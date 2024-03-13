@@ -1,0 +1,1 @@
+from spiral.tasks.base import Task

@@ -1,0 +1,56 @@
+[tool.poetry]
+name = "spiral"
+version = "0.2.0"
+description = "Package for creating AI Agents using llms"
+authors = ["theonlyamos <theonlyamos@gmail.com>"]
+license = "Apache2"
+readme = "README.md"
+homepage = "https://github.com/theonlyamos/spiral"
+repository = "https://github.com/theonlyamos/spiral"
+keywords = ["spiral", "ai", "agents", "ai agents", "ai-agents", "llms", "autonomous agents"]
+classifiers = [
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[tool.poetry.urls]
+"Bug Tracker" = "https://github.com/theonlyamos/spiral/issues"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+requests = "^2.31.0"
+python-dotenv = "^1.0.1"
+pydantic = "^2.6.2"
+serpapi = "^0.1.5"
+aiohttp = "^3.9.3"
+cohere = "^4.50"
+together = "^0.2.11"
+clarifai = "^10.1.0"
+google-search-results = "^2.4.2"
+openai = "^1.12.0"
+groq = "^0.4.1"
+google-generativeai = "^0.4.0"
+uuid = "^1.30"
+pillow = "^10.2.0"
+pyautogui = "^0.9.54"
+anthropic = "^0.17.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+spiral = "spiral.cli:main"
