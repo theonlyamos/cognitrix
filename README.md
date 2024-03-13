@@ -74,4 +74,4 @@ Cognitrix is open source and contributions are welcome. See [CONTRIBUTING.md](CO
 This project is licensed under the MIT license. See [LICENSE.md](LICENSE.md) for more details.
 
 ### Acknowledgments
-Cognitrix was created by [Amos Amissah](https://github.com/theonlyamos) and is heavily inspired by projects like AutoGPT and EngineerGPT. Special thanks to the open-source community for their contributions and the AI companies providing LLM APIs.
+Cognitrix was created by [Amos Amissah](https://github.com/theonlyamos) and is heavily inspired by projects like AutoGPT and GPT Engineer. Special thanks to the open-source community for their contributions and the AI companies providing LLM APIs.
