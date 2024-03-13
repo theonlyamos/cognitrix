@@ -2,19 +2,21 @@
 Cognitrix is an open-source autonous AI agents orchestrator built in Python. It allows you to create and manage AI agents easily.
 
 ### Features
-- Create and manage AI agents.
-- Conversational interface using chat
-- Modular architecture for easy extensibility
-- Access to various tools like calculators, web - search, etc.
-- Support for multiple platforms
+- **`Agent Creation and Management`:** Create, list, and load AI agents with customizable names, tasks, and configurations.
+- **`LLM Integration`:** Seamlessly integrate with multiple LLM providers, including Anthropic (Claude), Cohere, Groq, Google, OpenAI, and Together.
+- **`Modular Architecture`:** Easily extend the framework by adding new tools, agents, and LLM integrations.
+- **`Conversational Interface`:** Interact with AI agents through a command-line interface, providing queries and receiving responses.
+- **`Tool Integration`:** Agents can utilize a variety of tools, such as calculators, web searches, file system browsers, and more.
+- **`Autonomous Agent Mode`:** Enable agents to operate autonomously, visually perceiving the screen, interacting with UI elements, and performing tasks.
+- **`Multimodal Support`:** Agents can handle both text and image inputs/outputs, enabling multimodal interactions.
 
 ### Architecture
-The core components of Cognitrix are:
+Cognitrix's architecture is designed to be modular and extensible, with core components including:
 
-- `Agent` - Base class for chatbot agents with - support for tools
-- `LLM` - Integration with large language models like - Cohere, GPT-3 etc.
-- `Tools` - Various utility tools like calculators, search etc.
-- `Memory` - For tracking context and state
+1. **`Agents`:** The base Agent class and specialized classes like AIAssistant for creating and managing AI agents.
+2. **`LLMs`:** A collection of classes for integrating with various LLM providers, such as Cohere, OpenAI, Claude, and more.
+3. **`Tools`:** A set of tools that agents can utilize, including calculators, web searches, file system browsers, and more.
+4. **`Templates`:** Customizable prompt templates for guiding the behavior and output formats of LLMs.
 
 The architecture is highly modular and extensible. New tools and capabilities can be easily added.
 
@@ -71,5 +73,5 @@ Cognitrix is open source and contributions are welcome. See [CONTRIBUTING.md](CO
 ### License
 This project is licensed under the MIT license. See [LICENSE.md](LICENSE.md) for more details.
 
-### Credits
-Cognitrix was created by [Amos Amissah](https://github.com/theonlyamos).
+### Acknowledgments
+Cognitrix was created by [Amos Amissah](https://github.com/theonlyamos) and is heavily inspired by projects like AutoGPT and EngineerGPT. Special thanks to the open-source community for their contributions and the AI companies providing LLM APIs.
