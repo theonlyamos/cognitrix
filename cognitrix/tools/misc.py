@@ -395,20 +395,114 @@ def take_screenshot():
     }"""
     screenshot = pyautogui.screenshot()
     
-    # Resize the image by 50% while maintaining the aspect ratio
-    # width, height = screenshot.size
-    # new_width = int(width * 0.5)
-    # new_height = int(height * 0.5)
-    # screenshot = screenshot.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-    # Convert the screenshot to a BytesIO object
-    # screenshot_bytes = io.BytesIO()
-    # screenshot.save(screenshot_bytes, format='JPEG')
-
-    # # Convert the BytesIO object to base64
-    # screenshot_base64 = base64.b64encode(screenshot_bytes.getvalue()).decode('utf-8')
-    
     return ['image', screenshot]
+
+@tool
+def text_input(text: str):
+    """Use this tool to take make text inputs.
+    Args:
+        text (str): Text to input.
+    
+    Returns:
+        str: Text input completed.
+    
+    Example:
+        User: write hello world
+        AI Assistant: {
+            "type": "function_call",
+            "function": "Text Input",
+            "arguments": ["hello world"]
+        }
+    """
+    screenshot = pyautogui.write(text, 0.25)
+    return 'Text input completed'
+
+@tool
+def key_press(key: str):
+    """Use this tool to take make key presses.
+    Args:
+        key (str): Name of key to press.
+    
+    Returns:
+        str: Keypress completed.
+    
+    Example:
+        User: Press windows key
+        AI Assistant: {
+            "type": "function_call",
+            "function": "Key Press",
+            "arguments": ["win"]
+        }
+    """
+    screenshot = pyautogui.press(key.lower())
+    
+    return 'Keypress completed'
+
+@tool
+def mouse_click(x: int, y: int):
+    """Use this tool to take make mouse clicks.
+    Args:
+        x (int): X coordinate of mouse click.
+        y (int): y coordinate of mouse click.
+    
+    Returns:
+        str: Mouse click completed.
+    
+    Example:
+        User: Click on Brave icon
+        AI Assistant: {
+            "type": "function_call",
+            "function": "Mouse Click",
+            "arguments": ["123", "456"]
+        }
+    """
+    screenshot = pyautogui.click(x, y)
+    
+    return 'Mouse Click completed'
+
+@tool
+def mouse_double_click(x: int, y: int):
+    """Use this tool to take make mouse double clicks.
+    Args:
+        x (int): X coordinate of mouse click.
+        y (int): y coordinate of mouse click.
+    
+    Returns:
+        str: Mouse double-click completed.
+    
+    Example:
+        User: Click on Brave icon
+        AI Assistant: {
+            "type": "function_call",
+            "function": "Mouse Double Click",
+            "arguments": ["123", "456"]
+        }
+    """
+    screenshot = pyautogui.doubleClick(x, y)
+    
+    return 'Mouse double-click completed.'
+
+@tool
+def mouse_right_click(x: int, y: int):
+    """Use this tool to take make mouse right clicks.
+    Args:
+        x (int): X coordinate of mouse click.
+        y (int): y coordinate of mouse click.
+    
+    Returns:
+        str: Mouse right-click completed.
+    
+    Example:
+        User: Right-click on Brave icon
+        AI Assistant: {
+            "type": "function_call",
+            "function": "Mouse Right Click",
+            "arguments": ["123", "456"]
+        }
+    """
+    screenshot = pyautogui.rightClick(x, y)
+    
+    return 'Mouse double-click completed.'
 
 # @tool
 # def get_ui_elements_coordinates():

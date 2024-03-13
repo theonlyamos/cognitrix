@@ -14,8 +14,9 @@ from .tools import (
     Calculator, YoutubePlayer,
     WorldNews, PythonREPL,
     FSBrowser, SearchTool,
-    InternetBrowser,
-    take_screenshot
+    InternetBrowser, take_screenshot,
+    text_input, key_press, mouse_click,
+    mouse_double_click, mouse_right_click
 )
 
 from .config import VERSION
@@ -98,7 +99,12 @@ def start(args: Namespace):
         if assistant:
             assistant.llm = platform
             assistant.name = args.name
-            assistant.add_tool(take_screenshot())
+            assistant.add_tool(take_screenshot)
+            assistant.add_tool(text_input)
+            assistant.add_tool(key_press)
+            assistant.add_tool(mouse_click)
+            assistant.add_tool(mouse_double_click)
+            assistant.add_tool(mouse_right_click)
             # assistant.add_tool(Calculator())
             # assistant.add_tool(YoutubePlayer())
             # assistant.add_tool(WorldNews())

@@ -9,17 +9,18 @@ def tool(func: Callable, *args, **kwargs):
         return func(*args, **kwargs)
 
     class GenericTool(Tool):
-        name: str = ' '.join(func.__name__.split('_')).capitalize()
-        description: str = str(func.__doc__)
-        
-        def run(self):
+        def run(self, *args, **kwargs):
             if inspect.iscoroutinefunction(func):
                 raise NotImplementedError("Asynchronous execution is not supported for coroutine functions")
             return wrapper(*args, **kwargs)
         
-        async def arun(self):
+        async def arun(self, *args, **kwargs):
             if inspect.iscoroutinefunction(func):
                 return await wrapper(*args, **kwargs)
             raise NotImplementedError("Synchronous execution is not supported for synchronous functions")
 
-    return GenericTool
+    new_tool = GenericTool(
+        name=' '.join(func.__name__.split('_')).title(),
+        description=str(func.__doc__)
+    )
+    return new_tool

@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from ..llms.base import LLM
 from ..tools.base import Tool
 from ..tasks.base import Task
-from ..agents.templates import PROMPT_TEMPLATE
+from ..agents.templates import ASSISTANT_TEMPLATE
 from ..config import AGENTS_FILE
 
 logging.basicConfig(
@@ -35,7 +35,7 @@ class Agent(BaseModel):
     tools: List[Tool] = Field(default=[])
     """Tools to be used by agent"""
     
-    prompt_template: str = Field(default=PROMPT_TEMPLATE)
+    prompt_template: str = Field(default=ASSISTANT_TEMPLATE)
     """Base system prompt template"""
     
     verbose: bool = Field(default=False)
@@ -206,7 +206,7 @@ class Agent(BaseModel):
         Initialize the llm
         """
         self.format_system_prompt()
-
+        
         query: str|dict = input("\nUser (q to quit): ")
         while query:
             try:
