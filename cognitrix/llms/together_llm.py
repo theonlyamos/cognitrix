@@ -1,7 +1,7 @@
 import os
 import sys
 import together 
-from spiral.llms.base import LLM
+from cognitrix.llms.base import LLM
 from dotenv import load_dotenv
 from pydantic import Extra, Field, root_validator
 from typing import Any, Dict, List, Mapping, Optional 

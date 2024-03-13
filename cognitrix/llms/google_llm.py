@@ -1,4 +1,4 @@
-from spiral.llms.base import LLM
+from cognitrix.llms.base import LLM
 from typing import Any
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -11,7 +11,7 @@ logging.basicConfig(
     datefmt='%d-%b-%y %H:%M:%S',
     level=logging.WARNING
 )
-logger = logging.getLogger('spiral.log')
+logger = logging.getLogger('cognitrix.log')
 load_dotenv()
 
 

@@ -1,5 +1,5 @@
-### Spiral
-Spiral is an open-source autonous AI agents orchestrator built in Python. It allows you to create and manage AI agents easily.
+### Cognitrix
+Cognitrix is an open-source autonous AI agents orchestrator built in Python. It allows you to create and manage AI agents easily.
 
 ### Features
 - Create and manage AI agents.
@@ -9,7 +9,7 @@ Spiral is an open-source autonous AI agents orchestrator built in Python. It all
 - Support for multiple platforms
 
 ### Architecture
-The core components of Spiral are:
+The core components of Cognitrix are:
 
 - `Agent` - Base class for chatbot agents with - support for tools
 - `LLM` - Integration with large language models like - Cohere, GPT-3 etc.
@@ -22,54 +22,54 @@ The architecture is highly modular and extensible. New tools and capabilities ca
 
 ### Installation
 ```bash
-pip install spiral
+pip install cognitrix
 ```
 or
 ```bash
-pip install https://github.com/theonlyamos/spiral/archive/main.zip
+pip install https://github.com/theonlyamos/cognitrix/archive/main.zip
 ```
 
 ### Usage
 Run with default settings
 ```bash
-spiral
+cognitrix
 ```
 
 List supported platforms
 ```bash
-spiral --platforms
+cognitrix --platforms
 ```
 
 Run with specific platform
 ```bash
-spiral --platform <platform_name>
+cognitrix --platform <platform_name>
 ```
 
 Create a new agent
 ```bash
-spiral agents --new
+cognitrix agents --new
 ```
 
 List created agents
 ```bash
-spiral agents
+cognitrix agents
 ```
 
 Run with specific agent
 ```bash
-spiral --agent <agent_name>
+cognitrix --agent <agent_name>
 ```
 
 Print help message
 ```bash
-spiral --help
+cognitrix --help
 ```
 
 ### Contributing
-Spiral is open source and contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
+Cognitrix is open source and contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 
 ### License
 This project is licensed under the MIT license. See [LICENSE.md](LICENSE.md) for more details.
 
 ### Credits
-Spiral was created by [Amos Amissah](https://github.com/theonlyamos).
+Cognitrix was created by [Amos Amissah](https://github.com/theonlyamos).

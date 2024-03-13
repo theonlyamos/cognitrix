@@ -1,6 +1,6 @@
 from openai import OpenAI as OpenAILLM
-from spiral.llms.base import LLM
-from spiral.utils import image_to_base64
+from cognitrix.llms.base import LLM
+from cognitrix.utils import image_to_base64
 from typing import Any, Optional
 from dotenv import load_dotenv
 import logging
@@ -12,7 +12,7 @@ logging.basicConfig(
     datefmt='%d-%b-%y %H:%M:%S',
     level=logging.WARNING
 )
-logger = logging.getLogger('spiral.log')
+logger = logging.getLogger('cognitrix.log')
 load_dotenv()
 
 

@@ -1,0 +1,1 @@
+from cognitrix.tasks.base import Task

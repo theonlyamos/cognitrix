@@ -25,7 +25,7 @@ logging.basicConfig(
     datefmt='%d-%b-%y %H:%M:%S',
     level=logging.WARNING
 )
-logger = logging.getLogger('spiral.log')
+logger = logging.getLogger('cognitrix.log')
 
 class Calculator(Tool):
     name: str = 'Calculator'

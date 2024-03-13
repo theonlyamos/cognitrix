@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "spiral"
+name = "cognitrix"
 version = "0.2.0"
 description = "Package for creating AI Agents using llms"
 authors = ["theonlyamos <theonlyamos@gmail.com>"]
 license = "Apache2"
 readme = "README.md"
-homepage = "https://github.com/theonlyamos/spiral"
-repository = "https://github.com/theonlyamos/spiral"
-keywords = ["spiral", "ai", "agents", "ai agents", "ai-agents", "llms", "autonomous agents"]
+homepage = "https://github.com/theonlyamos/cognitrix"
+repository = "https://github.com/theonlyamos/cognitrix"
+keywords = ["cognitrix", "ai", "agents", "ai agents", "ai-agents", "llms", "autonomous agents"]
 classifiers = [
     "Topic :: Software Development :: Build Tools",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -26,7 +26,7 @@ classifiers = [
 ]
 
 [tool.poetry.urls]
-"Bug Tracker" = "https://github.com/theonlyamos/spiral/issues"
+"Bug Tracker" = "https://github.com/theonlyamos/cognitrix/issues"
 
 [tool.poetry.dependencies]
 python = "^3.12"
@@ -53,4 +53,4 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-spiral = "spiral.cli:main"
+cognitrix = "cognitrix.cli:main"

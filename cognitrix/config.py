@@ -2,7 +2,7 @@ from pathlib import Path
 import json
 
 VERSION = '0.2.0'
-SPIRAL_WORKDIR = Path('~').expanduser() / '.spiral'
+SPIRAL_WORKDIR = Path('~').expanduser() / '.cognitrix'
 
 AGENTS_FILE = SPIRAL_WORKDIR / 'agents.json'
 CONFIG_FILE = SPIRAL_WORKDIR / 'config.json'

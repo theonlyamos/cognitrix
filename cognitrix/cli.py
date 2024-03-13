@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 from argparse import Namespace
 
-from spiral.llms import (
+from cognitrix.llms import (
     Cohere, OpenAI,LLM
 )
 

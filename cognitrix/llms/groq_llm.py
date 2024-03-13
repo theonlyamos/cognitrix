@@ -1,5 +1,5 @@
 from groq import Groq as GroqLLM
-from spiral.llms.base import LLM
+from cognitrix.llms.base import LLM
 from typing import Any, Optional
 from dotenv import load_dotenv
 import logging
@@ -11,7 +11,7 @@ logging.basicConfig(
     datefmt='%d-%b-%y %H:%M:%S',
     level=logging.WARNING
 )
-logger = logging.getLogger('spiral.log')
+logger = logging.getLogger('cognitrix.log')
 load_dotenv()
 
 

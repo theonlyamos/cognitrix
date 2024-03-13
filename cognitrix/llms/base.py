@@ -10,7 +10,7 @@ logging.basicConfig(
     datefmt='%d-%b-%y %H:%M:%S',
     level=logging.WARNING
 )
-logger = logging.getLogger('spiral.log')
+logger = logging.getLogger('cognitrix.log')
 
 PROMPT_TEMPLATE = """
 You are a helpful, respectful and honest assistant.

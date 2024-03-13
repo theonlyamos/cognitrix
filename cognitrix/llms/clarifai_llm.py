@@ -1,5 +1,5 @@
 from clarifai.client.model import Model
-from spiral.llms.base import LLM
+from cognitrix.llms.base import LLM
 from typing import Any, Optional
 from dotenv import load_dotenv
 import logging
@@ -12,7 +12,7 @@ logging.basicConfig(
     datefmt='%d-%b-%y %H:%M:%S',
     level=logging.INFO
 )
-logger = logging.getLogger('spiral.log')
+logger = logging.getLogger('cognitrix.log')
 load_dotenv()
 
 class Clarifai(LLM):
