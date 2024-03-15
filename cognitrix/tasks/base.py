@@ -16,8 +16,13 @@ class Task(BaseModel):
     """
     
     description: str
+    """Description of the task"""
+    
     func: Optional[Callable] = None
+    """Assigned tool to complete the task"""
+    
     done: bool = False
+    """Checks/Sets whether the task has been completed"""
     
     async def start(self):
         if self.func:

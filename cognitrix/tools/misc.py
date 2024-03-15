@@ -5,6 +5,9 @@ from typing import Union, Optional, Any, Tuple, Dict, List
 from webbrowser import open_new_tab
 from ..tools.base import Tool
 from ..tools.tool import tool
+from cognitrix.agents import Agent
+from cognitrix.llms import LLM
+from cognitrix.tasks import Task
 from pydantic import Field
 from serpapi import google_search
 from pathlib import Path
@@ -503,6 +506,64 @@ def mouse_right_click(x: int, y: int):
     screenshot = pyautogui.rightClick(x, y)
     
     return 'Mouse double-click completed.'
+
+@tool
+def create_agents(agent_details: list[list], parent_id):
+    f"""Use this tool to create sub agents for specific tasks.
+    Args:
+        agent_details (list): Detailes needed to create an agent.
+            Each list should contain three items (name, task, llm).
+            name (str) - The name of the agent
+            prompt (str) - Prompt describing the agent's role and functionalities
+            task (str) - A brief description of the task for the agent (Can be empty. To be called later.)
+            llm (str) - The name of the llm to use. Choose from {LLM.list_llms()}
+            autostart (bool) - Whether the agent should immediately run it's task
+    
+    Returns:
+        list[Agents]: A list of created sub agents
+    
+    Example:
+        User: Create the snake game in python
+        AI Assistant: {
+            "type": "function_call",
+            "function": "Create Agents",
+            "arguments": [
+                [
+                    ["CodeWizard", "You are an experienced coder in the python language", "Write the code for the game in python", "openai", True],
+                    ["TestWizard", "You are an experienced code tester", "Write and run tests for code written by CodeWizard", "", "claude", False]
+                ]
+            ]
+        }
+    """
+    
+    sub_agents = []
+    
+    for detail in agent_details:
+        loaded_llm = LLM.load_llm(detail[3])
+        if loaded_llm:
+            agent_llm = loaded_llm()
+            new_agent = Agent.create_agent(
+                name=detail[0],
+                task_description=detail[1],
+                llm=agent_llm,
+                is_sub_agent=True,
+                parent_id=parent_id
+            )
+            if new_agent:
+                new_agent.prompt_template = detail[2]
+                sub_agents.append(new_agent)
+                print('[+] Created sub agent', detail[0].title())
+    
+    return ['agents', sub_agents, 'Sub agents created successfully']
+
+@tool
+def call_sub_agent(name: str, task: str, parent: Agent):
+    """Run a task with a sub agent
+    
+    Args:
+        name (str): Name of the agent to call
+    """
+    parent.call_sub_agent(name, task)
 
 # @tool
 # def get_ui_elements_coordinates():
