@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from ..llms.base import LLM
 from ..tools.base import Tool
 from ..tasks.base import Task
-from ..agents.templates import ASSISTANT_TEMPLATE
+from ..agents.templates import AUTONOMOUSE_AGENT_2
 from ..config import AGENTS_FILE
 
 logging.basicConfig(
@@ -36,7 +36,7 @@ class Agent(BaseModel):
     tools: List[Tool] = Field(default=[])
     """Tools to be used by agent"""
     
-    prompt_template: str = Field(default=ASSISTANT_TEMPLATE)
+    prompt_template: str = Field(default=AUTONOMOUSE_AGENT_2)
     """Base system prompt template"""
     
     verbose: bool = Field(default=False)
@@ -61,12 +61,16 @@ class Agent(BaseModel):
         super().__init__(**data)
         
     def format_system_prompt(self):
-        tools_str = "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
+        tools_str = "Available Tools:"
+        tools_str += "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
         available_tools = [tool.name for tool in self.tools]
+        subagents_str = "Available Subagents:"
+        subagents_str += "\n".join([f"{agent.name}: {agent.task}" for agent in self.sub_agents])
         prompt = self.prompt_template
         prompt = prompt.replace("{name}", self.name)
         # prompt = prompt.replace("{query}", query)
         prompt = prompt.replace("{tools}", tools_str)
+        prompt = prompt.replace("{subagents}", subagents_str)
         prompt = prompt.replace("{available_tools}", json.dumps(available_tools))
         
         self.llm.system_prompt = prompt
@@ -257,7 +261,8 @@ class Agent(BaseModel):
                 print('Exiting...')
                 sys.exit(1)
             except Exception as e:
-                logger.warning(str(e))
+                logger.exception(e)
+                # logger.warning(str(e))
                 sys.exit(1)
 
     def start(self):

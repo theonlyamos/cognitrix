@@ -417,7 +417,7 @@ def text_input(text: str):
             "arguments": ["hello world"]
         }
     """
-    screenshot = pyautogui.write(text, 0.25)
+    screenshot = pyautogui.write(text, 0.15)
     return 'Text input completed'
 
 @tool
@@ -438,6 +438,27 @@ def key_press(key: str):
         }
     """
     screenshot = pyautogui.press(key.lower())
+    
+    return 'Keypress completed'
+
+@tool
+def hot_key(*hotkeys):
+    """Use this tool to take make hot key presses.
+    Args:
+        hotkeys (list): list of keys to press together.
+    
+    Returns:
+        str: Keypress completed.
+    
+    Example:
+        User: Make a paste
+        AI Assistant: {
+            "type": "function_call",
+            "function": "Hot Key",
+            "arguments": ["ctrl", "v"]
+        }
+    """
+    screenshot = pyautogui.hotkey(*hotkeys)
     
     return 'Keypress completed'
 

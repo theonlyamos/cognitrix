@@ -8,6 +8,7 @@ from argparse import Namespace
 from cognitrix.llms import (
     Cohere, OpenAI,LLM
 )
+from cognitrix.tools.misc import hot_key
 
 from .agents import AIAssistant, Agent
 from .tools import (
@@ -102,6 +103,7 @@ def start(args: Namespace):
             assistant.add_tool(take_screenshot)
             assistant.add_tool(text_input)
             assistant.add_tool(key_press)
+            assistant.add_tool(hot_key)
             assistant.add_tool(mouse_click)
             assistant.add_tool(mouse_double_click)
             assistant.add_tool(mouse_right_click)
@@ -131,7 +133,7 @@ def get_arguments():
     
     agents_parser.set_defaults(func=manage_agents)
 
-    parser.add_argument('--name', type=str, default='Adam', help='Set name of agent')
+    parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
     parser.add_argument('--platform', default='', help='Set llm platform to use')
     parser.add_argument('--platforms', action='store_true', help='Get a list of all supported platforms')
     parser.add_argument('--agents', action='store_true', help='List all saved agents')

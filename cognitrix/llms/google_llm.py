@@ -2,9 +2,13 @@ from cognitrix.llms.base import LLM
 from typing import Any
 import google.generativeai as genai
 from dotenv import load_dotenv
+from PIL import Image
 import logging
 import sys
 import os
+import io
+
+from cognitrix.utils import image_to_base64
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -49,7 +53,7 @@ class Gemini(LLM):
     """Whether the model is multimodal."""
     
     def format_query(self, message: dict[str, str]) -> list:
-        """Formats a message for the Gemini API"""
+        """Formats messages for the Gemini API"""
         formatted_message = [*self.chat_history, message]
         
         messages = []
@@ -60,8 +64,11 @@ class Gemini(LLM):
             if fm['type'] == 'text': 
                 messages.append(fm['message'])
             elif fm['type'] == 'image':
+                screenshot_bytes = io.BytesIO()
+                fm['image'].save(screenshot_bytes, format='JPEG')
+                upload_image = Image.open(screenshot_bytes)
                 self.model = self.vision_model
-                messages.append(fm['image'])
+                messages.append(upload_image)
                 messages.append('Above is the screenshot')
 
         return messages
