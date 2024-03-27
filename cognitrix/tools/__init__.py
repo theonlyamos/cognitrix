@@ -5,7 +5,8 @@ from ..tools.misc import (
     WorldNews, FSBrowser,
     InternetBrowser, take_screenshot,
     text_input, key_press, mouse_click,
-    mouse_double_click, mouse_right_click
+    mouse_double_click, mouse_right_click,
+    create_sub_agent, call_sub_agent
 )
 
 from ..tools.python import PythonREPL

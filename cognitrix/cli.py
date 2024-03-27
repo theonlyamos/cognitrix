@@ -8,7 +8,7 @@ from argparse import Namespace
 from cognitrix.llms import (
     Cohere, OpenAI,LLM
 )
-from cognitrix.tools.misc import hot_key
+from cognitrix.tools.misc import call_sub_agent, create_sub_agent, hot_key
 
 from .agents import AIAssistant, Agent
 from .tools import (
@@ -91,8 +91,8 @@ def start(args: Namespace):
             if loaded_agent:
                 assistant = loaded_agent
             else:
-                assistant_description = "You are an ai assistant. Your main goal is to help the user complete tasks"
-                assistant = AIAssistant.create_agent(name=args.agent, task_description=assistant_description, llm=platform) #type: ignore
+                # assistant_description = "You are an ai assistant. Your main goal is to help the user complete tasks"
+                assistant = AIAssistant.create_agent(name=args.agent, llm=platform) #type: ignore
 
         else:
             assistant = AIAssistant(llm=platform, name=args.name, verbose=args.verbose)
@@ -100,6 +100,8 @@ def start(args: Namespace):
         if assistant:
             assistant.llm = platform
             assistant.name = args.name
+            assistant.add_tool(create_sub_agent)
+            assistant.add_tool(call_sub_agent)
             assistant.add_tool(take_screenshot)
             assistant.add_tool(text_input)
             assistant.add_tool(key_press)
@@ -113,7 +115,10 @@ def start(args: Namespace):
             # assistant.add_tool(FSBrowser())
             # assistant.add_tool(PythonREPL())
             # assistant.add_tool(InternetBrowser())
-            # assistant.add_tool(SearchTool())
+            # assistant.llm.tools = assistant.tools
+            
+            assistant.add_tool(SearchTool())
+
             assistant.start()
     except Exception as e:
         logging.error(str(e))

@@ -7,6 +7,7 @@ from ..tools.base import Tool
 from ..tools.tool import tool
 from cognitrix.agents import Agent
 from cognitrix.llms import LLM
+from cognitrix.utils import json_return_format
 from cognitrix.tasks import Task
 from pydantic import Field
 from serpapi import google_search
@@ -164,7 +165,7 @@ class FSBrowser(Tool):
     name: str =  "File System Browser"
     home_path: str = os.path.expanduser('~')
     desktop_path: str = os.path.join(home_path, 'Desktop').replace('\\', '\\\\')
-    documents_path: str = os.path.join(home_path, 'Documents').replace('\\', '\\\\')
+    documents_path: str = os.path.join(home_path, 'Documents').replace('\\', '\\\\') #type: ignore
     description: str =  f"""use this tool when you need to perform
     file system operations like listing of directories,
     opening a file, creating a file, updating a file,
@@ -529,16 +530,15 @@ def mouse_right_click(x: int, y: int):
     return 'Mouse double-click completed.'
 
 @tool
-def create_agents(agent_details: list[list], parent_id):
-    f"""Use this tool to create sub agents for specific tasks.
+def create_sub_agent(name: str, description: str, task: str, llm: str, autostart: bool, parent: Agent):
+    """Use this tool to create sub agents for specific tasks.
+    
     Args:
-        agent_details (list): Detailes needed to create an agent.
-            Each list should contain three items (name, task, llm).
-            name (str) - The name of the agent
-            prompt (str) - Prompt describing the agent's role and functionalities
-            task (str) - A brief description of the task for the agent (Can be empty. To be called later.)
-            llm (str) - The name of the llm to use. Choose from {LLM.list_llms()}
-            autostart (bool) - Whether the agent should immediately run it's task
+        name (str) - The name of the agent
+        description (str) - Prompt describing the agent's role and functionalities. Should include the agent's role, capabilities and any other info the agent needs to be able to complete it's task. Be as thorough as possible.
+        task (Optional[str]) - A brief description of the task for the agent (Can be empty)
+        llm (str) - The name of the llm to use.
+        autostart (bool) - Whether the agent should immediately run it's task. It should be either True or False.
     
     Returns:
         list[Agents]: A list of created sub agents
@@ -548,34 +548,34 @@ def create_agents(agent_details: list[list], parent_id):
         AI Assistant: {
             "type": "function_call",
             "function": "Create Agents",
-            "arguments": [
-                [
-                    ["CodeWizard", "You are an experienced coder in the python language", "Write the code for the game in python", "openai", True],
-                    ["TestWizard", "You are an experienced code tester", "Write and run tests for code written by CodeWizard", "", "claude", False]
-                ]
-            ]
+            "arguments": ["CodeWizard", "You are an experienced coder in the python language.", "Write the code for the game in python.\\n{return_format}", "openai", True]
         }
     """
     
-    sub_agents = []
+    sub_agent: Optional[Agent]
+
+    loaded_llm = LLM.load_llm(llm)
+    if loaded_llm:
+        agent_llm = loaded_llm()
+        
+        if not "return_format" in description:
+            description += f"\n{json_return_format}"
+            
+        sub_agent = Agent.create_agent(
+            name=name,
+            description=description,
+            task_description=task,
+            llm=agent_llm,
+            is_sub_agent=True,
+            parent_id=parent.id
+        )
+        
+    if sub_agent:
+        sub_agent.prompt_template = description
+
+        return ['agent', sub_agent, 'Sub agent created successfully']
     
-    for detail in agent_details:
-        loaded_llm = LLM.load_llm(detail[3])
-        if loaded_llm:
-            agent_llm = loaded_llm()
-            new_agent = Agent.create_agent(
-                name=detail[0],
-                task_description=detail[1],
-                llm=agent_llm,
-                is_sub_agent=True,
-                parent_id=parent_id
-            )
-            if new_agent:
-                new_agent.prompt_template = detail[2]
-                sub_agents.append(new_agent)
-                print('[+] Created sub agent', detail[0].title())
-    
-    return ['agents', sub_agents, 'Sub agents created successfully']
+    return "Error creating sub agent"
 
 @tool
 def call_sub_agent(name: str, task: str, parent: Agent):
@@ -583,8 +583,12 @@ def call_sub_agent(name: str, task: str, parent: Agent):
     
     Args:
         name (str): Name of the agent to call
+        task (str): The task|query to perform|answer
+        
     """
     parent.call_sub_agent(name, task)
+    
+    return "Agent running"
 
 # @tool
 # def get_ui_elements_coordinates():

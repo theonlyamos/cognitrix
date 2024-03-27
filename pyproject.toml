@@ -46,6 +46,7 @@ uuid = "^1.30"
 pillow = "^10.2.0"
 pyautogui = "^0.9.54"
 anthropic = "^0.17.0"
+aiofiles = "^23.2.1"
 
 
 [build-system]

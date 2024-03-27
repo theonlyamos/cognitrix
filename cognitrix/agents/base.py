@@ -1,202 +1,156 @@
-import re
-import ast
-import sys
 import json
+import uuid
 import asyncio
 import logging
+import aiofiles
+from pathlib import Path
 from threading import Thread
-from typing import Optional, List, Dict, Union, Any, Self, Type
+from typing import List, Optional, Self, TypeAlias, Union, Type, Any
+from dataclasses import dataclass
 
-import uuid
 from pydantic import BaseModel, Field
 
-from ..llms.base import LLM
-from ..tools.base import Tool
-from ..tasks.base import Task
-from ..agents.templates import AUTONOMOUSE_AGENT_2
-from ..config import AGENTS_FILE
+from cognitrix.tasks import Task
+from cognitrix.llms.base import LLM
+from cognitrix.tools.base import Tool
+from cognitrix.utils import extract_json, json_return_format
+from cognitrix.agents.templates import AUTONOMOUSE_AGENT_2
+from cognitrix.config import AGENTS_FILE
 
-logging.basicConfig(
-    format='%(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
-    datefmt='%d-%b-%y %H:%M:%S',
-    level=logging.WARNING
-)
 logger = logging.getLogger('cognitrix.log')
 
+AgentList: TypeAlias = List['Agent']
+
 class Agent(BaseModel):
-    """
-    Base Agent Class
-    """
-    
     name: str = Field(default='Avatar')
-    
     llm: LLM
-    """Selected llm to use for agent"""
-    
-    tools: List[Tool] = Field(default=[])
-    """Tools to be used by agent"""
-    
+    tools: List[Tool] = Field(default_factory=list)
     prompt_template: str = Field(default=AUTONOMOUSE_AGENT_2)
-    """Base system prompt template"""
-    
     verbose: bool = Field(default=False)
-    """Verbose mode flag"""
-    
-    sub_agents: List['Agent'] = Field(default=[])
-    """Sub agents that can be called by this agent"""
-    
+    sub_agents: AgentList = Field(default_factory=list)
     task: Optional[Task] = None
-    """Current task assigned to the agent"""
-    
-    is_sub_agent:  bool = Field(default=False)
-    """Flag indicating if agent is a sub agent"""
-    
-    id: str = uuid.uuid4().hex
-    """Unique ID for each agent instance"""
-    
+    is_sub_agent: bool = Field(default=False)
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     parent_id: Optional[str] = None
-    """ID of parent agent (if any)"""
-    
-    def __init__(self, **data):
-        super().__init__(**data)
-        
+    autostart: bool = False
+
+    @property
+    def available_tools(self) -> List[str]:
+        return [tool.name for tool in self.tools]
+
     def format_system_prompt(self):
-        tools_str = "Available Tools:"
-        tools_str += "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
-        available_tools = [tool.name for tool in self.tools]
-        subagents_str = "Available Subagents:"
-        subagents_str += "\n".join([f"{agent.name}: {agent.task}" for agent in self.sub_agents])
+        tools_str = self._format_tools_string()
+        subagents_str = self._format_subagents_string()
+        llms_str = self._format_llms_string()
+
         prompt = self.prompt_template
         prompt = prompt.replace("{name}", self.name)
-        # prompt = prompt.replace("{query}", query)
         prompt = prompt.replace("{tools}", tools_str)
         prompt = prompt.replace("{subagents}", subagents_str)
-        prompt = prompt.replace("{available_tools}", json.dumps(available_tools))
-        
+        prompt = prompt.replace("{available_tools}", json.dumps(self.available_tools))
+        prompt = prompt.replace("{llms}", llms_str)
+        prompt = prompt.replace("{return_format}", json_return_format)
+
+        if 'json' not in prompt:
+            prompt += f"\n{json_return_format}"
+
         self.llm.system_prompt = prompt
-    
-    def generate_prompt(self, query: str|dict, role: str = 'User')->dict:
-        """Generates a prompt from a query.
 
-        Args:
-            query (str|dict): A string or dict containing the query.
+    def _format_tools_string(self) -> str:
+        return "Available Tools:\n" + "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
 
-        Returns:
-           (dict): A dictionary containing the generated prompt.
-        """
-        
-        processed_query = self.extract_json(query) if isinstance(query, str) else query
-        
+    def _format_subagents_string(self) -> str:
+        subagents_str = "Available Subagents:\n"
+        subagents_str += "\n".join([f"-- {agent.name}: {agent.task.description}" for agent in self.sub_agents if agent.task])
+        subagents_str += "\nYou should always use a subagent for a task if there is one specifically created for that task."
+        return subagents_str
+
+    def _format_llms_string(self) -> str:
+        llms = LLM.list_llms()
+        llms_str = "Available LLM Platforms:\n" + ", ".join(llms) + "\nChoose one for each subagent."
+        return llms_str
+
+    def generate_prompt(self, query: str | dict, role: str = 'User') -> dict:
+        processed_query = self._process_query(query)
+        prompt: dict[str, Any] = {'role': role, 'type': 'text'}
+
         if isinstance(processed_query, dict):
-            if isinstance(processed_query['result'], list):
-                if processed_query['result'][0] == 'image':
-                    prompt = {'role': role, 'type': 'image', 'image': processed_query['result'][1]}
-                elif processed_query['result'][0] == 'agents':
-                    self.sub_agents = processed_query['result'][1]
-                    for sub_agent in self.sub_agents:
-                        agent_thread = Thread(target=sub_agent.start_task)
-                        agent_thread.name = sub_agent.name.lower()
-                        agent_thread.start()
-                        
-                    prompt = {'role': role, 'type': 'text', 'text': processed_query['result'][2]}
-                else:
-                    prompt = {'role': role, 'type': 'text', 'message': processed_query['result']}
-            else:
-                prompt = {'role': role, 'type': 'text', 'message': processed_query['result']}
-        else:
-            prompt = {'role': role, 'type': 'text', 'message': query}
- 
+            result = processed_query['result']
+            if isinstance(result, list):
+                if result[0] == 'image':
+                    prompt['type'] = 'image'
+                    prompt['image'] = result[1]
+                elif result[0] == 'agent':
+                    new_agent: Agent = result[1]
+                    new_agent.parent_id = self.id
+                    self.add_sub_agent(new_agent)
 
-        return {
-            'type': 'query',
-            'user_name': role,
-            'output': prompt,
-            'is_final': False
-        }
-    
+                    if new_agent.autostart:
+                        self.start_task_thread(new_agent, self)
+
+                    prompt['message'] = result[2]
+                else:
+                    prompt['message'] = result
+            else:
+                prompt['message'] = result
+        else:
+            prompt['message'] = processed_query
+
+        return prompt
+
+    def _process_query(self, query: str | dict) -> str | dict:
+        return extract_json(query) if isinstance(query, str) else query
+
     def add_sub_agent(self, agent: 'Agent'):
-        """Adds a sub agent to the list of sub agents"""
         self.sub_agents.append(agent)
-    
-    def get_sub_agent_by_name(self, name: str)-> Optional['Agent']:
-        for sub_agent in self.sub_agents:
-            if sub_agent.name.lower() == name.lower():
-                return sub_agent
-        return None
-    
-    def get_tool_by_name(self, name: str)-> Optional[Tool]:
-        for tool in self.tools:
-            if tool.name.lower() == name.lower():
-                return tool
-        return None
-    
-    def process_response(self, response: str)-> Union[dict, str]:
-        response = response.strip()
-        response_data = self.extract_json(response)
-        
+
+    def get_sub_agent_by_name(self, name: str) -> Optional['Agent']:
+        return next((agent for agent in self.sub_agents if agent.name.lower() == name.lower()), None)
+
+    def get_tool_by_name(self, name: str) -> Optional[Tool]:
+        return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
+
+    def process_response(self, response: str) -> Union[dict, str]:
+        response = response
+        response_data = extract_json(response)
+
         try:
             if isinstance(response_data, dict):
                 final_result_keys = ['final_answer', 'function_call_result']
-                
-                if response_data['type'].replace('\\', '') in final_result_keys: # type: ignore
-                    return response_data['result'] # type: ignore
-                tool = self.get_tool_by_name(response_data['function']) # type: ignore
+
+                if response_data['type'].replace('\\', '') in final_result_keys:
+                    return response_data['result']
+
+                tool = self.get_tool_by_name(response_data['function'])
+                if isinstance(response_data['arguments'], dict):
+                    response_data['arguments'] = list(response_data['arguments'].values())
+
                 if response_data['function'].lower() == 'create agents':
                     response_data['arguments'] = [*response_data['arguments'], self.id]
-                
-                if not tool:
-                    raise Exception(f'Tool {response_data["function"]} not found') # type: ignore
-               
-                print(f"Running tool '{tool.name.title()}' with parameters: {response_data['arguments']}")
-                
-                if isinstance(response_data['arguments'], list): # type: ignore
-                    result = tool.run(*response_data['arguments']) # type: ignore
-                else:
-                    result = tool.run(response_data['arguments']) # type: ignore
 
-                # if isinstance(result, list) and result[0] == 'image':
-                #     result = result[1]
-                response_json = {}
-                response_json['type'] = 'function_call_result'
-                response_json['result'] = result
-                
+                if not tool:
+                    raise Exception(f"Tool {response_data['function']} not found")
+
+                print(f"\nRunning tool '{tool.name.title()}' with parameters: {response_data['arguments']}")
+
+                if 'sub agent' in tool.name.lower():
+                    response_data['arguments'].append(self)
+
+                result = tool.run(*response_data['arguments'])
+
+                response_json = {
+                    'type': 'function_call_result',
+                    'result': result
+                }
+
                 return response_json
             else:
                 raise Exception('Not a json object')
         except Exception as e:
-            # logger.warning(str(e))
+            logger.warning(str(e))
             return response_data
-    
-    def extract_json(self, content: str) -> dict | str:
-        """
-        Extract JSON content from a response string.
 
-        Args:
-            content (str): The response string to extract JSON from.
-
-        Returns:
-            dict|str: Result of the extraction.
-        """
-        try:
-            # Escape special characters in the input string
-            # escaped_content = re.escape(content)
-
-            # Find the start and end index of the JSON string
-            start_index = content.find('{')
-            end_index = content.find('}', start_index) + 1
-
-            # Extract the JSON string
-            json_str = content[start_index:end_index]
-            
-            # Convert the JSON string to a Python dictionary
-            json_dict = json.loads(json_str)
-            return json_dict
-        except Exception as e:
-            # logger.warning(str(e))
-            return content
-    
     def add_tool(self, tool: Tool):
-        """Adds an additional tool to this LLM object"""
         self.tools.append(tool)
 
     async def call_tool(self, tool, params):
@@ -204,150 +158,110 @@ class Agent(BaseModel):
             return await tool(**params)
         else:
             return tool(**params)
-    
+
     async def initialize(self):
-        """
-        Initialize the llm
-        """
-        self.format_system_prompt()
-        
-        query: str|dict = input("\nUser (q to quit): ")
-        while query:
+        query: str | dict = input("\nUser (q to quit): ")
+        while True:
             try:
+                if not query:
+                    query: str | dict = input("\nUser (q to quit): ")
+                    continue
                 if isinstance(query, str):
                     if query.lower() in ['q', 'quit', 'exit']:
                         print('Exiting...')
-                        sys.exit(1)
-                        
+                        break
+
                     elif query.lower() == 'add agent':
-                            new_agent = Agent.create_agent(is_sub_agent=True, parent_id=self.id)
-                            if new_agent:
-                                self.add_sub_agent(new_agent)
-                                print(f"\nAgent {new_agent.name} added successfully!")
-                            else:
-                                print("\nError creating agent")
-                            
-                            query = input("\nUser (q to quit): ")
-                            continue
-                    
+                        new_agent = self.create_agent(is_sub_agent=True, parent_id=self.id)
+                        if new_agent:
+                            self.add_sub_agent(new_agent)
+                            print(f"\nAgent {new_agent.name} added successfully!")
+                        else:
+                            print("\nError creating agent")
+
+                        query = input("\nUser (q to quit): ")
+                        continue
+
                     elif query.lower() == 'list agents':
                         agents_str = "\nAvailable Agents:"
-                        agents = Agent.list_agents()
-                        sub_agents = [agent for agent in agents if agent.parent_id == self.id]
+                        sub_agents = [agent for agent in await self.list_agents() if agent.parent_id == self.id]
                         for index, agent in enumerate(sub_agents):
                             agents_str += (f"\n[{index}] {agent.name}")
                         print(agents_str)
                         query = input("\nUser (q to quit): ")
                         continue
-                
+
+                self.format_system_prompt()
                 full_prompt = self.generate_prompt(query)
-                response = self.llm(full_prompt['output']) # type: ignore
-                self.llm.chat_history.append(full_prompt['output'])
-                self.llm.chat_history.append({'role': 'Assistant', 'type': 'text', 'message': response})
+                response: Any = self.llm(full_prompt)
+                self.llm.chat_history.append(full_prompt)
+                self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response})
 
                 if self.verbose:
                     print(response)
-                
+
                 result: dict[Any, Any] | str = self.process_response(response)
-                
+
                 if isinstance(result, dict) and result['type'] == 'function_call_result':
-                    # self.llm.chat_history.append({'role': 'Assistant', 'type': 'text', 'message': response.strip()})
                     query = result
                 else:
                     print(f"\n{self.name}: {result}")
                     query = input("\nUser (q to quit): ")
-                    
+
             except KeyboardInterrupt:
                 print('Exiting...')
-                sys.exit(1)
+                break
             except Exception as e:
                 logger.exception(e)
-                # logger.warning(str(e))
-                sys.exit(1)
+                break
 
     def start(self):
-        """
-        Initialize agent
-        """
-        task = asyncio.run(self.initialize())
+        asyncio.run(self.initialize())
 
-        return task
-    
-    def run_task(self, parent: type['Agent']):
-        """Run agent task"""
-        
+    @staticmethod
+    def start_task_thread(agent: 'Agent', parent: 'Agent'):
+        agent_thread = Thread(target=agent.run_task, args=(parent,))
+        agent_thread.name = agent.name.lower()
+        agent_thread.start()
 
+    def run_task(self, parent: Self):
+        self.format_system_prompt()
         query = self.task.description if self.task else None
-        
-        while query and query.lower() != 'task complete!!!':
+
+        while query:
             full_prompt = self.generate_prompt(query)
-            
-            response = self.llm(full_prompt['output'])                                  #type: ignore
-            self.llm.chat_history.append(full_prompt['output'])
-            self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response})
-            
-            parent_prompt = self.generate_prompt(response, self.name)
-            parent.llm(parent_prompt)                                                     #type: ignore
-            
-            parent_response = self.llm(full_prompt['output']) # type: ignore
-            parent.llm.chat_history.append(parent_response['output'])
-            parent.llm.chat_history.append({'role': 'Assistant', 'type': 'text', 'message': response})
-            
-            print(f"\n{self.name}: {parent_response}")
-            query = response
-    
+            response: Any = self.llm(full_prompt)
+            self.llm.chat_history.append(full_prompt)
+            self.llm.chat_history.append({'role': 'user', 'type': 'text', 'message': response})
+
+            agent_result = self.process_response(response)
+            if isinstance(agent_result, dict) and agent_result['type'] == 'function_call_result':
+                query = agent_result
+            else:
+                parent_prompt = parent.generate_prompt(response, 'user')
+                parent_prompt['message'] = self.name + ": " + response
+                parent_response: Any = parent.llm(parent_prompt)
+                parent.llm.chat_history.append(parent_prompt)
+                parent.llm.chat_history.append({'role': 'assistant', 'type': 'text', 'message': parent_response})
+                parent_result = parent.process_response(parent_response)
+                print(f"\n\n{parent.name}: {parent_result}")
+                query = ""
+
     def call_sub_agent(self, agent_name: str, task_description: str):
-        """Run a task with a sub agent
-        
-        Args:
-            agent_name (str): Name of the sub agent
-            task_description (str): Description of the task for the sub agent
-        
-        Returns:
-        """
         sub_agent = self.get_sub_agent_by_name(agent_name)
         if sub_agent:
             sub_agent.task = Task(description=task_description)
-            
-            query = sub_agent.task.description
-            full_prompt = self.generate_prompt(query)
-                
-            response = self.llm(full_prompt['output'])                                  #type: ignore
-            sub_agent.llm.chat_history.append(full_prompt['output'])
-            sub_agent.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response})
-            
-            print(f"\n{sub_agent.name}: {response}")
-            
-            parent_prompt = self.generate_prompt(response, self.name)
-            self.llm(parent_prompt['output'])                                                     #type: ignore
-            
-            parent_response = self.llm(full_prompt['output']) # type: ignore
-            self.llm.chat_history.append(parent_response['output'])
-            self.llm.chat_history.append({'role': 'Assistant', 'type': 'text', 'message': response})
-            
-            print(f"\n{self.name}: {parent_response}")
+            if sub_agent.task:
+                self.start_task_thread(sub_agent, self)
         else:
             full_prompt = self.generate_prompt(f'Sub-agent with name {agent_name} was not found.')
-            self.llm(full_prompt['output'])         #type: ignore
-    
-    @classmethod
-    def create_agent(cls,  name: str = '', task_description: str = '', tools: List[Tool]=[], llm: Optional[LLM]=None, is_sub_agent: bool = False, parent_id=None) -> Self | None:
-        """Create a new agent instance
+            self.llm(full_prompt)
 
-        Args:
-            name (str): Name of the agent
-            llm (LLM): LLM instance
-            task_description (str): Task description
-            tools (List[Tool], optional): List of tools available to the agent. Defaults to [].
-            is_sub_agent (bool, optional): Set whether agent is a sub_agent. Defaults to True.
-            parent_id (str, optional): Set parent agent id. Defaults to None.
-        
-        Returns:
-            Agent: New agent instance
-        """
+    @classmethod
+    def create_agent(cls, name: str = '', description: str = '', task_description: str = '', tools: List[Tool] = [],
+                     llm: Optional[LLM] = None, is_sub_agent: bool = False, parent_id=None) -> Optional[Self]:
         try:
             name = name or input("\n[Enter agent name]: ")
-            task_description = task_description or input("\n[Enter brief description of agent task]: ")
 
             while not llm:
                 llms = LLM.list_llms()
@@ -363,63 +277,71 @@ class Agent(BaseModel):
                     llm = loaded_llm()
                     llm.model = input(f"\nEnter model name [{llm.model}]: ") or llm.model
                     llm.temperature = float(input(f"\nEnter model temperature [{llm.temperature}]: ")) or llm.temperature
-            if llm:   
+
+            if llm:
                 task = Task(description=task_description)
                 new_agent = cls(name=name, llm=llm, task=task, tools=tools, is_sub_agent=is_sub_agent, parent_id=parent_id)
+                if description:
+                    new_agent.prompt_template = description
+
+                agents = []
                 with open(AGENTS_FILE, 'r') as file:
                     content = file.read()
                     agents = json.loads(content) if content else []
-                    agents.append(new_agent.dict())        #type: ignore
-                
+                    agents.append(new_agent.model_dump())
+
                 with open(AGENTS_FILE, 'w') as file:
                     json.dump(agents, file, indent=4)
-                    
+
                 return new_agent
-            
+
         except Exception as e:
             logger.error(str(e))
-            sys.exit(1)
-    
-    @staticmethod
-    def list_agents(id: str = "")-> List['Agent']:
-        """List all agents or just one agent when <id> is provided
 
-        Args:
-            id (str): Id of the agent (Optional)
-        """
+    @classmethod
+    async def list_agents(cls, parent_id: Optional[str] = None) -> AgentList:
         try:
-            agents: List['Agent'] = []
-            with open(AGENTS_FILE, 'r') as file:
-                content = file.read()
+            agents: AgentList = []
+            async with aiofiles.open(AGENTS_FILE, 'r') as file:
+                content = await file.read()
                 loaded_agents: list[dict] = json.loads(content) if content else []
-                # agents = [Agent(**agent) for agent in agents]   #type: ignore
                 for agent in loaded_agents:
                     llm = LLM.load_llm(agent["llm"]["platform"])
                     loaded_agent = Agent(**agent)
                     if llm:
                         loaded_agent.llm = llm(**agent["llm"])
                     agents.append(loaded_agent)
+
+            if parent_id:
+                agents = [agent for agent in agents if agent.parent_id == parent_id]
+
             return agents
-                
+
         except Exception as e:
             logger.exception(e)
             return []
-        
+
     @classmethod
-    def load_agent(cls, agent_name: str):
-        """Dynamically load Agent based on name"""
+    async def get(cls, id) -> Optional['Agent']:
+        try:
+            agents = await cls.list_agents()
+            loaded_agents: list[Agent] = [agent for agent in agents if agent.id == id]
+            if len(loaded_agents):
+                return loaded_agents[0]
+        except Exception as e:
+            logger.exception(e)
+            return None
+
+    @classmethod
+    def load_agent(cls, agent_name: str) -> Optional['Agent']:
         try:
             agent_name = agent_name.lower()
-            agents = cls.list_agents()
+            agents = asyncio.run(cls.list_agents())
             loaded_agents: list[Agent] = [agent for agent in agents if agent.name.lower() == agent_name]
-            if len(loaded_agents):
+            if loaded_agents:
                 agent = loaded_agents[0]
-                # loaded_llm = LLM.load_llm(agent.llm.platform)
-                # if loaded_llm:
-                #     agent.llm = loaded_llm(**agent.llm.dict())
+                agent.sub_agents = asyncio.run(cls.list_agents(agent.id))
                 return agent
         except Exception as e:
             logger.exception(e)
-            # logging.error(str(e))
             return None
-        

@@ -7,7 +7,7 @@ class Task(BaseModel):
     Initializes the Task object by assigning values to its attributes.
 
     Args:
-        func (function): The function to be executed by the task.
+        description (str): The task to perform or query to answer.
         args (tuple): The positional arguments to be passed to the function.
         kwargs (dict): The keyword arguments to be passed to the function.
 
@@ -16,7 +16,7 @@ class Task(BaseModel):
     """
     
     description: str
-    """Description of the task"""
+    """The task|query to perform|answer"""
     
     func: Optional[Callable] = None
     """Assigned tool to complete the task"""

@@ -1,7 +1,8 @@
 from openai import OpenAI as OpenAILLM
 from cognitrix.llms.base import LLM
+from cognitrix.tools.base import Tool
 from cognitrix.utils import image_to_base64
-from typing import Any, Optional
+from typing import Any, List, Optional
 from dotenv import load_dotenv
 import logging
 import sys
@@ -53,6 +54,9 @@ class OpenAI(LLM):
     system_prompt: str = ""
     """System prompt to prepend to queries"""
     
+    tools: List[Tool] = []
+    """Functions to call"""
+    
     def format_query(self, message: dict[str, str]) -> list:
         """Formats a message for the Claude API.
 
@@ -78,7 +82,7 @@ class OpenAI(LLM):
                         }
                     ]
                 })
-            else:
+            elif fm['type'] == 'image':
                 base64_image = image_to_base64(fm['image'])
                 self.model = self.vision_model
                 messages.append({
@@ -94,6 +98,8 @@ class OpenAI(LLM):
                         }
                     ]
                 })
+            else:
+                print(fm)
             
         return messages
 
@@ -110,6 +116,7 @@ class OpenAI(LLM):
 
         client = OpenAILLM(api_key=self.api_key)
         formatted_messages = self.format_query(query)
+        
         response = client.chat.completions.create(
             model=self.model,
             messages=[
@@ -119,5 +126,5 @@ class OpenAI(LLM):
             temperature=self.temperature,
             max_tokens=self.max_tokens
         )
-            
+        
         return response.choices[0].message.content

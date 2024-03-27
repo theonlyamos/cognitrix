@@ -28,7 +28,7 @@ class Claude(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    model: str = 'claude-3-sonnet-20240229'
+    model: str = 'claude-3-opus-20240229'
     """model endpoint to use""" 
     
     temperature: float = 0.1

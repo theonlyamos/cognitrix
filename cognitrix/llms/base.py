@@ -5,6 +5,8 @@ import logging
 import inspect
 import sys
 
+from cognitrix.tools.base import Tool
+
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
     datefmt='%d-%b-%y %H:%M:%S',
@@ -114,6 +116,9 @@ class LLM(BaseModel):
     chat_history: List[Dict[str, str]] = []
     """Chat history stored as a list of responses"""
     
+    tools: List[Tool] = []
+    """Functions calling tools"""
+    
     def __init__(self, **data):
         super().__init__(**data)
         self.platform = self.__class__.__name__
@@ -143,3 +148,6 @@ class LLM(BaseModel):
         except Exception as e:
             logging.error(str(e))
             return None
+    
+    def __call__(*args, **kwargs):
+        pass
