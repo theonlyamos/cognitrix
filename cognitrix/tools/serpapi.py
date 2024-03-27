@@ -1,6 +1,6 @@
 from typing import Union, Optional, Any, Tuple, Dict, List
 from serpapi.google_search import GoogleSearch
-from ..tools.base import Tool
+from cognitrix.tools.base import Tool
 from pydantic import Field
 import logging 
 import aiohttp

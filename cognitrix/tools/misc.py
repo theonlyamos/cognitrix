@@ -1,14 +1,14 @@
+import asyncio
 import json
 import shutil
 from webbrowser import open_new_tab
 from typing import Union, Optional, Any, Tuple, Dict, List
 from webbrowser import open_new_tab
-from ..tools.base import Tool
-from ..tools.tool import tool
+from cognitrix.tools.base import Tool
+from cognitrix.tools.tool import tool
 from cognitrix.agents import Agent
 from cognitrix.llms import LLM
 from cognitrix.utils import json_return_format
-from cognitrix.tasks import Task
 from pydantic import Field
 from serpapi import google_search
 from pathlib import Path
@@ -17,10 +17,8 @@ import pyautogui
 import requests
 import logging 
 import aiohttp
-import base64
 import sys
 import os
-import io
 
 NotImplementedErrorMessage = 'this tool does not suport async'
 
@@ -561,14 +559,14 @@ def create_sub_agent(name: str, description: str, task: str, llm: str, autostart
         if not "return_format" in description:
             description += f"\n{json_return_format}"
             
-        sub_agent = Agent.create_agent(
+        sub_agent = asyncio.run(Agent.create_agent(
             name=name,
             description=description,
             task_description=task,
             llm=agent_llm,
             is_sub_agent=True,
             parent_id=parent.id
-        )
+        ))
         
     if sub_agent:
         sub_agent.prompt_template = description

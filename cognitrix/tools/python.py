@@ -1,6 +1,6 @@
 from pydantic import Field
 from typing import Dict, Optional
-from ..tools.base import Tool
+from cognitrix.tools.base import Tool
 from io import StringIO
 import multiprocessing
 import functools

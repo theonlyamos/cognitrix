@@ -1,6 +1,6 @@
 from functools import wraps
 from typing import Callable
-from ..tools import Tool
+from cognitrix.tools import Tool
 import inspect
 
 def tool(func: Callable, *args, **kwargs):

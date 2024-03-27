@@ -120,4 +120,4 @@ class Local(LLM):
             max_tokens=self.max_tokens
         )
             
-        return response.choices[0].message.content
+        return response.choices[0].message.content                          #type: ignore

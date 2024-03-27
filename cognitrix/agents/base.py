@@ -22,7 +22,7 @@ logger = logging.getLogger('cognitrix.log')
 AgentList: TypeAlias = List['Agent']
 
 class Agent(BaseModel):
-    name: str = Field(default='Avatar')
+    name: str = Field(default='Agent')
     llm: LLM
     tools: List[Tool] = Field(default_factory=list)
     prompt_template: str = Field(default=AUTONOMOUSE_AGENT_2)
@@ -172,7 +172,7 @@ class Agent(BaseModel):
                         break
 
                     elif query.lower() == 'add agent':
-                        new_agent = self.create_agent(is_sub_agent=True, parent_id=self.id)
+                        new_agent = await self.create_agent(is_sub_agent=True, parent_id=self.id)
                         if new_agent:
                             self.add_sub_agent(new_agent)
                             print(f"\nAgent {new_agent.name} added successfully!")
@@ -258,7 +258,7 @@ class Agent(BaseModel):
             self.llm(full_prompt)
 
     @classmethod
-    def create_agent(cls, name: str = '', description: str = '', task_description: str = '', tools: List[Tool] = [],
+    async def create_agent(cls, name: str = '', description: str = '', task_description: str = '', tools: List[Tool] = [],
                      llm: Optional[LLM] = None, is_sub_agent: bool = False, parent_id=None) -> Optional[Self]:
         try:
             name = name or input("\n[Enter agent name]: ")
@@ -285,12 +285,12 @@ class Agent(BaseModel):
                     new_agent.prompt_template = description
 
                 agents = []
-                with open(AGENTS_FILE, 'r') as file:
-                    content = file.read()
+                async with aiofiles.open(AGENTS_FILE, 'r') as file:
+                    content = await file.read()
                     agents = json.loads(content) if content else []
                     agents.append(new_agent.model_dump())
 
-                with open(AGENTS_FILE, 'w') as file:
+                async with aiofiles.open(AGENTS_FILE, 'w') as file:
                     json.dump(agents, file, indent=4)
 
                 return new_agent
@@ -345,3 +345,16 @@ class Agent(BaseModel):
         except Exception as e:
             logger.exception(e)
             return None
+    
+    async def save(self):
+        """Save current agent"""
+        agents = await Agent.list_agents()
+        updated_agents = []
+        for index, agent in enumerate(agents):
+            if agent.id == self.id:
+                agents[index] = self
+            
+            updated_agents.append(agent.model_dump())
+        
+        async with aiofiles.open(AGENTS_FILE, 'w') as file:
+            json.dump(updated_agents, file, indent=4)

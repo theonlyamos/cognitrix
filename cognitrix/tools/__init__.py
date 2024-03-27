@@ -1,6 +1,6 @@
-from ..tools.base import Tool
-from ..tools.tool import tool
-from ..tools.misc import (
+from cognitrix.tools.base import Tool
+from cognitrix.tools.tool import tool
+from cognitrix.tools.misc import (
     Calculator, YoutubePlayer,
     WorldNews, FSBrowser,
     InternetBrowser, take_screenshot,
@@ -9,5 +9,5 @@ from ..tools.misc import (
     create_sub_agent, call_sub_agent
 )
 
-from ..tools.python import PythonREPL
-from ..tools.serpapi import SearchTool
+from cognitrix.tools.python import PythonREPL
+from cognitrix.tools.serpapi import SearchTool
