@@ -103,5 +103,5 @@ def extract_json(content: str) -> dict | str:
             
             return json_dict
         except Exception as e:
-            # logging.warning(str(e))
+            # logging.exception(e)
             return content

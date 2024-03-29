@@ -34,24 +34,20 @@ class Tool(BaseModel):
     def list_all_tools():
         """List all tools"""
         try:
-            module_path = Path(__file__, '..').resolve()
-            sys.path.append(str(module_path))
-            module = __import__(str(inspect.getmodulename(Path('__init__.py'))))
+            module = __import__(__package__, fromlist=['__init__'])
             tools  = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool)]
             class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
             tools.extend(class_tools)
             return tools
         except Exception as e:
-            logging.error(str(e))
+            logging.exception(e)
             return []
     
     @classmethod
     def get_by_name(cls, name: str)-> Optional['Tool']:
         """Dynamically load tool by name"""
         try:
-            module_path = Path(__file__, '..').resolve()
-            sys.path.append(str(module_path))
-            module = __import__(str(inspect.getmodulename(Path('__init__.py'))))
+            module = __import__(__package__, fromlist=[name])
             tools  = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool)]
             class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
             tools.extend(class_tools)
@@ -60,5 +56,5 @@ class Tool(BaseModel):
         except IndexError:
             return None
         except Exception as e:
-            logging.error(str(e))
+            logging.exception(e)
             return None

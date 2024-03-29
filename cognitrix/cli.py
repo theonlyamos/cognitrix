@@ -1,6 +1,6 @@
-import asyncio
 import os
 import sys
+import asyncio
 import logging
 import argparse
 from pathlib import Path
@@ -49,7 +49,7 @@ def manage_agents(args: Namespace):
         print()
         sys.exit()
     except Exception as e:
-        logging.warning(str(e))
+        logging.exception(e)
         sys.exit(1)
 
 def str_or_file(string):
@@ -71,10 +71,12 @@ def start(args: Namespace):
         elif args.tools:
             list_tools()
             sys.exit()
+        
         platform = None
         if args.platform:
             platform = LLM.load_llm(model_name=args.platform)
         platform = platform() if platform else Cohere()
+        
         
         if args.api_key:
             platform.api_key = args.api_key
@@ -101,10 +103,14 @@ def start(args: Namespace):
         if assistant:
             assistant.llm = platform
             assistant.name = args.name
+            if args.load_all_tools:
+                assistant.tools = Tool.list_all_tools()
+            
+            assistant.format_system_prompt()
+            asyncio.run(assistant.save())
             assistant.start()
-        print(Tool.get_by_name('Mouse Click1'))
     except Exception as e:
-        logging.error(str(e))
+        logging.exception(e)
         parser.print_help()
         sys.exit(1)
 
@@ -127,6 +133,7 @@ def get_arguments():
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
     parser.add_argument('--tools', action='store_true', help='List all available tools')
+    parser.add_argument('--load-all-tools', action='store_true', help='Add all available tools to agent')
     parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
     parser.add_argument('--api-base', type=str, default='', help='Set api base of selected llm. Set if using local llm.')
@@ -146,7 +153,7 @@ def main():
         args.func(args)
 
     except Exception as e:
-        logging.error(str(e))
+        logging.exception(e)
         parser.print_help()
         sys.exit(1)
 

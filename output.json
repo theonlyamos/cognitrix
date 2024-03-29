@@ -1,4 +1,6 @@
 {
-  "type": "final_answer",
-  "result": "Hello! How can I assist you today?"
+    "observation": "The user greeted me.",
+    "thought": "The appropriate response to a greeting is to return the greeting.",
+    "type": "final_answer",
+    "result": "Hello! How can I assist you today?"
 }

@@ -51,7 +51,7 @@ class Agent(BaseModel):
         prompt = prompt.replace("{llms}", llms_str)
         prompt = prompt.replace("{return_format}", json_return_format)
 
-        if 'json' not in prompt:
+        if 'json' not in prompt.lower():
             prompt += f"\n{json_return_format}"
 
         self.llm.system_prompt = prompt
@@ -147,17 +147,11 @@ class Agent(BaseModel):
             else:
                 raise Exception('Not a json object')
         except Exception as e:
-            logger.warning(str(e))
+            logger.exception(e)
             return response_data
 
     def add_tool(self, tool: Tool):
         self.tools.append(tool)
-
-    async def call_tool(self, tool, params):
-        if asyncio.iscoroutinefunction(tool):
-            return await tool(**params)
-        else:
-            return tool(**params)
 
     async def initialize(self):
         query: str | dict = input("\nUser (q to quit): ")
@@ -192,6 +186,7 @@ class Agent(BaseModel):
                         continue
 
                 self.format_system_prompt()
+                print(self.llm.system_prompt)
                 full_prompt = self.generate_prompt(query)
                 response: Any = self.llm(full_prompt)
                 self.llm.chat_history.append(full_prompt)
@@ -291,7 +286,7 @@ class Agent(BaseModel):
                     agents.append(new_agent.model_dump())
 
                 async with aiofiles.open(AGENTS_FILE, 'w') as file:
-                    json.dump(agents, file, indent=4)
+                    await file.write(json.dumps(agents, indent=4))
 
                 return new_agent
 
@@ -357,4 +352,4 @@ class Agent(BaseModel):
             updated_agents.append(agent.model_dump())
         
         async with aiofiles.open(AGENTS_FILE, 'w') as file:
-            json.dump(updated_agents, file, indent=4)
+            await file.write(json.dumps(updated_agents, indent=4))

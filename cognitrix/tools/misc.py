@@ -570,7 +570,7 @@ def create_sub_agent(name: str, description: str, task: str, llm: str, autostart
         
     if sub_agent:
         sub_agent.prompt_template = description
-
+        asyncio.run(sub_agent.save())
         return ['agent', sub_agent, 'Sub agent created successfully']
     
     return "Error creating sub agent"
