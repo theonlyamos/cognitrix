@@ -11,11 +11,15 @@ be directed converted into a python dictionary with
 json.loads()
 Return the response in the following format only:    
 {
+"observation": "Observations made by the ai agent"
+"thought": "Thoughts of the ai agent on a task. Should include steps for completing the task.",
 "type": "final_answer",
 "result": "
 }
 if it's the final anwers or
 {
+"observation": "Observations made by the ai agent"
+"thought": "Thoughts of the ai agent on a task. Should include steps for completing the task.",
 "type": "function_call",
 "function": "",
 "arguments": []

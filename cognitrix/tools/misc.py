@@ -244,23 +244,34 @@ class FSBrowser(Tool):
     def create_path(self, path: Path):
         if path.is_file():
             with path.open('wt') as file:
-                return file
-        return path.mkdir()
+                pass
+        else: 
+            path.mkdir()
+        
+        return 'Operation done'
     
     def read_path(self, path: Path):
         if path.is_file():
             with path.open('rt') as file:
                 return file.read()
-        return os.listdir(path)
+        elif path.is_dir(): 
+            return os.listdir(path)
+        else:
+            return "Path wasn't found"
     
     def write_file(self, path: Path, filename: str, content: str):
         with path.joinpath(filename).open('wt') as file:
-            return file.write(content)
+            file.write(content)
+        
+        return 'Write operation successful.'
     
     def delete_path(self, path: Path):
         if path.is_file():
-            return path.unlink()
-        return shutil.rmtree(path)
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+        
+        return 'Delete operation successfull'
     
 class SearchTool(Tool):
     """Wrapper around SerpAPI.
@@ -388,13 +399,17 @@ class SearchTool(Tool):
 @tool
 def take_screenshot():
     """Use this tool to take a screenshot of the screen.
+    
     Example:
-    User: take a screenshot
-    AI Assistant: {
-        "type": "function_call",
-        "function": "Take Screenshot",
-        "arguments": []
-    }"""
+        User: take a screenshot
+        AI Assistant: {
+            "observation": "I need to take a screenshot of the user's screen.",
+            "thought": "Step 1) To take a screenshot, I need to use the Take Screenshot tool.  Step 2) Calling the Take Screenshot tool.",
+            "type": "function_call",
+            "function": "Take Screenshot",
+            "arguments": []
+        }
+    """
     screenshot = pyautogui.screenshot()
     
     return ['image', screenshot]
@@ -411,12 +426,15 @@ def text_input(text: str):
     Example:
         User: write hello world
         AI Assistant: {
+            "observation": "I need to input text on the computer using the keyboard.",
+            "thought": "Step 1) To perform this action, I will need to use the Text Input tool. Step 2) The Text Input function takes one argument: text (a string representing the text to input). Step 2) Calling the Text Input function with argument: 'hello world'.",
             "type": "function_call",
             "function": "Text Input",
             "arguments": ["hello world"]
         }
     """
     screenshot = pyautogui.write(text, 0.15)
+    
     return 'Text input completed'
 
 @tool
@@ -431,6 +449,8 @@ def key_press(key: str):
     Example:
         User: Press windows key
         AI Assistant: {
+            "observation": "I need to perform a single key press on the computer.",
+            "thought": "Step 1) This action requires the usage of the Key Press tool. Step 2) The Key Press tool takes one argument: key (a string representing the name of the key to press). Step 3) Calling the Key Press tool with argument: 'win'.",
             "type": "function_call",
             "function": "Key Press",
             "arguments": ["win"]
@@ -452,6 +472,8 @@ def hot_key(*hotkeys):
     Example:
         User: Make a paste
         AI Assistant: {
+            "observation": "I need to perform a paste action using hotkey combination on the computer.",
+            "thought": "Step 1) I need to use the Hot Key tool to perform this action. Step 2) The Hot Key tool takes a variable number of arguments (*hotkeys), which should be a list of keys to press together as a hotkey combination. Step 3) Calling the Hot Key tool with list of keys to press together.",
             "type": "function_call",
             "function": "Hot Key",
             "arguments": ["ctrl", "v"]
@@ -474,6 +496,8 @@ def mouse_click(x: int, y: int):
     Example:
         User: Click on Brave icon
         AI Assistant: {
+            "observation": "I need to perform a mouse click at specific coordinates on the screen.",
+            "thought": "Step 1) To perform the mouse-click, I need to use the Mouse Click tool. Step 2) The Mouse Click tool takes two arguments: x (the x-coordinate of the mouse click) and y (the y-coordinate of the mouse click). Step 3) Calling the Mouse Click tool with the x,y coordinates",
             "type": "function_call",
             "function": "Mouse Click",
             "arguments": ["123", "456"]
@@ -496,6 +520,8 @@ def mouse_double_click(x: int, y: int):
     Example:
         User: Click on Brave icon
         AI Assistant: {
+            "observation": "I need to perform a mouse double-click at specific coordinates on the screen.",
+            "thought": "Step 1) To perform the mouse double-click, I need to use the Mouse Double Click tool. Step 2) The Mouse Double Click tool takes two arguments: x (the x-coordinate of the mouse click) and y (the y-coordinate of the mouse click). Step 3) Calling the Mouse Double Click tool with the x,y coordinates",
             "type": "function_call",
             "function": "Mouse Double Click",
             "arguments": ["123", "456"]
@@ -518,6 +544,8 @@ def mouse_right_click(x: int, y: int):
     Example:
         User: Right-click on Brave icon
         AI Assistant: {
+            "observation": "I need to perform a mouse right-click at specific coordinates on the screen.",
+            "thought": "Step 1) To perform the mouse right-click, I need to use the Mouse Right Click tool. Step 2) The Mouse Click tool takes two arguments: x (the x-coordinate of the mouse click) and y (the y-coordinate of the mouse click). Step 3) Calling the Mouse Right Click tool with the x,y coordinates",
             "type": "function_call",
             "function": "Mouse Right Click",
             "arguments": ["123", "456"]
@@ -528,7 +556,7 @@ def mouse_right_click(x: int, y: int):
     return 'Mouse double-click completed.'
 
 @tool
-def create_sub_agent(name: str, description: str, task: str, llm: str, autostart: bool, parent: Agent):
+async def create_sub_agent(name: str, description: str, task: str, llm: str, autostart: bool, parent: Agent):
     """Use this tool to create sub agents for specific tasks.
     
     Args:
@@ -536,17 +564,28 @@ def create_sub_agent(name: str, description: str, task: str, llm: str, autostart
         description (str) - Prompt describing the agent's role and functionalities. Should include the agent's role, capabilities and any other info the agent needs to be able to complete it's task. Be as thorough as possible.
         task (Optional[str]) - A brief description of the task for the agent (Can be empty)
         llm (str) - The name of the llm to use.
-        autostart (bool) - Whether the agent should immediately run it's task. It should be either True or False.
+        autostart (bool) - Whether the agent should immediately run it's task. It should be either true or false.
     
     Returns:
-        list[Agents]: A list of created sub agents
+        str: A message indicating whether the the sub agent was created or not.
     
     Example:
+        User: Create sub agent for a task
+        AI Assistant: {
+            "observation": "The user has requested me to create a sub-agent for a specific task.",
+            "thought": "Step 1) To create the sub agent, I need to use the Create Sub Agent Tool. Step 2) The Create Sub Agent tool takes five arguments: name (the name of the sub-agent), description (a prompt describing the agent's role and capabilities), task (an optional brief description of the task), llm (the name of the language model to use), and autostart (a boolean indicating whether the agent should immediately run its task). Step 3) Calling the Create Sub Agent Tool with required arguments.",
+            "type": "function_call",
+            "function": "Create Sub Agent",
+            "arguments": ["<agent_name>", "<agent_prompt>", "", "<llm>", false]
+        }
+        
         User: Create the snake game in python
         AI Assistant: {
+            "observation": "The user has requested me to create the classic Snake game in Python.",
+            "thought": "Step 1) To create the Snake game in Python, I will need to create a specialized sub-agent called 'CodeWizard' with expertise in Python programming. Step 2) I will provide the CodeWizard agent with the instructions to write the code for the Snake game in Python, following the specified return format. Step 3) I will delegate the task of writing the Python code for the Snake game to the CodeWizard agent.",
             "type": "function_call",
-            "function": "Create Agents",
-            "arguments": ["CodeWizard", "You are an experienced coder in the python language.", "Write the code for the game in python.\\n{return_format}", "openai", True]
+            "function": "Create Sub Agent",
+            "arguments": ["CodeWizard", "You are a skilled Python programmer tasked with creating the classic Snake game. Your role is to write clean, efficient, and well-documented code that implements the game's logic, user interface, and any additional features you deem necessary. You should follow best practices for software development and ensure your code is modular, readable, and maintainable.", "Create a Python implementation of the Snake game. {return_format}", "openai", true]
         }
     """
     
@@ -559,14 +598,14 @@ def create_sub_agent(name: str, description: str, task: str, llm: str, autostart
         if not "return_format" in description:
             description += f"\n{json_return_format}"
             
-        sub_agent = asyncio.run(Agent.create_agent(
+        sub_agent = await Agent.create_agent(
             name=name,
             description=description,
             task_description=task,
             llm=agent_llm,
             is_sub_agent=True,
             parent_id=parent.id
-        ))
+        )
         
     if sub_agent:
         sub_agent.prompt_template = description
@@ -582,7 +621,17 @@ def call_sub_agent(name: str, task: str, parent: Agent):
     Args:
         name (str): Name of the agent to call
         task (str): The task|query to perform|answer
+    
+    Example:
+        User: Run task with sub agent
         
+        AI Assistant: {
+            "observation": "I need to run a task with a sub-agent.",
+            "thought": "Step 1) This can be accomplished by using the Call Sub Agent Tool. Step 2) The Call Sub Agent tool takes two arguments: name (the name of the sub-agent to call) and task (the task or query for the sub-agent to perform or answer). Step 3) Calling the Call Sub Agent tool with required arguments",
+            "type": "function_call",
+            "function": "call_sub_agent",
+            "arguments": ["CodeWizard", "Write the code for the Snake game in Python."]
+        }
     """
     parent.call_sub_agent(name, task)
     

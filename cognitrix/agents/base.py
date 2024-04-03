@@ -1,3 +1,4 @@
+import inspect
 import json
 import uuid
 import asyncio
@@ -63,6 +64,7 @@ class Agent(BaseModel):
         subagents_str = "Available Subagents:\n"
         subagents_str += "\n".join([f"-- {agent.name}: {agent.task.description}" for agent in self.sub_agents if agent.task])
         subagents_str += "\nYou should always use a subagent for a task if there is one specifically created for that task."
+        subagents_str += "\nWhen creating a sub agent, it's description should be a comprehensive prompt of the agent's behavior, capabilities and example tasks."
         return subagents_str
 
     def _format_llms_string(self) -> str:
@@ -110,8 +112,7 @@ class Agent(BaseModel):
     def get_tool_by_name(self, name: str) -> Optional[Tool]:
         return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
 
-    def process_response(self, response: str) -> Union[dict, str]:
-        response = response
+    async def process_response(self, response: str) -> Union[dict, str]:
         response_data = extract_json(response)
 
         try:
@@ -135,8 +136,11 @@ class Agent(BaseModel):
 
                 if 'sub agent' in tool.name.lower():
                     response_data['arguments'].append(self)
-
-                result = tool.run(*response_data['arguments'])
+                    
+                if tool.name.lower() == 'create sub agent':
+                    result = await tool.arun(*response_data['arguments'])
+                else:
+                    result = tool.run(*response_data['arguments'])
 
                 response_json = {
                     'type': 'function_call_result',
@@ -186,7 +190,7 @@ class Agent(BaseModel):
                         continue
 
                 self.format_system_prompt()
-                print(self.llm.system_prompt)
+                
                 full_prompt = self.generate_prompt(query)
                 response: Any = self.llm(full_prompt)
                 self.llm.chat_history.append(full_prompt)
@@ -195,7 +199,7 @@ class Agent(BaseModel):
                 if self.verbose:
                     print(response)
 
-                result: dict[Any, Any] | str = self.process_response(response)
+                result: dict[Any, Any] | str = await self.process_response(response)
 
                 if isinstance(result, dict) and result['type'] == 'function_call_result':
                     query = result
@@ -229,7 +233,7 @@ class Agent(BaseModel):
             self.llm.chat_history.append(full_prompt)
             self.llm.chat_history.append({'role': 'user', 'type': 'text', 'message': response})
 
-            agent_result = self.process_response(response)
+            agent_result = asyncio.run(self.process_response(response))
             if isinstance(agent_result, dict) and agent_result['type'] == 'function_call_result':
                 query = agent_result
             else:
@@ -238,7 +242,7 @@ class Agent(BaseModel):
                 parent_response: Any = parent.llm(parent_prompt)
                 parent.llm.chat_history.append(parent_prompt)
                 parent.llm.chat_history.append({'role': 'assistant', 'type': 'text', 'message': parent_response})
-                parent_result = parent.process_response(parent_response)
+                parent_result = asyncio.run(parent.process_response(parent_response))
                 print(f"\n\n{parent.name}: {parent_result}")
                 query = ""
 
