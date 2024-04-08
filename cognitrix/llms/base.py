@@ -27,7 +27,7 @@ If a question does not make any sense, or is not factually coherent,
 explain why instead of answering something not corrent.
 
 Always check your answer against the current results from the
-current search tool.
+Internet Search tool.
 Always return the most updated and correct answer.
 If you do not come up with any answer, just tell me you don't know.
 
@@ -110,7 +110,7 @@ class LLM(BaseModel):
     is_multimodal: bool = Field(default=False)
     """Whether the model is multimodal."""
     
-    platform: str = Field(default="")
+    provider: str = Field(default="")
     """This is set to the name of the class"""
     
     chat_history: List[Dict[str, str]] = []
@@ -121,7 +121,7 @@ class LLM(BaseModel):
     
     def __init__(self, **data):
         super().__init__(**data)
-        self.platform = self.__class__.__name__
+        self.provider = self.__class__.__name__
     
     @staticmethod
     def list_llms():

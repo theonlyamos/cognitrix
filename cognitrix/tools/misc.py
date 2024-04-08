@@ -9,8 +9,9 @@ from cognitrix.tools.tool import tool
 from cognitrix.agents import Agent
 from cognitrix.llms import LLM
 from cognitrix.utils import json_return_format
+from serpapi.google_search import GoogleSearch
+from bs4 import BeautifulSoup
 from pydantic import Field
-from serpapi import google_search
 from pathlib import Path
 from PIL import Image
 import pyautogui
@@ -194,6 +195,13 @@ class FSBrowser(Tool):
         "arguments": ["{desktop_path}", "create", "test.py", "gibberish"]
     }}
     
+    User: create folder called NewApp on Desktop.
+    AI Assistant: {{
+        "type": "function_call",
+        "function": "File System Browser",
+        "arguments": ["{desktop_path}", "create", "NewApp"]
+    }}
+    
     User: How many files are in my documents.
     AI Assistant: {{
         "type": "function_call",
@@ -204,27 +212,30 @@ class FSBrowser(Tool):
     
     :param path: The specific path (realpath)
     :param operation: The operation to perform
-    :param filename: (Optional) Name of file to create
+    :param filename: (Optional) Name of file or folder to create
     :param content: (Optional) Content to write to file
     """
     
     def run(self, path: str | Path, operation: str, filename: Optional[str] = None, content: Optional[str] = None):
-        path = Path(path).resolve()
-        operations = {
-            'open': self.execute,
-            'list': self.listdir,
-            # 'create': self.create_path,
-            'read': self.read_path,
-            'create': self.write_file,
-            'write': self.write_file,
-            'delete': self.delete_path
-        }
-        
-        if operation in ['write', 'create']:
-            return operations[operation](path, filename, content)
-        elif operation == 'open':
-            return operations[operation](path, filename)
-        return operations[operation](path)
+        try:
+            path = Path(path).resolve()
+            operations = {
+                'open': self.execute,
+                'list': self.listdir,
+                'create': self.create_path,
+                'read': self.read_path,
+                # 'create': self.write_file,
+                'write': self.write_file,
+                'delete': self.delete_path
+            }
+            
+            if operation in ['write', 'create']:
+                return operations[operation](path, filename, content)
+            elif operation == 'open':
+                return operations[operation](path, filename)
+            return operations[operation](path)
+        except Exception as e:
+            return str(e)
     
     def arun(self, url: str):
         raise NotImplementedError(NotImplementedErrorMessage)
@@ -241,21 +252,23 @@ class FSBrowser(Tool):
     def listdir(self, path: Path):
         return 'The content of the directory are: '+json.dumps(os.listdir(path))
     
-    def create_path(self, path: Path):
-        if path.is_file():
-            with path.open('wt') as file:
-                pass
+    def create_path(self, path: Path, filename: Optional[str], content: Optional[str]):
+        full_path = path.joinpath(filename) if filename else path
+        if content:
+            with full_path.open('wt') as file:
+                file.write(content)
         else: 
-            path.mkdir()
+            full_path.mkdir()
         
         return 'Operation done'
     
-    def read_path(self, path: Path):
-        if path.is_file():
-            with path.open('rt') as file:
+    def read_path(self, path: Path, filename: Optional[str] = None):
+        full_path = path.joinpath(filename) if filename else path
+        if full_path.is_file():
+            with full_path.open('rt') as file:
                 return file.read()
-        elif path.is_dir(): 
-            return os.listdir(path)
+        elif full_path.is_dir(): 
+            return json.dumps(os.listdir(full_path))
         else:
             return "Path wasn't found"
     
@@ -273,129 +286,6 @@ class FSBrowser(Tool):
         
         return 'Delete operation successfull'
     
-class SearchTool(Tool):
-    """Wrapper around SerpAPI.
-
-    To use, you should have the ``google-search-results`` python package installed,
-    and the environment variable ``SERPAPI_API_KEY`` set with your API key, or pass
-    `serpapi_api_key` as a named parameter to the constructor.
-
-    Example:
-        .. code-block:: python
-
-            from langchain.utilities import SerpAPIWrapper
-            serpapi = SerpAPIWrapper()
-    """
-    
-    name: str = "Current Search"
-    description: str = "Use this tool to search for current information"
-
-    search_engine: Any = google_search #: :meta private:
-    params: dict = Field(
-        default={
-            "engine": "google",
-            "google_domain": "google.com",
-            "gl": "us",
-            "hl": "en",
-        }
-    )
-    serpapi_api_key: Optional[str] = os.getenv('SERPAPI_API_KEY')
-    aiosession: Optional[aiohttp.ClientSession] = None
-
-    async def arun(self, query: str, **kwargs: Any) -> Union[str, List]:
-        """Run query through SerpAPI and parse result async."""
-        return self._process_response(await self.aresults(query))
-
-    def run(self, query: str, **kwargs: Any) -> Union[str,List]:
-        """Run query through SerpAPI and parse result."""
-        return self._process_response(self.results(query))
-
-    def results(self, query: str) -> dict:
-        """Run query through SerpAPI and return the raw result."""
-        params = self.get_params(query)
-        search = self.search_engine(params)
-        res = search.get_dict()
-        return res
-
-    async def aresults(self, query: str) -> dict:
-        """Use aiohttp to run query through SerpAPI and return the results async."""
-
-        def construct_url_and_params() -> Tuple[str, Dict[str, str]]:
-            params = self.get_params(query)
-            params["source"] = "python"
-            if self.serpapi_api_key:
-                params["serp_api_key"] = self.serpapi_api_key
-            params["output"] = "json"
-            url = "https://serpapi.com/search"
-            return url, params
-
-        url, params = construct_url_and_params()
-        if not self.aiosession:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as response:
-                    res = await response.json()
-        else:
-            async with self.aiosession.get(url, params=params) as response:
-                res = await response.json()
-
-        return res
-
-    def get_params(self, query: str) -> Dict[str, str]:
-        """Get parameters for SerpAPI."""
-        _params = {
-            "api_key": self.serpapi_api_key,
-            "q": query,
-        }
-        params = {**self.params, **_params}
-        return params
-
-    @staticmethod
-    def _process_response(res: dict) -> Union[str,List]:
-        """Process response from SerpAPI."""
-        
-        toret: Union[str, List] = ""
-        if "error" in res.keys():
-            raise ValueError(f"Got error from SerpAPI: {res['error']}")
-        if "answer_box" in res.keys() and type(res["answer_box"]) == list:
-            res["answer_box"] = res["answer_box"][0]
-        if "answer_box" in res.keys() and "answer" in res["answer_box"].keys():
-            toret = res["answer_box"]["answer"]
-        elif "answer_box" in res.keys() and "snippet" in res["answer_box"].keys():
-            toret = res["answer_box"]["snippet"]
-        elif (
-            "answer_box" in res.keys()
-            and "snippet_highlighted_words" in res["answer_box"].keys()
-        ):
-            toret = res["answer_box"]["snippet_highlighted_words"][0]
-        elif (
-            "sports_results" in res.keys()
-            and "game_spotlight" in res["sports_results"].keys()
-        ):
-            toret = res["sports_results"]["game_spotlight"]
-        elif (
-            "shopping_results" in res.keys()
-            and "title" in res["shopping_results"][0].keys()
-        ):
-            toret = res["shopping_results"][:3]
-        elif (
-            "knowledge_graph" in res.keys()
-            and "description" in res["knowledge_graph"].keys()
-        ):
-            toret = res["knowledge_graph"]["description"]
-        elif "snippet" in res["organic_results"][0].keys():
-            toret = res["organic_results"][0]["snippet"]
-        elif "link" in res["organic_results"][0].keys():
-            toret = res["organic_results"][0]["link"]
-        elif (
-            "images_results" in res.keys()
-            and "thumbnail" in res["images_results"][0].keys()
-        ):
-            thumbnails = [item["thumbnail"] for item in res["images_results"][:10]]
-            toret = thumbnails
-        else:
-            toret = "No good search result found"
-        return toret
-
 @tool
 def take_screenshot():
     """Use this tool to take a screenshot of the screen.
@@ -585,7 +475,7 @@ async def create_sub_agent(name: str, description: str, task: str, llm: str, aut
             "thought": "Step 1) To create the Snake game in Python, I will need to create a specialized sub-agent called 'CodeWizard' with expertise in Python programming. Step 2) I will provide the CodeWizard agent with the instructions to write the code for the Snake game in Python, following the specified return format. Step 3) I will delegate the task of writing the Python code for the Snake game to the CodeWizard agent.",
             "type": "function_call",
             "function": "Create Sub Agent",
-            "arguments": ["CodeWizard", "You are a skilled Python programmer tasked with creating the classic Snake game. Your role is to write clean, efficient, and well-documented code that implements the game's logic, user interface, and any additional features you deem necessary. You should follow best practices for software development and ensure your code is modular, readable, and maintainable.", "Create a Python implementation of the Snake game. {return_format}", "openai", true]
+            "arguments": ["CodeWizard", "You are a skilled Python programmer tasked with creating the classic Snake game. Your role is to write clean, efficient, and well-documented code that implements the game's logic, user interface, and any additional features you deem necessary. You should follow best practices for software development and ensure your code is modular, readable, and maintainable.", "Create a Python implementation of the Snake game.", "openai", true]
         }
     """
     
@@ -594,6 +484,8 @@ async def create_sub_agent(name: str, description: str, task: str, llm: str, aut
     loaded_llm = LLM.load_llm(llm)
     if loaded_llm:
         agent_llm = loaded_llm()
+        
+        description += '\n\n{tools}'
         
         if not "return_format" in description:
             description += f"\n{json_return_format}"
@@ -609,7 +501,7 @@ async def create_sub_agent(name: str, description: str, task: str, llm: str, aut
         
     if sub_agent:
         sub_agent.prompt_template = description
-        asyncio.run(sub_agent.save())
+        await sub_agent.save()
         return ['agent', sub_agent, 'Sub agent created successfully']
     
     return "Error creating sub agent"
@@ -629,7 +521,7 @@ def call_sub_agent(name: str, task: str, parent: Agent):
             "observation": "I need to run a task with a sub-agent.",
             "thought": "Step 1) This can be accomplished by using the Call Sub Agent Tool. Step 2) The Call Sub Agent tool takes two arguments: name (the name of the sub-agent to call) and task (the task or query for the sub-agent to perform or answer). Step 3) Calling the Call Sub Agent tool with required arguments",
             "type": "function_call",
-            "function": "call_sub_agent",
+            "function": "Call Sub Agent",
             "arguments": ["CodeWizard", "Write the code for the Snake game in Python."]
         }
     """
@@ -637,32 +529,81 @@ def call_sub_agent(name: str, task: str, parent: Agent):
     
     return "Agent running"
 
-# @tool
-# def get_ui_elements_coordinates():
-#     import cv2
-#     import numpy as np
+@tool
+def internet_search(query: str):
+    """Use this tool to search the internet.
     
-#     def get_ui_element_coords(image_path, element_name):
-#         # Load the image
-#         image = cv2.imread(image_path)
-        
-#         # Convert the image to grayscale
-#         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-#         # Perform template matching to find the UI element
-#         template = cv2.imread(f'{element_name}.png', 0)
-#         res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
-#         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-        
-#         # Get the coordinates of the matched region
-#         top_left = max_loc
-#         bottom_right = (top_left[0] + template.shape[1], top_left[1] + template.shape[0])
-        
-#         # Return the coordinates
-#         return top_left, bottom_right
+    Args:
+        query (str): The query to search for.
     
-#     # Example usage
-#     image_path = 'screenshot.png'
-#     element_name = 'brave'
-#     coords = get_ui_element_coords(image_path, element_name)
-#     print(f'The coordinates of the {element_name} icon are: {coords}')
+    Example:
+        User: who is the president of the United States?
+        AI Assistant: {
+            "observation": "I need to search the internet for information about the president of the United States.",
+            "thought": "Step 1) To do an internet search, I need to use the Internet Search tool. Step 2) The Internet Search tool takes one argument: query (the topic to search for).  Step 3) Calling the Take Screenshot tool with the provided arguments.",
+            "type": "function_call",
+            "function": "Internet Search",
+            "arguments": ["who is the president of the United States?"]
+        }
+    """
+    
+    res = GoogleSearch({"q": query, "serp_api_key": os.getenv('SERPA_API_KEY', '')}).get_dict()
+
+    toret: Union[str, List] = []
+    if "error" in res.keys():
+        raise ValueError(f"Got error from SerpAPI: {res['error']}")
+
+    if "answer_box" in res.keys():
+        toret.append({'answer_box': res['answer_box']})
+
+    if "sports_results" in res.keys():
+        toret.append({'sports_results': res['sports_results']})
+    
+    if "shopping_results" in res.keys():
+        toret.append({'shopping_results': res['shopping_results']})
+    
+    if "knowledge_graph" in res.keys():
+        toret.append({'knowledge_graph': res['knowledge_graph']})
+    
+    if "organic_results" in res.keys():
+        toret.append({'organic_results': res['organic_results']})
+    
+    if "images_results" in res.keys():
+        thumbnails = [item["thumbnail"] for item in res["images_results"][:10]]
+        toret.append({'images_results': thumbnails})
+    
+    return json.dumps(toret)
+
+@tool
+def web_scraper(url: str):
+    """Use this tool to scrape websites when given a link url.
+
+    Args:
+        url (str): The URL of the website to scrape.
+
+    Returns:
+        str: The text content of the scraped website.
+
+    Example:
+        User: Scrape the website https://example.com
+        AI Assistant: {
+            "observation": "The user has requested to scrape a website.",
+            "thought": "Step 1) To scrape a website, I need to use the Web Scraper tool. Step 2) The Web Scraper tool takes one argument: url (the URL of the website to scrape). Step 3) Calling the Web Scraper tool with the provided URL.",
+            "type": "function_call",
+            "function": "Web Scraper",
+            "arguments": ["https://example.com"]
+        }
+    """
+    
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for non-2xx status codes
+        html_content = response.text
+
+        soup = BeautifulSoup(html_content, 'html.parser')
+        text_content = soup.get_text()
+        text_content = ' '.join(text_content.split())  # Remove empty spaces
+
+        return text_content
+    except requests.exceptions.RequestException as e:
+        return f"Error: {e}"

@@ -54,11 +54,11 @@ class Agent(BaseModel):
 
         if 'json' not in prompt.lower():
             prompt += f"\n{json_return_format}"
-
+        
         self.llm.system_prompt = prompt
 
     def _format_tools_string(self) -> str:
-        return "Available Tools:\n" + "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
+        return "You have access to the following Tools:\n" + "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
 
     def _format_subagents_string(self) -> str:
         subagents_str = "Available Subagents:\n"
@@ -69,7 +69,7 @@ class Agent(BaseModel):
 
     def _format_llms_string(self) -> str:
         llms = LLM.list_llms()
-        llms_str = "Available LLM Platforms:\n" + ", ".join(llms) + "\nChoose one for each subagent."
+        llms_str = "Available LLM Providers:\n" + ", ".join(llms) + "\nChoose one for each subagent."
         return llms_str
 
     def generate_prompt(self, query: str | dict, role: str = 'User') -> dict:
@@ -77,6 +77,9 @@ class Agent(BaseModel):
         prompt: dict[str, Any] = {'role': role, 'type': 'text'}
 
         if isinstance(processed_query, dict):
+            if self.is_sub_agent:
+                print("=======is sub agent===========")
+                print(processed_query)
             result = processed_query['result']
             if isinstance(result, list):
                 if result[0] == 'image':
@@ -151,7 +154,7 @@ class Agent(BaseModel):
             else:
                 raise Exception('Not a json object')
         except Exception as e:
-            logger.exception(e)
+            # logger.exception(e)
             return response_data
 
     def add_tool(self, tool: Tool):
@@ -216,6 +219,27 @@ class Agent(BaseModel):
 
     def start(self):
         asyncio.run(self.initialize())
+        
+    def start_audio(self, transcriber: Any, result: Any, **kwargs):
+        query = result.channel.alternatives[0].transcript
+
+        if query:
+            self.format_system_prompt()
+                
+            full_prompt = self.generate_prompt(query)
+            response: Any = self.llm(full_prompt)
+            self.llm.chat_history.append(full_prompt)
+            self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response})
+
+            if self.verbose:
+                print(response)
+
+            processsed_response: dict[Any, Any] | str = asyncio.run(self.process_response(response))
+
+            if isinstance(processsed_response, dict) and processsed_response['type'] == 'function_call_result':
+                query = processsed_response
+            else:
+                print(f"\n{self.name}: {processsed_response}")
 
     @staticmethod
     def start_task_thread(agent: 'Agent', parent: 'Agent'):
@@ -275,11 +299,14 @@ class Agent(BaseModel):
                 if loaded_llm:
                     llm = loaded_llm()
                     llm.model = input(f"\nEnter model name [{llm.model}]: ") or llm.model
-                    llm.temperature = float(input(f"\nEnter model temperature [{llm.temperature}]: ")) or llm.temperature
+                    temp = input(f"\nEnter model temperature [{llm.temperature}]: ")
+                    llm.temperature = float(temp) if temp else llm.temperature
 
             if llm:
                 task = Task(description=task_description)
                 new_agent = cls(name=name, llm=llm, task=task, tools=tools, is_sub_agent=is_sub_agent, parent_id=parent_id)
+                
+                description = input("\n[Enter agent system prompt]: ") if not description else description
                 if description:
                     new_agent.prompt_template = description
 
@@ -305,7 +332,7 @@ class Agent(BaseModel):
                 content = await file.read()
                 loaded_agents: list[dict] = json.loads(content) if content else []
                 for agent in loaded_agents:
-                    llm = LLM.load_llm(agent["llm"]["platform"])
+                    llm = LLM.load_llm(agent["llm"]["provider"])
                     loaded_agent = Agent(**agent)
                     if llm:
                         loaded_agent.llm = llm(**agent["llm"])

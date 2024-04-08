@@ -18,7 +18,7 @@ from cognitrix.config import VERSION
 def add_agent():
     new_agent = asyncio.run(Agent.create_agent()) # type: ignore
     if new_agent:
-        print(f"\nAgent {new_agent.name} added successfully!")
+        print(f"\nAgent **{new_agent.name}** added successfully!")
     else:
         print("\nError creating agent")
     sys.exit()
@@ -29,8 +29,8 @@ def list_agents():
         agents_str += (f"\n[{index}] {agent.name}")                 #type: ignore
     print(agents_str)
     
-def list_platforms():
-    print("\nAvailable Platforms:")
+def list_providers():
+    print("\nAvailable providers:")
     for index, l in enumerate(LLM.list_llms()):
         print(f"[{index}] {l}")
         
@@ -62,8 +62,8 @@ def str_or_file(string):
 
 def start(args: Namespace):
     try:
-        if args.platforms:
-            list_platforms()
+        if args.providers:
+            list_providers()
             sys.exit()
         elif args.agents:
             list_agents()              #type: ignore
@@ -72,20 +72,20 @@ def start(args: Namespace):
             list_tools()
             sys.exit()
         
-        platform = None
-        if args.platform:
-            platform = LLM.load_llm(model_name=args.platform)
-        platform = platform() if platform else Cohere()
+        provider = None
+        if args.provider:
+            provider = LLM.load_llm(model_name=args.provider)
+        provider = provider() if provider else Cohere()
         
         
         if args.api_key:
-            platform.api_key = args.api_key
+            provider.api_key = args.api_key
         if args.model:
-            platform.model = args.model
+            provider.model = args.model
         
-        platform.temperature = args.temperature
+        provider.temperature = args.temperature
         if args.system_prompt:
-            platform.system_prompt = args.system_prompt
+            provider.system_prompt = args.system_prompt
         # llm = TogetherLLM()
         loaded_agent = None
         if args.agent:
@@ -95,19 +95,25 @@ def start(args: Namespace):
                 assistant = loaded_agent
             else:
                 # assistant_description = "You are an ai assistant. Your main goal is to help the user complete tasks"
-                assistant = asyncio.run(AIAssistant.create_agent(name=args.agent, llm=platform)) #type: ignore
+                assistant = asyncio.run(AIAssistant.create_agent(name=args.agent, llm=provider)) #type: ignore
 
         else:
-            assistant = AIAssistant(llm=platform, name=args.name, verbose=args.verbose)
+            assistant = AIAssistant(llm=provider, name=args.name, verbose=args.verbose)
         
         if assistant:
-            assistant.llm = platform
+            if args.provider:
+                assistant.llm = provider
             assistant.name = args.name
             if args.load_all_tools:
                 assistant.tools = Tool.list_all_tools()
             
             assistant.format_system_prompt()
             asyncio.run(assistant.save())
+            
+            # if args.audio:
+            #     AudioTranscriber.transcribe_from_mic(assistant.start_audio)
+            # else:
+            #     
             assistant.start()
     except Exception as e:
         logging.exception(e)
@@ -128,8 +134,8 @@ def get_arguments():
     agents_parser.set_defaults(func=manage_agents)
 
     parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
-    parser.add_argument('--platform', default='', help='Set llm platform to use')
-    parser.add_argument('--platforms', action='store_true', help='Get a list of all supported platforms')
+    parser.add_argument('--provider', default='', help='Set llm provider to use')
+    parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
     parser.add_argument('--tools', action='store_true', help='List all available tools')
@@ -140,6 +146,7 @@ def get_arguments():
     parser.add_argument('--temperature', type=float, default=0.1, help='Set temperature of model')
     parser.add_argument('--system-prompt', type=str_or_file, default='', help='Set system prompt of model. Can be a string or a text file path')
     parser.add_argument('--prompt-template', type=str_or_file, default='', help='Set prompt template of model. Can be a string or a text file path')
+    parser.add_argument('--audio', action='store_true', help='Get input from microphone')
     parser.add_argument('--verbose', action='store_true', help='Set verbose mode')
     parser.add_argument('-v','--version', action='version', version=f'%(prog)s {VERSION}')
     parser.set_defaults(func=start)

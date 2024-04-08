@@ -37,14 +37,14 @@ Run with default settings
 cognitrix
 ```
 
-List supported platforms
+List supported providers
 ```bash
-cognitrix --platforms
+cognitrix --providers
 ```
 
-Run with specific platform
+Run with specific provider
 ```bash
-cognitrix --platform <platform_name>
+cognitrix --provider <provider_name>
 ```
 
 Create a new agent

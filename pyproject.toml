@@ -49,6 +49,7 @@ anthropic = "^0.17.0"
 aiofiles = "^23.2.1"
 xmltodict = "^0.13.0"
 deepgram-sdk = "==3.*"
+beautifulsoup4 = "^4.12.3"
 
 
 [build-system]
