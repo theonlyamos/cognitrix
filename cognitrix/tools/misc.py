@@ -122,7 +122,7 @@ class WorldNews(Tool):
     :param category (optional): Category selected from categories
     :param country (optional): Country to search news from
     """
-    def run(self, topic: Optional[str] = None, category: Optional[str] = None, country: Optional[str] = None):
+    def run(self, topic: Optional[str] = None, category: Optional[str] = 'general', country: Optional[str] = 'world'):
         try:
             url = "https://newsapi.org/v2/top-headlines"
             params={
@@ -456,15 +456,14 @@ def mouse_right_click(x: int, y: int):
     return 'Mouse double-click completed.'
 
 @tool
-async def create_sub_agent(name: str, description: str, task: str, llm: str, autostart: bool, parent: Agent):
+async def create_sub_agent(name: str, llm: str, description: str, tools: List[str], parent: Agent):
     """Use this tool to create sub agents for specific tasks.
     
     Args:
         name (str) - The name of the agent
+        llm (str) - The name of the llm to use. Select from [openai, google, anthropic, groq, together, clarifai].
         description (str) - Prompt describing the agent's role and functionalities. Should include the agent's role, capabilities and any other info the agent needs to be able to complete it's task. Be as thorough as possible.
-        task (Optional[str]) - A brief description of the task for the agent (Can be empty)
-        llm (str) - The name of the llm to use.
-        autostart (bool) - Whether the agent should immediately run it's task. It should be either true or false.
+        tools (list) - Tools the agent needs to complete it's tasks if any.
     
     Returns:
         str: A message indicating whether the the sub agent was created or not.
@@ -476,7 +475,7 @@ async def create_sub_agent(name: str, description: str, task: str, llm: str, aut
             "thought": "Step 1) To create the sub agent, I need to use the Create Sub Agent Tool. Step 2) The Create Sub Agent tool takes five arguments: name (the name of the sub-agent), description (a prompt describing the agent's role and capabilities), task (an optional brief description of the task), llm (the name of the language model to use), and autostart (a boolean indicating whether the agent should immediately run its task). Step 3) Calling the Create Sub Agent Tool with required arguments.",
             "type": "function_call",
             "function": "Create Sub Agent",
-            "arguments": ["<agent_name>", "<agent_prompt>", "", "<llm>", false]
+            "arguments": ["<agent_name>", "<llm>", "<agent_prompt>", []]
         }
         
         User: Create the snake game in python
@@ -485,11 +484,17 @@ async def create_sub_agent(name: str, description: str, task: str, llm: str, aut
             "thought": "Step 1) To create the Snake game in Python, I will need to create a specialized sub-agent called 'CodeWizard' with expertise in Python programming. Step 2) I will provide the CodeWizard agent with the instructions to write the code for the Snake game in Python, following the specified return format. Step 3) I will delegate the task of writing the Python code for the Snake game to the CodeWizard agent.",
             "type": "function_call",
             "function": "Create Sub Agent",
-            "arguments": ["CodeWizard", "You are a skilled Python programmer tasked with creating the classic Snake game. Your role is to write clean, efficient, and well-documented code that implements the game's logic, user interface, and any additional features you deem necessary. You should follow best practices for software development and ensure your code is modular, readable, and maintainable.", "Create a Python implementation of the Snake game.", "openai", true]
+            "arguments": ["CodeWizard", "gemini", "You are a skilled Python programmer tasked with creating the classic Snake game. Your role is to write clean, efficient, and well-documented code that implements the game's logic, user interface, and any additional features you deem necessary. You should follow best practices for software development and ensure your code is modular, readable, and maintainable.", ["File System Browser", "Call Sub Agent"]]
         }
     """
     
     sub_agent: Optional[Agent]
+    
+    loaded_tools: List[Tool] = []
+    for t in tools:
+        tool = Tool.get_by_name(t)
+        if tool:
+            loaded_tools.append(tool)
 
     loaded_llm = LLM.load_llm(llm)
     if loaded_llm:
@@ -503,10 +508,10 @@ async def create_sub_agent(name: str, description: str, task: str, llm: str, aut
         sub_agent = await Agent.create_agent(
             name=name,
             description=description,
-            task_description=task,
             llm=agent_llm,
             is_sub_agent=True,
-            parent_id=parent.id
+            parent_id=parent.id,
+            tools=loaded_tools
         )
         
     if sub_agent:

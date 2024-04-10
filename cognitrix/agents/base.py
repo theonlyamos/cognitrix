@@ -92,9 +92,6 @@ class Agent(BaseModel):
                     new_agent.parent_id = self.id
                     self.add_sub_agent(new_agent)
 
-                    if new_agent.autostart:
-                        self.start_task_thread(new_agent, self)
-
                     prompt['message'] = result[2]
                 else:
                     prompt['message'] = result

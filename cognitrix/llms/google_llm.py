@@ -43,6 +43,9 @@ class Google(LLM):
     api_key: str = os.getenv('GOOGLE_API_KEY', '')
     """GOOGLE API key""" 
     
+    max_tokens: int = 2048
+    """Maximum output tokens"""
+    
     supports_system_prompt: bool = False
     """Flag to indicate if system prompt should be supported"""
     
