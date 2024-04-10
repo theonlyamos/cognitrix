@@ -19,7 +19,7 @@ logger = logging.getLogger('cognitrix.log')
 load_dotenv()
 
 
-class Gemini(LLM):
+class Google(LLM):
     """A class for interacting with the Gemini API.
 
     Args:
@@ -31,11 +31,8 @@ class Gemini(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    model: str = 'gemini-pro'
+    model: str = 'gemini-1.5-pro-latest'
     """model endpoint to use""" 
-    
-    vision_model: str = 'gemini-pro-vision'
-    """vision model endpoint to use""" 
     
     temperature: float = 0.0
     """What sampling temperature to use.""" 
@@ -67,7 +64,6 @@ class Gemini(LLM):
                 screenshot_bytes = io.BytesIO()
                 fm['image'].save(screenshot_bytes, format='JPEG')
                 upload_image = Image.open(screenshot_bytes)
-                self.model = self.vision_model
                 messages.append(upload_image)
                 messages.append('Above is the screenshot')
 
@@ -108,7 +104,7 @@ class Gemini(LLM):
     
 if __name__ == "__main__":
     try:
-        assistant = Gemini()
+        assistant = Google()
         # assistant.add_tool(calculator)
         while True:
             message = input("\nEnter Query$ ")

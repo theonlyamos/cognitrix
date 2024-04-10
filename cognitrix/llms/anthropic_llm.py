@@ -2,7 +2,7 @@ from cognitrix.llms.base import LLM
 from cognitrix.utils import image_to_base64
 from typing import Any
 from dotenv import load_dotenv
-from anthropic import Anthropic
+from anthropic import Anthropic as AnthropicLLM
 import logging
 import sys
 import os
@@ -16,7 +16,7 @@ logger = logging.getLogger('cognitrix.log')
 load_dotenv()
 
 
-class Claude(LLM):
+class Anthropic(LLM):
     """A class for interacting with the Claude API.
 
     Args:
@@ -107,7 +107,7 @@ class Claude(LLM):
             str|None: A string containing the generated response.
         """
 
-        client = Anthropic(api_key=self.api_key)
+        client = AnthropicLLM(api_key=self.api_key)
         result = client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,

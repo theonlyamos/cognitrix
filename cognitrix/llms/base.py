@@ -1,9 +1,8 @@
+import json
 from pydantic import BaseModel, Field
-from typing import Any, List, Dict
-from pathlib import Path
+from typing import List, Dict
 import logging
 import inspect
-import sys
 
 from cognitrix.tools.base import Tool
 
@@ -13,67 +12,6 @@ logging.basicConfig(
     level=logging.WARNING
 )
 logger = logging.getLogger('cognitrix.log')
-
-PROMPT_TEMPLATE = """
-You are a helpful, respectful and honest assistant.
-Always answer as helpfully as possible, while being safe.
-Your answers should not include any harmful, unethical,
-racist, sexist, toxic, dangerous, or illegal content.
-
-Please ensure your responses are socially unbiased and
-positive in nature.
-
-If a question does not make any sense, or is not factually coherent,
-explain why instead of answering something not corrent.
-
-Always check your answer against the current results from the
-Internet Search tool.
-Always return the most updated and correct answer.
-If you do not come up with any answer, just tell me you don't know.
-
-Never share false information
-
-The chatbot assistant can perform a variety of tasks, including:
-Answering questions in a comprehensive and informative way
-Generating different creative text formats of text content
-Translating languages
-Performing mathematical calculations
-Summarizing text
-Accessing and using external tools
-
-Tools:
-{tools}
-
-The chatbot assistant should always follow chain of thought reasoning and use its knowledge and abilities to provide the best possible response to the user.
-
-Use the following format:
-
-query: the input query you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of {available_tools}
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input query
-
-Begin!
-
-query: {query}
-Thought:
-
-The response should be in a valid json format which can
-be directed converted into a python dictionary with 
-json.loads()
-Return the response in the following format:
-{
-  "thought": "{thought}",
-  "action": "{action}",
-  "action_input": "{action_input}",
-  "observation": "{observation}",
-  "final_answer": "{actionable_response}"
-}
-"""
 
 class LLM(BaseModel):
     """
@@ -127,7 +65,7 @@ class LLM(BaseModel):
     def list_llms():
         """List all supported LLMs"""
         try:
-            module = __import__(__package__, fromlist=['__init__'])
+            module = __import__(str(__package__), fromlist=['__init__'])
             return [f[0] for f in inspect.getmembers(module, inspect.isclass) if f[0] != 'LLM']
         except Exception as e:
             logging.exception(e)
@@ -138,7 +76,7 @@ class LLM(BaseModel):
         """Dynamically load LLMs based on name"""
         try:
             model_name = model_name.lower()
-            module = __import__(__package__, fromlist=[model_name])
+            module = __import__(str(__package__), fromlist=[model_name])
             llm: type[LLM] = [f[1] for f in inspect.getmembers(module, inspect.isclass) if f[0].lower() == model_name][0]
             return llm
         except Exception as e:

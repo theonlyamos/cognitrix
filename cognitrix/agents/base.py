@@ -1,5 +1,6 @@
 import inspect
 import json
+import sys
 import uuid
 import asyncio
 import logging
@@ -16,7 +17,8 @@ from cognitrix.llms.base import LLM
 from cognitrix.tools.base import Tool
 from cognitrix.utils import extract_json, json_return_format
 from cognitrix.agents.templates import AUTONOMOUSE_AGENT_2
-from cognitrix.config import AGENTS_FILE
+from cognitrix.config import AGENTS_FILE, SESSIONS_FILE
+from cognitrix.llms.session import Session
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -160,7 +162,10 @@ class Agent(BaseModel):
     def add_tool(self, tool: Tool):
         self.tools.append(tool)
 
-    async def initialize(self):
+    def initialize(self, session_id: Optional[str] = None):
+        session: Session = asyncio.run(Session.load(session_id)) if session_id else Session(chat=self.llm.chat_history)
+        self.llm.chat_history = session.chat
+        
         query: str | dict = input("\nUser (q to quit): ")
         while True:
             try:
@@ -173,7 +178,7 @@ class Agent(BaseModel):
                         break
 
                     elif query.lower() == 'add agent':
-                        new_agent = await self.create_agent(is_sub_agent=True, parent_id=self.id)
+                        new_agent = asyncio.run(self.create_agent(is_sub_agent=True, parent_id=self.id))
                         if new_agent:
                             self.add_sub_agent(new_agent)
                             print(f"\nAgent {new_agent.name} added successfully!")
@@ -185,7 +190,7 @@ class Agent(BaseModel):
 
                     elif query.lower() == 'list agents':
                         agents_str = "\nAvailable Agents:"
-                        sub_agents = [agent for agent in await self.list_agents() if agent.parent_id == self.id]
+                        sub_agents = [agent for agent in asyncio.run(self.list_agents()) if agent.parent_id == self.id]
                         for index, agent in enumerate(sub_agents):
                             agents_str += (f"\n[{index}] {agent.name}")
                         print(agents_str)
@@ -202,13 +207,15 @@ class Agent(BaseModel):
                 if self.verbose:
                     print(response)
 
-                result: dict[Any, Any] | str = await self.process_response(response)
+                result: dict[Any, Any] | str = asyncio.run(self.process_response(response))
 
                 if isinstance(result, dict) and result['type'] == 'function_call_result':
                     query = result
                 else:
                     print(f"\n{self.name}: {result}")
                     query = input("\nUser (q to quit): ")
+                
+                self.save_session(session)
 
             except KeyboardInterrupt:
                 print('Exiting...')
@@ -217,8 +224,8 @@ class Agent(BaseModel):
                 logger.exception(e)
                 break
 
-    def start(self):
-        asyncio.run(self.initialize())
+    def start(self, session_id: Optional[str] = None):
+        self.initialize(session_id)
         
     def start_audio(self, transcriber: Any, result: Any, **kwargs):
         query = result.channel.alternatives[0].transcript
@@ -306,7 +313,6 @@ class Agent(BaseModel):
                 task = Task(description=task_description)
                 new_agent = cls(name=name, llm=llm, task=task, tools=tools, is_sub_agent=is_sub_agent, parent_id=parent_id)
                 
-                description = input("\n[Enter agent system prompt]: ") if not description else description
                 if description:
                     new_agent.prompt_template = description
 
@@ -364,7 +370,7 @@ class Agent(BaseModel):
             agent_name = agent_name.lower()
             agents = asyncio.run(cls.list_agents())
             loaded_agents: list[Agent] = [agent for agent in agents if agent.name.lower() == agent_name]
-            if loaded_agents:
+            if len(loaded_agents):
                 agent = loaded_agents[0]
                 agent.sub_agents = asyncio.run(cls.list_agents(agent.id))
                 return agent
@@ -384,3 +390,8 @@ class Agent(BaseModel):
         
         async with aiofiles.open(AGENTS_FILE, 'w') as file:
             await file.write(json.dumps(updated_agents, indent=4))
+    
+    def save_session(self, session: Session):
+        save_thread = Thread(target=session.save, args=(self.llm.chat_history,))
+        save_thread.daemon = True
+        save_thread.start()

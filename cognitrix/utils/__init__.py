@@ -100,8 +100,6 @@ def extract_json(content: str) -> dict | str:
             json_str = content[start_index:end_index]
             json_str = json_str.replace(r'```', '')
             
-            with open('output.json', 'w') as file:
-                print(json_str, file=file)
             # Convert the JSON string to a Python dictionary
             json_dict = json.loads(json_str)
             

@@ -8,6 +8,7 @@ SPIRAL_WORKDIR = Path('~').expanduser() / '.cognitrix'
 
 AGENTS_FILE = SPIRAL_WORKDIR / 'agents.json'
 CONFIG_FILE = SPIRAL_WORKDIR / 'config.json'
+SESSIONS_FILE = SPIRAL_WORKDIR / 'sessions.json'
 
 
 async def configure():
@@ -20,6 +21,10 @@ async def configure():
             
     if not CONFIG_FILE.exists() and not CONFIG_FILE.is_file():
         async with aiofiles.open(CONFIG_FILE, 'w') as file:
+            pass
+        
+    if not SESSIONS_FILE.exists() and not SESSIONS_FILE.is_file():
+        async with aiofiles.open(SESSIONS_FILE, 'w') as file:
             pass
         
 asyncio.run(configure())

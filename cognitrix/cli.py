@@ -11,6 +11,7 @@ from cognitrix.llms import (
 )
 
 from cognitrix.agents import AIAssistant, Agent
+from cognitrix.llms.session import Session
 from cognitrix.tools import Tool
 
 from cognitrix.config import VERSION
@@ -18,6 +19,10 @@ from cognitrix.config import VERSION
 def add_agent():
     new_agent = asyncio.run(Agent.create_agent()) # type: ignore
     if new_agent:
+        description = input("\n[Enter agent system prompt]: ")
+        if description:
+            new_agent.prompt_template = description
+            asyncio.run(new_agent.save())
         print(f"\nAgent **{new_agent.name}** added successfully!")
     else:
         print("\nError creating agent")
@@ -38,6 +43,12 @@ def list_tools():
     print("\nAvailable Tools:")
     for index, l in enumerate(Tool.list_all_tools()):
         print(f"[{index}] {l.name}")
+        
+def list_sessions():
+    print("\nSaved Sessions:")
+    sessions = asyncio.run(Session.list_sessions())
+    for index, l in enumerate(sessions):
+        print(f"[{index}] {l.id}")
 
 def manage_agents(args: Namespace):
     try:
@@ -70,6 +81,9 @@ def start(args: Namespace):
             sys.exit()
         elif args.tools:
             list_tools()
+            sys.exit()
+        elif args.sessions:
+            list_sessions()
             sys.exit()
         
         provider = None
@@ -114,7 +128,7 @@ def start(args: Namespace):
             #     AudioTranscriber.transcribe_from_mic(assistant.start_audio)
             # else:
             #     
-            assistant.start()
+            assistant.start(args.session)
     except Exception as e:
         logging.exception(e)
         parser.print_help()
@@ -147,6 +161,8 @@ def get_arguments():
     parser.add_argument('--system-prompt', type=str_or_file, default='', help='Set system prompt of model. Can be a string or a text file path')
     parser.add_argument('--prompt-template', type=str_or_file, default='', help='Set prompt template of model. Can be a string or a text file path')
     parser.add_argument('--audio', action='store_true', help='Get input from microphone')
+    parser.add_argument('--session', type=str, default="", help='Load saved session')
+    parser.add_argument('--sessions', action='store_true', help='Get a list of all saved sessions')
     parser.add_argument('--verbose', action='store_true', help='Set verbose mode')
     parser.add_argument('-v','--version', action='version', version=f'%(prog)s {VERSION}')
     parser.set_defaults(func=start)

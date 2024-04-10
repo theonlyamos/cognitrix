@@ -195,6 +195,13 @@ class FSBrowser(Tool):
         "arguments": ["{desktop_path}", "create", "test.py", "gibberish"]
     }}
     
+    User: write new content to test.py on Desktop.
+    AI Assistant: {{
+        "type": "function_call",
+        "function": "File System Browser",
+        "arguments": ["{desktop_path}", "write", "gibberish"]
+    }}
+    
     User: create folder called NewApp on Desktop.
     AI Assistant: {{
         "type": "function_call",
@@ -231,7 +238,7 @@ class FSBrowser(Tool):
             
             if operation in ['write', 'create']:
                 return operations[operation](path, filename, content)
-            elif operation == 'open':
+            elif operation in ['open', 'read']:
                 return operations[operation](path, filename)
             return operations[operation](path)
         except Exception as e:
@@ -250,13 +257,16 @@ class FSBrowser(Tool):
         return 'Unable to open file'
         
     def listdir(self, path: Path):
-        return 'The content of the directory are: '+json.dumps(os.listdir(path))
+        if path.is_dir():
+            return 'The content of the directory are: '+json.dumps(os.listdir(path))
+        return "The path you provided isn't a directory"
     
     def create_path(self, path: Path, filename: Optional[str], content: Optional[str]):
         full_path = path.joinpath(filename) if filename else path
-        if content:
+        if full_path.is_file():
             with full_path.open('wt') as file:
-                file.write(content)
+                if content:
+                    file.write(content)
         else: 
             full_path.mkdir()
         
