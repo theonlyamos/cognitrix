@@ -124,10 +124,7 @@ def start(args: Namespace):
             assistant.format_system_prompt()
             asyncio.run(assistant.save())
             
-            if args.audio:
-                assistant.start_audio()
-            else:
-                assistant.start(args.session)
+            assistant.start(args.session, audio=args.audio)
     except Exception as e:
         logging.exception(e)
         parser.print_help()

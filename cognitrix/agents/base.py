@@ -228,8 +228,11 @@ class Agent(BaseModel):
                 logger.exception(e)
                 break
 
-    def start(self, session_id: Optional[str] = None):
-        self.initialize(session_id)
+    def start(self, session_id: Optional[str] = None, audio: bool = False):
+        if audio:
+            self.start_audio()
+        else:
+            self.initialize(session_id)
         
     def handle_transcription(self, sentence: str, transcriber: Transcriber):
         if sentence:
