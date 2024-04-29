@@ -50,6 +50,7 @@ aiofiles = "^23.2.1"
 xmltodict = "^0.13.0"
 deepgram-sdk = "==3.*"
 beautifulsoup4 = "^4.12.3"
+pyttsx3 = "^2.90"
 
 
 [build-system]

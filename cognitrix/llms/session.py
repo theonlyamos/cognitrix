@@ -5,6 +5,7 @@ from flask import json
 from pydantic import BaseModel, Field
 from cognitrix.config import SESSIONS_FILE
 from typing import List, Optional, Dict
+from datetime import datetime
 import uuid
 
 class Session(BaseModel):
@@ -14,8 +15,15 @@ class Session(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """The session id"""
     
+    datetime: str = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
+    """When the session was started"""
+    
+    agent_id: str = ""
+    """The id of the agent that started the session"""
+    
     def save(self, chat: List[Dict[str, str]] = []):
         """Save the current state of the session to disk"""
+        self.chat = chat
         sessions = Session.list_sessions()
         updated_sessions = []
         session_exist = False

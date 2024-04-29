@@ -42,7 +42,7 @@ class OpenAI(LLM):
     api_key: str = os.getenv('OPENAI_API_KEY', '')
     """OpenAI API key""" 
     
-    max_tokens: int = 4000
+    max_tokens: int = 4096
     """The maximum number of tokens to generate in the completion.""" 
     
     chat_history: list[str] = []
@@ -84,7 +84,7 @@ class OpenAI(LLM):
                 })
             elif fm['type'] == 'image':
                 base64_image = image_to_base64(fm['image'])
-                self.model = self.vision_model
+                # self.model = self.vision_model
                 messages.append({
                     "role": fm['role'].lower(),
                     "content": [
@@ -100,7 +100,7 @@ class OpenAI(LLM):
                 })
             else:
                 print(fm)
-            
+        
         return messages
 
     def __call__(self, query: dict, **kwds: dict)->Optional[str]:
@@ -115,6 +115,9 @@ class OpenAI(LLM):
         """
 
         client = OpenAILLM(api_key=self.api_key)
+        if self.base_url:
+            client.base_url = self.base_url
+            
         formatted_messages = self.format_query(query)
         
         response = client.chat.completions.create(

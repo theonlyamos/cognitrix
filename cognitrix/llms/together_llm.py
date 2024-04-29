@@ -10,31 +10,7 @@ load_dotenv()
 
 B_INST, E_INST = "[INST]", "[/INST]"
 B_SYS, E_SYS = "<<SYS>>\n", "\n<</SYS>>\n\n"
-DEFAULT_SYSTEM_PROMPT = """
-You are a helpful, respectful and honest assistant. 
-Always answer as helpfully as possible, while being safe. 
-Your answers should not include any harmful, unethical,
-racist, sexist, toxic, dangerous, or illegal content.
 
-Please ensure your responses are socially unbiased and 
-positive in nature.
-
-If a question does not make any sense, or is not factually coherent, 
-explain why instead of answering something not corrent.
-
-Always check your answer against the current results from the
-Internet Search tool.
-Always return the most updated and correct answer.
-If you do not come up with any answer, just tell me you don't know.
-
-Never share false information
-"""
-
-def get_prompt(instruction, new_system_prompt=DEFAULT_SYSTEM_PROMPT ):
-    SYSTEM_PROMPT = B_SYS + new_system_prompt + E_SYS
-    prompt_template = B_INST + SYSTEM_PROMPT + instruction + E_INST
-    
-    return prompt_template
 
 def cut_off_text(text, prompt):
     cutoff_phrase = prompt
@@ -75,29 +51,43 @@ class Together(LLM):
     def _llm_type(self) -> str:
         """Return type of LLM."""
         return "together"
+    
+    def format_query(self, message: dict[str, str]) -> str:
+        """Formats a message for the Claude API.
+
+        Args:
+            message (dict[str, str]): The message to be formatted for the Claude API.
+
+        Returns:
+            list: A list of formatted messages for the Claude API.
+        """
+        
+        
+        
+        formatted_message = [*self.chat_history, message]
+        
+        messages = B_INST + B_SYS + self.system_prompt + E_SYS
+        
+        for fm in formatted_message:
+            if fm['type'] == 'text':
+                messages += f"\n{fm['message']}"
+        messages += E_INST
+        
+        return messages
 
     def __call__(
         self,
-        prompt: str,
+        prompt: dict,
         **kkwargs: Any,
     ) -> str:
         """Call to Together endpoint."""
         
         together.api_key = self.api_key
         output = together.Complete.create(
-            get_prompt(prompt),
+            self.format_query(prompt),
             model=self.model,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
         )
         
         return output['output']['choices'][0]['text']   # type: ignore
-
-if __name__ == "__main__":
-    try:
-        assistant = Together()
-        while True:
-            response = assistant(input('\n[Prompt]# '))
-            print(response)
-    except KeyboardInterrupt:
-        sys.exit(1)

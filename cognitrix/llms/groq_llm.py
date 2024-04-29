@@ -25,10 +25,10 @@ class Groq(LLM):
         temperature: The temperature to use when generating text.
         api_key: Your Groq API key.
     """
-    model: str = 'mixtral-8x7b-32768'
+    model: str = 'llama3-70b-8192'
     """model endpoint to use""" 
     
-    temperature: float = 0.1
+    temperature: float = 0.2
     """What sampling temperature to use.""" 
     
     chat_history: list[str] = []

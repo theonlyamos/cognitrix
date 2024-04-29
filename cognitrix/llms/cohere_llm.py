@@ -35,13 +35,6 @@ class Cohere(LLM):
     
     api_key: str = os.getenv('CO_API_KEY', '')
     """Cohere API key""" 
-    
-    def format_query(self, message: str) -> str:
-        """Formats a message for the Cohere API"""
-
-        formatted_message = self.system_prompt + '\nUser: ' + message
-
-        return formatted_message
 
     def __call__(self, query, **kwds: Any)->str:
         """Generates a response to a query using the Cohere API.
@@ -53,12 +46,14 @@ class Cohere(LLM):
         Returns:
         A string containing the generated response.
         """
+        
         client = cohere.Client(api_key=self.api_key)
         response = client.chat( 
             model=self.model,
             message=query['message'],
             temperature=self.temperature,
             chat_history=self.chat_history,
+            preamble_override=self.system_prompt,
             prompt_truncation='auto',
             stream=False,
             citation_quality='accurate',

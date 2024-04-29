@@ -46,9 +46,9 @@ def list_tools():
         
 def list_sessions():
     print("\nSaved Sessions:")
-    sessions = asyncio.run(Session.list_sessions())
-    for index, l in enumerate(sessions):
-        print(f"[{index}] {l.id}")
+    sessions = Session.list_sessions()
+    for index, s in enumerate(sessions):
+        print(f"[{index}] [{s.datetime}] {s.id}")
 
 def manage_agents(args: Namespace):
     try:
@@ -124,11 +124,10 @@ def start(args: Namespace):
             assistant.format_system_prompt()
             asyncio.run(assistant.save())
             
-            # if args.audio:
-            #     AudioTranscriber.transcribe_from_mic(assistant.start_audio)
-            # else:
-            #     
-            assistant.start(args.session)
+            if args.audio:
+                assistant.start_audio()
+            else:
+                assistant.start(args.session)
     except Exception as e:
         logging.exception(e)
         parser.print_help()

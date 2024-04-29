@@ -88,22 +88,64 @@ def extract_json(content: str) -> dict | str:
         Returns:
             dict|str: Result of the extraction.
         """
+        default_content = content
         try:
-            # Escape special characters in the input string
-            # escaped_content = re.escape(content)
+            if '{' not in content:
+                return content
+            
+            start_index = content.find('{') + 1
+            end_index = content.rfind('}')
 
-            # Find the start and end index of the JSON string
-            start_index = content.find('{')
-            end_index = content.rfind('}') + 1
-            
             # Extract the JSON string
-            json_str = content[start_index:end_index]
-            json_str = json_str.replace(r'```', '')
+            content = content[start_index:end_index]
+
+            # Split the JSON string into key-value pairs
+            pairs = content.split('\n')
+
+            # Initialize an empty list to store the escaped pairs
+            escaped_pairs = []
             
-            # Convert the JSON string to a Python dictionary
-            json_dict = json.loads(json_str)
+            # Iterate over the key-value pairs
+            for pair in pairs:
+                # Split the pair into key and value
+                pair = pair.strip()
+                
+                if pair:
+                    key, value = pair.split('":')
+                    
+                    # Remove any whitespace from the key and value
+                    key = key.strip()
+                    q_mark = '"' if key.startswith('"') else "'"
+                    a_mark = '"' if key.startswith("'") else "'"
+                    key = key.replace(q_mark, '')
+                    value = value.strip()
+                    # print(key, value)
+                    
+                    if not value.startswith('[') and not value.endswith('{'):
+                        start_index = value.find('"') + 1
+                        end_index = value.rfind('"')
+                        value = value[start_index:end_index]
+                        value = value.replace('"', '\"')
+                        value = value.replace("'", "\'")
+                    else:
+                        value = value.replace('\n', '')
+                        value = value.replace(q_mark, a_mark)
+                        value = json.loads(value)
+
+                    # If the value is a string, escape any double quotes
+                    if isinstance(value, str):
+                        if value.startswith('"') and value.endswith('"'):
+                            quote_start = value.find('"')
+                            quote_end = value.rfind('"')
+                            for i, char in enumerate(value):
+                                if char == '"' and (i != quote_start and i != quote_end):
+                                    value = value.replace('"', '\\"', 1)
+                                break
+
+                    # Add the escaped pair to the list
+                    escaped_pairs.append([key, value])
             
-            return json_dict
+            return dict(escaped_pairs)
         except Exception as e:
             # logging.exception(e)
             return content

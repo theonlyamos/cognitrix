@@ -1,109 +1,95 @@
-# Copyright 2023-2024 Deepgram SDK contributors. All Rights Reserved.
-# Use of this source code is governed by a MIT license that can be found in the LICENSE file.
-# SPDX-License-Identifier: MIT
-from typing import Callable
-from pydantic import BaseModel
-from dotenv import load_dotenv
-import logging, verboselogs
-from time import sleep
 import os
+from dotenv import load_dotenv
+from multiprocessing import Pool
+from typing import Callable, Optional
 
 from deepgram import (
     DeepgramClient,
     DeepgramClientOptions,
     LiveTranscriptionEvents,
     LiveOptions,
-    Microphone,
+    Microphone
 )
+
+import pyttsx3
 
 load_dotenv()
 
-DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY', '')
+class Transcriber:
+    def __init__(self, api_key: Optional[str] = None, on_message_callback: Optional[Callable[[str, 'Transcriber'], None]]=None):
+        self.api_key = api_key if api_key else os.getenv('DEEPGRAM_API_KEY', '')
+        self.client = None
+        self.connection = None
+        self.microphone = None
+        self.on_message_callback = on_message_callback
+        self.tts_engine = pyttsx3.init()
+        self.pool = Pool(processes=2)
+
+    def on_message(self, connection, result, **kwargs):
+        sentence = result.channel.alternatives[0].transcript
+        if len(sentence) == 0:
+            return
+        print(f"\nUser: {sentence}")
+        if self.on_message_callback:
+            self.on_message_callback(sentence, self)
+
+    def on_error(self, connection, error, **kwargs):
+        print(f"\n\n{error}\n\n")
+
+    def setup_client(self):
+        config = DeepgramClientOptions(options={"keepalive": "true"})
+        self.client = DeepgramClient(self.api_key, config)
+    
+    def text_to_speech(self, text: str):
+        self.pool.apply_async(self.run_tts, (text,))
+    
+    @staticmethod
+    def run_tts(text):
+        try:
+            tts_engine = pyttsx3.init()
+            tts_engine.say(text)
+            tts_engine.runAndWait()
+            tts_engine.stop()
+        except Exception as e:
+            print(f"Exception in run_tts: {e}")
+
+    def start_transcription(self):
+        self.setup_client()
+        if self.client:
+            self.connection = self.client.listen.live.v("1")
+            self.connection.on(LiveTranscriptionEvents.Transcript, self.on_message)
+            self.connection.on(LiveTranscriptionEvents.Error, self.on_error)
+
+            options = LiveOptions(
+                model="nova-2",
+                punctuate=True,
+                language="en-US",
+                encoding="linear16",
+                channels=1,
+                sample_rate=16000,
+            )
+
+            if self.connection.start(options) is False:
+                print("Failed to connect to Deepgram")
+                return False
+
+            self.microphone = Microphone(self.connection.send)
+            self.microphone.start()
+            return True
+
+    def stop_transcription(self):
+        if self.microphone:
+            self.microphone.finish()
+        if self.connection:
+            self.connection.finish()
+        print("Transcription stopped.")
 
 def main():
-    try:
-        # example of setting up a client config. logging values: WARNING, VERBOSE, DEBUG, SPAM
-        config = DeepgramClientOptions(
-            options={"keepalive": "true"}
-        )
-        # deepgram: DeepgramClient = DeepgramClient("", config)
-        # otherwise, use default config
-        deepgram: DeepgramClient = DeepgramClient(DEEPGRAM_API_KEY, config)
-
-        dg_connection = deepgram.listen.live.v("1")
-
-        def on_open(self, open, **kwargs):
-            print(f"\n\n{open}\n\n")
-
-        def on_message(self, result, **kwargs):
-            sentence = result.channel.alternatives[0].transcript
-            if len(sentence) == 0:
-                return
-            print(f"speaker: {sentence}")
-
-        def on_metadata(self, metadata, **kwargs):
-            print(f"\n\n{metadata}\n\n")
-
-        def on_speech_started(self, speech_started, **kwargs):
-            print(f"\n\n{speech_started}\n\n")
-
-        def on_utterance_end(self, utterance_end, **kwargs):
-            print(f"\n\n{utterance_end}\n\n")
-
-        def on_error(self, error, **kwargs):
-            print(f"\n\n{error}\n\n")
-
-        def on_close(self, close, **kwargs):
-            print(f"\n\n{close}\n\n")
-
-        dg_connection.on(LiveTranscriptionEvents.Open, on_open)
-        dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
-        # dg_connection.on(LiveTranscriptionEvents.Metadata, on_metadata)
-        dg_connection.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
-        # dg_connection.on(LiveTranscriptionEvents.UtteranceEnd, on_utterance_end)
-        dg_connection.on(LiveTranscriptionEvents.Error, on_error)
-        # dg_connection.on(LiveTranscriptionEvents.Close, on_close)
-
-        options: LiveOptions = LiveOptions(
-            model="nova-2",
-            punctuate=True,
-            language="en-US",
-            encoding="linear16",
-            channels=1,
-            sample_rate=16000,
-            # To get UtteranceEnd, the following must be set:
-            interim_results=True,
-            utterance_end_ms="1000",
-            vad_events=True,
-        )
-
-        print("\n\nPress Enter to stop recording...\n\n")
-        if dg_connection.start(options) is False:
-            print("Failed to connect to Deepgram")
-            return
-
-        # Open a microphone stream on the default input device
-        microphone = Microphone(dg_connection.send)
-
-        # start microphone
-        microphone.start()
-
-        # wait until finished
-        input("")
-
-        # Wait for the microphone to close
-        microphone.finish()
-
-        # Indicate that we've finished
-        dg_connection.finish()
-
-        print("Finished")
-        # sleep(30)  # wait 30 seconds to see if there is any additional socket activity
-        # print("Really done!")
-
-    except Exception as e:
-        print(f"Could not open socket: {e}")
-        return
+    api_key = os.getenv('DEEPGRAM_API_KEY', '')
+    transcriber = Transcriber(api_key)
+    if transcriber.start_transcription():
+        input("\n\nPress Enter to stop recording...\n\n")
+        transcriber.stop_transcription()
 
 if __name__ == "__main__":
     main()

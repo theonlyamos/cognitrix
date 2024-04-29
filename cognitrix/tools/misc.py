@@ -97,68 +97,83 @@ class InternetBrowser(Tool):
     def arun(self, url: str):
         raise NotImplementedError(NotImplementedErrorMessage)
 
-class WorldNews(Tool):
-    name: str =  "World News"
-    categories: list = ["business","entertainment","general",
-                  "health","science","sports","technology"]
-    description: str =  f"""
-    Use this tool to fetch current news headlines.
-    Only titles of the news should be presented to
-    the user.
+# class WorldNews(Tool):
+#     name: str =  "World News"
+#     categories: list = ["business","entertainment","general",
+#                   "health","science","sports","technology"]
+#     description: str =  f"""
+#     Use this tool to fetch current news headlines.
+#     Only titles of the news should be presented to
+#     the user.
     
-    Allowed categories are: {categories}
-    The parameters for the news should be intuited
-    from the user's query.
+#     Allowed categories are: {categories}
+#     The parameters for the news should be intuited
+#     from the user's query.
     
-    Always convert the country to its 2-letter ISO 3166-1 code
-    if the country parameter is needed before being used.
+#     Always convert the country to its 2-letter ISO 3166-1 code
+#     if the country parameter is needed before being used.
     
-    Never use 'world' as a country.
+#     Never use 'world' as a country.
     
-    The results of this tool should alwasy be returned
-    to the user as bullet points.
+#     The results of this tool should alwasy be returned
+#     to the user as bullet points.
     
-    :param topic (optional): The topic to search for
-    :param category (optional): Category selected from categories
-    :param country (optional): Country to search news from
-    """
-    def run(self, topic: Optional[str] = None, category: Optional[str] = 'general', country: Optional[str] = 'world'):
-        try:
-            url = "https://newsapi.org/v2/top-headlines"
-            params={
-                "apiKey": os.getenv('NEWSAPI_API_KEY'),
-                "language": "en",
-                "sources": "bbc-news,the-verge,google-news",
-                "pageSize": 5
-            }
-            
-            if topic:
-                params["q"] = topic
-            
-            if any([category, country]) and category != 'general' and country not in ('world',''):
-                del params['sources']
-            
-                if category:
-                    params["category"] = category
-            
-                if country:
-                    params["country"] = country
-            
-            response = requests.get(
-                url,
-                params=params
-            )
-            
-            results = response.json()
-            articles = results['articles']
-            headlines = [line['title'] for line in articles]
-            
-            return headlines
-        except Exception as e:
-            return f"Error: {str(e)}"
+#     :param topic: The topic to search for
+#     :param category: Category selected from categories {categories}
+#     :param country (optional): Country to search news from
     
-    def arun(self, url: str):
-        raise NotImplementedError(NotImplementedErrorMessage)
+#     Example:
+#     User: Get me the latest news on technology in the united states
+#     AI Assistant: {{
+#         "type": "function_call",
+#         "function": "World News",
+#         "arguments": ["latest news on technology", "technology", "US"]
+#     }}
+    
+#     User: Get me news headlines from around the world
+#     AI Assistant: {{
+#         "type": "function_call",
+#         "function": "World News",
+#         "arguments": ["news headlines around the world", "general"]
+#     }}
+#     """
+#     def run(self, topic: Optional[str] = None, category: Optional[str] = 'general', country: Optional[str] = 'world'):
+#         try:
+#             url = "https://newsapi.org/v2/top-headlines"
+#             params={
+#                 "apiKey": os.getenv('NEWSAPI_API_KEY'),
+#                 "language": "en",
+#                 "sources": "bbc-news,the-verge,google-news",
+#                 "pageSize": 5
+#             }
+            
+#             if topic:
+#                 params["q"] = topic
+            
+#             if any([category, country]) and category != 'general' and country not in ('world',''):
+#                 del params['sources']
+            
+#                 if category:
+#                     params["category"] = category
+            
+#                 if country:
+#                     params["country"] = country
+            
+#             response = requests.get(
+#                 url,
+#                 params=params
+#             )
+            
+#             results = response.json()
+#             articles = results['articles']
+#             headlines = [line['title'] for line in articles]
+            
+#             return json.dumps(headlines)
+#         except Exception as e:
+#             return f"Error: {str(e)}"
+    
+#     def arun(self, url: str):
+#         raise NotImplementedError(NotImplementedErrorMessage)
 
 class FSBrowser(Tool):
     name: str =  "File System Browser"
@@ -546,7 +561,12 @@ def call_sub_agent(name: str, task: str, parent: Agent):
 
 @tool
 def internet_search(query: str):
-    """Use this tool to search the internet.
+    """Use this to retrieve up-to-date information from the internet 
+    and generate more accurate and informative responses.
+    
+    When you need to answer a question or provide information, you can call this tool 
+    to fetch the latest details from the web. 
+    This tool takes one argument: the query or question you want to search for.
     
     Args:
         query (str): The query to search for.
@@ -587,7 +607,17 @@ def internet_search(query: str):
         thumbnails = [item["thumbnail"] for item in res["images_results"][:10]]
         toret.append({'images_results': thumbnails})
     
-    return json.dumps(toret)
+    response = 'The result of the search are below:\n'
+    response += json.dumps(toret)
+    response += """\nTo get a more comprehensive result, always scrape some of the
+    links returned by the search tool to get relevant facts 
+    from multiple sources.
+    
+    Follow these steps:
+    2. Scrape the top search results one by one to extract relevant facts from multiple sources.
+    3. Compile the results for the user."""
+    
+    return response
 
 @tool
 def web_scraper(url: str):

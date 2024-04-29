@@ -19,6 +19,7 @@ from cognitrix.utils import extract_json, json_return_format
 from cognitrix.agents.templates import AUTONOMOUSE_AGENT_2
 from cognitrix.config import AGENTS_FILE, SESSIONS_FILE
 from cognitrix.llms.session import Session
+from cognitrix.transcriber import Transcriber
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -115,11 +116,16 @@ class Agent(BaseModel):
         return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
 
     async def process_response(self, response: str) -> Union[dict, str]:
+        # response = response.replace("'", '"')
+        response = response.replace('\\n', '')
+        response = response.replace("'", "\"")
+        # response = response.replace('"', '\\"')
         response_data = extract_json(response)
+        
 
         try:
             if isinstance(response_data, dict):
-                final_result_keys = ['final_answer', 'function_call_result']
+                final_result_keys = ['final_answer', 'function_call_result', 'respons']
 
                 if response_data['type'].replace('\\', '') in final_result_keys:
                     return response_data['result']
@@ -160,7 +166,7 @@ class Agent(BaseModel):
         self.tools.append(tool)
 
     def initialize(self, session_id: Optional[str] = None):
-        session: Session = asyncio.run(Session.load(session_id)) if session_id else Session(chat=self.llm.chat_history)
+        session: Session = asyncio.run(Session.load(session_id)) if session_id else Session(chat=self.llm.chat_history, agent_id=self.id)
         self.llm.chat_history = session.chat
         
         query: str | dict = input("\nUser (q to quit): ")
@@ -198,6 +204,7 @@ class Agent(BaseModel):
                 
                 full_prompt = self.generate_prompt(query)
                 response: Any = self.llm(full_prompt)
+                
                 self.llm.chat_history.append(full_prompt)
                 self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response})
 
@@ -224,13 +231,11 @@ class Agent(BaseModel):
     def start(self, session_id: Optional[str] = None):
         self.initialize(session_id)
         
-    def start_audio(self, transcriber: Any, result: Any, **kwargs):
-        query = result.channel.alternatives[0].transcript
-
-        if query:
+    def handle_transcription(self, sentence: str, transcriber: Transcriber):
+        if sentence:
             self.format_system_prompt()
                 
-            full_prompt = self.generate_prompt(query)
+            full_prompt = self.generate_prompt(sentence)
             response: Any = self.llm(full_prompt)
             self.llm.chat_history.append(full_prompt)
             self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response})
@@ -244,6 +249,19 @@ class Agent(BaseModel):
                 query = processsed_response
             else:
                 print(f"\n{self.name}: {processsed_response}")
+                if isinstance(processsed_response, str):
+                    transcriber.text_to_speech(processsed_response)
+
+
+    def start_audio(self, **kwargs):
+        transcriber = Transcriber(on_message_callback=self.handle_transcription)  # Pass callback to Transcriber
+        if transcriber.start_transcription():
+            print("Audio transcription started.")
+            input("\n\nPress Enter to stop recording...\n\n")
+            transcriber.stop_transcription()
+        else:
+            print("Failed to start audio transcription.")
+        
 
     @staticmethod
     def start_task_thread(agent: 'Agent', parent: 'Agent'):
@@ -260,11 +278,15 @@ class Agent(BaseModel):
             response: Any = self.llm(full_prompt)
             self.llm.chat_history.append(full_prompt)
             self.llm.chat_history.append({'role': 'user', 'type': 'text', 'message': response})
-
+            
+            if parent.verbose:
+                print(response)
+                
             agent_result = asyncio.run(self.process_response(response))
             if isinstance(agent_result, dict) and agent_result['type'] == 'function_call_result':
                 query = agent_result
             else:
+                print(f"\n--{self.name}: {agent_result}")
                 parent_prompt = parent.generate_prompt(response, 'user')
                 parent_prompt['message'] = self.name + ": " + response
                 parent_response: Any = parent.llm(parent_prompt)
@@ -302,9 +324,10 @@ class Agent(BaseModel):
 
                 if loaded_llm:
                     llm = loaded_llm()
-                    llm.model = input(f"\nEnter model name [{llm.model}]: ") or llm.model
-                    temp = input(f"\nEnter model temperature [{llm.temperature}]: ")
-                    llm.temperature = float(temp) if temp else llm.temperature
+                    if llm:
+                        llm.model = input(f"\nEnter model name [{llm.model}]: ") or llm.model
+                        temp = input(f"\nEnter model temperature [{llm.temperature}]: ")
+                        llm.temperature = float(temp) if temp else llm.temperature
 
             if llm:
                 task = Task(description=task_description)

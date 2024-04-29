@@ -36,6 +36,9 @@ class LLM(BaseModel):
     api_key: str = Field(default=None)
     """API key""" 
     
+    base_url: str = ''
+    """Base url of local llm server"""
+    
     max_tokens: int = Field(default=512)
     """The maximum number of tokens to generate in the completion.""" 
     

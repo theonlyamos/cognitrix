@@ -34,7 +34,7 @@ class Tool(BaseModel):
     def list_all_tools():
         """List all tools"""
         try:
-            module = __import__(__package__, fromlist=['__init__'])
+            module = __import__(__package__, fromlist=['__init__']) # type: ignore
             tools  = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool)]
             class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
             tools.extend(class_tools)
@@ -47,7 +47,7 @@ class Tool(BaseModel):
     def get_by_name(cls, name: str)-> Optional['Tool']:
         """Dynamically load tool by name"""
         try:
-            module = __import__(__package__, fromlist=[name])
+            module = __import__(__package__, fromlist=[name]) # type: ignore
             tools  = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool)]
             class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
             tools.extend(class_tools)
