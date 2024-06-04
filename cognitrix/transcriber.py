@@ -1,4 +1,5 @@
 import os
+from threading import Thread
 from dotenv import load_dotenv
 from multiprocessing import Pool
 from typing import Callable, Optional
@@ -8,10 +9,12 @@ from deepgram import (
     DeepgramClientOptions,
     LiveTranscriptionEvents,
     LiveOptions,
-    Microphone
+    Microphone,
+    SpeakOptions
 )
 
-import pyttsx3
+from pydub import AudioSegment
+from pydub.playback import play
 
 load_dotenv()
 
@@ -22,7 +25,6 @@ class Transcriber:
         self.connection = None
         self.microphone = None
         self.on_message_callback = on_message_callback
-        self.tts_engine = pyttsx3.init()
         self.pool = Pool(processes=2)
 
     def on_message(self, connection, result, **kwargs):
@@ -40,18 +42,28 @@ class Transcriber:
         config = DeepgramClientOptions(options={"keepalive": "true"})
         self.client = DeepgramClient(self.api_key, config)
     
-    def text_to_speech(self, text: str):
-        self.pool.apply_async(self.run_tts, (text,))
-    
-    @staticmethod
-    def run_tts(text):
+    def text_to_speech(self, text: str, filename: str = "output.mp3"):
         try:
-            tts_engine = pyttsx3.init()
-            tts_engine.say(text)
-            tts_engine.runAndWait()
-            tts_engine.stop()
+            if self.client:
+                speak_options = SpeakOptions(
+                    model="aura-asteria-en",  # Customize the model as needed
+                )
+                response = self.client.speak.v("1").save(filename, {"text": text}, speak_options)
+                # print(f"Audio content written to file '{filename}'")
+                # print(response.to_json(indent=4))
+
+                speech_thread = Thread(target=self.play_audio, args=(filename,))
+                speech_thread.daemon = True
+                speech_thread.start()
+
         except Exception as e:
-            print(f"Exception in run_tts: {e}")
+            print(f"Exception in text_to_speech: {e}")
+
+    def play_audio(self, filename: str):
+        # Load the MP3 file
+        audio = AudioSegment.from_mp3(filename)
+        # Play the audio file
+        play(audio)
 
     def start_transcription(self):
         self.setup_client()

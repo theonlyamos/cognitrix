@@ -33,10 +33,10 @@ class Session(BaseModel):
                 sessions[index] = self
                 session_exist = True
             
-            updated_sessions.append(session.model_dump())
+            updated_sessions.append(session.dict())
         
         if not session_exist:
-            updated_sessions.append(self.model_dump())
+            updated_sessions.append(self.dict())
             
         with open(SESSIONS_FILE, 'w') as file:
             json.dump(updated_sessions, file, indent=4)

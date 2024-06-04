@@ -346,6 +346,8 @@ Example 5 (Final Answer with Chain of Thought):
     "type": "final_answer",
     "result": "25 degrees Celsius is equivalent to 77 degrees Fahrenheit."
 }
+
+The only keys allowed in the json response are ["observervation", "tought", "type", "function", "arguments", "result"].
 """
 
 AUTONOMOUSE_AGENT_2_JSON_REMINDER = """

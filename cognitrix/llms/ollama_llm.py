@@ -1,9 +1,8 @@
-from openai import OpenAI as OpenAILLM
 from cognitrix.llms.base import LLM
-from cognitrix.tools.base import Tool
 from cognitrix.utils import image_to_base64
-from typing import Any, List, Optional
+from typing import Any, Optional
 from dotenv import load_dotenv
+from ollama import Client
 import logging
 import sys
 import os
@@ -17,29 +16,35 @@ logger = logging.getLogger('cognitrix.log')
 load_dotenv()
 
 
-class OpenAI(LLM):
-    """A class for interacting with the OpenAI API.
+class Ollama(LLM):
+    """A class for interacting with the Ollama API.
 
     Args:
-        model (str): The name of the OpenAI model to use
+        model (str): The name of the Local model to use
         temperature (float): The temperature to use when generating text
-        api_key (str): Your OpenAI API key
+        base_url (str): Base url of local llm server
         chat_history (list): Chat history
         max_tokens (int): The maximum number of tokens to generate in the completion
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
     
-    model: str = 'gpt-4o'
+    model: str = 'llama3'
     """model endpoint to use""" 
+    
+    vision_model: str = 'llava-phi3'
+    """vision model endpoint to use""" 
     
     temperature: float = 0.1
     """What sampling temperature to use.""" 
     
-    api_key: str = os.getenv('OPENAI_API_KEY', '')
-    """OpenAI API key""" 
+    api_key: str = 'not-needed'
+    """API key""" 
     
-    max_tokens: int = 4096
+    base_url: str = 'http://localhost:11434'
+    """Base url of local llm server"""
+    
+    max_tokens: int = 4048
     """The maximum number of tokens to generate in the completion.""" 
     
     chat_history: list[str] = []
@@ -50,9 +55,6 @@ class OpenAI(LLM):
     
     system_prompt: str = ""
     """System prompt to prepend to queries"""
-    
-    tools: List[Tool] = []
-    """Functions to call"""
     
     def format_query(self, message: dict[str, str]) -> list:
         """Formats a message for the Claude API.
@@ -72,33 +74,18 @@ class OpenAI(LLM):
             if fm['type'] == 'text':
                 messages.append({
                     "role": fm['role'].lower(),
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": fm['message']
-                        }
-                    ]
-                })
-            elif fm['type'] == 'image':
-                base64_image = image_to_base64(fm['image'])
-                messages.append({
-                    "role": fm['role'].lower(),
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "This is the result of the latest screenshot"
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
-                        }
-                    ]
+                    "content": fm['message']
                 })
             else:
-                print(fm)
-        
+                base64_image = image_to_base64(fm['image'])
+                self.model = self.vision_model
+                new_message = {
+                    "role": fm['role'].lower(),
+                    "content": "This is the result of the latest screenshot",
+                    "images": [base64_image]
+                }
+                messages.append(new_message)
+            
         return messages
 
     def __call__(self, query: dict, **kwds: dict)->Optional[str]:
@@ -111,21 +98,18 @@ class OpenAI(LLM):
         Returns:
             A string containing the generated response.
         """
-
-        client = OpenAILLM(api_key=self.api_key)
-        if self.base_url:
-            client.base_url = self.base_url
-            
+        
+        client = Client('http://localhost:11434')
+        
         formatted_messages = self.format_query(query)
         
-        response = client.chat.completions.create(
+        response = client.chat(
             model=self.model,
             messages=[
-                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": self.system_prompt},
                 *formatted_messages
             ],
-            temperature=self.temperature,
-            max_tokens=self.max_tokens
+            stream=False,
         )
-        
-        return response.choices[0].message.content
+        print(response)
+        return response['message']['content']                        #type: ignore

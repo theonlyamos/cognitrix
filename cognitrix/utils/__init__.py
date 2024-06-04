@@ -78,6 +78,53 @@ def tool_to_functions(tool: Tool) -> Dict:
     
     return tool_json
 
+import json
+import logging
+
+# def extract_json(content: str) -> dict | str:
+#     """
+#     Extract JSON content from a response string.
+
+#     Args:
+#         content (str): The response string to extract JSON from.
+
+#     Returns:
+#         dict|str: Extracted JSON as a dictionary if valid, otherwise the original string.
+#     """
+#     # Check if the content contains JSON-like structure
+#     if '{' not in content or '}' not in content:
+#         return content
+
+#     try:
+#         # Attempt to directly parse the content as JSON
+#         return json.loads(content)
+#     except json.JSONDecodeError:
+#         # If direct parsing fails, try to extract the JSON part
+#         start_index = content.find('{')
+#         end_index = content.rfind('}') + 1
+
+#         json_str = content[start_index:end_index]
+
+#         # Clean up the JSON string
+#         json_str = json_str.replace('\n', '').replace('\\n', '').replace("'", "\"")
+
+#         try:
+#             return json.loads(json_str)
+#         except json.JSONDecodeError:
+#             # Attempt to further clean and parse the JSON string
+#             try:
+#                 # Remove any trailing commas
+#                 json_str = json_str.rstrip(', ')
+#                 # Replace any invalid escape sequences
+#                 json_str = json_str.replace('\\"', '"').replace('\\\'', "'")
+#                 return json.loads(json_str)
+#             except json.JSONDecodeError:
+#                 return content
+#     except Exception as e:
+#         # Log the exception if needed
+#         logging.exception(e)
+#         return content
+
 def extract_json(content: str) -> dict | str:
         """
         Extract JSON content from a response string.
@@ -88,11 +135,15 @@ def extract_json(content: str) -> dict | str:
         Returns:
             dict|str: Result of the extraction.
         """
+        # print(rf"{content}")
         default_content = content
+        
+        if '{' not in content:
+            return content
         try:
-            if '{' not in content:
-                return content
-            
+            return json.loads(content)
+        except json.JSONDecodeError:
+
             start_index = content.find('{') + 1
             end_index = content.rfind('}')
 
@@ -119,27 +170,24 @@ def extract_json(content: str) -> dict | str:
                     a_mark = '"' if key.startswith("'") else "'"
                     key = key.replace(q_mark, '')
                     value = value.strip()
-                    # print(key, value)
                     
                     if not value.startswith('[') and not value.endswith('{'):
                         start_index = value.find('"') + 1
                         end_index = value.rfind('"')
                         value = value[start_index:end_index]
-                        value = value.replace('"', '\"')
-                        value = value.replace("'", "\'")
+                        # value = value.replace(a_mark, f'\{a_mark}').replace(q_mark, f"\{q_mark}")
                     else:
                         value = value.replace('\n', '')
-                        value = value.replace(q_mark, a_mark)
                         value = json.loads(value)
 
                     # If the value is a string, escape any double quotes
                     if isinstance(value, str):
-                        if value.startswith('"') and value.endswith('"'):
-                            quote_start = value.find('"')
-                            quote_end = value.rfind('"')
+                        if value.startswith(q_mark) and value.endswith(q_mark):
+                            quote_start = value.find(q_mark)
+                            quote_end = value.rfind(q_mark)
                             for i, char in enumerate(value):
-                                if char == '"' and (i != quote_start and i != quote_end):
-                                    value = value.replace('"', '\\"', 1)
+                                if char == q_mark and (i != quote_start and i != quote_end):
+                                    value = value.replace(q_mark, f'\\{q_mark}', 1)
                                 break
 
                     # Add the escaped pair to the list
@@ -148,4 +196,4 @@ def extract_json(content: str) -> dict | str:
             return dict(escaped_pairs)
         except Exception as e:
             # logging.exception(e)
-            return content
+            return default_content

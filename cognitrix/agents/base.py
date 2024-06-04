@@ -115,19 +115,21 @@ class Agent(BaseModel):
     def get_tool_by_name(self, name: str) -> Optional[Tool]:
         return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
 
-    async def process_response(self, response: str) -> Union[dict, str]:
+    async def process_response(self, response: str|dict) -> Union[dict, str]:
         # response = response.replace("'", '"')
-        response = response.replace('\\n', '')
-        response = response.replace("'", "\"")
-        # response = response.replace('"', '\\"')
-        response_data = extract_json(response)
+        response_data = response
+        if isinstance(response, str):
+            response = response.replace('\\n', '')
+            response = response.replace("'", "\"")
+            # response = response.replace('"', '\\"')
+            response_data = extract_json(response)
         
 
         try:
             if isinstance(response_data, dict):
-                final_result_keys = ['final_answer', 'function_call_result', 'respons']
+                # final_result_keys = ['final_answer', 'function_call_result', 'respons']
 
-                if response_data['type'].replace('\\', '') in final_result_keys:
+                if response_data['type'].replace('\\', '') != 'function_call':
                     return response_data['result']
 
                 tool = self.get_tool_by_name(response_data['function'])
@@ -251,16 +253,16 @@ class Agent(BaseModel):
             if isinstance(processsed_response, dict) and processsed_response['type'] == 'function_call_result':
                 query = processsed_response
             else:
-                print(f"\n{self.name}: {processsed_response}")
                 if isinstance(processsed_response, str):
                     transcriber.text_to_speech(processsed_response)
+                print(f"\n{self.name}: {processsed_response}")
 
 
     def start_audio(self, **kwargs):
         transcriber = Transcriber(on_message_callback=self.handle_transcription)  # Pass callback to Transcriber
         if transcriber.start_transcription():
             print("Audio transcription started.")
-            input("\n\nPress Enter to stop recording...\n\n")
+            input("\n\nPress Enter to quit...\n\n")
             transcriber.stop_transcription()
         else:
             print("Failed to start audio transcription.")
@@ -343,7 +345,7 @@ class Agent(BaseModel):
                 async with aiofiles.open(AGENTS_FILE, 'r') as file:
                     content = await file.read()
                     agents = json.loads(content) if content else []
-                    agents.append(new_agent.model_dump())
+                    agents.append(new_agent.dict()) 
 
                 async with aiofiles.open(AGENTS_FILE, 'w') as file:
                     await file.write(json.dumps(agents, indent=4))
@@ -409,7 +411,7 @@ class Agent(BaseModel):
             if agent.id == self.id:
                 agents[index] = self
             
-            updated_agents.append(agent.model_dump())
+            updated_agents.append(agent.dict())
         
         async with aiofiles.open(AGENTS_FILE, 'w') as file:
             await file.write(json.dumps(updated_agents, indent=4))
