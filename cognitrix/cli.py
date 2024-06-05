@@ -118,8 +118,16 @@ def start(args: Namespace):
             if args.provider:
                 assistant.llm = provider
             assistant.name = args.name
-            if args.load_all_tools:
+            if 'all' in args.load_tools:
                 assistant.tools = Tool.list_all_tools()
+            else:
+                tools = []
+                for cat in args.load_tools:
+                    loaded_tools = Tool.get_tools_by_category(cat.lower())
+                    tools.extend(loaded_tools)
+
+                assistant.tools = tools
+                
             
             assistant.format_system_prompt()
             asyncio.run(assistant.save())
@@ -149,7 +157,7 @@ def get_arguments():
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
     parser.add_argument('--tools', action='store_true', help='List all available tools')
-    parser.add_argument('--load-all-tools', action='store_true', help='Add all available tools to agent')
+    parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='general', help='Add tools by categories to agent')
     parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
     parser.add_argument('--api-base', type=str, default='', help='Set api base of selected llm. Set if using local llm.')

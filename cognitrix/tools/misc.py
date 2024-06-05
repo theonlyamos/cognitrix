@@ -32,7 +32,6 @@ logger = logging.getLogger('cognitrix.log')
 
 class Calculator(Tool):
     name: str = 'Calculator'
-    
     description: str =  """
         Useful for getting the result of a math expression.
         The input to this tool should be a valid mathematical expression that could be executed by a simple calculator.
@@ -54,6 +53,7 @@ class Calculator(Tool):
 
 class YoutubePlayer(Tool):
     name: str =  "Youtube Player"
+    category: str = "web"
     description: str =  """
     use this tool when you need to play a youtube video
     
@@ -89,6 +89,8 @@ class InternetBrowser(Tool):
     
     :param url: The url to visit
     """
+    category: str = "web"
+    
     def run(self, url: str):
         open_new_tab(url)
         
@@ -177,6 +179,7 @@ class InternetBrowser(Tool):
 
 class FSBrowser(Tool):
     name: str =  "File System Browser"
+    category: str = "system"
     home_path: str = os.path.expanduser('~')
     desktop_path: str = os.path.join(home_path, 'Desktop').replace('\\', '\\\\')
     documents_path: str = os.path.join(home_path, 'Documents').replace('\\', '\\\\') #type: ignore
@@ -311,7 +314,7 @@ class FSBrowser(Tool):
         
         return 'Delete operation successfull'
     
-@tool
+@tool(category='system')
 def take_screenshot():
     """Use this tool to take a screenshot of the screen.
     
@@ -329,7 +332,7 @@ def take_screenshot():
     
     return ['image', screenshot]
 
-@tool
+@tool(category='system')
 def text_input(text: str):
     """Use this tool to take make text inputs.
     Args:
@@ -352,7 +355,7 @@ def text_input(text: str):
     
     return 'Text input completed'
 
-@tool
+@tool(category='system')
 def key_press(key: str):
     """Use this tool to take make key presses.
     Args:
@@ -375,7 +378,7 @@ def key_press(key: str):
     
     return 'Keypress completed'
 
-@tool
+@tool(category='system')
 def hot_key(*hotkeys):
     """Use this tool to take make hot key presses.
     Args:
@@ -398,7 +401,7 @@ def hot_key(*hotkeys):
     
     return 'Keypress completed'
 
-@tool
+@tool(category='system')
 def mouse_click(x: int, y: int):
     """Use this tool to take make mouse clicks.
     Args:
@@ -422,7 +425,7 @@ def mouse_click(x: int, y: int):
     
     return 'Mouse Click completed'
 
-@tool
+@tool(category='system')
 def mouse_double_click(x: int, y: int):
     """Use this tool to take make mouse double clicks.
     Args:
@@ -446,7 +449,7 @@ def mouse_double_click(x: int, y: int):
     
     return 'Mouse double-click completed.'
 
-@tool
+@tool(category='system')
 def mouse_right_click(x: int, y: int):
     """Use this tool to take make mouse right clicks.
     Args:
@@ -503,7 +506,7 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
         }
     """
     
-    sub_agent: Optional[Agent]
+    sub_agent: Optional[Agent] = None
     
     loaded_tools: List[Tool] = []
     for t in tools:
@@ -559,7 +562,7 @@ def call_sub_agent(name: str, task: str, parent: Agent):
     
     return "Agent running"
 
-@tool
+@tool(category='web')
 def internet_search(query: str):
     """Use this to retrieve up-to-date information from the internet 
     and generate more accurate and informative responses.
@@ -619,7 +622,7 @@ def internet_search(query: str):
     
     return response
 
-@tool
+@tool(category='web')
 def web_scraper(url: str):
     """Use this tool to scrape websites when given a link url.
 

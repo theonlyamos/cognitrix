@@ -30,6 +30,7 @@ class PythonREPL(Tool):
     locals: Optional[Dict] = Field(default_factory=dict, alias="_locals")
     
     name: str = "Python REPL"
+    category: str = "system"
     description: str = """Use this tool to execute python code.
     
     :param code: the valid python code to execute

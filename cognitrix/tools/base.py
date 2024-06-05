@@ -19,6 +19,9 @@ class Tool(BaseModel):
     description: str
     """Description of what the tool does and how to use it"""
     
+    category: str = "general"
+    """Category of the tool. Used for grouping"""
+    
     class Config:
         arbitrary_types_allowed = True
     
@@ -39,6 +42,19 @@ class Tool(BaseModel):
             class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
             tools.extend(class_tools)
             return tools
+        except Exception as e:
+            logging.exception(e)
+            return []
+    
+    @staticmethod
+    def get_tools_by_category(category: str):
+        """Retrieve all tools by category"""
+        try:
+            module = __import__(__package__, fromlist=['__init__'])  # type: ignore
+            tools_by_category = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool) and f[1].category == category]
+            class_tools_by_category = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool'  and isinstance(f[1](), Tool) and f[1]().category == category]
+            tools_by_category.extend(class_tools_by_category)
+            return tools_by_category
         except Exception as e:
             logging.exception(e)
             return []
