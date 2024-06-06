@@ -29,20 +29,58 @@ def add_agent():
     sys.exit()
 
 def list_agents():
-    agents_str = "\nAvailable Agents:"
-    for index, agent in enumerate(asyncio.run(Agent.list_agents())):
-        agents_str += (f"\n[{index}] {agent.name}")                 #type: ignore
-    print(agents_str)
+    agents = asyncio.run(Agent.list_agents())
+    agent_names = [agent.name for agent in agents]
+    max_col = len(max(agent_names, key=len))
+    max_width = 10
+    max_col = max_col if max_col >= max_width else max_width
+    
+    print(max_col)
+    print("\nAvailable Agents:")
+    print(f" {'_'*((int(len(agents)/10)+5)+max_width+1)}")
+    print(f"| #{' '*(int(len(agents)/10))} | {'Agent Name'+' '*(max_col-max_width)} |")
+    print(f"|{'-'*(int(len(agents)/10)+3)}|-{'-'*(max_col)}-|")
+    for index, a in enumerate(agents):
+        padding = (len(str(index)))-int(len(agents)/10)
+        padding = padding if padding else padding + 2
+        print(f"| {str(index) + ' '*padding}| {a.name + ' '*(max_col-len(a.name))} |")
     
 def list_providers():
-    print("\nAvailable providers:")
-    for index, l in enumerate(LLM.list_llms()):
-        print(f"[{index}] {l}")
+    providers = LLM.list_llms()
+    provider_names = [p for p in providers]
+    max_col = len(max(provider_names, key=len))
+    max_width = 9
+    max_col = max_col if max_col >= max_width else max_width
+
+    print("\nAvailable Providers:")
+    print(f" {'_'*((int(len(providers)/10)+5)+max_width+1)}")
+    print(f"| #{' '*(int(len(providers)/10))} | {'Provider'+' '*(max_col-7)}|")
+    print(f"|{'-'*(int(len(providers)/10)+3)}|-{'-'*(max_col)}-|")
+    for index, p in enumerate(providers):
+        padding = (len(str(index)))-int(len(providers)/10)
+        padding = padding if padding else padding + 2
+        print(f"| {str(index) + ' '*padding}| {p + ' '*(max_col-len(p))} |")
+
         
-def list_tools():
+def list_tools(category='all'):
+    tools = []
+    if category == 'all':
+        tools = Tool.list_all_tools()
+    else:
+        tools = Tool.get_tools_by_category(category)
+    tool_names = [t.name for t in tools]
+    max_col = len(max(tool_names, key=len))
+    max_width = 13
+    max_col = max_col if max_col >= max_width else max_width
+
     print("\nAvailable Tools:")
-    for index, l in enumerate(Tool.list_all_tools()):
-        print(f"[{index}] {l.name}")
+    print(f" {'_'*((int(len(tools)/10)+5)+max_col+max_width+4)}")
+    print(f"| #{' '*(int(len(tools)/10))} | {'Tool Name'+' '*(max_col-9)} | {'Tool category'+' '*(max_width-13)} |")
+    print(f"|{'-'*(int(len(tools)/10)+3)}|-{'-'*(max_col)}-|-{'-'*(max_width)}-|")
+    for index, t in enumerate(tools):
+        padding = (len(str(index)))-int(len(tools)/10)
+        padding = padding if padding else padding + 2
+        print(f"| {str(index) + ' '*padding}| {t.name + ' '*(max_col-len(t.name))} | {t.category + ' '*(max_width-len(t.category))} |")
         
 def list_sessions():
     print("\nSaved Sessions:")
@@ -54,8 +92,19 @@ def manage_agents(args: Namespace):
     try:
         if args.new:
             add_agent()
-        elif args.list:
+        if args.list:
             list_agents()
+    except KeyboardInterrupt:
+        print()
+        sys.exit()
+    except Exception as e:
+        logging.exception(e)
+        sys.exit(1)
+        
+def manage_tools(args: Namespace):
+    try:
+        if args.list:
+            list_tools(args.list)
     except KeyboardInterrupt:
         print()
         sys.exit()
@@ -145,18 +194,20 @@ def get_arguments():
     agents_parser = subparsers.add_parser('agents', help="Manage agents")
     agents_parser.add_argument("name", type=str, nargs="?", help="Name of an agent to manage (details|update|remove)")  
     agents_parser.add_argument('--new', action='store_true', help='Create a new agent')
-    agents_parser.add_argument('--list', action='store_false', help='List all saved agents')
+    agents_parser.add_argument('-l', '--list', action='store_false', help='List all saved agents')
     agents_parser.add_argument('--update', action='store_true', help='Update an agent')
     agents_parser.add_argument('--remove', action='store_true', help='Delete an agent')
-    
     agents_parser.set_defaults(func=manage_agents)
+    
+    agents_parser = subparsers.add_parser('tools', help="Manage tools")
+    agents_parser.add_argument('-l', '--list', type=str, default='all', nargs='?', choices=['all', 'general', 'system', 'web'], help='List tools by category')
+    agents_parser.set_defaults(func=manage_tools)
 
     parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
     parser.add_argument('--provider', default='', help='Set llm provider to use')
     parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
-    parser.add_argument('--tools', action='store_true', help='List all available tools')
     parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='general', help='Add tools by categories to agent')
     parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')

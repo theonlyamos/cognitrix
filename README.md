@@ -1,77 +1,110 @@
-### Cognitrix
-Cognitrix is an open-source autonous AI agents orchestrator built in Python. It allows you to create and manage AI agents easily.
+# Cognitrix
 
-### Features
-- **`Agent Creation and Management`:** Create, list, and load AI agents with customizable names, tasks, and configurations.
-- **`LLM Integration`:** Seamlessly integrate with multiple LLM providers, including Anthropic (Claude), Cohere, Groq, Google, OpenAI, and Together.
-- **`Modular Architecture`:** Easily extend the framework by adding new tools, agents, and LLM integrations.
-- **`Conversational Interface`:** Interact with AI agents through a command-line interface, providing queries and receiving responses.
-- **`Tool Integration`:** Agents can utilize a variety of tools, such as calculators, web searches, file system browsers, and more.
-- **`Autonomous Agent Mode`:** Enable agents to operate autonomously, visually perceiving the screen, interacting with UI elements, and performing tasks.
-- **`Multimodal Support`:** Agents can handle both text and image inputs/outputs, enabling multimodal interactions.
+Cognitrix is an open-source autonomous AI agents orchestrator built in Python. It allows you to create and manage AI agents with ease and integrates seamlessly with large language models (LLMs) from various providers. 
 
-### Architecture
-Cognitrix's architecture is designed to be modular and extensible, with core components including:
+## Features
 
-1. **`Agents`:** The base Agent class and specialized classes like AIAssistant for creating and managing AI agents.
-2. **`LLMs`:** A collection of classes for integrating with various LLM providers, such as Cohere, OpenAI, Claude, and more.
-3. **`Tools`:** A set of tools that agents can utilize, including calculators, web searches, file system browsers, and more.
-4. **`Templates`:** Customizable prompt templates for guiding the behavior and output formats of LLMs.
+- **Agent Creation and Management:** Create, list, and load AI agents with customizable names, tasks, and configurations.
+- **LLM Integration:** Integrates with multiple LLM providers, including Anthropic (Claude), Cohere, Groq, Google, OpenAI, and Together.
+- **Modular Architecture:** Easily extensible, allowing the addition of new tools, agents, and LLM integrations.
+- **Conversational Interface:** Interact with AI agents through a command-line interface, providing queries and receiving responses.
+- **Tool Integration:** Agents can utilize a variety of tools, including calculators, web searches, file system browsers, and more.
+- **Autonomous Agent Mode:** Agents can operate autonomously, visually perceiving the screen, interacting with UI elements, and performing tasks.
+- **Multimodal Support:** Handles both text and image inputs/outputs, enabling multimodal interactions.
 
-The architecture is highly modular and extensible. New tools and capabilities can be easily added.
+## Architecture
 
-### Getting Started
+Cognitrix's architecture is designed to be highly modular and extensible:
 
-### Installation
+- **Agents:** The base `Agent` class and specialized classes like `AIAssistant` for creating and managing AI agents.
+- **LLMs:** A collection of classes for integrating with various LLM providers (Cohere, OpenAI, Claude, etc.).
+- **Tools:** A set of tools that agents can utilize. Each tool has a `category` attribute for grouping and management.
+- **Templates:** Customizable prompt templates guide the behavior and output formats of LLMs.
+
+More tools can be added by creating new classes that inherit from the `Tool` base class and specifying a unique `category`.
+
+## Installation
+
 ```bash
 pip install cognitrix
 ```
-or
+
+Alternatively, you can install directly from GitHub:
+
 ```bash
 pip install https://github.com/theonlyamos/cognitrix/archive/main.zip
 ```
 
-### Usage
-Run with default settings
+## Usage
+
+To run Cognitrix with default settings:
+
 ```bash
 cognitrix
 ```
 
-List supported providers
+To list supported LLM providers:
+
 ```bash
 cognitrix --providers
 ```
 
-Run with specific provider
-```bash
-cognitrix --provider <provider_name>
-```
+To list created agents:
 
-Create a new agent
-```bash
-cognitrix agents --new
-```
-
-List created agents
 ```bash
 cognitrix agents
 ```
 
-Run with specific agent
+To list available tools:
+
+```bash
+cognitrix --tools
+```
+
+To run Cognitrix with a specific provider:
+
+```bash
+cognitrix --provider <provider_name>
+```
+
+To run Cognitrix with a specific agent:
+
 ```bash
 cognitrix --agent <agent_name>
 ```
 
-Print help message
+To run Cognitrix with a category of tools:
+
+```bash
+cognitrix --load-tools "web"
+```
+
+To run Cognitrix with categories of tools:
+
+```bash
+cognitrix --load-tools "web,general"
+```
+
+To create a new agent:
+
+```bash
+cognitrix agents --new
+```
+
+For more options and usage details, use the help command:
+
 ```bash
 cognitrix --help
 ```
 
-### Contributing
-Cognitrix is open source and contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
+## Contributing
 
-### License
-This project is licensed under the MIT license. See [LICENSE.md](LICENSE.md) for more details.
+Cognitrix is open source and contributions are welcome! Please refer to [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute.
 
-### Acknowledgments
-Cognitrix was created by [Amos Amissah](https://github.com/theonlyamos) and is heavily inspired by projects like AutoGPT and GPT Engineer. Special thanks to the open-source community for their contributions and the AI companies providing LLM APIs.
+## License
+
+This project is licensed under the MIT license. See [LICENSE.md](LICENSE.md) for more information.
+
+## Acknowledgments
+
+Cognitrix was created by [Amos Amissah](https://github.com/theonlyamos) and is inspired by projects like AutoGPT and GPT Engineer. Special thanks to the open-source community and AI companies providing LLM APIs.
