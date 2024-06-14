@@ -106,11 +106,12 @@ class Local(LLM):
             A string containing the generated response.
         """
         
-        client = OpenAILLM(base_url=self.base_url, api_key=self.api_key)
+        if not self.client:
+            self.client = OpenAILLM(base_url=self.base_url, api_key=self.api_key)
         
         formatted_messages = self.format_query(query)
         
-        response = client.chat.completions.create(
+        response = self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": self.system_prompt},

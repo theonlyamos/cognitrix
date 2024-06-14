@@ -1,7 +1,6 @@
-from pathlib import Path
 import asyncio
 import aiofiles
-import json
+from pathlib import Path
 
 VERSION = '0.2.4'
 SPIRAL_WORKDIR = Path('~').expanduser() / '.cognitrix'

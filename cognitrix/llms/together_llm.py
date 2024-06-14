@@ -81,9 +81,12 @@ class Together(LLM):
         **kkwargs: Any,
     ) -> str:
         """Call to Together endpoint."""
+        if not self.client:
+            self.client = together
+            
+        self.client.api_key = self.api_key
         
-        together.api_key = self.api_key
-        output = together.Complete.create(
+        output = self.client.Complete.create(
             self.format_query(prompt),
             model=self.model,
             max_tokens=self.max_tokens,

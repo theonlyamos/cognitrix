@@ -1,4 +1,3 @@
-import asyncio
 import json
 import shutil
 from webbrowser import open_new_tab
@@ -9,7 +8,7 @@ from cognitrix.tools.tool import tool
 from cognitrix.agents import Agent
 from cognitrix.llms import LLM
 from cognitrix.utils import json_return_format
-from serpapi.google_search import GoogleSearch
+from tavily import TavilyClient
 from bs4 import BeautifulSoup
 from pydantic import Field
 from pathlib import Path
@@ -45,10 +44,10 @@ class Calculator(Tool):
         :param math_express: The math expression to evaluate
         """
     
-    def run(self, math_expression):
+    def run(self, math_expression: str):
         return eval(math_expression)
     
-    async def arun(self, math_expression):
+    async def arun(self, math_expression: str):
         return await eval(math_expression)
 
 class YoutubePlayer(Tool):
@@ -127,16 +126,29 @@ class InternetBrowser(Tool):
 #     Example:
 #     User: Get me the latest news on technology in the united states
 #     AI Assistant: {{
-#         "type": "function_call",
-#         "function": "World News",
-#         "arguments": ["latest news on technology", "technology", "US"]
+#         "type": "tool_calls",
+#         "tool_calls": [
+#           {
+#                "name": "World News",
+#                "arguments": {
+#                   "topic": "latest news on technology", 
+#                   "category": "technology", 
+#                   "country": "US"},
+#               }
+#         ]
 #     }}
     
 #     User: Get me news headlines from around the world
 #     AI Assistant: {{
-#         "type": "function_call",
-#         "function": "World News",
-#         "arguments": ["news headlines around the world", "general"]
+#         "type": "tool_calls",
+#         "tool_calls": [
+#           {
+#                "name": "World News",
+#                "arguments": {
+#                   "topic": "news headlines around the world", 
+#                   "category": "general"
+#               }
+#         ]
 #     }}
 #     """
 #     def run(self, topic: Optional[str] = None, category: Optional[str] = 'general', country: Optional[str] = 'world'):
@@ -183,7 +195,7 @@ class FSBrowser(Tool):
     home_path: str = os.path.expanduser('~')
     desktop_path: str = os.path.join(home_path, 'Desktop').replace('\\', '\\\\')
     documents_path: str = os.path.join(home_path, 'Documents').replace('\\', '\\\\') #type: ignore
-    description: str =  f"""use this tool when you need to perform
+    description: str =  """use this tool when you need to perform
     file system operations like listing of directories,
     opening a file, creating a file, updating a file,
     reading from a file or deleting a file.
@@ -191,11 +203,11 @@ class FSBrowser(Tool):
     This tool is for file reads and file writes
     actions.
     
-    {sys.platform} is the platform.
-    {home_path} is the home path.
+    platform is the platform.
+    home_path is the home path.
     
     The operation to perform should be in this 
-    list:- ['open', 'list', 'create', 
+    list:- ['open', 'list', 'create', "mkdir", 
     'read', 'write', 'delete', 'execute'].
     
     The path should always be converted to absolute
@@ -207,39 +219,64 @@ class FSBrowser(Tool):
     
     Example:
     User: create test.py on Desktop.
-    AI Assistant: {{
-        "type": "function_call",
-        "function": "File System Browser",
-        "arguments": ["{desktop_path}", "create", "test.py", "gibberish"]
-    }}
+    AI Assistant: {
+        "type": "tool_calls",
+        "tool_calls": [{
+            "name": "File System Browser",
+            "arguments": {
+                "path": "desktop_path",
+                "operation": "create",
+                "filename": "test.py",
+                "content": "gibberish"
+            }
+        }] 
+    }
     
     User: write new content to test.py on Desktop.
-    AI Assistant: {{
-        "type": "function_call",
-        "function": "File System Browser",
-        "arguments": ["{desktop_path}", "write", "gibberish"]
-    }}
+    AI Assistant: {
+        "type": "tool_calls",
+        "tool_calls": [{
+            "name": "File System Browser",
+            "arguments": {
+                "path": "desktop_path",
+                "operation": "write",
+                "filename": "test.py",
+                "content": "gibberish"
+            }
+        }]
+    }
     
     User: create folder called NewApp on Desktop.
-    AI Assistant: {{
-        "type": "function_call",
-        "function": "File System Browser",
-        "arguments": ["{desktop_path}", "create", "NewApp"]
-    }}
+    AI Assistant: {
+        "type": "tool_calls",
+        "tool_calls": [{
+            "name": "File System Browser",
+            "arguments": {
+                "path": "desktop_path",
+                "operation": "mkdir",
+                "filename": "NewApp",
+            }
+        }]
+    }
     
     User: How many files are in my documents.
-    AI Assistant: {{
-        "type": "function_call",
-        "function": "File System Browser",
-        "arguments": ["{documents_path}", "list"]
-    }}
+    AI Assistant: {
+        "type": "tool_calls",
+        "tool_calls": [{
+            "name": "File System Browser",
+            "arguments": {
+                "path": "documents_path",
+                "operation": "list",
+            }
+        }]
+    }
     
     
     :param path: The specific path (realpath)
     :param operation: The operation to perform
     :param filename: (Optional) Name of file or folder to create
     :param content: (Optional) Content to write to file
-    """
+    """.replace("platform", sys.platform).replace('home_path', home_path).replace('desktop_path', desktop_path).replace('documents_path', documents_path)
     
     def run(self, path: str | Path, operation: str, filename: Optional[str] = None, content: Optional[str] = None):
         try:
@@ -248,6 +285,7 @@ class FSBrowser(Tool):
                 'open': self.execute,
                 'list': self.listdir,
                 'create': self.create_path,
+                'mkdir': self.mkdir,
                 'read': self.read_path,
                 # 'create': self.write_file,
                 'write': self.write_file,
@@ -285,7 +323,12 @@ class FSBrowser(Tool):
             with full_path.open('wt') as file:
                 if content:
                     file.write(content)
-        else: 
+        
+        return 'Operation done'
+    
+    def mkdir(self, path: Path, filename: Optional[str]):
+        full_path = path.joinpath(filename) if filename else path
+        if not full_path.is_dir() and full_path.exists():
             full_path.mkdir()
         
         return 'Operation done'
@@ -323,8 +366,8 @@ def take_screenshot():
         AI Assistant: {
             "observation": "I need to take a screenshot of the user's screen.",
             "thought": "Step 1) To take a screenshot, I need to use the Take Screenshot tool.  Step 2) Calling the Take Screenshot tool.",
-            "type": "function_call",
-            "function": "Take Screenshot",
+            "type": "tool_calls",
+            "tool_calls": [{}]: "Take Screenshot",
             "arguments": []
         }
     """
@@ -346,8 +389,8 @@ def text_input(text: str):
         AI Assistant: {
             "observation": "I need to input text on the computer using the keyboard.",
             "thought": "Step 1) To perform this action, I will need to use the Text Input tool. Step 2) The Text Input function takes one argument: text (a string representing the text to input). Step 2) Calling the Text Input function with argument: 'hello world'.",
-            "type": "function_call",
-            "function": "Text Input",
+            "type": "tool_calls",
+            "tool_calls": [{}]: "Text Input",
             "arguments": ["hello world"]
         }
     """
@@ -369,8 +412,8 @@ def key_press(key: str):
         AI Assistant: {
             "observation": "I need to perform a single key press on the computer.",
             "thought": "Step 1) This action requires the usage of the Key Press tool. Step 2) The Key Press tool takes one argument: key (a string representing the name of the key to press). Step 3) Calling the Key Press tool with argument: 'win'.",
-            "type": "function_call",
-            "function": "Key Press",
+            "type": "tool_calls",
+            "tool_calls": [{}]: "Key Press",
             "arguments": ["win"]
         }
     """
@@ -379,7 +422,7 @@ def key_press(key: str):
     return 'Keypress completed'
 
 @tool(category='system')
-def hot_key(*hotkeys):
+def hot_key(hotkeys: list):
     """Use this tool to take make hot key presses.
     Args:
         hotkeys (list): list of keys to press together.
@@ -392,8 +435,8 @@ def hot_key(*hotkeys):
         AI Assistant: {
             "observation": "I need to perform a paste action using hotkey combination on the computer.",
             "thought": "Step 1) I need to use the Hot Key tool to perform this action. Step 2) The Hot Key tool takes a variable number of arguments (*hotkeys), which should be a list of keys to press together as a hotkey combination. Step 3) Calling the Hot Key tool with list of keys to press together.",
-            "type": "function_call",
-            "function": "Hot Key",
+            "type": "tool_calls",
+            "tool_calls": [{}]: "Hot Key",
             "arguments": ["ctrl", "v"]
         }
     """
@@ -416,8 +459,8 @@ def mouse_click(x: int, y: int):
         AI Assistant: {
             "observation": "I need to perform a mouse click at specific coordinates on the screen.",
             "thought": "Step 1) To perform the mouse-click, I need to use the Mouse Click tool. Step 2) The Mouse Click tool takes two arguments: x (the x-coordinate of the mouse click) and y (the y-coordinate of the mouse click). Step 3) Calling the Mouse Click tool with the x,y coordinates",
-            "type": "function_call",
-            "function": "Mouse Click",
+            "type": "tool_calls",
+            "tool_calls": [{}]: "Mouse Click",
             "arguments": ["123", "456"]
         }
     """
@@ -440,8 +483,8 @@ def mouse_double_click(x: int, y: int):
         AI Assistant: {
             "observation": "I need to perform a mouse double-click at specific coordinates on the screen.",
             "thought": "Step 1) To perform the mouse double-click, I need to use the Mouse Double Click tool. Step 2) The Mouse Double Click tool takes two arguments: x (the x-coordinate of the mouse click) and y (the y-coordinate of the mouse click). Step 3) Calling the Mouse Double Click tool with the x,y coordinates",
-            "type": "function_call",
-            "function": "Mouse Double Click",
+            "type": "tool_calls",
+            "tool_calls": [{}]: "Mouse Double Click",
             "arguments": ["123", "456"]
         }
     """
@@ -464,8 +507,8 @@ def mouse_right_click(x: int, y: int):
         AI Assistant: {
             "observation": "I need to perform a mouse right-click at specific coordinates on the screen.",
             "thought": "Step 1) To perform the mouse right-click, I need to use the Mouse Right Click tool. Step 2) The Mouse Click tool takes two arguments: x (the x-coordinate of the mouse click) and y (the y-coordinate of the mouse click). Step 3) Calling the Mouse Right Click tool with the x,y coordinates",
-            "type": "function_call",
-            "function": "Mouse Right Click",
+            "type": "tool_calls",
+            "tool_calls": [{}]: "Mouse Right Click",
             "arguments": ["123", "456"]
         }
     """
@@ -473,15 +516,15 @@ def mouse_right_click(x: int, y: int):
     
     return 'Mouse double-click completed.'
 
-@tool
+@tool(category='system')
 async def create_sub_agent(name: str, llm: str, description: str, tools: List[str], parent: Agent):
     """Use this tool to create sub agents for specific tasks.
     
     Args:
-        name (str) - The name of the agent
-        llm (str) - The name of the llm to use. Select from [openai, google, anthropic, groq, together, clarifai].
-        description (str) - Prompt describing the agent's role and functionalities. Should include the agent's role, capabilities and any other info the agent needs to be able to complete it's task. Be as thorough as possible.
-        tools (list) - Tools the agent needs to complete it's tasks if any.
+        name (str): The name of the agent
+        llm (str): The name of the llm to use. Select from [openai, google, anthropic, groq, together, clarifai].
+        description (str): Prompt describing the agent's role and functionalities. Should include the agent's role, capabilities and any other info the agent needs to be able to complete it's task. Be as thorough as possible.
+        tools (list): Tools the agent needs to complete it's tasks if any.
     
     Returns:
         str: A message indicating whether the the sub agent was created or not.
@@ -491,8 +534,8 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
         AI Assistant: {
             "observation": "The user has requested me to create a sub-agent for a specific task.",
             "thought": "Step 1) To create the sub agent, I need to use the Create Sub Agent Tool. Step 2) The Create Sub Agent tool takes five arguments: name (the name of the sub-agent), description (a prompt describing the agent's role and capabilities), task (an optional brief description of the task), llm (the name of the language model to use), and autostart (a boolean indicating whether the agent should immediately run its task). Step 3) Calling the Create Sub Agent Tool with required arguments.",
-            "type": "function_call",
-            "function": "Create Sub Agent",
+            "type": "tool_calls",
+            "tool_calls": [{}]: "Create Sub Agent",
             "arguments": ["<agent_name>", "<llm>", "<agent_prompt>", []]
         }
         
@@ -500,8 +543,8 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
         AI Assistant: {
             "observation": "The user has requested me to create the classic Snake game in Python.",
             "thought": "Step 1) To create the Snake game in Python, I will need to create a specialized sub-agent called 'CodeWizard' with expertise in Python programming. Step 2) I will provide the CodeWizard agent with the instructions to write the code for the Snake game in Python, following the specified return format. Step 3) I will delegate the task of writing the Python code for the Snake game to the CodeWizard agent.",
-            "type": "function_call",
-            "function": "Create Sub Agent",
+            "type": "tool_calls",
+            "tool_calls": [{}]: "Create Sub Agent",
             "arguments": ["CodeWizard", "gemini", "You are a skilled Python programmer tasked with creating the classic Snake game. Your role is to write clean, efficient, and well-documented code that implements the game's logic, user interface, and any additional features you deem necessary. You should follow best practices for software development and ensure your code is modular, readable, and maintainable.", ["File System Browser", "Call Sub Agent"]]
         }
     """
@@ -539,7 +582,7 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
     
     return "Error creating sub agent"
 
-@tool
+@tool(category='system')
 def call_sub_agent(name: str, task: str, parent: Agent):
     """Run a task with a sub agent
     
@@ -553,8 +596,8 @@ def call_sub_agent(name: str, task: str, parent: Agent):
         AI Assistant: {
             "observation": "I need to run a task with a sub-agent.",
             "thought": "Step 1) This can be accomplished by using the Call Sub Agent Tool. Step 2) The Call Sub Agent tool takes two arguments: name (the name of the sub-agent to call) and task (the task or query for the sub-agent to perform or answer). Step 3) Calling the Call Sub Agent tool with required arguments",
-            "type": "function_call",
-            "function": "Call Sub Agent",
+            "type": "tool_calls",
+            "tool_calls": [{}]: "Call Sub Agent",
             "arguments": ["CodeWizard", "Write the code for the Snake game in Python."]
         }
     """
@@ -563,7 +606,7 @@ def call_sub_agent(name: str, task: str, parent: Agent):
     return "Agent running"
 
 @tool(category='web')
-def internet_search(query: str):
+def internet_search(query: str, search_depth: str = "basic"):
     """Use this to retrieve up-to-date information from the internet 
     and generate more accurate and informative responses.
     
@@ -573,52 +616,21 @@ def internet_search(query: str):
     
     Args:
         query (str): The query to search for.
+        search_depth (str, optional): The search depth. Accepts "basic" or "advanced". Defaults to "basic".
     
     Example:
         User: who is the president of the United States?
         AI Assistant: {
             "observation": "I need to search the internet for information about the president of the United States.",
             "thought": "Step 1) To do an internet search, I need to use the Internet Search tool. Step 2) The Internet Search tool takes one argument: query (the topic to search for).  Step 3) Calling the Take Screenshot tool with the provided arguments.",
-            "type": "function_call",
-            "function": "Internet Search",
-            "arguments": ["who is the president of the United States?"]
+            "type": "tool_calls",
+            "tool_calls": [{"name": "Internet Search", "arguments": {"query": "who is the president of the United States?"}}]
         }
     """
     
-    res = GoogleSearch({"q": query, "serp_api_key": os.getenv('SERPA_API_KEY', '')}).get_dict()
-
-    toret: Union[str, List] = []
-    if "error" in res.keys():
-        raise ValueError(f"Got error from SerpAPI: {res['error']}")
-
-    if "answer_box" in res.keys():
-        toret.append({'answer_box': res['answer_box']})
-
-    if "sports_results" in res.keys():
-        toret.append({'sports_results': res['sports_results']})
+    tavily = TavilyClient(api_key=os.getenv('TAVILY_API_KEY', ''))
     
-    if "shopping_results" in res.keys():
-        toret.append({'shopping_results': res['shopping_results']})
-    
-    if "knowledge_graph" in res.keys():
-        toret.append({'knowledge_graph': res['knowledge_graph']})
-    
-    if "organic_results" in res.keys():
-        toret.append({'organic_results': res['organic_results']})
-    
-    if "images_results" in res.keys():
-        thumbnails = [item["thumbnail"] for item in res["images_results"][:10]]
-        toret.append({'images_results': thumbnails})
-    
-    response = 'The result of the search are below:\n'
-    response += json.dumps(toret)
-    response += """\nTo get a more comprehensive result, always scrape some of the
-    links returned by the search tool to get relevant facts 
-    from multiple sources.
-    
-    Follow these steps:
-    2. Scrape the top search results one by one to extract relevant facts from multiple sources.
-    3. Compile the results for the user."""
+    response = tavily.get_search_context(query, search_depth, max_tokens=500)
     
     return response
 
@@ -637,8 +649,8 @@ def web_scraper(url: str):
         AI Assistant: {
             "observation": "The user has requested to scrape a website.",
             "thought": "Step 1) To scrape a website, I need to use the Web Scraper tool. Step 2) The Web Scraper tool takes one argument: url (the URL of the website to scrape). Step 3) Calling the Web Scraper tool with the provided URL.",
-            "type": "function_call",
-            "function": "Web Scraper",
+            "type": "tool_calls",
+            "tool_calls": [{}]: "Web Scraper",
             "arguments": ["https://example.com"]
         }
     """

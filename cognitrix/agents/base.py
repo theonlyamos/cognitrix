@@ -1,14 +1,13 @@
 import inspect
 import json
-import sys
 import uuid
 import asyncio
 import logging
 import aiofiles
 from pathlib import Path
 from threading import Thread
-from typing import List, Optional, Self, TypeAlias, Union, Type, Any
-from dataclasses import dataclass
+from datetime import datetime
+from typing import Dict, List, Optional, Self, TypeAlias, Union, Type, Any
 
 from pydantic import BaseModel, Field
 
@@ -27,43 +26,112 @@ AgentList: TypeAlias = List['Agent']
 
 class Agent(BaseModel):
     name: str = Field(default='Agent')
+    """Name of the agent"""
+    
     llm: LLM
+    """LLM Provider to use for the agent"""
+    
     tools: List[Tool] = Field(default_factory=list)
+    """List of tools to be use by the agent"""
+    
     prompt_template: str = Field(default=AUTONOMOUSE_AGENT_2)
+    """Agent's prompt template"""
+    
     verbose: bool = Field(default=False)
+    """Set agent verbosity"""
+    
     sub_agents: AgentList = Field(default_factory=list)
+    """List of sub agents which can be called by this agent"""
+    
     task: Optional[Task] = None
+    """The task to be completed by the agent"""
+    
     is_sub_agent: bool = Field(default=False)
+    """Whether this agent is a sub agent for another agent"""
+    
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    """Unique id for the agent"""
+    
     parent_id: Optional[str] = None
+    """Id of this agent's parent agent (if it's a sub agent)"""
+    
     autostart: bool = False
+    """Whether the agent should start running as soon as it's created"""
 
     @property
     def available_tools(self) -> List[str]:
         return [tool.name for tool in self.tools]
+    
+    def format_tools_for_llm(self):
+        TYPE_HINTS = {
+            "<class 'int'>": 'integer',
+            "<class 'str'>": 'string',
+            "<class 'float'>": 'float',
+            "<class 'dict'>": 'object',
+            "<class 'list'>": 'array',
+            "typing.Dict": 'object',
+            "typing.List": 'array',
+            "typing.Optional[int]": 'integer',
+            "typing.Optional[str]": 'integer',
+            "typing.Optional[float]": 'float',
+        }
+        llm_tools: list[dict[str, Any]] = []
+        classes = []
+        for tool in self.tools:
+            tool_parameters = tool.parameters
+            if not tool_parameters:
+                func_signatures = inspect.signature(tool.run)
+                tool_parameters = func_signatures.parameters
+            
+            parameters = tool_parameters.keys()
+            tool_details = {
+                'tool': tool,
+                'name': tool.name,
+                'description': tool.description,
+                'parameters': {},
+                'required': []
+            }
+
+            if not 'args' in parameters:
+                tool_details['parameters'] = {name: TYPE_HINTS.get(str(param.annotation), 'string') for name, param in tool_parameters.items()}
+                tool_details['required'] = [name for name, param in tool_parameters.items() if param.default is inspect._empty]
+            
+            llm_tools.append(tool_details)
+
+        self.llm.format_tools(llm_tools)
 
     def format_system_prompt(self):
         tools_str = self._format_tools_string()
         subagents_str = self._format_subagents_string()
         llms_str = self._format_llms_string()
 
-        prompt = self.prompt_template
+        today = (datetime.now()).strftime("%a %b %d %Y") 
+        prompt = f"Today is {today}.\n\n"
+        prompt += self.prompt_template
         prompt = prompt.replace("{name}", self.name)
+        
+        # if not self.llm.supports_tool_use:
         prompt = prompt.replace("{tools}", tools_str)
         prompt = prompt.replace("{subagents}", subagents_str)
+        
+        # if not self.llm.supports_tool_use:
         prompt = prompt.replace("{available_tools}", json.dumps(self.available_tools))
         prompt = prompt.replace("{llms}", llms_str)
         prompt = prompt.replace("{return_format}", json_return_format)
 
         if 'json' not in prompt.lower():
             prompt += f"\n{json_return_format}"
-        
+
         self.llm.system_prompt = prompt
+        
+        self.format_tools_for_llm()
 
     def _format_tools_string(self) -> str:
         return "You have access to the following Tools:\n" + "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
 
     def _format_subagents_string(self) -> str:
+        if not len(self.sub_agents):
+            return ''
         subagents_str = "Available Subagents:\n"
         subagents_str += "\n".join([f"-- {agent.name}: {agent.task.description}" for agent in self.sub_agents if agent.task])
         subagents_str += "\nYou should always use a subagent for a task if there is one specifically created for that task."
@@ -83,6 +151,7 @@ class Agent(BaseModel):
             if self.is_sub_agent:
                 print("=======is sub agent===========")
                 print(processed_query)
+
             result = processed_query['result']
             if isinstance(result, list):
                 if result[0] == 'image':
@@ -116,48 +185,53 @@ class Agent(BaseModel):
         return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
 
     async def process_response(self, response: str|dict) -> Union[dict, str]:
+        # print(response)
         # response = response.replace("'", '"')
         response_data = response
         if isinstance(response, str):
             response = response.replace('\\n', '')
-            response = response.replace("'", "\"")
+            # response = response.replace("'", "\""
             # response = response.replace('"', '\\"')
             response_data = extract_json(response)
         
 
         try:
             if isinstance(response_data, dict):
-                # final_result_keys = ['final_answer', 'function_call_result', 'respons']
-
-                if response_data['type'].replace('\\', '') != 'function_call':
+                # final_result_keys = ['final_answer', 'tool_calls_result', 'response']
+                
+                tool_calls_result = []
+                
+                if response_data['type'].replace('\\', '') != 'tool_calls':
                     return response_data['result']
 
-                tool = self.get_tool_by_name(response_data['function'])
-                if isinstance(response_data['arguments'], dict):
-                    response_data['arguments'] = list(response_data['arguments'].values())
-
-                if response_data['function'].lower() == 'create agents':
-                    response_data['arguments'] = [*response_data['arguments'], self.id]
-
-                if not tool:
-                    raise Exception(f"Tool {response_data['function']} not found")
-
-                print(f"\nRunning tool '{tool.name.title()}' with parameters: {response_data['arguments']}")
-
-                if 'sub agent' in tool.name.lower():
-                    response_data['arguments'].append(self)
+                for t in response_data['tool_calls']:
+                    tool = self.get_tool_by_name(t['name'])
                     
-                if tool.name.lower() == 'create sub agent':
-                    result = await tool.arun(*response_data['arguments'])
-                else:
-                    result = tool.run(*response_data['arguments'])
+                    if not tool:
+                        print(f"Tool '{t['name']}' not found")
+                        raise Exception(f"Tool '{t['name']}' not found")
+                    
+                    print(f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}")
 
-                response_json = {
-                    'type': 'function_call_result',
-                    'result': result
+                    if 'sub agent' in tool.name.lower():
+                        t['arguments']['parent'] = self
+                        
+                    if tool.name.lower() == 'create sub agent':
+                        result = await tool.arun(*t['arguments'])
+                    else:
+                        result = tool.run(**t['arguments'])
+
+                    tool_calls_result.append({
+                        'tool_call_id': t['name'],
+                        'role': 'tool',
+                        'name': tool.name,
+                        'content': result
+                    })
+                
+                return {
+                    'type': 'tool_calls_result',
+                    'result': f"The results of the tool_calls are {json.dumps(tool_calls_result)}"
                 }
-
-                return response_json
             else:
                 raise Exception('Not a json object')
         except Exception as e:
@@ -215,7 +289,7 @@ class Agent(BaseModel):
 
                 result: dict[Any, Any] | str = asyncio.run(self.process_response(response))
 
-                if isinstance(result, dict) and result['type'] == 'function_call_result':
+                if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                     query = result
                 else:
                     print(f"\n{self.name}: {result}")
@@ -250,7 +324,7 @@ class Agent(BaseModel):
 
             processsed_response: dict[Any, Any] | str = asyncio.run(self.process_response(response))
 
-            if isinstance(processsed_response, dict) and processsed_response['type'] == 'function_call_result':
+            if isinstance(processsed_response, dict) and processsed_response['type'] == 'tool_calls_result':
                 query = processsed_response
             else:
                 if isinstance(processsed_response, str):
@@ -288,7 +362,7 @@ class Agent(BaseModel):
                 print(response)
                 
             agent_result = asyncio.run(self.process_response(response))
-            if isinstance(agent_result, dict) and agent_result['type'] == 'function_call_result':
+            if isinstance(agent_result, dict) and agent_result['type'] == 'tool_calls_result':
                 query = agent_result
             else:
                 print(f"\n--{self.name}: {agent_result}")

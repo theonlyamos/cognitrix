@@ -3,6 +3,7 @@ from cognitrix.llms.base import LLM
 from typing import Any, Optional
 from dotenv import load_dotenv
 import logging
+import json
 import sys
 import os
 import ast
@@ -23,7 +24,7 @@ class Clarifai(LLM):
         temperature: The temperature to use when generating text.
         api_key: Your Clarifai Personal Access Token.
     """
-    model: str = "https://clarifai.com/mistralai/completion/models/mixtral-8x7B-Instruct-v0_1"
+    model: str = "https://clarifai.com/anthropic/completion/models/claude-3-opus"
     """model endpoint to use""" 
     
     temperature: float = 0.1
@@ -45,10 +46,13 @@ class Clarifai(LLM):
         Returns:
         A string containing the generated response.
         """
-
-        client = Model(url=self.model)
-        query = f"<s> [INST] {query} [/INST]"
-        result = client.predict_by_bytes(query.encode(), input_type="text")
+        if not self.client:
+            self.client = Model(url=self.model)
+            
+        formatted_messages = self.format_query(query)
+            
+        query = f"{self.system_prompt}\n {json.dumps(formatted_messages)}"
+        result = self.client.predict_by_bytes(query.encode(), input_type="text")
             
         return result.outputs[0].data.text.raw
     

@@ -27,7 +27,7 @@ class Cohere(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    model: str = 'command-nightly'
+    model: str = 'command-r-plus'
     """model endpoint to use""" 
     
     temperature: float = 0.1
@@ -35,6 +35,24 @@ class Cohere(LLM):
     
     api_key: str = os.getenv('CO_API_KEY', '')
     """Cohere API key""" 
+    
+    supports_tool_use: bool = False
+    
+    def format_tools(self, tools: list[dict[str, Any]]):
+        """Format tools for the groq sdk"""
+        for tool in tools:
+            f_tool = {
+                "name": tool['name'],
+                "description": tool['description'],
+                "parameter_definitions": {}
+            }
+            for key, value in tool['parameters'].items():
+                f_tool['parameter_definitions'][key] = {
+                    'type': value,
+                    'required': (key in tool['required'])
+                }
+            
+            self.tools.append(f_tool)
 
     def __call__(self, query, **kwds: Any)->str:
         """Generates a response to a query using the Cohere API.
@@ -47,15 +65,16 @@ class Cohere(LLM):
         A string containing the generated response.
         """
         
-        client = cohere.Client(api_key=self.api_key)
-        response = client.chat( 
+        if not self.client:
+            self.client = cohere.Client(api_key=self.api_key)
+            
+        response = self.client.chat( 
             model=self.model,
             message=query['message'],
             temperature=self.temperature,
+            preamble_override=self.system_prompt, # type: ignore
             chat_history=self.chat_history,
-            preamble_override=self.system_prompt,
             prompt_truncation='auto',
-            stream=False,
             citation_quality='accurate',
             connectors=[{"id": "web-search"}]
         )

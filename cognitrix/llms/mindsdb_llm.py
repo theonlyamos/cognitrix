@@ -23,11 +23,12 @@ class MindsDB(OpenAI):
             A string containing the generated response.
         """
 
-        client = OpenAILLM(api_key=self.api_key, base_url=self.base_url)
+        if not self.client:
+            self.client = OpenAILLM(api_key=self.api_key, base_url=self.base_url)
             
         formatted_messages = self.format_query(query)
         
-        response = client.chat.completions.create(
+        response = self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "user", "content": self.system_prompt},

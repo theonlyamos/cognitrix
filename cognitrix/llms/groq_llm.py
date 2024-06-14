@@ -43,6 +43,9 @@ class Groq(LLM):
     system_prompt: str = ""
     """System prompt to prepend to queries"""
     
+    max_tokens: int = 4096
+    """Maximum output tokens"""
+    
     def format_query(self, message: dict[str, str]) -> list:
         """Formats a message for the Claude API.
 
@@ -58,12 +61,16 @@ class Groq(LLM):
         messages = []
         
         for fm in formatted_message:
+            # if isinstance(fm['message'], list):
+            #     for msg in fm['message']:
+            #         messages.append(msg)
+            
             if fm['type'] == 'text':
                 messages.append({
                     "role": fm['role'].lower(),
                     "content": fm['message']
                 })
-            
+        
         return messages
 
 
@@ -78,10 +85,12 @@ class Groq(LLM):
         A string containing the generated response.
         """
 
-        client = GroqLLM(api_key=self.api_key)
+        if not self.client:
+            self.client = GroqLLM(api_key=self.api_key)
+            
         formatted_messages = self.format_query(query)
         
-        response = client.chat.completions.create(
+        response = self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": self.system_prompt},
@@ -90,9 +99,15 @@ class Groq(LLM):
             temperature=self.temperature,
             top_p=1,
             stop=None,
+            # tools=self.tools,  # type: ignore
+            # tool_choice="auto", # type: ignore
+            max_tokens=self.max_tokens
         )
-            
-        return response.choices[0].message.content              #type: ignore
+        response_message = response.choices[0].message
+        # tool_calls = response_message.tool_calls
+        # print(tool_calls)
+ 
+        return response_message.content
     
 if __name__ == "__main__":
     try:

@@ -99,11 +99,12 @@ class Ollama(LLM):
             A string containing the generated response.
         """
         
-        client = Client('http://localhost:11434')
+        if not self.client:
+            self.client = Client('http://localhost:11434')
         
         formatted_messages = self.format_query(query)
         
-        response = client.chat(
+        response = self.client.chat(
             model=self.model,
             messages=[
                 {"role": "user", "content": self.system_prompt},

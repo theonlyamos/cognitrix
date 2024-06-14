@@ -51,9 +51,6 @@ class OpenAI(LLM):
     system_prompt: str = ""
     """System prompt to prepend to queries"""
     
-    tools: List[Tool] = []
-    """Functions to call"""
-    
     def format_query(self, message: dict[str, str]) -> list:
         """Formats a message for the Claude API.
 
@@ -112,20 +109,27 @@ class OpenAI(LLM):
             A string containing the generated response.
         """
 
-        client = OpenAILLM(api_key=self.api_key)
+        if not self.client:
+            self.client = OpenAILLM(api_key=self.api_key)
+        
         if self.base_url:
-            client.base_url = self.base_url
+            self.client.base_url = self.base_url
             
         formatted_messages = self.format_query(query)
-        
-        response = client.chat.completions.create(
+        print(self.tools[0]['function']['name'])
+        response = self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": self.system_prompt},
                 *formatted_messages
             ],
             temperature=self.temperature,
+            tools=self.tools, # type: ignore
+            tool_choice='auto',
             max_tokens=self.max_tokens
         )
-        
-        return response.choices[0].message.content
+        response_message = response.choices[0].message
+        tool_calls = response_message.tool_calls
+        print(tool_calls)
+ 
+        return response_message.content

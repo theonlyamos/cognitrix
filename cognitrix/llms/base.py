@@ -1,9 +1,10 @@
 import json
 from pydantic import BaseModel, Field
-from typing import List, Dict
+from typing import Any, List, Dict
 import logging
 import inspect
 
+from cognitrix.utils import image_to_base64
 from cognitrix.tools.base import Tool
 
 logging.basicConfig(
@@ -57,12 +58,86 @@ class LLM(BaseModel):
     chat_history: List[Dict[str, str]] = []
     """Chat history stored as a list of responses"""
     
-    tools: List[Tool] = []
-    """Functions calling tools"""
+    tools: List[Dict] = []
+    """Functions calling tools formatted for this specific llm provider"""
+    
+    supports_tool_use: bool = True
+    """Whether the provider supports tool use"""
+    
+    client: Any = None
+    """The client object for the llm provider"""
     
     def __init__(self, **data):
         super().__init__(**data)
         self.provider = self.__class__.__name__
+    
+    def format_query(self, message: dict[str, str]) -> list:
+        """Formats a message for the Claude API.
+
+        Args:
+            message (dict[str, str]): The message to be formatted for the Claude API.
+
+        Returns:
+            list: A list of formatted messages for the Claude API.
+        """
+        
+        formatted_message = [*self.chat_history, message]
+        
+        messages = []
+        
+        for fm in formatted_message:
+            if fm['type'] == 'text':
+                messages.append({
+                    "role": fm['role'].lower(),
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": fm['message']
+                        }
+                    ]
+                })
+            elif fm['type'] == 'image':
+                base64_image = image_to_base64(fm['image']) # type: ignore
+                messages.append({
+                    "role": fm['role'].lower(),
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "This is the result of the latest screenshot"
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                })
+            else:
+                print(fm)
+        
+        return messages
+
+    
+    def format_tools(self, tools: list[dict[str, Any]]):
+        """Format tools for the provider sdk"""
+        for tool in tools:
+            f_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool['name'].replace(' ', '_'),
+                    "description": tool['description'][:1024],
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": tool['required'],
+                    },
+                },
+            }
+            for key, value in tool['parameters'].items():
+                f_tool['function']['parameters']['properties'][key] = {'type': value}
+            
+            self.tools.append(f_tool)
     
     @staticmethod
     def list_llms():
@@ -80,8 +155,8 @@ class LLM(BaseModel):
         try:
             model_name = model_name.lower()
             module = __import__(str(__package__), fromlist=[model_name])
-            llm: type[LLM] = [f[1] for f in inspect.getmembers(module, inspect.isclass) if f[0].lower() == model_name][0]
-            return llm
+            llm = [f[1] for f in inspect.getmembers(module, inspect.isclass) if (len(f) and f[0].lower() == model_name)]
+            return llm[0] if len(llm) else None
         except Exception as e:
             logging.exception(e)
             return None

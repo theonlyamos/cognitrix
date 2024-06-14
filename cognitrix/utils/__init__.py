@@ -7,7 +7,7 @@ import io
 
 json_return_format: str = """
 Your response should be in a valid json format which can
-be directed converted into a python dictionary with  
+be directly converted into a python dictionary with  
 json.loads()
 Return the response in the following format only:    
 {
@@ -20,9 +20,11 @@ if it's the final anwers or
 {
 "observation": "Observations made by the ai agent"
 "thought": "Thoughts of the ai agent on a task. Should include steps for completing the task.",
-"type": "function_call",
-"function": "",
-"arguments": []
+"type": "tool_calls",
+"tool_calls": [{
+"name": "<tool_name>",
+"arguments": {}
+}]
 }
 
 Do not include the json decorator in the response.

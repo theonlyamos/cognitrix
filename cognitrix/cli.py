@@ -7,7 +7,7 @@ from pathlib import Path
 from argparse import Namespace
 
 from cognitrix.llms import (
-    Cohere, OpenAI,LLM
+    Cohere, Clarifai, LLM
 )
 
 from cognitrix.agents import AIAssistant, Agent
@@ -128,9 +128,6 @@ def start(args: Namespace):
         elif args.agents:
             list_agents()              #type: ignore
             sys.exit()
-        elif args.tools:
-            list_tools()
-            sys.exit()
         elif args.sessions:
             list_sessions()
             sys.exit()
@@ -138,7 +135,7 @@ def start(args: Namespace):
         provider = None
         if args.provider:
             provider = LLM.load_llm(model_name=args.provider)
-        provider = provider() if provider else Cohere()
+        provider = provider() if provider else Clarifai()
         
         
         if args.api_key:

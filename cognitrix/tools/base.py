@@ -22,6 +22,9 @@ class Tool(BaseModel):
     category: str = "general"
     """Category of the tool. Used for grouping"""
     
+    parameters: Any = {}
+    """Used for type hinting for function tools"""
+    
     class Config:
         arbitrary_types_allowed = True
     
@@ -38,7 +41,9 @@ class Tool(BaseModel):
         """List all tools"""
         try:
             module = __import__(__package__, fromlist=['__init__']) # type: ignore
-            tools  = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool)]
+            tools = []
+            func_tools  = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool)]
+            tools.extend(func_tools)
             class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
             tools.extend(class_tools)
             return tools

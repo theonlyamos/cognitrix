@@ -93,9 +93,10 @@ class Google(LLM):
         }
         contents = self.format_query(query)
         
-        client = genai.GenerativeModel(self.model)
+        if not self.client:
+            self.client = genai.GenerativeModel(self.model)
         
-        response = client.generate_content(
+        response = self.client.generate_content(
             contents,
             stream=True,
             generation_config=general_config    # type: ignore

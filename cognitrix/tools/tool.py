@@ -26,7 +26,13 @@ def tool(*args: Any, **kwargs: Any):
             description=str(func.__doc__),
             category=kwargs.get('category', 'general')
         )
+        
+        func_signatures = inspect.signature(func)
+        func_parameters = func_signatures.parameters
+        
+        new_tool.parameters = func_parameters
 
         return new_tool
+    
     
     return decorator
