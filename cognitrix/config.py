@@ -2,7 +2,7 @@ import asyncio
 import aiofiles
 from pathlib import Path
 
-VERSION = '0.2.4'
+VERSION = '0.2.5'
 SPIRAL_WORKDIR = Path('~').expanduser() / '.cognitrix'
 
 AGENTS_FILE = SPIRAL_WORKDIR / 'agents.json'

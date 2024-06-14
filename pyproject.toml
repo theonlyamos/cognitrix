@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cognitrix"
-version = "0.2.4"
+version = "0.2.5"
 description = "Package for creating AI Agents using llms"
 authors = ["theonlyamos <theonlyamos@gmail.com>"]
 license = "Apache2"
