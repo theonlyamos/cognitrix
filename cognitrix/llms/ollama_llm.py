@@ -1,4 +1,4 @@
-from cognitrix.llms.base import LLM
+from cognitrix.llms.base import LLM, LLMResponse
 from cognitrix.utils import image_to_base64
 from typing import Any, Optional
 from dotenv import load_dotenv
@@ -88,7 +88,7 @@ class Ollama(LLM):
             
         return messages
 
-    def __call__(self, query: dict, **kwds: dict)->Optional[str]:
+    def __call__(self, query: dict, **kwds: dict):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -112,5 +112,5 @@ class Ollama(LLM):
             ],
             stream=False,
         )
-        print(response)
-        return response['message']['content']                        #type: ignore
+        
+        return LLMResponse(response['message']['content'])                        #type: ignore

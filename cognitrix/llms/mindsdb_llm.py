@@ -3,6 +3,8 @@ from openai import OpenAI as OpenAILLM
 from typing import Optional
 import os
 
+from cognitrix.llms.base import LLMResponse
+
 class MindsDB(OpenAI):
     """A class for interacting with the MindsDB API."""
     
@@ -12,7 +14,7 @@ class MindsDB(OpenAI):
     
     base_url: str = 'https://llm.mdb.ai'
     
-    def __call__(self, query: dict, **kwds: dict)->Optional[str]:
+    def __call__(self, query: dict, **kwds: dict):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -38,4 +40,4 @@ class MindsDB(OpenAI):
             max_tokens=self.max_tokens
         )
         
-        return response.choices[0].message.content
+        return LLMResponse(response.choices[0].message.content)

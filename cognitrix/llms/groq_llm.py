@@ -1,5 +1,5 @@
 from groq import Groq as GroqLLM
-from cognitrix.llms.base import LLM
+from cognitrix.llms.base import LLM, LLMResponse
 from typing import Any, Optional
 from dotenv import load_dotenv
 import logging
@@ -74,7 +74,7 @@ class Groq(LLM):
         return messages
 
 
-    def __call__(self, query, **kwds: Any)->str|None:
+    def __call__(self, query, **kwds: Any):
         """Generates a response to a query using the Groq API.
 
         Args:
@@ -107,7 +107,7 @@ class Groq(LLM):
         # tool_calls = response_message.tool_calls
         # print(tool_calls)
  
-        return response_message.content
+        return LLMResponse(response_message.content)
     
 if __name__ == "__main__":
     try:

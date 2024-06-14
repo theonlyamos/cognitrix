@@ -4,7 +4,6 @@ import uuid
 import asyncio
 import logging
 import aiofiles
-from pathlib import Path
 from threading import Thread
 from datetime import datetime
 from typing import Dict, List, Optional, Self, TypeAlias, Union, Type, Any
@@ -12,7 +11,7 @@ from typing import Dict, List, Optional, Self, TypeAlias, Union, Type, Any
 from pydantic import BaseModel, Field
 
 from cognitrix.tasks import Task
-from cognitrix.llms.base import LLM
+from cognitrix.llms.base import LLM, LLMResponse
 from cognitrix.tools.base import Tool
 from cognitrix.utils import extract_json, json_return_format
 from cognitrix.agents.templates import AUTONOMOUSE_AGENT_2
@@ -184,27 +183,12 @@ class Agent(BaseModel):
     def get_tool_by_name(self, name: str) -> Optional[Tool]:
         return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
 
-    async def process_response(self, response: str|dict) -> Union[dict, str]:
-        # print(response)
-        # response = response.replace("'", '"')
-        response_data = response
-        if isinstance(response, str):
-            response = response.replace('\\n', '')
-            # response = response.replace("'", "\""
-            # response = response.replace('"', '\\"')
-            response_data = extract_json(response)
-        
-
+    async def call_tools(self, tool_calls: list) -> Union[dict, str]:
+ 
         try:
-            if isinstance(response_data, dict):
-                # final_result_keys = ['final_answer', 'tool_calls_result', 'response']
-                
+            if tool_calls:
                 tool_calls_result = []
-                
-                if response_data['type'].replace('\\', '') != 'tool_calls':
-                    return response_data['result']
-
-                for t in response_data['tool_calls']:
+                for t in tool_calls:
                     tool = self.get_tool_by_name(t['name'])
                     
                     if not tool:
@@ -235,8 +219,8 @@ class Agent(BaseModel):
             else:
                 raise Exception('Not a json object')
         except Exception as e:
-            # logger.exception(e)
-            return response_data
+            logger.exception(e)
+            return str(e)
 
     def add_tool(self, tool: Tool):
         self.tools.append(tool)
@@ -282,18 +266,22 @@ class Agent(BaseModel):
                 response: Any = self.llm(full_prompt)
                 
                 self.llm.chat_history.append(full_prompt)
-                self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response})
+                
+                if response.text:
+                    self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response.text})
+                    print(f"\n{self.name}: {response.text}")
+                
+                if response.tool_calls:
+                    result: dict[Any, Any] | str = asyncio.run(self.call_tools(response.tool_calls))
 
-                if self.verbose:
-                    print(response)
-
-                result: dict[Any, Any] | str = asyncio.run(self.process_response(response))
-
-                if isinstance(result, dict) and result['type'] == 'tool_calls_result':
-                    query = result
+                    if isinstance(result, dict) and result['type'] == 'tool_calls_result':
+                        query = result
+                    else:
+                        print(result)
                 else:
-                    print(f"\n{self.name}: {result}")
                     query = input("\nUser (q to quit): ")
+
+                # query = input("\nUser (q to quit): ")
                 
                 self.save_session(session)
 
@@ -322,7 +310,7 @@ class Agent(BaseModel):
             if self.verbose:
                 print(response)
 
-            processsed_response: dict[Any, Any] | str = asyncio.run(self.process_response(response))
+            processsed_response: dict[Any, Any] | str = asyncio.run(self.call_tools(response))
 
             if isinstance(processsed_response, dict) and processsed_response['type'] == 'tool_calls_result':
                 query = processsed_response
@@ -361,7 +349,7 @@ class Agent(BaseModel):
             if parent.verbose:
                 print(response)
                 
-            agent_result = asyncio.run(self.process_response(response))
+            agent_result = asyncio.run(self.call_tools(response))
             if isinstance(agent_result, dict) and agent_result['type'] == 'tool_calls_result':
                 query = agent_result
             else:
@@ -371,7 +359,7 @@ class Agent(BaseModel):
                 parent_response: Any = parent.llm(parent_prompt)
                 parent.llm.chat_history.append(parent_prompt)
                 parent.llm.chat_history.append({'role': 'assistant', 'type': 'text', 'message': parent_response})
-                parent_result = asyncio.run(parent.process_response(parent_response))
+                parent_result = asyncio.run(parent.call_tools(parent_response))
                 print(f"\n\n{parent.name}: {parent_result}")
                 query = ""
 

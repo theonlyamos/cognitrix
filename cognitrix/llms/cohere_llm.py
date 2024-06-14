@@ -1,5 +1,5 @@
 import cohere
-from cognitrix.llms.base import LLM
+from cognitrix.llms.base import LLM, LLMResponse
 from typing import Any, Optional
 from dotenv import load_dotenv
 import logging
@@ -54,7 +54,7 @@ class Cohere(LLM):
             
             self.tools.append(f_tool)
 
-    def __call__(self, query, **kwds: Any)->str:
+    def __call__(self, query, **kwds: Any):
         """Generates a response to a query using the Cohere API.
 
         Args:
@@ -79,7 +79,7 @@ class Cohere(LLM):
             connectors=[{"id": "web-search"}]
         )
         
-        return response.text
+        return LLMResponse(response.text)
     
 if __name__ == "__main__":
     try:

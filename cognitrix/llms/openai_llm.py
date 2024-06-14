@@ -1,5 +1,5 @@
 from openai import OpenAI as OpenAILLM
-from cognitrix.llms.base import LLM
+from cognitrix.llms.base import LLM, LLMResponse
 from cognitrix.tools.base import Tool
 from cognitrix.utils import image_to_base64
 from typing import Any, List, Optional
@@ -98,7 +98,7 @@ class OpenAI(LLM):
         
         return messages
 
-    def __call__(self, query: dict, **kwds: dict)->Optional[str]:
+    def __call__(self, query: dict, **kwds: dict):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -132,4 +132,4 @@ class OpenAI(LLM):
         tool_calls = response_message.tool_calls
         print(tool_calls)
  
-        return response_message.content
+        return LLMResponse(response_message.content)

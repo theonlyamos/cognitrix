@@ -1,5 +1,5 @@
 from clarifai.client.model import Model
-from cognitrix.llms.base import LLM
+from cognitrix.llms.base import LLM, LLMResponse
 from typing import Any, Optional
 from dotenv import load_dotenv
 import logging
@@ -36,7 +36,7 @@ class Clarifai(LLM):
     api_key: str = os.getenv('CLARIFAI_API_KEY', '')
     """Clarifai Personal Access Token""" 
 
-    def __call__(self, query, **kwds: Any)->str:
+    def __call__(self, query, **kwds: Any):
         """Generates a response to a query using the Clarifai API.
 
         Args:
@@ -54,5 +54,5 @@ class Clarifai(LLM):
         query = f"{self.system_prompt}\n {json.dumps(formatted_messages)}"
         result = self.client.predict_by_bytes(query.encode(), input_type="text")
             
-        return result.outputs[0].data.text.raw
+        return LLMResponse(result.outputs[0].data.text.raw)
     

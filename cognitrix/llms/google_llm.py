@@ -1,4 +1,4 @@
-from cognitrix.llms.base import LLM
+from cognitrix.llms.base import LLM, LLMResponse
 from typing import Any
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -72,7 +72,7 @@ class Google(LLM):
 
         return messages
 
-    def __call__(self, query, **kwds: Any)->str|None:
+    def __call__(self, query, **kwds: Any):
         """Generates a response to a query using the Gemini API.
 
         Args:
@@ -104,15 +104,5 @@ class Google(LLM):
 
         response.resolve()
         
-        return response.text
-    
-if __name__ == "__main__":
-    try:
-        assistant = Google()
-        # assistant.add_tool(calculator)
-        while True:
-            message = input("\nEnter Query$ ")
-            result = assistant(message)
-            print(result)
-    except KeyboardInterrupt:
-        sys.exit(1)
+        return LLMResponse(response.text)
+

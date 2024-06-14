@@ -1,5 +1,5 @@
 from openai import OpenAI as OpenAILLM
-from cognitrix.llms.base import LLM
+from cognitrix.llms.base import LLM, LLMResponse
 from cognitrix.utils import image_to_base64
 from typing import Any, Optional
 from dotenv import load_dotenv
@@ -95,7 +95,7 @@ class Local(LLM):
             
         return messages
 
-    def __call__(self, query: dict, **kwds: dict)->Optional[str]:
+    def __call__(self, query: dict, **kwds: dict):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -121,4 +121,4 @@ class Local(LLM):
             max_tokens=self.max_tokens
         )
             
-        return response.choices[0].message.content                          #type: ignore
+        return LLMResponse(response.choices[0].message.content)                   #type: ignore

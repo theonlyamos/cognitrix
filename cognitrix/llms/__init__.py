@@ -1,4 +1,5 @@
 from cognitrix.llms.base import LLM
+from cognitrix.llms.base import LLMResponse
 from cognitrix.llms.groq_llm import Groq
 from cognitrix.llms.local_llm import Local
 from cognitrix.llms.cohere_llm import Cohere

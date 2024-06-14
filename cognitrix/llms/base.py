@@ -1,10 +1,10 @@
 import json
 from pydantic import BaseModel, Field
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional, TypedDict
 import logging
 import inspect
 
-from cognitrix.utils import image_to_base64
+from cognitrix.utils import extract_json, image_to_base64
 from cognitrix.tools.base import Tool
 
 logging.basicConfig(
@@ -13,6 +13,35 @@ logging.basicConfig(
     level=logging.WARNING
 )
 logger = logging.getLogger('cognitrix.log')
+
+class LLMResponse:
+    """Class to handle and separate LLM responses into text and tool calls."""
+    
+    def __init__(self, llm_response: Optional[str]=None):
+        self.llm_response = llm_response
+        self.text: Optional[str] = None
+        self.tool_calls: Optional[List[Dict[str, Any]]] = None
+        self.parse_llm_response()
+    
+    def parse_llm_response(self):
+        """Parse the LLM response into text and tool calls."""
+        
+        if not self.llm_response: return 
+        
+        response_data = extract_json(self.llm_response)
+
+        try:
+            if isinstance(response_data, dict):
+                if 'result' in response_data.keys():
+                    self.text = response_data['result']
+                else:
+                    self.tool_calls = response_data['tool_calls']
+            else:
+                self.text = str(response_data)
+        except Exception as e:
+            logger.exception(e)
+            self.text = str(response_data)
+            
 
 class LLM(BaseModel):
     """
@@ -162,4 +191,4 @@ class LLM(BaseModel):
             return None
     
     def __call__(*args, **kwargs):
-        pass
+        return LLMResponse()

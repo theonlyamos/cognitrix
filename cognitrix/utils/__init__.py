@@ -143,15 +143,13 @@ def extract_json(content: str) -> dict | str:
         if '{' not in content:
             return content
         try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-
-            start_index = content.find('{') + 1
-            end_index = content.rfind('}')
-
+            start_index = content.find('{')
+            end_index = content.rfind('}') + 1
             # Extract the JSON string
             content = content[start_index:end_index]
-
+            return json.loads(content)
+        except json.JSONDecodeError:
+            print(content)
             # Split the JSON string into key-value pairs
             pairs = content.split('\n')
 
