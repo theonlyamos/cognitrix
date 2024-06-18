@@ -33,8 +33,12 @@ def start_web_ui(agent: Agent | AIAssistant):
             agent.WSConnection = websocket
             while True:
                 query = await websocket.receive_json()
-                if query['type'] == 'session':
-                    await websocket.send_json({'type': 'session', 'content': session.chat})
+                
+                if query['type'] == 'chat_history':
+                    await websocket.send_json({'type': 'chat_history', 'content': session.chat})
+                elif query['type'] == 'sessions':
+                    sessions = [sess.dict() for sess in Session.list_sessions()]
+                    await websocket.send_json({'type': 'sessions', 'content': sessions})
                 else:
                     response = await agent.chat(query, session)
                     await websocket.send_json({'type': 'chat_reply', 'content': response})
