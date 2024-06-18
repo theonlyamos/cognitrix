@@ -15,31 +15,40 @@
 
     const sendMessage = async(query: String)=>{
         loading = true;
-        try {
-            messages = [...messages, {
-                role: 'user',
-                content: query
-            }]
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(query);
-            }
-            
-            loading = false;
-        } catch (error) {
-            loading = false;
-            console.log(error)
+        messages = [...messages, {
+            role: 'user',
+            content: query
+        }]
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(`{"type": "chat", "content": ${query}}`);
         }
     }
 
     onMount(() => {
         const websocketUrl = new URL(BACKEND_URI.replace('http', 'ws')).origin;
         socket = new WebSocket(websocketUrl + '/ws');
+        
+        socket.onopen = () => {
+            socket.send('{"type": "session", "content": ""}');
+        };
 
         socket.onmessage = (event: MessageEvent) => {
-            messages = [...messages, {
-                role: 'assistant',
-                content: event.data
-            }]
+            loading = false
+            let data = JSON.parse(event.data)
+            if (data.type === 'session') {
+                for (let msg of data.content) {
+                    messages = [...messages, {
+                        role: msg.role.toLowerCase(),
+                        content: msg.message
+                    }]
+                }
+            }
+            else if (data.type === 'chat_reply') {
+                messages = [...messages, {
+                    role: 'assistant',
+                    content: data.content
+                }]
+            }
         };
 
         return (()=>{

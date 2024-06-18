@@ -32,9 +32,12 @@ def start_web_ui(agent: Agent | AIAssistant):
         try:
             agent.WSConnection = websocket
             while True:
-                query = await websocket.receive_text()
-                response = await agent.chat(query, session)
-                await websocket.send_text(str(response))
+                query = await websocket.receive_json()
+                if query['type'] == 'session':
+                    await websocket.send_json({'type': 'session', 'content': session.chat})
+                else:
+                    response = await agent.chat(query, session)
+                    await websocket.send_json({'type': 'chat_reply', 'content': response})
         except WebSocketDisconnect:
             logger.warning('Websocket disconnected')
             agent.WSConnection = None
