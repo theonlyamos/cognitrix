@@ -3,12 +3,14 @@ import aiofiles
 from pathlib import Path
 
 VERSION = '0.2.5'
-SPIRAL_WORKDIR = Path('~').expanduser() / '.cognitrix'
+API_VERSION = 'v1'
+SPIRAL_WORKDIR = Path.home() / '.cognitrix'
 
 AGENTS_FILE = SPIRAL_WORKDIR / 'agents.json'
 CONFIG_FILE = SPIRAL_WORKDIR / 'config.json'
 SESSIONS_FILE = SPIRAL_WORKDIR / 'sessions.json'
-
+BASE_DIR = Path(__file__).parent
+FRONTEND_BUILD_DIR = BASE_DIR.joinpath('frontend', 'build')
 
 async def configure():
     if not SPIRAL_WORKDIR.exists() and not SPIRAL_WORKDIR.is_dir():

@@ -5,6 +5,7 @@ import logging
 import argparse
 from pathlib import Path
 from argparse import Namespace
+from typing import Optional
 
 from cognitrix.llms import (
     Cohere, Clarifai, LLM
@@ -15,6 +16,33 @@ from cognitrix.llms.session import Session
 from cognitrix.tools import Tool
 
 from cognitrix.config import VERSION
+
+logger = logging.getLogger('cognitrix.log')
+
+def start_web_ui(agent: Agent | AIAssistant):
+    from fastapi import WebSocket
+    from starlette.websockets import WebSocketDisconnect
+    from .api.main import app
+    import uvicorn
+    
+    @app.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket):
+        await websocket.accept()
+        session = await agent.load_session()
+        try:
+            agent.WSConnection = websocket
+            while True:
+                query = await websocket.receive_text()
+                response = await agent.chat(query, session)
+                await websocket.send_text(str(response))
+        except WebSocketDisconnect:
+            logger.warning('Websocket disconnected')
+            agent.WSConnection = None
+        except Exception as e:
+            logger.exception(e)
+            agent.WSConnection = None
+    
+    uvicorn.run(app, forwarded_allow_ips="*")
 
 def add_agent():
     new_agent = asyncio.run(Agent.create_agent()) # type: ignore
@@ -161,9 +189,10 @@ def start(args: Namespace):
             assistant = AIAssistant(llm=provider, name=args.name, verbose=args.verbose)
         
         if assistant:
+            assistant.name = args.name
+
             if args.provider:
                 assistant.llm = provider
-            assistant.name = args.name
             if 'all' in args.load_tools:
                 assistant.tools = Tool.list_all_tools()
             else:
@@ -173,12 +202,15 @@ def start(args: Namespace):
                     tools.extend(loaded_tools)
 
                 assistant.tools = tools
-                
             
             assistant.format_system_prompt()
             asyncio.run(assistant.save())
-            
-            assistant.start(args.session, audio=args.audio)
+
+            if not args.web_ui:
+                assistant.start(args.session, audio=args.audio)
+            else:
+                start_web_ui(assistant)
+                
     except Exception as e:
         logging.exception(e)
         parser.print_help()
@@ -204,6 +236,7 @@ def get_arguments():
     parser.add_argument('--provider', default='', help='Set llm provider to use')
     parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
+    parser.add_argument('--web-ui', action='store_true', help='Expose api server')
     parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
     parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='general', help='Add tools by categories to agent')
     parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')

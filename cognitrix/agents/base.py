@@ -7,6 +7,7 @@ import aiofiles
 from threading import Thread
 from datetime import datetime
 from typing import Dict, List, Optional, Self, TypeAlias, Union, Type, Any
+from fastapi import WebSocket
 
 from pydantic import BaseModel, Field
 
@@ -56,6 +57,12 @@ class Agent(BaseModel):
     
     autostart: bool = False
     """Whether the agent should start running as soon as it's created"""
+    
+    WSConnection: Optional[WebSocket] = None
+    """Websocket connection for web ui"""
+    
+    class Config:
+        arbitrary_types_allowed = True
 
     @property
     def available_tools(self) -> List[str]:
@@ -196,7 +203,9 @@ class Agent(BaseModel):
                         raise Exception(f"Tool '{t['name']}' not found")
                     
                     print(f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}")
-
+                    if self.WSConnection:
+                        await self.WSConnection.send_text(f"Running tool '{tool.name.title()}' with parameters: {t['arguments']}")
+                        
                     if 'sub agent' in tool.name.lower():
                         t['arguments']['parent'] = self
                         
@@ -225,9 +234,35 @@ class Agent(BaseModel):
     def add_tool(self, tool: Tool):
         self.tools.append(tool)
 
+    async def chat(self, user_input: str|dict, session: Session):
+        agent_response = ''
+        while True:
+            self.format_system_prompt()
+            
+            full_prompt = self.generate_prompt(user_input)
+            response: Any = self.llm(full_prompt)
+            
+            self.llm.chat_history.append(full_prompt)
+            
+            if response.text:
+                self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response.text})
+                agent_response = response.text
+                break
+            
+            if response.tool_calls:
+                result: dict[Any, Any] | str = await self.call_tools(response.tool_calls)
+
+                if isinstance(result, dict) and result['type'] == 'tool_calls_result':
+                    user_input = result
+                else:
+                    agent_response = result
+                    break
+        
+        self.save_session(session)
+        return agent_response
+            
     def initialize(self, session_id: Optional[str] = None):
-        session: Session = asyncio.run(Session.load(session_id)) if session_id else Session(chat=self.llm.chat_history, agent_id=self.id)
-        self.llm.chat_history = session.chat
+        session: Session = asyncio.run(self.load_session(session_id))
         
         query: str | dict = input("\nUser (q to quit): ")
         while True:
@@ -478,7 +513,21 @@ class Agent(BaseModel):
         async with aiofiles.open(AGENTS_FILE, 'w') as file:
             await file.write(json.dumps(updated_agents, indent=4))
     
+    async def load_session(self, session_id: Optional[str] = None) -> Session:
+        if session_id:
+            session: Session = await Session.load(session_id)
+        else:
+            session = await Session.get_by_agent_id(self.id)
+        
+        if session.agent_id != self.id:
+            session.agent_id = self.id
+            session.chat = self.llm.chat_history
+        
+        self.llm.chat_history = session.chat
+        return session
+    
     def save_session(self, session: Session):
+        session.chat = self.llm.chat_history
         save_thread = Thread(target=session.save, args=(self.llm.chat_history,))
         save_thread.daemon = True
         save_thread.start()

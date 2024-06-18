@@ -24,19 +24,25 @@ class Session(BaseModel):
     def save(self, chat: List[Dict[str, str]] = []):
         """Save the current state of the session to disk"""
         self.chat = chat
+        
         sessions = Session.list_sessions()
         updated_sessions = []
-        session_exist = False
+        loaded_session: Optional[Session] = None
+        loaded_session_index: int = 0
         
         for index, session in enumerate(sessions):
             if session.id == self.id:
-                sessions[index] = self
-                session_exist = True
-            
-            updated_sessions.append(session.dict())
+                loaded_session = session
+                loaded_session_index = index
         
-        if not session_exist:
-            updated_sessions.append(self.dict())
+        if loaded_session:
+            sessions[loaded_session_index] = self
+        else:
+            sessions.append(self)
+        
+            
+        for session in sessions:
+            updated_sessions.append(session.dict())
             
         with open(SESSIONS_FILE, 'w') as file:
             json.dump(updated_sessions, file, indent=4)
@@ -60,7 +66,22 @@ class Session(BaseModel):
             sessions = cls.list_sessions()
             loaded_sessions: list[Session] = [session for session in sessions if session.id == session_id]
             if len(loaded_sessions):
-                session = loaded_sessions[0]
+                session = loaded_sessions[-1]
+                return session
+            else:
+                return Session()
+        except Exception as e:
+            logging.exception(e)
+            return Session()
+        
+    @classmethod
+    async def get_by_agent_id(cls, agent_id: str):
+        try:
+            sessions = cls.list_sessions()
+            loaded_sessions: list[Session] = [session for session in sessions if session.agent_id == agent_id]
+            
+            if len(loaded_sessions):
+                session = loaded_sessions[-1]
                 return session
             else:
                 return Session()

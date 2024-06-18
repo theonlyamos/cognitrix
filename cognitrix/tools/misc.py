@@ -630,7 +630,9 @@ def internet_search(query: str, search_depth: str = "basic"):
     
     tavily = TavilyClient(api_key=os.getenv('TAVILY_API_KEY', ''))
     
-    response = tavily.get_search_context(query, search_depth, max_tokens=500)
+    max_tokens = 500 if search_depth == "basic" else 1000
+    
+    response = tavily.get_search_context(query, search_depth, max_tokens)
     
     return response
 
