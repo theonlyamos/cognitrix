@@ -15,3 +15,12 @@ async def list_agents():
     } for agent in agents]
     
     return JSONResponse(response)
+
+@agents_api.get('/{agent_id}')
+async def load_agent(agent_id: str):
+    agent = await Agent.get(agent_id)
+    response = {}
+    if agent:
+        response = agent.dict()
+    
+    return JSONResponse(response)

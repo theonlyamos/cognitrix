@@ -1,6 +1,6 @@
 import json
 from pydantic import BaseModel, Field
-from typing import Any, List, Dict, Optional, TypedDict
+from typing import Any, List, Dict, Optional, TypeAlias, TypedDict
 import logging
 import inspect
 
@@ -13,6 +13,8 @@ logging.basicConfig(
     level=logging.WARNING
 )
 logger = logging.getLogger('cognitrix.log')
+
+LLMList: TypeAlias = List['LLM']
 
 class LLMResponse:
     """Class to handle and separate LLM responses into text and tool calls."""
@@ -173,7 +175,7 @@ class LLM(BaseModel):
         """List all supported LLMs"""
         try:
             module = __import__(str(__package__), fromlist=['__init__'])
-            return [f[0] for f in inspect.getmembers(module, inspect.isclass) if f[0] != 'LLM']
+            return  [f[1] for f in inspect.getmembers(module, inspect.isclass) if f[0] != 'LLM' and f[0] != 'LLMResponse']
         except Exception as e:
             logging.exception(e)
             return []

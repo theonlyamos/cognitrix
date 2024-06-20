@@ -30,11 +30,13 @@ def start_web_ui(agent: Agent | AIAssistant):
         await websocket.accept()
         session = await agent.load_session()
         try:
-            agent.WSConnection = websocket
+            agent.websocket = websocket
             while True:
                 query = await websocket.receive_json()
                 
                 if query['type'] == 'chat_history':
+                    session_id = query['content']
+                    session = await Session.load(session_id)
                     await websocket.send_json({'type': 'chat_history', 'content': session.chat})
                 elif query['type'] == 'sessions':
                     sessions = [sess.dict() for sess in Session.list_sessions()]
@@ -44,10 +46,10 @@ def start_web_ui(agent: Agent | AIAssistant):
                     await websocket.send_json({'type': 'chat_reply', 'content': response})
         except WebSocketDisconnect:
             logger.warning('Websocket disconnected')
-            agent.WSConnection = None
+            agent.websocket = None
         except Exception as e:
             logger.exception(e)
-            agent.WSConnection = None
+            agent.websocket = None
     
     uvicorn.run(app, forwarded_allow_ips="*")
 
@@ -82,7 +84,7 @@ def list_agents():
     
 def list_providers():
     providers = LLM.list_llms()
-    provider_names = [p for p in providers]
+    provider_names = [p.__name__ for p in providers]
     max_col = len(max(provider_names, key=len))
     max_width = 9
     max_col = max_col if max_col >= max_width else max_width
@@ -94,7 +96,7 @@ def list_providers():
     for index, p in enumerate(providers):
         padding = (len(str(index)))-int(len(providers)/10)
         padding = padding if padding else padding + 2
-        print(f"| {str(index) + ' '*padding}| {p + ' '*(max_col-len(p))} |")
+        print(f"| {str(index) + ' '*padding}| {p.__name__ + ' '*(max_col-len(p.__name__))} |")
 
         
 def list_tools(category='all'):

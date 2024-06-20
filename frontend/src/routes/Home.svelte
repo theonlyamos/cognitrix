@@ -1,12 +1,15 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-    import type { MessageInterface } from '../common/interfaces';
+    import { onMount } from 'svelte';
+    import type { MessageInterface, SessionInterface } from '../common/interfaces';
     import { BACKEND_URI } from '../common/utils';
     import ChatComponent from '../lib/ChatContent.svelte'
     import InputBar from '../lib/Inputbar.svelte';
 
+    export let session_id: String = '';
+    
+    let sessions: SessionInterface[] = [];
     let messages: MessageInterface[] = [];
-    let loading: Boolean = true;
+    let loading: boolean = true;
     let socket: any;
 
     const uploadFile = ()=>{
@@ -29,7 +32,9 @@
         socket = new WebSocket(websocketUrl + '/ws');
         
         socket.onopen = () => {
-            socket.send('{"type": "chat_history", "content": ""}');
+            if (session_id) {
+                socket.send(`{"type": "chat_history", "content": "${session_id}"}`);
+            }
             socket.send('{"type": "sessions", "content": ""}');
         };
 
@@ -51,7 +56,7 @@
                 }]
             }
             else if (data.type === 'sessions') {
-                console.log(data.content)
+                sessions = data.content as SessionInterface[];
             }
         };
 
@@ -62,5 +67,6 @@
 
 </script>
 
-<ChatComponent {messages}/>
-<InputBar {uploadFile} {sendMessage} {loading}/>
+<ChatComponent {messages} {sessions}>
+    <InputBar {uploadFile} {sendMessage} {loading}/>
+</ChatComponent>

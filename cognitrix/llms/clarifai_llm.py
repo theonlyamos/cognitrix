@@ -35,6 +35,9 @@ class Clarifai(LLM):
     
     api_key: str = os.getenv('CLARIFAI_API_KEY', '')
     """Clarifai Personal Access Token""" 
+    
+    is_multimodal: bool = True
+    """Whether the model is multimodal."""
 
     def __call__(self, query, **kwds: Any):
         """Generates a response to a query using the Clarifai API.

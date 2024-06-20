@@ -58,7 +58,7 @@ class Agent(BaseModel):
     autostart: bool = False
     """Whether the agent should start running as soon as it's created"""
     
-    WSConnection: Optional[WebSocket] = None
+    websocket: Optional[WebSocket] = None
     """Websocket connection for web ui"""
     
     class Config:
@@ -146,7 +146,7 @@ class Agent(BaseModel):
 
     def _format_llms_string(self) -> str:
         llms = LLM.list_llms()
-        llms_str = "Available LLM Providers:\n" + ", ".join(llms) + "\nChoose one for each subagent."
+        llms_str = "Available LLM Providers:\n" + ", ".join([llm.__name__ for llm in llms]) + "\nChoose one for each subagent."
         return llms_str
 
     def generate_prompt(self, query: str | dict, role: str = 'User') -> dict:
@@ -203,8 +203,8 @@ class Agent(BaseModel):
                         raise Exception(f"Tool '{t['name']}' not found")
                     
                     print(f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}")
-                    if self.WSConnection:
-                        await self.WSConnection.send_text(f"Running tool '{tool.name.title()}' with parameters: {t['arguments']}")
+                    if self.websocket:
+                        await self.websocket.send_text(f"Running tool '{tool.name.title()}' with parameters: {t['arguments']}")
                         
                     if 'sub agent' in tool.name.lower():
                         t['arguments']['parent'] = self
@@ -418,12 +418,12 @@ class Agent(BaseModel):
                 llms = LLM.list_llms()
                 llms_str = "\nAvailable LLMs:"
                 for index, llm_l in enumerate(llms):
-                    llms_str += (f"\n[{index}] {llm_l}")
+                    llms_str += (f"\n[{index}] {llm_l.__name__}")
                 print(llms_str)
+                
                 agent_llm = int(input("\n[Select LLM]: "))
-                selected_llm = llms[agent_llm]
-                loaded_llm = LLM.load_llm(selected_llm)
-
+                loaded_llm = llms[agent_llm]
+                
                 if loaded_llm:
                     llm = loaded_llm()
                     if llm:

@@ -1,6 +1,8 @@
 <script lang="ts">
     import { getAllAgents } from "../common/utils";
     import type { AgentInterface } from "../common/interfaces";
+  import AgentCard from "../lib/AgentCard.svelte";
+  import { link } from "svelte-routing";
     
     let agents: AgentInterface[] = [];
 
@@ -18,82 +20,51 @@
     <div class="loading">
         <i class="fas fa-spinner fa-spin fa-3x"></i>
     </div>
-{:then} 
-<div class="agents-container">
-    {#each agents as agent (agent.id)}
-        <div class="agent-card">
-            <div class="agent-detail">
-                <div class="agent-detail-key">
-                    Name:
-                </div>
-                <div class="agent-detail-value">
-                    {agent.name}
-                </div>
-            </div>
-            <div class="agent-detail">
-                <div class="agent-detail-key">
-                    Model:
-                </div>
-                <div class="agent-detail-value">
-                    {agent.model}
-                </div>
-            </div>
-            <div class="agent-detail">
-                <div class="agent-detail-key">
-                    Provider:
-                </div>
-                <div class="agent-detail-value">
-                    {agent.provider}
-                </div>
-            </div>
-            <div class="agent-detail">
-                <div class="agent-detail-key">
-                    Tools:
-                </div>
-                <div class="agent-detail-value">
-                    {agent.tools}
-                </div>
-            </div>
-        </div>
-    {/each}
+{:then}
+<div class="container">
+    <div class="toolbar">
+        <a href="/agents/new" use:link class="btn">
+            <i class="fa-solid fa-robot fa-fw"></i>
+            <span>New Agent</span>
+        </a>
+    </div>
+    <div class="agents-container">
+        {#each agents as agent (agent.id)}
+            <AgentCard agent={agent} />
+        {/each}
+    </div>
 </div>
 {/await}
 
 <style>
-    .loading {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        height: 100%;
+
+    .container {
+        padding: 20px;
     }
 
-    .fa-spinner {
-        color: var(--bg-2);
+    .toolbar {
+        display: flex;
+        justify-content: end;
+        gap: 10px;
+    }
+
+    .btn {
+        padding: 10px;
+        border-radius: 5px;
+        background-color: var(--bg-1);
+        box-shadow: var(--shadow-sm);
+        color: var(--fg-2);
+        
+        &:hover {
+            color: var(--fg-1);
+        }
     }
 
     .agents-container {
         padding: 20px;
         display: flex;
-        gap: 20px;
-    }
-
-    .agent-card {
-        text-align: start;
-        padding: 10px;
-        border-radius: 4px;
-        background-color: var(--fg-1);
-        color: var(--bg-2);
-        min-width: 250px;
-    }
-
-    .agent-detail {
-        width: 100%;
-        text-align: start;
-        display: flex;
-        justify-content: space-between;
         flex-wrap: wrap;
-        gap: 5px;
+        gap: 20px;
     }
 
 </style>

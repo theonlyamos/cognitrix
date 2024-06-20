@@ -51,6 +51,9 @@ class OpenAI(LLM):
     system_prompt: str = ""
     """System prompt to prepend to queries"""
     
+    is_multimodal: bool = True
+    """Whether the model is multimodal."""
+    
     def format_query(self, message: dict[str, str]) -> list:
         """Formats a message for the Claude API.
 

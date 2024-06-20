@@ -14,6 +14,9 @@ class MindsDB(OpenAI):
     
     base_url: str = 'https://llm.mdb.ai'
     
+    is_multimodal: bool = True
+    """Whether the model is multimodal."""
+    
     def __call__(self, query: dict, **kwds: dict):
         """Generates a response to a query using the OpenAI API.
 
