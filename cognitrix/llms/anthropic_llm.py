@@ -3,6 +3,7 @@ from cognitrix.utils import image_to_base64
 from typing import Any
 from dotenv import load_dotenv
 from anthropic import Anthropic as AnthropicLLM
+from cognitrix.llms.base import LLM, LLMResponse
 import logging
 import sys
 import os
@@ -28,7 +29,7 @@ class Anthropic(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    model: str = 'claude-3-opus-20240229'
+    model: str = 'claude-3-5-sonnet-20240620'
     """model endpoint to use""" 
     
     temperature: float = 0.1
@@ -65,8 +66,9 @@ class Anthropic(LLM):
         
         for fm in formatted_message:
             if fm['type'] == 'text':
+                role = 'assistant' if fm['role'].lower() != 'user' else fm['role'].lower()
                 messages.append({
-                    "role": fm['role'].lower(),
+                    "role": role,
                     "content": [
                         {
                             "type": "text",
@@ -96,7 +98,7 @@ class Anthropic(LLM):
             
         return messages
 
-    def __call__(self, query: dict, **kwds: Any)->str|None:
+    def __call__(self, query: dict, **kwds: Any):
         """Generates a response to a query using the Claude API.
 
         Args:
@@ -116,4 +118,4 @@ class Anthropic(LLM):
             messages=self.format_query(query)
         )
         
-        return result.content[0].text
+        return LLMResponse(result.content[0].text)

@@ -125,9 +125,6 @@ class Agent(BaseModel):
         prompt = prompt.replace("{llms}", llms_str)
         prompt = prompt.replace("{return_format}", json_return_format)
 
-        if 'json' not in prompt.lower():
-            prompt += f"\n{json_return_format}"
-
         self.llm.system_prompt = prompt
         
         self.format_tools_for_llm()
@@ -149,7 +146,7 @@ class Agent(BaseModel):
         llms_str = "Available LLM Providers:\n" + ", ".join([llm.__name__ for llm in llms]) + "\nChoose one for each subagent."
         return llms_str
 
-    def generate_prompt(self, query: str | dict, role: str = 'User') -> dict:
+    def process_prompt(self, query: str | dict, role: str = 'User') -> dict:
         processed_query = self._process_query(query)
         prompt: dict[str, Any] = {'role': role, 'type': 'text'}
 
@@ -239,7 +236,7 @@ class Agent(BaseModel):
         while True:
             self.format_system_prompt()
             
-            full_prompt = self.generate_prompt(user_input)
+            full_prompt = self.process_prompt(user_input)
             response: Any = self.llm(full_prompt)
             
             self.llm.chat_history.append(full_prompt)
@@ -297,7 +294,7 @@ class Agent(BaseModel):
 
                 self.format_system_prompt()
                 
-                full_prompt = self.generate_prompt(query)
+                full_prompt = self.process_prompt(query)
                 response: Any = self.llm(full_prompt)
                 
                 self.llm.chat_history.append(full_prompt)
@@ -327,6 +324,10 @@ class Agent(BaseModel):
                 logger.exception(e)
                 break
 
+    def generate(self, prompt: str):
+        full_prompt = self.process_prompt(prompt)
+        return self.llm(full_prompt)
+    
     def start(self, session_id: Optional[str] = None, audio: bool = False):
         if audio:
             self.start_audio()
@@ -337,7 +338,7 @@ class Agent(BaseModel):
         if sentence:
             self.format_system_prompt()
                 
-            full_prompt = self.generate_prompt(sentence)
+            full_prompt = self.process_prompt(sentence)
             response: Any = self.llm(full_prompt)
             self.llm.chat_history.append(full_prompt)
             self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response})
@@ -376,7 +377,7 @@ class Agent(BaseModel):
         query = self.task.description if self.task else None
 
         while query:
-            full_prompt = self.generate_prompt(query)
+            full_prompt = self.process_prompt(query)
             response: Any = self.llm(full_prompt)
             self.llm.chat_history.append(full_prompt)
             self.llm.chat_history.append({'role': 'user', 'type': 'text', 'message': response})
@@ -389,7 +390,7 @@ class Agent(BaseModel):
                 query = agent_result
             else:
                 print(f"\n--{self.name}: {agent_result}")
-                parent_prompt = parent.generate_prompt(response, 'user')
+                parent_prompt = parent.process_prompt(response, 'user')
                 parent_prompt['message'] = self.name + ": " + response
                 parent_response: Any = parent.llm(parent_prompt)
                 parent.llm.chat_history.append(parent_prompt)
@@ -405,7 +406,7 @@ class Agent(BaseModel):
             if sub_agent.task:
                 self.start_task_thread(sub_agent, self)
         else:
-            full_prompt = self.generate_prompt(f'Sub-agent with name {agent_name} was not found.')
+            full_prompt = self.process_prompt(f'Sub-agent with name {agent_name} was not found.')
             self.llm(full_prompt)
 
     @classmethod
@@ -433,6 +434,9 @@ class Agent(BaseModel):
 
             if llm:
                 task = Task(description=task_description)
+                
+                description = description or input("\n[Enter agent system prompt]: ")
+                
                 new_agent = cls(name=name, llm=llm, task=task, tools=tools, is_sub_agent=is_sub_agent, parent_id=parent_id)
                 
                 if description:
@@ -502,16 +506,45 @@ class Agent(BaseModel):
     
     async def save(self):
         """Save current agent"""
+
         agents = await Agent.list_agents()
         updated_agents = []
+        is_new = True
         for index, agent in enumerate(agents):
             if agent.id == self.id:
                 agents[index] = self
-            
+                is_new = False
+                break
+        
+        if is_new:
+            agents.append(self)
+        
+        for agent in agents:
             updated_agents.append(agent.dict())
         
         async with aiofiles.open(AGENTS_FILE, 'w') as file:
             await file.write(json.dumps(updated_agents, indent=4))
+        return self.id
+        
+    @staticmethod    
+    async def delete(name_or_index: str):
+        """Delete agent by id or name"""
+        agents = await Agent.list_agents()
+        updated_agents = []
+        deleted_agent = None
+        for index, agent in enumerate(agents):
+            if name_or_index.lower() in [str(index), agent.name.lower()]:
+                deleted_agent = agent
+                continue
+            updated_agents.append(agent.dict())
+        
+        if not deleted_agent:
+            return False
+        
+        async with aiofiles.open(AGENTS_FILE, 'w') as file:
+            await file.write(json.dumps(updated_agents, indent=4))
+        
+        return True
     
     async def load_session(self, session_id: Optional[str] = None) -> Session:
         if session_id:

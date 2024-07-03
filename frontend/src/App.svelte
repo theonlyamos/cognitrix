@@ -13,6 +13,9 @@
     <Sidebar />
     <Container>
       <Route path="/" component={Home} />
+      <Route path="/c/:agent_id" let:params>
+        <Home agent_id={params?.agent_id}/>
+      </Route>
       <Route path="/:session_id" let:params>
         <Home session_id={params?.session_id}/>
       </Route>

@@ -1,5 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from ...llms import LLM
 from ...agents import Agent
 
 agents_api = APIRouter(
@@ -16,6 +18,18 @@ async def list_agents():
     
     return JSONResponse(response)
 
+@agents_api.post('')
+async def save_agent(request: Request, agent: Agent):
+    data = await request.json()
+    
+    llm = LLM(**data['llm'])
+    llm.provider = data['llm']['provider']
+
+    agent.llm = llm
+    await agent.save()
+    
+    return JSONResponse(agent.dict())
+
 @agents_api.get('/{agent_id}')
 async def load_agent(agent_id: str):
     agent = await Agent.get(agent_id)
@@ -24,3 +38,4 @@ async def load_agent(agent_id: str):
         response = agent.dict()
     
     return JSONResponse(response)
+

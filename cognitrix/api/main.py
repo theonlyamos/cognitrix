@@ -1,3 +1,5 @@
+import aiofiles
+from fastapi.responses import HTMLResponse
 from ..llms import Together
 from ..llms import Cohere
 from ..agents import AIAssistant
@@ -12,6 +14,9 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
+from ..config import FRONTEND_BUILD_DIR
+
+
 app = FastAPI()
 
 app.add_middleware(
@@ -22,7 +27,20 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+
 app.include_router(api_router)
+app.mount('/css', StaticFiles(directory=FRONTEND_BUILD_DIR / 'css', html=True),  name='static')
+app.mount('/assets', StaticFiles(directory=FRONTEND_BUILD_DIR / 'assets', html=True),  name='static')
+app.mount('/webfonts', StaticFiles(directory=FRONTEND_BUILD_DIR / 'webfonts', html=True),  name='static')
+
+@app.get('/')
+async def index():
+    index_file = FRONTEND_BUILD_DIR / 'index.html'
+    content = ''
+    async with aiofiles.open(index_file, 'r') as file:
+        content = await file.read()
+    
+    return HTMLResponse(content)
 
 @app.get('/health')
 async def healthcheck():

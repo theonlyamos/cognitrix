@@ -10,7 +10,8 @@ AGENTS_FILE = SPIRAL_WORKDIR / 'agents.json'
 CONFIG_FILE = SPIRAL_WORKDIR / 'config.json'
 SESSIONS_FILE = SPIRAL_WORKDIR / 'sessions.json'
 BASE_DIR = Path(__file__).parent
-FRONTEND_BUILD_DIR = BASE_DIR.joinpath('frontend', 'build')
+FRONTEND_BUILD_DIR = BASE_DIR.joinpath('..', 'frontend', 'dist')
+FRONTEND_STATIC_DIR = FRONTEND_BUILD_DIR.joinpath('assets')
 
 async def configure():
     if not SPIRAL_WORKDIR.exists() and not SPIRAL_WORKDIR.is_dir():

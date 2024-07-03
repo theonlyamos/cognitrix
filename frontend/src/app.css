@@ -17,6 +17,10 @@
   box-sizing: border-box;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 [data-theme="dark"] body {
   --bg-1: hsl(0, 0%, 18%);
   --bg-2: hsl(0, 0%, 30%);
@@ -57,11 +61,7 @@ body {
 
 a {
   font-weight: 500;
-  color: #646cff;
   text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
 }
 
 body {
@@ -102,7 +102,6 @@ button, .btn {
   background-color: transparent;
   border: none;
   color: var(--fg-2);
-  box-shadow: var(--shadow-sm);
   padding: 0;
   cursor: pointer;
 
@@ -113,6 +112,10 @@ button, .btn {
   }
 }
 
+.shadow, .hover\:shadow:hover {
+  box-shadow: var(--shadow-sm);
+}
+
 .disabled, button:disabled, input:disabled + .slider {
   opacity: 0.6;
   pointer-events: none;
@@ -120,6 +123,10 @@ button, .btn {
 
 [data-theme="dark"] body img.icon {
   filter: invert(100%);
+}
+
+[role="button"] {
+  cursor: pointer;
 }
 
 code {
@@ -151,6 +158,30 @@ header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.container {
+  padding: 20px;
+}
+
+.toolbar {
+  padding: 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  z-index: 10;
+}
+
+.toolbar .btn {
+  padding: 10px;
+  border-radius: 5px;
+  background-color: var(--bg-1);
+  box-shadow: var(--shadow-sm);
+  color: var(--fg-2);
+  
+  &:hover {
+      color: var(--fg-1);
+  }
 }
 
 @media (prefers-color-scheme: light) {

@@ -4,7 +4,7 @@ from typing import Any, List, Dict, Optional, TypeAlias, TypedDict
 import logging
 import inspect
 
-from cognitrix.utils import extract_json, image_to_base64
+from cognitrix.utils import xml_to_dict, image_to_base64
 from cognitrix.tools.base import Tool
 
 logging.basicConfig(
@@ -23,21 +23,26 @@ class LLMResponse:
         self.llm_response = llm_response
         self.text: Optional[str] = None
         self.tool_calls: Optional[List[Dict[str, Any]]] = None
+        self.artifacts: Optional[List[Dict[str, Any]]] = None
+
         self.parse_llm_response()
     
     def parse_llm_response(self):
         """Parse the LLM response into text and tool calls."""
         
         if not self.llm_response: return 
-        
-        response_data = extract_json(self.llm_response)
-
+        response_data = xml_to_dict(self.llm_response)
+ 
         try:
             if isinstance(response_data, dict):
-                if 'result' in response_data.keys():
-                    self.text = response_data['result']
-                else:
-                    self.tool_calls = response_data['tool_calls']
+                response = response_data['response']
+                
+                if 'result' in response.keys():
+                    self.text = response['result'] # type: ignore
+                if 'tool_calls' in response.keys():
+                    self.tool_calls = response['tool_calls'] # type: ignore
+                if 'artifacts' in response.keys():
+                    self.tool_calls = response['artifacts'] # type: ignore
             else:
                 self.text = str(response_data)
         except Exception as e:

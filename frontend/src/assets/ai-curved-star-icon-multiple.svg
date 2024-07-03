@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
+  <!-- Main (center) star -->
+  <g transform="translate(0,0) scale(0.6)">
+    <path d="
+      M50 10 
+      C60 40, 90 40, 90 50 
+      C90 60, 60 60, 50 90 
+      C40 60, 10 60, 10 50 
+      C10 40, 40 40, 50 10
+      Z" 
+      fill="none" 
+      stroke="white" 
+      stroke-width="3"
+    />
+  </g>
+  
+  <!-- Top-right star -->
+  <g transform="translate(50,3) scale(0.2)">
+    <path d="
+      M50 10 
+      C60 40, 90 40, 90 50 
+      C90 60, 60 60, 50 90 
+      C40 60, 10 60, 10 50 
+      C10 40, 40 40, 50 10
+      Z" 
+      fill="none" 
+      stroke="white" 
+      stroke-width="5"
+    />
+  </g>
+  
+  <!-- Bottom-right star -->
+  <g transform="translate(50,37) scale(0.2)">
+    <path d="
+      M50 10 
+      C60 40, 90 40, 90 50 
+      C90 60, 60 60, 50 90 
+      C40 60, 10 60, 10 50 
+      C10 40, 40 40, 50 10
+      Z" 
+      fill="none" 
+      stroke="white" 
+      stroke-width="5"
+    />
+  </g>
+</svg>

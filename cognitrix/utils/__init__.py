@@ -1,5 +1,6 @@
 from PIL import Image
 from typing import Dict
+import xml.etree.ElementTree as ET
 from cognitrix.tools import Tool
 import logging
 import base64
@@ -28,6 +29,38 @@ if it's the final anwers or
 }
 
 Do not include the json decorator in the response.
+"""
+
+xml_return_format: str = """```xml
+<response>
+    <observation>[Description of the user's request or the current situation]</observation>
+    <mind-space>
+        [Multi-dimensional representations of the problem, each on a new line]
+    </mind-space>
+    <thought>[Step-by-step reasoning process, with each step on a new line]</thought>
+    <type>[Either "final_answer" or "tool_calls"]</type>
+    <result>[The final answer, if applicable]</result>
+    <tool_calls>
+        <tool>
+            <name>[Name of the tool to be called]</name>
+            <arguments>
+                <[argument_name]>[argument_value]</[argument_name]>
+                <!-- Repeat for each argument -->
+            </arguments>
+        </tool>
+        <!-- Repeat <tool> element for multiple tool calls -->
+    </tool_calls>
+    <artifacts>
+        <artifact>
+            <identifier>[Unique identifier for the artifact]</identifier>
+            <type>[MIME type of the artifact content]</type>
+            <title>[Brief title or description of the content]</title>
+            <content>[The actual content of the artifact]</content>
+        </artifact>
+        <!-- Repeat <artifact> element for multiple artifacts -->
+    </artifacts>
+</response>
+```
 """
 
 def image_to_base64(image: Image.Image) -> str:
@@ -148,52 +181,103 @@ def extract_json(content: str) -> dict | str:
             # Extract the JSON string
             content = content[start_index:end_index]
             return json.loads(content)
-        except json.JSONDecodeError:
-            print(content)
-            # Split the JSON string into key-value pairs
-            pairs = content.split('\n')
+        # except json.JSONDecodeError:
+        #     print(content)
+        #     # Split the JSON string into key-value pairs
+        #     pairs = content.split('\n')
 
-            # Initialize an empty list to store the escaped pairs
-            escaped_pairs = []
+        #     # Initialize an empty list to store the escaped pairs
+        #     escaped_pairs = []
             
-            # Iterate over the key-value pairs
-            for pair in pairs:
-                # Split the pair into key and value
-                pair = pair.strip()
+        #     # Iterate over the key-value pairs
+        #     for pair in pairs:
+        #         # Split the pair into key and value
+        #         pair = pair.strip()
                 
-                if pair:
-                    key, value = pair.split('":')
+        #         if pair:
+        #             key, value = pair.split('":')
                     
-                    # Remove any whitespace from the key and value
-                    key = key.strip()
-                    q_mark = '"' if key.startswith('"') else "'"
-                    a_mark = '"' if key.startswith("'") else "'"
-                    key = key.replace(q_mark, '')
-                    value = value.strip()
+        #             # Remove any whitespace from the key and value
+        #             key = key.strip()
+        #             q_mark = '"' if key.startswith('"') else "'"
+        #             a_mark = '"' if key.startswith("'") else "'"
+        #             key = key.replace(q_mark, '')
+        #             value = value.strip()
                     
-                    if not value.startswith('[') and not value.endswith('{'):
-                        start_index = value.find('"') + 1
-                        end_index = value.rfind('"')
-                        value = value[start_index:end_index]
-                        # value = value.replace(a_mark, f'\{a_mark}').replace(q_mark, f"\{q_mark}")
-                    else:
-                        value = value.replace('\n', '')
-                        value = json.loads(value)
+        #             if not value.startswith('[') and not value.endswith('{'):
+        #                 start_index = value.find('"') + 1
+        #                 end_index = value.rfind('"')
+        #                 value = value[start_index:end_index]
+        #                 # value = value.replace(a_mark, f'\{a_mark}').replace(q_mark, f"\{q_mark}")
+        #             else:
+        #                 value = value.replace('\n', '')
+        #                 value = json.loads(value)
 
-                    # If the value is a string, escape any double quotes
-                    if isinstance(value, str):
-                        if value.startswith(q_mark) and value.endswith(q_mark):
-                            quote_start = value.find(q_mark)
-                            quote_end = value.rfind(q_mark)
-                            for i, char in enumerate(value):
-                                if char == q_mark and (i != quote_start and i != quote_end):
-                                    value = value.replace(q_mark, f'\\{q_mark}', 1)
-                                break
+        #             # If the value is a string, escape any double quotes
+        #             if isinstance(value, str):
+        #                 if value.startswith(q_mark) and value.endswith(q_mark):
+        #                     quote_start = value.find(q_mark)
+        #                     quote_end = value.rfind(q_mark)
+        #                     for i, char in enumerate(value):
+        #                         if char == q_mark and (i != quote_start and i != quote_end):
+        #                             value = value.replace(q_mark, f'\\{q_mark}', 1)
+        #                         break
 
-                    # Add the escaped pair to the list
-                    escaped_pairs.append([key, value])
+        #             # Add the escaped pair to the list
+        #             escaped_pairs.append([key, value])
             
-            return dict(escaped_pairs)
+        #     return dict(escaped_pairs)
         except Exception as e:
             # logging.exception(e)
             return default_content
+
+def xml_to_dict(xml_string) -> dict | str:
+    """
+    Convert an XML string to a Python dictionary.
+
+    Args:
+        xml_string (str): The XML string to convert.
+
+    Returns:
+        dict: A dictionary representation of the XML string.
+
+    Raises:
+        None
+
+    This function removes the ```xml and ``` decorators from the XML string if present. It then strips any leading or trailing whitespace from the XML string. The function uses the `xml.etree.ElementTree` module to parse the XML string into an `Element` object. The `parse_element` function is defined to recursively parse the XML tree and convert it into a dictionary representation. The function returns a dictionary with the root tag as the key and the parsed XML tree as the value.
+
+    Example:
+        >>> xml_string = '<root><child>Hello</child></root>'
+        >>> xml_to_dict(xml_string)
+        {'root': {'child': 'Hello'}}
+    """
+    try:
+        xml_string = xml_string.strip()
+        if xml_string.startswith("```xml"):
+            xml_string = xml_string[6:]
+        if xml_string.endswith("```"):
+            xml_string = xml_string[:-3]
+        
+        xml_string = xml_string.strip()
+        
+        root = ET.fromstring(xml_string)
+        
+        def parse_element(element):
+            result = {}
+            if element.text and element.text.strip():
+                return element.text.strip()
+            for child in element:
+                child_data = parse_element(child)
+                if child.tag in result:
+                    if isinstance(result[child.tag], list):
+                        result[child.tag].append(child_data)
+                    else:
+                        result[child.tag] = [result[child.tag], child_data]
+                else:
+                    result[child.tag] = child_data
+            return result
+        
+        return {root.tag: parse_element(root)}
+    except Exception as e:
+        # logging.exception(e)
+        return xml_string

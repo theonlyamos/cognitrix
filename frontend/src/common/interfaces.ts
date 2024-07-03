@@ -46,7 +46,6 @@ export interface ToolInterface extends Object {
 export interface AgentDetailInterface extends Object {
     id?: string,
     name: string,
-    model: string,
     prompt_template: string,
     is_sub_agent: boolean,
     parent_id?: string,

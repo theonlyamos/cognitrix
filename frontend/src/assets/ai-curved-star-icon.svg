@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Main curved star shape -->
+  <path d="
+    M50 10 
+    C60 40, 90 40, 90 50 
+    C90 60, 60 60, 50 90 
+    C40 60, 10 60, 10 50 
+    C10 40, 40 40, 50 10
+    Z" 
+    fill="none" 
+    stroke="#4A90E2" 
+    stroke-width="4"
+  />
+  
+  <!-- Inner connecting lines -->
+  <path d="M50 10 C55 45, 85 45, 90 50" stroke="#4A90E2" stroke-width="2" opacity="0.7"/>
+  <path d="M90 50 C85 55, 55 55, 50 90" stroke="#4A90E2" stroke-width="2" opacity="0.7"/>
+  <path d="M50 90 C45 55, 15 55, 10 50" stroke="#4A90E2" stroke-width="2" opacity="0.7"/>
+  <path d="M10 50 C15 45, 45 45, 50 10" stroke="#4A90E2" stroke-width="2" opacity="0.7"/>
+  
+  <!-- Central circle -->
+  <circle cx="50" cy="50" r="5" fill="#4A90E2"/>
+  
+  <!-- Nodes at the tips -->
+  <circle cx="50" cy="10" r="3" fill="#4A90E2"/>
+  <circle cx="90" cy="50" r="3" fill="#4A90E2"/>
+  <circle cx="50" cy="90" r="3" fill="#4A90E2"/>
+  <circle cx="10" cy="50" r="3" fill="#4A90E2"/>
+</svg>

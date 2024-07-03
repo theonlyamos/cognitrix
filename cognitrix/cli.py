@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import asyncio
@@ -6,6 +7,9 @@ import argparse
 from pathlib import Path
 from argparse import Namespace
 from typing import Optional
+from fastapi import Request
+
+from fastapi.responses import JSONResponse
 
 from cognitrix.llms import (
     Cohere, Clarifai, LLM
@@ -25,24 +29,48 @@ def start_web_ui(agent: Agent | AIAssistant):
     from .api.main import app
     import uvicorn
     
+    @app.middleware("http")
+    async def add_middleware_data(request: Request, call_next):
+        request.state.agent = agent
+        response = await call_next(request)
+        return response
+    
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
+        web_agent = agent
         await websocket.accept()
-        session = await agent.load_session()
+        session = await web_agent.load_session()
         try:
-            agent.websocket = websocket
+            web_agent.websocket = websocket
             while True:
-                query = await websocket.receive_json()
+                data = await websocket.receive_text()
+                query = json.loads(data)
                 
                 if query['type'] == 'chat_history':
-                    session_id = query['content']
+                    session_id = query['session_id']
                     session = await Session.load(session_id)
-                    await websocket.send_json({'type': 'chat_history', 'content': session.chat})
+
+                    loaded_agent = await web_agent.get(session.agent_id)
+                    if loaded_agent:
+                        web_agent = loaded_agent
+                        web_agent.websocket = websocket
+
+                    await websocket.send_json({'type': 'chat_history', 'content': session.chat, 'agent_name': web_agent.name})
                 elif query['type'] == 'sessions':
-                    sessions = [sess.dict() for sess in Session.list_sessions()]
-                    await websocket.send_json({'type': 'sessions', 'content': sessions})
+                    if query['action'] == 'list':
+                        sessions = [sess.dict() for sess in Session.list_sessions()]
+                        await websocket.send_json({'type': 'sessions', 'action': 'list', 'content': sessions})
+                    elif query['action'] == 'get':
+                        agent_id = query['agent_id']
+                        loaded_agent = await web_agent.get(agent_id)
+                        if loaded_agent:
+                            web_agent = loaded_agent
+                            web_agent.websocket = websocket
+                            session = await loaded_agent.load_session()
+                            await websocket.send_json({'type': 'sessions', 'action': 'get', 'agent_name': web_agent.name, 'session': session.dict()})
                 else:
-                    response = await agent.chat(query, session)
+                    user_prompt = query['content']
+                    response = await web_agent.chat(user_prompt, session)
                     await websocket.send_json({'type': 'chat_reply', 'content': response})
         except WebSocketDisconnect:
             logger.warning('Websocket disconnected')
@@ -51,18 +79,31 @@ def start_web_ui(agent: Agent | AIAssistant):
             logger.exception(e)
             agent.websocket = None
     
+    @app.get('/generate')
+    async def generate_agent_system_prompt(prompt: str):
+        response = agent.generate(prompt)
+        
+        return JSONResponse({'status': True, 'data': response.text})
+    
     uvicorn.run(app, forwarded_allow_ips="*")
 
 def add_agent():
     new_agent = asyncio.run(Agent.create_agent()) # type: ignore
     if new_agent:
-        description = input("\n[Enter agent system prompt]: ")
-        if description:
-            new_agent.prompt_template = description
-            asyncio.run(new_agent.save())
         print(f"\nAgent **{new_agent.name}** added successfully!")
     else:
         print("\nError creating agent")
+    sys.exit()
+    
+def delete_agent(agent_name_or_index: str):
+    if agent_name_or_index:
+        agent_deleted = asyncio.run(Agent.delete(agent_name_or_index))
+        if agent_deleted:
+            print(f"\nAgent **{agent_name_or_index}** deleted successfully!")
+        else:
+            print(f"Agent **{agent_name_or_index}** couldn't be deleted")
+    else:
+        print("\nError deleting agent")
     sys.exit()
 
 def list_agents():
@@ -72,7 +113,6 @@ def list_agents():
     max_width = 10
     max_col = max_col if max_col >= max_width else max_width
     
-    print(max_col)
     print("\nAvailable Agents:")
     print(f" {'_'*((int(len(agents)/10)+5)+max_width+1)}")
     print(f"| #{' '*(int(len(agents)/10))} | {'Agent Name'+' '*(max_col-max_width)} |")
@@ -129,13 +169,18 @@ def manage_agents(args: Namespace):
     try:
         if args.new:
             add_agent()
-        if args.list:
+        elif args.delete:
+            agent_id__or_name = args.id or args.name
+            if not agent_id__or_name:
+                raise Exception('Specify agent name or id to delete')
+            delete_agent(agent_id__or_name)
+        elif args.list:
             list_agents()
     except KeyboardInterrupt:
         print()
         sys.exit()
     except Exception as e:
-        logging.exception(e)
+        logger.exception(e)
         sys.exit(1)
         
 def manage_tools(args: Namespace):
@@ -231,10 +276,11 @@ def get_arguments():
     subparsers = parser.add_subparsers()
     agents_parser = subparsers.add_parser('agents', help="Manage agents")
     agents_parser.add_argument("name", type=str, nargs="?", help="Name of an agent to manage (details|update|remove)")  
-    agents_parser.add_argument('--new', action='store_true', help='Create a new agent')
+    agents_parser.add_argument('--new','--create', action='store_true', help='Create a new agent')
     agents_parser.add_argument('-l', '--list', action='store_false', help='List all saved agents')
     agents_parser.add_argument('--update', action='store_true', help='Update an agent')
-    agents_parser.add_argument('--remove', action='store_true', help='Delete an agent')
+    agents_parser.add_argument('--delete', action='store_true', help='Delete an agent')
+    agents_parser.add_argument('--id', nargs='?', help='Specify agent id to update or delete')
     agents_parser.set_defaults(func=manage_agents)
     
     agents_parser = subparsers.add_parser('tools', help="Manage tools")
