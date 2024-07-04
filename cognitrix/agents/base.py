@@ -231,33 +231,26 @@ class Agent(BaseModel):
     def add_tool(self, tool: Tool):
         self.tools.append(tool)
 
-    async def chat(self, user_input: str|dict, session: Session):
-        agent_response = ''
-        while True:
-            self.format_system_prompt()
-            
-            full_prompt = self.process_prompt(user_input)
-            response: Any = self.llm(full_prompt)
-            
-            self.llm.chat_history.append(full_prompt)
-            
+    async def chat(self, user_input: str | dict, session: Session):
+        self.format_system_prompt()
+        
+        full_prompt = self.process_prompt(user_input)
+        
+        async for response in self.llm(full_prompt):
             if response.text:
                 self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response.text})
-                agent_response = response.text
-                break
-            
-            if response.tool_calls:
+                if self.websocket:
+                    await self.websocket.send_text(json.dumps({'type': 'chat_reply', 'content': response.text}))
+            elif response.tool_calls:
                 result: dict[Any, Any] | str = await self.call_tools(response.tool_calls)
-
                 if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                     user_input = result
                 else:
-                    agent_response = result
-                    break
+                    if self.websocket:
+                        await self.websocket.send_text(json.dumps({'type': 'chat_reply', 'content': result}))
         
         self.save_session(session)
-        return agent_response
-            
+    
     def initialize(self, session_id: Optional[str] = None):
         session: Session = asyncio.run(self.load_session(session_id))
         

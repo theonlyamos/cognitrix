@@ -72,7 +72,7 @@ class Google(LLM):
 
         return messages
 
-    def __call__(self, query, **kwds: Any):
+    async def __call__(self, query, **kwds: Any):
         """Generates a response to a query using the Gemini API.
 
         Args:
@@ -96,13 +96,17 @@ class Google(LLM):
         if not self.client:
             self.client = genai.GenerativeModel(self.model)
         
-        response = self.client.generate_content(
+        response = LLMResponse()
+        
+        stream =  self.client.generate_content(
             contents,
             stream=True,
             generation_config=general_config    # type: ignore
         )
-
-        response.resolve()
-        
-        return LLMResponse(response.text)
+        for chunk in stream:
+            response.add_chunk(chunk.text)
+            yield response
+            
+        # response.parse_llm_response()
+        yield response
 

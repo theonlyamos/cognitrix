@@ -20,29 +20,30 @@ class LLMResponse:
     """Class to handle and separate LLM responses into text and tool calls."""
     
     def __init__(self, llm_response: Optional[str]=None):
+        self.chunks = []
         self.llm_response = llm_response
         self.text: Optional[str] = None
         self.tool_calls: Optional[List[Dict[str, Any]]] = None
         self.artifacts: Optional[List[Dict[str, Any]]] = None
 
-        self.parse_llm_response()
+        # self.parse_llm_response()
     
+    def add_chunk(self, chunk):
+        self.chunks.append(chunk)
+        self.parse_llm_response()
+
     def parse_llm_response(self):
-        """Parse the LLM response into text and tool calls."""
-        
-        if not self.llm_response: return 
-        response_data = xml_to_dict(self.llm_response)
- 
+        full_response = ''.join(self.chunks)
+        response_data = xml_to_dict(full_response)
         try:
             if isinstance(response_data, dict):
                 response = response_data['response']
-                
                 if 'result' in response.keys():
-                    self.text = response['result'] # type: ignore
+                    self.text = response['result']  # type: ignore
                 if 'tool_calls' in response.keys():
-                    self.tool_calls = response['tool_calls'] # type: ignore
+                    self.tool_calls = response['tool_calls']  # type: ignore
                 if 'artifacts' in response.keys():
-                    self.tool_calls = response['artifacts'] # type: ignore
+                    self.tool_calls = response['artifacts']  # type: ignore
             else:
                 self.text = str(response_data)
         except Exception as e:
@@ -197,5 +198,6 @@ class LLM(BaseModel):
             logging.exception(e)
             return None
     
-    def __call__(*args, **kwargs):
-        return LLMResponse()
+    async def __call__(*args, **kwargs):
+        response = LLMResponse()
+        yield response

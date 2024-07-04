@@ -54,7 +54,7 @@ class Cohere(LLM):
             
             self.tools.append(f_tool)
 
-    def __call__(self, query, **kwds: Any):
+    async def __call__(self, query, **kwds: Any):
         """Generates a response to a query using the Cohere API.
 
         Args:
@@ -67,19 +67,35 @@ class Cohere(LLM):
         
         if not self.client:
             self.client = cohere.Client(api_key=self.api_key)
-            
-        response = self.client.chat( 
+        
+        response = LLMResponse()
+        
+        stream = self.client.chat_stream( 
             model=self.model,
             message=query['message'],
             temperature=self.temperature,
-            preamble_override=self.system_prompt, # type: ignore
+            preamble=self.system_prompt, # type: ignore
             chat_history=self.chat_history,
             prompt_truncation='auto',
             citation_quality='accurate',
-            connectors=[{"id": "web-search"}]
+            connectors=[{"id": "web-search"}],
+            # tools=[
+            #     {"name":"calculator"},
+            #     {"name":"python_interpreter"},
+            #     {"name":"internet_search"}
+            # ]
         )
         
-        return LLMResponse(response.text)
+        for event in stream:
+            if event.event_type == 'text-generation' or event.event_type == 'tool-calls-chunk':
+                if hasattr(event, 'text'):
+                    response.add_chunk(event.text)
+                    yield response
+                elif event.event_type == 'stream-end':
+                    response.add_chunk(event.response.text)
+                    yield response
+        
+        yield response
     
 if __name__ == "__main__":
     try:

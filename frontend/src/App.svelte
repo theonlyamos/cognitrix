@@ -5,7 +5,9 @@
   import Agents from './routes/Agents.svelte';
   import Container from './lib/Container.svelte';
   import AgentPage from './routes/AgentPage.svelte';
-  
+  import { webSocketStore } from './common/stores';
+
+  webSocketStore.connect();
 </script>
 
 <Router>

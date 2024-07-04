@@ -8,6 +8,7 @@ from pathlib import Path
 from argparse import Namespace
 from typing import Optional
 from fastapi import Request
+from rich import print
 
 from fastapi.responses import JSONResponse
 
@@ -18,75 +19,31 @@ from cognitrix.llms import (
 from cognitrix.agents import AIAssistant, Agent
 from cognitrix.llms.session import Session
 from cognitrix.tools import Tool
+from cognitrix.utils.ws import WebSocketManager
 
 from cognitrix.config import VERSION
 
 logger = logging.getLogger('cognitrix.log')
 
 def start_web_ui(agent: Agent | AIAssistant):
-    from fastapi import WebSocket
-    from starlette.websockets import WebSocketDisconnect
     from .api.main import app
+    from fastapi import WebSocket
     import uvicorn
+    ws_manager = WebSocketManager(agent)
     
+
     @app.middleware("http")
     async def add_middleware_data(request: Request, call_next):
         request.state.agent = agent
         response = await call_next(request)
         return response
-    
+
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
-        web_agent = agent
-        await websocket.accept()
-        session = await web_agent.load_session()
-        try:
-            web_agent.websocket = websocket
-            while True:
-                data = await websocket.receive_text()
-                query = json.loads(data)
-                
-                if query['type'] == 'chat_history':
-                    session_id = query['session_id']
-                    session = await Session.load(session_id)
+        await ws_manager.websocket_endpoint(websocket)
 
-                    loaded_agent = await web_agent.get(session.agent_id)
-                    if loaded_agent:
-                        web_agent = loaded_agent
-                        web_agent.websocket = websocket
-
-                    await websocket.send_json({'type': 'chat_history', 'content': session.chat, 'agent_name': web_agent.name})
-                elif query['type'] == 'sessions':
-                    if query['action'] == 'list':
-                        sessions = [sess.dict() for sess in Session.list_sessions()]
-                        await websocket.send_json({'type': 'sessions', 'action': 'list', 'content': sessions})
-                    elif query['action'] == 'get':
-                        agent_id = query['agent_id']
-                        loaded_agent = await web_agent.get(agent_id)
-                        if loaded_agent:
-                            web_agent = loaded_agent
-                            web_agent.websocket = websocket
-                            session = await loaded_agent.load_session()
-                            await websocket.send_json({'type': 'sessions', 'action': 'get', 'agent_name': web_agent.name, 'session': session.dict()})
-                else:
-                    user_prompt = query['content']
-                    response = await web_agent.chat(user_prompt, session)
-                    await websocket.send_json({'type': 'chat_reply', 'content': response})
-        except WebSocketDisconnect:
-            logger.warning('Websocket disconnected')
-            agent.websocket = None
-        except Exception as e:
-            logger.exception(e)
-            agent.websocket = None
-    
-    @app.get('/generate')
-    async def generate_agent_system_prompt(prompt: str):
-        response = agent.generate(prompt)
-        
-        return JSONResponse({'status': True, 'data': response.text})
-    
     uvicorn.run(app, forwarded_allow_ips="*")
-
+    
 def add_agent():
     new_agent = asyncio.run(Agent.create_agent()) # type: ignore
     if new_agent:
@@ -202,6 +159,10 @@ def str_or_file(string):
             return file.read()
     return string
 
+async def prompt_agent(assistant: AIAssistant|Agent, prompt):
+    async for response in assistant.generate(prompt):
+        print(response.text, end='\r')
+
 def start(args: Namespace):
     try:
         if args.providers:
@@ -260,10 +221,14 @@ def start(args: Namespace):
             assistant.format_system_prompt()
             asyncio.run(assistant.save())
 
-            if not args.web_ui:
-                assistant.start(args.session, audio=args.audio)
-            else:
+            if args.generate:
+                asyncio.run(prompt_agent(assistant, args.generate))
+                    
+            elif args.web_ui:
                 start_web_ui(assistant)
+                
+            else:
+                assistant.start(args.session, audio=args.audio)
                 
     except Exception as e:
         logging.exception(e)
@@ -300,6 +265,7 @@ def get_arguments():
     parser.add_argument('--temperature', type=float, default=0.1, help='Set temperature of model')
     parser.add_argument('--system-prompt', type=str_or_file, default='', help='Set system prompt of model. Can be a string or a text file path')
     parser.add_argument('--prompt-template', type=str_or_file, default='', help='Set prompt template of model. Can be a string or a text file path')
+    parser.add_argument('--generate', type=str, default='', help='Prompt the agent to generate text and then exit after printing out the response.')
     parser.add_argument('--audio', action='store_true', help='Get input from microphone')
     parser.add_argument('--session', type=str, default="", help='Load saved session')
     parser.add_argument('--sessions', action='store_true', help='Get a list of all saved sessions')

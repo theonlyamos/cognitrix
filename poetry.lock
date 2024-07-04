@@ -444,13 +444,13 @@ colorama = {version = "*", markers = "platform_system == \"Windows\""}
 
 [[package]]
 name = "cohere"
-version = "5.5.6"
+version = "5.5.8"
 description = ""
 optional = false
 python-versions = "<4.0,>=3.8"
 files = [
-    {file = "cohere-5.5.6-py3-none-any.whl", hash = "sha256:10b2e38489ea30493b1eae8851216bcdc2eaf9c96a7b413ed518489c845b39d9"},
-    {file = "cohere-5.5.6.tar.gz", hash = "sha256:d146b6c87a5f709912861c15bfcbc4fca11cefe5e9843dc90bad9662df65968f"},
+    {file = "cohere-5.5.8-py3-none-any.whl", hash = "sha256:e1ed84b90eadd13c6a68ee28e378a0bb955f8945eadc6eb7ee126b3399cafd54"},
+    {file = "cohere-5.5.8.tar.gz", hash = "sha256:84ce7666ff8fbdf4f41fb5f6ca452ab2639a514bc88967a2854a9b1b820d6ea0"},
 ]
 
 [package.dependencies]
@@ -461,7 +461,7 @@ httpx-sse = ">=0.4.0,<0.5.0"
 parameterized = ">=0.9.0,<0.10.0"
 pydantic = ">=1.9.2"
 requests = ">=2.0.0,<3.0.0"
-tokenizers = ">=0.15,<0.16"
+tokenizers = ">=0.15,<1"
 types-requests = ">=2.0.0,<3.0.0"
 typing_extensions = ">=4.0.0"
 
@@ -2962,4 +2962,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "502cacbca400343119d146def9d75d761634f041938a0fb8e00ae3470c2c6d77"
+content-hash = "2ba5732ee9abd72dc41b23b279476197c988cab6082ed05959c56ce8710a70d8"
