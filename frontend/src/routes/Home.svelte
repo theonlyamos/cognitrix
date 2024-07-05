@@ -16,6 +16,7 @@
     let loading: boolean = true;
     let unsubscribe: Unsubscriber | null = null;
     let socket: WebSocket;
+    let streaming_response: boolean = false;
 
     const uploadFile = ()=>{
         console.log('Uploading file...')
@@ -30,6 +31,7 @@
 
         if (socket && socket.readyState === WebSocket.OPEN) {
             webSocketStore.send(JSON.stringify({type: "chat_message", action: "send", content: query}));
+            streaming_response = false
         }
     }
 
@@ -52,38 +54,49 @@
     const startWebSocketConnection = ()=>{
         unsubscribe = webSocketStore.subscribe((event: {socket: WebSocket, type: string, data?: any})=>{
             socket = event.socket
-            if (event.type === 'open') {
-                if (socket && socket.readyState === WebSocket.OPEN) {
-                    webSocketStore.send(JSON.stringify({type: "sessions", action: "list"}));
-                    handleRouteChange();
-                }
-            }
-            else if (event.type === 'message'){
-                loading = false
-                let data = JSON.parse(event.data)
-                
-                if (data.type === 'chat_history') {
-                    agentName = data.agent_name
-                    for (let msg of data.content) {
-                        messages = [...messages, {
-                            role: msg.role.toLowerCase(),
-                            content: msg.message
-                        }]
+            if (event !== null){
+                if (event.type === 'open') {
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        webSocketStore.send(JSON.stringify({type: "sessions", action: "list"}));
+                        handleRouteChange();
                     }
                 }
-                else if (data.type === 'chat_reply') {
-                    messages = [...messages, {
-                        role: agentName,
-                        content: data.content
-                    }]
-                }
-                else if (data.type === 'sessions') {
-                    console.log(data)
-                    if (data.action === 'list') {
-                        sessions = data.content as SessionInterface[];
+                else if (event.type === 'message'){
+                    loading = false
+                    let data = JSON.parse(event.data)
+                    
+                    if (data.type === 'chat_history') {
+                        agentName = data.agent_name
+                        for (let msg of data.content) {
+                            messages = [...messages, {
+                                role: msg.role.toLowerCase(),
+                                content: msg.message
+                            }]
+                        }
                     }
-                    else if (data.action === 'get') {
-                        session_id = data.session?.id
+                    else if (data.type === 'chat_reply') {
+                        const new_message = {
+                            role: agentName,
+                            content: data.content
+                        }
+    
+                        if (!streaming_response){
+                            messages = [...messages, new_message]
+                        }
+                        else {
+                            messages = [...messages.slice(0, -1), new_message]
+                        }
+    
+                        streaming_response = true
+                    }
+                    else if (data.type === 'sessions') {
+                        console.log(data)
+                        if (data.action === 'list') {
+                            sessions = data.content as SessionInterface[];
+                        }
+                        else if (data.action === 'get') {
+                            session_id = data.session?.id
+                        }
                     }
                 }
             }

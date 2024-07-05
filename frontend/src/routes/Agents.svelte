@@ -9,6 +9,7 @@
     const loadAgents = async()=> {
         try {
             agents = await getAllAgents() as AgentInterface[];
+            console.log(agents)
         } catch (error) {
             console.log(error)
         }

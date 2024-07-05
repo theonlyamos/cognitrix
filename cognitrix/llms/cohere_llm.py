@@ -95,7 +95,7 @@ class Cohere(LLM):
                     response.add_chunk(event.response.text)
                     yield response
         
-        yield response
+        # yield response
     
 if __name__ == "__main__":
     try:

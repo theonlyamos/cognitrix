@@ -28,7 +28,7 @@ class WebSocketManager:
                     loaded_agent = await web_agent.get(session.agent_id)
                     if loaded_agent:
                         web_agent = loaded_agent
-                        self.websocket = websocket
+                        web_agent.websocket = websocket
 
                     await websocket.send_json({'type': 'chat_history', 'content': session.chat, 'agent_name': web_agent.name})
                 elif query['type'] == 'sessions':
@@ -49,8 +49,8 @@ class WebSocketManager:
                         await websocket.send_json({'type': 'generate_response', 'data': response.text})
                 else:
                     user_prompt = query['content']
-                    response = await web_agent.chat(user_prompt, session)
-                    await websocket.send_json({'type': 'chat_reply', 'content': response})
+                    await web_agent.chat(user_prompt, session)
+                    # await websocket.send_json({'type': 'chat_reply', 'content': response})
         except WebSocketDisconnect:
             logger.warning('Websocket disconnected')
             self.websocket = None

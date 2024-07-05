@@ -2,9 +2,9 @@ from PIL import Image
 from typing import Dict
 import xml.etree.ElementTree as ET
 from cognitrix.tools import Tool
-import logging
 import base64
 import io
+import re
 
 json_return_format: str = """
 Your response should be in a valid json format which can
@@ -230,6 +230,18 @@ def extract_json(content: str) -> dict | str:
         except Exception as e:
             # logging.exception(e)
             return default_content
+    
+def extract_parts(text):
+    pattern = r'(.*?)<response>(.*?)</response>(.*)'
+    match = re.search(pattern, text, re.DOTALL)
+    
+    if match:
+        before = match.group(1).strip()
+        response = match.group(2).strip()
+        after = match.group(3).strip()
+        return before, response, after
+    else:
+        return None, None, None
 
 def xml_to_dict(xml_string) -> dict | str:
     """
@@ -252,6 +264,10 @@ def xml_to_dict(xml_string) -> dict | str:
         {'root': {'child': 'Hello'}}
     """
     try:
+        before, extracted, after = extract_parts(xml_string)
+        
+        if extracted:
+            xml_string = extracted
         xml_string = xml_string.strip()
         if xml_string.startswith("```xml"):
             xml_string = xml_string[6:]
@@ -275,6 +291,8 @@ def xml_to_dict(xml_string) -> dict | str:
                         result[child.tag] = [result[child.tag], child_data]
                 else:
                     result[child.tag] = child_data
+            result['before'] = before
+            result['after'] = after
             return result
         
         return {root.tag: parse_element(root)}

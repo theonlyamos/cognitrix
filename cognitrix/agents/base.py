@@ -251,7 +251,7 @@ class Agent(BaseModel):
         
         self.save_session(session)
     
-    def initialize(self, session_id: Optional[str] = None):
+    async def initialize(self, session_id: Optional[str] = None):
         session: Session = asyncio.run(self.load_session(session_id))
         
         query: str | dict = input("\nUser (q to quit): ")
@@ -288,23 +288,22 @@ class Agent(BaseModel):
                 self.format_system_prompt()
                 
                 full_prompt = self.process_prompt(query)
-                response: Any = self.llm(full_prompt)
-                
-                self.llm.chat_history.append(full_prompt)
-                
-                if response.text:
-                    self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response.text})
-                    print(f"\n{self.name}: {response.text}")
-                
-                if response.tool_calls:
-                    result: dict[Any, Any] | str = asyncio.run(self.call_tools(response.tool_calls))
+                async for response in self.llm(full_prompt):
+                    self.llm.chat_history.append(full_prompt)
+                    
+                    if response.text:
+                        self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response.text})
+                        print(f"\n{self.name}: {response.text}")
+                    
+                    if response.tool_calls:
+                        result: dict[Any, Any] | str = asyncio.run(self.call_tools(response.tool_calls))
 
-                    if isinstance(result, dict) and result['type'] == 'tool_calls_result':
-                        query = result
+                        if isinstance(result, dict) and result['type'] == 'tool_calls_result':
+                            query = result
+                        else:
+                            print(result)
                     else:
-                        print(result)
-                else:
-                    query = input("\nUser (q to quit): ")
+                        query = input("\nUser (q to quit): ")
 
                 # query = input("\nUser (q to quit): ")
                 
@@ -325,7 +324,7 @@ class Agent(BaseModel):
         if audio:
             self.start_audio()
         else:
-            self.initialize(session_id)
+            asyncio.run(self.initialize(session_id))
         
     def handle_transcription(self, sentence: str, transcriber: Transcriber):
         if sentence:

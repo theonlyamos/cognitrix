@@ -35,6 +35,7 @@ class LLMResponse:
     def parse_llm_response(self):
         full_response = ''.join(self.chunks)
         response_data = xml_to_dict(full_response)
+
         try:
             if isinstance(response_data, dict):
                 response = response_data['response']

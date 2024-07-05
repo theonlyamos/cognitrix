@@ -161,7 +161,7 @@ def str_or_file(string):
 
 async def prompt_agent(assistant: AIAssistant|Agent, prompt):
     async for response in assistant.generate(prompt):
-        print(response.text, end='\r')
+        print(f"\r{response.text}", end='')
 
 def start(args: Namespace):
     try:

@@ -6,6 +6,7 @@
     import Checkbox from "../lib/Checkbox.svelte";
     import Switch from "../lib/Switch.svelte";
     import LlmProvider from "../lib/LLMProvider.svelte";
+  import Accordion from "../lib/Accordion.svelte";
 
     export let agent_id: string = '';
     let agent: AgentDetailInterface = {
@@ -160,54 +161,33 @@
         </button>
     </div>
     <div class="agent-form">
-        <div class="form-group">
-            <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <header role="button" on:click={() => llmsShown = !llmsShown} tabindex="0">
-                <label for="tools">Choose LLM Provider</label>
-                <button  class="toggle-tools"> 
-                    <i 
-                        class={`fa-solid ${llmsShown ? 'fa-angle-up fa-fw' : 'fa-angle-down fa-fw'}`}
-                    ></i>
-                </button>
-            </header>
-        </div>
-        {#if llmsShown}
-        <div class="form-group">
-            <select bind:value={agent.llm.provider} on:change={(e)=>{handleLLMChange(e)}}>
-            {#each providers as provider, index (index)}
-                <option disabled></option>
-                <option value={provider.provider} selected>{provider.provider}</option>
-            {/each}
-            </select>
-        </div>
-        <LlmProvider 
-            bind:model={agent.llm.model}
-            bind:api_key={agent.llm.api_key}
-            bind:base_url={agent.llm.base_url}
-            bind:temperature={agent.llm.temperature}
-            bind:max_tokens={agent.llm.max_tokens}
-            bind:is_multimodal={agent.llm.is_multimodal}
-        />
-        {/if}
+        <Accordion title="Choose LLM Provider">
+            <div class="form-group">
+                <select bind:value={agent.llm.provider} on:change={(e)=>{handleLLMChange(e)}}>
+                {#each providers as provider, index (index)}
+                    <option disabled></option>
+                    <option value={provider.provider} selected>{provider.provider}</option>
+                {/each}
+                </select>
+            </div>
+            <LlmProvider 
+                bind:model={agent.llm.model}
+                bind:api_key={agent.llm.api_key}
+                bind:base_url={agent.llm.base_url}
+                bind:temperature={agent.llm.temperature}
+                bind:max_tokens={agent.llm.max_tokens}
+                bind:is_multimodal={agent.llm.is_multimodal}
+            />
+        </Accordion>
     </div>
     <div class="agent-form tools">
-        <div class="form-group">
-            <header>
-                <label for="tools">Tools</label>
-                <button on:click={() => toolsShown = !toolsShown} class="toggle-tools"> 
-                    <i 
-                        class={`fa-solid ${toolsShown ? 'fa-angle-up fa-fw' : 'fa-angle-down fa-fw'}`}
-                    ></i>
-                </button>
-            </header>
-        </div>
-        {#if toolsShown}
-        <div class="tools-list">
-            {#each tools as tool, index (index)}
-                <Checkbox name="tools" value={tool.name} label={tool.name} onChange={handleToolChange}/>
-            {/each}
-        </div>
-        {/if}
+        <Accordion title="Tools">
+            <div class="tools-list">
+                {#each tools as tool, index (index)}
+                    <Checkbox name="tools" value={tool.name} label={tool.name} onChange={handleToolChange}/>
+                {/each}
+            </div>
+        </Accordion>
     </div>
 </div>
 
@@ -256,10 +236,6 @@
         display: flex;
         align-items: center;
         gap: 2px;
-    }
-
-    button.toggle-tools {
-        box-shadow: none;
     }
 
     .tools {
