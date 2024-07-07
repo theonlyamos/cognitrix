@@ -59,14 +59,17 @@
 
 <style>
     .input-bar {
-        width: 100%;
+        width: 95%;
         height: 11%;
         display: flex;
         justify-content: center;
         align-items: center;
+        position: absolute;
+        right: 20px;
+        backdrop-filter: blur(5px);
     }
     .input-container {
-        width: 80%;
+        width: 100%;
         display: flex;
         justify-content: space-between;
         align-items: center;

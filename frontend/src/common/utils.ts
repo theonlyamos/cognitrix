@@ -49,3 +49,8 @@ export const generatePrompt = async(agentName='', prompt: string): Promise<Objec
     })
     return response.json()
 }
+
+export const getAgentSession = async(agentId: string): Promise<Object> => {
+    const response = await fetch(`${BACKEND_URI}/agents/${agentId}/session`)
+    return response.json()
+}

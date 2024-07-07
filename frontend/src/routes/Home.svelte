@@ -35,6 +35,12 @@
         }
     }
 
+    const clearMessages = async()=>{
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            webSocketStore.send(JSON.stringify({type: "chat_history", action: "delete", session_id: session_id}));
+        }
+    }
+
     const resetState = () => {
         messages = [];
         agentName = 'Assistant';
@@ -53,8 +59,8 @@
 
     const startWebSocketConnection = ()=>{
         unsubscribe = webSocketStore.subscribe((event: {socket: WebSocket, type: string, data?: any})=>{
-            socket = event.socket
             if (event !== null){
+                socket = event.socket
                 if (event.type === 'open') {
                     if (socket && socket.readyState === WebSocket.OPEN) {
                         webSocketStore.send(JSON.stringify({type: "sessions", action: "list"}));
@@ -67,14 +73,20 @@
                     
                     if (data.type === 'chat_history') {
                         agentName = data.agent_name
-                        for (let msg of data.content) {
-                            messages = [...messages, {
-                                role: msg.role.toLowerCase(),
-                                content: msg.message
-                            }]
+                        if (data.action == 'delete'){
+                            messages = []
+                            window.location.reload()
+                        }
+                        else {
+                            for (let msg of data.content) {
+                                messages = [...messages, {
+                                    role: msg.role.toLowerCase(),
+                                    content: msg.message
+                                }]
+                            }
                         }
                     }
-                    else if (data.type === 'chat_reply') {
+                    else if (data.type === 'chat_message') {
                         const new_message = {
                             role: agentName,
                             content: data.content
@@ -84,18 +96,17 @@
                             messages = [...messages, new_message]
                         }
                         else {
-                            messages = [...messages.slice(0, -1), new_message]
+                            messages[messages.length-1]['content'] = new_message.content
                         }
     
                         streaming_response = true
                     }
                     else if (data.type === 'sessions') {
-                        console.log(data)
                         if (data.action === 'list') {
                             sessions = data.content as SessionInterface[];
                         }
                         else if (data.action === 'get') {
-                            session_id = data.session?.id
+                            session_id = data.content?.id
                         }
                     }
                 }
@@ -106,10 +117,6 @@
     onMount(() => {
         startWebSocketConnection();
 
-        const unsubscribe = webSocketStore.subscribe((event: {event: string, data?: any})=>{
-
-        })
-
         return (()=>{
             if (unsubscribe)
                 unsubscribe()
@@ -118,15 +125,15 @@
 
     onDestroy(()=>{
         if (unsubscribe)
-            unsubscribe();
+            unsubscribe()
     })
 
-    $: if (agent_id || session_id) {
+    $: if (session_id) {
         resetState();
         handleRouteChange();
     }
 </script>
 
-<ChatComponent {messages} {sessions}>
+<ChatComponent {messages} {sessions} {clearMessages}>
     <InputBar {uploadFile} {sendMessage} {loading}/>
 </ChatComponent>

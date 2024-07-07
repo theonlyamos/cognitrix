@@ -1,6 +1,6 @@
 <script lang="ts">
-    import { link } from "svelte-routing";
-    import { getAgent, getLLMProviders, getTools, generatePrompt, saveAgent } from "../common/utils";
+    import { link, navigate } from "svelte-routing";
+    import { getAgent, getLLMProviders, getTools, generatePrompt, saveAgent, getAgentSession } from "../common/utils";
     import type { AgentDetailInterface, ProviderInterface, ToolInterface } from "../common/interfaces";
     import GenerativeIcon from '../assets/ai-curved-star-icon-multiple.svg';
     import Checkbox from "../lib/Checkbox.svelte";
@@ -93,6 +93,16 @@
         }
     }
 
+    const chatWithAgent = async() => {
+        try {
+            const {session_id} = await getAgentSession(agent_id) as {session_id: string};
+            if (session_id)
+                navigate(`/${session_id}`, {replace: true});
+        } catch (error) {
+            console.log(error)
+        }
+    }
+
     const handleLLMChange = (event: Event) => {
         const target = event.target as HTMLInputElement;
         const selectedProvider = providers.find(provider => provider.provider === target.value) || {};
@@ -118,10 +128,10 @@
             <i class="fa-solid fa-tools fa-fw"></i>
             <span>Task</span>
         </button>
-        <a href={`/c/${agent_id}`} use:link class="btn">
-            <i class="fa-solid fa-message fa-fw"></i>
+        <button on:click={chatWithAgent} class="btn">
+            <i class="fa-regular fa-comments fa-fw"></i>
             <span>Chat</span>
-        </a>
+        </button>
     </div>
     {/if}
     <button 

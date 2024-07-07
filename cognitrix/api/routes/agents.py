@@ -39,3 +39,14 @@ async def load_agent(agent_id: str):
     
     return JSONResponse(response)
 
+@agents_api.get('/{agent_id}/session')
+async def load_session(agent_id: str):
+    agent = await Agent.get(agent_id)
+    session_id: str = ''
+    if agent:
+        session = await agent.load_session()
+        session_id = session.id
+        agent.save_session(session)
+        
+    return JSONResponse({'session_id': session_id})
+

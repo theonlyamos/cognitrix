@@ -1,9 +1,12 @@
+from typing import Optional
 from fastapi import WebSocket
 import json
 import logging
 from starlette.websockets import WebSocketDisconnect
+from cognitrix.agents.prompt_generator import PromptGenerator
 
 from cognitrix.llms.session import Session
+from cognitrix.agents import Agent, AIAssistant
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -20,33 +23,64 @@ class WebSocketManager:
             while True:
                 data = await websocket.receive_text()
                 query = json.loads(data)
+                action = query.get('action', '')
+                query_type = query['type']
                 
-                if query['type'] == 'chat_history':
+                if query_type == 'chat_history':
                     session_id = query['session_id']
-                    session = await Session.load(session_id)
+                    
+                    if action == 'get':
+                        session = await Session.load(session_id)
 
-                    loaded_agent = await web_agent.get(session.agent_id)
-                    if loaded_agent:
-                        web_agent = loaded_agent
-                        web_agent.websocket = websocket
+                        loaded_agent: Optional[Agent] = await web_agent.get(session.agent_id)
+                        if loaded_agent:
+                            web_agent = loaded_agent
+                            web_agent.websocket = websocket
 
-                    await websocket.send_json({'type': 'chat_history', 'content': session.chat, 'agent_name': web_agent.name})
-                elif query['type'] == 'sessions':
-                    if query['action'] == 'list':
+                        await websocket.send_json({'type': query_type, 'content': session.chat, 'agent_name': web_agent.name, 'action': action})
+                    
+                    elif action == 'delete':
+                        session = await Session.load(session_id)
+                        session.chat = []
+                        loaded_agent: Optional[Agent] = await web_agent.get(session.agent_id)
+                        if loaded_agent:
+                            web_agent: Agent = loaded_agent
+                            web_agent.llm.chat_history = session.chat
+                            web_agent.save_session(session)
+                            await web_agent.save()
+                            await websocket.send_json({'type': query_type, 'content': session.chat, 'agent_name': web_agent.name, 'action': action})
+                            
+                elif query_type == 'sessions':
+                    if action == 'list':
                         sessions = [sess.dict() for sess in Session.list_sessions()]
-                        await websocket.send_json({'type': 'sessions', 'action': 'list', 'content': sessions})
-                    elif query['action'] == 'get':
+                        await websocket.send_json({'type': query_type, 'content': sessions, 'action': action})
+                    
+                    elif action == 'get':
                         agent_id = query['agent_id']
                         loaded_agent = await web_agent.get(agent_id)
                         if loaded_agent:
+                            print(loaded_agent.name)
                             web_agent = loaded_agent
                             self.websocket = websocket
                             session = await loaded_agent.load_session()
-                            await websocket.send_json({'type': 'sessions', 'action': 'get', 'agent_name': web_agent.name, 'session': session.dict()})
-                elif query['type'] == 'generate':
+                            await websocket.send_json({'type': query_type, 'agent_name': web_agent.name, 'content': session.dict(), 'action': action})
+                
+                elif query_type == 'generate':
+                    default_prompt = query['prompt']
                     prompt = query['prompt']
+                    name = query.get('name', '')
+                    if action == 'system_prompt':
+                        agent = PromptGenerator(llm=web_agent.llm)
+                        agent.llm.system_prompt = agent.prompt_template
+                        
+                        prompt = "## Agent Description"
+                        if name:
+                            prompt += f"""\n\n## Agent Name: {name}"""
+                        
+                        prompt += f"""\n\n{default_prompt}"""
+                        
                     async for response in web_agent.generate(prompt):
-                        await websocket.send_json({'type': 'generate_response', 'data': response.text})
+                        await websocket.send_json({'type': query_type, 'content': response.text, 'action': action})
                 else:
                     user_prompt = query['content']
                     await web_agent.chat(user_prompt, session)

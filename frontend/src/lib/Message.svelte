@@ -8,7 +8,7 @@
     export let content: string;
     export let image: string = "";
 
-    let htmlContent = marked(content);
+    $: htmlContent = marked(content);
 </script>
 
 <article class={`message ${role === 'user' ? 'user' : 'astronaut'}`} id={`message${id}`}>
@@ -24,7 +24,7 @@
     </div>
     <hr>
     <div class="message-row">
-        <CodeBlock htmlContent={htmlContent}/>
+        <CodeBlock {htmlContent}/>
     </div>
     {#if image.length}
         <img src={image} alt="message" />

@@ -27,6 +27,10 @@
   
       formattedContent = doc.body.innerHTML;
     }
+
+    $: if (htmlContent) {
+      highlightCodeBlocks();
+    }
   </script>
   
   <div class="content-container">

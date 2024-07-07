@@ -236,18 +236,23 @@ class Agent(BaseModel):
         
         full_prompt = self.process_prompt(user_input)
         
+        full_response = ''
         async for response in self.llm(full_prompt):
             if response.text:
-                self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response.text})
+                full_response = response.text
                 if self.websocket:
-                    await self.websocket.send_text(json.dumps({'type': 'chat_reply', 'content': response.text}))
-            elif response.tool_calls:
+                    await self.websocket.send_text(json.dumps({'type': 'chat_message', 'content': response.text, 'action': 'reply'}))
+            if response.tool_calls:
                 result: dict[Any, Any] | str = await self.call_tools(response.tool_calls)
                 if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                     user_input = result
                 else:
                     if self.websocket:
-                        await self.websocket.send_text(json.dumps({'type': 'chat_reply', 'content': result}))
+                        await self.websocket.send_text(json.dumps({'type': 'chat_message', 'content': result, 'action': 'reply'}))
+        
+        self.llm.chat_history.append(full_prompt)
+        if full_response:
+            self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': full_response})
         
         self.save_session(session)
     
