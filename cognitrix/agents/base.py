@@ -1,5 +1,6 @@
 import inspect
 import json
+import time
 import uuid
 import asyncio
 import logging
@@ -15,7 +16,7 @@ from cognitrix.tasks import Task
 from cognitrix.llms.base import LLM, LLMResponse
 from cognitrix.tools.base import Tool
 from cognitrix.utils import extract_json, json_return_format
-from cognitrix.agents.templates import AUTONOMOUSE_AGENT_2
+from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 from cognitrix.config import AGENTS_FILE, SESSIONS_FILE
 from cognitrix.llms.session import Session
 from cognitrix.transcriber import Transcriber
@@ -34,7 +35,7 @@ class Agent(BaseModel):
     tools: List[Tool] = Field(default_factory=list)
     """List of tools to be use by the agent"""
     
-    prompt_template: str = Field(default=AUTONOMOUSE_AGENT_2)
+    prompt_template: str = Field(default=ASSISTANT_SYSTEM_PROMPT)
     """Agent's prompt template"""
     
     verbose: bool = Field(default=False)
@@ -99,7 +100,9 @@ class Agent(BaseModel):
             }
 
             if not 'args' in parameters:
-                tool_details['parameters'] = {name: TYPE_HINTS.get(str(param.annotation), 'string') for name, param in tool_parameters.items()}
+                for name, param in tool_parameters.items():
+                    print(name, param)
+                    tool_details['parameters'] = {name: TYPE_HINTS.get(str(param), 'string')}
                 tool_details['required'] = [name for name, param in tool_parameters.items() if param.default is inspect._empty]
             
             llm_tools.append(tool_details)
@@ -127,7 +130,7 @@ class Agent(BaseModel):
 
         self.llm.system_prompt = prompt
         
-        self.format_tools_for_llm()
+        # self.format_tools_for_llm()
 
     def _format_tools_string(self) -> str:
         return "You have access to the following Tools:\n" + "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
@@ -187,12 +190,20 @@ class Agent(BaseModel):
     def get_tool_by_name(self, name: str) -> Optional[Tool]:
         return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
 
-    async def call_tools(self, tool_calls: list) -> Union[dict, str]:
+    async def call_tools(self, tool_calls: dict) -> Union[dict, str]:
  
         try:
             if tool_calls:
                 tool_calls_result = []
-                for t in tool_calls:
+                agent_tool_calls = []
+                
+                if isinstance(tool_calls['tool'], list):
+                    for t in tool_calls['tool']:
+                        agent_tool_calls.append(t)
+                else: 
+                    agent_tool_calls.append(tool_calls['tool'])
+                    
+                for t in agent_tool_calls:
                     tool = self.get_tool_by_name(t['name'])
                     
                     if not tool:
@@ -200,8 +211,11 @@ class Agent(BaseModel):
                         raise Exception(f"Tool '{t['name']}' not found")
                     
                     print(f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}")
-                    if self.websocket:
-                        await self.websocket.send_text(f"Running tool '{tool.name.title()}' with parameters: {t['arguments']}")
+                    # if self.websocket:
+                    #     await self.websocket.send_text(json.dumps({
+                    #         'type': 'chat_message', 
+                    #         'content': f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}\n", 
+                    #         'action': 'reply', 'complete': False}))
                         
                     if 'sub agent' in tool.name.lower():
                         t['arguments']['parent'] = self
@@ -234,30 +248,49 @@ class Agent(BaseModel):
     async def chat(self, user_input: str | dict, session: Session):
         self.format_system_prompt()
         
-        full_prompt = self.process_prompt(user_input)
-        
         full_response = ''
-        async for response in self.llm(full_prompt):
-            if response.text:
-                full_response = response.text
-                if self.websocket:
-                    await self.websocket.send_text(json.dumps({'type': 'chat_message', 'content': response.text, 'action': 'reply'}))
-            if response.tool_calls:
-                result: dict[Any, Any] | str = await self.call_tools(response.tool_calls)
-                if isinstance(result, dict) and result['type'] == 'tool_calls_result':
-                    user_input = result
-                else:
-                    if self.websocket:
-                        await self.websocket.send_text(json.dumps({'type': 'chat_message', 'content': result, 'action': 'reply'}))
+        streaming = True
+        tool_calls = False
+        if self.websocket:
+            while streaming:
+                full_prompt = self.process_prompt(user_input)
+                response: LLMResponse | None = None
+                async for response in self.llm(full_prompt):
+                    full_response = response.text
+                    
+                    if response.text:
+                        response_text = response.text
+                        if response.before and response.before != '```xml':
+                            response_text = response.before + '\n\n' + response.text
+                        if response.after and response.after != '```':
+                            response_text = response_text + '\n\n' + response.after
+                        
+                        if response.artifacts:
+                            print(response.artifacts)
+                        await self.websocket.send_text(json.dumps({'type': 'chat_message', 'content': response_text, 'action': 'reply', 'complete': True}))
+                    else:
+                        await self.websocket.send_text(json.dumps({'type': 'chat_message', 'content': response.current_chunk, 'action': 'reply', 'complete': False}))
+                    await asyncio.sleep(0.5)
+                    if response.tool_calls:
+                        result: dict[Any, Any] | str = await self.call_tools(response.tool_calls)
+                        if isinstance(result, dict) and result['type'] == 'tool_calls_result':
+                            user_input = result
+                            tool_calls = True
+                            response.tool_calls = None
+                        else:
+                            await self.websocket.send_text(json.dumps({'type': 'chat_message', 'content': result, 'action': 'reply'}))
         
-        self.llm.chat_history.append(full_prompt)
-        if full_response:
-            self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': full_response})
-        
-        self.save_session(session)
+                if full_response:
+                    self.llm.chat_history.append(full_prompt)
+                    self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': full_response})
+                
+                if not tool_calls:
+                    streaming = False
+            
+            self.save_session(session)
     
     async def initialize(self, session_id: Optional[str] = None):
-        session: Session = asyncio.run(self.load_session(session_id))
+        session: Session = await self.load_session(session_id)
         
         query: str | dict = input("\nUser (q to quit): ")
         while True:
@@ -293,26 +326,30 @@ class Agent(BaseModel):
                 self.format_system_prompt()
                 
                 full_prompt = self.process_prompt(query)
+                query = ''
+                self.llm.chat_history.append(full_prompt)
+                print(f"\n{self.name}: ")
                 async for response in self.llm(full_prompt):
-                    self.llm.chat_history.append(full_prompt)
+                    print(f"\r{response.current_chunk}", end="")
                     
                     if response.text:
                         self.llm.chat_history.append({'role': self.name, 'type': 'text', 'message': response.text})
-                        print(f"\n{self.name}: {response.text}")
                     
                     if response.tool_calls:
-                        result: dict[Any, Any] | str = asyncio.run(self.call_tools(response.tool_calls))
+                        result: dict[Any, Any] | str = await self.call_tools(response.tool_calls)
 
                         if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                             query = result
                         else:
                             print(result)
-                    else:
-                        query = input("\nUser (q to quit): ")
+                    # else:
+                    #     query = input("\nUser (q to quit): ")
 
-                # query = input("\nUser (q to quit): ")
-                
                 self.save_session(session)
+                
+                if not query:
+                    query = input("\nUser (q to quit): ")
+                
 
             except KeyboardInterrupt:
                 print('Exiting...')

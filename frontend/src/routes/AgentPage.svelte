@@ -7,6 +7,9 @@
     import Switch from "../lib/Switch.svelte";
     import LlmProvider from "../lib/LLMProvider.svelte";
   import Accordion from "../lib/Accordion.svelte";
+  import { webSocketStore } from "../common/stores";
+  import type { Unsubscriber } from 'svelte/motion';
+  import { onDestroy, onMount } from "svelte";
 
     export let agent_id: string = '';
     let agent: AgentDetailInterface = {
@@ -25,32 +28,62 @@
     };
     let providers: ProviderInterface[] = [];
     let tools: ToolInterface[] = [];
+    let agentTools: string[] = [];
 
     let toolsShown: boolean = false;
     let llmsShown: boolean = false;
     let selectedTools: string[] = [];
     let loading: boolean = false;
     let submitting: boolean = false;
+    let unsubscribe: Unsubscriber | null = null;
+    let socket: WebSocket;
+    let newPromptTemplate: string = ''
     
     const loadAgent = async(agent_id: string) => {
         try {
             agent = await getAgent(agent_id) as AgentDetailInterface;
+            if (agent.tools && agent.tools.length){
+                agentTools = agent.tools.map(t => t.name)
+            }
+            console.log(agent)
         } catch (error) {
             console.log(error)
         }
     }
 
-    const generateAgentPrompt = async() => {
-        try {
-            loading = true;
-            const response = await generatePrompt(agent.name, agent.prompt_template) as {status: boolean, data: string};
-            agent.prompt_template = response.data
-        } catch (error) {
-            console.log(error)
-        } finally {
-            loading = false;
+    const generateAgentPrompt = () => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            webSocketStore.send(JSON.stringify({type: "generate", action: "system_prompt", name: agent.name, prompt: agent.prompt_template}));
+            loading = true
         }
     }
+
+    const startWebSocketConnection = ()=>{
+        unsubscribe = webSocketStore.subscribe((event: {socket: WebSocket, type: string, data?: any})=>{
+            if (event !== null){
+                socket = event.socket
+                console.log(socket)
+                if (event.type === 'message'){
+                    loading = false
+                    let data = JSON.parse(event.data)
+
+                    if (data.type == 'generate') {
+                        newPromptTemplate = data.content
+                        loading = false
+                    }
+                }
+            }
+        })
+    }
+
+    onMount(() => {
+        startWebSocketConnection();
+
+        return (()=>{
+            if (unsubscribe)
+                unsubscribe()
+        })
+    });
 
     (async () => {
         try {
@@ -110,6 +143,18 @@
             agent.llm = {...agent.llm, ...selectedProvider};
         }
     }
+
+    onDestroy(()=>{
+        if (unsubscribe)
+            unsubscribe()
+    })
+
+    $: if (newPromptTemplate) {
+        console.log(newPromptTemplate)
+        agent.prompt_template = agent.prompt_template + newPromptTemplate;
+    }
+
+    $: console.log(agent.tools)
 </script>
 
 {#if agent_id}
@@ -194,7 +239,13 @@
         <Accordion title="Tools">
             <div class="tools-list">
                 {#each tools as tool, index (index)}
-                    <Checkbox name="tools" value={tool.name} label={tool.name} onChange={handleToolChange}/>
+                    <Checkbox 
+                        name="tools" 
+                        value={tool.name} 
+                        label={tool.name} 
+                        onChange={handleToolChange}
+                        checked={agentTools.includes(tool.name)}
+                    />
                 {/each}
             </div>
         </Accordion>

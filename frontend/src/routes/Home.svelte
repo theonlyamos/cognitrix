@@ -91,12 +91,17 @@
                             role: agentName,
                             content: data.content
                         }
-    
+                        console.log(data.content, data.complete)
                         if (!streaming_response){
                             messages = [...messages, new_message]
                         }
                         else {
-                            messages[messages.length-1]['content'] = new_message.content
+                            if (data.complete){
+                                messages[messages.length-1].content = new_message.content
+                            }
+                            else {
+                                messages[messages.length-1].content = messages[messages.length-1].content + new_message.content
+                            }
                         }
     
                         streaming_response = true
@@ -135,5 +140,7 @@
 </script>
 
 <ChatComponent {messages} {sessions} {clearMessages}>
+    {#if session_id}
     <InputBar {uploadFile} {sendMessage} {loading}/>
+    {/if}
 </ChatComponent>

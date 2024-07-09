@@ -1,3 +1,4 @@
+import time
 from typing import Optional
 from fastapi import WebSocket
 import json
@@ -69,6 +70,7 @@ class WebSocketManager:
                     default_prompt = query['prompt']
                     prompt = query['prompt']
                     name = query.get('name', '')
+                    
                     if action == 'system_prompt':
                         agent = PromptGenerator(llm=web_agent.llm)
                         agent.llm.system_prompt = agent.prompt_template
@@ -80,7 +82,8 @@ class WebSocketManager:
                         prompt += f"""\n\n{default_prompt}"""
                         
                     async for response in web_agent.generate(prompt):
-                        await websocket.send_json({'type': query_type, 'content': response.text, 'action': action})
+                        await websocket.send_json({'type': query_type, 'content': response.current_chunk, 'action': action})
+                        time.sleep(1)
                 else:
                     user_prompt = query['content']
                     await web_agent.chat(user_prompt, session)

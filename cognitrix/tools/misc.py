@@ -86,11 +86,39 @@ class InternetBrowser(Tool):
     description: str =  """
     use this tool when you need to visit a website
     
+    Example:
+    User: Visit https://example.com
+    AI Assistant: <response>
+        <observation>The user or system has requested to open a web page at https://example.com using the Internet Browser tool.</observation>
+        <mindspace>
+    Web Browsing: URL structure, web protocols (HTTP/HTTPS)
+    Internet Security: Website trustworthiness, potential risks
+    User Interface: Browser interaction, web page rendering
+    Network: Internet connectivity, domain name resolution
+        </mindspace>
+        <thought>Step 1) The request is to open a specific web page, so we need to use the Internet Browser tool.
+    Step 2) The URL provided is "https://example.com", which is a secure (HTTPS) website.
+    Step 3) This appears to be a generic example URL, often used for testing or demonstration purposes.
+    Step 4) Opening a web page is a common operation but may have implications for user privacy and security.</thought>
+        <type>tool_calls</type>
+        <tool_calls>
+            <tool>
+                <name>Internet Browser</name>
+                <arguments>
+                    <url>https://example.com</url>
+                </arguments>
+            </tool>
+        </tool_calls>
+        <artifacts></artifacts>
+    </response>
+    
     :param url: The url to visit
     """
     category: str = "web"
     
     def run(self, url: str):
+        print(f"Opening {url} on the internet browser")
+        
         open_new_tab(url)
         
         return f"Opened {url} on the internet browser"
@@ -219,57 +247,116 @@ class FSBrowser(Tool):
     
     Example:
     User: create test.py on Desktop.
-    AI Assistant: {
-        "type": "tool_calls",
-        "tool_calls": [{
-            "name": "File System Browser",
-            "arguments": {
-                "path": "desktop_path",
-                "operation": "create",
-                "filename": "test.py",
-                "content": "gibberish"
-            }
-        }] 
-    }
+    AI Assistant: <response>
+        <observation>The user has requested to create a new file named 'test.py' on the desktop with content 'gibberish'.</observation>
+        <mindspace>
+    File System: File creation, directory structure, file permissions
+    Programming: Python files, code editing, file naming conventions
+    User Interface: Desktop environment, file management
+    Security: File access, potential risks of creating files
+        </mindspace>
+        <thought>Step 1) The user wants to create a new file, so we need to use the File System Browser tool.
+    Step 2) The file should be created on the desktop, which is specified by the 'desktop_path' argument.
+    Step 3) The filename is set to 'test.py', indicating it's likely a Python script.
+    Step 4) The content of the file is set to 'gibberish', which may not be valid Python code.</thought>
+        <type>tool_calls</type>
+        <tool_calls>
+            <tool>
+                <name>File System Browser</name>
+                <arguments>
+                    <path>{desktop_path}</path>
+                    <operation>create</operation>
+                    <filename>test.py</filename>
+                    <content>gibberish</content>
+                </arguments>
+            </tool>
+        </tool_calls>
+        <artifacts></artifacts>
+    </response>
     
     User: write new content to test.py on Desktop.
-    AI Assistant: {
-        "type": "tool_calls",
-        "tool_calls": [{
-            "name": "File System Browser",
-            "arguments": {
-                "path": "desktop_path",
-                "operation": "write",
-                "filename": "test.py",
-                "content": "gibberish"
-            }
-        }]
-    }
+    AI Assistant: <response>
+        <observation>The user has requested to write 'gibberish' content to a file named 'test.py' on the desktop.</observation>
+        <mindspace>
+    File System: File writing operations, file permissions
+    Programming: Python files, code editing, file content management
+    User Interface: Desktop environment, file access and modification
+    Security: File overwriting, data integrity, potential risks
+        </mindspace>
+        <thought>Step 1) The user wants to write to a file, so we need to use the File System Browser tool.
+    Step 2) The file is located on the desktop, specified by the 'desktop_path' argument.
+    Step 3) The operation is 'write', which means we'll be modifying the content of an existing file or creating it if it doesn't exist.
+    Step 4) The target file is 'test.py', which is likely a Python script.
+    Step 5) The content to be written is 'gibberish', which may not be valid Python code and could potentially overwrite existing content.</thought>
+        <type>tool_calls</type>
+        <tool_calls>
+            <tool>
+                <name>File System Browser</name>
+                <arguments>
+                    <path>{desktop_path}</path>
+                    <operation>write</operation>
+                    <filename>test.py</filename>
+                    <content>gibberish</content>
+                </arguments>
+            </tool>
+        </tool_calls>
+        <artifacts></artifacts>
+    </response>
     
     User: create folder called NewApp on Desktop.
-    AI Assistant: {
-        "type": "tool_calls",
-        "tool_calls": [{
-            "name": "File System Browser",
-            "arguments": {
-                "path": "desktop_path",
-                "operation": "mkdir",
-                "filename": "NewApp",
-            }
-        }]
-    }
+    AI Assistant: <response>
+        <observation>The user has requested to create a new folder called 'NewApp' on the Desktop.</observation>
+        <mindspace>
+    File System: Directory creation, folder structure, permissions
+    User Interface: Desktop organization, file management
+    Project Management: Application development, workspace setup
+    Naming Conventions: Folder naming best practices
+        </mindspace>
+        <thought>Step 1) The user wants to create a new folder, so we need to use the File System Browser tool.
+    Step 2) The folder should be created on the desktop, which is specified by the 'desktop_path' argument.
+    Step 3) The operation is 'mkdir', which stands for 'make directory', indicating we're creating a new folder.
+    Step 4) The name of the new folder is set to 'NewApp', suggesting it might be used for a new application or project.
+    Step 5) Creating a folder is generally a safe operation, but we should be aware of potential naming conflicts.</thought>
+        <type>tool_calls</type>
+        <tool_calls>
+            <tool>
+                <name>File System Browser</name>
+                <arguments>
+                    <path>{desktop_path}</path>
+                    <operation>mkdir</operation>
+                    <filename>NewApp</filename>
+                </arguments>
+            </tool>
+        </tool_calls>
+        <artifacts></artifacts>
+    </response>
     
     User: How many files are in my documents.
-    AI Assistant: {
-        "type": "tool_calls",
-        "tool_calls": [{
-            "name": "File System Browser",
-            "arguments": {
-                "path": "documents_path",
-                "operation": "list",
-            }
-        }]
-    }
+    AI Assistant: <response>
+        <observation>The user has asked to count the number of files in their documents folder.</observation>
+        <mindspace>
+    File System: Directory structure, file counting
+    User Data: Personal document management, file organization
+    System Information: File system queries, directory contents
+    Privacy: Access to user's personal files, data sensitivity
+        </mindspace>
+        <thought>Step 1) To count the files in the documents folder, we first need to list its contents.
+    Step 2) We'll use the File System Browser tool to accomplish this task.
+    Step 3) The path should be set to 'documents_path' to target the user's documents folder.
+    Step 4) The operation is 'list', which will retrieve the contents of the specified directory.
+    Step 5) After getting the list, we'll need to count the number of files (excluding subdirectories).</thought>
+        <type>tool_calls</type>
+        <tool_calls>
+            <tool>
+                <name>File System Browser</name>
+                <arguments>
+                    <path>{documents_path}</path>
+                    <operation>list</operation>
+                </arguments>
+            </tool>
+        </tool_calls>
+        <artifacts></artifacts>
+    </response>
     
     
     :param path: The specific path (realpath)
@@ -361,15 +448,28 @@ class FSBrowser(Tool):
 def take_screenshot():
     """Use this tool to take a screenshot of the screen.
     
-    Example:
-        User: take a screenshot
-        AI Assistant: {
-            "observation": "I need to take a screenshot of the user's screen.",
-            "thought": "Step 1) To take a screenshot, I need to use the Take Screenshot tool.  Step 2) Calling the Take Screenshot tool.",
-            "type": "tool_calls",
-            "tool_calls": [{}]: "Take Screenshot",
-            "arguments": []
-        }
+    Usage Example:
+    
+    User: take a screenshot
+    AI Assistant: <response>
+        <observation>I need to take a screenshot of the user's screen.</observation>
+        <mindspace>
+    Screen Capture: Screenshot techniques, image formats
+    User Interface: Current screen contents, visual information
+    Privacy: Potentially sensitive information on screen
+    System Interaction: Screen capture permissions, system API usage
+        </mindspace>
+        <thought>Step 1) To take a screenshot, I need to use the Take Screenshot tool.
+    Step 2) Calling the Take Screenshot tool.</thought>
+        <type>tool_calls</type>
+        <tool_calls>
+            <tool>
+                <name>Take Screenshot</name>
+                <arguments></arguments>
+            </tool>
+        </tool_calls>
+        <artifacts></artifacts>
+    </response>
     """
     screenshot = pyautogui.screenshot()
     
@@ -384,15 +484,31 @@ def text_input(text: str):
     Returns:
         str: Text input completed.
     
-    Example:
-        User: write hello world
-        AI Assistant: {
-            "observation": "I need to input text on the computer using the keyboard.",
-            "thought": "Step 1) To perform this action, I will need to use the Text Input tool. Step 2) The Text Input function takes one argument: text (a string representing the text to input). Step 2) Calling the Text Input function with argument: 'hello world'.",
-            "type": "tool_calls",
-            "tool_calls": [{}]: "Text Input",
-            "arguments": ["hello world"]
-        }
+    Example Usage:
+    
+    User: write hello world
+    AI Assistant: <response>
+        <observation>I need to input text on the computer using the keyboard.</observation>
+        <mindspace>
+    User Interface: Keyboard input, text entry fields
+    Human-Computer Interaction: Simulating user typing
+    System Control: Programmatic text input
+    Application Focus: Active window or text field for input
+        </mindspace>
+        <thought>Step 1) To perform this action, I will need to use the Text Input tool.
+    Step 2) The Text Input function takes one argument: text (a string representing the text to input).
+    Step 3) Calling the Text Input function with argument: 'hello world'.</thought>
+        <type>tool_calls</type>
+        <tool_calls>
+            <tool>
+                <name>Text Input</name>
+                <arguments>
+                    <text>hello world</text>
+                </arguments>
+            </tool>
+        </tool_calls>
+        <artifacts></artifacts>
+    </response>
     """
     screenshot = pyautogui.write(text, 0.15)
     
@@ -407,15 +523,16 @@ def key_press(key: str):
     Returns:
         str: Keypress completed.
     
-    Example:
-        User: Press windows key
-        AI Assistant: {
-            "observation": "I need to perform a single key press on the computer.",
-            "thought": "Step 1) This action requires the usage of the Key Press tool. Step 2) The Key Press tool takes one argument: key (a string representing the name of the key to press). Step 3) Calling the Key Press tool with argument: 'win'.",
-            "type": "tool_calls",
-            "tool_calls": [{}]: "Key Press",
-            "arguments": ["win"]
-        }
+    Usage Example:
+    
+    User: Press windows key
+    AI Assistant: {
+        "observation": "I need to perform a single key press on the computer.",
+        "thought": "Step 1) This action requires the usage of the Key Press tool. Step 2) The Key Press tool takes one argument: key (a string representing the name of the key to press). Step 3) Calling the Key Press tool with argument: 'win'.",
+        "type": "tool_calls",
+        "tool_calls": [{}]: "Key Press",
+        "arguments": ["win"]
+    }
     """
     screenshot = pyautogui.press(key.lower())
     
@@ -504,13 +621,29 @@ def mouse_right_click(x: int, y: int):
     
     Example:
         User: Right-click on Brave icon
-        AI Assistant: {
-            "observation": "I need to perform a mouse right-click at specific coordinates on the screen.",
-            "thought": "Step 1) To perform the mouse right-click, I need to use the Mouse Right Click tool. Step 2) The Mouse Click tool takes two arguments: x (the x-coordinate of the mouse click) and y (the y-coordinate of the mouse click). Step 3) Calling the Mouse Right Click tool with the x,y coordinates",
-            "type": "tool_calls",
-            "tool_calls": [{}]: "Mouse Right Click",
-            "arguments": ["123", "456"]
-        }
+        AI Assistant: <response>
+            <observation>I need to perform a mouse right-click at specific coordinates on the screen.</observation>
+            <mindspace>
+        Visual: Desktop interface, Brave browser icon location
+        Spatial: Coordinate system on computer screen
+        Technical: Mouse input simulation, right-click functionality
+        User Interface: Icon recognition, context menu activation
+            </mindspace>
+            <thought>Step 1) To perform the mouse right-click, I need to use the Mouse Right Click tool.
+        Step 2) The Mouse Click tool takes two arguments: x (the x-coordinate of the mouse click) and y (the y-coordinate of the mouse click).
+        Step 3) Calling the Mouse Right Click tool with the x,y coordinates</thought>
+            <type>tool_calls</type>
+            <tool_calls>
+                <tool>
+                    <name>Mouse Right Click</name>
+                    <arguments>
+                        <x>123</x>
+                        <y>456</y>
+                    </arguments>
+                </tool>
+            </tool_calls>
+            <artifacts></artifacts>
+        </response>
     """
     screenshot = pyautogui.rightClick(x, y)
     
@@ -531,22 +664,65 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
     
     Example:
         User: Create sub agent for a task
-        AI Assistant: {
-            "observation": "The user has requested me to create a sub-agent for a specific task.",
-            "thought": "Step 1) To create the sub agent, I need to use the Create Sub Agent Tool. Step 2) The Create Sub Agent tool takes five arguments: name (the name of the sub-agent), description (a prompt describing the agent's role and capabilities), task (an optional brief description of the task), llm (the name of the language model to use), and autostart (a boolean indicating whether the agent should immediately run its task). Step 3) Calling the Create Sub Agent Tool with required arguments.",
-            "type": "tool_calls",
-            "tool_calls": [{}]: "Create Sub Agent",
-            "arguments": ["<agent_name>", "<llm>", "<agent_prompt>", []]
-        }
+        AI Assistant: <response>
+            <observation>The user has requested me to create a sub-agent for a specific task.</observation>
+            <mindspace>
+        Agent Creation: Sub-agent design, task specialization
+        Natural Language Processing: LLM selection, prompt engineering
+        Task Delegation: Workload distribution, specialized processing
+        System Architecture: Multi-agent systems, modular AI design
+            </mindspace>
+            <thought>Step 1) To create the sub agent, I need to use the Create Sub Agent Tool.
+        Step 2) The Create Sub Agent tool takes four main arguments: name (the name of the sub-agent), llm (the name of the language model to use), description (a prompt describing the agent's role and capabilities), and tools (a list of tools the agent can use).
+        Step 3) In this case, the user hasn't provided specific details for the sub-agent, so I'll use placeholder values.
+        Step 4) Calling the Create Sub Agent Tool with required arguments.</thought>
+            <type>tool_calls</type>
+            <tool_calls>
+                <tool>
+                    <name>Create Sub Agent</name>
+                    <arguments>
+                        <name>&lt;agent_name&gt;</name>
+                        <llm>&lt;llm&gt;</llm>
+                        <description>&lt;agent_prompt&gt;</description>
+                        <tools></tools>
+                    </arguments>
+                </tool>
+            </tool_calls>
+            <artifacts></artifacts>
+        </response>
         
         User: Create the snake game in python
-        AI Assistant: {
-            "observation": "The user has requested me to create the classic Snake game in Python.",
-            "thought": "Step 1) To create the Snake game in Python, I will need to create a specialized sub-agent called 'CodeWizard' with expertise in Python programming. Step 2) I will provide the CodeWizard agent with the instructions to write the code for the Snake game in Python, following the specified return format. Step 3) I will delegate the task of writing the Python code for the Snake game to the CodeWizard agent.",
-            "type": "tool_calls",
-            "tool_calls": [{}]: "Create Sub Agent",
-            "arguments": ["CodeWizard", "gemini", "You are a skilled Python programmer tasked with creating the classic Snake game. Your role is to write clean, efficient, and well-documented code that implements the game's logic, user interface, and any additional features you deem necessary. You should follow best practices for software development and ensure your code is modular, readable, and maintainable.", ["File System Browser", "Call Sub Agent"]]
-        }
+        AI Assistant: <response>
+            <observation>The user has requested me to create the classic Snake game in Python.</observation>
+            <mindspace>
+        Game Development: Snake game mechanics, Python game libraries
+        Programming: Python syntax, object-oriented design
+        User Interface: Game graphics, user input handling
+        Agent Creation: Sub-agent specialization, task delegation
+        Software Engineering: Code modularity, best practices
+            </mindspace>
+            <thought>Step 1) To create the Snake game in Python, I will need to create a specialized sub-agent called 'CodeWizard' with expertise in Python programming.
+        Step 2) I will provide the CodeWizard agent with the instructions to write the code for the Snake game in Python, following the specified return format.
+        Step 3) I will delegate the task of writing the Python code for the Snake game to the CodeWizard agent.</thought>
+            <type>tool_calls</type>
+            <tool_calls>
+                <tool>
+                    <name>Create Sub Agent</name>
+                    <arguments>
+                        <name>CodeWizard</name>
+                        <llm>gemini</llm>
+                        <description>You are a skilled Python programmer tasked with creating the classic Snake game. Your role is to write clean, efficient, and well-documented code that implements the game's logic, user interface, and any additional features you deem necessary. You should follow best practices for software development and ensure your code is modular, readable, and maintainable.</description>
+                        <tools>
+                            File System Browser
+                        </tools>
+                        <tools>
+                            Call Sub Agentool
+                        </tools>
+                    </arguments>
+                </tool>
+            </tool_calls>
+            <artifacts></artifacts>
+        </response>
     """
     
     sub_agent: Optional[Agent] = None
@@ -593,13 +769,29 @@ def call_sub_agent(name: str, task: str, parent: Agent):
     Example:
         User: Run task with sub agent
         
-        AI Assistant: {
-            "observation": "I need to run a task with a sub-agent.",
-            "thought": "Step 1) This can be accomplished by using the Call Sub Agent Tool. Step 2) The Call Sub Agent tool takes two arguments: name (the name of the sub-agent to call) and task (the task or query for the sub-agent to perform or answer). Step 3) Calling the Call Sub Agent tool with required arguments",
-            "type": "tool_calls",
-            "tool_calls": [{}]: "Call Sub Agent",
-            "arguments": ["CodeWizard", "Write the code for the Snake game in Python."]
-        }
+        AI Assistant: <response>
+            <observation>I need to run a task with a sub-agent.</observation>
+            <mindspace>
+        Task Delegation: Sub-agent capabilities, task decomposition
+        Programming: Python coding, game development
+        Agent Collaboration: Inter-agent communication, task handoff
+        Efficiency: Parallel processing, specialized skills utilization
+            </mindspace>
+            <thought>Step 1) This can be accomplished by using the Call Sub Agent Tool.
+        Step 2) The Call Sub Agent tool takes two arguments: name (the name of the sub-agent to call) and task (the task or query for the sub-agent to perform or answer).
+        Step 3) Calling the Call Sub Agent tool with required arguments.</thought>
+            <type>tool_calls</type>
+            <tool_calls>
+                <tool>
+                    <name>Call Sub Agent</name>
+                    <arguments>
+                        <name>CodeWizard</name>
+                        <task>Write the code for the Snake game in Python.</task>
+                    </arguments>
+                </tool>
+            </tool_calls>
+            <artifacts></artifacts>
+        </response>
     """
     parent.call_sub_agent(name, task)
     
@@ -620,13 +812,31 @@ def internet_search(query: str, search_depth: str = "basic"):
     
     Example:
         User: who is the president of the United States?
-        AI Assistant: {
-            "observation": "I need to search the internet for information about the president of the United States.",
-            "thought": "Step 1) To do an internet search, I need to use the Internet Search tool. Step 2) The Internet Search tool takes one argument: query (the topic to search for).  Step 3) Calling the Take Screenshot tool with the provided arguments.",
-            "type": "tool_calls",
-            "tool_calls": [{"name": "Internet Search", "arguments": {"query": "who is the president of the United States?"}}]
-        }
+        AI Assistant: <response>
+            <observation>I need to search the internet for information about the president of the United States.</observation>
+            <mindspace>
+        Political Information: Current world leaders, US government structure
+        Internet Search: Search engine algorithms, query formulation
+        Information Retrieval: Credible sources, fact-checking
+        Current Events: Recent elections, political changes
+            </mindspace>
+            <thought>Step 1) To do an internet search, I need to use the Internet Search tool.
+        Step 2) The Internet Search tool takes one argument: query (the topic to search for).
+        Step 3) Calling the Internet Search tool with the provided query.</thought>
+            <type>tool_calls</type>
+            <tool_calls>
+                <tool>
+                    <name>Internet Search</name>
+                    <arguments>
+                        <query>who is the president of the United States?</query>
+                    </arguments>
+                </tool>
+            </tool_calls>
+            <artifacts></artifacts>
+        </response>
     """
+    
+    print(f"Query: {query}")
     
     tavily = TavilyClient(api_key=os.getenv('TAVILY_API_KEY', ''))
     
@@ -648,13 +858,28 @@ def web_scraper(url: str):
 
     Example:
         User: Scrape the website https://example.com
-        AI Assistant: {
-            "observation": "The user has requested to scrape a website.",
-            "thought": "Step 1) To scrape a website, I need to use the Web Scraper tool. Step 2) The Web Scraper tool takes one argument: url (the URL of the website to scrape). Step 3) Calling the Web Scraper tool with the provided URL.",
-            "type": "tool_calls",
-            "tool_calls": [{}]: "Web Scraper",
-            "arguments": ["https://example.com"]
-        }
+        AI Assistant: <response>
+            <observation>The user has requested to scrape a website.</observation>
+            <mindspace>
+        Web Scraping: HTML parsing, data extraction techniques
+        Internet: Website structure, HTTP requests
+        Data Analysis: Processing scraped information
+        Legal and Ethical Considerations: Website terms of service, data usage rights
+            </mindspace>
+            <thought>Step 1) To scrape a website, I need to use the Web Scraper tool.
+        Step 2) The Web Scraper tool takes one argument: url (the URL of the website to scrape).
+        Step 3) Calling the Web Scraper tool with the provided URL.</thought>
+            <type>tool_calls</type>
+            <tool_calls>
+                <tool>
+                    <name>Web Scraper</name>
+                    <arguments>
+                        <url>https://example.com</url>
+                    </arguments>
+                </tool>
+            </tool_calls>
+            <artifacts></artifacts>
+        </response>
     """
     
     try:

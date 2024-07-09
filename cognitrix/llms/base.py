@@ -22,13 +22,21 @@ class LLMResponse:
     def __init__(self, llm_response: Optional[str]=None):
         self.chunks = []
         self.llm_response = llm_response
+        self.current_chunk: str = ''
         self.text: Optional[str] = None
-        self.tool_calls: Optional[List[Dict[str, Any]]] = None
+        self.result: Optional[str] = None
+        self.tool_calls: Optional[Dict[str, Any]] = None
         self.artifacts: Optional[List[Dict[str, Any]]] = None
+        self.observation: Optional[str] = None
+        self.thought: Optional[str] = None
+        self.type: Optional[str] = None
+        self.before: Optional[str] = None
+        self.after: Optional[str] = None
 
         # self.parse_llm_response()
     
     def add_chunk(self, chunk):
+        self.current_chunk = chunk
         self.chunks.append(chunk)
         self.parse_llm_response()
 
@@ -39,14 +47,15 @@ class LLMResponse:
         try:
             if isinstance(response_data, dict):
                 response = response_data['response']
-                if 'result' in response.keys():
-                    self.text = response['result']  # type: ignore
-                if 'tool_calls' in response.keys():
-                    self.tool_calls = response['tool_calls']  # type: ignore
-                if 'artifacts' in response.keys():
-                    self.tool_calls = response['artifacts']  # type: ignore
-            else:
-                self.text = str(response_data)
+                if isinstance(response, dict):
+                    for key, value in response.items():
+                        if key == 'result':
+                            self.text = value
+                        setattr(self, key, value)
+
+                else:
+                    self.text = response
+
         except Exception as e:
             logger.exception(e)
             self.text = str(response_data)

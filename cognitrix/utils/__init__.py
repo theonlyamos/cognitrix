@@ -274,7 +274,7 @@ def xml_to_dict(xml_string) -> dict | str:
         if xml_string.endswith("```"):
             xml_string = xml_string[:-3]
         
-        xml_string = xml_string.strip()
+        xml_string = f"<response>{xml_string.strip()}</response>"
         
         root = ET.fromstring(xml_string)
         
@@ -282,6 +282,7 @@ def xml_to_dict(xml_string) -> dict | str:
             result = {}
             if element.text and element.text.strip():
                 return element.text.strip()
+            
             for child in element:
                 child_data = parse_element(child)
                 if child.tag in result:
@@ -291,8 +292,11 @@ def xml_to_dict(xml_string) -> dict | str:
                         result[child.tag] = [result[child.tag], child_data]
                 else:
                     result[child.tag] = child_data
-            result['before'] = before
-            result['after'] = after
+
+            if element.tag.lower() == 'response':
+                result['before'] = before
+                result['after'] = after
+            
             return result
         
         return {root.tag: parse_element(root)}

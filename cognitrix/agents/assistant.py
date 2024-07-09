@@ -1,6 +1,6 @@
 from pydantic import Field
 from ..agents.base import Agent
-from ..agents.templates import AUTONOMOUSE_AGENT_2
+from ..agents.templates import ASSISTANT_SYSTEM_PROMPT
 
 class AIAssistant(Agent):
     """_summary_
@@ -8,4 +8,4 @@ class AIAssistant(Agent):
     Args:
         Agent (_type_): _description_
     """
-    prompt_template: str = Field(default=AUTONOMOUSE_AGENT_2)
+    prompt_template: str = Field(default=ASSISTANT_SYSTEM_PROMPT)

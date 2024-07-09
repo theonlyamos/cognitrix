@@ -161,7 +161,9 @@ def str_or_file(string):
 
 async def prompt_agent(assistant: AIAssistant|Agent, prompt):
     async for response in assistant.generate(prompt):
-        print(f"\r{response.text}", end='')
+        if response.text:
+            print(f"\r{response.text}", end='')
+    print()
 
 def start(args: Namespace):
     try:
@@ -257,7 +259,7 @@ def get_arguments():
     parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--web-ui', action='store_true', help='Expose api server')
-    parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
+    parser.add_argument('--agent', type=str, default='', help='Set which saved agent to use')
     parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='general', help='Add tools by categories to agent')
     parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
