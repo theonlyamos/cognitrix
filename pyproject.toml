@@ -56,10 +56,15 @@ uvicorn = "^0.30.1"
 tavily-python = "^0.3.3"
 rich = "^13.7.1"
 
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 cognitrix = "cognitrix.cli:main"
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning"
+]

@@ -20,6 +20,7 @@ from cognitrix.agents import AIAssistant, Agent
 from cognitrix.llms.session import Session
 from cognitrix.tools import Tool
 from cognitrix.utils.ws import WebSocketManager
+from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 
 from cognitrix.config import VERSION
 
@@ -194,13 +195,13 @@ def start(args: Namespace):
         # llm = TogetherLLM()
         loaded_agent = None
         if args.agent:
-            loaded_agent = Agent.load_agent(args.agent)
+            loaded_agent = asyncio.run(Agent.load_agent(args.agent))
             
             if loaded_agent:
                 assistant = loaded_agent
             else:
                 # assistant_description = "You are an ai assistant. Your main goal is to help the user complete tasks"
-                assistant = asyncio.run(AIAssistant.create_agent(name=args.agent, llm=provider)) #type: ignore
+                assistant = asyncio.run(AIAssistant.create_agent(name=args.agent, llm=provider, description=ASSISTANT_SYSTEM_PROMPT)) #type: ignore
 
         else:
             assistant = AIAssistant(llm=provider, name=args.name, verbose=args.verbose)
@@ -216,8 +217,11 @@ def start(args: Namespace):
                 tools = []
                 for cat in args.load_tools:
                     loaded_tools = Tool.get_tools_by_category(cat.lower())
+                    tool_by_name = Tool.get_by_name(cat.lower())
+                    if tool_by_name:
+                        loaded_tools.append(tool_by_name)
                     tools.extend(loaded_tools)
-
+                
                 assistant.tools = tools
             
             assistant.format_system_prompt()
@@ -230,12 +234,15 @@ def start(args: Namespace):
                 start_web_ui(assistant)
                 
             else:
-                assistant.start(args.session, audio=args.audio)
-                
+                asyncio.run(assistant.start(args.session, audio=args.audio))
+    except KeyboardInterrupt:
+        print("\nExiting...")
+        sys.exit(1)            
     except Exception as e:
         logging.exception(e)
         parser.print_help()
         sys.exit(1)
+
 
 def get_arguments():
     global parser
@@ -259,7 +266,7 @@ def get_arguments():
     parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--web-ui', action='store_true', help='Expose api server')
-    parser.add_argument('--agent', type=str, default='', help='Set which saved agent to use')
+    parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
     parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='general', help='Add tools by categories to agent')
     parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')

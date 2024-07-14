@@ -224,7 +224,7 @@ class Agent(BaseModel):
                         result = await tool.arun(*t['arguments'])
                     else:
                         result = tool.run(**t['arguments'])
-
+                    
                     tool_calls_result.append({
                         'tool_call_id': t['name'],
                         'role': 'tool',
@@ -270,7 +270,7 @@ class Agent(BaseModel):
                         await self.websocket.send_text(json.dumps({'type': 'chat_message', 'content': response_text, 'action': 'reply', 'complete': True}))
                     else:
                         await self.websocket.send_text(json.dumps({'type': 'chat_message', 'content': response.current_chunk, 'action': 'reply', 'complete': False}))
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.1)
                     if response.tool_calls:
                         result: dict[Any, Any] | str = await self.call_tools(response.tool_calls)
                         if isinstance(result, dict) and result['type'] == 'tool_calls_result':
@@ -326,6 +326,7 @@ class Agent(BaseModel):
                 self.format_system_prompt()
                 
                 full_prompt = self.process_prompt(query)
+                print(full_prompt)
                 query = ''
                 self.llm.chat_history.append(full_prompt)
                 print(f"\n{self.name}: ")
@@ -362,11 +363,11 @@ class Agent(BaseModel):
         full_prompt = self.process_prompt(prompt)
         return self.llm(full_prompt)
     
-    def start(self, session_id: Optional[str] = None, audio: bool = False):
+    async def start(self, session_id: Optional[str] = None, audio: bool = False):
         if audio:
             self.start_audio()
         else:
-            asyncio.run(self.initialize(session_id))
+            await self.initialize(session_id)
         
     def handle_transcription(self, sentence: str, transcriber: Transcriber):
         if sentence:
@@ -525,14 +526,14 @@ class Agent(BaseModel):
             return None
 
     @classmethod
-    def load_agent(cls, agent_name: str) -> Optional['Agent']:
+    async def load_agent(cls, agent_name: str) -> Optional['Agent']:
         try:
             agent_name = agent_name.lower()
-            agents = asyncio.run(cls.list_agents())
+            agents = await cls.list_agents()
             loaded_agents: list[Agent] = [agent for agent in agents if agent.name.lower() == agent_name]
             if len(loaded_agents):
                 agent = loaded_agents[0]
-                agent.sub_agents = asyncio.run(cls.list_agents(agent.id))
+                agent.sub_agents = await cls.list_agents(agent.id)
                 return agent
         except Exception as e:
             logger.exception(e)

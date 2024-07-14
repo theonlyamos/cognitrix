@@ -49,15 +49,15 @@
 
     const handleRouteChange = () => {
         if (socket && socket.readyState === WebSocket.OPEN) {
-            if (agent_id) {
-                webSocketStore.send(JSON.stringify({type: "sessions", action: "get", agent_id: agent_id}));
-            } else if (session_id) {
+            webSocketStore.send(JSON.stringify({type: "sessions", action: "get", agent_id: agent_id}));
+            if (session_id) {
                 webSocketStore.send(JSON.stringify({type: "chat_history", action: "get", session_id: session_id}));
             }
         }
     }
 
     const startWebSocketConnection = ()=>{
+        console.log('started new subscription...')
         unsubscribe = webSocketStore.subscribe((event: {socket: WebSocket, type: string, data?: any})=>{
             if (event !== null){
                 socket = event.socket
@@ -68,7 +68,6 @@
                     }
                 }
                 else if (event.type === 'message'){
-                    loading = false
                     let data = JSON.parse(event.data)
                     
                     if (data.type === 'chat_history') {
@@ -98,6 +97,7 @@
                         else {
                             if (data.complete){
                                 messages[messages.length-1].content = new_message.content
+                                loading = false
                             }
                             else {
                                 messages[messages.length-1].content = messages[messages.length-1].content + new_message.content
@@ -119,23 +119,27 @@
         })
     }
 
-    onMount(() => {
-        startWebSocketConnection();
+    // onMount(() => {
+    //     startWebSocketConnection();
 
-        return (()=>{
-            if (unsubscribe)
-                unsubscribe()
-        })
-    });
+    //     return (()=>{
+    //         if (unsubscribe)
+    //             unsubscribe()
+    //     })
+    // });
 
     onDestroy(()=>{
         if (unsubscribe)
             unsubscribe()
     })
 
-    $: if (session_id) {
-        resetState();
+    $: {
+        console.log('rerending...')
+        startWebSocketConnection();
         handleRouteChange();
+        if (session_id) {
+            resetState();
+        }
     }
 </script>
 

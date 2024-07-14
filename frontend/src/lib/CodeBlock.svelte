@@ -20,7 +20,7 @@
           const language = block.className.split('-')[1] || 'plaintext';
           const preElement = block.parentElement;
           if (preElement instanceof HTMLPreElement) {
-            preElement.setAttribute('data-language', language);
+            preElement.setAttribute('data-language', language.split(' ')[0]);
           }
         }
       });
@@ -41,7 +41,7 @@
     .content-container {
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       line-height: 1.6;
-      color: #333;
+      color: var(--fg-1);
       max-width: 800px;
       margin: 0 auto;
     }

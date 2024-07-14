@@ -8,6 +8,7 @@ from cognitrix.agents.prompt_generator import PromptGenerator
 
 from cognitrix.llms.session import Session
 from cognitrix.agents import Agent, AIAssistant
+import asyncio
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -83,7 +84,7 @@ class WebSocketManager:
                         
                     async for response in web_agent.generate(prompt):
                         await websocket.send_json({'type': query_type, 'content': response.current_chunk, 'action': action})
-                        time.sleep(1)
+                        await asyncio.sleep(0.1)
                 else:
                     user_prompt = query['content']
                     await web_agent.chat(user_prompt, session)

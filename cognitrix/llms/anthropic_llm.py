@@ -2,7 +2,7 @@ from cognitrix.llms.base import LLM
 from cognitrix.utils import image_to_base64
 from typing import Any
 from dotenv import load_dotenv
-from anthropic import Anthropic as AnthropicLLM
+from anthropic import AsyncAnthropic as AnthropicLLM
 from cognitrix.llms.base import LLM, LLMResponse
 import logging
 import sys
@@ -98,7 +98,7 @@ class Anthropic(LLM):
             
         return messages
 
-    def __call__(self, query: dict, **kwds: Any):
+    async def __call__(self, query: dict, **kwds: Any):
         """Generates a response to a query using the Claude API.
 
         Args:
@@ -110,12 +110,18 @@ class Anthropic(LLM):
         """
 
         client = AnthropicLLM(api_key=self.api_key)
-        result = client.messages.create(
+        stream = await client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
             system=self.system_prompt,
-            messages=self.format_query(query)
+            messages=self.format_query(query),
+            stream=True
         )
         
-        return LLMResponse(result.content[0].text)
+        response = LLMResponse()
+        
+        async for event in stream:
+            if event.type == 'content_block_delta':
+                response.add_chunk(event.delta.text)
+                yield response

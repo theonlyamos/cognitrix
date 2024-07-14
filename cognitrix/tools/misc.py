@@ -29,26 +29,46 @@ logging.basicConfig(
 )
 logger = logging.getLogger('cognitrix.log')
 
-class Calculator(Tool):
-    name: str = 'Calculator'
-    description: str =  """
-        Useful for getting the result of a math expression.
-        The input to this tool should be a valid mathematical expression that could be executed by a simple calculator.
-        The code will be executed in a python environment so the input should be in a format it can be executed.
-        Always present the answer from this tool to the user in a sentence.
-        
-        Example:
+@tool(category='general')
+def Calculator(math_expression: str):
+    """
+    Useful for getting the result of a math expression.
+    The input to this tool should be a valid mathematical expression that could be executed by a simple calculator.
+    The code will be executed in a python environment so the input should be in a format it can be executed.
+    Always present the answer from this tool to the user in a sentence.
+
+    Example:
         User: what is the square root of 25?
-        arguments: 25**(1/2)
-        
-        :param math_express: The math expression to evaluate
-        """
-    
-    def run(self, math_expression: str):
-        return eval(math_expression)
-    
-    async def arun(self, math_expression: str):
-        return await eval(math_expression)
+        Assistant: <response>
+            <observation>The user is asking for the square root of 25 and has specified this should use the Calculator tool.</observation>
+            <mindspace>
+        Mathematical: Square root operation, perfect squares
+        Educational: Basic algebra, exponents and roots
+        Computational: Calculator functionality, numeric operations
+        Practical: Real-world applications of square roots
+            </mindspace>
+            <thought>Step 1) The question asks for the square root of 25.
+        Step 2) We need to use the Calculator tool to compute this.
+        Step 3) The Calculator tool accepts a math_expression as an argument.
+        Step 4) The correct expression for square root in most calculators is "sqrt(25)".</thought>
+            <type>tool_calls</type>
+            <tool_calls>
+                <tool>
+                    <name>Calculator</name>
+                    <arguments>
+                        <math_expression>sqrt(25)</math_expression>
+                    </arguments>
+                </tool>
+            </tool_calls>
+            <artifacts></artifacts>
+        </response>
+
+    :param math_expression: The math expression to evaluate
+    """
+    print('---math_expression', math_expression)
+    result = eval(math_expression)
+    print('**result', result)
+    return result
 
 class YoutubePlayer(Tool):
     name: str =  "Youtube Player"
