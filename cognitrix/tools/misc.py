@@ -65,9 +65,9 @@ def Calculator(math_expression: str):
 
     :param math_expression: The math expression to evaluate
     """
-    print('---math_expression', math_expression)
+
     result = eval(math_expression)
-    print('**result', result)
+
     return result
 
 class YoutubePlayer(Tool):
@@ -841,7 +841,7 @@ def internet_search(query: str, search_depth: str = "basic"):
         Current Events: Recent elections, political changes
             </mindspace>
             <thought>Step 1) To do an internet search, I need to use the Internet Search tool.
-        Step 2) The Internet Search tool takes one argument: query (the topic to search for).
+        Step 2) The Internet Search tool takes two arguments: query (the topic to search for) and search_depth (the search depth, either "basic" or "advanced").
         Step 3) Calling the Internet Search tool with the provided query.</thought>
             <type>tool_calls</type>
             <tool_calls>
@@ -855,8 +855,6 @@ def internet_search(query: str, search_depth: str = "basic"):
             <artifacts></artifacts>
         </response>
     """
-    
-    print(f"Query: {query}")
     
     tavily = TavilyClient(api_key=os.getenv('TAVILY_API_KEY', ''))
     
@@ -914,3 +912,64 @@ def web_scraper(url: str):
         return text_content
     except requests.exceptions.RequestException as e:
         return f"Error: {e}"
+    
+@tool(category='web')
+def brave_search(query: str):
+    """Use this to retrieve up-to-date information from the internet 
+    and generate more accurate and informative responses.
+    
+    When you need to answer a question or provide information, you can call this tool 
+    to fetch the latest details from the web. 
+    This tool takes one argument: the query or question you want to search for.
+    
+    Args:
+        query (str): The query to search for.
+    
+    Example:
+        User: who is the president of the United States?
+        AI Assistant: <response>
+            <observation>I need to search the internet for information about the president of the United States.</observation>
+            <mindspace>
+        Political Information: Current world leaders, US government structure
+        Internet Search: Search engine algorithms, query formulation
+        Information Retrieval: Credible sources, fact-checking
+        Current Events: Recent elections, political changes
+            </mindspace>
+            <thought>Step 1) To do an internet search, I need to use the Internet Search tool.
+        Step 2) The Brave Search tool takes one argument: query (the topic to search for).
+        Step 3) Calling the Brave Search tool with the provided query.</thought>
+            <type>tool_calls</type>
+            <tool_calls>
+                <tool>
+                    <name>Brave Search</name>
+                    <arguments>
+                        <query>who is the president of the United States?</query>
+                    </arguments>
+                </tool>
+            </tool_calls>
+            <artifacts></artifacts>
+        </response>
+    """
+    url = "https://api.search.brave.com/res/v1/web/search"
+    
+    params = {
+        "q": query,
+        "summary": 1
+    }
+    
+    headers = {
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "X-Subscription-Token": os.getenv('BRAVE_SEARCH_API_KEY', '')
+    }
+    
+    response = requests.get(url, params=params, headers=headers)
+    
+    if response.status_code == 200:
+        results = ""
+        for news in response.json()['web']['results']:
+            results += f"Title: {news['title']}\nDescripion: {news['description']}\nLink: {news['url']}\n\n"
+        # print(results)
+        return results
+    else:
+        return f"Error: {response.status_code}, {response.text}"

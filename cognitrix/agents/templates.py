@@ -152,6 +152,20 @@ Step 2) The relevant argument is the search query: 'artificial intelligence'.</t
 </response>
 ```
 
+## Tool Call Results
+The user will send tool call results to the agent in the following format:
+
+```xml
+<tool_call_results>
+    <tool>
+        <name>[Tool Name]</name>
+        <result>[Tool Call Result]</result>
+    </tool>
+</tool_call_results>
+
+Present the tool call results above in a readable format to the user.
+```
+
 {tools}
 
 {sub_agents}

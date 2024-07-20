@@ -1,5 +1,5 @@
 from cognitrix.llms.base import LLM, LLMResponse
-from typing import Any
+from typing import Any, Dict, List
 import google.generativeai as genai
 from dotenv import load_dotenv
 from PIL import Image
@@ -52,19 +52,20 @@ class Google(LLM):
     is_multimodal: bool = True
     """Whether the model is multimodal."""
     
-    def format_query(self, message: dict[str, str]) -> list:
+    def format_query(self, message: dict[str, str], system_prompt: str, chat_history: List[Dict[str, str]]) -> list:
         """Formats messages for the Gemini API"""
-        formatted_message = [*self.chat_history, message]
+        formatted_message = [*chat_history, message]
         
         messages = []
-        if self.system_prompt:
-            messages.append(self.system_prompt)
+        if system_prompt:
+            messages.append(system_prompt)
         
         for fm in formatted_message:
             if fm['type'] == 'text': 
                 messages.append(fm['message'])
             elif fm['type'] == 'image':
                 screenshot_bytes = io.BytesIO()
+                
                 fm['image'].save(screenshot_bytes, format='JPEG')
                 upload_image = Image.open(screenshot_bytes)
                 messages.append(upload_image)
@@ -72,7 +73,7 @@ class Google(LLM):
 
         return messages
 
-    async def __call__(self, query, **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
         """Generates a response to a query using the Gemini API.
 
         Args:
@@ -91,8 +92,9 @@ class Google(LLM):
             "top_p": 1,
             "top_k": 32
         }
-        contents = self.format_query(query)
         
+        contents = self.format_query(query, system_prompt, chat_history)
+
         if not self.client:
             self.client = genai.GenerativeModel(self.model)
         

@@ -1,8 +1,8 @@
 <script lang="ts">
     import { getAllAgents } from "../common/utils";
     import type { AgentInterface } from "../common/interfaces";
-  import AgentCard from "../lib/AgentCard.svelte";
-  import { link } from "svelte-routing";
+    import AgentCard from "../lib/AgentCard.svelte";
+    import { link } from "svelte-routing";
     
     let agents: AgentInterface[] = [];
 

@@ -1,6 +1,6 @@
 import cohere
 from cognitrix.llms.base import LLM, LLMResponse
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 import logging
 import sys
@@ -38,6 +38,18 @@ class Cohere(LLM):
     
     supports_tool_use: bool = False
     
+    def format_query(self, chat_history: List[Dict[str, str]] = []) -> list:
+        """Formats messages for the Gemini API"""
+        formatted_messages = []
+        
+        for fm in chat_history:
+            msg = fm.copy()
+            if fm['role'].lower() != 'user':
+                msg['role'] = 'Chatbot'
+            formatted_messages.append(msg)
+
+        return formatted_messages
+    
     def format_tools(self, tools: list[dict[str, Any]]):
         """Format tools for the groq sdk"""
         for tool in tools:
@@ -52,9 +64,9 @@ class Cohere(LLM):
                     'required': (key in tool['required'])
                 }
             
-            self.tools.append(f_tool)
+            # self.tools.append(f_tool)
 
-    async def __call__(self, query, **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
         """Generates a response to a query using the Cohere API.
 
         Args:
@@ -69,13 +81,14 @@ class Cohere(LLM):
             self.client = cohere.Client(api_key=self.api_key)
         
         response = LLMResponse()
+        chat_history = self.format_query(chat_history)
         
         stream = self.client.chat_stream( 
             model=self.model,
             message=query['message'],
             temperature=self.temperature,
-            preamble=self.system_prompt, # type: ignore
-            chat_history=self.chat_history,
+            preamble=system_prompt, # type: ignore
+            chat_history=chat_history,
             prompt_truncation='auto',
             citation_quality='accurate',
             connectors=[{"id": "web-search"}],
@@ -96,14 +109,3 @@ class Cohere(LLM):
                     yield response
         
         # yield response
-    
-if __name__ == "__main__":
-    try:
-        assistant = Cohere()
-        # assistant.add_tool(calculator)
-        while True:
-            message = input("\nEnter Query$ ")
-            result = assistant(message)
-            print(result)
-    except KeyboardInterrupt:
-        sys.exit(1)

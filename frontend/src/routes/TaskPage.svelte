@@ -2,6 +2,8 @@
     import { link, navigate } from "svelte-routing";
     import { getAgent, getLLMProviders, getTools, generatePrompt, saveAgent, getAgentSession } from "../common/utils";
     import type { AgentDetailInterface, ProviderInterface, ToolInterface } from "../common/interfaces";
+    import { getAllAgents } from "../common/utils";
+    import type { AgentInterface } from "../common/interfaces";
     import GenerativeIcon from '../assets/ai-curved-star-icon-multiple.svg';
     import Checkbox from "../lib/Checkbox.svelte";
     import Switch from "../lib/Switch.svelte";
@@ -11,7 +13,10 @@
     import type { Unsubscriber } from 'svelte/motion';
     import { onDestroy, onMount } from "svelte";
 
+    
+
     export let agent_id: string = '';
+    let agents: AgentInterface[] = [];
     let agent: AgentDetailInterface = {
         name: '',
         prompt_template: '',
@@ -46,6 +51,15 @@
                 agentTools = agent.tools.map(t => t.name)
             }
             console.log(agent)
+        } catch (error) {
+            console.log(error)
+        }
+    }
+
+    const loadAgents = async()=> {
+        try {
+            agents = await getAllAgents() as AgentInterface[];
+            console.log(agents)
         } catch (error) {
             console.log(error)
         }
@@ -88,6 +102,8 @@
     (async () => {
         try {
             providers = await getLLMProviders() as ProviderInterface[];
+            agents = await getAllAgents() as AgentInterface[];
+            console.log(agents)
             tools = await getTools() as ToolInterface[];
         } catch (error) {
             console.log(error)
@@ -183,7 +199,7 @@
         class="btn" 
         disabled={submitting}
         on:click={handleAgentSubmit}>
-        <i class="fa-solid fa-robot fa-fw"></i>
+        <i class="fa-solid fa-save fa-fw"></i>
         <span>{submitting ? 'Saving...' : agent_id ? 'Update Agent' : 'Save Agent'}</span>
     </button>
 </div>

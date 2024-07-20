@@ -1,6 +1,7 @@
 import json
 from pydantic import BaseModel, Field
 from typing import Any, List, Dict, Optional, TypeAlias, TypedDict
+from openai import OpenAI
 import logging
 import inspect
 
@@ -93,8 +94,8 @@ class LLM(BaseModel):
     supports_system_prompt: bool = Field(default=False)
     """Whether the model supports system prompts."""
     
-    system_prompt: str = Field(default='')
-    """System prompt to use for context."""
+    # system_prompt: str = Field(default='')
+    # """System prompt to use for context."""
     
     is_multimodal: bool = Field(default=False)
     """Whether the model is multimodal."""
@@ -102,11 +103,11 @@ class LLM(BaseModel):
     provider: str = Field(default="")
     """This is set to the name of the class"""
     
-    chat_history: List[Dict[str, str]] = []
-    """Chat history stored as a list of responses"""
+    # chat_history: List[Dict[str, str]] = []
+    # """Chat history stored as a list of responses"""
     
-    tools: List[Dict] = []
-    """Functions calling tools formatted for this specific llm provider"""
+    # tools: List[Dict] = []
+    # """Functions calling tools formatted for this specific llm provider"""
     
     supports_tool_use: bool = True
     """Whether the provider supports tool use"""
@@ -118,7 +119,7 @@ class LLM(BaseModel):
         super().__init__(**data)
         self.provider = self.__class__.__name__
     
-    def format_query(self, message: dict[str, str]) -> list:
+    def format_query(self, message: dict[str, str], chat_history: List[Dict[str, str]] = []) -> list:
         """Formats a message for the Claude API.
 
         Args:
@@ -128,7 +129,7 @@ class LLM(BaseModel):
             list: A list of formatted messages for the Claude API.
         """
         
-        formatted_message = [*self.chat_history, message]
+        formatted_message = [*chat_history, message]
         
         messages = []
         
@@ -136,12 +137,7 @@ class LLM(BaseModel):
             if fm['type'] == 'text':
                 messages.append({
                     "role": fm['role'].lower(),
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": fm['message']
-                        }
-                    ]
+                    "content": fm['message']
                 })
             elif fm['type'] == 'image':
                 base64_image = image_to_base64(fm['image']) # type: ignore
@@ -166,25 +162,25 @@ class LLM(BaseModel):
         return messages
 
     
-    def format_tools(self, tools: list[dict[str, Any]]):
-        """Format tools for the provider sdk"""
-        for tool in tools:
-            f_tool = {
-                "type": "function",
-                "function": {
-                    "name": tool['name'].replace(' ', '_'),
-                    "description": tool['description'][:1024],
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": tool['required'],
-                    },
-                },
-            }
-            for key, value in tool['parameters'].items():
-                f_tool['function']['parameters']['properties'][key] = {'type': value}
+    # def format_tools(self, tools: list[dict[str, Any]]):
+    #     """Format tools for the provider sdk"""
+    #     for tool in tools:
+    #         f_tool = {
+    #             "type": "function",
+    #             "function": {
+    #                 "name": tool['name'].replace(' ', '_'),
+    #                 "description": tool['description'][:1024],
+    #                 "parameters": {
+    #                     "type": "object",
+    #                     "properties": {},
+    #                     "required": tool['required'],
+    #                 },
+    #             },
+    #         }
+    #         for key, value in tool['parameters'].items():
+    #             f_tool['function']['parameters']['properties'][key] = {'type': value}
             
-            self.tools.append(f_tool)
+    #         self.tools.append(f_tool)
     
     @staticmethod
     def list_llms():
@@ -197,17 +193,48 @@ class LLM(BaseModel):
             return []
     
     @staticmethod
-    def load_llm(model_name: str):
+    def load_llm(provider: str):
         """Dynamically load LLMs based on name"""
         try:
-            model_name = model_name.lower()
-            module = __import__(str(__package__), fromlist=[model_name])
-            llm = [f[1] for f in inspect.getmembers(module, inspect.isclass) if (len(f) and f[0].lower() == model_name)]
+            provider = provider.lower()
+            module = __import__(str(__package__), fromlist=[provider])
+            llm = [f[1] for f in inspect.getmembers(module, inspect.isclass) if (len(f) and f[0].lower() == provider)]
             return llm[0] if len(llm) else None
         except Exception as e:
             logging.exception(e)
             return None
     
-    async def __call__(*args, **kwargs):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
+        """Generates a response to a query using the OpenAI API.
+
+        Args:
+            query (dict): The query to generate a response to.
+            system_prompt (str): System prompt for the agent
+            chat_history (list): Chat history
+
+        Returns:
+            A string containing the generated response.
+        """
+
+        if not self.client:
+            self.client = OpenAI(api_key=self.api_key)
+            if self.base_url:
+                self.client.base_url = self.base_url
+            
+        formatted_messages = self.format_query(query, chat_history)
+        
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "user", "content": system_prompt},
+                *formatted_messages
+            ],
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=True,
+        )
         response = LLMResponse()
-        yield response
+        for chunk in stream:
+            if chunk.choices[0].delta.content is not None:
+                response.add_chunk(chunk.choices[0].delta.content)
+                yield response

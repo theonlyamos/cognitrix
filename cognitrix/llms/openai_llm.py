@@ -30,7 +30,7 @@ class OpenAI(LLM):
         system_prompt (str): System prompt to prepend to queries
     """
     
-    model: str = 'gpt-4o'
+    model: str = 'gpt-4o-mini-2024-07-18'
     """model endpoint to use""" 
     
     temperature: float = 0.1
@@ -53,86 +53,3 @@ class OpenAI(LLM):
     
     is_multimodal: bool = True
     """Whether the model is multimodal."""
-    
-    def format_query(self, message: dict[str, str]) -> list:
-        """Formats a message for the Claude API.
-
-        Args:
-            message (dict[str, str]): The message to be formatted for the Claude API.
-
-        Returns:
-            list: A list of formatted messages for the Claude API.
-        """
-        
-        formatted_message = [*self.chat_history, message]
-        
-        messages = []
-        
-        for fm in formatted_message:
-            if fm['type'] == 'text':
-                messages.append({
-                    "role": fm['role'].lower(),
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": fm['message']
-                        }
-                    ]
-                })
-            elif fm['type'] == 'image':
-                base64_image = image_to_base64(fm['image'])
-                messages.append({
-                    "role": fm['role'].lower(),
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "This is the result of the latest screenshot"
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
-                        }
-                    ]
-                })
-            else:
-                print(fm)
-        
-        return messages
-
-    def __call__(self, query: dict, **kwds: dict):
-        """Generates a response to a query using the OpenAI API.
-
-        Args:
-            query (dict): The query to generate a response to.
-            kwds (dict): Additional keyword arguments to pass to the OpenAI API.
-
-        Returns:
-            A string containing the generated response.
-        """
-
-        if not self.client:
-            self.client = OpenAILLM(api_key=self.api_key)
-        
-        if self.base_url:
-            self.client.base_url = self.base_url
-            
-        formatted_messages = self.format_query(query)
-        print(self.tools[0]['function']['name'])
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": self.system_prompt},
-                *formatted_messages
-            ],
-            temperature=self.temperature,
-            tools=self.tools, # type: ignore
-            tool_choice='auto',
-            max_tokens=self.max_tokens
-        )
-        response_message = response.choices[0].message
-        tool_calls = response_message.tool_calls
-        print(tool_calls)
- 
-        return LLMResponse(response_message.content)

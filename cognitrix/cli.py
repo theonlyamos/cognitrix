@@ -6,7 +6,7 @@ import logging
 import argparse
 from pathlib import Path
 from argparse import Namespace
-from typing import Optional
+from typing import Literal, Optional
 from fastapi import Request
 from rich import print
 
@@ -20,6 +20,7 @@ from cognitrix.agents import AIAssistant, Agent
 from cognitrix.llms.session import Session
 from cognitrix.tools import Tool
 from cognitrix.utils.ws import WebSocketManager
+from cognitrix.utils.sse import SSEManager
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 
 from cognitrix.config import VERSION
@@ -31,11 +32,13 @@ def start_web_ui(agent: Agent | AIAssistant):
     from fastapi import WebSocket
     import uvicorn
     ws_manager = WebSocketManager(agent)
+    # sse_manager = SSEManager(agent)
     
 
     @app.middleware("http")
     async def add_middleware_data(request: Request, call_next):
         request.state.agent = agent
+        # request.state.sse_manager = sse_manager
         response = await call_next(request)
         return response
 
@@ -166,6 +169,67 @@ async def prompt_agent(assistant: AIAssistant|Agent, prompt):
             print(f"\r{response.text}", end='')
     print()
 
+async def initialize(session: Session, agent: Agent|AIAssistant, stream: bool = False):
+    query: str | dict = input("\nUser (q to quit): ")
+    while True:
+        try:
+            if not query:
+                query: str | dict = input("\nUser (q to quit): ")
+                continue
+
+            if query.lower() in ['q', 'quit', 'exit']:
+                print('Exiting...')
+                break
+
+            elif query.lower() == 'add agent':
+                new_agent = asyncio.run(Agent.create_agent(is_sub_agent=True, parent_id=agent.id))
+                if new_agent:
+                    agent.add_sub_agent(new_agent)
+                    print(f"\nAgent {new_agent.name} added successfully!")
+                else:
+                    print("\nError creating agent")
+
+                query = input("\nUser (q to quit): ")
+                continue
+
+            elif query.lower() == 'list tools':
+                agents_str = "\nAvailable Tools:"
+                tools = [tool for tool in agent.tools]
+                for index, tool in enumerate(tools):
+                    agents_str += (f"\n[{index}] {tool.name}")
+                print(agents_str)
+                query = input("\nUser (q to quit): ")
+                continue
+            
+            elif query.lower() == 'list agents':
+                tools_str = "\nAvailable Agents:"
+                sub_agents = [a for a in asyncio.run(Agent.list_agents()) if agent.parent_id == agent.id]
+                for index, agent in enumerate(sub_agents):
+                    tools_str += (f"\n[{index}] {agent.name}")
+                print(tools_str)
+                query = input("\nUser (q to quit): ")
+                continue
+            
+            elif query.lower() == 'show history':
+                history_str = "\nChat History:"
+                history = session.chat
+                for index, chat in enumerate(history):
+                    history_str += (f"\n[{chat['role']}]: {chat['message']}\n")
+                print(history_str)
+                query = input("\nUser (q to quit): ")
+                continue
+
+            await session(query, agent, streaming=stream)
+            query = ''
+        
+        except KeyboardInterrupt:
+            print('Exiting...')
+            break
+        except Exception as e:
+            logger.exception(e)
+            break
+
+
 def start(args: Namespace):
     try:
         if args.providers:
@@ -180,7 +244,7 @@ def start(args: Namespace):
         
         provider = None
         if args.provider:
-            provider = LLM.load_llm(model_name=args.provider)
+            provider = LLM.load_llm(provider=args.provider)
         provider = provider() if provider else Clarifai()
         
         
@@ -201,7 +265,7 @@ def start(args: Namespace):
                 assistant = loaded_agent
             else:
                 # assistant_description = "You are an ai assistant. Your main goal is to help the user complete tasks"
-                assistant = asyncio.run(AIAssistant.create_agent(name=args.agent, llm=provider, description=ASSISTANT_SYSTEM_PROMPT)) #type: ignore
+                assistant = asyncio.run(AIAssistant.create_agent(name=args.agent, llm=provider, description=ASSISTANT_SYSTEM_PROMPT))
 
         else:
             assistant = AIAssistant(llm=provider, name=args.name, verbose=args.verbose)
@@ -216,25 +280,33 @@ def start(args: Namespace):
             else:
                 tools = []
                 for cat in args.load_tools:
-                    loaded_tools = Tool.get_tools_by_category(cat.lower())
-                    tool_by_name = Tool.get_by_name(cat.lower())
+                    loaded_tools = Tool.get_tools_by_category(cat.strip().lower())
+                    
+                    tool_by_name = Tool.get_by_name(cat.strip().lower())
                     if tool_by_name:
                         loaded_tools.append(tool_by_name)
                     tools.extend(loaded_tools)
                 
                 assistant.tools = tools
             
-            assistant.format_system_prompt()
+            session = asyncio.run(Session.get_by_agent_id(assistant.id))
+            if args.clear_history:
+                session.chat = []
+                session.save()
+                
+            assistant.verbose = args.verbose
+            assistant.formatted_system_prompt()
+                
             asyncio.run(assistant.save())
 
             if args.generate:
-                asyncio.run(prompt_agent(assistant, args.generate))
+                asyncio.run(session(args.generate, assistant, streaming=args.stream))
                     
             elif args.web_ui:
                 start_web_ui(assistant)
                 
             else:
-                asyncio.run(assistant.start(args.session, audio=args.audio))
+                asyncio.run(initialize(session, assistant, stream=args.stream))
     except KeyboardInterrupt:
         print("\nExiting...")
         sys.exit(1)            
@@ -267,7 +339,7 @@ def get_arguments():
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--web-ui', action='store_true', help='Expose api server')
     parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
-    parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='general', help='Add tools by categories to agent')
+    parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='', help='Add tools by categories to agent')
     parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
     parser.add_argument('--api-base', type=str, default='', help='Set api base of selected llm. Set if using local llm.')
@@ -276,7 +348,9 @@ def get_arguments():
     parser.add_argument('--prompt-template', type=str_or_file, default='', help='Set prompt template of model. Can be a string or a text file path')
     parser.add_argument('--generate', type=str, default='', help='Prompt the agent to generate text and then exit after printing out the response.')
     parser.add_argument('--audio', action='store_true', help='Get input from microphone')
+    parser.add_argument('--stream', action='store_true', help='Enable response stream')
     parser.add_argument('--session', type=str, default="", help='Load saved session')
+    parser.add_argument('--clear-history', action='store_true', default="", help='Clear agent history')
     parser.add_argument('--sessions', action='store_true', help='Get a list of all saved sessions')
     parser.add_argument('--verbose', action='store_true', help='Set verbose mode')
     parser.add_argument('-v','--version', action='version', version=f'%(prog)s {VERSION}')

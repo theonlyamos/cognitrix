@@ -1,11 +1,9 @@
 <script lang="ts">
     import { afterUpdate, beforeUpdate } from "svelte"; 
-    import type { MessageInterface, SessionInterface } from "../common/interfaces";
+    import type { MessageInterface } from "../common/interfaces";
     import  MessageComponent from "./Message.svelte";
-    import { link } from "svelte-routing";
     import type { MouseEventHandler } from "svelte/elements";
 
-    export let sessions: SessionInterface[] = [];
     export let messages: MessageInterface[];
     export let clearMessages: MouseEventHandler<HTMLElement> = ()=>{};
 
@@ -33,83 +31,19 @@
     }
 </script>
 
-<div class="container">
-    <div class="chat-sessions">
-        <h3>Chat Sessions</h3>
-        {#each sessions as session (session.id)}
-            <a href="/{session.id}" use:link class="session-item">
-                <span>{session.datetime}</span>
-                <button>
-                    <i class="fa-solid fa-xmark"></i>
-                </button>
-            </a>
+<div class="main-chat-container">
+    <div class="chat-content" bind:this={container}>
+        {#each messages as message, index (index)}
+            <MessageComponent {...message}/>
         {/each}
     </div>
-    <div class="main-chat-container">
-        <div class="chat-content" bind:this={container}>
-            {#each messages as message, index (index)}
-                <MessageComponent {...message}/>
-            {/each}
-        </div>
-        <slot/>
-    </div>
-    <button class="clear-btn" on:click={clearMessages}>
-        <i class="fa-solid fa-comment-slash fa-fw"></i>Clear
-    </button>
+    <slot/>
 </div>
+<button class="clear-btn" on:click={clearMessages}>
+    <i class="fa-solid fa-comment-slash fa-fw"></i>Clear
+</button>
 
 <style>
-    .container {
-        width: 100%;
-        height: 100%;
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
-        position: relative;
-        padding: 0;
-    }
-    .chat-sessions {
-        width: 200px;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        box-sizing: border-box;
-        overflow-y: auto;
-        text-align: start;
-        border-right: 1px solid var(--bg-1);
-        color: var(--fg-1);
-    }
-
-    h3 {
-        margin-bottom: 0;
-        padding: 0 10px 10px 10px;
-        border-bottom: 1px solid var(--bg-1);
-        white-space: nowrap;
-    }
-
-    .session-item {
-        color: var(--fg-1);
-        font-size: 0.8rem;
-        padding: 10px 10px 0 10px;
-        position: relative;
-
-        &:hover, &:focus, &:active {
-            color: var(--fg-2);
-        }
-    }
-
-    .session-item button {
-        position: absolute;
-        top: 13px;
-        right: 5px;
-        display: none;
-        color: rgb(235, 22, 22);
-    }
-
-    .session-item:hover button {
-        display: block;
-    }
-
     .main-chat-container {
         width: 83%;
         height: 100%;

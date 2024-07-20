@@ -5,6 +5,9 @@
   import Agents from './routes/Agents.svelte';
   import Container from './lib/Container.svelte';
   import AgentPage from './routes/AgentPage.svelte';
+  import Tasks from './routes/Tasks.svelte';
+  import TaskPage from './routes/TaskPage.svelte';
+  // import { sseStore } from './common/stores';
   import { webSocketStore } from './common/stores';
 
   webSocketStore.connect();
@@ -25,6 +28,11 @@
       <Route path="/agents/new" component={AgentPage} />
       <Route path="/agents/:agent_id" let:params>
         <AgentPage agent_id={params?.agent_id}/>
+      </Route>
+      <Route path="/tasks" component={Tasks} />
+      <Route path="/tasks/new" component={TaskPage} />
+      <Route path="/tasks/:task_id" let:params>
+        <TaskPage agent_id={params?.task_id}/>
       </Route>
     </Container>
   </div>

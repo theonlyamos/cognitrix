@@ -36,9 +36,9 @@
       <img src={AgentsIcon} class="icon" alt="agents link" />
       <span>Agents</span>
     </a>
-    <a href="/tools" use:link class={page.includes('/tools') ? 'active' : ''}>
-      <img src={ToolBoxIcon} class="icon" alt="tools link" />
-      <span>Tools</span>
+    <a href="/tasks" use:link class={page.includes('/tasks') ? 'active' : ''}>
+      <i class="fa-solid fa-tools fa-fw"></i>
+      <span>Tasks</span>
     </a>
   </nav>
 
@@ -72,6 +72,10 @@
     padding: 20px;
     text-align: center;
     color: var(--fg-2);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
 
     &:first-of-type {
       border-radius: 7px 7px 0 0;
@@ -81,6 +85,10 @@
       background-color: var(--bg-1);
       color: var(--fg-1);
     }
+  }
+
+  nav a i {
+    font-size: 1.5rem;
   }
 
   button {

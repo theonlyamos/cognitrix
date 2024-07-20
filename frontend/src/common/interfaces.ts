@@ -56,3 +56,18 @@ export interface AgentDetailInterface extends Object {
     websocket?: WebSocket,
     verbose?: boolean
 }
+
+export interface SSEMessage {
+    type: string;
+    content: any;
+    action?: string;
+    complete?: boolean;
+}
+
+export interface SSEState {
+    event: string,
+    message: SSEMessage | null;
+    connected: boolean;
+    error: Event | Error | null;
+}
+  

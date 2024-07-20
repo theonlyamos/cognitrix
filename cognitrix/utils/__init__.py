@@ -303,3 +303,20 @@ def xml_to_dict(xml_string) -> dict | str:
     except Exception as e:
         # logging.exception(e)
         return xml_string
+
+def item_to_xml(item):
+    elem = ET.Element('tool')
+    name = ET.Element('name')
+    name.text = str(item[0])
+    value = ET.Element('result')
+    value.text = str(item[1])
+    elem.append(name)
+    elem.append(value)
+
+    return elem
+
+def parse_tool_call_results(lst):
+    root = ET.Element('tool_call_results')
+    for item in lst:
+        root.append(item_to_xml(item))
+    return ET.tostring(root, encoding='unicode', method='xml')

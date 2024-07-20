@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onDestroy, onMount } from 'svelte';
+    import { link } from "svelte-routing";
     import type { MessageInterface, SessionInterface } from '../common/interfaces';
-    import { BACKEND_URI } from '../common/utils';
     import ChatComponent from '../lib/ChatContent.svelte'
     import InputBar from '../lib/Inputbar.svelte';
     import { webSocketStore } from '../common/stores';
@@ -49,15 +49,15 @@
 
     const handleRouteChange = () => {
         if (socket && socket.readyState === WebSocket.OPEN) {
-            webSocketStore.send(JSON.stringify({type: "sessions", action: "get", agent_id: agent_id}));
-            if (session_id) {
+            if (agent_id) {
+                webSocketStore.send(JSON.stringify({type: "sessions", action: "get", agent_id: agent_id}));
+            } else if (session_id) {
                 webSocketStore.send(JSON.stringify({type: "chat_history", action: "get", session_id: session_id}));
             }
         }
     }
 
     const startWebSocketConnection = ()=>{
-        console.log('started new subscription...')
         unsubscribe = webSocketStore.subscribe((event: {socket: WebSocket, type: string, data?: any})=>{
             if (event !== null){
                 socket = event.socket
@@ -68,6 +68,7 @@
                     }
                 }
                 else if (event.type === 'message'){
+                    loading = false
                     let data = JSON.parse(event.data)
                     
                     if (data.type === 'chat_history') {
@@ -97,7 +98,6 @@
                         else {
                             if (data.complete){
                                 messages[messages.length-1].content = new_message.content
-                                loading = false
                             }
                             else {
                                 messages[messages.length-1].content = messages[messages.length-1].content + new_message.content
@@ -119,32 +119,94 @@
         })
     }
 
-    // onMount(() => {
-    //     startWebSocketConnection();
-
-    //     return (()=>{
-    //         if (unsubscribe)
-    //             unsubscribe()
-    //     })
-    // });
-
     onDestroy(()=>{
         if (unsubscribe)
             unsubscribe()
     })
 
-    $: {
-        console.log('rerending...')
+    $: if (session_id) {
+        resetState();
         startWebSocketConnection();
         handleRouteChange();
-        if (session_id) {
-            resetState();
-        }
+    }
+
+    $: if (!session_id) {
+        resetState();
+        startWebSocketConnection();
     }
 </script>
 
-<ChatComponent {messages} {sessions} {clearMessages}>
-    {#if session_id}
-    <InputBar {uploadFile} {sendMessage} {loading}/>
-    {/if}
-</ChatComponent>
+<div class="container">
+    <div class="chat-sessions">
+        <h3>Chat Sessions</h3>
+        {#each sessions as session (session.id)}
+            <a href="/{session.id}" use:link class="session-item">
+                <span>{session.datetime}</span>
+                <button>
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </a>
+        {/each}
+    </div>
+    <ChatComponent {messages} {clearMessages}>
+        {#if session_id}
+        <InputBar {uploadFile} {sendMessage} {loading}/>
+        {/if}
+    </ChatComponent>
+</div>
+
+<style>
+    .container {
+        inline-size: 100%;
+        block-size: 100%;
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        position: relative;
+        padding-inline: 0;
+        padding-block: 0;
+    }
+    .chat-sessions {
+        inline-size: 200px;
+        block-size: 100%;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        overflow-y: auto;
+        text-align: start;
+        border-inline-end: 1px solid var(--bg-1);
+        color: var(--fg-1);
+    }
+
+    h3 {
+        margin-block-end: 0;
+        padding-block: 0 10px;
+        padding-inline: 10px 10px;
+        border-block-end: 1px solid var(--bg-1);
+        white-space: nowrap;
+    }
+
+    .session-item {
+        color: var(--fg-1);
+        font-size: 0.8rem;
+        padding-inline: 10px 10px;
+        padding-block: 10px 0;
+        position: relative;
+
+        &:hover, &:focus, &:active {
+            color: var(--fg-2);
+        }
+    }
+
+    .session-item button {
+        position: absolute;
+        inset-block-start: 13px;
+        inset-inline-end: 5px;
+        display: none;
+        color: rgb(235, 22, 22);
+    }
+
+    .session-item:hover button {
+        display: block;
+    }
+</style>

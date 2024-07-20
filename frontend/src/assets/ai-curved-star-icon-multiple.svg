@@ -30,7 +30,7 @@
   </g>
   
   <!-- Bottom-right star -->
-  <g transform="translate(50,37) scale(0.2)">
+  <g transform="translate(35,-12) scale(0.2)">
     <path d="
       M50 10 
       C60 40, 90 40, 90 50 
