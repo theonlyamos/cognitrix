@@ -5,7 +5,8 @@ import json
 import logging
 from cognitrix.utils import xml_to_dict
 from starlette.websockets import WebSocketDisconnect
-from cognitrix.agents.prompt_generator import PromptGenerator
+from cognitrix.agents import PromptGenerator
+from cognitrix.agents import TaskInstructor
 
 from cognitrix.llms.session import Session
 from cognitrix.agents import Agent, AIAssistant
@@ -82,20 +83,30 @@ class WebSocketManager:
                 
                 elif query_type == 'generate':
                     default_prompt = query['prompt']
-                    prompt = query['prompt']
+                    prompt = ''
                     name = query.get('name', '')
+                    agent = web_agent
                     
                     if action == 'system_prompt':
                         agent = PromptGenerator(llm=web_agent.llm)
                         agent.llm.system_prompt = agent.prompt_template
                         
-                        prompt = "## Agent Description"
+                        prompt = "Agent Description"
                         if name:
-                            prompt += f"""\n\n## Agent Name: {name}"""
+                            prompt += f"""\n\nAgent Name: {name}"""
                         
                         prompt += f"""\n\n{default_prompt}"""
                     
-                    await session(prompt, web_agent, 'web', True, websocket.send_json, query)
+                    elif action == 'task_instructions': 
+                        agent = TaskInstructor(llm=web_agent.llm)
+                        
+                        prompt = ""
+                        if name:
+                            prompt += f"""\\nTask Title: {name}"""
+                        
+                        prompt += f"""\n\nTask Description: {default_prompt}"""
+                    
+                    await session(prompt, agent, 'web', True, websocket.send_json, query, False)
             
                 else:
                     user_prompt = query['content']

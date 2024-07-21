@@ -107,7 +107,7 @@ class Session(BaseModel):
             logger.exception(e)
             return None
     
-    async def __call__(self, message: str|dict, agent: Agent|AIAssistant, interface: Literal['cli', 'web'] = 'cli', streaming: bool = False, output: Callable = print, wsquery: Dict[str, str]= {}):
+    async def __call__(self, message: str|dict, agent: Agent|AIAssistant, interface: Literal['cli', 'web'] = 'cli', streaming: bool = False, output: Callable = print, wsquery: Dict[str, str]= {}, save_history: bool = True):
         system_prompt = agent.formatted_system_prompt()
         tool_calls: bool = False
         
@@ -140,7 +140,7 @@ class Session(BaseModel):
                                 await output({'type': wsquery['type'], 'content': result, 'action': wsquery['action']})
                     await asyncio.sleep(0.1)
             
-                if response:
+                if response and save_history:
                     self.update_history(full_prompt)
                     self.update_history({'role': agent.name, 'type': 'text', 'message': ''.join(response.chunks)})
                     

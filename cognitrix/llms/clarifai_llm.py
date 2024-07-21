@@ -1,6 +1,6 @@
 from clarifai.client.model import Model
 from cognitrix.llms.base import LLM, LLMResponse
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 import logging
 import json
@@ -39,7 +39,7 @@ class Clarifai(LLM):
     is_multimodal: bool = True
     """Whether the model is multimodal."""
 
-    def __call__(self, query, **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
         """Generates a response to a query using the Clarifai API.
 
         Args:
@@ -52,10 +52,10 @@ class Clarifai(LLM):
         if not self.client:
             self.client = Model(url=self.model)
             
-        formatted_messages = self.format_query(query)
-            
-        query = f"{self.system_prompt}\n {json.dumps(formatted_messages)}"
-        result = self.client.predict_by_bytes(query.encode(), input_type="text")
-            
-        return LLMResponse(result.outputs[0].data.text.raw)
+        formatted_messages = self.format_query(query, chat_history)
+        
+        message = f"{system_prompt}\n {json.dumps(formatted_messages)}"
+        result = self.client.predict_by_bytes(message.encode(), input_type="text")
+        print(result)
+        yield LLMResponse(result.outputs[0].data.text.raw)
     

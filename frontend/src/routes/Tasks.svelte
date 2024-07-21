@@ -1,15 +1,47 @@
 <script lang="ts">
   import { link } from "svelte-routing";
+  import { getAllTasks } from "../common/utils";
+  import type { TaskInterface } from "../common/interfaces";
+  import TaskCard from "../lib/TaskCard.svelte";
 
-    const tasks: object[] = [];
+  let tasks: TaskInterface[] = [];
+
+  const loadTasks = async () => {
+    try {
+      tasks = (await getAllTasks()) as TaskInterface[];
+      console.log(tasks);
+    } catch (error) {
+      console.log(error);
+    }
+  };
 </script>
 
-<div class="toolbar">
+{#await loadTasks()}
+  <div class="loading">
+    <i class="fas fa-spinner fa-spin fa-3x"></i>
+  </div>
+{:then}
+  <div class="toolbar">
     <a href="/tasks/new" use:link class="btn">
-        <i class="fa-solid fa-tools fa-fw"></i>
-        <span>New Task</span>
+      <i class="fa-solid fa-tools fa-fw"></i>
+      <span>New Task</span>
     </a>
-</div>
+  </div>
+  <div class="container">
+    <div class="tasks-container">
+      {#each tasks as task (task?.id)}
+        <TaskCard {task} />
+      {/each}
+    </div>
+  </div>
+{/await}
 
 <style>
+  .tasks-container {
+    padding-inline: 20px;
+    padding-block: 20px;
+    display: grid;
+    grid-template-columns: 400px;
+    gap: 20px;
+  }
 </style>

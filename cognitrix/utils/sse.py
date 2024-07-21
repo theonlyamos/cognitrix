@@ -3,7 +3,7 @@ import json
 import logging
 from fastapi import FastAPI, Request
 from sse_starlette.sse import EventSourceResponse
-from cognitrix.agents.prompt_generator import PromptGenerator
+from cognitrix.agents import PromptGenerator
 from cognitrix.llms.session import Session
 from cognitrix.agents import Agent, AIAssistant
 import asyncio
@@ -48,7 +48,7 @@ class SSEManager:
                         if loaded_agent:
                             self.agent = loaded_agent
                             self.agent.llm.chat_history = session.chat
-                            self.agent.save_session(session)
+                            session.save()
                             await self.agent.save()
                         yield {'event': 'message', 'data': json.dumps({'type': 'chat_history', 'content': session.chat, 'agent_name': self.agent.name, 'action': 'delete'})}
                             
@@ -81,7 +81,7 @@ class SSEManager:
                 
                 elif action['type'] == 'chat_message':
                     user_prompt = action['content']
-                    session = await self.agent.load_session()  # Ensure session is defined
+                    session = await Session.get_by_agent_id(self.agent.id)  # Ensure session is defined
                     async for response in self.agent.chat(user_prompt, session):
                         yield {'event': 'message', 'data': response}
 

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ...agents.prompt_generator import PromptGenerator
+from ...agents import PromptGenerator
 from ...config import API_VERSION
 
 api_router = APIRouter(

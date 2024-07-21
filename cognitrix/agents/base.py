@@ -44,9 +44,6 @@ class Agent(BaseModel):
     sub_agents: AgentList = Field(default_factory=list)
     """List of sub agents which can be called by this agent"""
     
-    task: Optional[Task] = None
-    """The task to be completed by the agent"""
-    
     is_sub_agent: bool = Field(default=False)
     """Whether this agent is a sub agent for another agent"""
     
@@ -141,7 +138,7 @@ class Agent(BaseModel):
         if not len(self.sub_agents):
             return ''
         subagents_str = "Available Subagents:\n"
-        subagents_str += "\n".join([f"-- {agent.name}: {agent.task.description}" for agent in self.sub_agents if agent.task])
+        subagents_str += "\n".join([f"-- {agent.name}" for agent in self.sub_agents])
         subagents_str += "\nYou should always use a subagent for a task if there is one specifically created for that task."
         subagents_str += "\nWhen creating a sub agent, it's description should be a comprehensive prompt of the agent's behavior, capabilities and example tasks."
         return subagents_str
@@ -456,13 +453,13 @@ class Agent(BaseModel):
 
     def call_sub_agent(self, agent_name: str, task_description: str):
         sub_agent = self.get_sub_agent_by_name(agent_name)
-        if sub_agent:
-            sub_agent.task = Task(description=task_description)
+        # if sub_agent:
+            # sub_agent.task = Task(description=task_description)
             # if sub_agent.task:
             #     self.start_task_thread(sub_agent, self)
-        else:
-            full_prompt = self.process_prompt(f'Sub-agent with name {agent_name} was not found.')
-            self.llm(full_prompt, self.formatted_system_prompt())
+        # else:
+        #     full_prompt = self.process_prompt(f'Sub-agent with name {agent_name} was not found.')
+        #     self.llm(full_prompt, self.formatted_system_prompt())
 
     @classmethod
     async def create_agent(cls, name: str = '', description: str = '', task_description: str = '', tools: List[Tool] = [],
@@ -488,11 +485,10 @@ class Agent(BaseModel):
                         llm.temperature = float(temp) if temp else llm.temperature
 
             if llm:
-                task = Task(description=task_description)
                 
                 description = description or input("\n[Enter agent system prompt]: ")
                 
-                new_agent = cls(name=name, llm=llm, task=task, tools=tools, is_sub_agent=is_sub_agent, parent_id=parent_id)
+                new_agent = cls(name=name, llm=llm,  tools=tools, is_sub_agent=is_sub_agent, parent_id=parent_id)
                 
                 if description:
                     new_agent.prompt_template = description
@@ -515,15 +511,17 @@ class Agent(BaseModel):
     async def list_agents(cls, parent_id: Optional[str] = None) -> AgentList:
         try:
             agents: AgentList = []
+            content = ''
             async with aiofiles.open(AGENTS_FILE, 'r') as file:
                 content = await file.read()
-                loaded_agents: list[dict] = json.loads(content) if content else []
-                for agent in loaded_agents:
-                    llm = LLM.load_llm(agent["llm"]["provider"])
-                    loaded_agent = Agent(**agent)
-                    if llm:
-                        loaded_agent.llm = llm(**agent["llm"])
-                    agents.append(loaded_agent)
+                
+            loaded_agents: list[dict] = json.loads(content) if content else []
+            for agent in loaded_agents:
+                llm = LLM.load_llm(agent["llm"]["provider"])
+                loaded_agent = Agent(**agent)
+                if llm:
+                    loaded_agent.llm = llm(**agent["llm"])
+                agents.append(loaded_agent)
 
             if parent_id:
                 agents = [agent for agent in agents if agent.parent_id == parent_id]

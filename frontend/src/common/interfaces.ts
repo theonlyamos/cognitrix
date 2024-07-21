@@ -13,6 +13,14 @@ export interface AgentInterface extends Object {
     tools?: string[]
 }
 
+export interface TaskInterface extends Object {
+    id?: string,
+    title: string,
+    description: string,
+    status: string,
+    done: boolean
+}
+
 export interface SessionInterface {
     id: string,
     agent_id: string,
@@ -55,6 +63,19 @@ export interface AgentDetailInterface extends Object {
     task?: Object,
     websocket?: WebSocket,
     verbose?: boolean
+}
+
+export interface TaskDetailInterface extends Object {
+    id?: string,
+    title: string,
+    description: string,
+    agents: AgentDetailInterface[],
+    tools?: ToolInterface[],
+    autostart: boolean,
+    status: string,
+    done: boolean,
+    created_at?: string
+    completed_at?: string
 }
 
 export interface SSEMessage {
