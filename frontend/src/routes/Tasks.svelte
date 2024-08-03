@@ -9,6 +9,7 @@
   const loadTasks = async () => {
     try {
       tasks = (await getAllTasks()) as TaskInterface[];
+      tasks = tasks.reverse();
       console.log(tasks);
     } catch (error) {
       console.log(error);
@@ -40,8 +41,8 @@
   .tasks-container {
     padding-inline: 20px;
     padding-block: 20px;
-    display: grid;
-    grid-template-columns: 400px;
+    display: flex;
     gap: 20px;
+    flex-wrap: wrap;
   }
 </style>

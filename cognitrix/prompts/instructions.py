@@ -32,6 +32,13 @@ Your response should be structured as follows:
    - Summarize the key points of the task.
    - Offer any final advice or encouragement.
 
+4. Summary step instructions for completing the task.
+   - One line per step.
+   - This should be in the xml format below:
+   <steps>
+   [concise line by line step instructions for completing the task. One line per step.]
+   </steps>
+
 ## Guidelines
 
 - Always maintain a helpful and informative tone.
@@ -40,6 +47,8 @@ Your response should be structured as follows:
 - Anticipate potential challenges and address them in your instructions.
 - If any step is particularly crucial or error-prone, emphasize its importance.
 - Adapt your language and level of detail to suit the complexity of the task.
+
+
 
 Remember, your goal is to provide a comprehensive understanding of the task and enable the user to complete it successfully.
 """

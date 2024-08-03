@@ -4,8 +4,8 @@
     getTask,
     getTools,
     saveTask,
-    getTaskSession,
     getAllAgents,
+    updateTaskStatus,
   } from "../common/utils";
   import type {
     TaskDetailInterface,
@@ -22,13 +22,14 @@
   import { webSocketStore } from "../common/stores";
   import type { Unsubscriber } from "svelte/motion";
   import { onDestroy, onMount } from "svelte";
+  import Tasks from "./Tasks.svelte";
 
   export let task_id: string = "";
   let agents: AgentDetailInterface[] = [];
   let task: TaskDetailInterface = {
     title: "",
     description: "",
-    agents: [],
+    agent_ids: [],
     tools: [],
     autostart: false,
     status: "not-started",
@@ -38,6 +39,7 @@
   let taskAgents: string[] = [];
   let taskTools: string[] = [];
 
+  let selectedAgents: string[] = [];
   let selectedTools: string[] = [];
   let loading: boolean = false;
   let submitting: boolean = false;
@@ -52,7 +54,6 @@
       if (task.tools && task.tools.length) {
         taskTools = task.tools.map((t) => t.name);
       }
-      console.log(task);
     } catch (error) {
       console.log(error);
     }
@@ -128,6 +129,21 @@
       .filter((tool): tool is ToolInterface => tool !== undefined);
   };
 
+  const handleAgentsChange = (event: Event) => {
+    const target = event.target as HTMLInputElement;
+    if (target.checked) {
+      if (!selectedAgents.includes(target.value))
+        selectedAgents = [...selectedAgents, target.value];
+    } else {
+      const index = selectedAgents.indexOf(target.value);
+      if (index > -1) {
+        let oldArray = [...selectedAgents];
+        oldArray.splice(index, 1);
+        selectedAgents = [...oldArray];
+      }
+    }
+  };
+
   const handleTaskSubmit = async () => {
     try {
       submitting = true;
@@ -140,6 +156,23 @@
     }
   };
 
+  const onStartTask = async () => {
+    try {
+      submitting = true;
+      task = (await updateTaskStatus(task?.id)) as TaskDetailInterface;
+      if (task.id) task_id = task.id;
+    } catch (error) {
+      console.log(error);
+    } finally {
+      submitting = false;
+    }
+  };
+
+  const stopTask = async () => {
+    task.status = "not-started";
+    task = (await saveTask(task)) as TaskDetailInterface;
+  };
+
   onDestroy(() => {
     if (unsubscribe) unsubscribe();
   });
@@ -147,6 +180,9 @@
   $: if (newTaskDescription) {
     task.description = newTaskDescription;
   }
+
+  $: task.agent_ids = selectedAgents;
+  $: console.log(task.agent_ids);
 </script>
 
 {#if task_id}
@@ -161,9 +197,21 @@
 <div class="toolbar">
   {#if task_id}
     <div style="margin-right: auto; display: flex; gap: 10px;">
-      <button class="btn">
+      <button
+        class="btn"
+        disabled={task.status === "in-progress"}
+        on:click={onStartTask}
+      >
         <i class="fa-solid fa-tools fa-fw"></i>
-        <span>Task</span>
+        <span>Start Task</span>
+      </button>
+      <button
+        class="btn"
+        disabled={["not-started", "completed"].includes(task.status)}
+        on:click={stopTask}
+      >
+        <i class="fa-solid fa-stop fa-fw"></i>
+        <span>Stop Task</span>
       </button>
     </div>
   {/if}
@@ -197,29 +245,29 @@
         placeholder="Provide a brief description of the task and click the Generate Description button to generate a detailed step-by-step instructions for completing the task."
       ></textarea>
     </div>
-    <button
-      class="btn ai-generate"
-      on:click={generateTaskDescription}
-      disabled={task.description === "" || loading}
-    >
-      <img src={GenerativeIcon} alt="generative" class="icon" />
-      {#if loading}
-        <i class="fas fa-spinner fa-spin"></i>
-      {:else}
-        <span>Generate Description</span>
-      {/if}
-    </button>
   </div>
+  <button
+    class="btn ai-generate"
+    on:click={generateTaskDescription}
+    disabled={task.description === "" || loading}
+  >
+    <img src={GenerativeIcon} alt="generative" class="icon" />
+    {#if loading}
+      <i class="fas fa-spinner fa-spin"></i>
+    {:else}
+      <span>Generate Task Description & Instructions</span>
+    {/if}
+  </button>
   <div class="task-form tools">
     <Accordion title="Select Agents">
       <div class="tools-list">
-        {#each agents as agent, index (agent.id)}
+        {#each agents as agent, index (agent?.id)}
           <Checkbox
             name="tools"
-            value={agent.name}
+            value={agent.id}
             label={agent.name}
-            onChange={handleToolChange}
-            checked={taskAgents.includes(agent.name)}
+            onChange={handleAgentsChange}
+            checked={task.agent_ids.includes(agent?.id)}
           />
         {/each}
       </div>
@@ -286,14 +334,15 @@
   .btn.ai-generate {
     margin-inline-start: auto;
     inline-size: fit-content;
-    background-color: var(--fg-1);
-    color: var(--bg-1);
+    background-color: var(--bg-1);
+    color: var(--fg-1);
     padding-inline: 7px;
     padding-block: 5px;
     border-radius: 7px;
     display: flex;
     align-items: center;
     gap: 2px;
+    box-shadow: var(--shadow-sm);
   }
 
   .tools {
@@ -314,5 +363,6 @@
   img.icon {
     inline-size: 30px;
     block-size: 30px;
+    filter: invert(1);
   }
 </style>

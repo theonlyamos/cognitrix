@@ -1,6 +1,7 @@
 from cognitrix.llms.base import LLM, LLMResponse
 from typing import Any, Dict, List
 import google.generativeai as genai
+from google.generativeai import GenerationConfig
 from dotenv import load_dotenv
 from PIL import Image
 import logging
@@ -31,10 +32,10 @@ class Google(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    model: str = 'gemini-1.5-flash'
+    model: str = 'gemini-1.5-pro-exp-0801'
     """model endpoint to use""" 
     
-    temperature: float = 0.0
+    temperature: float = 0.2
     """What sampling temperature to use.""" 
     
     chat_history: list[str] = []
@@ -43,7 +44,7 @@ class Google(LLM):
     api_key: str = os.getenv('GOOGLE_API_KEY', '')
     """GOOGLE API key""" 
     
-    max_tokens: int = 2048
+    max_tokens: int = 8192
     """Maximum output tokens"""
     
     supports_system_prompt: bool = False
@@ -66,7 +67,7 @@ class Google(LLM):
             elif fm['type'] == 'image':
                 screenshot_bytes = io.BytesIO()
                 
-                fm['image'].save(screenshot_bytes, format='JPEG')
+                fm['image'].save(screenshot_bytes, format='JPEG') # type: ignore
                 upload_image = Image.open(screenshot_bytes)
                 messages.append(upload_image)
                 messages.append('Above is the screenshot')
@@ -85,25 +86,24 @@ class Google(LLM):
         """
         genai.configure(api_key=self.api_key)
 
-        
-        general_config = {
-            "max_output_tokens": 2048,
-            "temperature": self.temperature,
-            "top_p": 1,
-            "top_k": 32
-        }
+        generation_config = GenerationConfig(
+            temperature=self.temperature,
+            top_p=0.95,
+            top_k=64,
+            max_output_tokens=self.max_tokens,
+            response_mime_type="text/plain"
+        )
         
         contents = self.format_query(query, system_prompt, chat_history)
 
         if not self.client:
-            self.client = genai.GenerativeModel(self.model)
+            self.client = genai.GenerativeModel(model_name=self.model, generation_config=generation_config)
         
         response = LLMResponse()
         
         stream =  self.client.generate_content(
             contents,
-            stream=True,
-            generation_config=general_config    # type: ignore
+            stream=True
         )
         for chunk in stream:
             response.add_chunk(chunk.text)

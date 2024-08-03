@@ -56,6 +56,7 @@ class Clarifai(LLM):
         
         message = f"{system_prompt}\n {json.dumps(formatted_messages)}"
         result = self.client.predict_by_bytes(message.encode(), input_type="text")
-        print(result)
-        yield LLMResponse(result.outputs[0].data.text.raw)
+        response = LLMResponse()
+        response.add_chunk(result.outputs[0].data.text.raw)
+        yield response
     

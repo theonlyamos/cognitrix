@@ -2,6 +2,7 @@ import uuid
 import asyncio
 import logging
 import logging
+import aiofiles
 from rich import print
 from flask import json
 from datetime import datetime
@@ -80,6 +81,39 @@ class Session(BaseModel):
             return Session()
         
     @classmethod
+    async def get(cls, session_id: str):
+        try:
+            sessions = cls.list_sessions()
+            loaded_sessions: list[Session] = [session for session in sessions if session.id == session_id]
+            if len(loaded_sessions):
+                session = loaded_sessions[-1]
+                return session
+            else:
+                return None
+        except Exception as e:
+            logging.exception(e)
+            return None
+        
+    @staticmethod
+    async def delete(id_or_index: str):
+        sessions = Session.list_sessions()
+        updated_sessions = []
+        deleted_session = None
+        for index, session in enumerate(sessions):
+            if id_or_index in [str(index), session.id]:
+                deleted_session = session
+                continue
+            updated_sessions.append(session.dict())
+        
+        if not deleted_session:
+            return False
+        
+        async with aiofiles.open(SESSIONS_FILE, 'w') as file:
+            await file.write(json.dumps(updated_sessions, indent=4))
+        
+        return True
+        
+    @classmethod
     async def get_by_agent_id(cls, agent_id: str):
         try:
             sessions = cls.list_sessions()
@@ -97,6 +131,7 @@ class Session(BaseModel):
     def update_history(self, message: Dict[str, str]):
         self.chat.append(message)
 
+    @property
     async def agent(self):
         try:
             agents = await Agent.list_agents()
@@ -138,6 +173,12 @@ class Session(BaseModel):
                                 output(result)
                             else:
                                 await output({'type': wsquery['type'], 'content': result, 'action': wsquery['action']})
+                    
+                    if response.artifacts:
+                        if 'artifact' in response.artifacts.keys():
+                            if interface == 'ws':
+                                await output({'type': wsquery['type'], 'content': '', 'action': wsquery['action'], 'artifacts': response.artifacts['artifact']})
+                    
                     await asyncio.sleep(0.1)
             
                 if response and save_history:

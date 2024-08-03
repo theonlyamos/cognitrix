@@ -7,12 +7,13 @@ from cognitrix.tools.base import Tool
 from cognitrix.tools.tool import tool
 from cognitrix.agents import Agent
 from cognitrix.llms import LLM
-from cognitrix.utils import json_return_format
+from cognitrix.utils import xml_return_format
 from tavily import TavilyClient
 from bs4 import BeautifulSoup
 from pydantic import Field
 from pathlib import Path
 from PIL import Image
+import wikipedia as wk
 import pyautogui
 import requests
 import logging 
@@ -747,7 +748,11 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
     
     sub_agent: Optional[Agent] = None
     
+    if isinstance(tools, dict):
+        tools = list(tools.values())
+    
     loaded_tools: List[Tool] = []
+    
     for t in tools:
         tool = Tool.get_by_name(t)
         if tool:
@@ -760,7 +765,7 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
         description += '\n\n{tools}'
         
         if not "return_format" in description:
-            description += f"\n{json_return_format}"
+            description += f"\n{xml_return_format}"
             
         sub_agent = await Agent.create_agent(
             name=name,
@@ -865,7 +870,7 @@ def internet_search(query: str, search_depth: str = "basic"):
     return response
 
 @tool(category='web')
-def web_scraper(url: str):
+def web_scraper(url: str|List[str]):
     """Use this tool to scrape websites when given a link url.
 
     Args:
@@ -901,15 +906,21 @@ def web_scraper(url: str):
     """
     
     try:
-        response = requests.get(url)
-        response.raise_for_status()  # Raise an exception for non-2xx status codes
-        html_content = response.text
+        results: List[str] = []
+        if isinstance(url, str):
+            url = [url]
+            
+        for link in url:
+            response = requests.get(link)
+            response.raise_for_status()  # Raise an exception for non-2xx status codes
+            html_content = response.text
 
-        soup = BeautifulSoup(html_content, 'html.parser')
-        text_content = soup.get_text()
-        text_content = ' '.join(text_content.split())  # Remove empty spaces
+            soup = BeautifulSoup(html_content, 'html.parser')
+            text_content = soup.get_text()
+            text_content = ' '.join(text_content.split())  # Remove empty spaces
+            results.append(text_content)
 
-        return text_content
+        return '\n'.join(results)
     except requests.exceptions.RequestException as e:
         return f"Error: {e}"
     
@@ -973,3 +984,63 @@ def brave_search(query: str):
         return results
     else:
         return f"Error: {response.status_code}, {response.text}"
+    
+@tool(category='web')
+def wikipedia(query: str, search_depth: str = 'basic'):
+    """Use this to retrieve information from wikipaedia.
+    
+    When you need to answer a question or provide information, you can call this tool 
+    to fetch the information from the web. 
+    This tool takes one argument: the query or question you want to search for.
+    
+    Args:
+    query (str): The term to search for.
+    search_depth (str, optional): The search depth. Accepts "basic" or "advanced". Defaults to "basic".
+    
+    Returns:
+    str: The search results.
+    
+    Example:
+    User: who is Joe Biden?
+    AI Assistant: <response>
+        <observation>I need to search the internet for information about Joe Biden</observation>
+        <mindspace>
+    Political Information: Current world leaders, US government structure
+    Internet Search: Search engine algorithms, query formulation
+    Information Retrieval: Credible sources, fact-checking
+    Current Events: Recent elections, political changes
+        </mindspace>
+        <thought>Step 1) To do an internet search, I need to use the Wikipedia tool.
+    Step 2) The Wikipaedia tool takes two arguments: query (the topic to search for) and search_depth (the search depth, either "basic" or "advanced").
+    Step 3) Calling the Wikipaedia tool with the provided query.</thought>
+        <type>tool_calls</type>
+        <tool_calls>
+            <tool>
+                <name>Wikipedia</name>
+                <arguments>
+                    <query>Joe Biden</query>
+                    <search_depth>basic</search_depth>
+                </arguments>
+            </tool>
+        </tool_calls>
+        <artifacts></artifacts>
+    </response>
+    """
+    results = ''
+    try:
+        if search_depth == 'basic':
+            results = wk.summary(query)
+        else:
+            page = wk.page(query)
+            results = page.content
+    except wk.exceptions.DisambiguationError as e:
+        print(f"DisambiguationError: {e}")
+        results = ''
+    except wk.exceptions.PageError as e:
+        print(f"PageError: {e}")
+        results = ''
+    except Exception as e:
+        print(f"Error: {e}")
+        results = ''
+    
+    return results

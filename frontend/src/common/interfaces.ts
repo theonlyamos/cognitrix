@@ -2,7 +2,8 @@ export interface MessageInterface {
     id?: string|number,
     role: string|string,
     content: string,
-    image?: string
+    image?: string,
+    artifacts?: object|object[]
 }
 
 export interface AgentInterface extends Object {
@@ -17,6 +18,7 @@ export interface TaskInterface extends Object {
     id?: string,
     title: string,
     description: string,
+    step_instructions?: string[],
     status: string,
     done: boolean
 }
@@ -69,13 +71,15 @@ export interface TaskDetailInterface extends Object {
     id?: string,
     title: string,
     description: string,
-    agents: AgentDetailInterface[],
+    step_instructions?: string[],
+    agent_ids: string[],
     tools?: ToolInterface[],
     autostart: boolean,
     status: string,
     done: boolean,
     created_at?: string
     completed_at?: string
+    session_id?: string,
 }
 
 export interface SSEMessage {

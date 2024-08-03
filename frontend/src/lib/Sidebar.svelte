@@ -1,52 +1,80 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
-  import HomeIcon from '../assets/home.svg';
-  import AgentsIcon from '../assets/agent.svg';
-  import ToolBoxIcon from '../assets/toolbox.svg';
-  import { link, useLocation } from 'svelte-routing';
+  import { onDestroy, onMount } from "svelte";
+  import HomeIcon from "../assets/home.svg";
+  import AgentsIcon from "../assets/agent.svg";
+  import { link, useLocation } from "svelte-routing";
 
-  let page = window.location.pathname;
-  let theme = 'light';
+  let page: string = window.location.pathname;
+  let theme: string;
+
+  function setTheme(theme: string) {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }
+
+  function getSystemTheme() {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+  }
+
+  function initializeTheme() {
+    const savedTheme = localStorage.getItem("theme");
+    if (savedTheme) {
+      setTheme(savedTheme);
+    } else {
+      setTheme(getSystemTheme());
+    }
+  }
 
   onMount(() => {
-    theme = localStorage.getItem('theme') || 'light';
-    document.documentElement.setAttribute('data-theme', theme);
+    // Initialize theme
+    initializeTheme();
   });
 
   function toggleTheme() {
-    theme = theme === 'light' ? 'dark' : 'light';
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
+    const currentTheme = localStorage.getItem("theme") || getSystemTheme();
+    const newTheme = currentTheme === "light" ? "dark" : "light";
+    setTheme(newTheme);
   }
 
-  const locationSub = useLocation().subscribe((location)=>{
-    page = location.pathname
-  })
+  // Listen for system theme changes
+  window
+    .matchMedia("(prefers-color-scheme: dark)")
+    .addEventListener("change", (e) => {
+      if (!localStorage.getItem("theme")) {
+        setTheme(e.matches ? "dark" : "light");
+      }
+    });
+
+  const locationSub = useLocation().subscribe((location) => {
+    page = location.pathname;
+  });
 
   onDestroy(locationSub);
 </script>
 
 <aside>
   <nav>
-    <a href="/" use:link class={page === '/' ? 'active' : ''}>
+    <a href="/" use:link class={page === "/" ? "active" : ""}>
       <img src={HomeIcon} class="icon" alt="home link" />
       <span>Home</span>
     </a>
-    <a href="/agents" use:link class={page.includes('/agents') ? 'active' : ''}>
+    <a href="/agents" use:link class={page.includes("/agents") ? "active" : ""}>
       <img src={AgentsIcon} class="icon" alt="agents link" />
       <span>Agents</span>
     </a>
-    <a href="/tasks" use:link class={page.includes('/tasks') ? 'active' : ''}>
+    <a href="/tasks" use:link class={page.includes("/tasks") ? "active" : ""}>
       <i class="fa-solid fa-tools fa-fw"></i>
       <span>Tasks</span>
     </a>
   </nav>
 
   <button on:click={toggleTheme}>
-    {#if theme === 'light'}
-    <i class="fas fa-moon"></i>
+    {#if theme === "light"}
+      <i class="fas fa-moon"></i>
     {:else}
-    <i class="fas fa-sun"></i>
+      <i class="fas fa-sun"></i>
     {/if}
   </button>
 </aside>
@@ -60,6 +88,7 @@
     flex-direction: column;
     justify-content: space-between;
     box-shadow: var(--shadow-sm);
+    transition: all 0.2s ease-in-out;
   }
 
   nav {
@@ -81,7 +110,8 @@
       border-radius: 7px 7px 0 0;
     }
 
-    &:hover, &.active {
+    &:hover,
+    &.active {
       background-color: var(--bg-1);
       color: var(--fg-1);
     }
@@ -101,7 +131,9 @@
     border: none;
     outline: none;
 
-    &:hover, &:focus, &:focus-visible {
+    &:hover,
+    &:focus,
+    &:focus-visible {
       border: none;
       padding: 0 !important;
       outline: none;
@@ -115,6 +147,20 @@
 
     &&.fa-moon {
       align-self: flex-end;
+    }
+  }
+
+  @media screen and (max-width: 640px) {
+    aside {
+      /* display: none; */
+      /* position: absolute;
+      inset-block-start: 0;
+      inset-inline-start: 0;
+      block-size: inherit; */
+      /* transform: translateY(-50%); */
+      /* z-index: 20; */
+      margin-inline-start: -120px;
+      box-shadow: var(--shadow-sm);
     }
   }
 </style>

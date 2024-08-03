@@ -40,12 +40,20 @@
 
 <style>
   .container {
-    margin: 50px;
-    width: 90vw;
-    height: 90vh;
+    position: relative;
+    margin: 0 auto;
+    inline-size: 90vmax;
+    block-size: 90vh;
     display: flex;
     justify-content: space-between;
     border-radius: 25px;
     gap: 20px;
+  }
+
+  @media screen and (max-width: 640px) {
+    .container {
+      inline-size: 100vmin;
+      block-size: 100vh;
+    }
   }
 </style>

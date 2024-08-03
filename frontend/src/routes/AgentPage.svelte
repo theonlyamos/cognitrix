@@ -223,7 +223,6 @@
     <div class="form-group">
       <label for="prompt">Agent Prompt</label>
       <textarea
-        rows="15"
         bind:value={agent.prompt_template}
         placeholder="Provide a brief description of your agent and click the Generate Prompt button to generate a system prompt for your Agent."
       ></textarea>
@@ -347,6 +346,7 @@
 
   textarea {
     resize: none;
+    block-size: 30vh;
   }
 
   img.icon {

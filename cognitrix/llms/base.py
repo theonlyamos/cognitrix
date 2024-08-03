@@ -27,7 +27,7 @@ class LLMResponse:
         self.text: Optional[str] = None
         self.result: Optional[str] = None
         self.tool_calls: Optional[Dict[str, Any]] = None
-        self.artifacts: Optional[List[Dict[str, Any]]] = None
+        self.artifacts: Optional[Dict[str, Any]] = None
         self.observation: Optional[str] = None
         self.thought: Optional[str] = None
         self.type: Optional[str] = None

@@ -1,91 +1,75 @@
 <script lang="ts">
-    import { afterUpdate, beforeUpdate } from "svelte"; 
-    import type { MessageInterface } from "../common/interfaces";
-    import  MessageComponent from "./Message.svelte";
-    import type { MouseEventHandler } from "svelte/elements";
+  import { afterUpdate, beforeUpdate } from "svelte";
+  import type { MessageInterface } from "../common/interfaces";
+  import MessageComponent from "./Message.svelte";
 
-    export let messages: MessageInterface[];
-    export let clearMessages: MouseEventHandler<HTMLElement> = ()=>{};
+  export let messages: MessageInterface[];
 
-    let container: HTMLElement;
+  let loading: boolean = true;
+  let loadedMessages = [];
+  let container: HTMLElement;
 
-    let autoscroll = false;
+  let autoscroll = false;
 
-	beforeUpdate(() => {
-		if (container) {
-			const scrollableDistance = container.scrollHeight - container.offsetHeight;
-			autoscroll = container.scrollTop > scrollableDistance - 20;
-		}
-	});
-
-	afterUpdate(() => {
-		if (autoscroll) {
-			container.scrollTo(0, container.scrollHeight);
-		}
-	});
-
-    $: if (messages.length){
-        if (autoscroll) {
-			container.scrollTo(0, container.scrollHeight);
-		}
+  beforeUpdate(() => {
+    if (container) {
+      const scrollableDistance =
+        container.scrollHeight - container.offsetHeight;
+      autoscroll = container.scrollTop > scrollableDistance - 20;
     }
+  });
+
+  afterUpdate(() => {
+    if (autoscroll) {
+      container.scrollTo(0, container.scrollHeight);
+    }
+  });
+
+  $: if (messages.length) {
+    console.log(messages.length, loadedMessages.length);
+    if (messages.length != loadedMessages.length) {
+      loadedMessages = messages;
+      loading = false;
+    }
+    if (autoscroll) {
+      container.scrollTo(0, container.scrollHeight);
+    }
+  }
 </script>
 
 <div class="main-chat-container">
-    <div class="chat-content" bind:this={container}>
-        {#each messages as message, index (index)}
-            <MessageComponent {...message}/>
-        {/each}
-    </div>
-    <slot/>
+  <div class="chat-content" bind:this={container}>
+    {#if loading}
+      <div class="loading">
+        <i class="fas fa-spinner fa-spin fa-3x"></i>
+      </div>
+    {/if}
+    {#each messages as message, index (index)}
+      <MessageComponent {...message} />
+    {/each}
+  </div>
+  <slot />
 </div>
-<button class="clear-btn" on:click={clearMessages}>
-    <i class="fa-solid fa-comment-slash fa-fw"></i>Clear
-</button>
 
 <style>
-    .main-chat-container {
-        width: 83%;
-        height: 100%;
-        position: relative;
-    }
+  .main-chat-container {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    height: 100%;
+    min-width: 0;
+    position: relative;
+  }
 
-    .chat-content {
-        width: 100%;
-        height: 85%;
-        color: var(--bg-1);
-        border-radius: 7px;
-        display: flex;
-        gap: 20px;
-        flex-direction: column;
-        box-sizing: border-box;
-        overflow-y: auto;
-        text-align: start;
-        margin-top: 20px;
-        padding: 0 20px 20px 20px;
-    }
-
-    .clear-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 5px;
-        position: absolute;
-        bottom: 60px;
-        left: 60%;
-        right: 25%;
-        transform: translate(-50%, -50%);
-        padding: 5px 10px;
-        border-radius: 25px;
-        border: 1px solid var(--fg-2);
-        color: var(--bg-1);
-        background-color: var(--fg-2);
-        font-size: 0.8rem;
-        cursor: pointer;
-        width: fit-content;
-
-        &:hover {
-            background-color: var(--fg-1);
-        }
-    }
+  .chat-content {
+    container-type: size;
+    display: flex;
+    flex-direction: column;
+    -webkit-box-flex: 1;
+    flex-grow: 1;
+    position: relative;
+    overflow: hidden auto;
+    margin: 20px;
+    gap: 20px;
+  }
 </style>

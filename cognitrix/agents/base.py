@@ -1,18 +1,14 @@
 import json
 import uuid
-import inspect
-import asyncio
 import logging
 import aiofiles
 from rich import print
-from threading import Thread
 from datetime import datetime
 from typing import Dict, List, Literal, Optional, Self, TypeAlias, Union, Type, Any
 from fastapi import WebSocket
 
 from pydantic import BaseModel, Field
 
-from cognitrix.tasks import Task
 from cognitrix.llms.base import LLM, LLMResponse
 from cognitrix.tools.base import Tool
 from cognitrix.utils import extract_json, parse_tool_call_results
@@ -202,7 +198,7 @@ class Agent(BaseModel):
                     agent_tool_calls.append(tool_calls['tool'])
                     
                 for t in agent_tool_calls:
-                    tool = self.get_tool_by_name(t['name'])
+                    tool = Tool.get_by_name(t['name'])
                     
                     if not tool:
                         print(f"Tool '{t['name']}' not found")
@@ -219,7 +215,8 @@ class Agent(BaseModel):
                         t['arguments']['parent'] = self
                     # print(tool)
                     if tool.name.lower() == 'create sub agent':
-                        result = await tool.arun(*t['arguments'])
+                        t['arguments']['parent'] = self
+                        result = await tool.arun(**t['arguments'])
                     else:
                         result = tool.run(**t['arguments'])
                     

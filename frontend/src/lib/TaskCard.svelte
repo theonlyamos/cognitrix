@@ -1,6 +1,7 @@
 <script lang="ts">
   import { link } from "svelte-routing";
   import type { TaskInterface } from "../common/interfaces";
+  import RadioItem from "./RadioItem.svelte";
   import { onMount } from "svelte";
 
   export let task: TaskInterface;
@@ -13,62 +14,166 @@
   id={`task-${task?.id}`}
   data-id={task?.id}
 >
-  <div class="task-detail">
-    <div class="task-detail-value">
-      {task.title}
-    </div>
+  <div class="task-card__title">
+    {task.title}
   </div>
-
-  <div class="task-detail">
-    <div class="task-detail-key">Status:</div>
-    <div class="task-detail-value">
-      {task.status}
+  {#if task.step_instructions && task.step_instructions.length > 0}
+    <div class="task-card__step-instructions">
+      {#each task.step_instructions as step, index}
+        <RadioItem name="index" label={step} disabled={true} />
+      {/each}
     </div>
-  </div>
-
-  <div class="task-detail">
-    <div class="task-detail-key">Description:</div>
-    <div class="task-detail-value">
+  {:else}
+    <div class="task-card__description">
       {task.description}
+    </div>
+  {/if}
+  <div class="task-card-footer">
+    <div class="task-card-footer__status">
+      {task.status}
     </div>
   </div>
 </a>
 
 <style>
   .task-card {
+    background: linear-gradient(to bottom, var(--bg-1), var(--bg-1));
+    color: var(--fg-1);
+    border-radius: 10px;
+    padding: 20px;
+    inline-size: 250px;
+    max-inline-size: 100%;
+    block-size: 300px;
+    box-shadow:
+      0 10px 20px rgba(0, 0, 0, 0.3),
+      0 6px 6px rgba(0, 0, 0, 0.2),
+      inset 0 1px 1px rgba(255, 255, 255, 0.1);
+    position: relative;
+    overflow: hidden;
     text-align: start;
-    padding-inline: 20px;
-    padding-block: 20px;
-    border-radius: 4px;
-    background-color: var(--bg-1);
-    color: var(--fg-2);
-    min-inline-size: 250px;
-    display: grid;
 
     &:hover {
-      box-shadow: var(--shadow-sm);
-      color: var(--fg-1);
+      box-shadow:
+        0 5px 10px rgba(0, 0, 0, 0.3),
+        0 6px 6px rgba(0, 0, 0, 0.2),
+        inset 0 1px 1px rgba(255, 255, 255, 0.1);
     }
   }
+  /* .task-card::before {
+    content: "";
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: -50%;
+    inline-size: 200%;
+    block-size: 200%;
+    background: radial-gradient(circle, var(--bg-2) 0%, var(--bg-1) 60%);
+    opacity: 0.5;
+  } */
 
-  .task-detail {
-    inline-size: 100%;
-    text-align: start;
+  .task-card__title {
+    font-weight: bold;
+    margin-bottom: 10px;
+    position: relative;
+  }
+  .task-card__step-instructions {
     display: flex;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    padding: 10px;
-    border-block-end: 1px solid var(--fg-2);
-
-    &:last-of-type {
-      border-block-end: none;
-    }
+    flex-direction: column;
+    gap: 10px;
   }
-
-  .task-detail-value {
+  .task-card__description {
+    text-align: justify;
+    font-size: 1.7vmin;
+    margin-bottom: 15px;
+    position: relative;
+    color: var(--fg-2);
     display: -webkit-box;
-    -webkit-line-clamp: 5; /* Change this number to set the number of lines */
+    -webkit-line-clamp: 8; /* Change this number to set the number of lines */
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  .task-card__description,
+  .task-card__step-instructions {
+    max-block-size: 75%;
+    overflow-y: auto;
+
+    &::-webkit-scrollbar {
+      width: 5px;
+    }
+  }
+
+  .task-card-footer {
+    position: absolute;
+    inset-block-end: 0;
+    inset-inline-start: 0;
+    inline-size: 100%;
+    display: flex;
+    padding: inherit;
+    background: inherit;
+  }
+
+  .task-card-footer__status {
+    padding-block: 5px;
+    padding-inline: 10px;
+    font-size: 1.4vmin;
+    font-weight: bold;
+    border-radius: 10px;
+    background-color: var(--bg-2);
+  }
+  .checkbox {
+    margin-bottom: 5px;
+  }
+  .checkbox input {
+    margin-right: 5px;
+  }
+  .category {
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+  }
+  .category::before {
+    content: "";
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 5px;
+    box-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
+  }
+  .school::before {
+    background-color: #ff3b30;
+  }
+  .freelance::before {
+    background-color: #007aff;
+  }
+  .family::before {
+    background-color: #34c759;
+  }
+  .action-button {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: none;
+    color: white;
+    font-size: 20px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease;
+  }
+  .action-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+  }
+  .red {
+    background: linear-gradient(145deg, #ff5e54, #e63329);
+  }
+  .blue {
+    background: linear-gradient(145deg, #1a8cff, #0066cc);
+  }
+  .green {
+    background: linear-gradient(145deg, #4dda76, #2eb350);
   }
 </style>

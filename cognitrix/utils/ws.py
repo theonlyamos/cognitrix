@@ -9,8 +9,7 @@ from cognitrix.agents import PromptGenerator
 from cognitrix.agents import TaskInstructor
 
 from cognitrix.llms.session import Session
-from cognitrix.agents import Agent, AIAssistant
-import asyncio
+from cognitrix.agents import Agent
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -41,11 +40,15 @@ class WebSocketManager:
                             web_agent = loaded_agent
                         
                         chat_history = []
+                        
                         for chat in session.chat:
                             chat_copy = chat.copy()
                             result = xml_to_dict(chat['message'])
+            
                             if isinstance(result, dict):
                                 if isinstance(result['response'], dict):
+                                    if len(result['response']['artifacts'].keys()):
+                                        chat_copy['artifacts'] = result['response']['artifacts']['artifact']
                                     if 'result' in result['response'].keys():
                                         chat_copy['message'] = result['response']['result']
                                         chat_history.append(chat_copy)
@@ -59,12 +62,8 @@ class WebSocketManager:
                     elif action == 'delete':
                         session = await Session.load(session_id)
                         session.chat = []
-                        loaded_agent: Optional[Agent] = await web_agent.get(session.agent_id)
-                        if loaded_agent:
-                            web_agent: Agent = loaded_agent
-                            session.save()
-                            await web_agent.save()
-                            await websocket.send_json({'type': query_type, 'content': session.chat, 'agent_name': web_agent.name, 'action': action})
+                        session.save()
+                        await websocket.send_json({'type': query_type, 'content': session.chat, 'agent_name': web_agent.name, 'action': action})
                             
                 elif query_type == 'sessions':
                     if action == 'list':
@@ -75,11 +74,16 @@ class WebSocketManager:
                         agent_id = query['agent_id']
                         loaded_agent = await web_agent.get(agent_id)
                         if loaded_agent:
-                            print(loaded_agent.name)
                             web_agent = loaded_agent
                             self.websocket = websocket
                             session = await Session.get_by_agent_id(loaded_agent.id)
                             await websocket.send_json({'type': query_type, 'agent_name': web_agent.name, 'content': session.dict(), 'action': action})
+                    
+                    elif action == 'delete':
+                        session_id = query['session_id']
+                        await Session.delete(session_id)
+                        sessions = [sess.dict() for sess in Session.list_sessions()]
+                        await websocket.send_json({'type': query_type, 'content': sessions, 'action': action})
                 
                 elif query_type == 'generate':
                     default_prompt = query['prompt']
@@ -89,7 +93,7 @@ class WebSocketManager:
                     
                     if action == 'system_prompt':
                         agent = PromptGenerator(llm=web_agent.llm)
-                        agent.llm.system_prompt = agent.prompt_template
+                        # agent.llm.system_prompt = agent.prompt_template
                         
                         prompt = "Agent Description"
                         if name:
@@ -110,7 +114,7 @@ class WebSocketManager:
             
                 else:
                     user_prompt = query['content']
-                    await session(user_prompt, web_agent, 'web', False, websocket.send_json, query)
+                    await session(user_prompt, web_agent, 'web', True, websocket.send_json, query)
                     # await websocket.send_json({'type': 'chat_reply', 'content': response})
         except WebSocketDisconnect:
             logger.warning('Websocket disconnected')

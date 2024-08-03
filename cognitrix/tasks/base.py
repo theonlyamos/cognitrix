@@ -6,8 +6,12 @@ import aiofiles
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional, Callable, TypeAlias
+from cognitrix.agents.evaluator import Evaluator
 
 from cognitrix.config import TASKS_FILE
+from cognitrix.agents.base import Agent
+from cognitrix.llms.session import Session
+from cognitrix.utils import xml_to_dict
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -32,8 +36,8 @@ class Task(BaseModel):
     description: str
     """The task|query to perform|answer"""
     
-    func: Optional[Callable] = None
-    """Assigned tool to complete the task"""
+    step_instructions: List = []
+    """Line by line instructions for completing the task"""
     
     status: Literal['not-started', 'in-progress', 'completed'] = 'not-started'
     
@@ -49,27 +53,62 @@ class Task(BaseModel):
     completed_at: Optional[str] = None
     """Completion date of the task"""
     
+    agent_ids: List[str] = []
+    """List of ids of agents assigned to this task"""
+    
+    session_id: Optional[str] = None
+    """Id of task session"""
+    
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """Unique id for the task"""
     
-    async def start(self):
-        if self.func:
-            self.task = asyncio.create_task(self.func())
+    async def team(self):
+        agents: List[Agent] = []
+        for agent_id in self.agent_ids:
+            agent = await Agent.get(agent_id)
+            if agent:
+                agents.append(agent)
+        return agents
 
-    async def join(self):
-        if self.task:
-            await self.task
+    async def session(self):
+        if self.session_id:
+            return await Session.load(self.session_id)
         else:
-            print("Task not started yet")
+            new_session = Session()
+            self.session_id = new_session.id
+            await self.save()
+            return new_session
     
-    async def cancel(self):
-        if self.task:
-            self.task.cancel()
-        else:
-            print("Task not started yet")
+    async def start(self):
+        session = await self.session()
+        if len(self.agent_ids):
+            team = await self.team()
+            if len(team):
+                agent = team[0]
+                if len(team) > 1:
+                    agent.sub_agents = team[1:]
+                self.status = 'in-progress'
+                await self.save()
+                print('[!]Starting task...\n')
+                
+                session.update_history({'role': 'system', 'type': 'text', 'message': self.description + '\n\nComplete the task step below:\n'})
+                
+                for index, step in enumerate(self.step_instructions):
+                    if self.status == 'in-progress':
+                        prompt = f'Step #{index + 1}: '+ step
+                        await session(prompt, agent, streaming=True)
+                        evaluator = Evaluator(llm=agent.llm)
+                        eval_prompt = "Task: "+step
+                        eval_prompt += "\n\nAgent Response:\n"+session.chat[-1]['message']
+                        await session(eval_prompt, evaluator, streaming=True, save_history=False)
+                
+                self.status = 'completed'
+                self.completed_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
+                await self.save()
     
     async def save(self):
         """Save current task"""
+        self.step_instructions = Task.extract_steps(self.description)
 
         tasks = await Task.list_tasks()
         updated_tasks = []
@@ -121,3 +160,20 @@ class Task(BaseModel):
         except Exception as e:
             logger.exception(e)
             return []
+
+    @staticmethod
+    def extract_steps(text):
+        # Find the start and end of the task_steps section
+        if '<steps>' not in text:
+            return []
+        
+        start = text.find('<steps>') + len('<steps>')
+        end = text.find('</steps>')
+        
+        # Extract the content between the tags
+        task_steps_content = text[start:end].strip()
+        
+        # Split the content into a list of steps
+        steps_list = [step.strip() for step in task_steps_content.split('\n') if step.strip()]
+        
+        return steps_list

@@ -34,9 +34,9 @@ Do not include the json decorator in the response.
 xml_return_format: str = """```xml
 <response>
     <observation>[Description of the user's request or the current situation]</observation>
-    <mind-space>
+    <mindspace>
         [Multi-dimensional representations of the problem, each on a new line]
-    </mind-space>
+    </mindspace>
     <thought>[Step-by-step reasoning process, with each step on a new line]</thought>
     <type>[Either "final_answer" or "tool_calls"]</type>
     <result>[The final answer, if applicable]</result>
@@ -259,15 +259,16 @@ def xml_to_dict(xml_string) -> dict | str:
     This function removes the ```xml and ``` decorators from the XML string if present. It then strips any leading or trailing whitespace from the XML string. The function uses the `xml.etree.ElementTree` module to parse the XML string into an `Element` object. The `parse_element` function is defined to recursively parse the XML tree and convert it into a dictionary representation. The function returns a dictionary with the root tag as the key and the parsed XML tree as the value.
 
     Example:
-        >>> xml_string = '<root><child>Hello</child></root>'
-        >>> xml_to_dict(xml_string)
-        {'root': {'child': 'Hello'}}
+    xml_string = '<root><child>Hello</child></root>'
+    xml_to_dict(xml_string)
+    {'root': {'child': 'Hello'}}
     """
     try:
         before, extracted, after = extract_parts(xml_string)
         
         if extracted:
             xml_string = extracted
+
         xml_string = xml_string.strip()
         if xml_string.startswith("```xml"):
             xml_string = xml_string[6:]
