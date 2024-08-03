@@ -7,9 +7,10 @@
   let page: string = window.location.pathname;
   let theme: string;
 
-  function setTheme(theme: string) {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("theme", theme);
+  function setTheme(newTheme: string) {
+    theme = newTheme;
+    document.documentElement.setAttribute("data-theme", newTheme);
+    localStorage.setItem("theme", newTheme);
   }
 
   function getSystemTheme() {

@@ -5,7 +5,7 @@ import uuid
 import aiofiles
 from datetime import datetime
 from pydantic import BaseModel, Field
-from typing import List, Literal, Optional, Callable, TypeAlias
+from typing import Any, Dict, List, Literal, Optional, Callable, TypeAlias
 from cognitrix.agents.evaluator import Evaluator
 
 from cognitrix.config import TASKS_FILE
@@ -36,7 +36,7 @@ class Task(BaseModel):
     description: str
     """The task|query to perform|answer"""
     
-    step_instructions: List = []
+    step_instructions: Dict[int, Dict[str, Any]] = {}
     """Line by line instructions for completing the task"""
     
     status: Literal['not-started', 'in-progress', 'completed'] = 'not-started'
@@ -93,14 +93,16 @@ class Task(BaseModel):
                 
                 session.update_history({'role': 'system', 'type': 'text', 'message': self.description + '\n\nComplete the task step below:\n'})
                 
-                for index, step in enumerate(self.step_instructions):
+                for key, value in self.step_instructions.items():
                     if self.status == 'in-progress':
-                        prompt = f'Step #{index + 1}: '+ step
+                        prompt = f'Step #{key + 1}: '+ value['step']
                         await session(prompt, agent, streaming=True)
                         evaluator = Evaluator(llm=agent.llm)
-                        eval_prompt = "Task: "+step
+                        eval_prompt = "Task: "+value['step']
                         eval_prompt += "\n\nAgent Response:\n"+session.chat[-1]['message']
                         await session(eval_prompt, evaluator, streaming=True, save_history=False)
+                        self.step_instructions[key]['done'] = True
+                        await self.save()
                 
                 self.status = 'completed'
                 self.completed_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
@@ -165,8 +167,9 @@ class Task(BaseModel):
     def extract_steps(text):
         # Find the start and end of the task_steps section
         if '<steps>' not in text:
-            return []
+            return {}
         
+        steps: Dict[int, Dict[str, Any]] = {}
         start = text.find('<steps>') + len('<steps>')
         end = text.find('</steps>')
         
@@ -176,4 +179,7 @@ class Task(BaseModel):
         # Split the content into a list of steps
         steps_list = [step.strip() for step in task_steps_content.split('\n') if step.strip()]
         
-        return steps_list
+        for index, step in enumerate(steps_list):
+            steps[index] = {'step': step, 'done': False}
+        
+        return steps

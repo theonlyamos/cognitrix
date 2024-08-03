@@ -18,7 +18,7 @@ export interface TaskInterface extends Object {
     id?: string,
     title: string,
     description: string,
-    step_instructions?: string[],
+    step_instructions?: object,
     status: string,
     done: boolean
 }

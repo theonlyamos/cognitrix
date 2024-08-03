@@ -2,7 +2,6 @@
   import { link } from "svelte-routing";
   import type { TaskInterface } from "../common/interfaces";
   import RadioItem from "./RadioItem.svelte";
-  import { onMount } from "svelte";
 
   export let task: TaskInterface;
 </script>
@@ -17,10 +16,15 @@
   <div class="task-card__title">
     {task.title}
   </div>
-  {#if task.step_instructions && task.step_instructions.length > 0}
+  {#if task.step_instructions && Object.keys(task.step_instructions).length > 0}
     <div class="task-card__step-instructions">
-      {#each task.step_instructions as step, index}
-        <RadioItem name="index" label={step} disabled={true} />
+      {#each Object.entries(task.step_instructions) as [index, value]}
+        <RadioItem
+          name="index"
+          label={value["step"]}
+          disabled={true}
+          checked={task.status === "completed" ? true : value["done"]}
+        />
       {/each}
     </div>
   {:else}
@@ -119,61 +123,5 @@
     font-weight: bold;
     border-radius: 10px;
     background-color: var(--bg-2);
-  }
-  .checkbox {
-    margin-bottom: 5px;
-  }
-  .checkbox input {
-    margin-right: 5px;
-  }
-  .category {
-    font-size: 12px;
-    display: flex;
-    align-items: center;
-  }
-  .category::before {
-    content: "";
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    margin-right: 5px;
-    box-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
-  }
-  .school::before {
-    background-color: #ff3b30;
-  }
-  .freelance::before {
-    background-color: #007aff;
-  }
-  .family::before {
-    background-color: #34c759;
-  }
-  .action-button {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    border: none;
-    color: white;
-    font-size: 20px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    cursor: pointer;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-    transition: all 0.3s ease;
-  }
-  .action-button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-  }
-  .red {
-    background: linear-gradient(145deg, #ff5e54, #e63329);
-  }
-  .blue {
-    background: linear-gradient(145deg, #1a8cff, #0066cc);
-  }
-  .green {
-    background: linear-gradient(145deg, #4dda76, #2eb350);
   }
 </style>

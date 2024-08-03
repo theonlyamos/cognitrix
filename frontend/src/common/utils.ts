@@ -82,7 +82,7 @@ export const getTaskSession = async(taskId: string): Promise<Object> => {
     return response.json()
 }
 
-export const updateTaskStatus = async(task_id: string): Promise<Object> => {
+export const updateTaskStatus = async(task_id: any): Promise<Object> => {
     const response = await fetch(`${BACKEND_URI}/tasks/start/${task_id}`)
     return response.json()
 }
