@@ -33,7 +33,7 @@ class Clarifai(LLM):
     chat_history: list[str] = []
     """Chat history"""
     
-    api_key: str = os.getenv('CLARIFAI_API_KEY', '')
+    api_key: str = os.getenv('CLARIFAI_ACCESS_TOKEN', '')
     """Clarifai Personal Access Token""" 
     
     is_multimodal: bool = True
@@ -50,7 +50,7 @@ class Clarifai(LLM):
         A string containing the generated response.
         """
         if not self.client:
-            self.client = Model(url=self.model)
+            self.client = Model(url=self.model, pat=self.api_key)
             
         formatted_messages = self.format_query(query, chat_history)
         

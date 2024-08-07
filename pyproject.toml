@@ -29,7 +29,7 @@ classifiers = [
 "Bug Tracker" = "https://github.com/theonlyamos/cognitrix/issues"
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = "^3.11"
 requests = "^2.31.0"
 python-dotenv = "^1.0.1"
 pydantic = "^2.6.2"
@@ -57,6 +57,8 @@ tavily-python = "^0.3.3"
 rich = "^13.7.1"
 sse-starlette = "^2.1.2"
 wikipedia = "^1.4.0"
+celery = {extras = ["redis"], version = "^5.4.0"}
+fastapi = "^0.112.0"
 
 [build-system]
 requires = ["poetry-core"]

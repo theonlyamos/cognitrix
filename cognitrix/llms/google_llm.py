@@ -90,8 +90,7 @@ class Google(LLM):
             temperature=self.temperature,
             top_p=0.95,
             top_k=64,
-            max_output_tokens=self.max_tokens,
-            response_mime_type="text/plain"
+            max_output_tokens=self.max_tokens
         )
         
         contents = self.format_query(query, system_prompt, chat_history)

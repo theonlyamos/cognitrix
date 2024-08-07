@@ -23,7 +23,7 @@
           name="index"
           label={value["step"]}
           disabled={true}
-          checked={task.status === "completed" ? true : value["done"]}
+          checked={value["done"]}
         />
       {/each}
     </div>

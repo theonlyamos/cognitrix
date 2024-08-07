@@ -49,6 +49,9 @@ class Task(BaseModel):
     
     created_at: str = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
     """Creation date of the task"""
+
+    started_at: Optional[str] = None
+    """Started date of the task"""
     
     completed_at: Optional[str] = None
     """Completion date of the task"""
@@ -58,6 +61,9 @@ class Task(BaseModel):
     
     session_id: Optional[str] = None
     """Id of task session"""
+    
+    pid: Optional[str] = None
+    """Worker Id of task"""
     
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """Unique id for the task"""
@@ -81,13 +87,18 @@ class Task(BaseModel):
     
     async def start(self):
         session = await self.session()
+        print('[!]Starting task...\n', session)
+        print(self.agent_ids)
         if len(self.agent_ids):
             team = await self.team()
             if len(team):
                 agent = team[0]
                 if len(team) > 1:
                     agent.sub_agents = team[1:]
+                
                 self.status = 'in-progress'
+                self.started_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
+
                 await self.save()
                 print('[!]Starting task...\n')
                 
@@ -96,12 +107,15 @@ class Task(BaseModel):
                 for key, value in self.step_instructions.items():
                     if self.status == 'in-progress':
                         prompt = f'Step #{key + 1}: '+ value['step']
+                        
                         await session(prompt, agent, streaming=True)
                         evaluator = Evaluator(llm=agent.llm)
                         eval_prompt = "Task: "+value['step']
                         eval_prompt += "\n\nAgent Response:\n"+session.chat[-1]['message']
+                        
                         await session(eval_prompt, evaluator, streaming=True, save_history=False)
                         self.step_instructions[key]['done'] = True
+                        
                         await self.save()
                 
                 self.status = 'completed'

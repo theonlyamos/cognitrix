@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { link } from "svelte-routing";
+  import { link, navigate, useLocation } from "svelte-routing";
   import type {
     MessageInterface,
     SessionInterface,
@@ -17,9 +17,12 @@
   let messages: MessageInterface[] = [];
   let agentName: string = "Assistant";
   let loading: boolean = true;
+  let loadingMessages: boolean = true;
   let unsubscribe: Unsubscriber | null = null;
   let socket: WebSocket;
   let streaming_response: boolean = false;
+
+  const location = useLocation();
 
   const uploadFile = () => {
     console.log("Uploading file...");
@@ -73,10 +76,14 @@
     messages = [];
     agentName = "Assistant";
     loading = true;
+    sessions = [];
   };
 
   const handleRouteChange = () => {
+    resetState();
     if (socket && socket.readyState === WebSocket.OPEN) {
+      webSocketStore.send(JSON.stringify({ type: "sessions", action: "list" }));
+
       if (agent_id) {
         webSocketStore.send(
           JSON.stringify({
@@ -86,6 +93,7 @@
           })
         );
       } else if (session_id) {
+        loadingMessages = true;
         webSocketStore.send(
           JSON.stringify({
             type: "chat_history",
@@ -112,6 +120,7 @@
             }
           } else if (event.type === "message") {
             loading = false;
+            loadingMessages = false;
             let data = JSON.parse(event.data);
 
             if (data.type === "chat_history") {
@@ -162,19 +171,23 @@
     );
   };
 
+  onMount(() => {
+    startWebSocketConnection();
+    handleRouteChange();
+  });
+
   onDestroy(() => {
     if (unsubscribe) unsubscribe();
   });
 
-  $: if (session_id) {
-    resetState();
-    startWebSocketConnection();
-    handleRouteChange();
-  }
+  $: {
+    // React to changes in the route
+    const currentPath = $location.pathname;
 
-  $: if (!session_id) {
-    resetState();
-    startWebSocketConnection();
+    if (currentPath === "/" || session_id || agent_id) {
+      if (currentPath === "/") session_id = "";
+      handleRouteChange();
+    }
   }
 </script>
 
@@ -191,7 +204,7 @@
     {/each}
   </div>
 
-  <ChatComponent {messages}>
+  <ChatComponent {messages} loading={loadingMessages}>
     {#if session_id}
       <InputBar {uploadFile} {sendMessage} {loading} {clearMessages} />
     {/if}

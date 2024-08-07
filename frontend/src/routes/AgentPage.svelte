@@ -169,11 +169,8 @@
   });
 
   $: if (newPromptTemplate) {
-    console.log(newPromptTemplate);
     agent.prompt_template = agent.prompt_template + newPromptTemplate;
   }
-
-  $: console.log(agent.tools);
 </script>
 
 {#if agent_id}

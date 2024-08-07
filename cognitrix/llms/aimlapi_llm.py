@@ -1,5 +1,4 @@
 from cognitrix.llms import OpenAI
-from openai import OpenAI as OpenAILLM
 from typing import Optional
 import os
 

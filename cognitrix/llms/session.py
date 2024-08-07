@@ -151,51 +151,55 @@ class Session(BaseModel):
                 raise Exception('Agent not initialized')
             
             while message:
-                full_prompt = agent.process_prompt(message)
-                message = ''
-                response: LLMResponse | None = None
-                called_tools: bool = False
-                async for response in agent.llm(full_prompt, system_prompt, self.chat):   
-                    if streaming:
-                        if interface == 'cli':
-                            output(f"{response.current_chunk}", end="")
-                        else:
-                            await output({'type': wsquery['type'], 'content': response.current_chunk, 'action': wsquery['action'], 'complete': False})
-                    
-                    if response.tool_calls and not called_tools and not response.text:
-                        called_tools = True
-                        result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls)
-                        
-                        if isinstance(result, dict) and result['type'] == 'tool_calls_result':
-                            message = result
-                        else:
+                try:
+                    full_prompt = agent.process_prompt(message)
+                    message = ''
+                    response: LLMResponse | None = None
+                    called_tools: bool = False
+                    async for response in agent.llm(full_prompt, system_prompt, self.chat):   
+                        if streaming:
                             if interface == 'cli':
-                                output(result)
+                                output(f"{response.current_chunk}", end="")
                             else:
-                                await output({'type': wsquery['type'], 'content': result, 'action': wsquery['action']})
-                    
-                    if response.artifacts:
-                        if 'artifact' in response.artifacts.keys():
-                            if interface == 'ws':
-                                await output({'type': wsquery['type'], 'content': '', 'action': wsquery['action'], 'artifacts': response.artifacts['artifact']})
-                    
-                    await asyncio.sleep(0.1)
-            
-                if response and save_history:
-                    self.update_history(full_prompt)
-                    self.update_history({'role': agent.name, 'type': 'text', 'message': ''.join(response.chunks)})
-                    
-                    if response.text and not streaming:
-                        if interface == 'cli':
-                            output(f"\n{agent.name}:", response.text)
-                        else:
-                            await output({'type': wsquery['type'], 'content': response.text, 'action': wsquery['action'], 'complete': True})
+                                await output({'type': wsquery['type'], 'content': response.current_chunk, 'action': wsquery['action'], 'complete': False})
+                        
+                        if response.tool_calls and not called_tools and not response.text:
+                            called_tools = True
+                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls)
+                            
+                            if isinstance(result, dict) and result['type'] == 'tool_calls_result':
+                                message = result
+                            else:
+                                if interface == 'cli':
+                                    output(result)
+                                else:
+                                    await output({'type': wsquery['type'], 'content': result, 'action': wsquery['action']})
+                        
+                        if response.artifacts:
+                            if 'artifact' in response.artifacts.keys():
+                                if interface == 'ws':
+                                    await output({'type': wsquery['type'], 'content': '', 'action': wsquery['action'], 'artifacts': response.artifacts['artifact']})
+                        
+                        await asyncio.sleep(0.01)
                 
-                if not tool_calls:
-                    streaming = False  
-                self.save()
-                if not message:
-                    break
+                    if response and save_history:
+                        self.update_history(full_prompt)
+                        self.update_history({'role': agent.name, 'type': 'text', 'message': ''.join(response.chunks)})
+                        
+                        if response.text and not streaming:
+                            if interface == 'cli':
+                                output(f"\n{agent.name}:", response.text)
+                            else:
+                                await output({'type': wsquery['type'], 'content': response.text, 'action': wsquery['action'], 'complete': True})
+                    
+                    if not tool_calls:
+                        streaming = False  
+                    self.save()
+                    if not message:
+                        break
+                except Exception as e:
+                    logger.warn(e)
+                    continue
                 
         except Exception as e:
             logger.exception(e)

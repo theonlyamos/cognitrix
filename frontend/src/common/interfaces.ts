@@ -1,6 +1,6 @@
 export interface MessageInterface {
     id?: string|number,
-    role: string|string,
+    role: string,
     content: string,
     image?: string,
     artifacts?: object|object[]
@@ -26,7 +26,7 @@ export interface TaskInterface extends Object {
 export interface SessionInterface {
     id: string,
     agent_id: string,
-    chat: Object[],
+    chat: object[],
     datetime: string
 }
 
@@ -41,8 +41,8 @@ export interface ProviderInterface extends Object {
     system_prompt?: string,
     is_multimodal: boolean,
     supports_tool_use: boolean,
-    tools?: Object[],
-    chat_history?: Object[],
+    tools?: object[],
+    chat_history?: object[],
     client?: string,
 }
 
@@ -50,7 +50,7 @@ export interface ToolInterface extends Object {
     name: string,
     description: string,
     category: string,
-    parameters: Object
+    parameters: object
 }
 
 export interface AgentDetailInterface extends Object {
@@ -62,7 +62,7 @@ export interface AgentDetailInterface extends Object {
     llm: ProviderInterface,
     tools?: ToolInterface[],
     autostart: boolean,
-    task?: Object,
+    task?: object,
     websocket?: WebSocket,
     verbose?: boolean
 }
@@ -71,15 +71,16 @@ export interface TaskDetailInterface extends Object {
     id?: string,
     title: string,
     description: string,
-    step_instructions?: string[],
+    step_instructions?: object,
     agent_ids: string[],
     tools?: ToolInterface[],
     autostart: boolean,
     status: string,
     done: boolean,
-    created_at?: string
-    completed_at?: string
-    session_id?: string,
+    created_at?: string,
+    started_at?: string,
+    completed_at?: string,
+    session_id?: string
 }
 
 export interface SSEMessage {

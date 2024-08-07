@@ -10,8 +10,8 @@ from cognitrix.llms import LLM
 from cognitrix.utils import xml_return_format
 from tavily import TavilyClient
 from bs4 import BeautifulSoup
-from pydantic import Field
 from pathlib import Path
+from rich import print
 from PIL import Image
 import wikipedia as wk
 import pyautogui
@@ -238,13 +238,15 @@ class InternetBrowser(Tool):
 #     def arun(self, url: str):
 #         raise NotImplementedError(NotImplementedErrorMessage)
 
+platform = sys.platform
+home_path: str = str(Path.home())
+desktop_path: str = str(Path.home().joinpath('Desktop'))
+documents_path: str = str(Path.home().joinpath('Documents'))
+
 class FSBrowser(Tool):
     name: str =  "File System Browser"
     category: str = "system"
-    home_path: str = os.path.expanduser('~')
-    desktop_path: str = os.path.join(home_path, 'Desktop').replace('\\', '\\\\')
-    documents_path: str = os.path.join(home_path, 'Documents').replace('\\', '\\\\') #type: ignore
-    description: str =  """use this tool when you need to perform
+    description: str =  f"""use this tool when you need to perform
     file system operations like listing of directories,
     opening a file, creating a file, updating a file,
     reading from a file or deleting a file.
@@ -252,8 +254,8 @@ class FSBrowser(Tool):
     This tool is for file reads and file writes
     actions.
     
-    platform is the platform.
-    home_path is the home path.
+    platform is the {platform}.
+    {home_path} is the home path.
     
     The operation to perform should be in this 
     list:- ['open', 'list', 'create', "mkdir", 
@@ -384,7 +386,7 @@ class FSBrowser(Tool):
     :param operation: The operation to perform
     :param filename: (Optional) Name of file or folder to create
     :param content: (Optional) Content to write to file
-    """.replace("platform", sys.platform).replace('home_path', home_path).replace('desktop_path', desktop_path).replace('documents_path', documents_path)
+    """
     
     def run(self, path: str | Path, operation: str, filename: Optional[str] = None, content: Optional[str] = None):
         try:
@@ -392,7 +394,7 @@ class FSBrowser(Tool):
             operations = {
                 'open': self.execute,
                 'list': self.listdir,
-                'create': self.create_path,
+                'create': self.create_file,
                 'mkdir': self.mkdir,
                 'read': self.read_path,
                 # 'create': self.write_file,
@@ -402,7 +404,7 @@ class FSBrowser(Tool):
             
             if operation in ['write', 'create']:
                 return operations[operation](path, filename, content)
-            elif operation in ['open', 'read']:
+            elif operation in ['open', 'read', 'mkdir']:
                 return operations[operation](path, filename)
             return operations[operation](path)
         except Exception as e:
@@ -422,12 +424,13 @@ class FSBrowser(Tool):
         
     def listdir(self, path: Path):
         if path.is_dir():
-            return 'The content of the directory are: '+json.dumps(os.listdir(path))
+            return 'The content of the directory are: \n'+json.dumps(os.listdir(path))
         return "The path you provided isn't a directory"
     
-    def create_path(self, path: Path, filename: Optional[str], content: Optional[str]):
+    def create_file(self, path: Path, filename: Optional[str], content: Optional[str]):
         full_path = path.joinpath(filename) if filename else path
-        if full_path.is_file():
+        
+        if not full_path.exists():
             with full_path.open('wt') as file:
                 if content:
                     file.write(content)
@@ -436,7 +439,7 @@ class FSBrowser(Tool):
     
     def mkdir(self, path: Path, filename: Optional[str]):
         full_path = path.joinpath(filename) if filename else path
-        if not full_path.is_dir() and full_path.exists():
+        if not full_path.exists() and not full_path.is_dir():
             full_path.mkdir()
         
         return 'Operation done'

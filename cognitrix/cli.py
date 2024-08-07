@@ -24,6 +24,7 @@ from cognitrix.utils.sse import SSEManager
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 
 from cognitrix.config import VERSION
+from cognitrix.celery_worker import celery_thread
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -283,6 +284,7 @@ def start(args: Namespace):
                     loaded_tools = Tool.get_tools_by_category(cat.strip().lower())
                     
                     tool_by_name = Tool.get_by_name(cat.strip().lower())
+
                     if tool_by_name:
                         loaded_tools.append(tool_by_name)
                     tools.extend(loaded_tools)
@@ -298,14 +300,14 @@ def start(args: Namespace):
             assistant.formatted_system_prompt()
                 
             asyncio.run(assistant.save())
-
             if args.generate:
                 asyncio.run(session(args.generate, assistant, streaming=args.stream))
                     
             elif args.web_ui:
+                celery_thread.start()
                 start_web_ui(assistant)
-                
             else:
+                celery_thread.start()
                 asyncio.run(initialize(session, assistant, stream=args.stream))
     except KeyboardInterrupt:
         print("\nExiting...")

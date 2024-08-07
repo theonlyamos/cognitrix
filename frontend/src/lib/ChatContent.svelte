@@ -4,11 +4,9 @@
   import MessageComponent from "./Message.svelte";
 
   export let messages: MessageInterface[];
+  export let loading: boolean = true;
 
-  let loading: boolean = true;
-  let loadedMessages = [];
   let container: HTMLElement;
-
   let autoscroll = false;
 
   beforeUpdate(() => {
@@ -26,11 +24,6 @@
   });
 
   $: if (messages.length) {
-    console.log(messages.length, loadedMessages.length);
-    if (messages.length != loadedMessages.length) {
-      loadedMessages = messages;
-      loading = false;
-    }
     if (autoscroll) {
       container.scrollTo(0, container.scrollHeight);
     }

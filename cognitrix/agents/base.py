@@ -153,21 +153,24 @@ class Agent(BaseModel):
                 print("=======is sub agent===========")
                 print(processed_query)
 
-            result = processed_query['result']
-            if isinstance(result, list):
-                if result[0] == 'image':
-                    prompt['type'] = 'image'
-                    prompt['image'] = result[1]
-                elif result[0] == 'agent':
-                    new_agent: Agent = result[1]
-                    new_agent.parent_id = self.id
-                    self.add_sub_agent(new_agent)
+            if 'result' in processed_query.keys():
+                result = processed_query['result']
+                if isinstance(result, list):
+                    if result[0] == 'image':
+                        prompt['type'] = 'image'
+                        prompt['image'] = result[1]
+                    elif result[0] == 'agent':
+                        new_agent: Agent = result[1]
+                        new_agent.parent_id = self.id
+                        self.add_sub_agent(new_agent)
 
-                    prompt['message'] = result[2]
+                        prompt['message'] = result[2]
+                    else:
+                        prompt['message'] = result
                 else:
                     prompt['message'] = result
             else:
-                prompt['message'] = result
+                print(processed_query)
         else:
             prompt['message'] = processed_query
 
