@@ -1,0 +1,10 @@
+Dockerfile
+.dockerignore
+runit_server.egg-info/
+dist/
+build/
+venv/
+.git/
+.vscode/
+.env
+fly.toml
