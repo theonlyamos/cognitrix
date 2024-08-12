@@ -14,6 +14,7 @@ agents_api = APIRouter(
 @agents_api.get('')
 async def list_agents():
     agents = await Agent.list_agents()
+
     response = [{
         'id': agent.id, 'name': agent.name, 'provider': agent.llm.provider,
         'model': agent.llm.model, 'tools': [tool.name for tool in agent.tools]
@@ -63,7 +64,7 @@ async def load_session(agent_id: str):
     if agent:
         session = await Session.get_by_agent_id(agent_id)
         session_id = session.id
-        session.save()
+        await session.save()
         
     return JSONResponse({'session_id': session_id})
 

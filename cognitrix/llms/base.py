@@ -94,17 +94,11 @@ class LLM(BaseModel):
     supports_system_prompt: bool = Field(default=False)
     """Whether the model supports system prompts."""
     
-    # system_prompt: str = Field(default='')
-    # """System prompt to use for context."""
-    
     is_multimodal: bool = Field(default=False)
     """Whether the model is multimodal."""
     
     provider: str = Field(default="")
     """This is set to the name of the class"""
-    
-    # chat_history: List[Dict[str, str]] = []
-    # """Chat history stored as a list of responses"""
     
     # tools: List[Dict] = []
     # """Functions calling tools formatted for this specific llm provider"""
@@ -117,7 +111,9 @@ class LLM(BaseModel):
     
     def __init__(self, **data):
         super().__init__(**data)
-        self.provider = self.__class__.__name__
+        if not 'provider' in data.keys():
+            print('---', data)
+            self.provider = self.__class__.__name__
     
     def format_query(self, message: dict[str, str], chat_history: List[Dict[str, str]] = []) -> list:
         """Formats a message for the Claude API.
@@ -198,8 +194,9 @@ class LLM(BaseModel):
         try:
             provider = provider.lower()
             module = __import__(str(__package__), fromlist=[provider])
-            llm = [f[1] for f in inspect.getmembers(module, inspect.isclass) if (len(f) and f[0].lower() == provider)]
-            return llm[0] if len(llm) else None
+            llm = next((f[1] for f in inspect.getmembers(module, inspect.isclass) if (len(f) and f[0].lower() == provider)), None)
+            
+            return llm
         except Exception as e:
             logging.exception(e)
             return None

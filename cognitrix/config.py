@@ -7,6 +7,7 @@ API_VERSION = 'v1'
 COGNITRIX_WORKDIR = Path.home() / '.cognitrix'
 
 TASKS_FILE = COGNITRIX_WORKDIR / 'tasks.json'
+TEAMS_FILE = COGNITRIX_WORKDIR / 'teams.json'
 AGENTS_FILE = COGNITRIX_WORKDIR / 'agents.json'
 CONFIG_FILE = COGNITRIX_WORKDIR / 'config.json'
 SESSIONS_FILE = COGNITRIX_WORKDIR / 'sessions.json'
@@ -15,12 +16,16 @@ FRONTEND_BUILD_DIR = BASE_DIR.joinpath('..', 'frontend', 'dist')
 FRONTEND_STATIC_DIR = FRONTEND_BUILD_DIR.joinpath('assets')
 
 async def configure():
-    if not COGNITRIX_WORKDIR.exists() and not COGNITRIX_WORKDIR.is_dir():
-        COGNITRIX_WORKDIR.mkdir()
-        
-    for file_path in [TASKS_FILE, AGENTS_FILE, CONFIG_FILE, SESSIONS_FILE]:
+    COGNITRIX_WORKDIR.mkdir(exist_ok=True)
+    
+    files_to_create = [TASKS_FILE, AGENTS_FILE, CONFIG_FILE, SESSIONS_FILE]
+    
+    async def create_file(file_path):
         if not file_path.exists():
             async with aiofiles.open(file_path, 'w') as file:
                 pass
-        
-asyncio.run(configure())
+
+    await asyncio.gather(*(create_file(file) for file in files_to_create))
+
+def run_configure():
+    asyncio.run(configure())

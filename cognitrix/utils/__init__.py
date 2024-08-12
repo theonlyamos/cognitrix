@@ -233,6 +233,7 @@ def extract_json(content: str) -> dict | str:
     
 def extract_parts(text):
     pattern = r'(.*?)<response>(.*?)</response>(.*)'
+    
     match = re.search(pattern, text, re.DOTALL)
     
     if match:

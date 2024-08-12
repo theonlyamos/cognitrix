@@ -7,7 +7,7 @@ from rich import print
 from flask import json
 from datetime import datetime
 from pydantic import BaseModel, Field
-from typing import IO, Any, Callable, List, Literal, Optional, Dict
+from typing import IO, Any, Callable, List, Literal, Optional, Dict, Self
 
 from cognitrix.agents import Agent
 from cognitrix.agents import AIAssistant
@@ -29,105 +29,54 @@ class Session(BaseModel):
     agent_id: str = ""
     """The id of the agent that started the session"""
     
-    def save(self):
-        """Save the current state of the session to disk"""
-        sessions = Session.list_sessions()
-        updated_sessions = []
-        loaded_session: Optional[Session] = None
-        loaded_session_index: int = 0
-        
-        for index, session in enumerate(sessions):
-            if session.id == self.id:
-                loaded_session = session
-                loaded_session_index = index
-        
-        if loaded_session:
-            sessions[loaded_session_index] = self
-        else:
-            sessions.append(self)
-        
-            
-        for session in sessions:
-            updated_sessions.append(session.dict())
-            
-        with open(SESSIONS_FILE, 'w') as file:
-            json.dump(updated_sessions, file, indent=4)
-
-    @staticmethod
-    def list_sessions() -> List['Session']:
-        """List all available sessions from disk"""
-        sessions = []
-        try:
-            with open(SESSIONS_FILE, 'r') as file:
-                content = file.read()
-                sessions = json.loads(content)if content else []
-                return [Session(**session) for session in sessions]
-        except Exception as e:
-            logging.exception(e)
-            return []
+    @classmethod
+    async def _load_sessions_from_file(cls) -> Dict[str, Dict]:
+        async with aiofiles.open(SESSIONS_FILE, 'r') as file:
+            content = await file.read()
+            return json.loads(content) if content else {}
 
     @classmethod
-    async def load(cls, session_id: str):
-        try:
-            sessions = cls.list_sessions()
-            loaded_sessions: list[Session] = [session for session in sessions if session.id == session_id]
-            if len(loaded_sessions):
-                session = loaded_sessions[-1]
-                return session
-            else:
-                return Session()
-        except Exception as e:
-            logging.exception(e)
-            return Session()
-        
-    @classmethod
-    async def get(cls, session_id: str):
-        try:
-            sessions = cls.list_sessions()
-            loaded_sessions: list[Session] = [session for session in sessions if session.id == session_id]
-            if len(loaded_sessions):
-                session = loaded_sessions[-1]
-                return session
-            else:
-                return None
-        except Exception as e:
-            logging.exception(e)
-            return None
-        
-    @staticmethod
-    async def delete(id_or_index: str):
-        sessions = Session.list_sessions()
-        updated_sessions = []
-        deleted_session = None
-        for index, session in enumerate(sessions):
-            if id_or_index in [str(index), session.id]:
-                deleted_session = session
-                continue
-            updated_sessions.append(session.dict())
-        
-        if not deleted_session:
-            return False
-        
+    async def _save_sessions_to_file(cls, sessions: Dict[str, Dict]):
         async with aiofiles.open(SESSIONS_FILE, 'w') as file:
-            await file.write(json.dumps(updated_sessions, indent=4))
-        
-        return True
-        
+            await file.write(json.dumps(sessions, indent=4))
+
+    async def save(self):
+        """Save current session"""
+        sessions = await self._load_sessions_from_file()
+        sessions[self.id] = self.dict()
+        await self._save_sessions_to_file(sessions)
+        return self.id
+
     @classmethod
-    async def get_by_agent_id(cls, agent_id: str):
-        try:
-            sessions = cls.list_sessions()
-            loaded_sessions: list[Session] = [session for session in sessions if session.agent_id == agent_id]
+    async def load(cls, session_id: Optional[str]) -> Self:
+        """Load an existing session or create a new one if it doesn't exist"""
+        sessions = await cls._load_sessions_from_file()
+        session_data = None
+        if session_id:
+            session_data = sessions.get(session_id)
+        
+        if not session_data:
+            new_session = cls()
+            await new_session.save()
+            session_data =  new_session.dict()
             
-            if len(loaded_sessions):
-                session = loaded_sessions[-1]
-                return session
-            else:
-                return Session(agent_id=agent_id)
-        except Exception as e:
-            logging.exception(e)
-            return Session()
-    
+        return cls(**session_data)
+
+    @classmethod
+    async def list_sessions(cls) -> List[Self]:
+        sessions = await cls._load_sessions_from_file()
+        return [cls(**session_data) for session_data in sessions.values()]
+
+    @classmethod
+    async def delete(cls, session_id: str):
+        """Delete session by id"""
+        sessions = await cls._load_sessions_from_file()
+        if session_id in sessions:
+            del sessions[session_id]
+            await cls._save_sessions_to_file(sessions)
+            return True
+        return False
+
     def update_history(self, message: Dict[str, str]):
         self.chat.append(message)
 
@@ -194,7 +143,7 @@ class Session(BaseModel):
                     
                     if not tool_calls:
                         streaming = False  
-                    self.save()
+                    await self.save()
                     if not message:
                         break
                 except Exception as e:
@@ -203,3 +152,14 @@ class Session(BaseModel):
                 
         except Exception as e:
             logger.exception(e)
+
+    @classmethod
+    async def get_by_agent_id(cls, agent_id: str) -> Self:
+        """Retrieve a session by agent_id"""
+        sessions = await cls._load_sessions_from_file()
+        for session_data in sessions.values():
+            if session_data.get('agent_id') == agent_id:
+                return cls(**session_data)
+        new_session = cls(agent_id=agent_id)
+        await new_session.save()
+        return new_session

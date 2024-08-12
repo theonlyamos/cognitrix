@@ -42,7 +42,7 @@
   <div class="agent-detail">
     <div class="agent-detail-key">Tools:</div>
     <div class="agent-detail-value">
-      {agent.tools}
+      {agent?.tools?.slice(0, 2).join(", ")}...
     </div>
   </div>
 </a>

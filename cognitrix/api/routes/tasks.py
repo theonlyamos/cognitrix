@@ -22,9 +22,8 @@ async def list_tasks():
 async def save_task(request: Request, task: Task, background_tasks: BackgroundTasks):
     await task.save()
     
-    if task.autostart:
-        print('Starting task...')
-        background_tasks.add_task(task.start)
+    # if task.autostart:
+    background_tasks.add_task(task.start)
     
     return JSONResponse(task.dict())
 
@@ -38,6 +37,7 @@ async def update_task_status(request: Request, task_id: str, background_tasks: B
 
         if task:
             result = run_task.delay(task_id)
+            print('[+] Task process', result)
             task.status = 'in-progress'
             task.pid = result.id
             await task.save()
@@ -50,8 +50,9 @@ async def load_task(task_id: str):
     task = await Task.get(task_id)
     response = {}
     if task:
-        task_result = AsyncResult(task.pid)
-        print('[+] Task Result',task_result)
+        if task.pid:
+            task_result = AsyncResult(task.pid)
+            print('[+] Task Result',task_result)
         response = task.dict()
     
     return JSONResponse(response)

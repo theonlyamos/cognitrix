@@ -25,7 +25,7 @@
   export let agent_id: string = "";
   let agent: AgentDetailInterface = {
     name: "",
-    prompt_template: "",
+    system_prompt: "",
     is_sub_agent: false,
     autostart: false,
     llm: {
@@ -69,7 +69,7 @@
           type: "generate",
           action: "system_prompt",
           name: agent.name,
-          prompt: agent.prompt_template,
+          prompt: agent.system_prompt,
         })
       );
       loading = true;
@@ -169,7 +169,7 @@
   });
 
   $: if (newPromptTemplate) {
-    agent.prompt_template = agent.prompt_template + newPromptTemplate;
+    agent.system_prompt = agent.system_prompt + newPromptTemplate;
   }
 </script>
 
@@ -220,14 +220,14 @@
     <div class="form-group">
       <label for="prompt">Agent Prompt</label>
       <textarea
-        bind:value={agent.prompt_template}
+        bind:value={agent.system_prompt}
         placeholder="Provide a brief description of your agent and click the Generate Prompt button to generate a system prompt for your Agent."
       ></textarea>
     </div>
     <button
       class="btn ai-generate"
       on:click={generateAgentPrompt}
-      disabled={agent.prompt_template === "" || loading}
+      disabled={agent.system_prompt === "" || loading}
     >
       <img src={GenerativeIcon} alt="generative" class="icon" />
       {#if loading}
@@ -263,6 +263,21 @@
         bind:is_multimodal={agent.llm.is_multimodal}
       />
     </Accordion>
+  </div>
+  <div class="agent-form creativity">
+    <label for="temperature">Creativity (Temperature)</label>
+    <div class="range-container">
+      <input
+        type="range"
+        id="temperature"
+        name="temperature"
+        min="0"
+        max="1"
+        step="0.1"
+        bind:value={agent.llm.temperature}
+      />
+      <span>{agent.llm.temperature.toFixed(1)}</span>
+    </div>
   </div>
   <div class="agent-form tools">
     <Accordion title="Tools">
@@ -349,5 +364,25 @@
   img.icon {
     inline-size: 30px;
     block-size: 30px;
+  }
+
+  .creativity {
+    z-index: 10;
+    text-align: start;
+  }
+
+  .range-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  input[type="range"] {
+    flex-grow: 1;
+  }
+
+  .range-container span {
+    min-width: 30px;
+    text-align: right;
   }
 </style>

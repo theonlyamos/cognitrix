@@ -68,7 +68,7 @@ class WebSocketManager:
                                 
                     elif query_type == 'sessions':
                         if action == 'list':
-                            sessions = [sess.dict() for sess in Session.list_sessions()]
+                            sessions = [sess.dict() for sess in await Session.list_sessions()]
                             await websocket.send_json({'type': query_type, 'content': sessions, 'action': action})
                         
                         elif action == 'get':
@@ -83,7 +83,7 @@ class WebSocketManager:
                         elif action == 'delete':
                             session_id = query['session_id']
                             await Session.delete(session_id)
-                            sessions = [sess.dict() for sess in Session.list_sessions()]
+                            sessions = [sess.dict() for sess in await Session.list_sessions()]
                             await websocket.send_json({'type': query_type, 'content': sessions, 'action': action})
                     
                     elif query_type == 'generate':
@@ -94,7 +94,7 @@ class WebSocketManager:
                         
                         if action == 'system_prompt':
                             agent = PromptGenerator(llm=web_agent.llm)
-                            # agent.llm.system_prompt = agent.prompt_template
+                            # agent.llm.system_prompt = agent.system_prompt
                             
                             prompt = "Agent Description"
                             if name:
@@ -118,7 +118,7 @@ class WebSocketManager:
                         await session(user_prompt, web_agent, 'web', True, websocket.send_json, query)
                         # await websocket.send_json({'type': 'chat_reply', 'content': response})
                 except Exception as e:
-                    logger.warn(e)
+                    logger.exception(e)
                     continue
                 
         except WebSocketDisconnect:

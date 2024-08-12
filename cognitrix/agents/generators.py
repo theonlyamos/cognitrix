@@ -7,10 +7,10 @@ class PromptGenerator(Agent):
     """_summary_
     """
     name: str = Field(default='Prompt Generator')
-    prompt_template: str = Field(default=meta_template)
+    system_prompt: str = Field(default=meta_template)
     
 class TaskInstructor(Agent):
     """_summary_
     """
     name: str = Field(default='Tasks Instructor')
-    prompt_template: str = Field(default=tasks_instructor)
+    system_prompt: str = Field(default=tasks_instructor)

@@ -9,6 +9,7 @@ from argparse import Namespace
 from typing import Literal, Optional
 from fastapi import Request
 from rich import print
+from functools import lru_cache
 
 from fastapi.responses import JSONResponse
 
@@ -23,10 +24,12 @@ from cognitrix.utils.ws import WebSocketManager
 from cognitrix.utils.sse import SSEManager
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 
-from cognitrix.config import VERSION
-from cognitrix.celery_worker import celery_thread
+from cognitrix.config import VERSION, run_configure
+
+import subprocess
 
 logger = logging.getLogger('cognitrix.log')
+parser = argparse.ArgumentParser(description="Build and run AI agents on your computer")
 
 def start_web_ui(agent: Agent | AIAssistant):
     from .api.main import app
@@ -68,8 +71,12 @@ def delete_agent(agent_name_or_index: str):
         print("\nError deleting agent")
     sys.exit()
 
+@lru_cache(maxsize=None)
+def get_agents():
+    return asyncio.run(Agent.list_agents())
+
 def list_agents():
-    agents = asyncio.run(Agent.list_agents())
+    agents = get_agents()
     agent_names = [agent.name for agent in agents]
     max_col = len(max(agent_names, key=len))
     max_width = 10
@@ -84,8 +91,12 @@ def list_agents():
         padding = padding if padding else padding + 2
         print(f"| {str(index) + ' '*padding}| {a.name + ' '*(max_col-len(a.name))} |")
     
+@lru_cache(maxsize=None)
+def get_providers():
+    return LLM.list_llms()
+
 def list_providers():
-    providers = LLM.list_llms()
+    providers = get_providers()
     provider_names = [p.__name__ for p in providers]
     max_col = len(max(provider_names, key=len))
     max_width = 9
@@ -101,12 +112,14 @@ def list_providers():
         print(f"| {str(index) + ' '*padding}| {p.__name__ + ' '*(max_col-len(p.__name__))} |")
 
         
-def list_tools(category='all'):
-    tools = []
+@lru_cache(maxsize=None)
+def get_tools(category='all'):
     if category == 'all':
-        tools = Tool.list_all_tools()
-    else:
-        tools = Tool.get_tools_by_category(category)
+        return Tool.list_all_tools()
+    return Tool.get_tools_by_category(category)
+
+def list_tools(category='all'):
+    tools = get_tools(category)
     tool_names = [t.name for t in tools]
     max_col = len(max(tool_names, key=len))
     max_width = 13
@@ -121,9 +134,9 @@ def list_tools(category='all'):
         padding = padding if padding else padding + 2
         print(f"| {str(index) + ' '*padding}| {t.name + ' '*(max_col-len(t.name))} | {t.category + ' '*(max_width-len(t.category))} |")
         
-def list_sessions():
+async def list_sessions():
     print("\nSaved Sessions:")
-    sessions = Session.list_sessions()
+    sessions = await Session.list_sessions()
     for index, s in enumerate(sessions):
         print(f"[{index}] [{s.datetime}] {s.id}")
 
@@ -171,58 +184,28 @@ async def prompt_agent(assistant: AIAssistant|Agent, prompt):
     print()
 
 async def initialize(session: Session, agent: Agent|AIAssistant, stream: bool = False):
-    query: str | dict = input("\nUser (q to quit): ")
     while True:
         try:
+            query: str | dict = input("\nUser (q to quit): ").lower()
             if not query:
-                query: str | dict = input("\nUser (q to quit): ")
                 continue
 
-            if query.lower() in ['q', 'quit', 'exit']:
+            if query in ['q', 'quit', 'exit']:
                 print('Exiting...')
                 break
 
-            elif query.lower() == 'add agent':
-                new_agent = asyncio.run(Agent.create_agent(is_sub_agent=True, parent_id=agent.id))
-                if new_agent:
-                    agent.add_sub_agent(new_agent)
-                    print(f"\nAgent {new_agent.name} added successfully!")
-                else:
-                    print("\nError creating agent")
+            command_handlers = {
+                'add agent': lambda: asyncio.run(Agent.create_agent(is_sub_agent=True, parent_id=agent.id)),
+                'list tools': lambda: print("\nAvailable Tools:\n" + "\n".join(f"[{i}] {tool.name}" for i, tool in enumerate(agent.tools))),
+                'list agents': lambda: print("\nAvailable Agents:\n" + "\n".join(f"[{i}] {a.name}" for i, a in enumerate(asyncio.run(Agent.list_agents())) if a.parent_id == agent.id)),
+                'show history': lambda: print("\nChat History:\n" + "\n".join(f"[{chat['role']}]: {chat['message']}" for chat in session.chat))
+            }
 
-                query = input("\nUser (q to quit): ")
-                continue
+            if query in command_handlers:
+                command_handlers[query]()
+            else:
+                await session(query, agent, streaming=stream)
 
-            elif query.lower() == 'list tools':
-                agents_str = "\nAvailable Tools:"
-                tools = [tool for tool in agent.tools]
-                for index, tool in enumerate(tools):
-                    agents_str += (f"\n[{index}] {tool.name}")
-                print(agents_str)
-                query = input("\nUser (q to quit): ")
-                continue
-            
-            elif query.lower() == 'list agents':
-                tools_str = "\nAvailable Agents:"
-                sub_agents = [a for a in asyncio.run(Agent.list_agents()) if agent.parent_id == agent.id]
-                for index, agent in enumerate(sub_agents):
-                    tools_str += (f"\n[{index}] {agent.name}")
-                print(tools_str)
-                query = input("\nUser (q to quit): ")
-                continue
-            
-            elif query.lower() == 'show history':
-                history_str = "\nChat History:"
-                history = session.chat
-                for index, chat in enumerate(history):
-                    history_str += (f"\n[{chat['role']}]: {chat['message']}\n")
-                print(history_str)
-                query = input("\nUser (q to quit): ")
-                continue
-
-            await session(query, agent, streaming=stream)
-            query = ''
-        
         except KeyboardInterrupt:
             print('Exiting...')
             break
@@ -232,6 +215,7 @@ async def initialize(session: Session, agent: Agent|AIAssistant, stream: bool = 
 
 
 def start(args: Namespace):
+    run_configure()
     try:
         if args.providers:
             list_providers()
@@ -240,7 +224,7 @@ def start(args: Namespace):
             list_agents()              #type: ignore
             sys.exit()
         elif args.sessions:
-            list_sessions()
+            asyncio.run(list_sessions())
             sys.exit()
         
         provider = None
@@ -292,9 +276,12 @@ def start(args: Namespace):
                 assistant.tools = tools
             
             session = asyncio.run(Session.get_by_agent_id(assistant.id))
+            if not session:
+                session = Session(agent_id=assistant.id)
+                
             if args.clear_history:
                 session.chat = []
-                session.save()
+                asyncio.run(session.save())
                 
             assistant.verbose = args.verbose
             assistant.formatted_system_prompt()
@@ -303,11 +290,11 @@ def start(args: Namespace):
             if args.generate:
                 asyncio.run(session(args.generate, assistant, streaming=args.stream))
                     
-            elif args.web_ui:
-                celery_thread.start()
+            elif args.ui.lower() == 'web':
+                start_worker()
                 start_web_ui(assistant)
             else:
-                celery_thread.start()
+                start_worker()
                 asyncio.run(initialize(session, assistant, stream=args.stream))
     except KeyboardInterrupt:
         print("\nExiting...")
@@ -321,48 +308,64 @@ def start(args: Namespace):
 def get_arguments():
     global parser
     
-    subparsers = parser.add_subparsers()
-    agents_parser = subparsers.add_parser('agents', help="Manage agents")
-    agents_parser.add_argument("name", type=str, nargs="?", help="Name of an agent to manage (details|update|remove)")  
-    agents_parser.add_argument('--new','--create', action='store_true', help='Create a new agent')
-    agents_parser.add_argument('-l', '--list', action='store_false', help='List all saved agents')
-    agents_parser.add_argument('--update', action='store_true', help='Update an agent')
-    agents_parser.add_argument('--delete', action='store_true', help='Delete an agent')
-    agents_parser.add_argument('--id', nargs='?', help='Specify agent id to update or delete')
-    agents_parser.set_defaults(func=manage_agents)
-    
-    agents_parser = subparsers.add_parser('tools', help="Manage tools")
-    agents_parser.add_argument('-l', '--list', type=str, default='all', nargs='?', choices=['all', 'general', 'system', 'web'], help='List tools by category')
-    agents_parser.set_defaults(func=manage_tools)
+    try:
+        subparsers = parser.add_subparsers()
+        agents_parser = subparsers.add_parser('agents', help="Manage agents")
+        agents_parser.add_argument("name", type=str, nargs="?", help="Name of an agent to manage (details|update|remove)")  
+        agents_parser.add_argument('--new','--create', action='store_true', help='Create a new agent')
+        agents_parser.add_argument('-l', '--list', action='store_false', help='List all saved agents')
+        agents_parser.add_argument('--update', action='store_true', help='Update an agent')
+        agents_parser.add_argument('--delete', action='store_true', help='Delete an agent')
+        agents_parser.add_argument('--id', nargs='?', help='Specify agent id to update or delete')
+        agents_parser.set_defaults(func=manage_agents)
+        
+        agents_parser = subparsers.add_parser('tools', help="Manage tools")
+        agents_parser.add_argument('-l', '--list', type=str, default='all', nargs='?', choices=['all', 'general', 'system', 'web'], help='List tools by category')
+        agents_parser.set_defaults(func=manage_tools)
 
-    parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
-    parser.add_argument('--provider', default='', help='Set llm provider to use')
-    parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
-    parser.add_argument('--agents', action='store_true', help='List all saved agents')
-    parser.add_argument('--web-ui', action='store_true', help='Expose api server')
-    parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
-    parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='', help='Add tools by categories to agent')
-    parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
-    parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
-    parser.add_argument('--api-base', type=str, default='', help='Set api base of selected llm. Set if using local llm.')
-    parser.add_argument('--temperature', type=float, default=0.1, help='Set temperature of model')
-    parser.add_argument('--system-prompt', type=str_or_file, default='', help='Set system prompt of model. Can be a string or a text file path')
-    parser.add_argument('--prompt-template', type=str_or_file, default='', help='Set prompt template of model. Can be a string or a text file path')
-    parser.add_argument('--generate', type=str, default='', help='Prompt the agent to generate text and then exit after printing out the response.')
-    parser.add_argument('--audio', action='store_true', help='Get input from microphone')
-    parser.add_argument('--stream', action='store_true', help='Enable response stream')
-    parser.add_argument('--session', type=str, default="", help='Load saved session')
-    parser.add_argument('--clear-history', action='store_true', default="", help='Clear agent history')
-    parser.add_argument('--sessions', action='store_true', help='Get a list of all saved sessions')
-    parser.add_argument('--verbose', action='store_true', help='Set verbose mode')
-    parser.add_argument('-v','--version', action='version', version=f'%(prog)s {VERSION}')
-    parser.set_defaults(func=start)
-    return parser.parse_args()
+        parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
+        parser.add_argument('--provider', default='', help='Set llm provider to use')
+        parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
+        parser.add_argument('--agents', action='store_true', help='List all saved agents')
+        parser.add_argument('--ui', default='cli', help='Determine preferred user interface')
+        parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
+        parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='', help='Add tools by categories to agent')
+        parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
+        parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
+        parser.add_argument('--api-base', type=str, default='', help='Set api base of selected llm. Set if using local llm.')
+        parser.add_argument('--temperature', type=float, default=0.1, help='Set temperature of model')
+        parser.add_argument('--system-prompt', type=str_or_file, default='', help='Set system prompt of model. Can be a string or a text file path')
+        parser.add_argument('--prompt-template', type=str_or_file, default='', help='Set prompt template of model. Can be a string or a text file path')
+        parser.add_argument('--generate', type=str, default='', help='Prompt the agent to generate text and then exit after printing out the response.')
+        parser.add_argument('--audio', action='store_true', help='Get input from microphone')
+        parser.add_argument('--stream', action='store_true', help='Enable response stream')
+        parser.add_argument('--session', type=str, default="", help='Load saved session')
+        parser.add_argument('--clear-history', action='store_true', default="", help='Clear agent history')
+        parser.add_argument('--sessions', action='store_true', help='Get a list of all saved sessions')
+        parser.add_argument('--verbose', action='store_true', help='Set verbose mode')
+        parser.add_argument('-v','--version', action='version', version=f'%(prog)s {VERSION}')
+        parser.set_defaults(func=start)
+        
+        return parser.parse_args()
+    except Exception as e:
+        logging.exception(e)
+        parser.print_help()
+        sys.exit(1)
+
+def start_worker():
+    try:
+        # Assuming your Celery app is defined in cognitrix.celery_app
+        celery_args = ['celery', '-A', 'cognitrix.celery_worker', 'worker', '--loglevel=info']
+        worker_process = subprocess.Popen(celery_args)
+        print("Celery worker started.")
+        return worker_process
+    except Exception as e:
+        print(f"Error starting Celery worker: {e}")
+        return None
 
 def main():
     global parser
     try:
-        parser = argparse.ArgumentParser(description="Build and run AI agents on your computer")
         args = get_arguments()
         args.func(args)
 
@@ -370,6 +373,3 @@ def main():
         logging.exception(e)
         parser.print_help()
         sys.exit(1)
-
-if __name__ == "__main__":
-    main()

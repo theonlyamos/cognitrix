@@ -31,13 +31,13 @@ class Agent(BaseModel):
     tools: List[Tool] = Field(default_factory=list)
     """List of tools to be use by the agent"""
     
-    prompt_template: str = Field(default=ASSISTANT_SYSTEM_PROMPT)
+    system_prompt: str = Field(default=ASSISTANT_SYSTEM_PROMPT)
     """Agent's prompt template"""
     
     verbose: bool = Field(default=False)
     """Set agent verbosity"""
     
-    sub_agents: AgentList = Field(default_factory=list)
+    sub_agents: List[Self] = Field(default_factory=list)
     """List of sub agents which can be called by this agent"""
     
     is_sub_agent: bool = Field(default=False)
@@ -109,7 +109,7 @@ class Agent(BaseModel):
 
         today = (datetime.now()).strftime("%a %b %d %Y") 
         prompt = f"Today is {today}.\n\n"
-        prompt += self.prompt_template
+        prompt += self.system_prompt
         prompt = prompt.replace("{name}", self.name)
         
         # if not self.llm.supports_tool_use:
@@ -462,6 +462,17 @@ class Agent(BaseModel):
         #     self.llm(full_prompt, self.formatted_system_prompt())
 
     @classmethod
+    async def _load_agents_from_file(cls) -> Dict[str, Dict]:
+        async with aiofiles.open(AGENTS_FILE, 'r') as file:
+            content = await file.read()
+            return json.loads(content) if content else {}
+
+    @classmethod
+    async def _save_agents_to_file(cls, agents: Dict[str, Dict]):
+        async with aiofiles.open(AGENTS_FILE, 'w') as file:
+            await file.write(json.dumps(agents, indent=4))
+
+    @classmethod
     async def create_agent(cls, name: str = '', description: str = '', task_description: str = '', tools: List[Tool] = [],
                      llm: Optional[LLM] = None, is_sub_agent: bool = False, parent_id=None) -> Optional[Self]:
         try:
@@ -491,16 +502,12 @@ class Agent(BaseModel):
                 new_agent = cls(name=name, llm=llm,  tools=tools, is_sub_agent=is_sub_agent, parent_id=parent_id)
                 
                 if description:
-                    new_agent.prompt_template = description
+                    new_agent.system_prompt = description
 
-                agents = []
-                async with aiofiles.open(AGENTS_FILE, 'r') as file:
-                    content = await file.read()
-                    agents = json.loads(content) if content else []
-                    agents.append(new_agent.dict()) 
+                agents = await cls._load_agents_from_file()
+                agents[new_agent.id] = new_agent.dict()
 
-                async with aiofiles.open(AGENTS_FILE, 'w') as file:
-                    await file.write(json.dumps(agents, indent=4))
+                await cls._save_agents_to_file(agents)
 
                 return new_agent
 
@@ -508,23 +515,22 @@ class Agent(BaseModel):
             logger.error(str(e))
 
     @classmethod
-    async def list_agents(cls, parent_id: Optional[str] = None) -> AgentList:
+    async def list_agents(cls, parent_id: Optional[str] = None) -> List[Self]:
         try:
-            agents: AgentList = []
-            content = ''
-            async with aiofiles.open(AGENTS_FILE, 'r') as file:
-                content = await file.read()
-                
-            loaded_agents: list[dict] = json.loads(content) if content else []
-            for agent in loaded_agents:
-                llm = LLM.load_llm(agent["llm"]["provider"])
-                loaded_agent = Agent(**agent)
-                if llm:
-                    loaded_agent.llm = llm(**agent["llm"])
-                agents.append(loaded_agent)
+            loaded_agents = await cls._load_agents_from_file()
+            agents = []
+            
+            for agent_data in loaded_agents.values():
+                agent = Agent(**agent_data)
+
+                # llm = LLM.load_llm(agent.llm.provider)
+                # print(llm)
+                # if llm:
+                #     agent.llm = llm(**agent.llm.dict())
+                agents.append(agent)
 
             if parent_id:
-                agents = [agent for agent in agents if agent.parent_id == parent_id]
+                agents = [agent for agent in agents if agent and agent.parent_id == parent_id]
 
             return agents
 
@@ -533,87 +539,48 @@ class Agent(BaseModel):
             return []
 
     @classmethod
-    async def get(cls, id) -> Optional['Agent']:
-        try:
-            agents = await cls.list_agents()
-            loaded_agents: list[Agent] = [agent for agent in agents if agent.id == id]
-            if len(loaded_agents):
-                return loaded_agents[0]
-        except Exception as e:
-            logger.exception(e)
-            return None
+    async def get(cls, id) -> Optional[Self]:
+        agents = await cls._load_agents_from_file()
+        agent_data = agents.get(id)
+        if agent_data:
+            agent =  Agent(**agent_data)
+            provider = LLM.load_llm(agent_data['llm']['provider'])
+            if provider:
+                agent.llm = provider(**agent_data['llm'])
+            return agent
+        return None
 
     @classmethod
     async def load_agent(cls, agent_name: str) -> Optional['Agent']:
-        try:
-            agent_name = agent_name.lower()
-            agents = await cls.list_agents()
-            loaded_agents: list[Agent] = [agent for agent in agents if agent.name.lower() == agent_name]
-            if len(loaded_agents):
-                agent = loaded_agents[0]
-                agent.sub_agents = await cls.list_agents(agent.id)
-                return agent
-        except Exception as e:
-            logger.exception(e)
-            return None
+        agents = await cls._load_agents_from_file()
+        agent_data = next((data for data in agents.values() if data['name'].lower() == agent_name.lower()), None)
+        if agent_data:
+            agent = Agent(**agent_data)
+            agent.sub_agents = await cls.list_agents(agent.id)
+            return agent
+        return None
     
     async def save(self):
         """Save current agent"""
-
-        agents = await Agent.list_agents()
-        updated_agents = []
-        is_new = True
-        for index, agent in enumerate(agents):
-            if agent.id == self.id:
-                agents[index] = self
-                is_new = False
-                break
-        
-        if is_new:
-            agents.append(self)
-        
-        for agent in agents:
-            updated_agents.append(agent.dict())
-        
-        async with aiofiles.open(AGENTS_FILE, 'w') as file:
-            await file.write(json.dumps(updated_agents, indent=4))
+        agents = await self._load_agents_from_file()
+        agents[self.id] = self.dict()
+        await self._save_agents_to_file(agents)
         return self.id
         
-    @staticmethod    
-    async def delete(name_or_index: str):
+    @classmethod    
+    async def delete(cls, name_or_id: str):
         """Delete agent by id or name"""
-        agents = await Agent.list_agents()
-        updated_agents = []
-        deleted_agent = None
-        for index, agent in enumerate(agents):
-            if name_or_index.lower() in [str(index), agent.name.lower()]:
-                deleted_agent = agent
-                continue
-            updated_agents.append(agent.dict())
+        agents = await cls._load_agents_from_file()
         
-        if not deleted_agent:
-            return False
+        if name_or_id in agents:
+            del agents[name_or_id]
+        else:
+            for agent_id, agent_data in list(agents.items()):
+                if agent_data['name'].lower() == name_or_id.lower():
+                    del agents[agent_id]
+                    break
         
-        async with aiofiles.open(AGENTS_FILE, 'w') as file:
-            await file.write(json.dumps(updated_agents, indent=4))
-        
-        return True
-    
-    # async def load_session(self, session_id: Optional[str] = None) -> Session:
-    #     if session_id:
-    #         session: Session = await Session.load(session_id)
-    #     else:
-    #         session = await Session.get_by_agent_id(self.id)
-        
-    #     if session.agent_id != self.id:
-    #         session.agent_id = self.id
-    #         # session.chat = self.llm.chat_history
-        
-    #     self.llm.chat_history = session.chat
-    #     return session
-    
-    # def save_session(self, session: Session):
-    #     session.chat = self.llm.chat_history
-    #     save_thread = Thread(target=session.save, args=(self.llm.chat_history,))
-    #     save_thread.daemon = True
-    #     save_thread.start()
+        if len(agents) < len(await cls._load_agents_from_file()):
+            await cls._save_agents_to_file(agents)
+            return True
+        return False

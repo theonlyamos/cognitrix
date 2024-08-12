@@ -182,7 +182,6 @@
   }
 
   $: task.agent_ids = selectedAgents;
-  $: console.log(task);
 </script>
 
 {#if task_id}

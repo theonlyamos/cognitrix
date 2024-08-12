@@ -72,7 +72,7 @@ class SSEManager:
                     
                     if action['action'] == 'system_prompt':
                         agent = PromptGenerator(llm=self.agent.llm)
-                        agent.llm.system_prompt = agent.prompt_template
+                        agent.llm.system_prompt = agent.system_prompt
                         
                         prompt = f"## Agent Description\n\n## Agent Name: {name}\n\n{prompt}"
                         

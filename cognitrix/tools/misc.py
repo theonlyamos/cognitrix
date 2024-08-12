@@ -780,7 +780,7 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
         )
         
     if sub_agent:
-        sub_agent.prompt_template = description
+        sub_agent.system_prompt = description
         await sub_agent.save()
         return ['agent', sub_agent, 'Sub agent created successfully']
     
@@ -908,12 +908,13 @@ def web_scraper(url: str|List[str]):
         </response>
     """
     
-    try:
-        results: List[str] = []
-        if isinstance(url, str):
-            url = [url]
-            
-        for link in url:
+    
+    results: List[str] = []
+    if isinstance(url, str):
+        url = [url]
+        
+    for link in url:
+        try:
             response = requests.get(link)
             response.raise_for_status()  # Raise an exception for non-2xx status codes
             html_content = response.text
@@ -921,11 +922,14 @@ def web_scraper(url: str|List[str]):
             soup = BeautifulSoup(html_content, 'html.parser')
             text_content = soup.get_text()
             text_content = ' '.join(text_content.split())  # Remove empty spaces
+            text_content = f"{link} Scraped Content:\n{text_content}"
+            results.append(text_content)
+        except Exception as e:
+            text_content =  f"{link} Scraped Content:\nError: {e}"
             results.append(text_content)
 
-        return '\n'.join(results)
-    except requests.exceptions.RequestException as e:
-        return f"Error: {e}"
+    return '\n'.join(results)
+    
     
 @tool(category='web')
 def brave_search(query: str):

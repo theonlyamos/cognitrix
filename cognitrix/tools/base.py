@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 import sys
 from pydantic import BaseModel, Field
-from typing import Any, Optional
+from typing import Any, Optional, Self
 
 class Tool(BaseModel):
     """
@@ -65,14 +65,14 @@ class Tool(BaseModel):
             return []
     
     @classmethod
-    def get_by_name(cls, name: str)-> Optional['Tool']:
+    def get_by_name(cls, name: str)-> Optional[Self]:
         """Dynamically load tool by name"""
         try:
             module = __import__(__package__, fromlist=[name]) # type: ignore
             tools  = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool)]
             class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
             tools.extend(class_tools)
-            tool = [t for t in tools if t.name.lower() == name.lower()][0]
+            tool = next((t for t in tools if t.name.lower() == name.lower()), None)
             return tool
         except IndexError:
             return None

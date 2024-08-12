@@ -5,7 +5,7 @@ import uuid
 import aiofiles
 from datetime import datetime
 from pydantic import BaseModel, Field
-from typing import Any, Dict, List, Literal, Optional, Callable, TypeAlias
+from typing import Any, Dict, List, Literal, Optional, Callable, Self, TypeAlias
 from cognitrix.agents.evaluator import Evaluator
 
 from cognitrix.config import TASKS_FILE
@@ -87,12 +87,13 @@ class Task(BaseModel):
     
     async def start(self):
         session = await self.session()
-        print('[!]Starting task...\n', session)
-        print(self.agent_ids)
+
         if len(self.agent_ids):
             team = await self.team()
+
             if len(team):
                 agent = team[0]
+                
                 if len(team) > 1:
                     agent.sub_agents = team[1:]
                 
@@ -100,15 +101,18 @@ class Task(BaseModel):
                 self.started_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
 
                 await self.save()
-                print('[!]Starting task...\n')
                 
                 session.update_history({'role': 'system', 'type': 'text', 'message': self.description + '\n\nComplete the task step below:\n'})
                 
-                for key, value in self.step_instructions.items():
+                print('[!]Starting task...\n', session)
+                
+                steps = self.step_instructions.copy()
+                for key, value in steps.items():
                     if self.status == 'in-progress':
                         prompt = f'Step #{key + 1}: '+ value['step']
                         
                         await session(prompt, agent, streaming=True)
+                        
                         evaluator = Evaluator(llm=agent.llm)
                         eval_prompt = "Task: "+value['step']
                         eval_prompt += "\n\nAgent Response:\n"+session.chat[-1]['message']
@@ -122,60 +126,51 @@ class Task(BaseModel):
                 self.completed_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
                 await self.save()
     
+    @classmethod
+    async def _load_tasks_from_file(cls) -> Dict[str, Dict]:
+        async with aiofiles.open(TASKS_FILE, 'r') as file:
+            content = await file.read()
+            return json.loads(content) if content else {}
+
+    @classmethod
+    async def _save_tasks_to_file(cls, tasks: Dict[str, Dict]):
+        async with aiofiles.open(TASKS_FILE, 'w') as file:
+            await file.write(json.dumps(tasks, indent=4))
+
     async def save(self):
         """Save current task"""
         self.step_instructions = Task.extract_steps(self.description)
-
-        tasks = await Task.list_tasks()
-        updated_tasks = []
-        is_new = True
-        for index, task in enumerate(tasks):
-            if task.id == self.id:
-                tasks[index] = self
-                is_new = False
-                break
-        
-        if is_new:
-            tasks.append(self)
-        
-        for task in tasks:
-            updated_tasks.append(task.dict())
-        
-        async with aiofiles.open(TASKS_FILE, 'w') as file:
-            await file.write(json.dumps(updated_tasks, indent=4))
-            
+        tasks = await self._load_tasks_from_file()
+        tasks[self.id] = self.dict()
+        await self._save_tasks_to_file(tasks)
         return self.id
 
     @classmethod
-    async def get(cls, id) -> Optional['Task']:
-        try:
-            tasks = await cls.list_tasks()
-            loaded_tasks: List[Task] = [task for task in tasks if task.id == id]
-            if len(loaded_tasks):
-                return loaded_tasks[0]
-        except Exception as e:
-            logger.exception(e)
-            return None
-    
+    async def get(cls, id) -> Optional[Self]:
+        tasks = await cls._load_tasks_from_file()
+        task_data = tasks.get(id)
+        if task_data:
+            return cls(**task_data)
+        return None
+
     @classmethod
     async def list_tasks(cls) -> TaskList:
         try:
-            tasks: TaskList = []
-            file_content: str = ''
-            
-            async with aiofiles.open(TASKS_FILE, 'r') as file:
-                file_content = await file.read()
-            
-            loaded_tasks: list[dict] = json.loads(file_content) if file_content else []
-            for task in loaded_tasks:
-                loaded_task = cls(**task)
-                tasks.append(loaded_task)
-
-            return tasks
-
+            tasks = await cls._load_tasks_from_file()
+            return [cls(**task_data) for task_data in tasks.values()]
         except Exception as e:
             logger.exception(e)
             return []
+
+    @classmethod
+    async def delete(cls, task_id: str):
+        """Delete task by id"""
+        tasks = await cls._load_tasks_from_file()
+        if task_id in tasks:
+            del tasks[task_id]
+            await cls._save_tasks_to_file(tasks)
+            return True
+        return False
 
     @staticmethod
     def extract_steps(text):
