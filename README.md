@@ -1,6 +1,6 @@
 # Cognitrix
 
-Cognitrix is an open-source autonomous AI agents orchestrator built in Python. It allows you to create and manage AI agents with ease and integrates seamlessly with large language models (LLMs) from various providers. 
+Cognitrix is an open-source autonomous AI agents orchestrator built in Python. It allows you to create and manage AI agents with ease and integrates seamlessly with large language models (LLMs) from various providers.
 
 ## Features
 
@@ -25,14 +25,35 @@ More tools can be added by creating new classes that inherit from the `Tool` bas
 
 ## Installation
 
+**Install with pip**:
+
 ```bash
 pip install cognitrix
 ```
 
-Alternatively, you can install directly from GitHub:
+**Build from source**:
+
+```bash
+git clone https://github.com/theonlyamos/cognitrix.git
+cd cognitrix/frontend
+npm install
+npm run dev
+cd ..
+pip install .
+```
+
+**Install directly from github**:
 
 ```bash
 pip install https://github.com/theonlyamos/cognitrix/archive/main.zip
+```
+
+**Build the Docker Image**:
+
+```bash
+git clone https://github.com/theonlyamos/cognitrix.git
+cd cognitrix
+docker build -t cognitrix .
 ```
 
 ## Usage
@@ -42,6 +63,26 @@ To run Cognitrix with default settings:
 ```bash
 cognitrix
 ```
+
+**Access the Web UI**
+
+To run with web interface
+
+```bash
+cognitrix --ui web
+```
+
+Open your web browser and go to `http://localhost:8000` to access the web UI.
+
+**Run the Docker Container**
+
+After building the image, you can run the container with:
+
+```bash
+docker run -p 8000:8000 cognitrix
+```
+
+This command maps port 8000 of the container to port 8000 on your host machine.
 
 To list supported LLM providers:
 
@@ -97,6 +138,31 @@ For more options and usage details, use the help command:
 cognitrix --help
 ```
 
+## Web UI
+
+Cognitrix includes a web UI built with Svelte and TypeScript. This UI allows users to interact with the AI agents and manage their configurations easily.
+
+### Development
+
+For development purposes, you can also run the web UI locally without Docker. Ensure you have Node.js and npm installed, then follow these steps:
+
+1. **Install Dependencies**:
+   Navigate to the `frontend` directory and run:
+
+   ```bash
+   npm install
+   ```
+
+2. **Start the Development Server**:
+   Run the following command to start the development server:
+
+   ```bash
+   npm run dev
+   ```
+
+3. **Access the Development Server**:
+   Open your web browser and go to `http://localhost:5173` to view the web UI in development mode.
+
 ## Contributing
 
 Cognitrix is open source and contributions are welcome! Please refer to [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute.
@@ -107,4 +173,4 @@ This project is licensed under the MIT license. See [LICENSE.md](LICENSE.md) for
 
 ## Acknowledgments
 
-Cognitrix was created by [Amos Amissah](https://github.com/theonlyamos) and is inspired by projects like AutoGPT and GPT Engineer. Special thanks to the open-source community and AI companies providing LLM APIs.
+Cognitrix was created by [Amos Amissah](https://github.com/theonlyamos) and is inspired by projects like AutoGPT and GPTEngineer. Special thanks to the open-source community and AI companies providing LLM APIs.
