@@ -355,7 +355,7 @@ def get_arguments():
 def start_worker():
     try:
         # Assuming your Celery app is defined in cognitrix.celery_app
-        celery_args = ['celery', '-A', 'cognitrix.celery_worker', 'worker', '--loglevel=info']
+        celery_args = ['celery', '-A', 'cognitrix.celery_worker', 'worker', '--loglevel=error']
         worker_process = subprocess.Popen(celery_args)
         print("Celery worker started.")
         return worker_process

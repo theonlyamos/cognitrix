@@ -87,7 +87,11 @@
             let data = JSON.parse(event.data);
 
             if (data.type == "generate") {
+              if (!newPromptTemplate.length) {
+                agent.system_prompt = "";
+              }
               newPromptTemplate = data.content;
+              agent.system_prompt = agent.system_prompt + data.content;
               loading = false;
             }
           }
@@ -168,9 +172,9 @@
     if (unsubscribe) unsubscribe();
   });
 
-  $: if (newPromptTemplate) {
-    agent.system_prompt = agent.system_prompt + newPromptTemplate;
-  }
+  // $: if (newPromptTemplate) {
+  //   agent.system_prompt = agent.system_prompt + newPromptTemplate;
+  // }
 </script>
 
 {#if agent_id}

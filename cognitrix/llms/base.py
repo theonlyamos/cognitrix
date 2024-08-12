@@ -112,7 +112,6 @@ class LLM(BaseModel):
     def __init__(self, **data):
         super().__init__(**data)
         if not 'provider' in data.keys():
-            print('---', data)
             self.provider = self.__class__.__name__
     
     def format_query(self, message: dict[str, str], chat_history: List[Dict[str, str]] = []) -> list:

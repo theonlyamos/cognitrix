@@ -49,21 +49,9 @@ class Task(BaseModel):
     
     created_at: str = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
     """Creation date of the task"""
-
-    started_at: Optional[str] = None
-    """Started date of the task"""
-    
-    completed_at: Optional[str] = None
-    """Completion date of the task"""
     
     agent_ids: List[str] = []
     """List of ids of agents assigned to this task"""
-    
-    session_id: Optional[str] = None
-    """Id of task session"""
-    
-    pid: Optional[str] = None
-    """Worker Id of task"""
     
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """Unique id for the task"""
@@ -76,17 +64,10 @@ class Task(BaseModel):
                 agents.append(agent)
         return agents
 
-    async def session(self):
-        if self.session_id:
-            return await Session.load(self.session_id)
-        else:
-            new_session = Session()
-            self.session_id = new_session.id
-            await self.save()
-            return new_session
+    async def sessions(self):
+        return await Session.get_by_task_id(self.id)
     
     async def start(self):
-        session = await self.session()
 
         if len(self.agent_ids):
             team = await self.team()
@@ -97,33 +78,39 @@ class Task(BaseModel):
                 if len(team) > 1:
                     agent.sub_agents = team[1:]
                 
+                evaluator = Evaluator(llm=agent.llm)
+                agent.sub_agents.append(evaluator)
+                
                 self.status = 'in-progress'
-                self.started_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
-
                 await self.save()
+
+                session = Session(task_id=self.id, agent_id=agent.id)
+                session.started_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
+                await session.save()
                 
                 session.update_history({'role': 'system', 'type': 'text', 'message': self.description + '\n\nComplete the task step below:\n'})
                 
-                print('[!]Starting task...\n', session)
+                print('[!]Starting task...\n')
                 
                 steps = self.step_instructions.copy()
+                
                 for key, value in steps.items():
                     if self.status == 'in-progress':
                         prompt = f'Step #{key + 1}: '+ value['step']
                         
                         await session(prompt, agent, streaming=True)
                         
-                        evaluator = Evaluator(llm=agent.llm)
                         eval_prompt = "Task: "+value['step']
                         eval_prompt += "\n\nAgent Response:\n"+session.chat[-1]['message']
                         
-                        await session(eval_prompt, evaluator, streaming=True, save_history=False)
+                        await session(eval_prompt, evaluator, streaming=True)
                         self.step_instructions[key]['done'] = True
                         
                         await self.save()
                 
+                session.completed_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
+                await session.save()
                 self.status = 'completed'
-                self.completed_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
                 await self.save()
     
     @classmethod

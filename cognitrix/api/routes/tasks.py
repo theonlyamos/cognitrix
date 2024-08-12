@@ -22,8 +22,8 @@ async def list_tasks():
 async def save_task(request: Request, task: Task, background_tasks: BackgroundTasks):
     await task.save()
     
-    # if task.autostart:
-    background_tasks.add_task(task.start)
+    if task.autostart:
+        background_tasks.add_task(task.start)
     
     return JSONResponse(task.dict())
 

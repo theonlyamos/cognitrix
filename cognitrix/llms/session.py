@@ -29,6 +29,18 @@ class Session(BaseModel):
     agent_id: str = ""
     """The id of the agent that started the session"""
     
+    task_id: Optional[str] = None
+    """The id of the task that started the session"""
+    
+    started_at: Optional[str] = None
+    """Started date of the task"""
+    
+    completed_at: Optional[str] = None
+    """Completion date of the task"""
+    
+    pid: Optional[str] = None
+    """Worker Id of task"""
+    
     @classmethod
     async def _load_sessions_from_file(cls) -> Dict[str, Dict]:
         async with aiofiles.open(SESSIONS_FILE, 'r') as file:
@@ -91,6 +103,28 @@ class Session(BaseModel):
             logger.exception(e)
             return None
     
+    @classmethod
+    async def get_by_agent_id(cls, agent_id: str) -> Self:
+        """Retrieve a session by agent_id"""
+        sessions = await cls._load_sessions_from_file()
+        for session_data in sessions.values():
+            if session_data.get('agent_id') == agent_id:
+                return cls(**session_data)
+        new_session = cls(agent_id=agent_id)
+        await new_session.save()
+        return new_session
+    
+    @classmethod
+    async def get_by_task_id(cls, task_id: str) -> List[Self]:
+        """Retrieve a session by task_id"""
+        sessions = await cls._load_sessions_from_file()
+        task_sessions: List[Self] = []
+        for session_data in sessions.values():
+            if session_data.get('task_id') == task_id:
+                task_sessions.append(cls(**session_data))
+
+        return task_sessions
+    
     async def __call__(self, message: str|dict, agent: Agent|AIAssistant, interface: Literal['cli', 'web'] = 'cli', streaming: bool = False, output: Callable = print, wsquery: Dict[str, str]= {}, save_history: bool = True):
         system_prompt = agent.formatted_system_prompt()
         tool_calls: bool = False
@@ -152,14 +186,3 @@ class Session(BaseModel):
                 
         except Exception as e:
             logger.exception(e)
-
-    @classmethod
-    async def get_by_agent_id(cls, agent_id: str) -> Self:
-        """Retrieve a session by agent_id"""
-        sessions = await cls._load_sessions_from_file()
-        for session_data in sessions.values():
-            if session_data.get('agent_id') == agent_id:
-                return cls(**session_data)
-        new_session = cls(agent_id=agent_id)
-        await new_session.save()
-        return new_session

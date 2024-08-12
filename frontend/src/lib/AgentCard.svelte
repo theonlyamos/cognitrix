@@ -83,7 +83,7 @@
     inline-size: 200%;
     block-size: 200%;
     background: radial-gradient(circle, var(--bg-2) 0%, var(--bg-1) 60%);
-    opacity: 0.5;
+    opacity: 0.3;
     border-radius: 10px;
   }
 

@@ -1,9 +1,28 @@
 <script lang="ts">
   import { link } from "svelte-routing";
-  import type { TaskInterface } from "../common/interfaces";
+  import type { TaskDetailInterface } from "../common/interfaces";
   import RadioItem from "./RadioItem.svelte";
 
-  export let task: TaskInterface;
+  export let task: TaskDetailInterface;
+
+  function calculateDuration(startedAt: string, completedAt: string) {
+    const startDate = new Date(startedAt);
+    const endDate = new Date(completedAt);
+
+    const durationMs = endDate - startDate;
+
+    const hours = Math.floor(durationMs / 3600000);
+    const minutes = Math.floor((durationMs % 3600000) / 60000);
+    const seconds = Math.floor((durationMs % 60000) / 1000);
+
+    // Construct the duration string
+    let durationStr = "";
+    if (hours > 0) durationStr += `${hours} hr${hours !== 1 ? "s" : ""} `;
+    if (minutes > 0) durationStr += `${minutes}min `;
+    if (seconds > 0) durationStr += ` ${seconds}s`;
+
+    return durationStr.trim();
+  }
 </script>
 
 <a
@@ -35,6 +54,12 @@
   <div class="task-card-footer">
     <div class="task-card-footer__status">
       {task.status}
+    </div>
+    <div class="task-card-footer__duration">
+      {#if task.status === "completed"}
+        <i class="fa-solid fa-clock fa-fw"></i>
+        <span>{calculateDuration(task.started_at, task.completed_at)}</span>
+      {/if}
     </div>
   </div>
 </a>
@@ -100,6 +125,7 @@
   .task-card__step-instructions {
     max-block-size: 75%;
     overflow-y: auto;
+    padding-block-end: 10px;
 
     &::-webkit-scrollbar {
       width: 5px;
@@ -112,6 +138,8 @@
     inset-inline-start: 0;
     inline-size: 100%;
     display: flex;
+    justify-content: space-between;
+    align-items: center;
     padding: inherit;
     background: inherit;
   }
@@ -123,5 +151,9 @@
     font-weight: bold;
     border-radius: 10px;
     background-color: var(--bg-2);
+  }
+
+  .task-card-footer__duration {
+    font-size: 1.4vmin;
   }
 </style>
