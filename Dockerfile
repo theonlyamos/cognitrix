@@ -16,7 +16,9 @@ RUN apt-get update \
     && apt-get -y autoremove \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
-    
+
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
 RUN curl https://bun.sh/install | bash 
 
 RUN echo 'export BUN_PATH="$HOME/.bun"' >> $HOME/.bashrc \
@@ -32,14 +34,14 @@ RUN ln -s /usr/bin/python3.11 /usr/bin/python
 
 COPY . /app/
 
-RUN mv .env.development .env
+RUN mv .env.example .env
 
 RUN cd /app/frontend && bun run build
 
 RUN pip install -e .
 
-EXPOSE 8000
+EXPOSE 9000
 
 # RUN ln -sf /bin/bash /bin/sh
 
-ENTRYPOINT ["cognitrix"]
+ENTRYPOINT ["runit-server"]

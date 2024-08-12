@@ -58,6 +58,23 @@ docker build -t cognitrix .
 
 ## Usage
 
+**Fill these environment variables as needed**
+
+```bash
+OPENAI_API_KEY=
+CO_API_KEY=
+TAVILY_API_KEY=
+CLARIFAI_ACCESS_TOKEN=
+GROQ_API_KEY=
+GOOGLE_API_KEY=
+NEWSAPI_API_KEY=
+ANTHROPIC_API_KEY=
+DEEPGRAM_API_KEY=
+MINDSDB_API_KEY=
+BRAVE_SEARCH_API_KEY=
+AIMLAPI_API_KEY=
+```
+
 To run Cognitrix with default settings:
 
 ```bash
