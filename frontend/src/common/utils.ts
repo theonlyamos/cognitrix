@@ -1,5 +1,10 @@
-import type { AgentDetailInterface } from "./interfaces";
-import type { TaskDetailInterface } from "./interfaces";
+import { XMLParser } from 'fast-xml-parser';
+import type { 
+    AgentDetailInterface, 
+    TaskDetailInterface, 
+    TeamInterface 
+} from "./interfaces";
+
 
 const API_VERSION = 'v1';
 export const BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL}/api/${API_VERSION}`
@@ -85,4 +90,93 @@ export const getTaskSession = async(taskId: string): Promise<Object> => {
 export const updateTaskStatus = async(task_id: any): Promise<Object> => {
     const response = await fetch(`${BACKEND_URI}/tasks/start/${task_id}`)
     return response.json()
+}
+
+export const convertXmlToJson = (xmlText: string) => {
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: "@_",
+    textNodeName: "#text",
+    parseAttributeValue: true,
+    trimValues: true,
+  });
+
+  try {
+    const wrappedXml = `<root>${xmlText}</root>`;
+    const result = parser.parse(wrappedXml);
+
+    // Helper function to clean up the parsed result
+    const cleanObject = (obj: any): any => {
+      if (typeof obj !== 'object' || obj === null) {
+        return obj;
+      }
+
+      if (Array.isArray(obj)) {
+        return obj.map(cleanObject);
+      }
+
+      const cleaned: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        if (key !== '#text' || value !== '') {
+          cleaned[key.replace('@_', '')] = cleanObject(value);
+        }
+      }
+
+      // If the object only has a #text property, return its value
+      if (Object.keys(cleaned).length === 1 && '#text' in cleaned) {
+        return cleaned['#text'];
+      }
+
+      return cleaned;
+    };
+
+    return cleanObject(result.root);
+  } catch (error) {
+    console.error('Error parsing XML:', error);
+    return null;
+  }
+};
+
+export async function getAllTeams(): Promise<TeamInterface[]> {
+    const response = await fetch(`${BACKEND_URI}/teams`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch teams');
+    }
+    return response.json();
+  }
+  
+  export async function getTeam(teamId: string): Promise<TeamInterface> {
+    const response = await fetch(`${BACKEND_URI}/teams/${teamId}`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch team');
+    }
+    return response.json();
+  }
+  
+export async function saveTeam(team: TeamInterface): Promise<TeamInterface> {
+    const method = team.id ? 'PUT' : 'POST';
+    const url = team.id ? `${BACKEND_URI}/teams/${team.id}` : `${BACKEND_URI}/teams`;
+    
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(team),
+    });
+  
+    if (!response.ok) {
+      throw new Error('Failed to save team');
+    }
+    return response.json();
+  }
+  
+  export async function deleteTeam(teamId: string): Promise<void> {
+    const response = await fetch(`${BACKEND_URI}/teams/${teamId}`, {
+      method: 'DELETE',
+    });
+  
+    if (!response.ok) {
+      throw new Error('Failed to delete team');
+    }
 }

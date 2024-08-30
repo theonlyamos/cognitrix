@@ -129,6 +129,7 @@
                 messages = [];
                 window.location.reload();
               } else {
+                console.log(data.content);
                 for (let msg of data.content) {
                   messages = [
                     ...messages,

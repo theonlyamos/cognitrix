@@ -473,7 +473,7 @@ class Agent(BaseModel):
             await file.write(json.dumps(agents, indent=4))
 
     @classmethod
-    async def create_agent(cls, name: str = '', description: str = '', task_description: str = '', tools: List[Tool] = [],
+    async def create_agent(cls, name: str = '', description: str = '', tools: List[Tool] = [],
                      llm: Optional[LLM] = None, is_sub_agent: bool = False, parent_id=None) -> Optional[Self]:
         try:
             name = name or input("\n[Enter agent name]: ")
@@ -495,24 +495,26 @@ class Agent(BaseModel):
                         temp = input(f"\nEnter model temperature [{llm.temperature}]: ")
                         llm.temperature = float(temp) if temp else llm.temperature
 
-            if llm:
+            if not llm:
+                raise Exception('Error loading LLM')
                 
-                description = description or input("\n[Enter agent system prompt]: ")
-                
-                new_agent = cls(name=name, llm=llm,  tools=tools, is_sub_agent=is_sub_agent, parent_id=parent_id)
-                
-                if description:
-                    new_agent.system_prompt = description
+            description = description or input("\n[Enter agent system prompt]: ")
+            
+            new_agent = cls(name=name, llm=llm, tools=tools, is_sub_agent=is_sub_agent, parent_id=parent_id)
+            
+            if description:
+                new_agent.system_prompt = description
 
-                agents = await cls._load_agents_from_file()
-                agents[new_agent.id] = new_agent.dict()
+            agents = await cls._load_agents_from_file()
+            agents[new_agent.id] = new_agent.dict()
 
-                await cls._save_agents_to_file(agents)
+            await cls._save_agents_to_file(agents)
 
-                return new_agent
+            return new_agent
 
         except Exception as e:
-            logger.error(str(e))
+            logger.error(f"Error creating agent: {str(e)}")
+            return None
 
     @classmethod
     async def list_agents(cls, parent_id: Optional[str] = None) -> List[Self]:

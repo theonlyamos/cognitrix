@@ -19,7 +19,9 @@ export interface TaskInterface extends Object {
     title: string,
     description: string,
     step_instructions?: object,
+    agent_ids: string[],
     status: string,
+    autostart: boolean,
     done: boolean
 }
 
@@ -97,3 +99,8 @@ export interface SSEState {
     error: Event | Error | null;
 }
   
+export interface TeamInterface {
+    id?: string;
+    name: string;
+    agent_ids: string[];
+}

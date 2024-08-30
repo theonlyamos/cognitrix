@@ -21,6 +21,7 @@
   },
   "type": "module",
   "dependencies": {
+    "fast-xml-parser": "^4.4.1",
     "marked": "^13.0.0"
   }
 }

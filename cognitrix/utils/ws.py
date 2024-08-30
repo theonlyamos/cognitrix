@@ -40,30 +40,14 @@ class WebSocketManager:
                             if loaded_agent:
                                 web_agent = loaded_agent
                             
-                            chat_history = []
-                            
-                            for chat in session.chat:
-                                chat_copy = chat.copy()
-                                result = xml_to_dict(chat['message'])
-                
-                                if isinstance(result, dict):
-                                    if isinstance(result['response'], dict):
-                                        if 'artifacts' in result['response'].keys() and len(result['response']['artifacts'].keys()):
-                                            chat_copy['artifacts'] = result['response']['artifacts']['artifact']
-                                        if 'result' in result['response'].keys():
-                                            chat_copy['message'] = result['response']['result']
-                                            chat_history.append(chat_copy)
-                                    else:
-                                        chat_history.append(chat)
-                                else:
-                                    chat_history.append(chat)
+                            chat_history = session.chat
                             
                             await websocket.send_json({'type': query_type, 'content': chat_history, 'agent_name': web_agent.name, 'action': action})
                         
                         elif action == 'delete':
                             session = await Session.load(session_id)
                             session.chat = []
-                            session.save()
+                            await session.save()
                             await websocket.send_json({'type': query_type, 'content': session.chat, 'agent_name': web_agent.name, 'action': action})
                                 
                     elif query_type == 'sessions':

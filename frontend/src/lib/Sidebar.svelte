@@ -69,6 +69,10 @@
       <i class="fa-solid fa-tools fa-fw"></i>
       <span>Tasks</span>
     </a>
+    <a href="/teams" use:link class={page.includes("/teams") ? "active" : ""}>
+      <i class="fa-solid fa-users fa-fw"></i>
+      <span>Teams</span>
+    </a>
   </nav>
 
   <button on:click={toggleTheme}>
@@ -82,14 +86,18 @@
 
 <style>
   aside {
+    block-size: 100vh;
     background: var(--bg-2);
-    border-radius: 7px;
     text-align: start;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
     box-shadow: var(--shadow-sm);
     transition: all 0.2s ease-in-out;
+    position: sticky;
+    inset-block-start: 0;
+    inset-inline-start: 0;
+    z-index: 9999;
   }
 
   nav {

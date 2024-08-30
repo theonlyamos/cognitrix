@@ -2,12 +2,16 @@
   import { marked } from "marked";
   import CodeBlock from "./CodeBlock.svelte";
   import AgentImg from "../assets/ai-agent-icon.svg";
+  import { convertXmlToJson } from "../common/utils";
+  import { onMount } from "svelte";
 
   export let id: string | number = "";
   export let role: string | String = "user";
   export let content: string;
   export let image: string = "";
   export let artifacts: object | object[] = {};
+
+  let htmlContent: string | Promise<string> = "";
 
   const formatOneArtifact = (artifact: any) => {
     let content = "";
@@ -36,21 +40,32 @@
     return content;
   };
 
-  const formatContent = (content: any): string => {
-    if (typeof content === "object") {
-      let new_content: string = "";
-      for (let k in content) {
-        new_content += `## ${k.charAt(0).toUpperCase()}${k.slice(1)}\n\n${content[k]}\n\n`;
-      }
-      content = new_content;
-    }
+  const formatContent = (content: string): string => {
+    const parsedContent = convertXmlToJson(content);
 
-    return content;
+    if (!parsedContent) return content;
+
+    const formatNode = (node: any): string => {
+      if (typeof node === "string") return node;
+      if (typeof node !== "object") return String(node);
+
+      return Object.entries(node)
+        .map(([key, value]) => {
+          if (key === "#text") return String(value);
+          return `## ${key.charAt(0).toUpperCase() + key.slice(1)}\n\n${formatNode(value)}\n\n`;
+        })
+        .join("");
+    };
+
+    return formatNode(parsedContent);
   };
 
   // $: console.log(content);
+
   $: htmlContent = marked(formatContent(content));
   $: artifactsContent = marked(formatArtifacts(artifacts));
+
+  onMount(async () => {});
 </script>
 
 <article
@@ -69,7 +84,7 @@
   <hr />
   <div class="message-row">
     <CodeBlock {htmlContent} />
-    <!-- <CodeBlock htmlContent={artifactsContent} /> -->
+    <CodeBlock htmlContent={artifactsContent} />
   </div>
   {#if image.length}
     <img src={image} alt="message" />

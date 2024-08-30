@@ -181,7 +181,8 @@ header {
 }
 
 .container {
-  padding: 20px;
+  flex: 1;
+  block-size: 100vh;
 }
 
 .toolbar {
@@ -207,8 +208,6 @@ header {
 @media screen and (max-width: 640px) {
   .container {
     padding: 0;
-    inline-size: 100vmax;
-    block-size: 100vh;
   }
   
 }

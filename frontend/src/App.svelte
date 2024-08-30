@@ -7,6 +7,8 @@
   import AgentPage from "./routes/AgentPage.svelte";
   import Tasks from "./routes/Tasks.svelte";
   import TaskPage from "./routes/TaskPage.svelte";
+  import Teams from "./routes/Teams.svelte";
+  import TeamPage from "./routes/TeamPage.svelte";
   // import { sseStore } from './common/stores';
   import { webSocketStore } from "./common/stores";
 
@@ -34,6 +36,11 @@
       <Route path="/tasks/:task_id" let:params>
         <TaskPage task_id={params?.task_id} />
       </Route>
+      <Route path="/teams" component={Teams} />
+      <Route path="/teams/new" component={TeamPage} />
+      <Route path="/teams/:team_id" let:params>
+        <TeamPage team_id={params?.team_id} />
+      </Route>
     </Container>
   </div>
 </Router>
@@ -41,19 +48,10 @@
 <style>
   .container {
     position: relative;
-    margin: 0 auto;
-    inline-size: 90vmax;
-    block-size: 90vh;
+    /* margin: 0 auto; */
     display: flex;
     justify-content: space-between;
-    border-radius: 25px;
+    /* border-radius: 25px; */
     gap: 20px;
-  }
-
-  @media screen and (max-width: 640px) {
-    .container {
-      inline-size: 100vmin;
-      block-size: 100vh;
-    }
   }
 </style>

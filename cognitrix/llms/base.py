@@ -42,8 +42,8 @@ class LLMResponse:
         self.parse_llm_response()
 
     def parse_llm_response(self):
-        full_response = ''.join(self.chunks)
-        response_data = xml_to_dict(full_response)
+        self.llm_response = ''.join(self.chunks)
+        response_data = xml_to_dict(self.llm_response)
 
         try:
             if isinstance(response_data, dict):
