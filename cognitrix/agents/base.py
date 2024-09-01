@@ -162,7 +162,7 @@ class Agent(BaseModel):
                     elif result[0] == 'agent':
                         new_agent: Agent = result[1]
                         new_agent.parent_id = self.id
-                        self.add_sub_agent(new_agent)
+                        self.add_sub_agent(new_agent) # type: ignore
 
                         prompt['message'] = result[2]
                     else:
@@ -179,7 +179,7 @@ class Agent(BaseModel):
     def _process_query(self, query: str | dict) -> str | dict:
         return extract_json(query) if isinstance(query, str) else query
 
-    def add_sub_agent(self, agent: 'Agent'):
+    def add_sub_agent(self, agent: Self):
         self.sub_agents.append(agent)
 
     def get_sub_agent_by_name(self, name: str) -> Optional['Agent']:
@@ -549,7 +549,7 @@ class Agent(BaseModel):
             provider = LLM.load_llm(agent_data['llm']['provider'])
             if provider:
                 agent.llm = provider(**agent_data['llm'])
-            return agent
+            return agent # type: ignore
         return None
 
     @classmethod

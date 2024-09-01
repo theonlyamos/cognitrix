@@ -87,7 +87,7 @@
 <style>
   aside {
     block-size: 100vh;
-    background: var(--bg-2);
+    background: var(--bg-1);
     text-align: start;
     display: flex;
     flex-direction: column;
@@ -121,8 +121,8 @@
 
     &:hover,
     &.active {
-      background-color: var(--bg-1);
-      color: var(--fg-1);
+      background-color: var(--fg-1);
+      color: var(--bg-1);
     }
   }
 
@@ -133,7 +133,7 @@
   button {
     padding: 0;
     width: fit-content;
-    background-color: var(--bg-2);
+    background-color: var(--bg-1);
     display: flex;
     margin: 0 auto;
     margin-bottom: 20px;

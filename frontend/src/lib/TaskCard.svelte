@@ -6,8 +6,8 @@
   export let task: TaskDetailInterface;
 
   function calculateDuration(startedAt: string, completedAt: string) {
-    const startDate = new Date(startedAt);
-    const endDate = new Date(completedAt);
+    const startDate: Date = new Date(startedAt);
+    const endDate: Date = new Date(completedAt);
 
     const durationMs = endDate - startDate;
 
@@ -28,7 +28,7 @@
 <a
   href={`/tasks/${task?.id}`}
   use:link
-  class="task-card"
+  class="card task-card"
   id={`task-${task?.id}`}
   data-id={task?.id}
 >
@@ -57,7 +57,7 @@
     </div>
     <div class="task-card-footer__duration">
       {#if task.status === "completed"}
-        <i class="fa-solid fa-clock fa-fw"></i>
+        <i class="fa-solid fa-clock fa-fw fa-2x"></i>
         <span>{calculateDuration(task.started_at, task.completed_at)}</span>
       {/if}
     </div>
@@ -66,38 +66,12 @@
 
 <style>
   .task-card {
-    background: linear-gradient(to bottom, var(--bg-1), var(--bg-1));
-    color: var(--fg-1);
-    border-radius: 10px;
-    padding: 20px;
-    inline-size: 250px;
+    inline-size: 360px;
     max-inline-size: 100%;
     block-size: 300px;
-    box-shadow:
-      0 10px 20px rgba(0, 0, 0, 0.3),
-      0 6px 6px rgba(0, 0, 0, 0.2),
-      inset 0 1px 1px rgba(255, 255, 255, 0.1);
     position: relative;
     overflow: hidden;
-    text-align: start;
-
-    &:hover {
-      box-shadow:
-        0 5px 10px rgba(0, 0, 0, 0.3),
-        0 6px 6px rgba(0, 0, 0, 0.2),
-        inset 0 1px 1px rgba(255, 255, 255, 0.1);
-    }
   }
-  /* .task-card::before {
-    content: "";
-    position: absolute;
-    inset-block-start: 0;
-    inset-inline-start: -50%;
-    inline-size: 200%;
-    block-size: 200%;
-    background: radial-gradient(circle, var(--bg-2) 0%, var(--bg-1) 60%);
-    opacity: 0.5;
-  } */
 
   .task-card__title {
     font-weight: bold;
@@ -116,7 +90,8 @@
     position: relative;
     color: var(--fg-2);
     display: -webkit-box;
-    -webkit-line-clamp: 8; /* Change this number to set the number of lines */
+    line-clamp: 8;
+    -webkit-line-clamp: 8;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }

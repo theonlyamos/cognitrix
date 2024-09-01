@@ -16,6 +16,13 @@
         'Open Sans', 'Helvetica Neue', sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas,
         'DejaVu Sans Mono', monospace;
+
+  --color-alert: #ff4136;
+  --color-confirm: #0074d9;
+  --color-info: #7fdbff;
+  --color-success: #2ecc40;
+  --color-warning: #ff851b;
+  --border-color: #ddd;
 }
 
 * {
@@ -97,7 +104,37 @@ h1 {
 }
 
 .card {
-  padding: 2em;
+  background: linear-gradient(to bottom, var(--bg-1), var(--bg-1));
+  color: var(--fg-1);
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.1),
+    0 6px 6px rgba(0, 0, 0, 0.1),
+    inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+
+  &:hover {
+    transform: translateY(-5px);
+    box-shadow:
+      0 15px 30px rgba(0, 0, 0, 0.15),
+      0 10px 10px rgba(0, 0, 0, 0.1),
+      inset 0 1px 1px rgba(255, 255, 255, 0.2);
+  }
+}
+
+[data-theme="dark"] .card {
+  box-shadow:
+  0 10px 20px rgba(0, 0, 0, 0.3),
+  0 6px 6px rgba(0, 0, 0, 0.2),
+  inset 0 1px 1px rgba(255, 255, 255, 0.1);
+
+  &:hover {
+    box-shadow:
+      0 5px 10px rgba(0, 0, 0, 0.3),
+      0 6px 6px rgba(0, 0, 0, 0.2),
+      inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  }
 }
 
 #app {
@@ -143,6 +180,25 @@ button, .btn {
 
 [data-theme="dark"] body img.icon {
   filter: invert(100%);
+}
+
+body aside a img.icon {
+  filter: invert(30%);
+}
+
+body aside a.active img.icon,
+body aside a:hover img.icon
+ {
+  filter: invert(100%);
+}
+
+[data-theme="dark"] body aside a img.icon {
+  filter: invert(90%);
+}
+
+[data-theme="dark"] body aside a.active img.icon,
+[data-theme="dark"] body aside a:hover img.icon {
+  filter: none;
 }
 
 [role="button"] {

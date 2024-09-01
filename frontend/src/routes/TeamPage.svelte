@@ -5,11 +5,14 @@
   import Checkbox from "../lib/Checkbox.svelte";
   import { onMount } from "svelte";
   import Accordion from "../lib/Accordion.svelte";
+  import RadioItem from "../lib/RadioItem.svelte";
 
   export let team_id: string = "";
   let team: TeamInterface = {
     name: "",
     agent_ids: [],
+    description: "",
+    team_leader_id: "",
   };
   let agents: AgentInterface[] = [];
   let selectedAgents: string[] = [];
@@ -54,6 +57,11 @@
     }
   };
 
+  const handleTeamLeaderChange = (event: Event) => {
+    const target = event.target as HTMLInputElement;
+    team.team_leader_id = target.value;
+  };
+
   const loadAgents = async () => {
     try {
       agents = (await getAllAgents()) as AgentInterface[];
@@ -65,10 +73,15 @@
 
   onMount(async () => {
     await loadAgents();
+    selectedAgents = [...team.agent_ids];
   });
 
   $: if (team_id) {
     loadTeam(team_id);
+  }
+
+  $: {
+    team.agent_ids = selectedAgents;
   }
 </script>
 
@@ -96,10 +109,18 @@
 </div>
 
 <div class="container">
-  <div class="team-form">
+  <div class="card team-form">
     <div class="form-group">
       <label for="name">Team Name</label>
       <input type="text" id="name" bind:value={team.name} />
+    </div>
+    <div class="form-group">
+      <label for="description">Team Description</label>
+      <textarea
+        rows="10"
+        bind:value={team.description}
+        placeholder="A brief description of the team's purpose or role."
+      ></textarea>
     </div>
     <div class="form-group">
       <Accordion title="Select Agents" opened={true}>
@@ -116,19 +137,42 @@
         </div>
       </Accordion>
     </div>
+    <div class="form-group">
+      <Accordion title="Team Leader" opened={true}>
+        <div class="agents-list">
+          {#each agents as agent (agent.id)}
+            {#if team.agent_ids.includes(agent.id)}
+              <RadioItem
+                name="agents"
+                value={agent.id}
+                label={agent.name}
+                onChange={handleTeamLeaderChange}
+                checked={agent.id === team.team_leader_id}
+              />
+            {/if}
+          {/each}
+        </div>
+      </Accordion>
+    </div>
   </div>
 </div>
 
 <style>
   .container {
-    padding: 20px;
+    inline-size: 700px;
+    max-inline-size: 100%;
+    block-size: fit-content;
+    padding-inline: 20px;
+    padding-block: 20px;
+    display: grid;
+    margin-inline: auto;
+    margin-block: 0;
   }
 
   .team-form {
     background-color: var(--bg-1);
     padding: 20px;
     border-radius: 10px;
-    box-shadow: var(--shadow-sm);
   }
 
   .form-group {

@@ -23,7 +23,7 @@
   };
 </script>
 
-<button class="radio" on:click={handleChange}>
+<label class="radio">
   <input
     type="radio"
     {value}
@@ -43,14 +43,15 @@
       style="display: {checked ? 'none' : 'inline-block'};"
     ></i>
   </span>
-  <label for="" title={label}>{label}</label>
-</button>
+  {label}
+</label>
 
 <style>
   .radio {
     display: flex;
-    text-align: start;
     gap: 10px;
+    font-size: 1rem;
+    text-align: start;
   }
 
   .radio-icon {
@@ -67,13 +68,13 @@
     display: none;
   }
 
-  /* .icon-checked,
+  .icon-checked,
   .icon-unchecked {
     position: absolute;
     top: 0;
     left: 0;
-    font-size: 16px;
-  } */
+    font-size: 24px;
+  }
 
   .icon-checked {
     color: var(--fg-1);
@@ -81,14 +82,5 @@
 
   .icon-unchecked {
     color: var(--fg-2);
-  }
-
-  label {
-    font-size: 0.875rem;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    cursor: pointer;
   }
 </style>

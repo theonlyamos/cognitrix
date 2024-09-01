@@ -5,12 +5,10 @@
   export let team: TeamInterface;
 </script>
 
-// src/lib/TeamCard.svelte
-<div class="team-card">
+<a href="/teams/{team.id}" use:link class="card team-card">
   <h3>{team.name}</h3>
   <p>Agents: {team.agent_ids.length}</p>
-  <a href="/teams/{team.id}" use:link class="btn">View Team</a>
-</div>
+</a>
 
 <style>
   .team-card {

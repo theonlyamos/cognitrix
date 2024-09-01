@@ -1,10 +1,10 @@
 import { writable } from 'svelte/store';
-import { BACKEND_URI } from './utils';
+import { API_BACKEND_URI } from './utils';
 import type { SSEMessage, SSEState } from './interfaces';
 
-const sseUrl = new URL(BACKEND_URI + '/agents/sse')
-const chatUrl = new URL(BACKEND_URI + '/agents/chat')
-const websocketUrl = new URL(BACKEND_URI.replace('http', 'ws')).origin + '/ws';
+const sseUrl = new URL(API_BACKEND_URI + '/agents/sse')
+const chatUrl = new URL(API_BACKEND_URI + '/agents/chat')
+const websocketUrl = new URL(API_BACKEND_URI.replace('http', 'ws')).origin + '/ws';
 
 function createWebSocketStore() {
   const { subscribe, set } = writable<any>(null);

@@ -13,8 +13,6 @@
     ToolInterface,
     AgentDetailInterface,
   } from "../common/interfaces";
-  import { getAllTasks } from "../common/utils";
-  import type { TaskInterface } from "../common/interfaces";
   import GenerativeIcon from "../assets/ai-curved-star-icon-multiple.svg";
   import Checkbox from "../lib/Checkbox.svelte";
   import Switch from "../lib/Switch.svelte";
@@ -22,7 +20,6 @@
   import { webSocketStore } from "../common/stores";
   import type { Unsubscriber } from "svelte/motion";
   import { onDestroy, onMount } from "svelte";
-  import Tasks from "./Tasks.svelte";
 
   export let task_id: string = "";
   let agents: AgentDetailInterface[] = [];

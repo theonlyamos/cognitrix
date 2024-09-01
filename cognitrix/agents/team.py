@@ -4,6 +4,7 @@ import uuid
 import logging
 from typing import List, Optional, Self, Dict
 from pydantic import BaseModel, Field
+from datetime import datetime
 import aiofiles
 
 from cognitrix.agents.base import Agent
@@ -18,8 +19,26 @@ class Team(BaseModel):
     agent_ids: List[str] = Field(default_factory=list)
     """List of agent IDs in the team"""
     
+    team_leader_id: Optional[str] = None
+    """ID of the team leader agent"""
+    
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """Unique id for the team"""
+    
+    description: Optional[str] = Field(default=None)
+    """Brief description of the team's purpose or role"""
+
+    created_at: str = Field(default=datetime.now().strftime("%a %b %d %Y %H:%M:%S"))
+    """Timestamp of when the team was created"""
+
+    updated_at: str = Field(default=datetime.now().strftime("%a %b %d %Y %H:%M:%S"))
+    """Timestamp of when the team was last modified"""
+
+    tags: List[str] = Field(default_factory=list)
+    """List of tags or categories for the team"""
+
+    max_size: Optional[int] = Field(default=None)
+    """Maximum number of agents allowed in the team (optional)"""
     
     class Config:
         arbitrary_types_allowed = True
@@ -49,13 +68,13 @@ class Team(BaseModel):
             return None
 
     @classmethod
-    async def list_teams(cls) -> Dict[str, Self]:
+    async def list_teams(cls) -> List[Self]:
         try:
             teams = await cls._load_teams_from_file()
-            return {team_id: cls(**team_data) for team_id, team_data in teams.items()}
+            return [cls(**team_data) for team_data in teams.values()]
         except Exception as e:
             logger.exception(f"Error listing teams: {str(e)}")
-            return {}
+            return []
 
     @classmethod
     async def get(cls, id_or_name: str) -> Optional[Self]:
@@ -68,6 +87,7 @@ class Team(BaseModel):
 
     async def save(self):
         """Save current team"""
+        self.last_modified = datetime.now().strftime("%a %b %d %Y %H:%M:%S")
         teams = await self._load_teams_from_file()
         teams[self.id] = self.dict()
         await self._save_teams_to_file(teams)
@@ -92,9 +112,15 @@ class Team(BaseModel):
     async def agents(self) -> List[Agent]:
         """Load and return the agents associated with this team"""
         return [agent for agent in await Agent.list_agents() if agent.id in self.agent_ids]
+    
+    async def team_leader(self) -> Optional[Agent]:
+        """Load and return the team leader agent"""
+        return await Agent.get(self.team_leader_id)
 
     def add_agent(self, agent_id: str):
         """Add an agent ID to the team"""
+        if self.max_size and len(self.agent_ids) >= self.max_size:
+            raise ValueError(f"Team has reached its maximum size of {self.max_size}")
         if agent_id not in self.agent_ids:
             self.agent_ids.append(agent_id)
 

@@ -18,7 +18,7 @@ FRONTEND_STATIC_DIR = FRONTEND_BUILD_DIR.joinpath('assets')
 async def configure():
     COGNITRIX_WORKDIR.mkdir(exist_ok=True)
     
-    files_to_create = [TASKS_FILE, AGENTS_FILE, CONFIG_FILE, SESSIONS_FILE]
+    files_to_create = [TASKS_FILE, AGENTS_FILE, CONFIG_FILE, SESSIONS_FILE, TEAMS_FILE]
     
     async def create_file(file_path):
         if not file_path.exists():

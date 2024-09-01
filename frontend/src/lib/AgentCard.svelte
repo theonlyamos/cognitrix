@@ -17,7 +17,7 @@
 <a
   href={`/agents/${agent.id}`}
   use:link
-  class="agent-card"
+  class="card agent-card"
   id={`agent-${agent.id}`}
   data-id={agent.id}
 >

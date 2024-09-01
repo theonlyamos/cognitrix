@@ -103,4 +103,9 @@ export interface TeamInterface {
     id?: string;
     name: string;
     agent_ids: string[];
+    description: string;
+    team_leader_id?: string;
+    created_at?: string;
+    updated_at?: string;
+
 }

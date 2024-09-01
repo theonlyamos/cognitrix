@@ -21,6 +21,7 @@
   import { webSocketStore } from "../common/stores";
   import type { Unsubscriber } from "svelte/motion";
   import { onDestroy, onMount } from "svelte";
+  import Modal from "../lib/Modal.svelte";
 
   export let agent_id: string = "";
   let agent: AgentDetailInterface = {
@@ -177,6 +178,16 @@
   // }
 </script>
 
+<Modal
+  isOpen={true}
+  type="confirm"
+  action={() => console.log("Confirmed!")}
+  actionLabel="Yes, do it"
+  size="small"
+  appearance="bordered"
+>
+  Are you sure you want to proceed?
+</Modal>
 {#if agent_id}
   {#await loadAgent(agent_id)}
     <div class="container">
@@ -191,7 +202,7 @@
     <div style="margin-right: auto; display: flex; gap: 10px;">
       <button class="btn">
         <i class="fa-solid fa-tools fa-fw"></i>
-        <span>Task</span>
+        <span>Assign Task</span>
       </button>
       <button on:click={chatWithAgent} class="btn">
         <i class="fa-regular fa-comments fa-fw"></i>

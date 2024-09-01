@@ -16,9 +16,9 @@
     }
   };
 
-  onMount(async () => {
-    await loadTeams();
-  });
+  //   onMount(async () => {
+  //     await loadTeams();
+  //   });
 </script>
 
 {#await loadTeams()}
