@@ -54,18 +54,24 @@ class Tool(BaseModel):
     @staticmethod
     def get_tools_by_category(category: str):
         """Retrieve all tools by category"""
+        tools: list[Tool] = []
         try:
+            if category is 'all':
+                return Tool.list_all_tools()
+            
             module = __import__(__package__, fromlist=['__init__'])  # type: ignore
-            tools_by_category = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool) and f[1].category == category]
-            class_tools_by_category = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool'  and isinstance(f[1](), Tool) and f[1]().category == category]
-            tools_by_category.extend(class_tools_by_category)
-            return tools_by_category
+            tools_by_category: list[Tool] = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool) and f[1].category == category]
+            class_tools_by_category: list[Tool] = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool'  and isinstance(f[1](), Tool) and f[1]().category == category]
+            tools.extend(tools_by_category)
+            tools.extend(class_tools_by_category)
+            
+            return tools
         except Exception as e:
             logging.exception(e)
-            return []
+            return tools
     
     @classmethod
-    def get_by_name(cls, name: str)-> Optional[Self]:
+    def get_by_name(cls, name: str)-> Optional['Tool']:
         """Dynamically load tool by name"""
         try:
             module = __import__(__package__, fromlist=[name]) # type: ignore
@@ -73,6 +79,7 @@ class Tool(BaseModel):
             class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
             tools.extend(class_tools)
             tool = next((t for t in tools if t.name.lower() == name.lower()), None)
+            
             return tool
         except IndexError:
             return None

@@ -772,7 +772,7 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
             
         sub_agent = await Agent.create_agent(
             name=name,
-            description=description,
+            system_prompt=description,
             llm=agent_llm,
             is_sub_agent=True,
             parent_id=parent.id,

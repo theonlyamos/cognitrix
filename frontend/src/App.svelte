@@ -9,38 +9,43 @@
   import TaskPage from "./routes/TaskPage.svelte";
   import Teams from "./routes/Teams.svelte";
   import TeamPage from "./routes/TeamPage.svelte";
-  // import { sseStore } from './common/stores';
-  import { webSocketStore } from "./common/stores";
+  import Signup from "./routes/Signup.svelte";
+  import Login from "./routes/Login.svelte";
+  import { webSocketStore, userStore } from "./common/stores";
+  import { onMount } from "svelte";
 
-  webSocketStore.connect();
+  let user: any;
+
+  userStore.subscribe((value) => {
+    user = value;
+  });
+
+  onMount(() => {
+    userStore.checkAuth();
+    webSocketStore.connect();
+  });
 </script>
 
 <Router>
   <div class="container">
-    <Sidebar />
+    {#if user}
+      <Sidebar />
+    {/if}
     <Container>
-      <Route path="/" component={Home} />
-      <Route path="/:session_id" let:params>
-        <Home session_id={params?.session_id} />
-      </Route>
-      <Route path="/c/:agent_id" let:params>
-        <Home agent_id={params?.agent_id} />
-      </Route>
+      <Route path="/" component={user ? Home : Login} />
+      <Route path="/:session_id" component={Home} />
+      <Route path="/c/:agent_id" component={Home} />
       <Route path="/agents" component={Agents} />
       <Route path="/agents/new" component={AgentPage} />
-      <Route path="/agents/:agent_id" let:params>
-        <AgentPage agent_id={params?.agent_id} />
-      </Route>
+      <Route path="/agents/:agent_id" component={AgentPage} />
       <Route path="/tasks" component={Tasks} />
       <Route path="/tasks/new" component={TaskPage} />
-      <Route path="/tasks/:task_id" let:params>
-        <TaskPage task_id={params?.task_id} />
-      </Route>
+      <Route path="/tasks/:task_id" component={TaskPage} />
       <Route path="/teams" component={Teams} />
       <Route path="/teams/new" component={TeamPage} />
-      <Route path="/teams/:team_id" let:params>
-        <TeamPage team_id={params?.team_id} />
-      </Route>
+      <Route path="/teams/:team_id" component={TeamPage} />
+      <Route path="/signup" component={Signup} />
+      <Route path="/login" component={Login} />
     </Container>
   </div>
 </Router>
@@ -48,10 +53,8 @@
 <style>
   .container {
     position: relative;
-    /* margin: 0 auto; */
     display: flex;
     justify-content: space-between;
-    /* border-radius: 25px; */
     gap: 20px;
   }
 </style>

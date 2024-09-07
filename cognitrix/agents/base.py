@@ -473,42 +473,43 @@ class Agent(BaseModel):
             await file.write(json.dumps(agents, indent=4))
 
     @classmethod
-    async def create_agent(cls, name: str = '', description: str = '', tools: List[Tool] = [],
-                     llm: Optional[LLM] = None, is_sub_agent: bool = False, parent_id=None) -> Optional[Self]:
+    async def create_agent(cls, name: str, system_prompt: str, provider: str = 'groq', 
+                           model: Optional[str] = '', temperature: float = 0.0,  tools: List[str] = [], 
+                           is_sub_agent: bool = False, parent_id=None,
+                           ephemeral: bool = False) -> Optional[Self]:
         try:
             name = name or input("\n[Enter agent name]: ")
-
-            while not llm:
-                llms = LLM.list_llms()
-                llms_str = "\nAvailable LLMs:"
-                for index, llm_l in enumerate(llms):
-                    llms_str += (f"\n[{index}] {llm_l.__name__}")
-                print(llms_str)
-                
-                agent_llm = int(input("\n[Select LLM]: "))
-                loaded_llm = llms[agent_llm]
-                
-                if loaded_llm:
-                    llm = loaded_llm()
-                    if llm:
-                        llm.model = input(f"\nEnter model name [{llm.model}]: ") or llm.model
-                        temp = input(f"\nEnter model temperature [{llm.temperature}]: ")
-                        llm.temperature = float(temp) if temp else llm.temperature
-
+            llm = LLM.load_llm(provider)
+            
             if not llm:
                 raise Exception('Error loading LLM')
-                
-            description = description or input("\n[Enter agent system prompt]: ")
             
-            new_agent = cls(name=name, llm=llm, tools=tools, is_sub_agent=is_sub_agent, parent_id=parent_id)
+            if model:
+                llm.model = model
+            if temperature:
+                llm.temperature = temperature
+
+            agent_tools = []
+            if 'all' in tools:
+                agent_tools = Tool.list_all_tools()
+            else:
+                loaded_tools = []
+                for cat in tools:
+                    loaded_tools = Tool.get_tools_by_category(cat.strip().lower())
+                    
+                    tool_by_name = Tool.get_by_name(cat.strip().lower())
+
+                    if tool_by_name:
+                        loaded_tools.append(tool_by_name)
+                    agent_tools.extend(loaded_tools)
             
-            if description:
-                new_agent.system_prompt = description
+            new_agent = cls(name=name, llm=llm, system_prompt=system_prompt, tools=agent_tools, is_sub_agent=is_sub_agent, parent_id=parent_id) # type: ignore
 
-            agents = await cls._load_agents_from_file()
-            agents[new_agent.id] = new_agent.dict()
+            if not ephemeral:
+                agents = await cls._load_agents_from_file()
+                agents[new_agent.id] = new_agent.dict()
 
-            await cls._save_agents_to_file(agents)
+                await cls._save_agents_to_file(agents)
 
             return new_agent
 

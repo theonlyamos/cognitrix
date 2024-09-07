@@ -1,8 +1,9 @@
+import asyncio
 from cognitrix.llms.base import LLM
 from cognitrix.utils import image_to_base64
-from typing import Any
+from typing import Any, Dict, List
 from dotenv import load_dotenv
-from anthropic import AsyncAnthropic as AnthropicLLM
+from anthropic import AnthropicError, AsyncAnthropic as AnthropicLLM
 from cognitrix.llms.base import LLM, LLMResponse
 import logging
 import sys
@@ -98,7 +99,7 @@ class Anthropic(LLM):
             
         return messages
 
-    async def __call__(self, query: dict, **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
         """Generates a response to a query using the Claude API.
 
         Args:
@@ -108,20 +109,29 @@ class Anthropic(LLM):
         Returns:
             str|None: A string containing the generated response.
         """
-
-        client = AnthropicLLM(api_key=self.api_key)
-        stream = await client.messages.create(
+        try:
+            client = AnthropicLLM(api_key=self.api_key)
+            stream = await client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
-            system=self.system_prompt,
+            system=system_prompt,
             messages=self.format_query(query),
             stream=True
-        )
-        
-        response = LLMResponse()
-        
-        async for event in stream:
-            if event.type == 'content_block_delta':
-                response.add_chunk(event.delta.text)
-                yield response
+            )
+            
+            response = LLMResponse()
+            
+            async for event in stream:
+                if event.type == 'content_block_delta':
+                    response.add_chunk(event.delta.text)
+                    yield response
+        except AnthropicError as e:
+            logger.error(f"Anthropic API error: {str(e)}")
+            yield LLMResponse(llm_response=f"Error: Anthropic API encountered an issue - {str(e)}")
+        except asyncio.TimeoutError:
+            logger.error("Request to Anthropic API timed out")
+            yield LLMResponse(llm_response="Error: Request to Anthropic timed out. Please try again later.")
+        except Exception as e:
+            logger.exception(f"Unexpected error in AnthropicLLM __call__ method: {str(e)}")
+            yield LLMResponse(llm_response=f"An unexpected error occurred in AnthropicLLM: {str(e)}")

@@ -10,4 +10,4 @@ from cognitrix.tools.misc import (
     wikipedia
 )
 
-from cognitrix.tools.python import PythonREPL
+from cognitrix.tools.python import PythonREPL as Python

@@ -1,5 +1,6 @@
 from cognitrix.llms import OpenAI
 import os
+import asyncio
 
 class MindsDB(OpenAI):
     """A class for interacting with the MindsDB API."""

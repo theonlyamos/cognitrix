@@ -4,6 +4,8 @@ from typing import Any, List, Dict, Optional, TypeAlias, TypedDict
 from openai import OpenAI
 import logging
 import inspect
+import asyncio
+from openai import OpenAIError
 
 from cognitrix.utils import xml_to_dict, image_to_base64
 from cognitrix.tools.base import Tool
@@ -34,7 +36,7 @@ class LLMResponse:
         self.before: Optional[str] = None
         self.after: Optional[str] = None
 
-        # self.parse_llm_response()
+        self.parse_llm_response()
     
     def add_chunk(self, chunk):
         self.current_chunk = chunk
@@ -193,7 +195,7 @@ class LLM(BaseModel):
         try:
             provider = provider.lower()
             module = __import__(str(__package__), fromlist=[provider])
-            llm = next((f[1] for f in inspect.getmembers(module, inspect.isclass) if (len(f) and f[0].lower() == provider)), None)
+            llm: type[LLM] | None = next((f[1] for f in inspect.getmembers(module, inspect.isclass) if (len(f) and f[0].lower() == provider)), None)
             
             return llm
         except Exception as e:
@@ -211,26 +213,35 @@ class LLM(BaseModel):
         Returns:
             A string containing the generated response.
         """
-
-        if not self.client:
-            self.client = OpenAI(api_key=self.api_key)
-            if self.base_url:
-                self.client.base_url = self.base_url
+        try:
+            if not self.client:
+                self.client = OpenAI(api_key=self.api_key)
+                if self.base_url:
+                    self.client.base_url = self.base_url
             
-        formatted_messages = self.format_query(query, chat_history)
-        
-        stream = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "user", "content": system_prompt},
-                *formatted_messages
-            ],
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stream=True,
-        )
-        response = LLMResponse()
-        for chunk in stream:
-            if chunk.choices[0].delta.content is not None:
-                response.add_chunk(chunk.choices[0].delta.content)
-                yield response
+            formatted_messages = self.format_query(query, chat_history)
+            
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "user", "content": system_prompt},
+                    *formatted_messages
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=True,
+            )
+            response = LLMResponse()
+            async for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    response.add_chunk(chunk.choices[0].delta.content)
+                    yield response
+        except OpenAIError as e:
+            logger.error(f"OpenAI API error: {str(e)}")
+            yield LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")
+        except asyncio.TimeoutError:
+            logger.error("Request to OpenAI API timed out")
+            yield LLMResponse(llm_response="Error: Request timed out. Please try again later.")
+        except Exception as e:
+            logger.exception(f"Unexpected error in LLM __call__ method: {str(e)}")
+            yield LLMResponse(llm_response=f"An unexpected error occurred: {str(e)}")

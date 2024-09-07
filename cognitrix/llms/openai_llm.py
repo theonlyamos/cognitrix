@@ -48,8 +48,5 @@ class OpenAI(LLM):
     supports_system_prompt: bool = True
     """Flag to indicate if system prompt should be supported"""
     
-    system_prompt: str = ""
-    """System prompt to prepend to queries"""
-    
     is_multimodal: bool = True
     """Whether the model is multimodal."""

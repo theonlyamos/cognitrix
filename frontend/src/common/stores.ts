@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
-import { API_BACKEND_URI } from './utils';
-import type { SSEMessage, SSEState } from './interfaces';
+import { API_BACKEND_URI } from './constants';
+import type { SSEMessage, SSEState, User } from './interfaces';
 
 const sseUrl = new URL(API_BACKEND_URI + '/agents/sse')
 const chatUrl = new URL(API_BACKEND_URI + '/agents/chat')
@@ -117,5 +117,45 @@ function createSSEStore() {
   };
 }
 
+function createUserStore() {
+  const { subscribe, set, update } = writable<User | null>(null);
+
+  return {
+    subscribe,
+    login: (user: User, token: string) => {
+      localStorage.setItem('token', token);
+      set(user);
+    },
+    logout: () => {
+      localStorage.removeItem('token');
+      set(null);
+    },
+    checkAuth: async () => {
+      const token = localStorage.getItem('token');
+      if (token) {
+        try {
+          const response = await fetch(`${API_BACKEND_URI}/auth/me`, {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          if (response.ok) {
+            const user: User = await response.json();
+            set(user);
+          } else {
+            localStorage.removeItem('token');
+            set(null);
+          }
+        } catch (error) {
+          console.error('Error checking authentication:', error);
+          localStorage.removeItem('token');
+          set(null);
+        }
+      }
+    }
+  };
+}
+
 export const webSocketStore = createWebSocketStore();
 export const sseStore = createSSEStore();
+export const userStore = createUserStore();

@@ -8,6 +8,8 @@ import logging
 import sys
 import os
 import io
+import asyncio
+from google.api_core import exceptions as google_exceptions
 
 from cognitrix.utils import image_to_base64
 
@@ -32,7 +34,7 @@ class Google(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    model: str = 'gemini-1.5-pro-exp-0801'
+    model: str = 'gemini-1.5-pro-exp-0827'
     """model endpoint to use""" 
     
     temperature: float = 0.2
@@ -75,39 +77,42 @@ class Google(LLM):
         return messages
 
     async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
-        """Generates a response to a query using the Gemini API.
+        try:
+            genai.configure(api_key=self.api_key)
 
-        Args:
-        query: The query to generate a response to.
-        kwds: Additional keyword arguments to pass to the Gemini API.
-
-        Returns:
-        A string containing the generated response.
-        """
-        genai.configure(api_key=self.api_key)
-
-        generation_config = GenerationConfig(
-            temperature=self.temperature,
-            top_p=0.95,
-            top_k=64,
-            max_output_tokens=self.max_tokens
-        )
-        
-        contents = self.format_query(query, system_prompt, chat_history)
-
-        if not self.client:
-            self.client = genai.GenerativeModel(model_name=self.model, generation_config=generation_config)
-        
-        response = LLMResponse()
-        
-        stream =  self.client.generate_content(
-            contents,
-            stream=True
-        )
-        for chunk in stream:
-            response.add_chunk(chunk.text)
-            yield response
+            generation_config = GenerationConfig(
+                temperature=self.temperature,
+                top_p=0.95,
+                top_k=64,
+                max_output_tokens=self.max_tokens
+            )
             
-        # response.parse_llm_response()
-        # yield response
+            contents = self.format_query(query, system_prompt, chat_history)
+
+            if not self.client:
+                self.client = genai.GenerativeModel(model_name=self.model, generation_config=generation_config)
+            
+            response = LLMResponse()
+            
+            stream =  self.client.generate_content(
+                contents,
+                stream=True
+            )
+            
+            for chunk in stream:
+                response.add_chunk(chunk.text)
+                yield response
+            
+            # response.parse_llm_response()
+            # yield response
+
+        except google_exceptions.GoogleAPIError as e:
+            logger.error(f"Google API error: {str(e)}")
+            yield LLMResponse(llm_response=f"Error: Google API encountered an issue - {str(e)}")
+        except asyncio.TimeoutError:
+            logger.error("Request to Google API timed out")
+            yield LLMResponse(llm_response="Error: Request to Google timed out. Please try again later.")
+        except Exception as e:
+            logger.exception(f"Unexpected error in GoogleLLM __call__ method: {str(e)}")
+            yield LLMResponse(llm_response=f"An unexpected error occurred in GoogleLLM: {str(e)}")
 

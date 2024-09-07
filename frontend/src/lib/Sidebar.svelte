@@ -3,6 +3,8 @@
   import HomeIcon from "../assets/home.svg";
   import AgentsIcon from "../assets/agent.svg";
   import { link, useLocation } from "svelte-routing";
+  import { userStore } from "../common/stores";
+  import { navigate } from "svelte-routing/src/history";
 
   let page: string = window.location.pathname;
   let theme: string;
@@ -53,6 +55,11 @@
   });
 
   onDestroy(locationSub);
+
+  function handleLogout() {
+    userStore.logout();
+    navigate("/login");
+  }
 </script>
 
 <aside>
@@ -82,6 +89,8 @@
       <i class="fas fa-sun"></i>
     {/if}
   </button>
+
+  <button on:click={handleLogout}>Logout</button>
 </aside>
 
 <style>

@@ -109,3 +109,9 @@ export interface TeamInterface {
     updated_at?: string;
 
 }
+
+export interface User {
+    username: string;
+    email: string;
+    // Add any other user properties here
+  }

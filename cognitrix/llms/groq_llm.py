@@ -1,9 +1,6 @@
-from groq import Groq as GroqLLM
-from cognitrix.llms.base import LLM, LLMResponse
-from typing import Any, Dict, List, Optional
+from cognitrix.llms.base import LLM
 from dotenv import load_dotenv
 import logging
-import sys
 import os
 
 from cognitrix.utils import image_to_base64

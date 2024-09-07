@@ -4,10 +4,7 @@ import type {
     TaskDetailInterface, 
     TeamInterface 
 } from "./interfaces";
-
-
-const API_VERSION = 'v1';
-export const API_BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL}/api/${API_VERSION}`
+import { API_BACKEND_URI } from './constants';
 
 export const sendChatMessage = async(query: String): Promise<string> => {
     const response = await fetch(`${API_BACKEND_URI}/?query=${query}`)

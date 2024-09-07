@@ -1,6 +1,8 @@
+import asyncio
+import aiohttp
 from cognitrix.llms.base import LLM, LLMResponse
 from cognitrix.utils import image_to_base64
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from ollama import Client
 import logging
@@ -56,7 +58,7 @@ class Ollama(LLM):
     system_prompt: str = ""
     """System prompt to prepend to queries"""
     
-    def format_query(self, message: dict[str, str]) -> list:
+    def format_query(self, message: dict[str, str], chat_history: List[Dict[str, str]] = []) -> list:
         """Formats a message for the Claude API.
 
         Args:
@@ -66,7 +68,7 @@ class Ollama(LLM):
             list: A list of formatted messages for the Claude API.
         """
         
-        formatted_message = [*self.chat_history, message]
+        formatted_message = [*chat_history, message]
         
         messages = []
         
@@ -77,7 +79,7 @@ class Ollama(LLM):
                     "content": fm['message']
                 })
             else:
-                base64_image = image_to_base64(fm['image'])
+                base64_image = image_to_base64(fm['image']) # type: ignore
                 self.model = self.vision_model
                 new_message = {
                     "role": fm['role'].lower(),
@@ -88,7 +90,7 @@ class Ollama(LLM):
             
         return messages
 
-    def __call__(self, query: dict, **kwds: dict):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -98,19 +100,31 @@ class Ollama(LLM):
         Returns:
             A string containing the generated response.
         """
-        
-        if not self.client:
-            self.client = Client('http://localhost:11434')
-        
-        formatted_messages = self.format_query(query)
-        
-        response = self.client.chat(
-            model=self.model,
-            messages=[
-                {"role": "user", "content": self.system_prompt},
-                *formatted_messages
-            ],
-            stream=False,
-        )
-        
-        return LLMResponse(response['message']['content'])                        #type: ignore
+        try:
+            if not self.client:
+                self.client = Client('http://localhost:11434')
+            
+            formatted_messages = self.format_query(query, chat_history)
+            
+            response = self.client.chat(
+                model=self.model,
+                messages=[
+                    {"role": "user", "content": system_prompt},
+                    *formatted_messages
+                ],
+                stream=False,
+            )
+            
+            response = LLMResponse()
+            response.add_chunk(response['message']['content'])                        #type: ignore
+            yield response
+
+        except aiohttp.ClientError as e:
+            logger.error(f"Ollama API error: {str(e)}")
+            yield LLMResponse(llm_response=f"Error: Ollama API encountered an issue - {str(e)}")
+        except asyncio.TimeoutError:
+            logger.error("Request to Ollama API timed out")
+            yield LLMResponse(llm_response="Error: Request to Ollama timed out. Please try again later.")
+        except Exception as e:
+            logger.exception(f"Unexpected error in OllamaLLM __call__ method: {str(e)}")
+            yield LLMResponse(llm_response=f"An unexpected error occurred in OllamaLLM: {str(e)}")

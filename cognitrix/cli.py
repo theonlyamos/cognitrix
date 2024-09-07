@@ -1,4 +1,3 @@
-import json
 import os
 import sys
 import asyncio
@@ -6,7 +5,6 @@ import logging
 import argparse
 from pathlib import Path
 from argparse import Namespace
-from typing import Literal, Optional
 from fastapi import Request
 from rich import print
 from functools import lru_cache
@@ -53,12 +51,43 @@ def start_web_ui(agent: Agent | AIAssistant):
     uvicorn.run(app, forwarded_allow_ips="*")
     
 def add_agent():
-    new_agent = asyncio.run(Agent.create_agent()) # type: ignore
-    if new_agent:
-        print(f"\nAgent **{new_agent.name}** added successfully!")
-    else:
-        print("\nError creating agent")
-    sys.exit()
+    name = None
+    provider = None
+    system_prompt = None
+    
+    try:
+        while not name:
+            name = input("Enter agent name: ")
+            while not provider:
+                llms = LLM.list_llms()
+                llms_str = "\nAvailable LLMs:"
+                for index, llm_l in enumerate(llms):
+                    llms_str += (f"\n[{index}] {llm_l.__name__}")
+                print(llms_str)
+                
+                agent_llm = int(input("\n[Select LLM]: "))
+                loaded_llm = llms[agent_llm]
+                
+                if loaded_llm:
+                    provider = loaded_llm()
+                    if provider:
+                        provider.model = input(f"\nEnter model name [{provider.model}]: ") or provider.model
+                        temp = input(f"\nEnter model temperature [{provider.temperature}]: ")
+                        provider.temperature = float(temp) if temp else provider.temperature
+
+            while not system_prompt:
+                system_prompt = input("\n[Enter agent system prompt]: ")
+                
+            new_agent = asyncio.run(Agent.create_agent(name, system_prompt=system_prompt, provider=provider, is_sub_agent=True))
+            
+            if not new_agent:
+                raise Exception("Error creating agent")
+            
+            print(f"\nAgent **{new_agent.name}** added successfully!")
+    except Exception as e:
+        logger.error(str(e))
+    finally:
+        sys.exit()
     
 def delete_agent(agent_name_or_index: str):
     if agent_name_or_index:
@@ -114,8 +143,6 @@ def list_providers():
         
 @lru_cache(maxsize=None)
 def get_tools(category='all'):
-    if category == 'all':
-        return Tool.list_all_tools()
     return Tool.get_tools_by_category(category)
 
 def list_tools(category='all'):
@@ -195,7 +222,7 @@ async def initialize(session: Session, agent: Agent|AIAssistant, stream: bool = 
                 break
 
             command_handlers = {
-                'add agent': lambda: asyncio.run(Agent.create_agent(is_sub_agent=True, parent_id=agent.id)),
+                'add agent': lambda: add_agent(),
                 'list tools': lambda: print("\nAvailable Tools:\n" + "\n".join(f"[{i}] {tool.name}" for i, tool in enumerate(agent.tools))),
                 'list agents': lambda: print("\nAvailable Agents:\n" + "\n".join(f"[{i}] {a.name}" for i, a in enumerate(asyncio.run(Agent.list_agents())) if a.parent_id == agent.id)),
                 'show history': lambda: print("\nChat History:\n" + "\n".join(f"[{chat['role']}]: {chat['message']}" for chat in session.chat))
@@ -227,75 +254,51 @@ def start(args: Namespace):
             asyncio.run(list_sessions())
             sys.exit()
         
-        provider = None
-        if args.provider:
-            provider = LLM.load_llm(provider=args.provider)
-        provider = provider() if provider else Clarifai()
+        assistant = None
         
-        
-        if args.api_key:
-            provider.api_key = args.api_key
-        if args.model:
-            provider.model = args.model
-        
-        provider.temperature = args.temperature
-        if args.system_prompt:
-            provider.system_prompt = args.system_prompt
-        # llm = TogetherLLM()
-        loaded_agent = None
         if args.agent:
-            loaded_agent = asyncio.run(Agent.load_agent(args.agent))
-            
-            if loaded_agent:
-                assistant = loaded_agent
-            else:
-                # assistant_description = "You are an ai assistant. Your main goal is to help the user complete tasks"
-                assistant = asyncio.run(AIAssistant.create_agent(name=args.agent, llm=provider, description=ASSISTANT_SYSTEM_PROMPT))
-
-        else:
-            assistant = AIAssistant(llm=provider, name=args.name, verbose=args.verbose)
+            assistant = asyncio.run(Agent.load_agent(args.agent))
         
-        if assistant:
-            assistant.name = args.name
-
-            if args.provider:
-                assistant.llm = provider
-            if 'all' in args.load_tools:
-                assistant.tools = Tool.list_all_tools()
-            else:
-                tools = []
-                for cat in args.load_tools:
-                    loaded_tools = Tool.get_tools_by_category(cat.strip().lower())
-                    
-                    tool_by_name = Tool.get_by_name(cat.strip().lower())
-
-                    if tool_by_name:
-                        loaded_tools.append(tool_by_name)
-                    tools.extend(loaded_tools)
-                
-                assistant.tools = tools
+        if not assistant:
+            assistant = asyncio.run(AIAssistant.create_agent(name=args.agent, provider=args.provider, model=args.model, temperature=args.temperature, system_prompt=ASSISTANT_SYSTEM_PROMPT))
             
-            session = asyncio.run(Session.get_by_agent_id(assistant.id))
-            if not session:
-                session = Session(agent_id=assistant.id)
+        if not assistant:
+            raise Exception("Agent not found")
+
+        if len(args.load_tools) and not len(assistant.tools):
+            tools = []
+            for cat in args.load_tools:
+                tools = get_tools(cat.strip().lower())
                 
-            if args.clear_history:
-                session.chat = []
-                asyncio.run(session.save())
+                tool_by_name = Tool.get_by_name(cat.strip().lower())
+
+                if tool_by_name:
+                    tools.append(tool_by_name)
+        
+            assistant.tools = tools
+        
+        session = asyncio.run(Session.get_by_agent_id(assistant.id))
+        if not session:
+            session = Session(agent_id=assistant.id)
+            
+        if args.clear_history:
+            session.chat = []
+            asyncio.run(session.save())
+            
+        assistant.verbose = args.verbose
+        assistant.formatted_system_prompt()
+            
+        asyncio.run(assistant.save())
+        
+        if args.generate:
+            asyncio.run(session(args.generate, assistant, streaming=args.stream))
                 
-            assistant.verbose = args.verbose
-            assistant.formatted_system_prompt()
-                
-            asyncio.run(assistant.save())
-            if args.generate:
-                asyncio.run(session(args.generate, assistant, streaming=args.stream))
-                    
-            elif args.ui.lower() == 'web':
-                start_worker()
-                start_web_ui(assistant)
-            else:
-                start_worker()
-                asyncio.run(initialize(session, assistant, stream=args.stream))
+        elif args.ui.lower() == 'web':
+            start_worker()
+            start_web_ui(assistant)
+        else:
+            start_worker()
+            asyncio.run(initialize(session, assistant, stream=args.stream))
     except KeyboardInterrupt:
         print("\nExiting...")
         sys.exit(1)            
@@ -303,7 +306,6 @@ def start(args: Namespace):
         logging.exception(e)
         parser.print_help()
         sys.exit(1)
-
 
 def get_arguments():
     global parser
@@ -324,7 +326,7 @@ def get_arguments():
         agents_parser.set_defaults(func=manage_tools)
 
         parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
-        parser.add_argument('--provider', default='', help='Set llm provider to use')
+        parser.add_argument('--provider', default='groq', help='Set llm provider to use')
         parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
         parser.add_argument('--agents', action='store_true', help='List all saved agents')
         parser.add_argument('--ui', default='cli', help='Determine preferred user interface')

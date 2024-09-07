@@ -1,7 +1,8 @@
+import asyncio
 from openai import OpenAI as OpenAILLM
 from cognitrix.llms.base import LLM, LLMResponse
 from cognitrix.utils import image_to_base64
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 import logging
 import sys
@@ -53,9 +54,6 @@ class Local(LLM):
     supports_system_prompt: bool = True
     """Flag to indicate if system prompt should be supported"""
     
-    system_prompt: str = ""
-    """System prompt to prepend to queries"""
-    
     def format_query(self, message: dict[str, str]) -> list:
         """Formats a message for the Claude API.
 
@@ -95,7 +93,7 @@ class Local(LLM):
             
         return messages
 
-    def __call__(self, query: dict, **kwds: dict):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -105,20 +103,32 @@ class Local(LLM):
         Returns:
             A string containing the generated response.
         """
-        
-        if not self.client:
-            self.client = OpenAILLM(base_url=self.base_url, api_key=self.api_key)
-        
-        formatted_messages = self.format_query(query)
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": self.system_prompt},
-                *formatted_messages
-            ],
-            temperature=self.temperature,
-            max_tokens=self.max_tokens
-        )
+        try:
+            if not self.client:
+                self.client = OpenAILLM(base_url=self.base_url, api_key=self.api_key)
             
-        return LLMResponse(response.choices[0].message.content)                   #type: ignore
+            formatted_messages = self.format_query(query)
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    *formatted_messages
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
+            )
+                
+            response = LLMResponse()
+            response.add_chunk(response.choices[0].message.content) # type: ignore
+            yield response
+        
+        except RuntimeError as e:
+            logger.error(f"Local LLM error: {str(e)}")
+            yield LLMResponse(llm_response=f"Error: Local LLM encountered an issue - {str(e)}")
+        except asyncio.TimeoutError:
+            logger.error("Local LLM processing timed out")
+            yield LLMResponse(llm_response="Error: Local LLM processing timed out. Please try again later.")
+        except Exception as e:
+            logger.exception(f"Unexpected error in LocalLLM __call__ method: {str(e)}")
+            yield LLMResponse(llm_response=f"An unexpected error occurred in LocalLLM: {str(e)}")#type: ignore

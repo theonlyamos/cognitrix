@@ -29,7 +29,7 @@ class PythonREPL(Tool):
     globals: Optional[Dict] = Field(default_factory=dict, alias="_globals")
     locals: Optional[Dict] = Field(default_factory=dict, alias="_locals")
     
-    name: str = "Python REPL"
+    name: str = "Python"
     category: str = "system"
     description: str = """Use this tool to execute python code.
     
@@ -54,8 +54,8 @@ class PythonREPL(Tool):
             sys.stdout = old_stdout
             queue.put(repr(e))
 
-    def run(self, command: str, timeout: Optional[int] = None) -> str:
-        """Run command with own globals/locals and returns anything printed.
+    def run(self, code: str, timeout: Optional[int] = None) -> str:
+        """Run code with own globals/locals and returns anything printed.
         Timeout after the specified number of seconds."""
 
         # Warn against dangers of PythonREPL
@@ -67,7 +67,7 @@ class PythonREPL(Tool):
         if timeout is not None:
             # create a Process
             p = multiprocessing.Process(
-                target=self.worker, args=(command, self.globals, self.locals, queue)
+                target=self.worker, args=(code, self.globals, self.locals, queue)
             )
 
             # start it
@@ -80,6 +80,6 @@ class PythonREPL(Tool):
                 p.terminate()
                 return "Execution timed out"
         else:
-            self.worker(command, self.globals, self.locals, queue)
+            self.worker(code, self.globals, self.locals, queue)
         # get the result from the worker function
         return queue.get()
