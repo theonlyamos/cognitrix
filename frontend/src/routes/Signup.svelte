@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { navigate } from "svelte-routing";
+  import { navigate, link } from "svelte-routing";
   import { API_BACKEND_URI } from "../common/constants";
 
-  let username = "";
+  let name = "";
   let email = "";
   let password = "";
   let confirmPassword = "";
@@ -20,7 +20,7 @@
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ name, email, password }),
       });
 
       if (response.ok) {
@@ -39,12 +39,18 @@
   <h1>Sign Up</h1>
   <form on:submit|preventDefault={handleSignup}>
     <div class="form-group">
-      <label for="username">Username</label>
-      <input type="text" id="username" bind:value={username} required />
+      <label for="name">Name</label>
+      <input type="text" id="name" bind:value={name} required />
     </div>
     <div class="form-group">
       <label for="email">Email</label>
-      <input type="email" id="email" bind:value={email} required />
+      <input
+        type="email"
+        id="email"
+        bind:value={email}
+        required
+        autocomplete="email"
+      />
     </div>
     <div class="form-group">
       <label for="password">Password</label>
@@ -64,7 +70,7 @@
     {/if}
     <button type="submit" class="btn">Sign Up</button>
   </form>
-  <p>Already have an account? <a href="/login">Log in</a></p>
+  <p>Already have an account? <a href="/login" use:link>Log in</a></p>
 </div>
 
 <style>

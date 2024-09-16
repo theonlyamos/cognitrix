@@ -1,31 +1,30 @@
+import os
 import asyncio
 import aiofiles
 from pathlib import Path
+from odbms import DBMS
+from dotenv import load_dotenv
+
+load_dotenv()
 
 VERSION = '0.2.5'
 API_VERSION = 'v1'
 COGNITRIX_WORKDIR = Path.home() / '.cognitrix'
 
-TASKS_FILE = COGNITRIX_WORKDIR / 'tasks.json'
-TEAMS_FILE = COGNITRIX_WORKDIR / 'teams.json'
-AGENTS_FILE = COGNITRIX_WORKDIR / 'agents.json'
-CONFIG_FILE = COGNITRIX_WORKDIR / 'config.json'
-SESSIONS_FILE = COGNITRIX_WORKDIR / 'sessions.json'
 BASE_DIR = Path(__file__).parent
 FRONTEND_BUILD_DIR = BASE_DIR.joinpath('..', 'frontend', 'dist')
 FRONTEND_STATIC_DIR = FRONTEND_BUILD_DIR.joinpath('assets')
 
-async def configure():
-    COGNITRIX_WORKDIR.mkdir(exist_ok=True)
-    
-    files_to_create = [TASKS_FILE, AGENTS_FILE, CONFIG_FILE, SESSIONS_FILE, TEAMS_FILE]
-    
-    async def create_file(file_path):
-        if not file_path.exists():
-            async with aiofiles.open(file_path, 'w') as file:
-                pass
+def initialize_database():
+    db_type = os.getenv('DB_TYPE', 'mongodb')
+    db_name = os.getenv('DB_NAME', 'cognitrix')
+    db_host = os.getenv('DB_HOST', 'localhost')
+    db_port = int(os.getenv('DB_PORT', 27017))
+    db_user = os.getenv('DB_USER', '')
+    db_password = os.getenv('DB_PASSWORD', '')
 
-    await asyncio.gather(*(create_file(file) for file in files_to_create))
+    DBMS.initialize(db_type, host=db_host, port=db_port, username=db_user, password=db_password, database=db_name) # type: ignore
+
 
 def run_configure():
-    asyncio.run(configure())
+    initialize_database()

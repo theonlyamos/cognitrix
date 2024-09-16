@@ -1,14 +1,14 @@
-import json
-from pydantic import BaseModel, Field
-from typing import Any, List, Dict, Optional, TypeAlias, TypedDict
+from odbms import Model
+from pydantic import Field
+from typing import Any, List, Dict, TypeAlias
 from openai import OpenAI
 import logging
 import inspect
 import asyncio
 from openai import OpenAIError
 
-from cognitrix.utils import xml_to_dict, image_to_base64
-from cognitrix.tools.base import Tool
+from cognitrix.utils import image_to_base64
+from cognitrix.utils.llm_response import LLMResponse
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -19,52 +19,7 @@ logger = logging.getLogger('cognitrix.log')
 
 LLMList: TypeAlias = List['LLM']
 
-class LLMResponse:
-    """Class to handle and separate LLM responses into text and tool calls."""
-    
-    def __init__(self, llm_response: Optional[str]=None):
-        self.chunks = []
-        self.llm_response = llm_response
-        self.current_chunk: str = ''
-        self.text: Optional[str] = None
-        self.result: Optional[str] = None
-        self.tool_calls: Optional[Dict[str, Any]] = None
-        self.artifacts: Optional[Dict[str, Any]] = None
-        self.observation: Optional[str] = None
-        self.thought: Optional[str] = None
-        self.type: Optional[str] = None
-        self.before: Optional[str] = None
-        self.after: Optional[str] = None
-
-        self.parse_llm_response()
-    
-    def add_chunk(self, chunk):
-        self.current_chunk = chunk
-        self.chunks.append(chunk)
-        self.parse_llm_response()
-
-    def parse_llm_response(self):
-        self.llm_response = ''.join(self.chunks)
-        response_data = xml_to_dict(self.llm_response)
-
-        try:
-            if isinstance(response_data, dict):
-                response = response_data['response']
-                if isinstance(response, dict):
-                    for key, value in response.items():
-                        if key == 'result':
-                            self.text = value
-                        setattr(self, key, value)
-
-                else:
-                    self.text = response
-
-        except Exception as e:
-            logger.exception(e)
-            self.text = str(response_data)
-            
-
-class LLM(BaseModel):
+class LLM(Model):
     """
     A class for representing a large language model.
 
@@ -111,7 +66,7 @@ class LLM(BaseModel):
     client: Any = None
     """The client object for the llm provider"""
     
-    def __init__(self, **data):
+    def __init__(self, *args, **data):
         super().__init__(**data)
         if not 'provider' in data.keys():
             self.provider = self.__class__.__name__
@@ -196,8 +151,9 @@ class LLM(BaseModel):
             provider = provider.lower()
             module = __import__(str(__package__), fromlist=[provider])
             llm: type[LLM] | None = next((f[1] for f in inspect.getmembers(module, inspect.isclass) if (len(f) and f[0].lower() == provider)), None)
-            
-            return llm
+            if not llm:
+                raise Exception(f"LLM {provider} not found")
+            return llm()
         except Exception as e:
             logging.exception(e)
             return None
@@ -232,7 +188,7 @@ class LLM(BaseModel):
                 stream=True,
             )
             response = LLMResponse()
-            async for chunk in stream:
+            for chunk in stream:
                 if chunk.choices[0].delta.content is not None:
                     response.add_chunk(chunk.choices[0].delta.content)
                     yield response

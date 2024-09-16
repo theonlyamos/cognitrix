@@ -13,11 +13,14 @@
   import Login from "./routes/Login.svelte";
   import { webSocketStore, userStore } from "./common/stores";
   import { onMount } from "svelte";
+  import ThemeToggle from "$lib/ThemeToggle.svelte";
+  import "./app.css";
 
   let user: any;
 
   userStore.subscribe((value) => {
     user = value;
+    console.log("User:", user);
   });
 
   onMount(() => {
@@ -29,23 +32,23 @@
 <Router>
   <div class="container">
     {#if user}
-      <Sidebar />
+      <Sidebar></Sidebar>
     {/if}
     <Container>
-      <Route path="/" component={user ? Home : Login} />
-      <Route path="/:session_id" component={Home} />
-      <Route path="/c/:agent_id" component={Home} />
-      <Route path="/agents" component={Agents} />
-      <Route path="/agents/new" component={AgentPage} />
-      <Route path="/agents/:agent_id" component={AgentPage} />
-      <Route path="/tasks" component={Tasks} />
-      <Route path="/tasks/new" component={TaskPage} />
-      <Route path="/tasks/:task_id" component={TaskPage} />
-      <Route path="/teams" component={Teams} />
-      <Route path="/teams/new" component={TeamPage} />
-      <Route path="/teams/:team_id" component={TeamPage} />
-      <Route path="/signup" component={Signup} />
-      <Route path="/login" component={Login} />
+      <Route path="/" component={user ? Home : Login}></Route>
+      <Route path="/:session_id" component={Home}></Route>
+      <Route path="/c/:agent_id" component={Home}></Route>
+      <Route path="/signup" component={Signup}></Route>
+      <Route path="/login" component={Login}></Route>
+      <Route path="/agents" component={Agents}></Route>
+      <Route path="/agents/new" component={AgentPage}></Route>
+      <Route path="/agents/:agent_id" component={AgentPage}></Route>
+      <Route path="/tasks" component={Tasks}></Route>
+      <Route path="/tasks/new" component={TaskPage}></Route>
+      <Route path="/tasks/:task_id" component={TaskPage}></Route>
+      <Route path="/teams" component={Teams}></Route>
+      <Route path="/teams/new" component={TeamPage}></Route>
+      <Route path="/teams/:team_id" component={TeamPage}></Route>
     </Container>
   </div>
 </Router>

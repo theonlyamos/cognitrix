@@ -1,17 +1,23 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from cognitrix.api.auth.routes import router as auth_router, get_current_user
+from cognitrix.api.routes.auth import auth_api as auth_router, get_current_user
+from cognitrix.config import initialize_database
 
 app = FastAPI()
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+# Initialize the database
+@app.on_event("startup")
+async def startup_event():
+    initialize_database()
 
 # Include the authentication routes
 app.include_router(auth_router, prefix="/auth", tags=["auth"])

@@ -10,7 +10,7 @@
   export let team_id: string = "";
   let team: TeamInterface = {
     name: "",
-    agent_ids: [],
+    assigned_agents: [],
     description: "",
     team_leader_id: "",
   };
@@ -20,7 +20,7 @@
   const loadTeam = async (team_id: string) => {
     try {
       team = (await getTeam(team_id)) as TeamInterface;
-      selectedAgents = [...team.agent_ids];
+      selectedAgents = [...team.assigned_agents];
     } catch (error) {
       console.log(error);
     }
@@ -28,7 +28,7 @@
 
   const handleTeamSubmit = async () => {
     try {
-      team.agent_ids = selectedAgents;
+      team.assigned_agents = selectedAgents;
       team = (await saveTeam(team)) as TeamInterface;
       if (team.id) team_id = team.id;
     } catch (error) {
@@ -73,7 +73,7 @@
 
   onMount(async () => {
     await loadAgents();
-    selectedAgents = [...team.agent_ids];
+    selectedAgents = [...team.assigned_agents];
   });
 
   $: if (team_id) {
@@ -81,7 +81,7 @@
   }
 
   $: {
-    team.agent_ids = selectedAgents;
+    team.assigned_agents = selectedAgents;
   }
 </script>
 
@@ -141,7 +141,7 @@
       <Accordion title="Team Leader" opened={true}>
         <div class="agents-list">
           {#each agents as agent (agent.id)}
-            {#if team.agent_ids.includes(agent.id)}
+            {#if team.assigned_agents.includes(agent.id)}
               <RadioItem
                 name="agents"
                 value={agent.id}

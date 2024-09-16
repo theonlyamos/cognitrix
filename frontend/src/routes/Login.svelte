@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { navigate } from "svelte-routing";
+  import { navigate, link } from "svelte-routing";
   import { API_BACKEND_URI } from "../common/constants";
   import { userStore } from "../common/stores";
 
-  let email = "";
+  let username = "";
   let password = "";
   let error = "";
 
@@ -14,16 +14,17 @@
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ username: email, password }),
+        body: JSON.stringify({ username, password }),
       });
 
       if (response.ok) {
         const data = await response.json();
+        console.log(data);
         userStore.login(data.user, data.access_token);
-        navigate("/");
+        // window.location.reload();
       } else {
         const data = await response.json();
-        error = data.detail || "Login failed";
+        error = "Login failed";
       }
     } catch (err) {
       error = "An error occurred during login";
@@ -36,7 +37,7 @@
   <form on:submit|preventDefault={handleLogin}>
     <div class="form-group">
       <label for="email">Email</label>
-      <input type="email" id="email" bind:value={email} required />
+      <input type="email" id="email" bind:value={username} required />
     </div>
     <div class="form-group">
       <label for="password">Password</label>
@@ -47,7 +48,7 @@
     {/if}
     <button type="submit" class="btn">Log In</button>
   </form>
-  <p>Don't have an account? <a href="/signup">Sign up</a></p>
+  <p>Don't have an account? <a href="/signup" use:link>Sign up</a></p>
 </div>
 
 <style>

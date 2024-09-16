@@ -17,7 +17,6 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-
 app.include_router(api_router)
 app.mount('/css', StaticFiles(directory=FRONTEND_BUILD_DIR / 'css', html=True),  name='static')
 app.mount('/assets', StaticFiles(directory=FRONTEND_BUILD_DIR / 'assets', html=True),  name='static')

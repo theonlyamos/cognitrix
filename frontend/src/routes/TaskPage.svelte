@@ -26,7 +26,7 @@
   let task: TaskDetailInterface = {
     title: "",
     description: "",
-    agent_ids: [],
+    assigned_agents: [],
     tools: [],
     autostart: false,
     status: "not-started",
@@ -178,7 +178,7 @@
     task.description = newTaskDescription;
   }
 
-  $: task.agent_ids = selectedAgents;
+  $: task.assigned_agents = selectedAgents;
 </script>
 
 {#if task_id}
@@ -263,7 +263,7 @@
             value={agent.id}
             label={agent.name}
             onChange={handleAgentsChange}
-            checked={task.agent_ids.includes(agent?.id)}
+            checked={task.assigned_agents.includes(agent?.id)}
           />
         {/each}
       </div>

@@ -15,7 +15,7 @@ from cognitrix.llms import (
     Cohere, Clarifai, LLM
 )
 
-from cognitrix.agents import AIAssistant, Agent
+from cognitrix.agents import  Agent
 from cognitrix.llms.session import Session
 from cognitrix.tools import Tool
 from cognitrix.utils.ws import WebSocketManager
@@ -29,7 +29,7 @@ import subprocess
 logger = logging.getLogger('cognitrix.log')
 parser = argparse.ArgumentParser(description="Build and run AI agents on your computer")
 
-def start_web_ui(agent: Agent | AIAssistant):
+def start_web_ui(agent: Agent ):
     from .api.main import app
     from fastapi import WebSocket
     import uvicorn
@@ -91,8 +91,9 @@ def add_agent():
     
 def delete_agent(agent_name_or_index: str):
     if agent_name_or_index:
-        agent_deleted = asyncio.run(Agent.delete(agent_name_or_index))
-        if agent_deleted:
+        agent_deleted1 = Agent.remove({'id': agent_name_or_index})
+        agent_deleted2 = Agent.remove({'name': agent_name_or_index})
+        if agent_deleted1 or agent_deleted2:
             print(f"\nAgent **{agent_name_or_index}** deleted successfully!")
         else:
             print(f"Agent **{agent_name_or_index}** couldn't be deleted")
@@ -204,13 +205,13 @@ def str_or_file(string):
             return file.read()
     return string
 
-async def prompt_agent(assistant: AIAssistant|Agent, prompt):
+async def prompt_agent(assistant: Agent, prompt):
     async for response in assistant.generate(prompt):
         if response.text:
             print(f"\r{response.text}", end='')
     print()
 
-async def initialize(session: Session, agent: Agent|AIAssistant, stream: bool = False):
+async def initialize(session: Session, agent: Agent, stream: bool = False):
     while True:
         try:
             query: str | dict = input("\nUser (q to quit): ").lower()
@@ -257,14 +258,26 @@ def start(args: Namespace):
         assistant = None
         
         if args.agent:
-            assistant = asyncio.run(Agent.load_agent(args.agent))
-        
+            assistant = Agent.find_one({'name': args.agent})
         if not assistant:
-            assistant = asyncio.run(AIAssistant.create_agent(name=args.agent, provider=args.provider, model=args.model, temperature=args.temperature, system_prompt=ASSISTANT_SYSTEM_PROMPT))
+            assistant = asyncio.run(Agent.create_agent(name=args.agent, provider=args.provider, model=args.model, temperature=args.temperature, system_prompt=ASSISTANT_SYSTEM_PROMPT))
+        
             
         if not assistant:
             raise Exception("Agent not found")
 
+        if args.provider and (assistant.llm.provider.lower() != args.provider.lower()):
+            provider = LLM.load_llm(args.provider)
+            if provider:
+                assistant.llm = provider
+        
+        if args.model and (assistant.llm.model.lower() != args.model.lower()):
+            assistant.llm.model = args.model
+        
+        # if args.temperature and (assistant.llm.temperature != args.temperature):
+        #     assistant.llm.temperature = args.temperature
+        
+        
         if len(args.load_tools) and not len(assistant.tools):
             tools = []
             for cat in args.load_tools:
@@ -283,12 +296,12 @@ def start(args: Namespace):
             
         if args.clear_history:
             session.chat = []
-            asyncio.run(session.save())
+            session.save()
             
         assistant.verbose = args.verbose
         assistant.formatted_system_prompt()
             
-        asyncio.run(assistant.save())
+        assistant.save()
         
         if args.generate:
             asyncio.run(session(args.generate, assistant, streaming=args.stream))
@@ -304,7 +317,7 @@ def start(args: Namespace):
         sys.exit(1)            
     except Exception as e:
         logging.exception(e)
-        parser.print_help()
+        # parser.print_help()
         sys.exit(1)
 
 def get_arguments():

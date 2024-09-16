@@ -94,13 +94,13 @@ Usage notes:
 
 All agents must use the following XML format for their responses, including the mindspace element:
 
-```xml
-<response>
+
     <observation>[Description of the user's request or the current situation]</observation>
     <mindspace>
         [Multi-dimensional representations of the problem, each on a new line]
     </mindspace>
     <thought>[Step-by-step reasoning process, with each step on a new line]</thought>
+    <reflection>[reflect over each idea where you: a. Review your reasoning. b. Check for potential errors or oversights. c. Confirm or adjust your conclusions if necessary. d. Consider alternative perspectives or approaches. e. Identify any assumptions made. f. Check for consistency with previous steps or information provided. g. Look for any missing information or data needed to make a conclusion. h. Consider the implications of your ideas on the problem and the user's goals. i. Look for any opportunities to improve the solution or approach.]</reflection>
     <type>[Either "final_answer" or "tool_calls"]</type>
     <result>[The final answer, if applicable]</result>
     <tool_calls>
@@ -122,7 +122,7 @@ All agents must use the following XML format for their responses, including the 
         </artifact>
         <!-- Repeat <artifact> element for multiple artifacts -->
     </artifacts>
-</response>
+
 ```
 
 Artifact types and their corresponding MIME types:
@@ -136,8 +136,7 @@ Artifact types and their corresponding MIME types:
 For code artifacts, include a "language" attribute in the <artifact> tag.
 
 Example 1 (Final Answer with Versatile Mind-Space):
-```xml
-<response>
+
     <observation>The user asked me to analyze the concept of "time".</observation>
     <mindspace>
 Visual: A clock face, hourglass, sundial, or a timeline
@@ -161,12 +160,11 @@ Step 4) Let's focus on the scientific, philosophical, and practical implications
     <type>final_answer</type>
     <result>Time is a complex concept that permeates many aspects of our existence. Scientifically, it's a fundamental dimension in physics, playing a crucial role in theories like relativity. Philosophically, time raises questions about the nature of existence and our perception of reality. Practically, time is a resource we manage in our daily lives, influencing how we schedule activities and measure productivity. The subjective experience of time can vary, feeling faster or slower depending on our psychological state. Throughout history, different cultures have conceptualized time differently, some viewing it as linear and others as cyclical. Understanding time involves considering its scientific properties, philosophical implications, and its practical impact on our lives.</result>
     <artifacts></artifacts>
-</response>
+
 ```
 
 Example 2 (Tool Call with Versatile Mind-Space):
-```xml
-<response>
+
     <observation>The user asked me to analyze the implications of artificial intelligence in society.</observation>
     <mindspace>
 Technological: Machine learning algorithms, neural networks, big data processing
@@ -199,12 +197,11 @@ Step 4) We should focus on key areas like economic impact, ethical consideration
         </tool>
     </tool_calls>
     <artifacts></artifacts>
-</response>
+
 ```
 
 Example of Artifact Usage:
-```xml
-<response>
+
     <observation>The user asked for a Python script to calculate the factorial of a number.</observation>
     <mindspace>
 Mathematical: Factorial operation, recursive function
@@ -236,7 +233,7 @@ print(f"The factorial of {number} is {result}")
             </content>
         </artifact>
     </artifacts>
-</response>
+
 ```
 
 Remember, the goal is to create a prompt that will consistently guide the AI agent to behave as intended across a wide range of potential interactions and scenarios, while always using the specified XML format for responses, leveraging the mindspace concept for multi-dimensional problem representation, and utilizing tools when appropriate.

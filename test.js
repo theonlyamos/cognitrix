@@ -3,7 +3,7 @@ function xmlToJson(xml) {
     // const responseContent = xml.match(/<response>(.*)<\/response>/s)[1];
     let tags = xml.match(/<(.*?)>/g);
     console.log(tags)
-    const mainKeys = ['<response>', '<observation>', '<mindspace>', '<thought>', '<type>', '<result>', '<tool_calls>', '<artifacts>'];
+    const mainKeys = ['<observation>', '<mindspace>', '<thought>', '<type>', '<result>', '<tool_calls>', '<artifacts>'];
     let isSubLevel = false
     if (tags) {
         tags.forEach(tag => {
@@ -33,40 +33,38 @@ function xmlToJson(xml) {
 
 // Test the function
 let xml = `
-<response>
-    <observation>The user asked for a Python script to calculate the factorial of a number.</observation>
-    <mindspace>
+<observation>The user asked for a Python script to calculate the factorial of a number.</observation>
+<mindspace>
 Mathematical: Factorial operation, recursive function
 Programming: Python syntax, function definition, conditional statements
 Educational: Explaining the concept of factorial
 Practical: Use cases for factorial calculations
-    </mindspace>
-    <thought>Step 1) A factorial calculation can be implemented using a recursive function in Python.
+</mindspace>
+<thought>Step 1) A factorial calculation can be implemented using a recursive function in Python.
 Step 2) We should create a function that handles both the base case and the recursive case.
 Step 3) Let's create an artifact with the Python script for calculating factorials.</thought>
-    <type>final_answer</type>
-    <result>I've created a Python script that calculates the factorial of a given number using a recursive function. You can find the script in the artifact below.</result>
-    <artifacts>
-        <artifact>
-            <language>python</language>
-            <identifier>factorial-script</identifier>
-            <type>application/vnd.ant.code</type>
-            <title>Python Factorial Calculator</title>
-            <content>
+<type>final_answer</type>
+<result>I've created a Python script that calculates the factorial of a given number using a recursive function. You can find the script in the artifact below.</result>
+<artifacts>
+    <artifact>
+        <language>python</language>
+        <identifier>factorial-script</identifier>
+        <type>application/vnd.ant.code</type>
+        <title>Python Factorial Calculator</title>
+        <content>
 def factorial(n):
-    if n == 0 or n == 1:
-        return 1
-    else:
-        return n * factorial(n - 1)
+if n == 0 or n == 1:
+    return 1
+else:
+    return n * factorial(n - 1)
 
 # Example usage
 number = 5
 result = factorial(number)
 print(f"The factorial of {number} is {result}")
-            </content>
-        </artifact>
-    </artifacts>
-</response>
+        </content>
+    </artifact>
+</artifacts>
 `;
 
 console.log(xmlToJson(xml));
@@ -130,7 +128,7 @@ console.log(xmlToJson(xml));
 //       </tool>
 //     </tool_calls>
 //     <artifacts></artifacts>
-//   </response>
+//
 //   `;
 
 // const jsonObject = convertXmlToJson(xmlResponse);

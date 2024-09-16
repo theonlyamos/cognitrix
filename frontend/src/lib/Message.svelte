@@ -9,63 +9,110 @@
   export let role: string | String = "user";
   export let content: string;
   export let image: string = "";
-  export let artifacts: object | object[] = {};
 
+  let artifacts: object[] = [];
+  let toolCalls: object[] = [];
+  let toolCallResults: object[] = [];
   let htmlContent: string | Promise<string> = "";
 
   const formatOneArtifact = (artifact: any) => {
-    let content = "";
+    let artifactContent = "";
     if (Object.keys(artifact).length) {
-      content = artifact.content;
+      artifactContent = artifact.content;
       if (
         Object.keys(artifact).includes("language") &&
         artifact.language &&
         typeof artifact.language === "string"
       ) {
-        content = "```" + artifact.language + "\n" + content + "\n```";
+        artifactContent =
+          "```" + artifact.language + "\n" + artifactContent + "\n```";
       }
     }
 
-    return content;
+    return artifactContent;
   };
-  const formatArtifacts = (artifacts: any | object[]) => {
-    let content = "";
-    if (typeof artifacts === "object") {
-      content = formatOneArtifact(artifacts);
-    } else if (Array.isArray(artifacts)) {
-      for (let i = 0; i < artifacts.length; i++) {
-        content += formatOneArtifact(artifacts[i]) + "\n";
-      }
+
+  const formatArtifacts = (artifacts: object[]) => {
+    let artifactsContent = "";
+
+    for (let i = 0; i < artifacts.length; i++) {
+      artifactsContent += formatOneArtifact(artifacts[i]) + "\n";
     }
-    return content;
+
+    return artifactsContent;
   };
 
   const formatContent = (content: string): string => {
-    const parsedContent = convertXmlToJson(content);
+    let parsedContent = convertXmlToJson(content);
 
     if (!parsedContent) return content;
+
+    for (let key in parsedContent) {
+      if (key === "artifacts") {
+        let artifactsObjects = parsedContent[key];
+
+        if (Object.keys(artifactsObjects).length) {
+          if (Array.isArray(artifactsObjects.artifact)) {
+            artifacts = artifactsObjects.artifact;
+          } else {
+            artifacts = [artifactsObjects.artifact];
+          }
+        }
+      } else if (key === "tool_calls") {
+        let tool_calls = parsedContent[key];
+        if (Object.keys(tool_calls).length) {
+          if (Array.isArray(tool_calls.tool)) {
+            toolCalls = tool_calls.tool;
+          } else {
+            toolCalls = [tool_calls.tool];
+          }
+        }
+      } else if (key === "tool_call_results") {
+        let tool_call_results = [];
+        if (Object.keys(parsedContent[key]).length) {
+          if (Array.isArray(parsedContent[key].tool)) {
+            tool_call_results = parsedContent[key].tool;
+          } else {
+            tool_call_results = [parsedContent[key].tool];
+          }
+        }
+
+        for (let i = 0; i < tool_call_results.length; i++) {
+          console.log(toolCalls);
+          // console.log(toolCalls[i]);
+          // toolCalls[i]["result"] = tool_call_results[i];
+        }
+      }
+    }
 
     const formatNode = (node: any): string => {
       if (typeof node === "string") return node;
       if (typeof node !== "object") return String(node);
 
-      return Object.entries(node)
-        .map(([key, value]) => {
-          if (key === "#text") return String(value);
-          return `## ${key.charAt(0).toUpperCase() + key.slice(1)}\n\n${formatNode(value)}\n\n`;
-        })
-        .join("");
+      if (node.type === "final_answer") {
+        return `${formatNode(node.result)}\n\n`;
+      }
+
+      return "";
+
+      // return Object.entries(node)
+      //   .map(([key, value]) => {
+      //     if (key === "#text") return String(value);
+
+      //     if (key === "result") {
+      //       return `${formatNode(value)}\n\n`;
+      //     }
+      //   })
+      //   .join("");
     };
 
     return formatNode(parsedContent);
   };
 
-  // $: console.log(content);
-
   $: htmlContent = marked(formatContent(content));
   $: artifactsContent = marked(formatArtifacts(artifacts));
 
-  onMount(async () => {});
+  $: console.log(content);
 </script>
 
 <article
@@ -83,6 +130,15 @@
   </div>
   <hr />
   <div class="message-row">
+    {#each toolCalls as tool_call}
+      <div class="tool-call">
+        <i class="fas fa-anchor fa-fw"></i>
+        <span
+          ><em>Running Tool <b>{tool_call?.name}</b></em> with parameters:
+          <em>{JSON.stringify(tool_call?.arguments)}</em></span
+        >
+      </div>
+    {/each}
     <CodeBlock {htmlContent} />
     <CodeBlock htmlContent={artifactsContent} />
   </div>

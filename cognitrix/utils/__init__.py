@@ -31,8 +31,7 @@ if it's the final anwers or
 Do not include the json decorator in the response.
 """
 
-xml_return_format: str = """```xml
-<response>
+xml_return_format: str = """
     <observation>[Description of the user's request or the current situation]</observation>
     <mindspace>
         [Multi-dimensional representations of the problem, each on a new line]
@@ -59,7 +58,6 @@ xml_return_format: str = """```xml
         </artifact>
         <!-- Repeat <artifact> element for multiple artifacts -->
     </artifacts>
-</response>
 ```
 """
 
@@ -232,7 +230,7 @@ def extract_json(content: str) -> dict | str:
             return default_content
     
 def extract_parts(text):
-    pattern = r'(.*?)<response>(.*?)</response>(.*)'
+    pattern = r'(.*?)<response>(.*?)(.*)'
     
     match = re.search(pattern, text, re.DOTALL)
     

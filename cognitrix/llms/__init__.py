@@ -11,3 +11,6 @@ from cognitrix.llms.clarifai_llm import Clarifai
 from cognitrix.llms.mindsdb_llm import MindsDB
 from cognitrix.llms.aimlapi_llm import AIMLAPI
 from cognitrix.llms.ollama_llm import Ollama
+from cognitrix.llms.azure_llm import Azure
+from cognitrix.llms.session import Session
+

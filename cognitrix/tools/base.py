@@ -2,18 +2,17 @@ import inspect
 import logging
 from pathlib import Path
 import sys
-from pydantic import BaseModel, Field
+from odbms import Model
 from typing import Any, Optional, Self
 
-class Tool(BaseModel):
+from pydantic import Field
+
+class Tool(Model):
     """
     Base tool class
-
-    Args:
-        BaseModel (_type_): _description_
     """
     
-    name: str
+    name: str 
     """Name of the tool"""
     
     description: str
@@ -24,6 +23,9 @@ class Tool(BaseModel):
     
     parameters: Any = {}
     """Used for type hinting for function tools"""
+    
+    user_id: Optional[str] = Field(default=None)
+    """User ID of the user the tool belongs to"""
     
     class Config:
         arbitrary_types_allowed = True
@@ -56,7 +58,7 @@ class Tool(BaseModel):
         """Retrieve all tools by category"""
         tools: list[Tool] = []
         try:
-            if category is 'all':
+            if category == 'all':
                 return Tool.list_all_tools()
             
             module = __import__(__package__, fromlist=['__init__'])  # type: ignore
@@ -86,3 +88,8 @@ class Tool(BaseModel):
         except Exception as e:
             logging.exception(e)
             return None
+    
+    @classmethod
+    def get_by_user_id(cls, user_id: str) -> list[Self]:
+        """Retrieve all tools by user ID"""
+        return [cls(**tool.model_dump()) for tool in Tool.find({"user_id": user_id})]

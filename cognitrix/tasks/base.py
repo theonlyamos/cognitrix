@@ -1,23 +1,26 @@
-import json
-import asyncio
 import logging
 import uuid
-import aiofiles
+from enum import Enum
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import Field
 from typing import Any, Dict, List, Literal, Optional, Callable, Self, TypeAlias
-from cognitrix.agents.evaluator import Evaluator
 
-from cognitrix.config import TASKS_FILE
+from cognitrix.agents.evaluator import Evaluator
 from cognitrix.agents.base import Agent
 from cognitrix.llms.session import Session
-from cognitrix.utils import xml_to_dict
+
+from odbms import Model
 
 logger = logging.getLogger('cognitrix.log')
 
 TaskList: TypeAlias = List['Task']
 
-class Task(BaseModel):
+class TaskStatus(Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+class Task(Model):
     """
     Initializes the Task object by assigning values to its attributes.
 
@@ -39,8 +42,6 @@ class Task(BaseModel):
     step_instructions: Dict[int, Dict[str, Any]] = {}
     """Line by line instructions for completing the task"""
     
-    status: Literal['not-started', 'in-progress', 'completed'] = 'not-started'
-    
     done: bool = False
     """Checks/Sets whether the task has been completed"""
     
@@ -50,16 +51,22 @@ class Task(BaseModel):
     created_at: str = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
     """Creation date of the task"""
     
-    agent_ids: List[str] = []
+    status: TaskStatus = TaskStatus.PENDING
+    """Status of the task"""
+
+    assigned_agents: List[str] = Field(default_factory=list)
     """List of ids of agents assigned to this task"""
     
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    """Unique id for the task"""
+    results: List[str] = Field(default_factory=list)
+    """List of results from the task"""
+    
+    pid: Optional[str] = None
+    """Worker Id of task"""
     
     async def team(self):
         agents: List[Agent] = []
-        for agent_id in self.agent_ids:
-            agent = await Agent.get(agent_id)
+        for agent_id in self.assigned_agents:
+            agent = Agent.get(agent_id)
             if agent:
                 agents.append(agent)
         return agents
@@ -69,7 +76,7 @@ class Task(BaseModel):
     
     async def start(self):
 
-        if len(self.agent_ids):
+        if len(self.assigned_agents):
             team = await self.team()
 
             if len(team):
@@ -81,12 +88,12 @@ class Task(BaseModel):
                 evaluator = Evaluator(llm=agent.llm)
                 agent.sub_agents.append(evaluator)
                 
-                self.status = 'in-progress'
-                await self.save()
+                self.status = TaskStatus.IN_PROGRESS
+                self.save()
 
                 session = Session(task_id=self.id, agent_id=agent.id)
                 session.started_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
-                await session.save()
+                session.save()
                 
                 session.update_history({'role': 'system', 'type': 'text', 'message': self.description + '\n\nComplete the task step below:\n'})
                 
@@ -106,58 +113,22 @@ class Task(BaseModel):
                         await session(eval_prompt, evaluator, streaming=True)
                         self.step_instructions[key]['done'] = True
                         
-                        await self.save()
+                        self.save()
                 
                 session.completed_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
-                await session.save()
-                self.status = 'completed'
-                await self.save()
-    
-    @classmethod
-    async def _load_tasks_from_file(cls) -> Dict[str, Dict]:
-        async with aiofiles.open(TASKS_FILE, 'r') as file:
-            content = await file.read()
-            return json.loads(content) if content else {}
-
-    @classmethod
-    async def _save_tasks_to_file(cls, tasks: Dict[str, Dict]):
-        async with aiofiles.open(TASKS_FILE, 'w') as file:
-            await file.write(json.dumps(tasks, indent=4))
-
-    async def save(self):
-        """Save current task"""
-        self.step_instructions = Task.extract_steps(self.description)
-        tasks = await self._load_tasks_from_file()
-        tasks[self.id] = self.dict()
-        await self._save_tasks_to_file(tasks)
-        return self.id
-
-    @classmethod
-    async def get(cls, id) -> Optional[Self]:
-        tasks = await cls._load_tasks_from_file()
-        task_data = tasks.get(id)
-        if task_data:
-            return cls(**task_data)
-        return None
+                session.save()
+                
+                self.status = TaskStatus.COMPLETED
+                self.save()
 
     @classmethod
     async def list_tasks(cls) -> TaskList:
-        try:
-            tasks = await cls._load_tasks_from_file()
-            return [cls(**task_data) for task_data in tasks.values()]
-        except Exception as e:
-            logger.exception(e)
-            return []
+        return cls.all()
 
     @classmethod
     async def delete(cls, task_id: str):
         """Delete task by id"""
-        tasks = await cls._load_tasks_from_file()
-        if task_id in tasks:
-            del tasks[task_id]
-            await cls._save_tasks_to_file(tasks)
-            return True
-        return False
+        return cls.remove({'id': task_id})
 
     @staticmethod
     def extract_steps(text):

@@ -1,7 +1,10 @@
 import json
-from fastapi import APIRouter, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from celery.result import AsyncResult
+
+from cognitrix.common.security import get_current_user
+from cognitrix.tasks.base import TaskStatus
 
 from ...celery_worker import run_task
 from cognitrix.llms.session import Session
@@ -9,18 +12,19 @@ from cognitrix.tasks import Task
 from ...llms import LLM
 
 tasks_api = APIRouter(
-    prefix='/tasks'
+    prefix='/tasks',
+    dependencies=[Depends(get_current_user)]
 )
 
 @tasks_api.get('')
 async def list_tasks():
-    tasks = await Task.list_tasks()
+    tasks = Task.all()
     response = [task.dict() for task in tasks]
     return JSONResponse(response)
 
 @tasks_api.post('')
 async def save_task(request: Request, task: Task, background_tasks: BackgroundTasks):
-    await task.save()
+    task.save()
     
     if task.autostart:
         background_tasks.add_task(task.start)
@@ -33,21 +37,21 @@ async def update_task_status(request: Request, task_id: str, background_tasks: B
     response = {}
 
     if task_id:
-        task = await Task.get(task_id)
+        task = Task.get(task_id)
 
         if task:
             result = run_task.delay(task_id)
             print('[+] Task process', result)
-            task.status = 'in-progress'
+            task.status = TaskStatus.IN_PROGRESS
             task.pid = result.id
-            await task.save()
+            task.save()
             response = task.dict()
     
     return JSONResponse(response)
 
 @tasks_api.get('/{task_id}')
 async def load_task(task_id: str):
-    task = await Task.get(task_id)
+    task = Task.get(task_id)
     response = {}
     if task:
         if task.pid:

@@ -2,9 +2,8 @@
   import { onDestroy, onMount } from "svelte";
   import HomeIcon from "../assets/home.svg";
   import AgentsIcon from "../assets/agent.svg";
-  import { link, useLocation } from "svelte-routing";
+  import { link, useLocation, navigate } from "svelte-routing";
   import { userStore } from "../common/stores";
-  import { navigate } from "svelte-routing/src/history";
 
   let page: string = window.location.pathname;
   let theme: string;
@@ -90,7 +89,9 @@
     {/if}
   </button>
 
-  <button on:click={handleLogout}>Logout</button>
+  <button on:click={handleLogout} title="Logout">
+    <i class="fas fa-power-off"></i>
+  </button>
 </aside>
 
 <style>
@@ -124,13 +125,9 @@
     gap: 10px;
     align-items: center;
 
-    &:first-of-type {
-      border-radius: 7px 7px 0 0;
-    }
-
     &:hover,
     &.active {
-      background-color: var(--fg-1);
+      background-color: var(--fg-2);
       color: var(--bg-1);
     }
   }
@@ -166,6 +163,10 @@
     &&.fa-moon {
       align-self: flex-end;
     }
+  }
+
+  .fa-power-off {
+    color: red;
   }
 
   @media screen and (max-width: 640px) {

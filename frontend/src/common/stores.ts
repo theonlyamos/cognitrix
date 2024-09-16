@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import { API_BACKEND_URI } from './constants';
 import type { SSEMessage, SSEState, User } from './interfaces';
+import { navigate } from 'svelte-routing';
 
 const sseUrl = new URL(API_BACKEND_URI + '/agents/sse')
 const chatUrl = new URL(API_BACKEND_URI + '/agents/chat')
@@ -129,12 +130,13 @@ function createUserStore() {
     logout: () => {
       localStorage.removeItem('token');
       set(null);
+      navigate('/'); // Redirect to home page after logout
     },
     checkAuth: async () => {
       const token = localStorage.getItem('token');
       if (token) {
         try {
-          const response = await fetch(`${API_BACKEND_URI}/auth/me`, {
+          const response = await fetch(`${API_BACKEND_URI}/auth/user`, {
             headers: {
               'Authorization': `Bearer ${token}`
             }
@@ -145,12 +147,16 @@ function createUserStore() {
           } else {
             localStorage.removeItem('token');
             set(null);
+            navigate('/');
           }
         } catch (error) {
           console.error('Error checking authentication:', error);
           localStorage.removeItem('token');
           set(null);
+          navigate('/');
         }
+      } else {
+        navigate('/');
       }
     }
   };

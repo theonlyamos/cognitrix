@@ -1,19 +1,21 @@
 import json
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from cognitrix.llms.session import Session
+from cognitrix.agents import Agent
+from cognitrix.common.security import get_current_user
+from cognitrix.llms import Session
 from ...llms import LLM
-from ...agents import Agent
 
 agents_api = APIRouter(
-    prefix='/agents'
+    prefix='/agents',
+    dependencies=[Depends(get_current_user)]
 )
 
 @agents_api.get('')
 async def list_agents():
-    agents = await Agent.list_agents()
+    agents = Agent.all()
 
     response = [{
         'id': agent.id, 'name': agent.name, 'provider': agent.llm.provider,
@@ -30,9 +32,9 @@ async def save_agent(request: Request, agent: Agent):
     llm.provider = data['llm']['provider']
 
     agent.llm = llm
-    await agent.save()
+    agent.save()
     
-    return JSONResponse(agent.dict())
+    return JSONResponse(agent.json())
 
 @agents_api.get("/sse")
 async def sse_endpoint(request: Request):
@@ -50,21 +52,26 @@ async def chat_endpoint(request: Request):
 
 @agents_api.get('/{agent_id}')
 async def load_agent(agent_id: str):
-    agent = await Agent.get(agent_id)
-    response = {}
-    if agent:
-        response = agent.dict()
+    agent = Agent.find_one({'id': agent_id})
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    response = agent.json()
     
     return JSONResponse(response)
 
 @agents_api.get('/{agent_id}/session')
 async def load_session(agent_id: str):
-    agent = await Agent.get(agent_id)
+    agent = Agent.find_one({'id': agent_id})
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
     session_id: str = ''
     if agent:
         session = await Session.get_by_agent_id(agent_id)
+        if not session:
+            session = Session(agent_id=agent_id)
+            
         session_id = session.id
-        await session.save()
+        session.save()
         
     return JSONResponse({'session_id': session_id})
 

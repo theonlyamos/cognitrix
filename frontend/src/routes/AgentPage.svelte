@@ -42,6 +42,7 @@
   let tools: ToolInterface[] = [];
   let agentTools: string[] = [];
 
+  let confirmModal: boolean = false;
   let toolsShown: boolean = false;
   let llmsShown: boolean = false;
   let selectedTools: string[] = [];
@@ -169,6 +170,10 @@
     }
   };
 
+  const deleteAgent = () => {
+    console.log("Deleting agent...");
+  };
+
   onDestroy(() => {
     if (unsubscribe) unsubscribe();
   });
@@ -179,9 +184,9 @@
 </script>
 
 <Modal
-  isOpen={true}
-  type="confirm"
-  action={() => console.log("Confirmed!")}
+  isOpen={confirmModal}
+  type="alert"
+  action={deleteAgent}
   actionLabel="Yes, do it"
   size="small"
   appearance="bordered"
@@ -219,6 +224,17 @@
           ? "Update Agent"
           : "Save Agent"}</span
     >
+  </button>
+  <button
+    class="btn"
+    disabled={submitting}
+    on:click={() => {
+      confirmModal = false;
+      confirmModal = true;
+    }}
+  >
+    <i class="fa-solid fa-skull-crossbones fa-fw"></i>
+    <span>Delete Agent</span>
   </button>
 </div>
 <div class="container ready">
@@ -279,21 +295,6 @@
       />
     </Accordion>
   </div>
-  <div class="agent-form creativity">
-    <label for="temperature">Creativity (Temperature)</label>
-    <div class="range-container">
-      <input
-        type="range"
-        id="temperature"
-        name="temperature"
-        min="0"
-        max="1"
-        step="0.1"
-        bind:value={agent.llm.temperature}
-      />
-      <span>{agent.llm.temperature.toFixed(1)}</span>
-    </div>
-  </div>
   <div class="agent-form tools">
     <Accordion title="Tools">
       <div class="tools-list">
@@ -320,6 +321,7 @@
     display: grid;
     margin-inline: auto;
     margin-block: 0;
+    block-size: fit-content;
   }
 
   .container.ready {
@@ -332,6 +334,7 @@
     inset-inline: 0;
     inset-block: 0;
     background-color: inherit;
+    background-color: var(--bg-2);
   }
 
   .agent-form {
@@ -379,25 +382,5 @@
   img.icon {
     inline-size: 30px;
     block-size: 30px;
-  }
-
-  .creativity {
-    z-index: 10;
-    text-align: start;
-  }
-
-  .range-container {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  input[type="range"] {
-    flex-grow: 1;
-  }
-
-  .range-container span {
-    min-width: 30px;
-    text-align: right;
   }
 </style>

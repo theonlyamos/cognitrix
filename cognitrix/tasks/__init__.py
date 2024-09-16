@@ -1,1 +1,1 @@
-from cognitrix.tasks.base import Task
+from cognitrix.tasks.base import Task, TaskStatus

@@ -1,27 +1,30 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from typing import List
+
+from cognitrix.common.security import get_current_user
 
 from ...agents.team import Team
 
 teams_api = APIRouter(
-    prefix='/teams'
+    prefix='/teams',
+    dependencies=[Depends(get_current_user)]
 )
 
 @teams_api.get("")
 async def get_all_teams():
-    teams = [team.dict() for team in await Team.list_teams()]
+    teams = [team.dict() for team in Team.all()]
     
-    return JSONResponse(teams)
+    return JSONResponse([team.dict() for team in teams])
 
 @teams_api.post("")
 async def save_team(team: Team):
-    await team.save()
+    team.save()
     return JSONResponse(team.dict())
 
 @teams_api.get("/{team_id}")
 async def get_team(team_id: str):
-    team = await Team.get(team_id)
+    team = Team.get(team_id)
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found")
     
@@ -29,9 +32,9 @@ async def get_team(team_id: str):
 
 @teams_api.delete("/{team_id}")
 async def delete_team(team_id: str):
-    team = await Team.get(team_id)
+    team = Team.get(team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     
-    await Team.delete(team_id)
+    Team.remove({'id': team_id})
     return JSONResponse({"message": "Team deleted successfully"})

@@ -35,8 +35,16 @@ class WebSocketManager:
                         
                         if action == 'get':
                             session = await Session.load(session_id)
-
-                            loaded_agent: Optional[Agent] = await web_agent.get(session.agent_id)
+                            
+                            if not session.agent_id:
+                                session.agent_id = web_agent.id
+                                session.save()
+                            
+                            if session.agent_id == web_agent.id:
+                                loaded_agent = web_agent
+                            else:
+                                loaded_agent: Optional[Agent] = Agent.get(session.agent_id)
+                            
                             if loaded_agent:
                                 web_agent = loaded_agent
                             
@@ -47,7 +55,7 @@ class WebSocketManager:
                         elif action == 'delete':
                             session = await Session.load(session_id)
                             session.chat = []
-                            await session.save()
+                            session.save()
                             await websocket.send_json({'type': query_type, 'content': session.chat, 'agent_name': web_agent.name, 'action': action})
                                 
                     elif query_type == 'sessions':
@@ -57,7 +65,7 @@ class WebSocketManager:
                         
                         elif action == 'get':
                             agent_id = query['agent_id']
-                            loaded_agent = await web_agent.get(agent_id)
+                            loaded_agent = web_agent.get(agent_id)
                             if loaded_agent:
                                 web_agent = loaded_agent
                                 self.websocket = websocket

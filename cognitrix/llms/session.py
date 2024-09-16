@@ -2,26 +2,23 @@ import uuid
 import asyncio
 import logging
 import logging
-import aiofiles
 from rich import print
-from flask import json
 from datetime import datetime
-from pydantic import BaseModel, Field
-from typing import IO, Any, Callable, List, Literal, Optional, Dict, Self
+from odbms import Model
+from pydantic import Field
+from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Dict, Self, Union
 
-from cognitrix.agents import Agent
-from cognitrix.agents import AIAssistant
-from cognitrix.config import SESSIONS_FILE
+
 from cognitrix.llms.base import LLMResponse
+
+if TYPE_CHECKING:
+    from cognitrix.agents.base import Agent
 
 logger = logging.getLogger('cognitrix.log')
 
-class Session(BaseModel):
+class Session(Model):
     chat: List[Dict[str, str]] = []
     """The chat history of the session"""
-    
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    """The session id"""
     
     datetime: str = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
     """When the session was started"""
@@ -40,54 +37,24 @@ class Session(BaseModel):
     
     pid: Optional[str] = None
     """Worker Id of task"""
-    
-    @classmethod
-    async def _load_sessions_from_file(cls) -> Dict[str, Dict]:
-        async with aiofiles.open(SESSIONS_FILE, 'r') as file:
-            content = await file.read()
-            return json.loads(content) if content else {}
 
     @classmethod
-    async def _save_sessions_to_file(cls, sessions: Dict[str, Dict]):
-        async with aiofiles.open(SESSIONS_FILE, 'w') as file:
-            await file.write(json.dumps(sessions, indent=4))
-
-    async def save(self):
-        """Save current session"""
-        sessions = await self._load_sessions_from_file()
-        sessions[self.id] = self.dict()
-        await self._save_sessions_to_file(sessions)
-        return self.id
-
-    @classmethod
-    async def load(cls, session_id: Optional[str]) -> Self:
+    async def load(cls, session_id: str) -> Self:
         """Load an existing session or create a new one if it doesn't exist"""
-        sessions = await cls._load_sessions_from_file()
-        session_data = None
-        if session_id:
-            session_data = sessions.get(session_id)
-        
-        if not session_data:
-            new_session = cls()
-            await new_session.save()
-            session_data =  new_session.dict()
-            
-        return cls(**session_data)
+        session = cls.get(session_id)
+        if not session:
+            session = cls()
+            session.save()
+        return session
 
     @classmethod
     async def list_sessions(cls) -> List[Self]:
-        sessions = await cls._load_sessions_from_file()
-        return [cls(**session_data) for session_data in sessions.values()]
+        return cls.all()
 
     @classmethod
     async def delete(cls, session_id: str):
         """Delete session by id"""
-        sessions = await cls._load_sessions_from_file()
-        if session_id in sessions:
-            del sessions[session_id]
-            await cls._save_sessions_to_file(sessions)
-            return True
-        return False
+        return cls.remove({'id': session_id})
 
     def update_history(self, message: Dict[str, str]):
         self.chat.append(message)
@@ -106,26 +73,20 @@ class Session(BaseModel):
     @classmethod
     async def get_by_agent_id(cls, agent_id: str) -> Self:
         """Retrieve a session by agent_id"""
-        sessions = await cls._load_sessions_from_file()
-        for session_data in sessions.values():
-            if session_data.get('agent_id') == agent_id:
-                return cls(**session_data)
-        new_session = cls(agent_id=agent_id)
-        await new_session.save()
-        return new_session
+        session = cls.find_one({'agent_id': agent_id})
+        if not session:
+            session = cls(agent_id=agent_id)
+            session.save()
+        return session
     
     @classmethod
     async def get_by_task_id(cls, task_id: str) -> List[Self]:
         """Retrieve a session by task_id"""
-        sessions = await cls._load_sessions_from_file()
-        task_sessions: List[Self] = []
-        for session_data in sessions.values():
-            if session_data.get('task_id') == task_id:
-                task_sessions.append(cls(**session_data))
-
-        return task_sessions
+        return cls.find({'task_id': task_id}) # type: ignore
     
-    async def __call__(self, message: str|dict, agent: Agent|AIAssistant, interface: Literal['cli', 'web'] = 'cli', streaming: bool = False, output: Callable = print, wsquery: Dict[str, str]= {}, save_history: bool = True):
+    async def __call__(self, message: str|dict, agent: Union['Agent'], interface: Literal['cli', 'web'] = 'cli', streaming: bool = False, output: Callable = print, wsquery: Dict[str, str]= {}, save_history: bool = True):
+        from cognitrix.agents.base import Agent
+        
         system_prompt = agent.formatted_system_prompt()
         tool_calls: bool = False
         
@@ -137,7 +98,7 @@ class Session(BaseModel):
                 try:
                     full_prompt = agent.process_prompt(message)
                     message = ''
-                    response: LLMResponse | None = None
+                    # response: LLMResponse | None = None
                     called_tools: bool = False
                     async for response in agent.llm(full_prompt, system_prompt, self.chat):   
                         if streaming:
@@ -177,7 +138,8 @@ class Session(BaseModel):
                     
                     if not tool_calls:
                         streaming = False  
-                    await self.save()
+                    
+                    self.save()
                     if not message:
                         break
                 except Exception as e:

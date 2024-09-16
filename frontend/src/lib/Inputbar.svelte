@@ -53,9 +53,9 @@
       class={`${userInput || loading ? "" : "disabled"}`}
     >
       {#if loading}
-        <i class="fas fa-circle-stop"></i>
+        <i class="fa-solid fa-circle-stop"></i>
       {:else}
-        <i class="fas fa-paper-plane"></i>
+        <i class="fa-solid fa-paper-plane"></i>
       {/if}
     </button>
   </div>
@@ -82,10 +82,9 @@
     align-items: center;
     border-radius: 20px;
     font-size: 0.9rem;
-    background-color: var(--bg-1);
-    color: var(--fg-2);
+    background-color: var(--fg-1);
+    /* color: var(--bg-2); */
     padding: 5px 20px;
-    /* max-block-size: 100px; */
   }
 
   .input-box {
@@ -95,7 +94,7 @@
     inline-size: 90%;
     max-block-size: 100px;
     overflow-y: auto;
-    color: var(--fg-1) !important;
+    color: var(--bg-1) !important;
 
     &::-webkit-scrollbar {
       display: none;
@@ -103,21 +102,20 @@
   }
 
   .input-container button {
-    background-color: var(--bg-1);
+    background-color: var(--fg-1);
+    color: var(--bg-1);
     padding: 0;
     border: 0;
     outline: none;
+    opacity: 0.7;
 
     &:hover,
     &:focus {
       border: none;
       padding: 0 !important;
       outline: none;
+      opacity: 1;
     }
-  }
-
-  .input-container i {
-    color: var(--fg-2);
   }
 
   .clear-btn {

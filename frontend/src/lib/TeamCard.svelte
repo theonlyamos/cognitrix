@@ -7,7 +7,7 @@
 
 <a href="/teams/{team.id}" use:link class="card team-card">
   <h3>{team.name}</h3>
-  <p>Agents: {team.agent_ids.length}</p>
+  <p>Agents: {team.assigned_agents.length}</p>
 </a>
 
 <style>

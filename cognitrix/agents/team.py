@@ -1,138 +1,289 @@
-import asyncio
-import json
-import uuid
-import logging
-from typing import List, Optional, Self, Dict
+from typing import List, Optional, Dict, Any, Callable
 from pydantic import BaseModel, Field
-from datetime import datetime
-import aiofiles
+import asyncio
+import uuid
+from enum import Enum
+from cognitrix.agents.base import Agent, Message, MessagePriority
+from cognitrix.llms.base import LLMResponse
+from cognitrix.tasks.base import Task, TaskStatus
+from odbms import Model
 
-from cognitrix.agents.base import Agent
-from cognitrix.config import TEAMS_FILE
-
-logger = logging.getLogger('cognitrix.log')
-
-class Team(BaseModel):
-    name: str = Field(default='Team')
-    """Name of the team"""
-    
-    agent_ids: List[str] = Field(default_factory=list)
-    """List of agent IDs in the team"""
-    
-    team_leader_id: Optional[str] = None
-    """ID of the team leader agent"""
-    
+class Team(Model):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    """Unique id for the team"""
-    
-    description: Optional[str] = Field(default=None)
-    """Brief description of the team's purpose or role"""
+    name: str
+    agents: List[Agent] = Field(default_factory=list)
+    tasks: List[Task] = Field(default_factory=list)
+    _leader: Optional[Agent] = None
 
-    created_at: str = Field(default=datetime.now().strftime("%a %b %d %Y %H:%M:%S"))
-    """Timestamp of when the team was created"""
-
-    updated_at: str = Field(default=datetime.now().strftime("%a %b %d %Y %H:%M:%S"))
-    """Timestamp of when the team was last modified"""
-
-    tags: List[str] = Field(default_factory=list)
-    """List of tags or categories for the team"""
-
-    max_size: Optional[int] = Field(default=None)
-    """Maximum number of agents allowed in the team (optional)"""
-    
     class Config:
         arbitrary_types_allowed = True
 
-    @classmethod
-    async def _load_teams_from_file(cls) -> Dict[str, Dict]:
-        async with aiofiles.open(TEAMS_FILE, 'r') as file:
-            content = await file.read()
-            return json.loads(content) if content else {}
+    @property
+    def leader(self) -> Optional[Agent]:
+        return self._leader
 
-    @classmethod
-    async def _save_teams_to_file(cls, teams: Dict[str, Dict]):
-        async with aiofiles.open(TEAMS_FILE, 'w') as file:
-            await file.write(json.dumps(teams, indent=4))
-
-    @classmethod
-    async def create_team(cls, name: str = '', agent_ids: List[str] = []) -> Optional[Self]:
-        try:
-            name = name or input("\n[Enter team name]: ")
-            new_team = cls(name=name, agent_ids=agent_ids)
-            teams = await cls._load_teams_from_file()
-            teams[new_team.id] = new_team.dict()
-            await cls._save_teams_to_file(teams)
-            return new_team
-        except Exception as e:
-            logger.error(f"Error creating team: {str(e)}")
-            return None
-
-    @classmethod
-    async def list_teams(cls) -> List[Self]:
-        try:
-            teams = await cls._load_teams_from_file()
-            return [cls(**team_data) for team_data in teams.values()]
-        except Exception as e:
-            logger.exception(f"Error listing teams: {str(e)}")
-            return []
-
-    @classmethod
-    async def get(cls, id_or_name: str) -> Optional[Self]:
-        """Get a team by ID or name"""
-        teams = await cls._load_teams_from_file()
-        team_data = teams.get(id_or_name)
-        if team_data:
-            return cls(**team_data)
-        return next((cls(**data) for data in teams.values() if data['name'].lower() == id_or_name.lower()), None)
-
-    async def save(self):
-        """Save current team"""
-        self.last_modified = datetime.now().strftime("%a %b %d %Y %H:%M:%S")
-        teams = await self._load_teams_from_file()
-        teams[self.id] = self.dict()
-        await self._save_teams_to_file(teams)
-        return self.id
-
-    @classmethod
-    async def delete(cls, id_or_name: str) -> bool:
-        """Delete team by id or name"""
-        teams = await cls._load_teams_from_file()
-        if id_or_name in teams:
-            del teams[id_or_name]
+    @leader.setter
+    def leader(self, agent: Agent):
+        if agent in self.agents:
+            self._leader = agent
         else:
-            for team_id, team_data in list(teams.items()):
-                if team_data['name'].lower() == id_or_name.lower():
-                    del teams[team_id]
-                    break
-        if len(teams) < len(await cls._load_teams_from_file()):
-            await cls._save_teams_to_file(teams)
-            return True
-        return False
+            raise ValueError("The leader must be a member of the team.")
 
-    async def agents(self) -> List[Agent]:
-        """Load and return the agents associated with this team"""
-        return [agent for agent in await Agent.list_agents() if agent.id in self.agent_ids]
-    
-    async def team_leader(self) -> Optional[Agent]:
-        """Load and return the team leader agent"""
-        return await Agent.get(self.team_leader_id)
-
-    def add_agent(self, agent_id: str):
-        """Add an agent ID to the team"""
-        if self.max_size and len(self.agent_ids) >= self.max_size:
-            raise ValueError(f"Team has reached its maximum size of {self.max_size}")
-        if agent_id not in self.agent_ids:
-            self.agent_ids.append(agent_id)
+    def add_agent(self, agent: Agent):
+        agent.team = self
+        self.agents.append(agent)
 
     def remove_agent(self, agent_id: str):
-        """Remove an agent ID from the team"""
-        self.agent_ids = [id for id in self.agent_ids if id != agent_id]
+        self.agents = [agent for agent in self.agents if agent.id != agent_id]
+        for agent in self.agents:
+            if agent.id == agent_id:
+                agent.team = None
 
-    async def get_agent(self, agent_id: str) -> Optional[Agent]:
-        """Get an agent from the team by ID"""
-        return await Agent.get(agent_id) if agent_id in self.agent_ids else None
+    async def broadcast_message(self, sender: Agent, content: str, priority: MessagePriority = MessagePriority.NORMAL):
+        for agent in self.agents:
+            if agent.id != sender.id:
+                message = Message(sender=sender.name, receiver=agent.name, content=content, priority=priority)
+                await agent.receive_message(message)
 
-    async def list_agent_names(self) -> List[str]:
-        """List all agent names in the team"""
-        agents = await self.agents()
-        return [agent.name for agent in agents]
+    async def send_message(self, sender: Agent, receiver: Agent, content: str, priority: MessagePriority = MessagePriority.NORMAL):
+        message = Message(sender=sender.name, receiver=receiver.name, content=content, priority=priority)
+        await receiver.receive_message(message)
+
+    async def start_communication(self):
+        while True:
+            for agent in self.agents:
+                while not agent.response_queue.empty():
+                    message, response = await agent.response_queue.get()
+                    print(f"{agent.name} processed message from {message.sender}: {response.llm_response}")
+            await asyncio.sleep(0.1)  # Small delay to prevent busy-waiting
+
+    def get_agent_by_name(self, name: str) -> Optional[Agent]:
+        return next((agent for agent in self.agents if agent.name.lower() == name.lower()), None)
+
+    def create_task(self, title: str, description: str) -> Task:
+        task = Task(title=title, description=description)
+        self.tasks.append(task)
+        return task
+
+    def assign_task(self, task_id: str, agent_names: List[str]):
+        task = next((t for t in self.tasks if t.id == task_id), None)
+        if task:
+            task.assigned_agents = agent_names
+            task.status = TaskStatus.IN_PROGRESS
+
+    async def work_on_task(self, task_id: str):
+        task = next((t for t in self.tasks if t.id == task_id), None)
+        if task and task.status == TaskStatus.IN_PROGRESS:
+            try:
+                # Planning phase
+                workflow = await self.leader_create_workflow(task)
+                
+                # Execution and monitoring phase
+                result = await self.leader_coordinate_workflow(task, workflow)
+                
+                # Evaluation and completion phase
+                final_result = await self.leader_evaluate_and_finalize(task, result)
+                
+                task.results = [final_result]
+                task.status = TaskStatus.COMPLETED
+            except ValueError as e:
+                print(f"Error while working on task: {e}")
+                task.status = TaskStatus.PENDING
+
+    async def leader_create_workflow(self, task: Task) -> List[str]:
+        if not self.leader:
+            raise ValueError("No team leader assigned to create the workflow.")
+        
+        prompt = (f"Task: {task.title}\nDescription: {task.description}\n"
+                  f"Team members: {', '.join(agent.name for agent in self.agents if agent != self.leader)}\n"
+                  "Create a detailed workflow assigning specific responsibilities to each team member, including the order of work and estimated time for each step.")
+        response: LLMResponse
+        async for response in self.leader.generate(prompt):
+            pass
+        
+        workflow = []
+        if response and response.llm_response:
+            for line in response.llm_response.split('\n'):
+                if ':' in line:
+                    agent_name, responsibility = line.split(':', 1)
+                    workflow.append(agent_name.strip())
+                    agent = self.get_agent_by_name(agent_name.strip())
+                    if agent:
+                        await self.send_message(self.leader, agent, f"Your role in task '{task.title}': {responsibility.strip()}")
+        else:
+            print(f"Warning: No workflow response received for task '{task.title}'")
+        
+        return workflow
+
+    async def leader_coordinate_workflow(self, task: Task, workflow: List[str]) -> str:
+        if not self.leader:
+            raise ValueError("No team leader assigned to coordinate the workflow.")
+        
+        result = ""
+        for agent_name in workflow:
+            agent = self.get_agent_by_name(agent_name)
+            if agent:
+                # Leader assigns the task to the agent
+                await self.send_message(self.leader, agent, f"Please start working on your part of the task: {task.title}")
+                
+                # Agent works on the task
+                agent_result = await self.process_agent_task(agent, task, result)
+                result += f"\n\n{agent_result}"
+                
+                # Leader reviews the agent's work
+                review_prompt = f"Review the following work done by {agent.name} for the task '{task.title}':\n{agent_result}\nProvide feedback and suggestions for improvement if necessary."
+                review_response: LLMResponse
+                async for review_response in self.leader.generate(review_prompt):
+                    pass
+                
+                # Leader provides feedback to the agent
+                if review_response and review_response.llm_response:
+                    await self.send_message(self.leader, agent, f"Feedback on your work:\n{review_response.llm_response}")
+                    
+                    # If improvements are needed, the agent revises their work
+                    if "improve" in review_response.llm_response.lower() or "revise" in review_response.llm_response.lower():
+                        revision_prompt = f"Based on the feedback: {review_response.llm_response}\nPlease revise your work on the task: {task.title}"
+                        revision_response: LLMResponse
+                        async for revision_response in agent.generate(revision_prompt):
+                            pass
+                        if revision_response and revision_response.llm_response:
+                            result += f"\n\nRevised work by {agent.name}: {revision_response.llm_response}"
+                else:
+                    print(f"Warning: No review response received for {agent.name}'s work on task '{task.title}'")
+        
+        return result
+
+    async def leader_evaluate_and_finalize(self, task: Task, result: str) -> str:
+        if not self.leader:
+            raise ValueError("No team leader assigned to evaluate and finalize the task.")
+        
+        evaluation_prompt = f"Task: {task.title}\nFull results:\n{result}\nEvaluate the overall quality of the work, highlight key findings, and create a comprehensive summary."
+        evaluation_response: LLMResponse
+        async for evaluation_response in self.leader.generate(evaluation_prompt):
+            pass
+        
+        if evaluation_response and evaluation_response.llm_response:
+            final_result = f"Task Results:\n{result}\n\nTeam Leader Evaluation and Summary:\n{evaluation_response.llm_response}"
+            
+            # Inform all team members about the task completion and share the summary
+            for agent in self.agents:
+                if agent != self.leader:
+                    await self.send_message(self.leader, agent, f"Task '{task.title}' has been completed. Here's the summary:\n{evaluation_response.llm_response}")
+        else:
+            final_result = f"Task Results:\n{result}\n\nWarning: No evaluation response received from the team leader."
+            print(f"Warning: No evaluation response received for task '{task.title}'")
+        
+        return final_result
+
+    def get_task_status(self, task_id: str) -> Optional[TaskStatus]:
+        task = next((t for t in self.tasks if t.id == task_id), None)
+        return task.status if task else None
+
+    def get_task_results(self, task_id: str) -> Optional[List[str]]:
+        task = next((t for t in self.tasks if t.id == task_id), None)
+        return task.results if task else None
+
+    async def process_agent_task(self, agent: Agent, task: Task, previous_result: str) -> str:
+        prompt = (f"Task: {task.title}\nDescription: {task.description}\n"
+                  f"Previous work done:\n{previous_result}\n"
+                  f"Based on the previous work, please continue working on the task and provide your contribution.")
+        response: LLMResponse
+        async for response in agent.generate(prompt):
+            pass
+        return f"{agent.name}'s contribution: {response.llm_response}"
+
+class TeamManager:
+    def __init__(self):
+        self.teams: Dict[str, Team] = {}
+
+    def create_team(self, name: str) -> Team:
+        team = Team(name=name)
+        self.teams[team.id] = team
+        return team
+
+    def get_team(self, team_id: str) -> Optional[Team]:
+        return self.teams.get(team_id)
+
+    def delete_team(self, team_id: str):
+        if team_id in self.teams:
+            del self.teams[team_id]
+
+    async def start_all_teams(self):
+        tasks = [asyncio.create_task(team.start_communication()) for team in self.teams.values()]
+        await asyncio.gather(*tasks)
+
+    async def send_cross_team_message(self, sender_team: Team, sender_agent: Agent, 
+                                      receiver_team: Team, receiver_agent: Agent, 
+                                      content: str, priority: MessagePriority = MessagePriority.NORMAL):
+        message = Message(
+            sender=f"{sender_team.name}:{sender_agent.name}", 
+            receiver=f"{receiver_team.name}:{receiver_agent.name}", 
+            content=content,
+            priority=priority
+        )
+        await receiver_agent.receive_message(message)
+
+# Example usage
+async def main():
+    def print_notification(message: Message):
+        print(f"Notification: New message for {message.receiver} from {message.sender} (Priority: {message.priority.name})")
+
+    manager = TeamManager()
+    research_team = manager.create_team("Research Team")
+
+    alice = await Agent.create_agent(name="Alice", system_prompt="Research Assistant", ephemeral=True)
+    bob = await Agent.create_agent(name="Bob", system_prompt="Data Analyst", ephemeral=True)
+    charlie = await Agent.create_agent(name="Charlie", system_prompt="Domain Expert", ephemeral=True)
+
+    if alice and bob and charlie:
+        research_team.add_agent(alice)
+        research_team.add_agent(bob)
+        research_team.add_agent(charlie)
+        research_team.leader = alice  # Set Alice as the team leader
+
+    # Start the communication system
+    # communication_task = asyncio.create_task(research_team.start_communication())
+
+    # Send messages with different priorities
+    # if alice and bob:
+    #     await research_team.send_message(alice, bob, "Can you analyze the latest dataset?", MessagePriority.HIGH)
+    # if charlie:
+    #     await research_team.broadcast_message(charlie, "Team meeting at 2 PM today.", MessagePriority.NORMAL)
+    # if bob and alice:
+    #     await research_team.send_message(bob, alice, "Urgent: Client needs the report ASAP!", MessagePriority.URGENT)
+
+    # Create and assign a task
+    task = research_team.create_task(
+        title="Stock Options",
+        description="Get me best ai-related stock options to invest in"
+    )
+    research_team.assign_task(task.id, ["Alice", "Bob", "Charlie"])
+
+    # Work on the task
+    await research_team.work_on_task(task.id)
+
+    # Check task status and results
+    task_status = research_team.get_task_status(task.id)
+    if task_status == TaskStatus.COMPLETED:
+        results = research_team.get_task_results(task.id)
+        if results is not None:
+            print("Task completed. Results:")
+            for result in results:
+                print(result)
+        else:
+            print("Task completed, but no results were found.")
+    else:
+        print(f"Task is not completed. Current status: {task_status}")
+
+    # Allow some time for message processing
+    await asyncio.sleep(10)
+
+    # Cancel the communication task
+    # communication_task.cancel()
+    # try:
+    #     await communication_task
+    # except asyncio.CancelledError:
+    #     pass
+
+if __name__ == "__main__":
+    asyncio.run(main())

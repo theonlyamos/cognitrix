@@ -40,8 +40,7 @@ def Calculator(math_expression: str):
 
     Example:
         User: what is the square root of 25?
-        Assistant: <response>
-            <observation>The user is asking for the square root of 25 and has specified this should use the Calculator tool.</observation>
+        Assistant: <observation>The user is asking for the square root of 25 and has specified this should use the Calculator tool.</observation>
             <mindspace>
         Mathematical: Square root operation, perfect squares
         Educational: Basic algebra, exponents and roots
@@ -62,7 +61,7 @@ def Calculator(math_expression: str):
                 </tool>
             </tool_calls>
             <artifacts></artifacts>
-        </response>
+        
 
     :param math_expression: The math expression to evaluate
     """
@@ -109,7 +108,7 @@ class InternetBrowser(Tool):
     
     Example:
     User: Visit https://example.com
-    AI Assistant: <response>
+    AI Assistant: 
         <observation>The user or system has requested to open a web page at https://example.com using the Internet Browser tool.</observation>
         <mindspace>
     Web Browsing: URL structure, web protocols (HTTP/HTTPS)
@@ -131,7 +130,7 @@ class InternetBrowser(Tool):
             </tool>
         </tool_calls>
         <artifacts></artifacts>
-    </response>
+    
     
     :param url: The url to visit
     """
@@ -270,7 +269,7 @@ class FSBrowser(Tool):
     
     Example:
     User: create test.py on Desktop.
-    AI Assistant: <response>
+    AI Assistant: 
         <observation>The user has requested to create a new file named 'test.py' on the desktop with content 'gibberish'.</observation>
         <mindspace>
     File System: File creation, directory structure, file permissions
@@ -295,10 +294,10 @@ class FSBrowser(Tool):
             </tool>
         </tool_calls>
         <artifacts></artifacts>
-    </response>
+    
     
     User: write new content to test.py on Desktop.
-    AI Assistant: <response>
+    AI Assistant: 
         <observation>The user has requested to write 'gibberish' content to a file named 'test.py' on the desktop.</observation>
         <mindspace>
     File System: File writing operations, file permissions
@@ -324,10 +323,10 @@ class FSBrowser(Tool):
             </tool>
         </tool_calls>
         <artifacts></artifacts>
-    </response>
+    
     
     User: create folder called NewApp on Desktop.
-    AI Assistant: <response>
+    AI Assistant: 
         <observation>The user has requested to create a new folder called 'NewApp' on the Desktop.</observation>
         <mindspace>
     File System: Directory creation, folder structure, permissions
@@ -352,10 +351,10 @@ class FSBrowser(Tool):
             </tool>
         </tool_calls>
         <artifacts></artifacts>
-    </response>
+    
     
     User: How many files are in my documents.
-    AI Assistant: <response>
+    AI Assistant: 
         <observation>The user has asked to count the number of files in their documents folder.</observation>
         <mindspace>
     File System: Directory structure, file counting
@@ -379,7 +378,7 @@ class FSBrowser(Tool):
             </tool>
         </tool_calls>
         <artifacts></artifacts>
-    </response>
+    
     
     
     :param path: The specific path (realpath)
@@ -475,7 +474,7 @@ def take_screenshot():
     Usage Example:
     
     User: take a screenshot
-    AI Assistant: <response>
+    AI Assistant: 
         <observation>I need to take a screenshot of the user's screen.</observation>
         <mindspace>
     Screen Capture: Screenshot techniques, image formats
@@ -493,7 +492,7 @@ def take_screenshot():
             </tool>
         </tool_calls>
         <artifacts></artifacts>
-    </response>
+    
     """
     screenshot = pyautogui.screenshot()
     
@@ -511,7 +510,7 @@ def text_input(text: str):
     Example Usage:
     
     User: write hello world
-    AI Assistant: <response>
+    AI Assistant: 
         <observation>I need to input text on the computer using the keyboard.</observation>
         <mindspace>
     User Interface: Keyboard input, text entry fields
@@ -532,7 +531,7 @@ def text_input(text: str):
             </tool>
         </tool_calls>
         <artifacts></artifacts>
-    </response>
+    
     """
     screenshot = pyautogui.write(text, 0.15)
     
@@ -645,7 +644,7 @@ def mouse_right_click(x: int, y: int):
     
     Example:
         User: Right-click on Brave icon
-        AI Assistant: <response>
+        AI Assistant: 
             <observation>I need to perform a mouse right-click at specific coordinates on the screen.</observation>
             <mindspace>
         Visual: Desktop interface, Brave browser icon location
@@ -667,7 +666,7 @@ def mouse_right_click(x: int, y: int):
                 </tool>
             </tool_calls>
             <artifacts></artifacts>
-        </response>
+        
     """
     screenshot = pyautogui.rightClick(x, y)
     
@@ -688,7 +687,7 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
     
     Example:
         User: Create sub agent for a task
-        AI Assistant: <response>
+        AI Assistant: 
             <observation>The user has requested me to create a sub-agent for a specific task.</observation>
             <mindspace>
         Agent Creation: Sub-agent design, task specialization
@@ -713,10 +712,10 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
                 </tool>
             </tool_calls>
             <artifacts></artifacts>
-        </response>
+        
         
         User: Create the snake game in python
-        AI Assistant: <response>
+        AI Assistant: 
             <observation>The user has requested me to create the classic Snake game in Python.</observation>
             <mindspace>
         Game Development: Snake game mechanics, Python game libraries
@@ -746,42 +745,28 @@ async def create_sub_agent(name: str, llm: str, description: str, tools: List[st
                 </tool>
             </tool_calls>
             <artifacts></artifacts>
-        </response>
+        
     """
     
     sub_agent: Optional[Agent] = None
-    
-    if isinstance(tools, dict):
-        tools = list(tools.values())
-    
-    loaded_tools: List[Tool] = []
-    
-    for t in tools:
-        tool = Tool.get_by_name(t)
-        if tool:
-            loaded_tools.append(tool)
-
-    loaded_llm = LLM.load_llm(llm)
-    if loaded_llm:
-        agent_llm = loaded_llm()
         
-        description += '\n\n{tools}'
+    description += '\n\n{tools}'
+    
+    if not "return_format" in description:
+        description += f"\n{xml_return_format}"
         
-        if not "return_format" in description:
-            description += f"\n{xml_return_format}"
-            
-        sub_agent = await Agent.create_agent(
-            name=name,
-            system_prompt=description,
-            llm=agent_llm,
-            is_sub_agent=True,
-            parent_id=parent.id,
-            tools=loaded_tools
-        )
+    sub_agent = await Agent.create_agent(
+        name=name,
+        system_prompt=description,
+        provider=llm,
+        is_sub_agent=True,
+        parent_id=parent.id,
+        tools=tools
+    )
         
     if sub_agent:
         sub_agent.system_prompt = description
-        await sub_agent.save()
+        sub_agent.save()
         return ['agent', sub_agent, 'Sub agent created successfully']
     
     return "Error creating sub agent"
@@ -797,7 +782,7 @@ def call_sub_agent(name: str, task: str, parent: Agent):
     Example:
         User: Run task with sub agent
         
-        AI Assistant: <response>
+        AI Assistant: 
             <observation>I need to run a task with a sub-agent.</observation>
             <mindspace>
         Task Delegation: Sub-agent capabilities, task decomposition
@@ -819,7 +804,7 @@ def call_sub_agent(name: str, task: str, parent: Agent):
                 </tool>
             </tool_calls>
             <artifacts></artifacts>
-        </response>
+        
     """
     parent.call_sub_agent(name, task)
     
@@ -840,7 +825,7 @@ def internet_search(query: str, search_depth: str = "basic"):
     
     Example:
         User: who is the president of the United States?
-        AI Assistant: <response>
+        AI Assistant: 
             <observation>I need to search the internet for information about the president of the United States.</observation>
             <mindspace>
         Political Information: Current world leaders, US government structure
@@ -861,7 +846,7 @@ def internet_search(query: str, search_depth: str = "basic"):
                 </tool>
             </tool_calls>
             <artifacts></artifacts>
-        </response>
+        
     """
     
     tavily = TavilyClient(api_key=os.getenv('TAVILY_API_KEY', ''))
@@ -884,7 +869,7 @@ def web_scraper(url: str|List[str]):
 
     Example:
         User: Scrape the website https://example.com
-        AI Assistant: <response>
+        AI Assistant: 
             <observation>The user has requested to scrape a website.</observation>
             <mindspace>
         Web Scraping: HTML parsing, data extraction techniques
@@ -905,7 +890,7 @@ def web_scraper(url: str|List[str]):
                 </tool>
             </tool_calls>
             <artifacts></artifacts>
-        </response>
+        
     """
     
     
@@ -945,7 +930,7 @@ def brave_search(query: str):
     
     Example:
         User: who is the president of the United States?
-        AI Assistant: <response>
+        AI Assistant: 
             <observation>I need to search the internet for information about the president of the United States.</observation>
             <mindspace>
         Political Information: Current world leaders, US government structure
@@ -966,7 +951,7 @@ def brave_search(query: str):
                 </tool>
             </tool_calls>
             <artifacts></artifacts>
-        </response>
+        
     """
     url = "https://api.search.brave.com/res/v1/web/search"
     
@@ -1009,7 +994,7 @@ def wikipedia(query: str, search_depth: str = 'basic'):
     
     Example:
     User: who is Joe Biden?
-    AI Assistant: <response>
+    AI Assistant: 
         <observation>I need to search the internet for information about Joe Biden</observation>
         <mindspace>
     Political Information: Current world leaders, US government structure
@@ -1031,7 +1016,7 @@ def wikipedia(query: str, search_depth: str = 'basic'):
             </tool>
         </tool_calls>
         <artifacts></artifacts>
-    </response>
+    
     """
     results = ''
     try:
@@ -1051,3 +1036,71 @@ def wikipedia(query: str, search_depth: str = 'basic'):
         results = ''
     
     return results
+
+@tool(category='system')
+def create_tool(name: str, description: str, category: str, function_code: str):
+    """Use this tool to create new tools dynamically.
+    
+    Args:
+        name (str): The name of the new tool.
+        description (str): A description of what the tool does and how to use it.
+        category (str): The category of the tool (e.g., 'system', 'web', 'general').
+        function_code (str): The Python code for the tool's function.
+    
+    Returns:
+        str: A message indicating whether the tool was created successfully.
+    
+    Example:
+        User: Create a new tool that reverses a string
+        AI Assistant: 
+            <observation>The user wants to create a new tool for reversing strings.</observation>
+            <mindspace>
+            Tool Creation: Dynamic function generation, code evaluation
+            Python Programming: String manipulation, function definition
+            System Integration: Adding new tools to the existing set
+            Safety: Code execution risks, input validation
+            </mindspace>
+            <thought>Step 1) To create a new tool, I need to use the Create Tool function.
+            Step 2) I'll define the tool's name, description, category, and function code.
+            Step 3) The function code should reverse a given string.
+            Step 4) Calling the Create Tool function with the necessary arguments.</thought>
+            <type>tool_calls</type>
+            <tool_calls>
+                <tool>
+                    <name>Create Tool</name>
+                    <arguments>
+                        <name>Reverse String</name>
+                        <description>This tool reverses a given string.
+                        Args:
+                            text (str): The string to reverse.
+                        Returns:
+                            str: The reversed string.</description>
+                        <category>general</category>
+                        <function_code>
+def reverse_string(text: str) -> str:
+    return text[::-1]
+                        </function_code>
+                    </arguments>
+                </tool>
+            </tool_calls>
+            <artifacts></artifacts>
+    """
+    try:
+        # Create the function object from the provided code
+        exec(function_code)
+        
+        # Get the function object
+        func = locals()[name.lower().replace(" ", "_")]
+        
+        # Create the new tool using the @tool decorator
+        new_tool = tool(category=category)(func)
+        
+        # Set the description
+        new_tool.__doc__ = description
+        
+        # Add the new tool to the global namespace
+        globals()[name.lower().replace(" ", "_")] = new_tool
+        
+        return f"Tool '{name}' created successfully."
+    except Exception as e:
+        return f"Error creating tool: {str(e)}"
