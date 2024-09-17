@@ -164,3 +164,21 @@ export async function saveTeam(team: TeamInterface): Promise<TeamInterface> {
     }
     return response.data
 }
+
+export async function generateTeam(description: string): Promise<Partial<TeamInterface>> {
+  // Call your AI service or API here to generate team details
+  // This is a placeholder implementation
+  const response = await fetch('/api/generate-team', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ description }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to generate team');
+  }
+
+  return await response.json();
+}

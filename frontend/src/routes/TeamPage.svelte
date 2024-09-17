@@ -1,26 +1,30 @@
 <script lang="ts">
   import { link, navigate } from "svelte-routing";
-  import { getTeam, saveTeam, deleteTeam, getAllAgents } from "../common/utils";
+  import { getTeam, saveTeam, deleteTeam, getAllAgents, generateTeam } from "../common/utils";
   import type { TeamInterface, AgentInterface } from "../common/interfaces";
   import Checkbox from "../lib/Checkbox.svelte";
   import { onMount } from "svelte";
   import Accordion from "../lib/Accordion.svelte";
   import RadioItem from "../lib/RadioItem.svelte";
+  import Switch from "../lib/Switch.svelte";
 
   export let team_id: string = "";
   let team: TeamInterface = {
     name: "",
     assigned_agents: [],
     description: "",
-    team_leader_id: "",
+    _leader: "",
   };
   let agents: AgentInterface[] = [];
   let selectedAgents: string[] = [];
+  let isGenerativeMode = true;
+  let generativeDescription = "";
 
   const loadTeam = async (team_id: string) => {
     try {
       team = (await getTeam(team_id)) as TeamInterface;
       selectedAgents = [...team.assigned_agents];
+      isGenerativeMode = false;
     } catch (error) {
       console.log(error);
     }
@@ -59,7 +63,7 @@
 
   const handleTeamLeaderChange = (event: Event) => {
     const target = event.target as HTMLInputElement;
-    team.team_leader_id = target.value;
+    team._leader = target.value;
   };
 
   const loadAgents = async () => {
@@ -69,6 +73,20 @@
     } catch (error) {
       console.log(error);
     }
+  };
+
+  const handleGenerateTeam = async () => {
+    try {
+      const generatedTeam = await generateTeam(generativeDescription);
+      team = { ...team, ...generatedTeam };
+      isGenerativeMode = false;
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  const handleModeChange = (event: CustomEvent<boolean>) => {
+    isGenerativeMode = event.detail;
   };
 
   onMount(async () => {
@@ -109,52 +127,124 @@
 </div>
 
 <div class="container">
-  <div class="card team-form">
-    <div class="form-group">
-      <label for="name">Team Name</label>
-      <input type="text" id="name" bind:value={team.name} />
-    </div>
-    <div class="form-group">
-      <label for="description">Team Description</label>
-      <textarea
-        rows="10"
-        bind:value={team.description}
-        placeholder="A brief description of the team's purpose or role."
-      ></textarea>
-    </div>
-    <div class="form-group">
-      <Accordion title="Select Agents" opened={true}>
-        <div class="agents-list">
-          {#each agents as agent (agent.id)}
-            <Checkbox
-              name="agents"
-              value={agent.id}
-              label={agent.name}
-              onChange={handleAgentChange}
-              checked={selectedAgents.includes(agent.id)}
-            />
-          {/each}
+  {#if !team_id}
+    <div class="card team-form">
+      <div class="form-group mode-switch">
+        <Switch
+          label="Generative Mode"
+          name="generativeMode"
+          bind:checked={isGenerativeMode}
+          onChange={handleModeChange}
+        />
+      </div>
+      {#if isGenerativeMode}
+        <div class="form-group">
+          <label for="generativeDescription">Describe your team</label>
+          <textarea
+            id="generativeDescription"
+            rows="10"
+            bind:value={generativeDescription}
+            placeholder="Describe the team you want to create, including its name, purpose, and any other relevant details."
+          ></textarea>
         </div>
-      </Accordion>
+        <button class="btn" on:click={handleGenerateTeam}>
+          <span>Generate Team</span>
+        </button>
+      {:else}
+        <div class="form-group">
+          <label for="name">Team Name</label>
+          <input type="text" id="name" bind:value={team.name} />
+        </div>
+        <div class="form-group">
+          <label for="description">Team Description</label>
+          <textarea
+            rows="10"
+            bind:value={team.description}
+            placeholder="A brief description of the team's purpose or role."
+          ></textarea>
+        </div>
+        <div class="form-group">
+          <Accordion title="Select Agents" opened={true}>
+            <div class="agents-list">
+              {#each agents as agent (agent.id)}
+                <Checkbox
+                  name="agents"
+                  value={agent.id}
+                  label={agent.name}
+                  onChange={handleAgentChange}
+                  checked={selectedAgents.includes(agent.id)}
+                />
+              {/each}
+            </div>
+          </Accordion>
+        </div>
+        <div class="form-group">
+          <Accordion title="Team Leader" opened={true}>
+            <div class="agents-list">
+              {#each agents as agent (agent.id)}
+                {#if team.assigned_agents.includes(agent.id)}
+                  <RadioItem
+                    name="agents"
+                    value={agent.id}
+                    label={agent.name}
+                    onChange={handleTeamLeaderChange}
+                    checked={agent.id === team._leader}
+                  />
+                {/if}
+              {/each}
+            </div>
+          </Accordion>
+        </div>
+      {/if}
     </div>
-    <div class="form-group">
-      <Accordion title="Team Leader" opened={true}>
-        <div class="agents-list">
-          {#each agents as agent (agent.id)}
-            {#if team.assigned_agents.includes(agent.id)}
-              <RadioItem
+  {:else}
+    <div class="card team-form">
+      <div class="form-group">
+        <label for="name">Team Name</label>
+        <input type="text" id="name" bind:value={team.name} />
+      </div>
+      <div class="form-group">
+        <label for="description">Team Description</label>
+        <textarea
+          rows="10"
+          bind:value={team.description}
+          placeholder="A brief description of the team's purpose or role."
+        ></textarea>
+      </div>
+      <div class="form-group">
+        <Accordion title="Select Agents" opened={true}>
+          <div class="agents-list">
+            {#each agents as agent (agent.id)}
+              <Checkbox
                 name="agents"
                 value={agent.id}
                 label={agent.name}
-                onChange={handleTeamLeaderChange}
-                checked={agent.id === team.team_leader_id}
+                onChange={handleAgentChange}
+                checked={selectedAgents.includes(agent.id)}
               />
-            {/if}
-          {/each}
-        </div>
-      </Accordion>
+            {/each}
+          </div>
+        </Accordion>
+      </div>
+      <div class="form-group">
+        <Accordion title="Team Leader" opened={true}>
+          <div class="agents-list">
+            {#each agents as agent (agent.id)}
+              {#if team.assigned_agents.includes(agent.id)}
+                <RadioItem
+                  name="agents"
+                  value={agent.id}
+                  label={agent.name}
+                  onChange={handleTeamLeaderChange}
+                  checked={agent.id === team._leader}
+                />
+              {/if}
+            {/each}
+          </div>
+        </Accordion>
+      </div>
     </div>
-  </div>
+  {/if}
 </div>
 
 <style>
@@ -197,5 +287,9 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 10px;
+  }
+
+  .mode-switch {
+    margin-bottom: 20px;
   }
 </style>

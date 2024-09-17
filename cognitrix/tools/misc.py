@@ -5,6 +5,7 @@ from typing import Union, Optional, Any, Tuple, Dict, List
 from webbrowser import open_new_tab
 from cognitrix.tools.base import Tool
 from cognitrix.tools.tool import tool
+from cognitrix.teams.base import TeamManager
 from cognitrix.agents import Agent
 from cognitrix.llms import LLM
 from cognitrix.utils import xml_return_format
@@ -673,7 +674,7 @@ def mouse_right_click(x: int, y: int):
     return 'Mouse double-click completed.'
 
 @tool(category='system')
-async def create_sub_agent(name: str, llm: str, description: str, tools: List[str], parent: Agent):
+async def create_new_agent(name: str, llm: str, description: str, tools: List[str], parent: Agent):
     """Use this tool to create sub agents for specific tasks.
     
     Args:
@@ -809,6 +810,81 @@ def call_sub_agent(name: str, task: str, parent: Agent):
     parent.call_sub_agent(name, task)
     
     return "Agent running"
+
+@tool(category='system')
+async def create_new_team(name: str, description: str, agent_names: List[str], leader_name: Optional[str] = None):
+    """Use this tool to create new teams with existing agents.
+    
+    Args:
+        name (str): The name of the team
+        description (str): A description of the team's purpose and goals
+        agent_names (List[str]): List of existing agent names to be added to the team
+        leader_name (Optional[str]): Name of an existing agent to be set as the team leader (optional)
+    
+    Returns:
+        str: A message indicating whether the team was created successfully or not.
+    
+    Example:
+        User: Create a new research team
+        AI Assistant: 
+            <observation>The user has requested to create a new research team with existing agents.</observation>
+            <mindspace>
+        Team Management: Team creation, role assignment
+        Collaboration: Group dynamics, task distribution
+        Project Planning: Team objectives, resource allocation
+        Leadership: Team leader selection, responsibility delegation
+            </mindspace>
+            <thought>Step 1) To create a new team, I need to use the Create New Team tool.
+        Step 2) The Create New Team tool takes four arguments: name (the name of the team), description (the team's purpose and goals), agent_names (a list of existing agent names to add to the team), and leader_name (optional, the name of an existing agent to be the team leader).
+        Step 3) I'll use the provided information to create the team.
+        Step 4) Calling the Create New Team tool with the required arguments.</thought>
+            <type>tool_calls</type>
+            <tool_calls>
+                <tool>
+                    <name>Create New Team</name>
+                    <arguments>
+                        <name>Research Team Alpha</name>
+                        <description>A team dedicated to conducting cutting-edge research in artificial intelligence and machine learning.</description>
+                        <agent_names>
+                            Research Assistant
+                        </agent_names>
+                        <agent_names>
+                            Data Analyst
+                        </agent_names>
+                        <agent_names>
+                            Domain Expert
+                        </agent_names>
+                        <leader_name>Alice</leader_name>
+                    </arguments>
+                </tool>
+            </tool_calls>
+            <artifacts></artifacts>
+    """
+    
+    try:
+        team_manager = TeamManager()
+        new_team = team_manager.create_team(name, description)
+        new_team.description = description
+
+        for agent_name in agent_names:
+            agent = await Agent.load_agent(agent_name)
+            if agent:
+                new_team.add_agent(agent)
+            else:
+                print(f"Warning: Agent '{agent_name}' not found and couldn't be added to the team.")
+
+        if leader_name:
+            leader = await Agent.load_agent(leader_name)
+            if leader and leader.id in new_team.agent_ids:
+                new_team.leader = leader
+            else:
+                print(f"Warning: Leader '{leader_name}' not found or not in the team. No leader set.")
+
+        new_team.save()
+
+        return ['team', new_team, f"Team '{name}' created successfully with {len(new_team.agent_ids)} agents."]
+    except Exception as e:
+        return f"Error creating team: {str(e)}"
 
 @tool(category='web')
 def internet_search(query: str, search_depth: str = "basic"):

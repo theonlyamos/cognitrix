@@ -74,9 +74,6 @@ class Agent(Model):
     response_list: List[tuple] = Field(default_factory=list)
     """List for storing responses from the agent"""
     
-    # team: Optional['Team'] = None
-    
-    
     class Config:
         arbitrary_types_allowed = True
     
@@ -110,31 +107,11 @@ class Agent(Model):
         
         print(f"{self.name} responded: {response.text}")
 
-        # Check for delegation keywords
-        if "delegate" in str(response.text).lower():
-            return await self.delegate_task(message, str(response.text))
-        elif "queue" in str(response.text).lower():
+        # Check for queue keyword
+        if "queue" in str(response.text).lower():
             return await self.queue_response(message, str(response.text))
         else:
             return response
-
-    async def delegate_task(self, message: Message, response: str):
-        if self.team:
-            # Extract delegate name from response (assuming format: "delegate to: AgentName")
-            delegate_name = response.split("delegate to:")[-1].strip()
-            delegate = self.team.get_agent_by_name(delegate_name)
-            if delegate:
-                new_message = Message(
-                    sender=self.name,
-                    receiver=delegate.name,
-                    content=f"Delegated task: {message.content}",
-                    priority=message.priority
-                )
-                await delegate.receive_message(new_message)
-                return f"Task delegated to {delegate_name}"
-            else:
-                return f"Couldn't find agent {delegate_name} to delegate to"
-        return "Unable to delegate task: not part of a team"
 
     async def queue_response(self, message: Message, response: str):
         # Extract time delay from response (assuming format: "queue for: 5 minutes")
@@ -155,46 +132,6 @@ class Agent(Model):
     def available_tools(self) -> List[str]:
         return [tool.name for tool in self.tools]
     
-    # def format_tools_for_llm(self):
-    #     TYPE_HINTS = {
-    #         "<class 'int'>": 'integer',
-    #         "<class 'str'>": 'string',
-    #         "<class 'float'>": 'float',
-    #         "<class 'dict'>": 'object',
-    #         "<class 'list'>": 'array',
-    #         "typing.Dict": 'object',
-    #         "typing.List": 'array',
-    #         "typing.Optional[int]": 'integer',
-    #         "typing.Optional[str]": 'integer',
-    #         "typing.Optional[float]": 'float',
-    #     }
-    #     llm_tools: list[dict[str, Any]] = []
-    #     classes = []
-    #     for tool in self.tools:
-    #         tool_parameters = tool.parameters
-    #         if not tool_parameters:
-    #             func_signatures = inspect.signature(tool.run)
-    #             tool_parameters = func_signatures.parameters
-            
-    #         parameters = tool_parameters.keys()
-    #         tool_details = {
-    #             'tool': tool,
-    #             'name': tool.name,
-    #             'description': tool.description,
-    #             'parameters': {},
-    #             'required': []
-    #         }
-
-    #         if not 'args' in parameters:
-    #             for name, param in tool_parameters.items():
-    #                 print(name, param)
-    #                 tool_details['parameters'] = {name: TYPE_HINTS.get(str(param), 'string')}
-    #             tool_details['required'] = [name for name, param in tool_parameters.items() if param.default is inspect._empty]
-            
-    #         llm_tools.append(tool_details)
-
-    #     self.llm.format_tools(llm_tools)
-
     def formatted_system_prompt(self):
         tools_str = self._format_tools_string()
         subagents_str = self._format_subagents_string()
@@ -205,19 +142,12 @@ class Agent(Model):
         prompt += self.system_prompt
         prompt = prompt.replace("{name}", self.name)
         
-        # if not self.llm.supports_tool_use:
         prompt = prompt.replace("{tools}", tools_str)
         prompt = prompt.replace("{subagents}", subagents_str)
         
-        # if not self.llm.supports_tool_use:
         prompt = prompt.replace("{available_tools}", json.dumps(self.available_tools))
         prompt = prompt.replace("{llms}", llms_str)
-        # prompt = prompt.replace("{return_format}", json_return_format)
 
-        # self.llm.system_prompt = prompt
-        
-        # self.format_tools_for_llm()
-        
         return prompt
 
     def _format_tools_string(self) -> str:
@@ -259,7 +189,7 @@ class Agent(Model):
 
                         prompt['message'] = result[2]
                     else:
-                        prompt['message'] = result
+                        prompt['message'] = result[2]
                 else:
                     prompt['message'] = result
             else:
@@ -301,15 +231,8 @@ class Agent(Model):
                         raise Exception(f"Tool '{t['name']}' not found")
                     
                     print(f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}")
-                    # if self.websocket:
-                    #     await self.websocket.send_text(json.dumps({
-                    #         'type': 'chat_message', 
-                    #         'content': f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}\n", 
-                    #         'action': 'reply', 'complete': False}))
-                        
                     if 'sub agent' in tool.name.lower():
                         t['arguments']['parent'] = self
-                    # print(tool)
                     if tool.name.lower() == 'create sub agent':
                         t['arguments']['parent'] = self
                         result = await tool.arun(**t['arguments'])
@@ -337,13 +260,6 @@ class Agent(Model):
     
     def call_sub_agent(self, agent_name: str, task_description: str):
         sub_agent = self.get_sub_agent_by_name(agent_name)
-        # if sub_agent:
-            # sub_agent.task = Task(description=task_description)
-            # if sub_agent.task:
-            #     self.start_task_thread(sub_agent, self)
-        # else:
-        #     full_prompt = self.process_prompt(f'Sub-agent with name {agent_name} was not found.')
-        #     self.llm(full_prompt, self.formatted_system_prompt())
 
     @classmethod
     async def create_agent(cls, name: str, system_prompt: str, provider: str = 'groq', 

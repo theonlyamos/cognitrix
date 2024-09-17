@@ -2,24 +2,28 @@
   export let label: string = "";
   export let name: string = "";
   export let checked: boolean = false;
-  export let group: string[] = [];
   export let disabled: boolean = false;
-  export let onChange = (e: Event) => {};
+  export let onChange = (e: CustomEvent<boolean>) => {};
+
+  function toggle() {
+    if (!disabled) {
+      checked = !checked;
+      onChange(new CustomEvent('change', { detail: checked }));
+    }
+  }
 </script>
 
 <div class="switch-container">
   <label for={name}>{label}</label>
-  <label class={`switch ${disabled ? "disabled" : ""}`}>
-    <input
-      type="checkbox"
-      {name}
-      bind:checked
-      bind:group
-      on:change={onChange}
-      {disabled}
-    />
-    <span class="slider round"> </span>
-  </label>
+  <button
+    class={`switch ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}`}
+    on:click={toggle}
+    {disabled}
+    aria-checked={checked}
+    role="switch"
+  >
+    <span class="slider" />
+  </button>
 </div>
 
 <style>
@@ -35,57 +39,40 @@
     display: inline-block;
     width: 50px;
     height: 27px;
+    padding: 0;
+    border: none;
+    background-color: var(--bg-3);
+    cursor: pointer;
+    border-radius: 27px;
+    transition: background-color 0.4s;
   }
 
-  .switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
+  .switch.checked {
+    background-color: var(--fg-1);
+  }
+
+  .switch:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--fg-1);
   }
 
   .slider {
     position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: var(--bg-3);
-    -webkit-transition: 0.4s;
-    transition: 0.4s;
-  }
-
-  .slider:before {
-    position: absolute;
-    content: "";
     height: 20px;
     width: 20px;
     left: 4px;
     bottom: 4px;
     background-color: var(--bg-1);
-    -webkit-transition: 0.4s;
     transition: 0.4s;
+    border-radius: 50%;
   }
 
-  input:checked + .slider {
-    background-color: var(--fg-1);
-  }
-
-  input:focus + .slider {
-    box-shadow: 0 0 1px var(--fg-1);
-  }
-
-  input:checked + .slider:before {
-    -webkit-transform: translateX(22px);
-    -ms-transform: translateX(22px);
+  .switch.checked .slider {
     transform: translateX(22px);
   }
 
-  .slider.round {
-    border-radius: 27px;
-  }
-
-  .slider.round:before {
-    border-radius: 50%;
+  .switch.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 </style>

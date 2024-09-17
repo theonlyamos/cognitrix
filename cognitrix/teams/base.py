@@ -7,37 +7,48 @@ from cognitrix.agents.base import Agent, Message, MessagePriority
 from cognitrix.llms.base import LLMResponse
 from cognitrix.tasks.base import Task, TaskStatus
 from odbms import Model
+from functools import cached_property
 
 class Team(Model):
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str
-    agents: List[Agent] = Field(default_factory=list)
+    """Name of the team"""
+    
+    description: str = Field(default="")
+    """Description of the team"""
+    
+    agent_ids: List[str] = Field(default_factory=list)
+    """List of agent IDs in the team"""
+    
     tasks: List[Task] = Field(default_factory=list)
-    _leader: Optional[Agent] = None
+    """List of tasks in the team"""
+    
+    _leader_id: Optional[str] = None
+    """ID of the team leader"""
 
     class Config:
         arbitrary_types_allowed = True
 
+    @cached_property
+    def agents(self) -> List[Agent]:
+        return [agent for aid in self.agent_ids if (agent := Agent.get(aid)) is not None]
+
     @property
     def leader(self) -> Optional[Agent]:
-        return self._leader
+        return Agent.get(self._leader_id) if self._leader_id else None
 
     @leader.setter
     def leader(self, agent: Agent):
-        if agent in self.agents:
-            self._leader = agent
+        if agent.id in self.agent_ids:
+            self._leader_id = agent.id
         else:
             raise ValueError("The leader must be a member of the team.")
 
     def add_agent(self, agent: Agent):
-        agent.team = self
-        self.agents.append(agent)
+        if agent.id not in self.agent_ids:
+            self.agent_ids.append(agent.id)
 
     def remove_agent(self, agent_id: str):
-        self.agents = [agent for agent in self.agents if agent.id != agent_id]
-        for agent in self.agents:
-            if agent.id == agent_id:
-                agent.team = None
+        self.agent_ids = [aid for aid in self.agent_ids if aid != agent_id]
 
     async def broadcast_message(self, sender: Agent, content: str, priority: MessagePriority = MessagePriority.NORMAL):
         for agent in self.agents:
@@ -52,13 +63,11 @@ class Team(Model):
     async def start_communication(self):
         while True:
             for agent in self.agents:
-                while not agent.response_queue.empty():
-                    message, response = await agent.response_queue.get()
-                    print(f"{agent.name} processed message from {message.sender}: {response.llm_response}")
+                while agent.response_list:
+                    message, response = agent.response_list.pop(0)
+                    processed_response = await self.process_agent_message(agent, message, response.text)
+                    print(f"{agent.name} processed message from {message.sender}: {processed_response}")
             await asyncio.sleep(0.1)  # Small delay to prevent busy-waiting
-
-    def get_agent_by_name(self, name: str) -> Optional[Agent]:
-        return next((agent for agent in self.agents if agent.name.lower() == name.lower()), None)
 
     def create_task(self, title: str, description: str) -> Task:
         task = Task(title=title, description=description)
@@ -95,7 +104,7 @@ class Team(Model):
             raise ValueError("No team leader assigned to create the workflow.")
         
         prompt = (f"Task: {task.title}\nDescription: {task.description}\n"
-                  f"Team members: {', '.join(agent.name for agent in self.agents if agent != self.leader)}\n"
+                  f"Team members: {', '.join(agent.name for agent in self.agents if agent.id != self._leader_id)}\n"
                   "Create a detailed workflow assigning specific responsibilities to each team member, including the order of work and estimated time for each step.")
         response: LLMResponse
         async for response in self.leader.generate(prompt):
@@ -107,7 +116,7 @@ class Team(Model):
                 if ':' in line:
                     agent_name, responsibility = line.split(':', 1)
                     workflow.append(agent_name.strip())
-                    agent = self.get_agent_by_name(agent_name.strip())
+                    agent = Agent.find_one({'name': agent_name.strip()})
                     if agent:
                         await self.send_message(self.leader, agent, f"Your role in task '{task.title}': {responsibility.strip()}")
         else:
@@ -121,7 +130,7 @@ class Team(Model):
         
         result = ""
         for agent_name in workflow:
-            agent = self.get_agent_by_name(agent_name)
+            agent = Agent.find_one({'name': agent_name})
             if agent:
                 # Leader assigns the task to the agent
                 await self.send_message(self.leader, agent, f"Please start working on your part of the task: {task.title}")
@@ -167,7 +176,7 @@ class Team(Model):
             
             # Inform all team members about the task completion and share the summary
             for agent in self.agents:
-                if agent != self.leader:
+                if agent.id != self._leader_id:
                     await self.send_message(self.leader, agent, f"Task '{task.title}' has been completed. Here's the summary:\n{evaluation_response.llm_response}")
         else:
             final_result = f"Task Results:\n{result}\n\nWarning: No evaluation response received from the team leader."
@@ -192,12 +201,33 @@ class Team(Model):
             pass
         return f"{agent.name}'s contribution: {response.llm_response}"
 
+    async def delegate_task(self, sender: Agent, message: Message, delegate_name: str):
+        delegate = Agent.find_one({'name': delegate_name})
+        if delegate:
+            new_message = Message(
+                sender=sender.name,
+                receiver=delegate.name,
+                content=f"Delegated task: {message.content}",
+                priority=message.priority
+            )
+            await delegate.receive_message(new_message)
+            return f"Task delegated to {delegate_name}"
+        else:
+            return f"Couldn't find agent {delegate_name} to delegate to"
+
+    async def process_agent_message(self, agent: Agent, message: Message, response: str):
+        if "delegate" in response.lower():
+            delegate_name = response.split("delegate to:")[-1].strip()
+            return await self.delegate_task(agent, message, delegate_name)
+        else:
+            return response
+
 class TeamManager:
     def __init__(self):
         self.teams: Dict[str, Team] = {}
 
-    def create_team(self, name: str) -> Team:
-        team = Team(name=name)
+    def create_team(self, name: str, description: str) -> Team:
+        team = Team(name=name, description=description)
         self.teams[team.id] = team
         return team
 
@@ -229,7 +259,7 @@ async def main():
         print(f"Notification: New message for {message.receiver} from {message.sender} (Priority: {message.priority.name})")
 
     manager = TeamManager()
-    research_team = manager.create_team("Research Team")
+    research_team = manager.create_team("Research Team", "A team dedicated to conducting cutting-edge research in artificial intelligence and machine learning.")
 
     alice = await Agent.create_agent(name="Alice", system_prompt="Research Assistant", ephemeral=True)
     bob = await Agent.create_agent(name="Bob", system_prompt="Data Analyst", ephemeral=True)

@@ -103,7 +103,7 @@ export interface TeamInterface {
   name: string;
   assigned_agents: string[];
   description: string;
-  team_leader_id?: string;
+  _leader?: string;
   created_at?: string;
   updated_at?: string;
 }
