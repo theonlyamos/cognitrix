@@ -149,7 +149,7 @@ export async function getAllTeams(): Promise<TeamInterface[]> {
   }
   
 export async function saveTeam(team: TeamInterface): Promise<TeamInterface> {
-    const response = await api.post(`${API_BACKEND_URI}/teams`, {team});
+    const response = await api.post(`${API_BACKEND_URI}/teams`, team);
     if (response.status !== 200) {
       throw new Error('Failed to save team');
     }

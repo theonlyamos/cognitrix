@@ -13,16 +13,16 @@ class Team(Model):
     name: str
     """Name of the team"""
     
-    description: str = Field(default="")
+    description: str
     """Description of the team"""
     
-    agent_ids: List[str] = Field(default_factory=list)
+    assigned_agents: List[str] = []
     """List of agent IDs in the team"""
     
-    tasks: List[Task] = Field(default_factory=list)
+    tasks: List[Task] = []
     """List of tasks in the team"""
     
-    _leader_id: Optional[str] = None
+    leader_id: Optional[str] = None
     """ID of the team leader"""
 
     class Config:
@@ -30,25 +30,25 @@ class Team(Model):
 
     @cached_property
     def agents(self) -> List[Agent]:
-        return [agent for aid in self.agent_ids if (agent := Agent.get(aid)) is not None]
+        return [agent for aid in self.assigned_agents if (agent := Agent.get(aid)) is not None]
 
     @property
     def leader(self) -> Optional[Agent]:
-        return Agent.get(self._leader_id) if self._leader_id else None
+        return Agent.get(self.leader_id) if self.leader_id else None
 
     @leader.setter
     def leader(self, agent: Agent):
-        if agent.id in self.agent_ids:
-            self._leader_id = agent.id
+        if agent.id in self.assigned_agents:
+            self.leader_id = agent.id
         else:
             raise ValueError("The leader must be a member of the team.")
 
     def add_agent(self, agent: Agent):
-        if agent.id not in self.agent_ids:
-            self.agent_ids.append(agent.id)
+        if agent.id not in self.assigned_agents:
+            self.assigned_agents.append(agent.id)
 
     def remove_agent(self, agent_id: str):
-        self.agent_ids = [aid for aid in self.agent_ids if aid != agent_id]
+        self.assigned_agents = [aid for aid in self.assigned_agents if aid != agent_id]
 
     async def broadcast_message(self, sender: Agent, content: str, priority: MessagePriority = MessagePriority.NORMAL):
         for agent in self.agents:
@@ -65,7 +65,7 @@ class Team(Model):
             for agent in self.agents:
                 while agent.response_list:
                     message, response = agent.response_list.pop(0)
-                    processed_response = await self.process_agent_message(agent, message, response.text)
+                    processed_response = await self.process_agent_message(agent, message, response.result)
                     print(f"{agent.name} processed message from {message.sender}: {processed_response}")
             await asyncio.sleep(0.1)  # Small delay to prevent busy-waiting
 
@@ -104,7 +104,7 @@ class Team(Model):
             raise ValueError("No team leader assigned to create the workflow.")
         
         prompt = (f"Task: {task.title}\nDescription: {task.description}\n"
-                  f"Team members: {', '.join(agent.name for agent in self.agents if agent.id != self._leader_id)}\n"
+                  f"Team members: {', '.join(agent.name for agent in self.agents if agent.id != self.leader_id)}\n"
                   "Create a detailed workflow assigning specific responsibilities to each team member, including the order of work and estimated time for each step.")
         response: LLMResponse
         async for response in self.leader.generate(prompt):
@@ -176,7 +176,7 @@ class Team(Model):
             
             # Inform all team members about the task completion and share the summary
             for agent in self.agents:
-                if agent.id != self._leader_id:
+                if agent.id != self.leader_id:
                     await self.send_message(self.leader, agent, f"Task '{task.title}' has been completed. Here's the summary:\n{evaluation_response.llm_response}")
         else:
             final_result = f"Task Results:\n{result}\n\nWarning: No evaluation response received from the team leader."

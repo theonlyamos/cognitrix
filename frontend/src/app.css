@@ -343,6 +343,10 @@ header {
   }
 }
 
+ol, ul, menu {
+  list-style: revert;
+}
+
 @media screen and (max-width: 640px) {
   .container {
     padding: 0;

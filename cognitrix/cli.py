@@ -207,8 +207,8 @@ def str_or_file(string):
 
 async def prompt_agent(assistant: Agent, prompt):
     async for response in assistant.generate(prompt):
-        if response.text:
-            print(f"\r{response.text}", end='')
+        if response.result:
+            print(f"\r{response.result}", end='')
     print()
 
 async def initialize(session: Session, agent: Agent, stream: bool = False):

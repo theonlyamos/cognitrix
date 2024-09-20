@@ -105,11 +105,11 @@ class Agent(Model):
         async for response in self.generate(content):
             pass
         
-        print(f"{self.name} responded: {response.text}")
+        print(f"{self.name} responded: {response.result}")
 
         # Check for queue keyword
-        if "queue" in str(response.text).lower():
-            return await self.queue_response(message, str(response.text))
+        if "queue" in str(response.result).lower():
+            return await self.queue_response(message, str(response.result))
         else:
             return response
 

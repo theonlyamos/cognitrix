@@ -1,24 +1,32 @@
 <script lang="ts">
   import { link, navigate } from "svelte-routing";
-  import { getTeam, saveTeam, deleteTeam, getAllAgents, generateTeam } from "../common/utils";
+  import { onMount, onDestroy } from "svelte";
+  import { getTeam, saveTeam, deleteTeam, getAllAgents, generateTeam, convertXmlToJson } from "../common/utils";
   import type { TeamInterface, AgentInterface } from "../common/interfaces";
   import Checkbox from "../lib/Checkbox.svelte";
-  import { onMount } from "svelte";
+  import { webSocketStore } from "../common/stores";
+  import type { Unsubscriber } from "svelte/motion";
   import Accordion from "../lib/Accordion.svelte";
   import RadioItem from "../lib/RadioItem.svelte";
   import Switch from "../lib/Switch.svelte";
+    import Modal from "$lib/Modal.svelte";
 
   export let team_id: string = "";
   let team: TeamInterface = {
     name: "",
     assigned_agents: [],
     description: "",
-    _leader: "",
+    leader_id: "",
   };
   let agents: AgentInterface[] = [];
   let selectedAgents: string[] = [];
-  let isGenerativeMode = true;
+  let isGenerativeMode = false;
   let generativeDescription = "";
+  let teamDetails = "";
+  let teamDetailsLoading = false;
+  let unsubscribe: Unsubscriber | null = null;
+  let socket: WebSocket;
+  let loading = false;
 
   const loadTeam = async (team_id: string) => {
     try {
@@ -63,7 +71,7 @@
 
   const handleTeamLeaderChange = (event: Event) => {
     const target = event.target as HTMLInputElement;
-    team._leader = target.value;
+    team.leader_id = target.value;
   };
 
   const loadAgents = async () => {
@@ -89,10 +97,54 @@
     isGenerativeMode = event.detail;
   };
 
-  onMount(async () => {
-    await loadAgents();
-    selectedAgents = [...team.assigned_agents];
+  const generateTeamDetails = () => {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      webSocketStore.send(
+        JSON.stringify({
+          type: "generate",
+          action: "team_details",
+          prompt: generativeDescription,
+        })
+      );
+      loading = true;
+    }
+  };
+
+  const startWebSocketConnection = () => {
+    unsubscribe = webSocketStore.subscribe(
+      (event: { socket: WebSocket; type: string; data?: any }) => {
+        if (event !== null) {
+          socket = event.socket;
+          if (event.type === "message") {
+            loading = false;
+            let data = JSON.parse(event.data);
+
+            if (data.type == "generate") {
+              loading = false;
+              teamDetails = teamDetails + data.content;
+            }
+          }
+        }
+      }
+    );
+  };
+
+  onMount(() => {
+    startWebSocketConnection();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   });
+
+  (async () => {
+    try {
+      await loadAgents();
+      selectedAgents = [...team.assigned_agents];
+    } catch (error) {
+      console.log(error);
+    }
+  })();
 
   $: if (team_id) {
     loadTeam(team_id);
@@ -100,6 +152,15 @@
 
   $: {
     team.assigned_agents = selectedAgents;
+  }
+
+  $: {
+    let parsedTeamDetails: any = convertXmlToJson(teamDetails);
+    console.log(parsedTeamDetails);
+    team.name = parsedTeamDetails?.name;
+    team.description = parsedTeamDetails?.description;
+    // team.assigned_agents = parsedTeamDetails.members;
+    // team._leader = parsedTeamDetails.leader;
   }
 </script>
 
@@ -127,6 +188,27 @@
 </div>
 
 <div class="container">
+  <Modal
+    isOpen={isGenerativeMode}
+    type="info"
+    action={generateTeamDetails}
+    actionLabel="Generate Team Details"
+    size="medium"
+    appearance="floating"
+    title="Generate Team Details"
+    onClose={() => {
+      isGenerativeMode = false;
+    }}
+  >
+    <div class="form-group">
+      <textarea
+        id="generativeDescription"
+        rows="10"
+        bind:value={generativeDescription}
+        placeholder="Describe the team you want to create, including its name, purpose, and any other relevant details."
+      ></textarea>
+    </div>
+  </Modal>
   {#if !team_id}
     <div class="card team-form">
       <div class="form-group mode-switch">
@@ -137,65 +219,50 @@
           onChange={handleModeChange}
         />
       </div>
-      {#if isGenerativeMode}
-        <div class="form-group">
-          <label for="generativeDescription">Describe your team</label>
-          <textarea
-            id="generativeDescription"
-            rows="10"
-            bind:value={generativeDescription}
-            placeholder="Describe the team you want to create, including its name, purpose, and any other relevant details."
-          ></textarea>
-        </div>
-        <button class="btn" on:click={handleGenerateTeam}>
-          <span>Generate Team</span>
-        </button>
-      {:else}
-        <div class="form-group">
-          <label for="name">Team Name</label>
-          <input type="text" id="name" bind:value={team.name} />
-        </div>
-        <div class="form-group">
-          <label for="description">Team Description</label>
-          <textarea
-            rows="10"
-            bind:value={team.description}
-            placeholder="A brief description of the team's purpose or role."
-          ></textarea>
-        </div>
-        <div class="form-group">
-          <Accordion title="Select Agents" opened={true}>
-            <div class="agents-list">
-              {#each agents as agent (agent.id)}
-                <Checkbox
+      <div class="form-group">
+        <label for="name">Team Name</label>
+        <input type="text" id="name" bind:value={team.name} />
+      </div>
+      <div class="form-group">
+        <label for="description">Team Description</label>
+        <textarea
+          rows="10"
+          bind:value={team.description}
+          placeholder="A brief description of the team's purpose or role."
+        ></textarea>
+      </div>
+      <div class="form-group">
+        <Accordion title="Select Agents" opened={true}>
+          <div class="agents-list">
+            {#each agents as agent (agent.id)}
+              <Checkbox
+                name="agents"
+                value={agent.id}
+                label={agent.name}
+                onChange={handleAgentChange}
+                checked={selectedAgents.includes(agent.id)}
+              />
+            {/each}
+          </div>
+        </Accordion>
+      </div>
+      <div class="form-group">
+        <Accordion title="Team Leader" opened={true}>
+          <div class="agents-list">
+            {#each agents as agent (agent.id)}
+              {#if team.assigned_agents.includes(agent.id)}
+                <RadioItem
                   name="agents"
                   value={agent.id}
                   label={agent.name}
-                  onChange={handleAgentChange}
-                  checked={selectedAgents.includes(agent.id)}
+                  onChange={handleTeamLeaderChange}
+                  checked={agent.id === team.leader_id}
                 />
-              {/each}
-            </div>
-          </Accordion>
-        </div>
-        <div class="form-group">
-          <Accordion title="Team Leader" opened={true}>
-            <div class="agents-list">
-              {#each agents as agent (agent.id)}
-                {#if team.assigned_agents.includes(agent.id)}
-                  <RadioItem
-                    name="agents"
-                    value={agent.id}
-                    label={agent.name}
-                    onChange={handleTeamLeaderChange}
-                    checked={agent.id === team._leader}
-                  />
-                {/if}
-              {/each}
-            </div>
-          </Accordion>
-        </div>
-      {/if}
+              {/if}
+            {/each}
+          </div>
+        </Accordion>
+      </div>
     </div>
   {:else}
     <div class="card team-form">
@@ -236,7 +303,7 @@
                   value={agent.id}
                   label={agent.name}
                   onChange={handleTeamLeaderChange}
-                  checked={agent.id === team._leader}
+                  checked={agent.id === team.leader_id}
                 />
               {/if}
             {/each}

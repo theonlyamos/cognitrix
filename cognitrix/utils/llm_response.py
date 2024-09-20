@@ -1,5 +1,6 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 from cognitrix.utils import xml_to_dict
+from odbms import Model
 import logging
 
 logging.basicConfig(
@@ -9,26 +10,55 @@ logging.basicConfig(
 )
 logger = logging.getLogger('cognitrix.log')
 
-class LLMResponse:
-    """Class to handle and separate LLM responses into text and tool calls."""
+class LLMResponse(Model):
+    """Class to handle llm responses"""
     
-    def __init__(self, llm_response: Optional[str]=None):
-        self.chunks = []
-        self.llm_response = llm_response
-        self.current_chunk: str = ''
-        self.text: Optional[str] = None
-        self.result: Optional[str] = None
-        self.tool_calls: Optional[Dict[str, Any]] = None
-        self.artifacts: Optional[Dict[str, Any]] = None
-        self.observation: Optional[str] = None
-        self.thought: Optional[str] = None
-        self.type: Optional[str] = None
-        self.before: Optional[str] = None
-        self.after: Optional[str] = None
-
+    llm_response: Optional[str] = None
+    """LLM response"""
+    
+    chunks: List[str] = []
+    """List of chunks"""
+    current_chunk: str = ''
+    """Current chunk"""
+    
+    result: Optional[str] = None
+    """Result"""
+    
+    tool_call: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None
+    """Tool calls"""
+    
+    artifact: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None
+    """Artifacts"""
+    
+    observation: Optional[str] = None
+    """Observation"""
+    
+    thought: Optional[str] = None
+    """Thought"""
+    
+    mindspace: Optional[str] = None
+    """Mindspace"""
+    
+    reflection: Optional[str] = None
+    """Reflection"""
+    
+    type: Optional[str] = None
+    """Type"""
+    
+    before: Optional[str] = None
+    """Before"""
+    
+    after: Optional[str] = None
+    """After"""
+    
+    class Config:
+        arbitrary_types_allowed = True
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.parse_llm_response()
     
-    def add_chunk(self, chunk):
+    def add_chunk(self, chunk: str):
         self.current_chunk = chunk
         self.chunks.append(chunk)
         self.parse_llm_response()
@@ -42,14 +72,11 @@ class LLMResponse:
                 response = response_data['response']
                 if isinstance(response, dict):
                     for key, value in response.items():
-                        if key == 'result':
-                            self.text = value
                         setattr(self, key, value)
-
                 else:
-                    self.text = response
+                    self.result = response
 
         except Exception as e:
             logger.exception(e)
-            self.text = str(response_data)
+            self.result = str(response_data)
             

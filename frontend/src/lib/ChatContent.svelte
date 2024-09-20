@@ -38,7 +38,12 @@
       </div>
     {/if}
     {#each messages as message, index (index)}
-      <MessageComponent {...message} />
+      <MessageComponent
+        {...message}
+        thought={message.thought}
+        observation={message.observation}
+        reflection={message.reflection}
+      />
     {/each}
   </div>
   <slot />

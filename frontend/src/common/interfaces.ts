@@ -103,7 +103,7 @@ export interface TeamInterface {
   name: string;
   assigned_agents: string[];
   description: string;
-  _leader?: string;
+  leader_id?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -112,4 +112,24 @@ export interface User {
   id?: string;
   name: string;
   email: string;
+}
+
+export interface LLMResponseInterface {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  llm_response: string;
+  chunks?: string[];
+  current_chunk?: string;
+  text?: string;
+  result?: string;
+  tool_calls?: null | any; // You might want to define a more specific type for tool_calls if needed
+  artifacts?: Record<string, any>;
+  observation?: null | string;
+  thought?: null | string;
+  mindspace?: null | string;
+  reflection?: null | string;
+  type?: string;
+  before?: null | string;
+  after?: null | string;
 }

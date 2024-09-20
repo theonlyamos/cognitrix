@@ -875,14 +875,14 @@ async def create_new_team(name: str, description: str, agent_names: List[str], l
 
         if leader_name:
             leader = await Agent.load_agent(leader_name)
-            if leader and leader.id in new_team.agent_ids:
+            if leader and leader.id in new_team.assigned_agents:
                 new_team.leader = leader
             else:
                 print(f"Warning: Leader '{leader_name}' not found or not in the team. No leader set.")
 
         new_team.save()
 
-        return ['team', new_team, f"Team '{name}' created successfully with {len(new_team.agent_ids)} agents."]
+        return ['team', new_team, f"Team '{name}' created successfully with {len(new_team.assigned_agents)} agents."]
     except Exception as e:
         return f"Error creating team: {str(e)}"
 

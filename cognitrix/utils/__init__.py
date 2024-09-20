@@ -14,7 +14,7 @@ Return the response in the following format only:
 {
 "observation": "Observations made by the ai agent"
 "thought": "Thoughts of the ai agent on a task. Should include steps for completing the task.",
-"type": "final_answer",
+"type": "result",
 "result": "
 }
 if it's the final anwers or
@@ -37,8 +37,8 @@ xml_return_format: str = """
         [Multi-dimensional representations of the problem, each on a new line]
     </mindspace>
     <thought>[Step-by-step reasoning process, with each step on a new line]</thought>
-    <type>[Either "final_answer" or "tool_calls"]</type>
-    <result>[The final answer, if applicable]</result>
+    <type>[Either "result" or "tool_calls"]</type>
+    <result>[The result, if applicable]</result>
     <tool_calls>
         <tool>
             <name>[Name of the tool to be called]</name>

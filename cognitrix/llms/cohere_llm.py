@@ -98,7 +98,7 @@ class Cohere(LLM):
                         response.add_chunk(event.text)
                         yield response
                     elif event.event_type == 'stream-end':
-                        response.add_chunk(event.response.text)
+                        response.add_chunk(event.response.result)
                         yield response
             
             # yield response

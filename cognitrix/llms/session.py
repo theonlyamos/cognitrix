@@ -84,7 +84,7 @@ class Session(Model):
         """Retrieve a session by task_id"""
         return cls.find({'task_id': task_id}) # type: ignore
     
-    async def __call__(self, message: str|dict, agent: Union['Agent'], interface: Literal['cli', 'web'] = 'cli', streaming: bool = False, output: Callable = print, wsquery: Dict[str, str]= {}, save_history: bool = True):
+    async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'web'] = 'cli', streaming: bool = False, output: Callable = print, wsquery: Dict[str, str]= {}, save_history: bool = True):
         from cognitrix.agents.base import Agent
         
         system_prompt = agent.formatted_system_prompt()
@@ -100,16 +100,16 @@ class Session(Model):
                     message = ''
                     # response: LLMResponse | None = None
                     called_tools: bool = False
-                    async for response in agent.llm(full_prompt, system_prompt, self.chat):   
+                    async for response in agent.llm(full_prompt, system_prompt, self.chat):
                         if streaming:
                             if interface == 'cli':
                                 output(f"{response.current_chunk}", end="")
                             else:
                                 await output({'type': wsquery['type'], 'content': response.current_chunk, 'action': wsquery['action'], 'complete': False})
                         
-                        if response.tool_calls and not called_tools and not response.text:
+                        if response.tool_call and not called_tools and not response.result:
                             called_tools = True
-                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls)
+                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_call)
                             
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                                 message = result
@@ -119,22 +119,27 @@ class Session(Model):
                                 else:
                                     await output({'type': wsquery['type'], 'content': result, 'action': wsquery['action']})
                         
-                        if response.artifacts:
-                            if 'artifact' in response.artifacts.keys():
+                        if response.artifact:
+                            if 'artifact' in response.artifact.keys():
                                 if interface == 'ws':
                                     await output({'type': wsquery['type'], 'content': '', 'action': wsquery['action'], 'artifacts': response.artifacts['artifact']})
                         
                         await asyncio.sleep(0.01)
-                
+                    
                     if response and save_history:
                         self.update_history(full_prompt)
-                        self.update_history({'role': agent.name, 'type': 'text', 'message': ''.join(response.chunks)})
+                        response_dict = {
+                            'role': agent.name,
+                            'type': 'text',
+                            'message': response.model_dump()
+                        }
+                        self.update_history(response_dict)
                         
-                        if response.text and not streaming:
+                        if response.result and not streaming:
                             if interface == 'cli':
-                                output(f"\n{agent.name}:", response.text)
+                                output(f"\n{agent.name}:", response.result)
                             else:
-                                await output({'type': wsquery['type'], 'content': response.text, 'action': wsquery['action'], 'complete': True})
+                                await output({'type': wsquery['type'], 'content': response.result, 'action': wsquery['action'], 'complete': True})
                     
                     if not tool_calls:
                         streaming = False  

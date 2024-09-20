@@ -4,6 +4,7 @@ import logging
 from fastapi import FastAPI, Request
 from sse_starlette.sse import EventSourceResponse
 from cognitrix.agents import PromptGenerator
+from cognitrix.agents.generators import TaskInstructor
 from cognitrix.llms.session import Session
 from cognitrix.agents import Agent
 import asyncio
@@ -36,53 +37,71 @@ class SSEManager:
                     
                     if action['action'] == 'get':
                         session = await Session.load(session_id)
-                        loaded_agent: Optional[Agent] = self.agent.get(session.agent_id)
+                            
+                        if not session.agent_id:
+                            session.agent_id = self.agent.id
+                            session.save()
+                        
+                        if session.agent_id == self.agent.id:
+                            loaded_agent = self.agent
+                        else:
+                            loaded_agent: Optional[Agent] = Agent.get(session.agent_id)
+                        
                         if loaded_agent:
                             self.agent = loaded_agent
+
                         yield {'event': 'message', 'data': json.dumps({'type': 'chat_history', 'content': session.chat, 'agent_name': self.agent.name, 'action': 'get'})}
                     
                     elif action['action'] == 'delete':
                         session = await Session.load(session_id)
                         session.chat = []
-                        loaded_agent: Optional[Agent] = self.agent.get(session.agent_id)
-                        if loaded_agent:
-                            self.agent = loaded_agent
-                            self.agent.llm.chat_history = session.chat
-                            session.save()
-                            await self.agent.save()
+                        session.save()
                         yield {'event': 'message', 'data': json.dumps({'type': 'chat_history', 'content': session.chat, 'agent_name': self.agent.name, 'action': 'delete'})}
                             
                 elif action['type'] == 'sessions':
                     if action['action'] == 'list':
-                        sessions = [sess.dict() for sess in Session.list_sessions()]
+                        sessions = [sess.model_dump() for sess in await Session.list_sessions()]
                         yield {'event': 'message', 'data': json.dumps({'type': 'sessions', 'content': sessions, 'action': 'list'})}
                     
                     elif action['action'] == 'get':
                         agent_id = action['agent_id']
                         if agent_id:
-                            loaded_agent = await self.agent.get(agent_id)
+                            loaded_agent = Agent.get(agent_id)
                             if loaded_agent:
                                 self.agent = loaded_agent
-                                session = await loaded_agent.load_session()
+                                session = await Session.get_by_agent_id(loaded_agent.id)
                                 yield {'event': 'message', 'data': json.dumps({'type': 'sessions', 'agent_name': self.agent.name, 'content': session.dict(), 'action': 'get'})}
                 
                 elif action['type'] == 'generate':
-                    prompt = action['prompt']
+                    default_prompt = action['prompt']
+                    prompt = ''
                     name = action.get('name', '')
+                    agent = self.agent
                     
-                    if action['action'] == 'system_prompt':
-                        agent = PromptGenerator(llm=self.agent.llm)
-                        agent.llm.system_prompt = agent.system_prompt
+                    if action == 'system_prompt':
+                        agent = PromptGenerator(llm=agent.llm)
                         
-                        prompt = f"## Agent Description\n\n## Agent Name: {name}\n\n{prompt}"
+                        prompt = "Agent Description"
+                        if name:
+                            prompt += f"""\n\nAgent Name: {name}"""
                         
-                    async for response in self.agent.generate(prompt):
+                        prompt += f"""\n\n{default_prompt}"""
+                    
+                    elif action == 'task_instructions': 
+                        agent = TaskInstructor(llm=agent.llm)
+                        
+                        prompt = ""
+                        if name:
+                            prompt += f"""\\nTask Title: {name}"""
+                        
+                        prompt += f"""\n\nTask Description: {default_prompt}"""
+                        
+                    async for response in agent.generate(prompt):
                         yield {'event': 'message', 'data': json.dumps({'type': 'generate', 'content': response.current_chunk, 'action': 'system_prompt'})}
                 
                 elif action['type'] == 'chat_message':
                     user_prompt = action['content']
-                    session = await Session.get_by_agent_id(self.agent.id)  # Ensure session is defined
-                    async for response in self.agent.chat(user_prompt, session):
-                        yield {'event': 'message', 'data': response}
+                    async for response in self.agent.generate(user_prompt):
+                        yield {'event': 'message', 'data': json.dumps({'type': 'generate', 'content': response.current_chunk, 'action': 'chat_message'})}
 
         return EventSourceResponse(event_generator())

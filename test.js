@@ -43,7 +43,7 @@ Practical: Use cases for factorial calculations
 <thought>Step 1) A factorial calculation can be implemented using a recursive function in Python.
 Step 2) We should create a function that handles both the base case and the recursive case.
 Step 3) Let's create an artifact with the Python script for calculating factorials.</thought>
-<type>final_answer</type>
+<type>result</type>
 <result>I've created a Python script that calculates the factorial of a given number using a recursive function. You can find the script in the artifact below.</result>
 <artifacts>
     <artifact>

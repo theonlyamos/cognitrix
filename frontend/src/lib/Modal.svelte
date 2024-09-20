@@ -1,6 +1,6 @@
 <script lang="ts">
   export let isOpen = false;
-  // export let onClose: () => void;
+  export let onClose: () => void;
   export let type: "alert" | "confirm" | "info" | "success" | "warning" =
     "info";
   export let appearance: "default" | "minimal" | "bordered" | "floating" =
@@ -8,10 +8,11 @@
   export let size: "small" | "medium" | "large" = "medium";
   export let action: (() => void) | null = null;
   export let actionLabel = "Confirm";
+  export let title = "";
 
   function handleClose() {
     isOpen = false;
-    // onClose();
+    onClose();
   }
 
   function handleOutsideClick(event: MouseEvent) {
@@ -62,11 +63,14 @@
     >
       <div
         class="modal-content card {getTypeClass(type)} {getAppearanceClass(
-          appearance
+          appearance,
         )} {getSizeClass(size)}"
         style="--modal-color: {getTypeColor(type)};"
       >
-        <button class="close-btn" on:click={handleClose}>&times;</button>
+        <div class="modal-header">
+          <div class="modal-title">{title}</div>
+          <button class="close-btn" on:click={handleClose}>&times;</button>
+        </div>
         <slot></slot>
         <div class="action-buttons">
           <button class="cancel-btn" on:click={handleClose}>Cancel</button>
@@ -106,6 +110,17 @@
     align-items: center;
   }
 
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .modal-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+
   .modal-content {
     position: relative;
     inline-size: 90%;
@@ -114,7 +129,10 @@
     background-color: var(--bg-1);
     border-radius: 8px;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    padding: 20px;
+    padding: 5px 20px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
 
   .modal-size-small {
@@ -130,9 +148,6 @@
   }
 
   .close-btn {
-    position: absolute;
-    inset-block-start: 10px;
-    inset-inline-end: 10px;
     font-size: 1.5rem;
     background: none;
     border: none;
@@ -181,7 +196,6 @@
     display: flex;
     justify-content: flex-end;
     gap: 10px;
-    margin-block-start: 20px;
   }
 
   .cancel-btn,

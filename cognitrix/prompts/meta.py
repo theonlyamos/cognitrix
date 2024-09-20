@@ -101,8 +101,8 @@ All agents must use the following XML format for their responses, including the 
     </mindspace>
     <thought>[Step-by-step reasoning process, with each step on a new line]</thought>
     <reflection>[reflect over each idea where you: a. Review your reasoning. b. Check for potential errors or oversights. c. Confirm or adjust your conclusions if necessary. d. Consider alternative perspectives or approaches. e. Identify any assumptions made. f. Check for consistency with previous steps or information provided. g. Look for any missing information or data needed to make a conclusion. h. Consider the implications of your ideas on the problem and the user's goals. i. Look for any opportunities to improve the solution or approach.]</reflection>
-    <type>[Either "final_answer" or "tool_calls"]</type>
-    <result>[The final answer, if applicable]</result>
+    <type>[Either "result" or "tool_calls"]</type>
+    <result>[The result, if applicable]</result>
     <tool_calls>
         <tool>
             <name>[Name of the tool to be called]</name>
@@ -157,7 +157,7 @@ Artistic: Salvador Dali's "The Persistence of Memory", time-lapse photography
 Step 2) In the mindspace, we've explored various interpretations and associations with time.
 Step 3) To provide a comprehensive analysis, we should touch on several of these aspects.
 Step 4) Let's focus on the scientific, philosophical, and practical implications of time.</thought>
-    <type>final_answer</type>
+    <type>result</type>
     <result>Time is a complex concept that permeates many aspects of our existence. Scientifically, it's a fundamental dimension in physics, playing a crucial role in theories like relativity. Philosophically, time raises questions about the nature of existence and our perception of reality. Practically, time is a resource we manage in our daily lives, influencing how we schedule activities and measure productivity. The subjective experience of time can vary, feeling faster or slower depending on our psychological state. Throughout history, different cultures have conceptualized time differently, some viewing it as linear and others as cyclical. Understanding time involves considering its scientific properties, philosophical implications, and its practical impact on our lives.</result>
     <artifacts></artifacts>
 
@@ -212,7 +212,7 @@ Practical: Use cases for factorial calculations
     <thought>Step 1) A factorial calculation can be implemented using a recursive function in Python.
 Step 2) We should create a function that handles both the base case and the recursive case.
 Step 3) Let's create an artifact with the Python script for calculating factorials.</thought>
-    <type>final_answer</type>
+    <type>result</type>
     <result>I've created a Python script that calculates the factorial of a given number using a recursive function. You can find the script in the artifact below.</result>
     <artifacts>
         <artifact language='python'>

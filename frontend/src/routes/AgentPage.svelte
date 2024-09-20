@@ -38,7 +38,7 @@
       supports_tool_use: false,
     },
   };
-  let providers: ProviderInterface[] = [];
+  let providers: ProviderInterface[] = []; 
   let tools: ToolInterface[] = [];
   let agentTools: string[] = [];
 
@@ -190,6 +190,9 @@
   actionLabel="Yes, do it"
   size="small"
   appearance="bordered"
+  onClose={() => {
+    confirmModal = false;
+  }}
 >
   Are you sure you want to proceed?
 </Modal>

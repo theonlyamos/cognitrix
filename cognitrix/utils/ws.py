@@ -10,6 +10,7 @@ from cognitrix.agents import TaskInstructor
 
 from cognitrix.llms.session import Session
 from cognitrix.agents import Agent
+from cognitrix.prompts.generator import team_details_generator
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -86,13 +87,22 @@ class WebSocketManager:
                         
                         if action == 'system_prompt':
                             agent = PromptGenerator(llm=web_agent.llm)
-                            # agent.llm.system_prompt = agent.system_prompt
                             
                             prompt = "Agent Description"
                             if name:
                                 prompt += f"""\n\nAgent Name: {name}"""
                             
                             prompt += f"""\n\n{default_prompt}"""
+                            
+                        if action == 'team_details':
+                            agent = PromptGenerator(llm=web_agent.llm)
+                            agent.system_prompt = team_details_generator
+                            
+                            prompt = "## Provided Information\n"
+                            prompt += f"""{default_prompt}"""
+                            
+                            available_agents = [agent.name for agent in Agent.all()]
+                            prompt = prompt.replace("{agents}", "\n".join(available_agents))
                         
                         elif action == 'task_instructions': 
                             agent = TaskInstructor(llm=web_agent.llm)
