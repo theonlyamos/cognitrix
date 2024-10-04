@@ -6,7 +6,7 @@ from cognitrix.llms.cohere_llm import Cohere
 from cognitrix.llms.openai_llm import OpenAI
 from cognitrix.llms.google_llm import Google
 from cognitrix.llms.anthropic_llm import Anthropic
-from cognitrix.llms.together_llm import Together
+from cognitrix.llms.together_llm import TogetherAI
 from cognitrix.llms.clarifai_llm import Clarifai
 from cognitrix.llms.mindsdb_llm import MindsDB
 from cognitrix.llms.aimlapi_llm import AIMLAPI

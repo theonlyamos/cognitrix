@@ -42,6 +42,9 @@ class OpenAI(LLM):
     max_tokens: int = 4096
     """The maximum number of tokens to generate in the completion.""" 
     
+    base_url: str = 'https://oai.helicone.ai/v1'
+    """Base URL for the OpenAI API"""
+    
     chat_history: list[str] = []
     """Chat history"""
     

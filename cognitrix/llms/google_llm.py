@@ -34,7 +34,7 @@ class Google(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    model: str = 'gemini-1.5-pro-exp-0827'
+    model: str = 'gemini-1.5-pro-002'
     """model endpoint to use""" 
     
     temperature: float = 0.2
@@ -78,12 +78,22 @@ class Google(LLM):
 
     async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
         try:
-            genai.configure(api_key=self.api_key)
+            genai.configure(
+                api_key=self.api_key,
+                client_options={
+                    'api_endpoint': 'gateway.helicone.ai',
+                },
+                default_metadata=[
+                    ('helicone-auth', f'Bearer {os.environ.get("HELICONE_API_KEY")}'),
+                    ('helicone-target-url', 'https://generativelanguage.googleapis.com')
+                ],
+                transport="rest"
+            )
 
             generation_config = GenerationConfig(
                 temperature=self.temperature,
                 top_p=0.95,
-                top_k=64,
+                top_k=40,
                 max_output_tokens=self.max_tokens
             )
             

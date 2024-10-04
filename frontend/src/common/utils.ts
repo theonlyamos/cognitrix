@@ -182,3 +182,11 @@ export async function generateTeam(description: string): Promise<Partial<TeamInt
 
   return await response.json();
 }
+
+export async function getTasksByTeam(teamId: string): Promise<TaskDetailInterface[]> {
+  const response = await api.get(`${API_BACKEND_URI}/teams/${teamId}/tasks`);
+  if (response.status !== 200) {
+    throw new Error('Failed to fetch tasks for team');
+  }
+  return response.data;
+}

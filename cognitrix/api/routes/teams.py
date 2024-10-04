@@ -28,13 +28,11 @@ async def save_team(team: Team):
                 team = result
                 return JSONResponse(team.model_dump())
             else:
-                raise HTTPException(status_code=404, detail="Error updating team")
+                raise HTTPException(status_code=503, detail="Error updating team")
     else:
         team.save()
 
-        
     return JSONResponse(team.model_dump())
-
 
 @teams_api.get("/{team_id}")
 async def get_team(team_id: str):
@@ -57,3 +55,17 @@ async def delete_team(team_id: str):
 async def sse_endpoint(request: Request):
     sse_manager = request.state.sse_manager
     return await sse_manager.sse_endpoint(request)
+
+from fastapi import APIRouter, HTTPException
+from cognitrix.teams.base import Team
+from cognitrix.tasks.base import Task
+
+router = APIRouter()
+
+@router.get("/teams/{team_id}/tasks")
+async def get_tasks_by_team(team_id: str):
+    team = Team.get(team_id)
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    tasks = team.get_assigned_tasks()
+    return tasks

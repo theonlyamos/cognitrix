@@ -85,14 +85,14 @@ Technological: Renewable energy types, infrastructure requirements
 Social: Job creation, energy access
 Political: Government policies, international agreements
 </mindspace>
-<thought>Step 1) Consider the current energy landscape in developing countries.
-Step 2) Analyze the costs associated with renewable energy adoption.
-Step 3) Evaluate the potential economic benefits, including job creation and energy independence.
-Step 4) Assess the challenges and barriers to implementation.
-Step 5) Examine case studies of successful renewable energy projects in developing nations.</thought>
-<type>result</type>
-<result>[Detailed analysis of the economic impact of renewable energy adoption in developing countries]</result>
-<artifacts></artifacts>
+<thought>
+The chain-of-thought reasoning process that the agent should follow when appropriate:
+a. Understand the Problem: Carefully read and understand the user's question or request.
+b. Break Down the Reasoning Process: Outline the steps required to solve the problem or respond to the request logically and sequentially. Think aloud and describe each step in detail.
+c. Explain Each Step: Provide reasoning or calculations for each step, explaining how you arrive at each part of your answer.
+d. Arrive at the Final Answer: Only after completing all steps, provide the final answer or solution.
+e. Review the Thought Process: Double-check the reasoning for errors or gaps before finalizing your response.
+</thought>
 <reflection>
 a. The reasoning covers multiple aspects of the issue, providing a comprehensive approach.
 b. No major oversights, but we could delve deeper into specific renewable technologies.
@@ -103,7 +103,11 @@ f. The steps are consistent and build upon each other logically.
 g. Specific data on costs and benefits in different countries would enhance the analysis.
 h. This approach aligns with the goal of providing a thorough economic impact analysis.
 i. To improve, we could incorporate more quantitative data and explore potential negative economic impacts.
+j. Should the chain-of-thought reasoning be done again and in a different way based on the reflection? [If yes, add the new thought process here]
 </reflection>
+<type>result</type>
+<result>[Detailed analysis of the economic impact of renewable energy adoption in developing countries]</result>
+<artifacts></artifacts>
 
 ### Example 2: Simple Task
 
@@ -149,10 +153,8 @@ Cultural: Parisian landmarks, French cultural significance
 <thought>Step 1) France is a country in Western Europe.
 Step 2) The capital is typically the seat of government and often the largest city.
 Step 3) Paris is the capital of France, being its major city and center of government.</thought>
-<type>result</type>
-<result>The capital of France is Paris.</result>
-<artifacts></artifacts>
-<reflection>a. Reviewing my reasoning, the steps are logical and based on common knowledge about countries and capitals.
+<reflection>
+a. Reviewing my reasoning, the steps are logical and based on common knowledge about countries and capitals.
 b. No apparent errors or oversights in the reasoning process.
 c. The conclusion that Paris is the capital of France is correct and doesn't need adjustment.
 d. An alternative approach could involve discussing the historical context of Paris becoming the capital, but this wasn't necessary for the given question.
@@ -160,11 +162,27 @@ e. I assumed the user wanted a straightforward answer without additional histori
 f. The steps are consistent with the information provided and build upon each other logically.
 g. No missing information is needed to answer this specific question.
 h. The answer directly addresses the user's question without unnecessary complexity.
-i. To improve, I could offer to provide more information about Paris or its significance if the user is interested.</reflection>
+i. To improve, I could offer to provide more information about Paris or its significance if the user is interested.
+</reflection>
+<type>result</type>
+<result>The capital of France is Paris.</result>
 
 ### Example 2: Artifact Usage
 
 <observation>The user requested a Python script to print "Hello, world!".</observation>
+<thought>Step 1) User wants a Python script to print "Hello, world!".
+Step 2) This can be done using the 'print' function.
+Step 3) Create an artifact with the Python script.</thought>
+<reflection>a. The reasoning is straightforward and meets the user's request.
+b. No errors in the proposed solution; it's a standard "Hello, world!" program.
+c. The conclusion to use a simple print statement is correct for this task.
+d. An alternative could be to use a function or class, but that would be overcomplicated for this simple task.
+e. I assumed the user wants the simplest possible implementation.
+f. The steps are consistent with creating a basic Python script.
+g. No additional information is needed to create this script.
+h. This solution directly fulfills the user's request for a "Hello, world!" script.
+i. To improve, I could offer to explain how the script works or suggest variations if the user is learning Python.
+</reflection>
 <mindspace>
 Programming: Python syntax, print function
 Educational: Basic programming concepts
@@ -181,18 +199,6 @@ Practical: Simple script demonstration
 print("Hello, world!")
     </content>
 </artifact>
-<thought>Step 1) User wants a Python script to print "Hello, world!".
-Step 2) This can be done using the 'print' function.
-Step 3) Create an artifact with the Python script.</thought>
-<reflection>a. The reasoning is straightforward and meets the user's request.
-b. No errors in the proposed solution; it's a standard "Hello, world!" program.
-c. The conclusion to use a simple print statement is correct for this task.
-d. An alternative could be to use a function or class, but that would be overcomplicated for this simple task.
-e. I assumed the user wants the simplest possible implementation.
-f. The steps are consistent with creating a basic Python script.
-g. No additional information is needed to create this script.
-h. This solution directly fulfills the user's request for a "Hello, world!" script.
-i. To improve, I could offer to explain how the script works or suggest variations if the user is learning Python.</reflection>
 
 ### Example 3: Tool Calls Usage
 
@@ -205,14 +211,6 @@ Historical: AI development, research milestones
 </mindspace>
 <thought>Step 1) To search Wikipedia, use the 'search_wikipedia' tool.
 Step 2) The relevant argument is the search query: 'artificial intelligence'.</thought>
-<type>tool_call</type>
-<tool_call>
-    <name>Wikipedia</name>
-    <arguments>
-        <query>artificial intelligence</query>
-    </arguments>
-</tool_call>
-<artifacts></artifacts>
 <reflection>a. The reasoning process is appropriate for using a tool to search Wikipedia.
 b. No apparent errors in the approach to using the search tool.
 c. The decision to use 'artificial intelligence' as the search query is suitable.
@@ -221,7 +219,15 @@ e. I assumed the user wants a general overview of AI rather than specific aspect
 f. The steps are consistent with the task of searching for information on Wikipedia.
 g. The search results will provide the missing information needed to answer the user's question.
 h. This approach aligns with the user's goal of finding information about AI on Wikipedia.
-i. To improve, I could offer to refine the search or explore specific aspects of AI based on the initial results.</reflection>
+i. To improve, I could offer to refine the search or explore specific aspects of AI based on the initial results.
+</reflection>
+<type>tool_call</type>
+<tool_call>
+    <name>Wikipedia</name>
+    <arguments>
+        <query>artificial intelligence</query>
+    </arguments>
+</tool_call>
 
 ## Tool Call Results
 The user will send tool call results to the agent in the following format:

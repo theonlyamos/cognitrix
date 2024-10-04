@@ -2,7 +2,7 @@ import asyncio
 import os
 import sys
 import logging
-import together
+from together import Together
 from together.error import TogetherException
 from cognitrix.llms.base import LLM, LLMResponse
 from dotenv import load_dotenv
@@ -30,11 +30,14 @@ def cut_off_text(text, prompt):
     else:
         return text
 
-class Together(LLM):
+class TogetherAI(LLM):
     """Together large language models.""" 
     
-    model: str = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+    model: str = "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo"
     """model endpoint to use""" 
+    
+    base_url: str = "https://together.helicone.ai/v1"
+    """Base URL for the Together API"""
 
     api_key: str = os.getenv("TOGETHER_API_KEY", "")
     """Together API key""" 
@@ -42,11 +45,14 @@ class Together(LLM):
     temperature: float = 0.1
     """What sampling temperature to use.""" 
     
-    max_tokens: int = 512
+    max_tokens: int = 8193
     """The maximum number of tokens to generate in the completion.""" 
     
     chat_history: list[str] = []
     """Chat history"""
+    
+    is_multimodal: bool = True
+    """Whether the model is multimodal."""
 
     class Config:
         extra = 'allow'
@@ -65,46 +71,65 @@ class Together(LLM):
         """Return type of LLM."""
         return "together"
     
-    def format_query(self, message: dict[str, str], system_prompt: str, chat_history: List[Dict[str, str]] = []) -> str:
-        """Formats a message for the Claude API.
+    # def format_query(self, message: dict[str, str], system_prompt: str, chat_history: List[Dict[str, str]] = []) -> str:
+    #     """Formats a message for the Claude API.
 
-        Args:
-            message (dict[str, str]): The message to be formatted for the Claude API.
+    #     Args:
+    #         message (dict[str, str]): The message to be formatted for the Claude API.
 
-        Returns:
-            list: A list of formatted messages for the Claude API.
-        """
+    #     Returns:
+    #         list: A list of formatted messages for the Claude API.
+    #     """
         
         
         
-        formatted_message = [*chat_history, message]
+    #     formatted_message = [*chat_history, message]
         
-        messages = B_INST + B_SYS + system_prompt + E_SYS
+    #     messages = B_INST + B_SYS + system_prompt + E_SYS
         
-        for fm in formatted_message:
-            if fm['type'] == 'text':
-                messages += f"\n{fm['message']}"
-        messages += E_INST
+    #     for fm in formatted_message:
+    #         if fm['type'] == 'text':
+    #             messages += f"\n{fm['message']}"
+    #     messages += E_INST
         
-        return messages
+    #     return messages
 
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
+    # async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
         try:
             if not self.client:
-                self.client = together
-                
-            self.client.api_key = self.api_key
+                self.client = Together(api_key=self.api_key)
+                if self.base_url:
+                    self.client.base_url = self.base_url
+                if 'helicone' in self.base_url:
+                    logger.info(f"Using Helicone with base url {self.base_url}")
+                    self.client = Together(
+                        api_key=self.api_key, 
+                        default_headers={'Helicone-Auth': f'Bearer {os.getenv("HELICONE_API_KEY")}'}
+                    )
             
-            output = self.client.Complete.create(
-                self.format_query(query, system_prompt, chat_history),
+            formatted_messages = self.format_query(query, chat_history)
+            
+            stream = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=self.max_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    *formatted_messages
+                ],
                 temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                top_p=0.7,
+                top_k=50,
+                repetition_penalty=1,
+                stop=["<|eot_id|>","<|eom_id|>"],
+                # stream=True,
             )
-            
+            print(stream.choices[0].message.content)
             response = LLMResponse()
-            response.add_chunk(output['output']['choices'][0]['text'] )
+            response.add_chunk(stream.choices[0].message.content)
             yield response
+            # for chunk in stream:
+            #     response.add_chunk(chunk.choices[0].delta.content or "")
+            #     yield response
 
         except TogetherException as e:
             logger.error(f"Together API error: {str(e)}")

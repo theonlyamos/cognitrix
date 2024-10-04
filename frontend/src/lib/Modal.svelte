@@ -21,6 +21,10 @@
     }
   }
 
+  function handleModalContentClick(event: MouseEvent) {
+    event.stopPropagation();
+  }
+
   function getTypeClass(type: string): string {
     return `modal-${type}`;
   }
@@ -52,34 +56,71 @@
     } as const;
     return colorMap[type];
   }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      handleClose();
+    }
+  }
+
+  function handleConfirmKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      handleAction();
+    }
+  }
+
+  function handleCancelKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      handleClose();
+    }
+  }
 </script>
 
 {#if isOpen}
-  <div class="modal-overlay">
-    <button
-      class="modal-overlay-button"
-      on:click={handleOutsideClick}
-      aria-label="Close modal"
+  <div
+    class="modal-overlay"
+    on:click={handleOutsideClick}
+    on:keydown={handleKeydown}
+    role="dialog"
+    aria-modal="true"
+    tabindex="-1"
+  >
+    <div
+      class="modal-content card {getTypeClass(type)} {getAppearanceClass(
+        appearance,
+      )} {getSizeClass(size)}"
+      style="--modal-color: {getTypeColor(type)};"
+      on:click|stopPropagation={handleModalContentClick}
     >
-      <div
-        class="modal-content card {getTypeClass(type)} {getAppearanceClass(
-          appearance,
-        )} {getSizeClass(size)}"
-        style="--modal-color: {getTypeColor(type)};"
-      >
-        <div class="modal-header">
-          <div class="modal-title">{title}</div>
-          <button class="close-btn" on:click={handleClose}>&times;</button>
-        </div>
-        <slot></slot>
-        <div class="action-buttons">
-          <button class="cancel-btn" on:click={handleClose}>Cancel</button>
-          <button class="confirm-btn" on:click={handleAction}
-            >{actionLabel}</button
-          >
-        </div>
+      <div class="modal-header">
+        <div class="modal-title">{title}</div>
+        <button
+          class="close-btn"
+          on:click={handleClose}
+          on:keydown={handleCancelKeydown}
+          aria-label="Close modal"
+        >
+          &times;
+        </button>
       </div>
-    </button>
+      <slot></slot>
+      <div class="action-buttons">
+        <button
+          class="cancel-btn"
+          on:click={handleClose}
+          on:keydown={handleCancelKeydown}
+        >
+          Cancel
+        </button>
+        <button
+          class="confirm-btn"
+          on:click={handleAction}
+          on:keydown={handleConfirmKeydown}
+        >
+          {actionLabel}
+        </button>
+      </div>
+    </div>
   </div>
 {/if}
 
@@ -220,5 +261,9 @@
   .cancel-btn:hover,
   .confirm-btn:hover {
     opacity: 0.9;
+  }
+
+  .modal-overlay:focus {
+    outline: none;
   }
 </style>

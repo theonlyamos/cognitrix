@@ -9,7 +9,8 @@
   import Accordion from "../lib/Accordion.svelte";
   import RadioItem from "../lib/RadioItem.svelte";
   import Switch from "../lib/Switch.svelte";
-    import Modal from "$lib/Modal.svelte";
+  import Modal from "$lib/Modal.svelte";
+  import Alert from "../lib/Alert.svelte";
 
   export let team_id: string = "";
   let team: TeamInterface = {
@@ -28,6 +29,10 @@
   let socket: WebSocket;
   let loading = false;
 
+  let alertMessage = "";
+  let alertType: "default" | "success" | "warning" | "danger" | "loading" = "default";
+  let showAlert = false;
+
   const loadTeam = async (team_id: string) => {
     try {
       team = (await getTeam(team_id)) as TeamInterface;
@@ -40,21 +45,41 @@
 
   const handleTeamSubmit = async () => {
     try {
+      alertType = "loading";
+      alertMessage = "Saving team...";
+      showAlert = true;
+
       team.assigned_agents = selectedAgents;
       team = (await saveTeam(team)) as TeamInterface;
       if (team.id) team_id = team.id;
+
+      alertType = "success";
+      alertMessage = `Team ${team_id ? "updated" : "created"} successfully!`;
     } catch (error) {
       console.log(error);
+      alertType = "danger";
+      alertMessage = `Failed to ${team_id ? "update" : "create"} team. Please try again.`;
     }
   };
 
   const handleDeleteTeam = async () => {
     if (confirm("Are you sure you want to delete this team?")) {
       try {
+        alertType = "loading";
+        alertMessage = "Deleting team...";
+        showAlert = true;
+
         await deleteTeam(team_id);
-        navigate("/teams");
+
+        alertType = "success";
+        alertMessage = "Team deleted successfully!";
+        setTimeout(() => {
+          navigate("/teams");
+        }, 2000);
       } catch (error) {
         console.log(error);
+        alertType = "danger";
+        alertMessage = "Failed to delete team. Please try again.";
       }
     }
   };
@@ -98,7 +123,7 @@
   };
 
   const generateTeamDetails = () => {
-    if (socket && socket.readyState === WebSocket.OPEN) {
+    if (socket && socket.readyState === WebSocket.OPEN && generativeDescription) {
       webSocketStore.send(
         JSON.stringify({
           type: "generate",
@@ -164,6 +189,37 @@
   }
 </script>
 
+<Modal
+  isOpen={isGenerativeMode}
+  type="info"
+  action={generateTeamDetails}
+  actionLabel="Generate Team Details"
+  size="medium"
+  appearance="floating"
+  title="Generate Team Details"
+  onClose={() => {
+    isGenerativeMode = false;
+  }}
+>
+  <div class="form-group">
+    <textarea
+      id="generativeDescription"
+      rows="10"
+      bind:value={generativeDescription}
+      placeholder="Describe the team you want to create, including its name, purpose, and any other relevant details."
+    ></textarea>
+  </div>
+</Modal>
+
+{#if showAlert}
+  <Alert
+    type={alertType}
+    message={alertMessage}
+    onClose={() => (showAlert = false)}
+    autoClose={alertType !== "loading"}
+  />
+{/if}
+
 {#if team_id}
   {#await loadTeam(team_id)}
     <div class="container">
@@ -188,130 +244,68 @@
 </div>
 
 <div class="container">
-  <Modal
-    isOpen={isGenerativeMode}
-    type="info"
-    action={generateTeamDetails}
-    actionLabel="Generate Team Details"
-    size="medium"
-    appearance="floating"
-    title="Generate Team Details"
-    onClose={() => {
-      isGenerativeMode = false;
-    }}
-  >
+  <div class="card team-form">
+    <div class="form-group mode-switch">
+      <Switch
+        label="Generative Mode"
+        name="generativeMode"
+        bind:checked={isGenerativeMode}
+        onChange={handleModeChange}
+      />
+    </div>
+  </div>
+  <div class="card team-form">
     <div class="form-group">
+      <label for="name">Team Name</label>
+      <input type="text" id="name" bind:value={team.name} />
+    </div>
+  </div>
+  <div class="card team-form">
+    <div class="form-group">
+      <label for="description">Team Description</label>
       <textarea
-        id="generativeDescription"
         rows="10"
-        bind:value={generativeDescription}
-        placeholder="Describe the team you want to create, including its name, purpose, and any other relevant details."
+        bind:value={team.description}
+        placeholder="A brief description of the team's purpose or role."
       ></textarea>
     </div>
-  </Modal>
-  {#if !team_id}
-    <div class="card team-form">
-      <div class="form-group mode-switch">
-        <Switch
-          label="Generative Mode"
-          name="generativeMode"
-          bind:checked={isGenerativeMode}
-          onChange={handleModeChange}
-        />
-      </div>
-      <div class="form-group">
-        <label for="name">Team Name</label>
-        <input type="text" id="name" bind:value={team.name} />
-      </div>
-      <div class="form-group">
-        <label for="description">Team Description</label>
-        <textarea
-          rows="10"
-          bind:value={team.description}
-          placeholder="A brief description of the team's purpose or role."
-        ></textarea>
-      </div>
-      <div class="form-group">
-        <Accordion title="Select Agents" opened={true}>
-          <div class="agents-list">
-            {#each agents as agent (agent.id)}
-              <Checkbox
+  </div>
+  <div class="card team-form">
+    <div class="form-group">
+      <Accordion title="Select Agents" opened={false}>
+        <div class="agents-list">
+          {#each agents as agent (agent.id)}
+            <Checkbox
+              name="agents"
+              value={agent.id}
+              label={agent.name}
+              onChange={handleAgentChange}
+              checked={selectedAgents.includes(agent.id)}
+            />
+          {/each}
+        </div>
+      </Accordion>
+    </div>
+  </div>
+  <div class="card team-form">
+    <div class="form-group">
+      <Accordion title="Team Leader" opened={false}>
+        <div class="agents-list">
+          {#each agents as agent (agent.id)}
+            {#if team.assigned_agents.includes(agent.id)}
+              <RadioItem
                 name="agents"
                 value={agent.id}
                 label={agent.name}
-                onChange={handleAgentChange}
-                checked={selectedAgents.includes(agent.id)}
+                onChange={handleTeamLeaderChange}
+                checked={agent.id === team.leader_id}
               />
-            {/each}
-          </div>
-        </Accordion>
-      </div>
-      <div class="form-group">
-        <Accordion title="Team Leader" opened={true}>
-          <div class="agents-list">
-            {#each agents as agent (agent.id)}
-              {#if team.assigned_agents.includes(agent.id)}
-                <RadioItem
-                  name="agents"
-                  value={agent.id}
-                  label={agent.name}
-                  onChange={handleTeamLeaderChange}
-                  checked={agent.id === team.leader_id}
-                />
-              {/if}
-            {/each}
-          </div>
-        </Accordion>
-      </div>
+            {/if}
+          {/each}
+        </div>
+      </Accordion>
     </div>
-  {:else}
-    <div class="card team-form">
-      <div class="form-group">
-        <label for="name">Team Name</label>
-        <input type="text" id="name" bind:value={team.name} />
-      </div>
-      <div class="form-group">
-        <label for="description">Team Description</label>
-        <textarea
-          rows="10"
-          bind:value={team.description}
-          placeholder="A brief description of the team's purpose or role."
-        ></textarea>
-      </div>
-      <div class="form-group">
-        <Accordion title="Select Agents" opened={true}>
-          <div class="agents-list">
-            {#each agents as agent (agent.id)}
-              <Checkbox
-                name="agents"
-                value={agent.id}
-                label={agent.name}
-                onChange={handleAgentChange}
-                checked={selectedAgents.includes(agent.id)}
-              />
-            {/each}
-          </div>
-        </Accordion>
-      </div>
-      <div class="form-group">
-        <Accordion title="Team Leader" opened={true}>
-          <div class="agents-list">
-            {#each agents as agent (agent.id)}
-              {#if team.assigned_agents.includes(agent.id)}
-                <RadioItem
-                  name="agents"
-                  value={agent.id}
-                  label={agent.name}
-                  onChange={handleTeamLeaderChange}
-                  checked={agent.id === team.leader_id}
-                />
-              {/if}
-            {/each}
-          </div>
-        </Accordion>
-      </div>
-    </div>
-  {/if}
+  </div>
 </div>
 
 <style>
@@ -324,12 +318,20 @@
     display: grid;
     margin-inline: auto;
     margin-block: 0;
+    gap: 20px;
   }
 
   .team-form {
+    display: flex;
+    flex-direction: column;
+    block-size: fit-content;
+    gap: 10px;
     background-color: var(--bg-1);
-    padding: 20px;
-    border-radius: 10px;
+    padding-inline: 20px;
+    padding-block: 20px;
+    border-radius: 5px;
+    box-shadow: var(--shadow-sm);
+    position: relative;
   }
 
   .form-group {

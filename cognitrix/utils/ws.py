@@ -3,6 +3,8 @@ from typing import Optional
 from fastapi import WebSocket
 import json
 import logging
+from cognitrix.teams.base import Team
+from cognitrix.tools.base import Tool
 from cognitrix.utils import xml_to_dict
 from starlette.websockets import WebSocketDisconnect
 from cognitrix.agents import PromptGenerator
@@ -10,7 +12,7 @@ from cognitrix.agents import TaskInstructor
 
 from cognitrix.llms.session import Session
 from cognitrix.agents import Agent
-from cognitrix.prompts.generator import team_details_generator
+from cognitrix.prompts.generator import team_details_generator, agent_details_generator, task_details_generator
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -97,28 +99,46 @@ class WebSocketManager:
                         if action == 'team_details':
                             agent = PromptGenerator(llm=web_agent.llm)
                             agent.system_prompt = team_details_generator
-                            
-                            prompt = "## Provided Information\n"
-                            prompt += f"""{default_prompt}"""
-                            
                             available_agents = [agent.name for agent in Agent.all()]
-                            prompt = prompt.replace("{agents}", "\n".join(available_agents))
-                        
-                        elif action == 'task_instructions': 
-                            agent = TaskInstructor(llm=web_agent.llm)
+                            agent.system_prompt = agent.system_prompt.replace("{agents}", "\n".join(available_agents))
                             
-                            prompt = ""
-                            if name:
-                                prompt += f"""\\nTask Title: {name}"""
-                            
-                            prompt += f"""\n\nTask Description: {default_prompt}"""
+                            prompt += f"""{default_prompt}"""
                         
+                        if action == 'agent_details':
+                            agent = PromptGenerator(llm=web_agent.llm)
+                            agent.system_prompt = agent_details_generator
+                            available_tools = [tool.name for tool in Tool.list_all_tools()]
+                            agent.system_prompt = agent.system_prompt.replace("{available_tools}", "\n".join(available_tools))
+                            
+                            prompt = f"""{default_prompt}"""
+                            
+                        elif action == 'task_details': 
+                            agent = PromptGenerator(llm=web_agent.llm)
+                            agent.system_prompt = task_details_generator
+                            
+                            prompt = f"""{default_prompt}"""
+                        
+                        session.chat = []
                         await session(prompt, agent, 'web', True, websocket.send_json, query, False)
                 
+                    elif query_type == 'start_task':
+                        task = query['task']
+                        team_id = query['team_id']
+                        team = Team.get(team_id)
+                        if team:
+                            task = team.create_task(task['title'], task['description'])
+                            task_session = Session(team_id=team_id, task_id=task.id)
+                            task_session.save()
+                            await team.work_on_task(task.id, task_session, self)
+                        else:
+                            await websocket.send_json({'type': 'error', 'content': 'Team not found'})
+                            
                     else:
                         user_prompt = query['content']
                         await session(user_prompt, web_agent, 'web', True, websocket.send_json, query)
                         # await websocket.send_json({'type': 'chat_reply', 'content': response})
+                    
+
                 except Exception as e:
                     logger.exception(e)
                     continue
@@ -130,3 +150,14 @@ class WebSocketManager:
         except Exception as e:
             logger.exception(e)
             self.websocket = None
+
+    async def send_team_message(self, sender: str, receiver: str, content: str):
+        if self.websocket:
+            await self.websocket.send_json({
+                'type': 'team_message',
+                'sender': sender,
+                'receiver': receiver,
+                'content': content
+            })
+        else:
+            logger.warning("WebSocket is not connected. Unable to send team message.")

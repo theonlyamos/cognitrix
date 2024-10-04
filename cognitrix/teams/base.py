@@ -1,13 +1,18 @@
-from typing import List, Optional, Dict, Any, Callable
+from typing import List, Optional, Dict, Any, Callable, TYPE_CHECKING
 from pydantic import BaseModel, Field
 import asyncio
-import uuid
 from enum import Enum
+from rich import print
 from cognitrix.agents.base import Agent, Message, MessagePriority
 from cognitrix.llms.base import LLMResponse
 from cognitrix.tasks.base import Task, TaskStatus
 from odbms import Model
 from functools import cached_property
+
+if TYPE_CHECKING:
+    from cognitrix.llms.base import LLM
+    from cognitrix.llms.session import Session
+    from cognitrix.utils.ws import WebSocketManager
 
 class Team(Model):
     name: str
@@ -34,7 +39,14 @@ class Team(Model):
 
     @property
     def leader(self) -> Optional[Agent]:
-        return Agent.get(self.leader_id) if self.leader_id else None
+        leader = Agent.get(self.leader_id) if self.leader_id else None
+        if leader:
+            from cognitrix.llms.base import LLM
+            new_llm = LLM.load_llm(leader.llm.provider)
+            if new_llm:
+                new_llm.temperature = leader.llm.temperature
+                leader.llm = new_llm
+        return leader
 
     @leader.setter
     def leader(self, agent: Agent):
@@ -70,99 +82,160 @@ class Team(Model):
             await asyncio.sleep(0.1)  # Small delay to prevent busy-waiting
 
     def create_task(self, title: str, description: str) -> Task:
-        task = Task(title=title, description=description)
+        task = Task(title=title, description=description, assigned_agents=self.assigned_agents, team_id=self.id)
+        task.save()
         self.tasks.append(task)
         return task
 
-    def assign_task(self, task_id: str, agent_names: List[str]):
+    def assign_task(self, task_id: str):
+        task = Task.get(task_id)
+        if task:
+            task.assigned_agents = self.assigned_agents
+            task.status = TaskStatus.IN_PROGRESS
+            task.team_id = self.id
+            task.save()
+            self.tasks.append(task)
+            return task
+        return None
+
+    async def work_on_task(self, task_id: str, session: 'Session', websocket_manager: Optional['WebSocketManager'] = None):
         task = next((t for t in self.tasks if t.id == task_id), None)
         if task:
-            task.assigned_agents = agent_names
-            task.status = TaskStatus.IN_PROGRESS
-
-    async def work_on_task(self, task_id: str):
-        task = next((t for t in self.tasks if t.id == task_id), None)
-        if task and task.status == TaskStatus.IN_PROGRESS:
             try:
                 # Planning phase
-                workflow = await self.leader_create_workflow(task)
+                task.status = TaskStatus.IN_PROGRESS
+                task.save()
+                workflow = await self.leader_create_workflow(task, session, websocket_manager)
                 
                 # Execution and monitoring phase
-                result = await self.leader_coordinate_workflow(task, workflow)
+                result = await self.leader_coordinate_workflow(task, workflow, session, websocket_manager)
                 
                 # Evaluation and completion phase
-                final_result = await self.leader_evaluate_and_finalize(task, result)
+                final_result = await self.leader_evaluate_and_finalize(task, result, session, websocket_manager)
                 
                 task.results = [final_result]
                 task.status = TaskStatus.COMPLETED
+                task.save()
             except ValueError as e:
                 print(f"Error while working on task: {e}")
                 task.status = TaskStatus.PENDING
+                task.save()
 
-    async def leader_create_workflow(self, task: Task) -> List[str]:
+    async def leader_create_workflow(self, task: Task, session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> List[Dict[str, Any]]:
         if not self.leader:
             raise ValueError("No team leader assigned to create the workflow.")
         
-        prompt = (f"Task: {task.title}\nDescription: {task.description}\n"
-                  f"Team members: {', '.join(agent.name for agent in self.agents if agent.id != self.leader_id)}\n"
-                  "Create a detailed workflow assigning specific responsibilities to each team member, including the order of work and estimated time for each step.")
+        prompt = (
+            f"Task: {task.title}\nDescription: {task.description}\n"
+            f"Team members: {', '.join(agent.name for agent in self.agents if agent.id != self.leader_id)}\n\n"
+            "Create a detailed workflow for this task. For each step, provide the following information in a structured format:\n"
+            "1. Step number and title\n"
+            "2. Responsibilities (one per line, format: 'Agent Name: Specific task')\n"
+            "3. Estimated time\n\n"
+            "Use the following format for each step:\n"
+            "Step X: [Step Title]\n"
+            "Responsibilities:\n"
+            "- [Agent Name]: [Specific task]\n"
+            "- [Agent Name]: [Specific task]\n"
+            "Estimated Time: [Duration]\n\n"
+            "Repeat this structure for each step in the workflow."
+        )
+        
         response: LLMResponse
-        async for response in self.leader.generate(prompt):
-            pass
+        
+        async for response in self.leader.llm(self.leader.process_prompt(prompt), self.leader.formatted_system_prompt()):
+            print(response.current_chunk, end="")
+            if websocket_manager:
+                await websocket_manager.send_team_message(self.leader.name, "system", response.llm_response if response.llm_response else response.current_chunk)
         
         workflow = []
         if response and response.llm_response:
-            for line in response.llm_response.split('\n'):
-                if ':' in line:
-                    agent_name, responsibility = line.split(':', 1)
-                    workflow.append(agent_name.strip())
-                    agent = Agent.find_one({'name': agent_name.strip()})
-                    if agent:
-                        await self.send_message(self.leader, agent, f"Your role in task '{task.title}': {responsibility.strip()}")
-        else:
+            steps = response.llm_response.split('\n\n')
+            for step in steps:
+                if step.strip().startswith("Step"):
+                    lines = step.strip().split('\n')
+                    current_step = {
+                        "step": lines[0].strip(),
+                        "responsibilities": [],
+                        "estimated_time": ""
+                    }
+                    
+                    for line in lines[1:]:
+                        if line.startswith("Responsibilities:"):
+                            continue
+                        elif line.startswith("- "):
+                            agent, task_str = line[2:].split(": ", 1)
+                            current_step["responsibilities"].append({
+                                "agent": agent.strip(),
+                                "task": task_str.strip()
+                            })
+                        elif line.startswith("Estimated Time:"):
+                            current_step["estimated_time"] = line.split(": ", 1)[1].strip()
+                    
+                    workflow.append(current_step)
+        
+        if not workflow:
             print(f"Warning: No workflow response received for task '{task.title}'")
+            return []
+        print(workflow)
+        for step in workflow:
+            for responsibility in step["responsibilities"]:
+                agent = Agent.find_one({'name': responsibility["agent"]})
+                if agent:
+                    message = f"Your role in {step['step']} of task '{task.title}': {responsibility['task']}. Estimated time: {step['estimated_time']}"
+                    await self.send_message(self.leader, agent, message)
         
         return workflow
 
-    async def leader_coordinate_workflow(self, task: Task, workflow: List[str]) -> str:
+    async def leader_coordinate_workflow(self, task: Task, workflow: List[Dict[str, Any]], session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> str:
         if not self.leader:
             raise ValueError("No team leader assigned to coordinate the workflow.")
         
         result = ""
-        for agent_name in workflow:
-            agent = Agent.find_one({'name': agent_name})
-            if agent:
-                # Leader assigns the task to the agent
-                await self.send_message(self.leader, agent, f"Please start working on your part of the task: {task.title}")
-                
-                # Agent works on the task
-                agent_result = await self.process_agent_task(agent, task, result)
-                result += f"\n\n{agent_result}"
-                
-                # Leader reviews the agent's work
-                review_prompt = f"Review the following work done by {agent.name} for the task '{task.title}':\n{agent_result}\nProvide feedback and suggestions for improvement if necessary."
-                review_response: LLMResponse
-                async for review_response in self.leader.generate(review_prompt):
-                    pass
-                
-                # Leader provides feedback to the agent
-                if review_response and review_response.llm_response:
-                    await self.send_message(self.leader, agent, f"Feedback on your work:\n{review_response.llm_response}")
+        for step in workflow:
+            for responsibility in step["responsibilities"]:
+                agent = Agent.find_one({'name': responsibility["agent"]})
+                if agent:
+                    # Leader assigns the task to the agent
+                    message = f"Please start working on your part of the task: {task.title}\nStep: {step['step']}\nYour responsibility: {responsibility['task']}"
+                    await self.send_message(self.leader, agent, message)
+                    if websocket_manager:
+                        await websocket_manager.send_team_message(self.leader.name, agent.name, message)
                     
-                    # If improvements are needed, the agent revises their work
-                    if "improve" in review_response.llm_response.lower() or "revise" in review_response.llm_response.lower():
-                        revision_prompt = f"Based on the feedback: {review_response.llm_response}\nPlease revise your work on the task: {task.title}"
-                        revision_response: LLMResponse
-                        async for revision_response in agent.generate(revision_prompt):
-                            pass
-                        if revision_response and revision_response.llm_response:
-                            result += f"\n\nRevised work by {agent.name}: {revision_response.llm_response}"
-                else:
-                    print(f"Warning: No review response received for {agent.name}'s work on task '{task.title}'")
+                    # Agent works on the task
+                    agent_result = await self.process_agent_task(agent, task, result, websocket_manager)
+                    result += f"\n\n{agent_result}"
+                    
+                    # Leader reviews the agent's work
+                    review_prompt = f"Review the following work done by {agent.name} for the task '{task.title}' (Step: {step['step']}):\n{agent_result}\nProvide feedback and suggestions for improvement if necessary."
+                    review_response: LLMResponse
+                    async for review_response in self.leader.generate(review_prompt):
+                        pass
+                    
+                    # Leader provides feedback to the agent
+                    if review_response and review_response.llm_response:
+                        await self.send_message(self.leader, agent, f"Feedback on your work:\n{review_response.llm_response}")
+                        
+                        # If improvements are needed, the agent revises their work
+                        if "improve" in review_response.llm_response.lower() or "revise" in review_response.llm_response.lower():
+                            revision_prompt = f"Based on the feedback: {review_response.llm_response}\nPlease revise your work on the task: {task.title} (Step: {step['step']})"
+                            revision_response: LLMResponse
+                            
+                            new_llm = LLM.load_llm(agent.llm.provider)
+                            if new_llm:
+                                new_llm.temperature = agent.llm.temperature
+                                agent.llm = new_llm
+                            
+                            async for revision_response in agent.generate(revision_prompt):
+                                pass
+                            if revision_response and revision_response.llm_response:
+                                result += f"\n\nRevised work by {agent.name}: {revision_response.llm_response}"
+                    else:
+                        print(f"Warning: No review response received for {agent.name}'s work on task '{task.title}' (Step: {step['step']})")
         
         return result
 
-    async def leader_evaluate_and_finalize(self, task: Task, result: str) -> str:
+    async def leader_evaluate_and_finalize(self, task: Task, result: str, session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> str:
         if not self.leader:
             raise ValueError("No team leader assigned to evaluate and finalize the task.")
         
@@ -177,7 +250,10 @@ class Team(Model):
             # Inform all team members about the task completion and share the summary
             for agent in self.agents:
                 if agent.id != self.leader_id:
-                    await self.send_message(self.leader, agent, f"Task '{task.title}' has been completed. Here's the summary:\n{evaluation_response.llm_response}")
+                    message = f"Task '{task.title}' has been completed. Here's the summary:\n{evaluation_response.llm_response}"
+                    await self.send_message(self.leader, agent, message)
+                    if websocket_manager:
+                        await websocket_manager.send_team_message(self.leader.name, agent.name, message)
         else:
             final_result = f"Task Results:\n{result}\n\nWarning: No evaluation response received from the team leader."
             print(f"Warning: No evaluation response received for task '{task.title}'")
@@ -192,13 +268,19 @@ class Team(Model):
         task = next((t for t in self.tasks if t.id == task_id), None)
         return task.results if task else None
 
-    async def process_agent_task(self, agent: Agent, task: Task, previous_result: str) -> str:
+    async def process_agent_task(self, agent: Agent, task: Task, previous_result: str, websocket_manager: Optional['WebSocketManager'] = None) -> str:
         prompt = (f"Task: {task.title}\nDescription: {task.description}\n"
                   f"Previous work done:\n{previous_result}\n"
                   f"Based on the previous work, please continue working on the task and provide your contribution.")
+        new_llm = LLM.load_llm(agent.llm.provider)
+        if new_llm:
+            new_llm.temperature = agent.llm.temperature
+            agent.llm = new_llm
+        
         response: LLMResponse
         async for response in agent.generate(prompt):
-            pass
+            if websocket_manager:
+                await websocket_manager.send_team_message(agent.name, "system", response.current_chunk)
         return f"{agent.name}'s contribution: {response.llm_response}"
 
     async def delegate_task(self, sender: Agent, message: Message, delegate_name: str):
@@ -221,6 +303,15 @@ class Team(Model):
             return await self.delegate_task(agent, message, delegate_name)
         else:
             return response
+
+    def get_assigned_tasks(self):
+        """Get all tasks assigned to this team"""
+        return Task.find({'team_id': self.id})
+
+    @classmethod
+    def get_session(cls, team_id: str) -> Optional['Session']:
+        from cognitrix.llms.session import Session
+        return Session.find_one({'team_id': team_id})
 
 class TeamManager:
     def __init__(self):
@@ -287,7 +378,7 @@ async def main():
         title="Stock Options",
         description="Get me best ai-related stock options to invest in"
     )
-    research_team.assign_task(task.id, ["Alice", "Bob", "Charlie"])
+    research_team.assign_task(task.id)
 
     # Work on the task
     await research_team.work_on_task(task.id)
