@@ -5,24 +5,25 @@
   export let sendMessage: Function;
   export let loading: boolean = false;
   export let clearMessages: MouseEventHandler<HTMLElement> = () => {};
+  export let placeholder: string = "Enter your message...";
+  export let clearButton: boolean = false;
 
-  let inputElement: any;
-  let userInput = "Enter prompt here...";
-
-  const onfocus = (event: FocusEvent) => {
-    if (userInput === "Enter prompt here...") userInput = "";
-  };
+  let inputElement: HTMLDivElement;
+  let userInput = "";
 
   function handleKeyDown(event: KeyboardEvent) {
-    if (event.key === "Enter") {
+    if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (userInput) onSendMessage();
+      if (userInput.trim()) onSendMessage();
     }
   }
 
   const onSendMessage = async () => {
-    await sendMessage(userInput);
-    userInput = "";
+    if (userInput.trim()) {
+      await sendMessage(userInput.trim());
+      userInput = "";
+      inputElement.innerText = "";
+    }
   };
 </script>
 
@@ -33,24 +34,18 @@
       tabindex="0"
       class="input-box"
       contenteditable="true"
-      on:focus={onfocus}
       on:keydown={handleKeyDown}
-      bind:innerText={userInput}
+      bind:innerHTML={userInput}
       bind:this={inputElement}
-    >
-      {userInput}
-    </div>
-    <button
-      on:click={() => {
-        uploadFile();
-      }}
-    >
+      {placeholder}
+    ></div>
+    <button on:click={(event) => uploadFile(event)}>
       <i class="fas fa-paperclip"></i>
     </button>
     <button
       on:click={onSendMessage}
-      disabled={!userInput || loading}
-      class={`${userInput || loading ? "" : "disabled"}`}
+      disabled={!userInput.trim() || loading}
+      class={`${userInput.trim() && !loading ? "" : "disabled"}`}
     >
       {#if loading}
         <i class="fa-solid fa-circle-stop"></i>
@@ -60,14 +55,15 @@
     </button>
   </div>
 
-  <button class="clear-btn" on:click={clearMessages}>
-    <i class="fa-solid fa-comment-slash fa-fw"></i>Clear
-  </button>
+  {#if clearButton}
+    <button class="clear-btn" on:click={clearMessages}>
+      <i class="fa-solid fa-comment-slash fa-fw"></i>Clear
+    </button>
+  {/if}
 </div>
 
 <style>
   .input-bar {
-    -webkit-box-align: end;
     align-items: end;
     background: none;
     display: flex;
@@ -76,14 +72,13 @@
   }
 
   .input-container {
-    inline-size: 100%;
+    width: 100%;
     display: flex;
     justify-content: space-between;
     align-items: center;
     border-radius: 20px;
     font-size: 0.9rem;
     background-color: var(--fg-1);
-    /* color: var(--bg-2); */
     padding: 5px 20px;
   }
 
@@ -91,14 +86,16 @@
     text-align: start;
     outline: none;
     padding: 10px;
-    inline-size: 90%;
-    max-block-size: 100px;
+    width: 90%;
+    max-height: 100px;
     overflow-y: auto;
     color: var(--bg-1) !important;
+  }
 
-    &::-webkit-scrollbar {
-      display: none;
-    }
+  .input-box:empty::before {
+    content: attr(placeholder);
+    color: var(--bg-2);
+    opacity: 0.6;
   }
 
   .input-container button {
@@ -108,14 +105,14 @@
     border: 0;
     outline: none;
     opacity: 0.7;
+  }
 
-    &:hover,
-    &:focus {
-      border: none;
-      padding: 0 !important;
-      outline: none;
-      opacity: 1;
-    }
+  .input-container button:hover,
+  .input-container button:focus {
+    border: none;
+    padding: 0 !important;
+    outline: none;
+    opacity: 1;
   }
 
   .clear-btn {
@@ -124,8 +121,8 @@
     justify-content: center;
     gap: 5px;
     position: absolute;
-    inset-block-start: -20px;
-    inset-inline-start: 50%;
+    top: -20px;
+    left: 50%;
     transform: translateX(-50%);
     padding: 5px 10px;
     border-radius: 25px;
@@ -135,9 +132,9 @@
     font-size: 0.8rem;
     cursor: pointer;
     width: fit-content;
+  }
 
-    &:hover {
-      background-color: var(--fg-1);
-    }
+  .clear-btn:hover {
+    background-color: var(--fg-1);
   }
 </style>

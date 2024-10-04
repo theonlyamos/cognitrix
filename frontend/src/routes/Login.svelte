@@ -19,8 +19,8 @@
 
       if (response.ok) {
         const data = await response.json();
-        console.log(data);
         userStore.login(data.user, data.access_token);
+        navigate('/')
         // window.location.reload();
       } else {
         const data = await response.json();

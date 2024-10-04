@@ -4,11 +4,11 @@
   import AgentImg from "../assets/ai-agent-icon.svg";
   import { convertXmlToJson } from "../common/utils";
   import { onMount } from "svelte";
-  import { slide } from 'svelte/transition';
+  import { fade, fly, slide } from 'svelte/transition';
 
   export let id: string | number = "";
   export let role: string | String = "user";
-  export let content: string;
+  export let content: string|object;
   export let image: string = "";
   export let thought: string | null = null;
   export let observation: string | null = null;
@@ -50,10 +50,13 @@
     return artifactsContent;
   };
 
-  const formatContent = (content: string): string => {
-    let parsedContent = convertXmlToJson(content);
+  const formatContent = (content: string|object): string => {
+    if (typeof content === 'object') {
+      content = content.llm_response as string;
+    }
+    let parsedContent = convertXmlToJson(content as string);
 
-    if (!parsedContent) return content;
+    if (!parsedContent) return content as string;
 
     for (let key in parsedContent) {
       if (key === "artifacts") {
@@ -137,7 +140,11 @@
     {/if}
   </div>
   <hr />
-  <div class="message-row">
+  <div
+    class="message-row"
+    in:fly={{ y: 20, duration: 300 }}
+    out:fade={{ duration: 200 }}
+  >
     {#each toolCalls as tool_call}
       <div class="tool-call">
         <i class="fas fa-anchor fa-fw"></i>

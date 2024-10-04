@@ -10,24 +10,29 @@ from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Dict, 
 
 
 from cognitrix.llms.base import LLMResponse
+# from cognitrix.teams.base import Team
 
 if TYPE_CHECKING:
     from cognitrix.agents.base import Agent
+    from cognitrix.teams.base import Team
 
 logger = logging.getLogger('cognitrix.log')
 
 class Session(Model):
-    chat: List[Dict[str, str]] = []
+    chat: List[Dict[str, Any]] = []
     """The chat history of the session"""
     
     datetime: str = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
     """When the session was started"""
     
-    agent_id: str = ""
+    agent_id: Optional[str] = None
     """The id of the agent that started the session"""
     
     task_id: Optional[str] = None
     """The id of the task that started the session"""
+    
+    team_id: Optional[str] = None
+    """The id of the team that started the session"""
     
     started_at: Optional[str] = None
     """Started date of the task"""
@@ -61,15 +66,14 @@ class Session(Model):
 
     @property
     async def agent(self):
-        try:
-            agents = await Agent.list_agents()
-            loaded_agents: list[Agent] = [agent for agent in agents if agent.id == self.agent_id]
-            if len(loaded_agents):
-                return loaded_agents[0]
-        except Exception as e:
-            logger.exception(e)
-            return None
-    
+        from cognitrix.agents.base import Agent
+        return Agent.get(self.agent_id) if self.agent_id else None
+        
+    @property
+    def team(self) -> Optional['Team']:
+        from cognitrix.teams.base import Team
+        return Team.get(self.team_id) if self.team_id else None
+
     @classmethod
     async def get_by_agent_id(cls, agent_id: str) -> Self:
         """Retrieve a session by agent_id"""
@@ -91,15 +95,13 @@ class Session(Model):
         tool_calls: bool = False
         
         try:
-            if not agent:
-                raise Exception('Agent not initialized')
-            
             while message:
                 try:
                     full_prompt = agent.process_prompt(message)
                     message = ''
                     # response: LLMResponse | None = None
                     called_tools: bool = False
+                    
                     async for response in agent.llm(full_prompt, system_prompt, self.chat):
                         if streaming:
                             if interface == 'cli':
@@ -109,7 +111,7 @@ class Session(Model):
                         
                         if response.tool_call and not called_tools and not response.result:
                             called_tools = True
-                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_call)
+                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls)
                             
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                                 message = result
@@ -119,10 +121,9 @@ class Session(Model):
                                 else:
                                     await output({'type': wsquery['type'], 'content': result, 'action': wsquery['action']})
                         
-                        if response.artifact:
-                            if 'artifact' in response.artifact.keys():
+                        if response.artifacts:
                                 if interface == 'ws':
-                                    await output({'type': wsquery['type'], 'content': '', 'action': wsquery['action'], 'artifacts': response.artifacts['artifact']})
+                                    await output({'type': wsquery['type'], 'content': '', 'action': wsquery['action'], 'artifacts': response.artifacts})
                         
                         await asyncio.sleep(0.01)
                     
@@ -143,8 +144,8 @@ class Session(Model):
                     
                     if not tool_calls:
                         streaming = False  
-                    
-                    self.save()
+                    if save_history:
+                        self.save()
                     if not message:
                         break
                 except Exception as e:

@@ -207,7 +207,13 @@
 
   <ChatComponent {messages} loading={loadingMessages}>
     {#if session_id}
-      <InputBar {uploadFile} {sendMessage} {loading} {clearMessages} />
+      <InputBar
+        {uploadFile}
+        {sendMessage}
+        {loading}
+        {clearMessages}
+        clearButton={true}
+      />
     {/if}
   </ChatComponent>
 </div>

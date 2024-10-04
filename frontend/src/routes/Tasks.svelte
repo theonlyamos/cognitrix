@@ -1,20 +1,37 @@
 <script lang="ts">
   import { link } from "svelte-routing";
-  import { getAllTasks } from "../common/utils";
-  import type { TaskInterface } from "../common/interfaces";
+  import { getAllTasks, getAllTeams, getTasksByTeam } from "../common/utils";
+  import type { TaskInterface, TeamInterface } from "../common/interfaces";
   import TaskCard from "../lib/TaskCard.svelte";
+  import Select from "$lib/Select.svelte";
 
   let tasks: TaskInterface[] = [];
+  let teams: TeamInterface[] = [];
+  let selectedTeam: string = "";
 
   const loadTasks = async () => {
     try {
       tasks = (await getAllTasks()) as TaskInterface[];
+      teams = (await getAllTeams()) as TeamInterface[];
       tasks = tasks.reverse();
       console.log(tasks);
     } catch (error) {
       console.log(error);
     }
   };
+
+  const filterTasksByTeam = async () => {
+    if (selectedTeam) {
+      tasks = await getTasksByTeam(selectedTeam);
+    } else {
+      tasks = (await getAllTasks()) as TaskInterface[];
+    }
+    tasks = tasks.reverse();
+  };
+
+  $: if (selectedTeam !== undefined) {
+    filterTasksByTeam();
+  }
 </script>
 
 {#await loadTasks()}
@@ -29,6 +46,19 @@
     </a>
   </div>
   <div class="container">
+    <div class="filter-container">
+      <Select
+        options={[
+          { value: "", label: "All Teams" },
+          ...teams.map((team) => ({
+            value: team.id || "",
+            label: team.name,
+          })),
+        ]}
+        bind:value={selectedTeam}
+        placeholder="Filter tasks by team"
+      />
+    </div>
     <div class="tasks-container">
       {#each tasks as task (task?.id)}
         <TaskCard {task} />
@@ -44,5 +74,11 @@
     display: flex;
     gap: 20px;
     flex-wrap: wrap;
+  }
+
+  .filter-container {
+    padding-inline: 20px;
+    padding-block: 20px;
+    max-width: 300px;
   }
 </style>

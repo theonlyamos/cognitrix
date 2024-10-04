@@ -9,6 +9,7 @@
   import TaskPage from "./routes/TaskPage.svelte";
   import Teams from "./routes/Teams.svelte";
   import TeamPage from "./routes/TeamPage.svelte";
+  import TeamInteraction from './routes/TeamInteraction.svelte';
   import Signup from "./routes/Signup.svelte";
   import Login from "./routes/Login.svelte";
   import { webSocketStore, userStore } from "./common/stores";
@@ -27,10 +28,12 @@
     userStore.checkAuth();
     webSocketStore.connect();
   });
+
+  export let url = '';
 </script>
 
-<Router>
-  <div class="container">
+<Router {url}>
+  <div class="main-container">
     {#if user}
       <Sidebar></Sidebar>
     {/if}
@@ -49,12 +52,15 @@
       <Route path="/teams" component={Teams}></Route>
       <Route path="/teams/new" component={TeamPage}></Route>
       <Route path="/teams/:team_id" component={TeamPage}></Route>
+      <Route path="/teams/:team_id/interact" component={TeamInteraction}
+      ></Route>
     </Container>
   </div>
 </Router>
 
 <style>
-  .container {
+  .main-container {
+    block-size: 100vh;
     position: relative;
     display: flex;
     justify-content: space-between;

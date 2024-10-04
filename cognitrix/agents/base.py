@@ -101,11 +101,17 @@ class Agent(Model):
 
     async def process_message(self, message: Message):
         content = f"{message.sender}: {message.content}"
+        
+        new_llm = LLM.load_llm(self.llm.provider)
+        if new_llm:
+            new_llm.temperature = self.llm.temperature
+            self.llm = new_llm
+        
         response: LLMResponse
         async for response in self.generate(content):
             pass
         
-        print(f"{self.name} responded: {response.result}")
+        print(f"\n{self.name} responded: {response.result}")
 
         # Check for queue keyword
         if "queue" in str(response.result).lower():
@@ -212,6 +218,7 @@ class Agent(Model):
         return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
 
     async def call_tools(self, tool_calls: dict) -> Union[dict, str]:
+        print(f"Tool calls: {tool_calls}")
         try:
             if tool_calls:
                 tool_calls_result = []

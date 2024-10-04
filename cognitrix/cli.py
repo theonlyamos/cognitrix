@@ -140,7 +140,6 @@ def list_providers():
         padding = (len(str(index)))-int(len(providers)/10)
         padding = padding if padding else padding + 2
         print(f"| {str(index) + ' '*padding}| {p.__name__ + ' '*(max_col-len(p.__name__))} |")
-
         
 @lru_cache(maxsize=None)
 def get_tools(category='all'):
@@ -266,7 +265,7 @@ def start(args: Namespace):
         if not assistant:
             raise Exception("Agent not found")
 
-        if args.provider and (assistant.llm.provider.lower() != args.provider.lower()):
+        if args.provider:
             provider = LLM.load_llm(args.provider)
             if provider:
                 assistant.llm = provider

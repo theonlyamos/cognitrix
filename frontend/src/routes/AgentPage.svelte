@@ -7,6 +7,7 @@
     generatePrompt,
     saveAgent,
     getAgentSession,
+    convertXmlToJson,
   } from "../common/utils";
   import type {
     AgentDetailInterface,
@@ -22,6 +23,7 @@
   import type { Unsubscriber } from "svelte/motion";
   import { onDestroy, onMount } from "svelte";
   import Modal from "../lib/Modal.svelte";
+  import Alert from "../lib/Alert.svelte";
 
   export let agent_id: string = "";
   let agent: AgentDetailInterface = {
@@ -51,12 +53,19 @@
   let unsubscribe: Unsubscriber | null = null;
   let socket: WebSocket;
   let newPromptTemplate: string = "";
+  let isGenerativeMode = false;
+  let generativeDescription = "";
+
+  let alertMessage = "";
+  let alertType: "default" | "success" | "warning" | "danger" | "loading" = "default";
+  let showAlert = false;
 
   const loadAgent = async (agent_id: string) => {
     try {
       agent = (await getAgent(agent_id)) as AgentDetailInterface;
       if (agent.tools && agent.tools.length) {
         agentTools = agent.tools.map((t) => t.name);
+        selectedTools = agent.tools.map((t) => t.name);
       }
       console.log(agent);
     } catch (error) {
@@ -64,16 +73,20 @@
     }
   };
 
-  const generateAgentPrompt = () => {
-    if (socket && socket.readyState === WebSocket.OPEN) {
+  const handleModeChange = (event: CustomEvent<boolean>) => {
+    isGenerativeMode = event.detail;
+  };
+
+  const generateAgentDetails = () => {
+    if (socket && socket.readyState === WebSocket.OPEN && generativeDescription) {
       webSocketStore.send(
         JSON.stringify({
           type: "generate",
-          action: "system_prompt",
-          name: agent.name,
-          prompt: agent.system_prompt,
+          action: "agent_details",
+          prompt: generativeDescription,
         })
       );
+      generativeDescription = ''
       loading = true;
     }
   };
@@ -83,18 +96,14 @@
       (event: { socket: WebSocket; type: string; data?: any }) => {
         if (event !== null) {
           socket = event.socket;
-          console.log(socket);
+          
           if (event.type === "message") {
             loading = false;
             let data = JSON.parse(event.data);
 
-            if (data.type == "generate") {
-              if (!newPromptTemplate.length) {
-                agent.system_prompt = "";
-              }
-              newPromptTemplate = data.content;
-              agent.system_prompt = agent.system_prompt + data.content;
-              loading = false;
+            if (data.type === "generate" && data.action === "agent_details") {
+                generativeDescription = generativeDescription + data.content;
+                loading = false;
             }
           }
         }
@@ -132,19 +141,24 @@
         selectedTools = [...oldArray];
       }
     }
-
-    agent.tools = selectedTools
-      .map((tool) => tools.find((t) => t.name === tool))
-      .filter((tool): tool is ToolInterface => tool !== undefined);
   };
 
   const handleAgentSubmit = async () => {
     try {
       submitting = true;
+      alertType = "loading";
+      alertMessage = "Saving agent...";
+      showAlert = true;
+      
       agent = (await saveAgent(agent)) as AgentDetailInterface;
       if (agent.id) agent_id = agent.id;
+      
+      alertType = "success";
+      alertMessage = `Agent ${agent_id ? "updated" : "created"} successfully!`;
     } catch (error) {
       console.log(error);
+      alertType = "danger";
+      alertMessage = `Failed to ${agent_id ? "update" : "create"} agent. Please try again.`;
     } finally {
       submitting = false;
     }
@@ -181,6 +195,21 @@
   // $: if (newPromptTemplate) {
   //   agent.system_prompt = agent.system_prompt + newPromptTemplate;
   // }
+
+  $: if (generativeDescription) {
+    const parsedGenerativeDescription = convertXmlToJson(generativeDescription) as {name: string, description: string, tools: string[]}
+    agent.name = parsedGenerativeDescription.name
+    agent.system_prompt = parsedGenerativeDescription.description
+    if (parsedGenerativeDescription.tools && parsedGenerativeDescription.tools.length) {
+      selectedTools = parsedGenerativeDescription.tools
+    }
+  }
+
+  $: if (Array.isArray(selectedTools) && selectedTools.length){
+    agent.tools = selectedTools
+      .map((tool) => tools.find((t) => t.name === tool))
+      .filter((tool): tool is ToolInterface => tool !== undefined);
+  }
 </script>
 
 <Modal
@@ -196,6 +225,29 @@
 >
   Are you sure you want to proceed?
 </Modal>
+
+<Modal
+  isOpen={isGenerativeMode}
+  type="info"
+  action={generateAgentDetails}
+  actionLabel="Generate Agent Details"
+  size="medium"
+  appearance="floating"
+  title="Generate Agent Details"
+  onClose={() => {
+    isGenerativeMode = false;
+  }}
+>
+  <div class="form-group">
+    <textarea
+      id="generativeDescription"
+      rows="10"
+      bind:value={generativeDescription}
+      placeholder="Describe the agent you want to create, including its name, purpose, and any other relevant details."
+    ></textarea>
+  </div>
+</Modal>
+
 {#if agent_id}
   {#await loadAgent(agent_id)}
     <div class="container">
@@ -242,13 +294,20 @@
 </div>
 <div class="container ready">
   <div class="agent-form">
+    <div class="form-group mode-switch">
+      <Switch
+        label="Generative Mode"
+        name="generativeMode"
+        bind:checked={isGenerativeMode}
+        onChange={handleModeChange}
+      />
+    </div>
+  </div>
+  <div class="agent-form">
     <div class="form-group">
       <label for="name">Name of Agent</label>
       <input type="text" bind:value={agent.name} />
     </div>
-    <!-- <div class="form-group">
-            <Switch label="Is Sub Agent" bind:checked={agent.is_sub_agent} />
-        </div> -->
   </div>
   <div class="agent-form">
     <div class="form-group">
@@ -258,7 +317,7 @@
         placeholder="Provide a brief description of your agent and click the Generate Prompt button to generate a system prompt for your Agent."
       ></textarea>
     </div>
-    <button
+    <!-- <button
       class="btn ai-generate"
       on:click={generateAgentPrompt}
       disabled={agent.system_prompt === "" || loading}
@@ -269,7 +328,7 @@
       {:else}
         <span>Generate Prompt</span>
       {/if}
-    </button>
+    </button> -->
   </div>
   <div class="agent-form">
     <Accordion title="Choose LLM Provider">
@@ -307,13 +366,22 @@
             value={tool.name}
             label={tool.name}
             onChange={handleToolChange}
-            checked={agentTools.includes(tool.name)}
+            checked={selectedTools.includes(tool.name)}
           />
         {/each}
       </div>
     </Accordion>
   </div>
 </div>
+
+{#if showAlert}
+  <Alert
+    type={alertType}
+    message={alertMessage}
+    onClose={() => (showAlert = false)}
+    autoClose={alertType !== "loading"}
+  />
+{/if}
 
 <style>
   .container {
@@ -353,19 +421,6 @@
     position: relative;
   }
 
-  .btn.ai-generate {
-    margin-inline-start: auto;
-    inline-size: fit-content;
-    background-color: var(--fg-1);
-    color: var(--bg-1);
-    padding-inline: 7px;
-    padding-block: 5px;
-    border-radius: 7px;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
-
   .tools {
     z-index: 10;
   }
@@ -380,10 +435,5 @@
   textarea {
     resize: none;
     block-size: 30vh;
-  }
-
-  img.icon {
-    inline-size: 30px;
-    block-size: 30px;
   }
 </style>

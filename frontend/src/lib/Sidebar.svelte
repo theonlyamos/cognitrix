@@ -166,7 +166,7 @@
   }
 
   .fa-power-off {
-    color: red;
+    color: #f44336;
   }
 
   @media screen and (max-width: 640px) {

@@ -17,10 +17,7 @@ agents_api = APIRouter(
 async def list_agents():
     agents = Agent.all()
 
-    response = [{
-        'id': agent.id, 'name': agent.name, 'provider': agent.llm.provider,
-        'model': agent.llm.model, 'tools': [tool.name for tool in agent.tools]
-    } for agent in agents]
+    response = [agent.model_dump() for agent in agents]
     
     return JSONResponse(response)
 
@@ -33,6 +30,9 @@ async def save_agent(request: Request, agent: Agent):
 
     agent.llm = llm
     agent.save()
+    
+    if request.state.agent.id == agent.id:
+        request.state.agent = agent
     
     return JSONResponse(agent.json())
 

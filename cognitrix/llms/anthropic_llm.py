@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 from anthropic import AnthropicError, AsyncAnthropic as AnthropicLLM
 from cognitrix.llms.base import LLM, LLMResponse
 import logging
-import sys
 import os
 
 logging.basicConfig(
@@ -35,6 +34,9 @@ class Anthropic(LLM):
     
     temperature: float = 0.1
     """What sampling temperature to use.""" 
+    
+    base_url: str = 'https://anthropic.helicone.ai'
+    """Base URL for the Anthropic API"""
     
     chat_history: list[str] = []
     """Chat history"""
@@ -110,14 +112,18 @@ class Anthropic(LLM):
             str|None: A string containing the generated response.
         """
         try:
-            client = AnthropicLLM(api_key=self.api_key)
+            client = AnthropicLLM(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                default_headers={'Helicone-Auth': f'Bearer {os.getenv("HELICONE_API_KEY")}'}
+            )
             stream = await client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
-            system=system_prompt,
-            messages=self.format_query(query),
-            stream=True
+                model=self.model,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                system=system_prompt,
+                messages=self.format_query(query),
+                stream=True
             )
             
             response = LLMResponse()

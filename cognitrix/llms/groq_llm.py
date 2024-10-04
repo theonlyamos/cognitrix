@@ -34,7 +34,8 @@ class Groq(LLM):
     api_key: str = os.getenv('GROQ_API_KEY', '')
     """Groq API key""" 
     
-    base_url: str = 'https://api.groq.com/openai/v1'
+    # base_url: str = 'https://api.groq.com/openai/v1'
+    base_url: str = 'https://groq.helicone.ai/openai/v1'
     """Base URL for the Groq API"""
     
     supports_system_prompt: bool = True

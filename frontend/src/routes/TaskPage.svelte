@@ -1,25 +1,15 @@
 <script lang="ts">
-  import { link, navigate } from "svelte-routing";
-  import {
-    getTask,
-    getTools,
-    saveTask,
-    getAllAgents,
-    updateTaskStatus,
-  } from "../common/utils";
-  import type {
-    TaskDetailInterface,
-    ProviderInterface,
-    ToolInterface,
-    AgentDetailInterface,
-  } from "../common/interfaces";
-  import GenerativeIcon from "../assets/ai-curved-star-icon-multiple.svg";
+  import { getTask, getTools, saveTask, getAllAgents, updateTaskStatus, getAllTeams, getTasksByTeam } from "../common/utils";
+  import type { TaskDetailInterface, ToolInterface, AgentDetailInterface, TeamInterface } from "../common/interfaces";
   import Checkbox from "../lib/Checkbox.svelte";
   import Switch from "../lib/Switch.svelte";
   import Accordion from "../lib/Accordion.svelte";
+  import Select from "$lib/Select.svelte";
+  import Modal from "../lib/Modal.svelte";
+  import { onMount, onDestroy } from "svelte";
   import { webSocketStore } from "../common/stores";
-  import type { Unsubscriber } from "svelte/motion";
-  import { onDestroy, onMount } from "svelte";
+    import type { Unsubscriber } from "svelte/store";
+  import Alert from "../lib/Alert.svelte";
 
   export let task_id: string = "";
   let agents: AgentDetailInterface[] = [];
@@ -29,8 +19,9 @@
     assigned_agents: [],
     tools: [],
     autostart: false,
-    status: "not-started",
+    status: "pending",
     done: false,
+    team_id: "",
   };
   let tools: ToolInterface[] = [];
   let taskAgents: string[] = [];
@@ -38,11 +29,20 @@
 
   let selectedAgents: string[] = [];
   let selectedTools: string[] = [];
+  let selectedTeam: string = "";
   let loading: boolean = false;
   let submitting: boolean = false;
   let unsubscribe: Unsubscriber | null = null;
   let socket: WebSocket;
   let newTaskDescription: string = "";
+  let isGenerativeMode = false;
+  let generativeDescription = "";
+
+  let teams: TeamInterface[] = [];
+
+  let alertMessage = "";
+  let alertType: "default" | "success" | "warning" | "danger" | "loading" = "default";
+  let showAlert = false;
 
   const loadTask = async (task_id: string) => {
     try {
@@ -71,6 +71,23 @@
     }
   };
 
+  const handleModeChange = (event: CustomEvent<boolean>) => {
+    isGenerativeMode = event.detail;
+  };
+
+  const generateTaskDetails = () => {
+    if (socket && socket.readyState === WebSocket.OPEN && generativeDescription) {
+      webSocketStore.send(
+        JSON.stringify({
+          type: "generate",
+          action: "team_details",
+          prompt: generativeDescription,
+        })
+      );
+      loading = true;
+    }
+  };
+
   const startWebSocketConnection = () => {
     unsubscribe = webSocketStore.subscribe(
       (event: { socket: WebSocket; type: string; data?: any }) => {
@@ -90,18 +107,11 @@
     );
   };
 
-  onMount(() => {
-    startWebSocketConnection();
-
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  });
-
   (async () => {
     try {
       agents = (await getAllAgents()) as AgentDetailInterface[];
       tools = (await getTools()) as ToolInterface[];
+      teams = (await getAllTeams()) as TeamInterface[];
     } catch (error) {
       console.log(error);
     }
@@ -144,10 +154,19 @@
   const handleTaskSubmit = async () => {
     try {
       submitting = true;
+      alertType = "loading";
+      alertMessage = "Saving task...";
+      showAlert = true;
+
+      task.team_id = selectedTeam;
       task = (await saveTask(task)) as TaskDetailInterface;
       if (task.id) task_id = task.id;
+      alertType = "success";
+      alertMessage = `Task ${task_id ? "updated" : "created"} successfully!`;
     } catch (error) {
       console.log(error);
+      alertType = "danger";
+      alertMessage = `Failed to ${task_id ? "update" : "create"} task. Please try again.`;
     } finally {
       submitting = false;
     }
@@ -156,19 +175,47 @@
   const onStartTask = async () => {
     try {
       submitting = true;
+      alertType = "loading";
+      alertMessage = "Starting task...";
+      showAlert = true;
+
       task = (await updateTaskStatus(task?.id)) as TaskDetailInterface;
       if (task.id) task_id = task.id;
+      alertType = "success";
+      alertMessage = "Task started successfully!";
     } catch (error) {
       console.log(error);
+      alertType = "danger";
+      alertMessage = "Failed to start task. Please try again.";
     } finally {
       submitting = false;
     }
   };
 
   const stopTask = async () => {
-    task.status = "not-started";
-    task = (await saveTask(task)) as TaskDetailInterface;
+    try {
+      alertType = "loading";
+      alertMessage = "Stopping task...";
+      showAlert = true;
+
+      task.status = "not-started";
+      task = (await saveTask(task)) as TaskDetailInterface;
+      alertType = "success";
+      alertMessage = "Task stopped successfully!";
+    } catch (error) {
+      console.log(error);
+      alertType = "danger";
+      alertMessage = "Failed to stop task. Please try again.";
+    }
   };
+
+  onMount(() => {
+    startWebSocketConnection();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  });
 
   onDestroy(() => {
     if (unsubscribe) unsubscribe();
@@ -179,7 +226,33 @@
   }
 
   $: task.assigned_agents = selectedAgents;
+
+  $: if (task.team_id) {
+    selectedTeam = task.team_id;
+  }
 </script>
+
+<Modal
+  isOpen={isGenerativeMode}
+  type="info"
+  action={generateTaskDetails}
+  actionLabel="Generate Task Details"
+  size="medium"
+  appearance="floating"
+  title="Generate Task Details"
+  onClose={() => {
+    isGenerativeMode = false;
+  }}
+>
+  <div class="form-group">
+    <textarea
+      id="generativeDescription"
+      rows="10"
+      bind:value={generativeDescription}
+      placeholder="Provide a brief description of the task and click the Generate Task Details button to generate a detailed step-by-step instructions for completing the task."
+    ></textarea>
+  </div>
+</Modal>
 
 {#if task_id}
   {#await loadTask(task_id)}
@@ -220,6 +293,16 @@
 </div>
 <div class="container ready">
   <div class="task-form">
+    <div class="form-group mode-switch">
+      <Switch
+        label="Generative Mode"
+        name="generativeMode"
+        bind:checked={isGenerativeMode}
+        onChange={handleModeChange}
+      />
+    </div>
+  </div>
+  <div class="task-form">
     <div class="form-group">
       <label for="name">Task Title</label>
       <input
@@ -238,22 +321,10 @@
       <textarea
         rows="15"
         bind:value={task.description}
-        placeholder="Provide a brief description of the task and click the Generate Description button to generate a detailed step-by-step instructions for completing the task."
+        placeholder="Provide a detailed description of the task."
       ></textarea>
     </div>
   </div>
-  <button
-    class="btn ai-generate"
-    on:click={generateTaskDescription}
-    disabled={task.description === "" || loading}
-  >
-    <img src={GenerativeIcon} alt="generative" class="icon" />
-    {#if loading}
-      <i class="fas fa-spinner fa-spin"></i>
-    {:else}
-      <span>Generate Task Description & Instructions</span>
-    {/if}
-  </button>
   <div class="task-form tools">
     <Accordion title="Select Agents">
       <div class="tools-list">
@@ -289,29 +360,46 @@
       <Switch label="Autostart" bind:checked={task.autostart} />
     </div>
   </div>
+  <div class="task-form">
+    <div class="form-group">
+      <label for="team">Assign to Team</label>
+      <Select
+        options={teams.map((team) => ({
+          value: team.id || "",
+          label: team.name,
+        }))}
+        bind:value={selectedTeam}
+        placeholder="Select a team"
+      />
+    </div>
+  </div>
 </div>
+
+{#if showAlert}
+  <Alert
+    type={alertType}
+    message={alertMessage}
+    onClose={() => (showAlert = false)}
+    autoClose={alertType !== "loading"}
+  />
+{/if}
 
 <style>
   .container {
     inline-size: 700px;
     max-inline-size: 100%;
+    block-size: fit-content;
     padding-inline: 20px;
     padding-block: 20px;
     display: grid;
     margin-inline: auto;
     margin-block: 0;
+    gap: 20px;
   }
 
   .container.ready {
     gap: 20px;
     overflow-y: auto;
-  }
-
-  .toolbar {
-    position: sticky;
-    inset-inline: 0;
-    inset-block: 0;
-    background-color: inherit;
   }
 
   .task-form {
@@ -327,20 +415,6 @@
     position: relative;
   }
 
-  .btn.ai-generate {
-    margin-inline-start: auto;
-    inline-size: fit-content;
-    background-color: var(--bg-1);
-    color: var(--fg-1);
-    padding-inline: 7px;
-    padding-block: 5px;
-    border-radius: 7px;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    box-shadow: var(--shadow-sm);
-  }
-
   .tools {
     z-index: 10;
   }
@@ -354,11 +428,5 @@
 
   textarea {
     resize: none;
-  }
-
-  img.icon {
-    inline-size: 30px;
-    block-size: 30px;
-    filter: invert(1);
   }
 </style>

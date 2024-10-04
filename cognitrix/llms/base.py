@@ -2,6 +2,7 @@ from odbms import Model
 from pydantic import Field
 from typing import Any, List, Dict, TypeAlias
 from openai import OpenAI
+import os
 import logging
 import inspect
 import asyncio
@@ -172,6 +173,11 @@ class LLM(Model):
         try:
             if not self.client:
                 self.client = OpenAI(api_key=self.api_key)
+                if 'helicone' in self.base_url:
+                    self.client = OpenAI(
+                        api_key=self.api_key, 
+                        default_headers={'Helicone-Auth': f'Bearer {os.getenv("HELICONE_API_KEY")}'}
+                    )
                 if self.base_url:
                     self.client.base_url = self.base_url
             
@@ -180,7 +186,7 @@ class LLM(Model):
             stream = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "user", "content": system_prompt},
+                    {"role": "system", "content": system_prompt},
                     *formatted_messages
                 ],
                 temperature=self.temperature,
@@ -189,7 +195,7 @@ class LLM(Model):
             )
             response = LLMResponse()
             for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
+                if chunk.choices and len(chunk.choices) and chunk.choices[0].delta.content is not None:
                     response.add_chunk(chunk.choices[0].delta.content)
                     yield response
         except OpenAIError as e:

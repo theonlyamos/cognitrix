@@ -2,7 +2,7 @@ import logging
 import uuid
 from enum import Enum
 from datetime import datetime
-from pydantic import Field
+from pydantic import Field, validator
 from typing import Any, Dict, List, Literal, Optional, Callable, Self, TypeAlias
 
 from cognitrix.agents.evaluator import Evaluator
@@ -15,7 +15,7 @@ logger = logging.getLogger('cognitrix.log')
 
 TaskList: TypeAlias = List['Task']
 
-class TaskStatus(Enum):
+class TaskStatus(str, Enum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -51,7 +51,7 @@ class Task(Model):
     created_at: str = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
     """Creation date of the task"""
     
-    status: TaskStatus = TaskStatus.PENDING
+    status: TaskStatus = Field(default=TaskStatus.PENDING)
     """Status of the task"""
 
     assigned_agents: List[str] = Field(default_factory=list)
@@ -63,6 +63,9 @@ class Task(Model):
     pid: Optional[str] = None
     """Worker Id of task"""
     
+    team_id: Optional[str] = None
+    """ID of the team assigned to this task"""
+
     async def team(self):
         agents: List[Agent] = []
         for agent_id in self.assigned_agents:
@@ -130,6 +133,16 @@ class Task(Model):
         """Delete task by id"""
         return cls.remove({'id': task_id})
 
+    @classmethod
+    async def assign_to_team(cls, task_id: str, team_id: str):
+        """Assign a task to a team"""
+        task = cls.get(task_id)
+        if task:
+            task.team_id = team_id
+            task.save()
+            return task
+        return None
+
     @staticmethod
     def extract_steps(text):
         # Find the start and end of the task_steps section
@@ -150,3 +163,14 @@ class Task(Model):
             steps[index] = {'step': step, 'done': False}
         
         return steps
+
+    @validator("status", pre=True)
+    def parse_status(cls, value):
+        if isinstance(value, TaskStatus):
+            return value
+        return TaskStatus(value)
+
+    class Config:
+        json_encoders = {
+            TaskStatus: lambda v: v.value
+        }

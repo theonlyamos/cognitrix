@@ -3,6 +3,12 @@ export interface MessageInterface {
   role: string;
   content: string;
   image?: string;
+  thought?: string;
+  observation?: string;
+  mindspace?: string;
+  reflection?: string;
+  artifacts?: object[];
+  tool_calls?: object[];
 }
 
 export interface AgentInterface extends Object {
@@ -66,6 +72,7 @@ export interface AgentDetailInterface extends Object {
   task?: object;
   websocket?: WebSocket;
   verbose?: boolean;
+  created_at?: string;
 }
 
 export interface TaskDetailInterface extends Object {
@@ -82,6 +89,7 @@ export interface TaskDetailInterface extends Object {
   started_at?: string;
   completed_at?: string;
   session_id?: string;
+  team_id?: string;
 }
 
 export interface SSEMessage {

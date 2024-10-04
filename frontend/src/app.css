@@ -331,6 +331,14 @@ header {
   z-index: 10;
 }
 
+.toolbar {
+  position: sticky;
+  inset-inline: 0;
+  inset-block: 0;
+  background-color: inherit;
+  background-color: var(--bg-2);
+}
+
 .toolbar .btn {
   padding: 10px;
   border-radius: 5px;
