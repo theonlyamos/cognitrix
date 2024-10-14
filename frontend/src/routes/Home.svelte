@@ -1,221 +1,82 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
-  import { link, navigate, useLocation } from "svelte-routing";
-  import type {
-    MessageInterface,
-    SessionInterface,
-  } from "../common/interfaces";
+  import { onMount } from "svelte";
+  import { link, navigate } from "svelte-routing";
+  import type { SessionInterface } from "../common/interfaces";
+  import { createSession, deleteSession, getAllSessions } from "../common/utils";
   import ChatComponent from "../lib/ChatContent.svelte";
-  import InputBar from "../lib/Inputbar.svelte";
-  import { webSocketStore } from "../common/stores";
-  import type { Unsubscriber } from "svelte/motion";
 
   export let session_id: string = "";
   export let agent_id: string = "";
 
   let sessions: SessionInterface[] = [];
-  let messages: MessageInterface[] = [];
-  let agentName: string = "Assistant";
   let loading: boolean = true;
-  let loadingMessages: boolean = true;
-  let unsubscribe: Unsubscriber | null = null;
-  let socket: WebSocket;
-  let streaming_response: boolean = false;
 
-  const location = useLocation();
 
-  const uploadFile = () => {
-    console.log("Uploading file...");
-  };
-
-  const sendMessage = async (query: string) => {
-    loading = true;
-    messages = [
-      ...messages,
-      {
-        role: "user",
-        content: query,
-      },
-    ];
-
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      webSocketStore.send(
-        JSON.stringify({ type: "chat_message", action: "send", content: query })
-      );
-      streaming_response = false;
+  const loadAllSessions = async () => {
+    loading = true
+    try {
+      const response = await getAllSessions() as SessionInterface[]
+      sessions = response
+    } catch (error) {
+      console.error("Error loading sessions:", error);
+    } finally {
+      loading = false
     }
-  };
+  }
 
-  const deleteSession = async (event: MouseEvent, sessionId: string) => {
+  const removeSession = async (event: MouseEvent, sessionId: string) => {
     // event.stopPropagation();
     event.preventDefault();
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      webSocketStore.send(
-        JSON.stringify({
-          type: "sessions",
-          action: "delete",
-          session_id: sessionId,
-        })
-      );
+    try {
+      await deleteSession(sessionId)
+      navigate('/')
+    } catch (error) {
+      console.error("Error deleting session:", error);
     }
-  };
-
-  const clearMessages = async () => {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      webSocketStore.send(
-        JSON.stringify({
-          type: "chat_history",
-          action: "delete",
-          session_id: session_id,
-        })
-      );
-    }
-  };
-
-  const resetState = () => {
-    messages = [];
-    agentName = "Assistant";
-    loading = true;
-    sessions = [];
-  };
-
-  const handleRouteChange = () => {
-    resetState();
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      webSocketStore.send(JSON.stringify({ type: "sessions", action: "list" }));
-
-      if (agent_id) {
-        webSocketStore.send(
-          JSON.stringify({
-            type: "sessions",
-            action: "get",
-            agent_id: agent_id,
-          })
-        );
-      } else if (session_id) {
-        loadingMessages = true;
-        webSocketStore.send(
-          JSON.stringify({
-            type: "chat_history",
-            action: "get",
-            session_id: session_id,
-          })
-        );
-      }
-    }
-  };
-
-  const startWebSocketConnection = () => {
-    unsubscribe = webSocketStore.subscribe(
-      (event: { socket: WebSocket; type: string; data?: any }) => {
-        if (event !== null) {
-          socket = event.socket;
-          if (event.type === "open") {
-            if (socket && socket.readyState === WebSocket.OPEN) {
-              webSocketStore.send(
-                JSON.stringify({ type: "sessions", action: "list" })
-              );
-
-              handleRouteChange();
-            }
-          } else if (event.type === "message") {
-            loading = false;
-            loadingMessages = false;
-            let data = JSON.parse(event.data);
-
-            if (data.type === "chat_history") {
-              agentName = data.agent_name;
-              if (data.action == "delete") {
-                messages = [];
-                window.location.reload();
-              } else {
-                console.log(data.content);
-                for (let msg of data.content) {
-                  messages = [
-                    ...messages,
-                    {
-                      role: msg.role.toLowerCase(),
-                      content: msg.message,
-                      artifacts: msg.artifacts,
-                    },
-                  ];
-                }
-              }
-            } else if (data.type === "chat_message") {
-              const new_message = {
-                role: agentName,
-                content: data.content,
-              };
-
-              if (!streaming_response) {
-                messages = [...messages, new_message];
-              } else {
-                if (data.complete) {
-                  messages[messages.length - 1].content = new_message.content;
-                } else {
-                  messages[messages.length - 1].content =
-                    messages[messages.length - 1].content + new_message.content;
-                }
-              }
-
-              streaming_response = true;
-            } else if (data.type === "sessions") {
-              if (data.action === "list" || data.action === "delete") {
-                sessions = data.content as SessionInterface[];
-              } else if (data.action === "get") {
-                session_id = data.content?.id;
-              }
-            }
-          }
-        }
-      }
-    );
   };
 
   onMount(() => {
-    startWebSocketConnection();
-    handleRouteChange();
+    loadAllSessions()
   });
 
-  onDestroy(() => {
-    if (unsubscribe) unsubscribe();
-  });
-
-  $: {
-    // React to changes in the route
-    const currentPath = $location.pathname;
-
-    if (currentPath === "/" || session_id || agent_id) {
-      if (currentPath === "/") session_id = "";
-      handleRouteChange();
+  async function createNewSession() {
+    let sessionData: any = {}
+    if (agent_id) {
+      sessionData.agent_id = agent_id;
+    }
+    try {
+      const newSession = await createSession(sessionData);
+      navigate(`/${newSession.id}`);
+      window.location.reload()
+    } catch (error) {
+      console.error("Error creating new session:", error);
     }
   }
 </script>
 
 <div class="container">
   <div class="chat-sessions">
-    <h3>Chat Sessions</h3>
+    <div class="session-header">
+      <h3>Sessions</h3>
+      <button on:click={createNewSession} title="Create new session">
+        <i class="fa-solid fa-plus"></i>
+      </button>
+    </div>
     {#each sessions as session (session.id)}
       <a href="/{session.id}" use:link class="session-item">
-        <span>{session.datetime}</span>
-        <button on:click={(e) => deleteSession(e, session.id)}>
-          <i class="fa-solid fa-xmark"></i>
-        </button>
+        <span>{new Date(session.created_at).toLocaleString()}</span>
+        {#if session.id !== session_id}
+          <button on:click={(e) => removeSession(e, session.id)}>
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        {/if}
       </a>
     {/each}
   </div>
 
-  <ChatComponent {messages} loading={loadingMessages}>
-    {#if session_id}
-      <InputBar
-        {uploadFile}
-        {sendMessage}
-        {loading}
-        {clearMessages}
-        clearButton={true}
-      />
-    {/if}
-  </ChatComponent>
+  {#if session_id}
+    <ChatComponent {session_id} />
+  {/if}
 </div>
 
 <style>
@@ -241,12 +102,14 @@
     color: var(--fg-1);
   }
 
-  h3 {
-    margin-block-end: 0;
-    padding-block: 0 10px;
-    padding-inline: 10px 10px;
+  .session-header {
+    padding: 10px;
     border-block-end: 1px solid var(--bg-1);
     white-space: nowrap;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
   }
 
   .session-item {

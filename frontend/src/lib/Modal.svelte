@@ -77,6 +77,8 @@
 </script>
 
 {#if isOpen}
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div
     class="modal-overlay"
     on:click={handleOutsideClick}
@@ -85,6 +87,7 @@
     aria-modal="true"
     tabindex="-1"
   >
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
       class="modal-content card {getTypeClass(type)} {getAppearanceClass(
         appearance,

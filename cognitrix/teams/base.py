@@ -4,14 +4,14 @@ import asyncio
 from enum import Enum
 from rich import print
 from cognitrix.agents.base import Agent, Message, MessagePriority
-from cognitrix.llms.base import LLMResponse
+from cognitrix.providers.base import LLMResponse
 from cognitrix.tasks.base import Task, TaskStatus
 from odbms import Model
 from functools import cached_property
 
 if TYPE_CHECKING:
-    from cognitrix.llms.base import LLM
-    from cognitrix.llms.session import Session
+    from cognitrix.providers.base import LLM
+    from cognitrix.providers.session import Session
     from cognitrix.utils.ws import WebSocketManager
 
 class Team(Model):
@@ -41,7 +41,7 @@ class Team(Model):
     def leader(self) -> Optional[Agent]:
         leader = Agent.get(self.leader_id) if self.leader_id else None
         if leader:
-            from cognitrix.llms.base import LLM
+            from cognitrix.providers.base import LLM
             new_llm = LLM.load_llm(leader.llm.provider)
             if new_llm:
                 new_llm.temperature = leader.llm.temperature
@@ -122,6 +122,56 @@ class Team(Model):
                 task.save()
 
     async def leader_create_workflow(self, task: Task, session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> List[Dict[str, Any]]:
+        response = ''
+        workflow = []
+        
+        async def parse_agent_response(data: Dict[str, Any]):
+            nonlocal response
+
+            if not self.leader:
+                raise ValueError("No team leader assigned to create the workflow.")
+            
+            response = response + data['content']
+            print(self.leader.name, ':', data['content'])
+            if websocket_manager:
+                await websocket_manager.send_team_message(self.leader.name, "system", data['content'])
+            
+            if response:
+                steps = response.split('\n\n')
+                for step in steps:
+                    if step.strip().startswith("Step"):
+                        lines = step.strip().split('\n')
+                        current_step = {
+                            "step": lines[0].strip(),
+                            "responsibilities": [],
+                            "estimated_time": ""
+                        }
+                        
+                        for line in lines[1:]:
+                            if line.startswith("Responsibilities:"):
+                                continue
+                            elif line.startswith("- "):
+                                agent, task_str = line[2:].split(": ", 1)
+                                current_step["responsibilities"].append({
+                                    "agent": agent.strip(),
+                                    "task": task_str.strip()
+                                })
+                            elif line.startswith("Estimated Time:"):
+                                current_step["estimated_time"] = line.split(": ", 1)[1].strip()
+                        
+                        workflow.append(current_step)
+            
+            if not workflow:
+                print(f"Warning: No workflow response received for task '{task.title}'")
+                return []
+            
+            for step in workflow:
+                for responsibility in step["responsibilities"]:
+                    agent = Agent.find_one({'name': responsibility["agent"]})
+                    if agent:
+                        message = f"Your role in {step['step']} of task '{task.title}': {responsibility['task']}. Estimated time: {step['estimated_time']}"
+                        await self.send_message(self.leader, agent, message)
+                
         if not self.leader:
             raise ValueError("No team leader assigned to create the workflow.")
         
@@ -140,50 +190,8 @@ class Team(Model):
             "Estimated Time: [Duration]\n\n"
             "Repeat this structure for each step in the workflow."
         )
-        
-        response: LLMResponse
-        
-        async for response in self.leader.llm(self.leader.process_prompt(prompt), self.leader.formatted_system_prompt()):
-            print(response.current_chunk, end="")
-            if websocket_manager:
-                await websocket_manager.send_team_message(self.leader.name, "system", response.llm_response if response.llm_response else response.current_chunk)
-        
-        workflow = []
-        if response and response.llm_response:
-            steps = response.llm_response.split('\n\n')
-            for step in steps:
-                if step.strip().startswith("Step"):
-                    lines = step.strip().split('\n')
-                    current_step = {
-                        "step": lines[0].strip(),
-                        "responsibilities": [],
-                        "estimated_time": ""
-                    }
-                    
-                    for line in lines[1:]:
-                        if line.startswith("Responsibilities:"):
-                            continue
-                        elif line.startswith("- "):
-                            agent, task_str = line[2:].split(": ", 1)
-                            current_step["responsibilities"].append({
-                                "agent": agent.strip(),
-                                "task": task_str.strip()
-                            })
-                        elif line.startswith("Estimated Time:"):
-                            current_step["estimated_time"] = line.split(": ", 1)[1].strip()
-                    
-                    workflow.append(current_step)
-        
-        if not workflow:
-            print(f"Warning: No workflow response received for task '{task.title}'")
-            return []
-        print(workflow)
-        for step in workflow:
-            for responsibility in step["responsibilities"]:
-                agent = Agent.find_one({'name': responsibility["agent"]})
-                if agent:
-                    message = f"Your role in {step['step']} of task '{task.title}': {responsibility['task']}. Estimated time: {step['estimated_time']}"
-                    await self.send_message(self.leader, agent, message)
+
+        await session(prompt, self.leader, 'ws', True, parse_agent_response, {'type': 'start_task', 'action': 'create_workflow'})
         
         return workflow
 
@@ -309,9 +317,13 @@ class Team(Model):
         return Task.find({'team_id': self.id})
 
     @classmethod
-    def get_session(cls, team_id: str) -> Optional['Session']:
-        from cognitrix.llms.session import Session
-        return Session.find_one({'team_id': team_id})
+    def get_session(cls, team_id: str) -> 'Session':
+        from cognitrix.providers.session import Session
+        session = Session.find_one({'team_id': team_id})
+        if not session:
+            session = Session(team_id=team_id)
+            session.save()
+        return session
 
 class TeamManager:
     def __init__(self):
@@ -381,7 +393,7 @@ async def main():
     research_team.assign_task(task.id)
 
     # Work on the task
-    await research_team.work_on_task(task.id)
+    await research_team.work_on_task(task.id, research_team.get_session(research_team.id))
 
     # Check task status and results
     task_status = research_team.get_task_status(task.id)

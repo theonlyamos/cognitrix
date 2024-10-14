@@ -42,8 +42,7 @@
     font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
     line-height: 1.6;
     color: var(--fg-1);
-    max-width: 800px;
-    margin: 0 auto;
+    inline-size: 100%;
   }
 
   :global(.content-container h1),
@@ -71,7 +70,7 @@
     background-color: #282c34;
     border-radius: 8px;
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    margin: 1.5em 0;
+    /* margin: 1.5em 0; */
     position: relative;
     padding: 1em;
   }
@@ -108,6 +107,10 @@
   :global(.content-container a:hover) {
     color: #2980b9;
     text-decoration: underline;
+  }
+
+  :global(.content-container p:last-of-type) {
+    margin-bottom: 0;
   }
 
   :global(.content-container ul),

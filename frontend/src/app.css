@@ -33,6 +33,22 @@
     --ring: 222.2 84% 4.9%;
  
     --radius: 0.5rem;
+
+    --error-color: #e74c3c;
+    --accent-color: #3498db;
+    --accent-color-dark: #2980b9;  /* This is a darker shade of the accent color */
+
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+      Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+    --font-mono: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+      "DejaVu Sans Mono", monospace;
+
+    --color-alert: #ff4136;
+    --color-confirm: #0074d9;
+    --color-info: #7fdbff;
+    --color-success: #2ecc40;
+    --color-warning: #ff851b;
+    --border-color: #ddd;
   }
  
   .dark {
@@ -244,6 +260,14 @@ button,
     outline: none;
     color: var(--fg-1);
   }
+}
+
+.btn {
+  padding: 10px;
+  border-radius: 5px;
+  background-color: var(--bg-1);
+  box-shadow: var(--shadow-sm);
+  color: var(--fg-2);
 }
 
 .shadow,

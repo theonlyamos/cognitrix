@@ -65,7 +65,7 @@ function createSSEStore() {
 
   let eventSource: EventSource | null = null;
 
-  function connect(): void {
+  function connect(sseUrl: string): void {
       eventSource = new EventSource(sseUrl);
 
       eventSource.onopen = () => {
@@ -77,7 +77,6 @@ function createSSEStore() {
       };
 
       eventSource.onmessage = (event: MessageEvent) => {
-          console.log(event)
           try {
               const data: SSEMessage = JSON.parse(event.data);
               update(state => ({

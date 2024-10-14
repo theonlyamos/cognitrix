@@ -18,7 +18,7 @@ from azure.ai.inference.models import (
 )
 from azure.core.credentials import AzureKeyCredential
 
-from cognitrix.llms.base import LLM
+from cognitrix.providers.base import LLM
 from cognitrix.utils import image_to_base64
 from cognitrix.utils.llm_response import LLMResponse
 
@@ -80,11 +80,11 @@ class Azure(LLM):
         for fm in formatted_message:
             if fm['type'] == 'text':
                 if fm['role'].lower() == 'user':
-                    messages.append(UserMessage(content=fm['message']))
+                    messages.append(UserMessage(content=fm['content']))
                 else:
-                    messages.append(AssistantMessage(content=fm['message']))
+                    messages.append(AssistantMessage(content=fm['content']))
             elif fm['type'] == 'image':
-                base64_image = image_to_base64(fm['image']) # type: ignore
+                base64_image = image_to_base64(fm['content']) # type: ignore
                 messages.append(UserMessage(content=[
                     TextContentItem(text="This is the result of the latest screenshot"),
                     ImageContentItem(

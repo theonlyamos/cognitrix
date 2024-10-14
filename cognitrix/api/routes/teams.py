@@ -4,6 +4,7 @@ from typing import List
 
 from cognitrix.common.security import get_current_user
 
+from cognitrix.providers.session import Session
 from cognitrix.teams.base import Team
 
 teams_api = APIRouter(
@@ -50,6 +51,11 @@ async def delete_team(team_id: str):
     
     Team.remove({'id': team_id})
     return JSONResponse({"message": "Team deleted successfully"})
+
+@teams_api.get("/{team_id}/sessions")
+async def sessions(team_id: str):
+    sessions = Session.find({'team_id': team_id})
+    return JSONResponse([session.model_dump() for session in sessions])
 
 @teams_api.get(path="/generate")
 async def sse_endpoint(request: Request):

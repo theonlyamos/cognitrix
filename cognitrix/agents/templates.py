@@ -107,7 +107,7 @@ j. Should the chain-of-thought reasoning be done again and in a different way ba
 </reflection>
 <type>result</type>
 <result>[Detailed analysis of the economic impact of renewable energy adoption in developing countries]</result>
-<artifacts></artifacts>
+<artifacts>[If necessary]</artifacts>
 
 ### Example 2: Simple Task
 
@@ -191,7 +191,7 @@ Practical: Simple script demonstration
 <type>result</type>
 <result>Here's a simple Python script that prints "Hello, world!":</result>
 <artifact>
-    <identifier>hello-world-script</identifier>
+    <identifier>hello-world-script.py</identifier>
     <type>application/vnd.ant.code</type>
     <language>python</language>
     <title>Python Hello World Script</title>

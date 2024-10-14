@@ -10,7 +10,7 @@ from fastapi import WebSocket
 from pydantic import Field
 from odbms import Model
 
-from cognitrix.llms.base import LLM
+from cognitrix.providers.base import LLM
 from cognitrix.tools.base import Tool
 from cognitrix.transcriber import Transcriber
 from cognitrix.utils.llm_response import LLMResponse
@@ -187,21 +187,21 @@ class Agent(Model):
                 if isinstance(result, list):
                     if result[0] == 'image':
                         prompt['type'] = 'image'
-                        prompt['image'] = result[1]
+                        prompt['content'] = result[1]
                     elif result[0] == 'agent':
                         new_agent: Agent = result[1]
                         new_agent.parent_id = self.id
                         self.add_sub_agent(new_agent) # type: ignore
 
-                        prompt['message'] = result[2]
+                        prompt['content'] = result[2]
                     else:
-                        prompt['message'] = result[2]
+                        prompt['content'] = result[2]
                 else:
-                    prompt['message'] = result
+                    prompt['content'] = result
             else:
                 print(processed_query)
         else:
-            prompt['message'] = processed_query
+            prompt['content'] = processed_query
 
         return prompt
 
@@ -217,18 +217,18 @@ class Agent(Model):
     def get_tool_by_name(self, name: str) -> Optional[Tool]:
         return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
 
-    async def call_tools(self, tool_calls: dict) -> Union[dict, str]:
+    async def call_tools(self, tool_calls: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Union[dict, str]:
         print(f"Tool calls: {tool_calls}")
         try:
             if tool_calls:
                 tool_calls_result = []
                 agent_tool_calls = []
 
-                if isinstance(tool_calls['tool'], list):
-                    for t in tool_calls['tool']:
+                if isinstance(tool_calls, list):
+                    for t in tool_calls:
                         agent_tool_calls.append(t)
                 else: 
-                    agent_tool_calls.append(tool_calls['tool'])
+                    agent_tool_calls.append(tool_calls)
                     
                 for t in agent_tool_calls:
                     tool = Tool.get_by_name(t['name'])

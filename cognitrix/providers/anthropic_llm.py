@@ -1,10 +1,10 @@
 import asyncio
-from cognitrix.llms.base import LLM
+from cognitrix.providers.base import LLM
 from cognitrix.utils import image_to_base64
 from typing import Any, Dict, List
 from dotenv import load_dotenv
 from anthropic import AnthropicError, AsyncAnthropic as AnthropicLLM
-from cognitrix.llms.base import LLM, LLMResponse
+from cognitrix.providers.base import LLM, LLMResponse
 import logging
 import os
 
@@ -75,12 +75,12 @@ class Anthropic(LLM):
                     "content": [
                         {
                             "type": "text",
-                            "text": fm['message']
+                            "text": fm['content']
                         }
                     ]
                 })
             else:
-                base64_image = image_to_base64(fm['image'])
+                base64_image = image_to_base64(fm['content'])
                 messages.append({
                     "role": fm['role'].lower(),
                     "content": [

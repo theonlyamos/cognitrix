@@ -2,9 +2,10 @@ import { XMLParser } from 'fast-xml-parser';
 import type { 
     AgentDetailInterface, 
     TaskDetailInterface, 
-    TeamInterface 
+    TeamInterface,
+    SessionInterface  // Add this import
 } from "./interfaces";
-import { API_BACKEND_URI } from './constants';
+import { API_BACKEND_URI, DEEPGRAM_API_KEY } from './constants';
 import axios from 'axios';
 
 const api = axios.create({
@@ -62,7 +63,7 @@ export const getTools = async(): Promise<Object[]> => {
   return response.data;
 }
 
-export const getAllTasks = async(): Promise<Object[]> => {
+export const getAllTasks = async(): Promise<TaskDetailInterface[]> => {
   const response = await api.get('/tasks');
   return response.data;
 }
@@ -77,10 +78,13 @@ export const saveTask = async(task: TaskDetailInterface): Promise<Object> => {
   return response.data;
 }
 
-export const getTaskSession = async(taskId: string): Promise<Object> => {
-  const response = await api.get(`/tasks/${taskId}/session`);
+export const getTaskSession = async(sessionId: string): Promise<SessionInterface> => {
+  const response = await api.get(`${API_BACKEND_URI}/sessions/${sessionId}`);
+  if (response.status !== 200) {
+    throw new Error('Failed to fetch session');
+  }
   return response.data;
-}
+};
 
 export const updateTaskStatus = async(task_id: any): Promise<Object> => {
     const response = await api.get(`${API_BACKEND_URI}/tasks/start/${task_id}`)
@@ -131,6 +135,10 @@ export const convertXmlToJson = (xmlText: string) => {
     return null;
   }
 };
+
+export const startMicrophoneStream = async(): Promise<MediaStream> => {
+  return await navigator.mediaDevices.getUserMedia({ audio: true });
+}
 
 export async function getAllTeams(): Promise<TeamInterface[]> {
     const response = await api.get(`${API_BACKEND_URI}/teams`);
@@ -190,3 +198,61 @@ export async function getTasksByTeam(teamId: string): Promise<TaskDetailInterfac
   }
   return response.data;
 }
+
+export async function createSession(session: Object = {}): Promise<SessionInterface> {
+  const response = await api.post(`${API_BACKEND_URI}/sessions`, session);
+  if (response.status !== 200) {
+    throw new Error('Failed to create session');
+  }
+  return response.data;
+}
+
+export async function getAllSessions(): Promise<SessionInterface[]> {
+  const response = await api.get(`${API_BACKEND_URI}/sessions`);
+  if (response.status !== 200) {
+    throw new Error('Failed to fetch sessions');
+  }
+  return response.data;
+}
+
+export async function getSession(sessionId: string): Promise<SessionInterface> {
+  const response = await api.get(`${API_BACKEND_URI}/sessions/${sessionId}`);
+  if (response.status !== 200) {
+    throw new Error('Failed to fetch session');
+  }
+  return response.data;
+}
+
+export async function getSessionsByTeam(teamId: string): Promise<SessionInterface[]> {
+  const response = await api.get(`${API_BACKEND_URI}/teams/${teamId}/sessions`);
+  if (response.status !== 200) {
+    throw new Error('Failed to fetch sessions for team');
+  }
+  return response.data;
+}
+
+export async function getSessionsByAgent(agentId: string): Promise<SessionInterface[]> {
+  const response = await api.get(`${API_BACKEND_URI}/agents/${agentId}/sessions`);
+  if (response.status !== 200) {
+    throw new Error('Failed to fetch sessions for agent');
+  }
+  return response.data;
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const response = await api.delete(`${API_BACKEND_URI}/sessions/${sessionId}`);
+  if (response.status !== 200) {
+    throw new Error('Failed to delete session');
+  }
+  return response.data;
+}
+
+export async function deleteChat(sessionId: string): Promise<void> {
+  const response = await api.delete(`${API_BACKEND_URI}/sessions/${sessionId}/chat`);
+  if (response.status !== 200) {
+    throw new Error('Failed to delete chat');
+  }
+  return response.data;
+}
+
+

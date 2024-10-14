@@ -24,6 +24,24 @@
   import { onDestroy, onMount } from "svelte";
   import Modal from "../lib/Modal.svelte";
   import Alert from "../lib/Alert.svelte";
+  import { button, type buttonVariants } from "$lib/components/ui/button"
+  import {
+    card,
+    cardContent,
+    cardDescription,
+    cardFooter,
+    cardHeader,
+    cardTitle,
+  } from "../lib/components/ui/card"
+  import { input } from "../lib/components/ui/input"
+  import { label } from "../lib/components/ui/label"
+  import {
+    tabsContent,
+    tabsList,
+    tabsTrigger,
+    createTabs
+  } from "$lib/components/ui/tabs"
+  
 
   export let agent_id: string = "";
   let agent: AgentDetailInterface = {
@@ -59,6 +77,8 @@
   let alertMessage = "";
   let alertType: "default" | "success" | "warning" | "danger" | "loading" = "default";
   let showAlert = false;
+
+  const { value, setValue } = createTabs({ defaultValue: 'tab1' });
 
   const loadAgent = async (agent_id: string) => {
     try {
@@ -293,6 +313,26 @@
   </button>
 </div>
 <div class="container ready">
+  <div use:tabsList={{}}>
+    <button
+      use:tabsTrigger={{ value: "tab1", activeValue: $value }}
+      on:click={() => setValue("tab1")}
+    >
+      Tab 1
+    </button>
+    <button
+      use:tabsTrigger={{ value: "tab2", activeValue: $value }}
+      on:click={() => setValue("tab2")}
+    >
+      Tab 2
+    </button>
+  </div>
+  <div use:tabsContent={{ value: "tab1", activeValue: $value }}>
+    Content of Tab 1
+  </div>
+  <div use:tabsContent={{ value: "tab2", activeValue: $value }}>
+    Content of Tab 2
+  </div>
   <div class="agent-form">
     <div class="form-group mode-switch">
       <Switch

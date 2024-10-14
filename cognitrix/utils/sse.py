@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from sse_starlette.sse import EventSourceResponse
 from cognitrix.agents import PromptGenerator
 from cognitrix.agents.generators import TaskInstructor
-from cognitrix.llms.session import Session
+from cognitrix.providers.session import Session
 from cognitrix.agents import Agent
 import asyncio
 

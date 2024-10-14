@@ -11,12 +11,12 @@ from functools import lru_cache
 
 from fastapi.responses import JSONResponse
 
-from cognitrix.llms import (
+from cognitrix.providers import (
     Cohere, Clarifai, LLM
 )
 
 from cognitrix.agents import  Agent
-from cognitrix.llms.session import Session
+from cognitrix.providers.session import Session
 from cognitrix.tools import Tool
 from cognitrix.utils.ws import WebSocketManager
 from cognitrix.utils.sse import SSEManager
@@ -231,7 +231,7 @@ async def initialize(session: Session, agent: Agent, stream: bool = False):
             if query in command_handlers:
                 command_handlers[query]()
             else:
-                await session(query, agent, streaming=stream)
+                await session(query, agent, stream=stream)
 
         except KeyboardInterrupt:
             print('Exiting...')
@@ -303,7 +303,7 @@ def start(args: Namespace):
         assistant.save()
         
         if args.generate:
-            asyncio.run(session(args.generate, assistant, streaming=args.stream))
+            asyncio.run(session(args.generate, assistant, stream=args.stream))
                 
         elif args.ui.lower() == 'web':
             start_worker()
