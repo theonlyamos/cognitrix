@@ -1,13 +1,18 @@
 <script lang="ts">
   import { link } from "svelte-routing";
-  import { getAllTasks, getAllTeams, getTasksByTeam } from "../common/utils";
-  import type { TaskInterface, TeamInterface } from "../common/interfaces";
+  import { deleteTask, getAllTasks, getAllTeams, getTasksByTeam } from "../common/utils";
+  import type { TaskDetailInterface, TaskInterface, TeamInterface } from "../common/interfaces";
   import TaskCard from "../lib/TaskCard.svelte";
   import Select from "$lib/Select.svelte";
+    import Modal from "$lib/Modal.svelte";
 
   let tasks: TaskInterface[] = [];
   let teams: TeamInterface[] = [];
   let selectedTeam: string = "";
+
+  let confirmModal = false;
+  let taskToDelete: string = "";
+  let confirmTitle: string = "Delete this task!";
 
   const loadTasks = async () => {
     try {
@@ -29,10 +34,41 @@
     tasks = tasks.reverse();
   };
 
+  const onDeleteTask = async(task: TaskDetailInterface)=>{
+    confirmModal = true;
+    taskToDelete = task.id as string;
+  }
+
+  const onConfirmDeleteTask = async()=>{
+    try{
+      await deleteTask(taskToDelete);
+      tasks = tasks.filter((t) => t.id !== taskToDelete);
+    } catch(error){
+      console.log(error);
+    } finally {
+      confirmModal = false;
+    }
+  }
+
   $: if (selectedTeam !== undefined) {
     filterTasksByTeam();
   }
 </script>
+
+<Modal
+  isOpen={confirmModal}
+  type="alert"
+  action={onConfirmDeleteTask}
+  title={confirmTitle}
+  actionLabel="Yes, do it"
+  size="small"
+  appearance="bordered"
+  onClose={() => {
+    confirmModal = false;
+  }}
+>
+  Are you sure you want to proceed?
+</Modal>
 
 {#await loadTasks()}
   <div class="loading">
@@ -61,7 +97,7 @@
     </div>
     <div class="tasks-container">
       {#each tasks as task (task?.id)}
-        <TaskCard {task} />
+        <TaskCard {task} onDelete={onDeleteTask} />
       {/each}
     </div>
   </div>

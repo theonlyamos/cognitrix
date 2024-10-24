@@ -1,6 +1,6 @@
 import cohere
 from cohere.errors.client_closed_request_error import ClientClosedRequestError
-from cognitrix.llms.base import LLM, LLMResponse
+from cognitrix.providers.base import LLM, LLMResponse
 from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 import logging
@@ -46,8 +46,11 @@ class Cohere(LLM):
         
         for fm in chat_history:
             msg = fm.copy()
+            msg['message'] = fm['content']
             if fm['role'].lower() != 'user':
+                msg['message'] = f"{fm['role']}: {fm['content']}"
                 msg['role'] = 'Chatbot'
+            del msg['content']
             formatted_messages.append(msg)
 
         return formatted_messages
@@ -78,7 +81,7 @@ class Cohere(LLM):
             
             stream = self.client.chat_stream( 
                 model=self.model,
-                message=query['message'],
+                message=query['content'],
                 temperature=self.temperature,
                 preamble=system_prompt, # type: ignore
                 chat_history=chat_history,

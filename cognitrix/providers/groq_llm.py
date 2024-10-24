@@ -1,4 +1,4 @@
-from cognitrix.llms.base import LLM
+from cognitrix.providers.base import LLM
 from dotenv import load_dotenv
 import logging
 import os

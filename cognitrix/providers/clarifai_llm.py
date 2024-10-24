@@ -1,5 +1,5 @@
 from clarifai.client.model import Model
-from cognitrix.llms.base import LLM, LLMResponse
+from cognitrix.providers.base import LLM, LLMResponse
 from typing import Any, Dict, List
 from dotenv import load_dotenv
 import logging

@@ -7,9 +7,9 @@ from cognitrix.common.security import get_current_user
 from cognitrix.tasks.base import TaskStatus
 
 from ...celery_worker import run_task
-from cognitrix.llms.session import Session
+from cognitrix.providers.session import Session
 from cognitrix.tasks import Task
-from ...llms import LLM
+from ...providers import LLM
 
 tasks_api = APIRouter(
     prefix='/tasks',
@@ -60,3 +60,8 @@ async def load_task(task_id: str):
         response = task.dict()
     
     return JSONResponse(response)
+
+@tasks_api.delete('/{task_id}')
+async def delete_task(task_id: str):
+    Task.remove(query={'id': task_id})
+    return JSONResponse({'message': 'Task deleted successfully'})

@@ -27,10 +27,7 @@ class LLMResponse(Model):
     tool_call: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None
     """Tool calls"""
     
-    artifacts: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None
-    """Artifacts"""
-    
-    tool_calls: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None
+    artifact: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None
     """Artifacts"""
     
     observation: Optional[str] = None
@@ -78,6 +75,9 @@ class LLMResponse(Model):
                         setattr(self, key, value)
                 else:
                     self.result = response
+        
+        except ValueError:
+            pass
 
         except Exception as e:
             logger.exception(e)

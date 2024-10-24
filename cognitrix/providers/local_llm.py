@@ -1,6 +1,6 @@
 import asyncio
 from openai import OpenAI as OpenAILLM
-from cognitrix.llms.base import LLM, LLMResponse
+from cognitrix.providers.base import LLM, LLMResponse
 from cognitrix.utils import image_to_base64
 from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
@@ -72,10 +72,10 @@ class Local(LLM):
             if fm['type'] == 'text':
                 messages.append({
                     "role": fm['role'].lower(),
-                    "content": fm['message']
+                    "content": fm['content']
                 })
             else:
-                base64_image = image_to_base64(fm['image'])
+                base64_image = image_to_base64(fm['content'])
                 self.model = self.vision_model
                 messages.append({
                     "role": fm['role'].lower(),

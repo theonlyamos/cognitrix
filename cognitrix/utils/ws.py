@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import WebSocket
 import json
 import logging
+from cognitrix.tasks.base import Task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import Tool
 from cognitrix.utils import xml_to_dict
@@ -10,7 +11,7 @@ from starlette.websockets import WebSocketDisconnect
 from cognitrix.agents import PromptGenerator
 from cognitrix.agents import TaskInstructor
 
-from cognitrix.llms.session import Session
+from cognitrix.providers.session import Session
 from cognitrix.agents import Agent
 from cognitrix.prompts.generator import team_details_generator, agent_details_generator, task_details_generator
 
@@ -123,16 +124,46 @@ class WebSocketManager:
                 
                     elif query_type == 'start_task':
                         task = query['task']
+                        task_id = query.get('task_id', '')
                         team_id = query['team_id']
                         team = Team.get(team_id)
                         if team:
-                            task = team.create_task(task['title'], task['description'])
-                            task_session = Session(team_id=team_id, task_id=task.id)
-                            task_session.save()
-                            await team.work_on_task(task.id, task_session, self)
+                            if task_id:
+                                task = Task.get(task_id)
+                            else:
+                                task = team.create_task(task['title'], task['description'])
+                            if task:
+                                if team.assign_task(task.id):
+                                    task_session = Session(team_id=team_id, task_id=task.id)
+                                    task_session.save()
+                                    await team.work_on_task(task.id, task_session, self)
+                            else:
+                                await websocket.send_json({'type': 'error', 'content': 'Task not found'})
                         else:
                             await websocket.send_json({'type': 'error', 'content': 'Team not found'})
+                    # elif query_type == "websocket.receive":
+                    #     if "text" in message:
+                    #         data = message["text"]
+                    #         query = json.loads(data)
+                    #         action = query.get('action', '')
+                    #         query_type = query['type']
                             
+                    #         # Handle existing text-based messages
+                    #         # ... (existing code for handling different query types)
+
+                    #     elif "bytes" in message:
+                    #         # Handle incoming audio data
+                    #         audio_chunk = message["bytes"]
+                    #         if not self.is_recording:
+                    #             self.is_recording = True
+                    #             self.audio_chunks = []
+                            
+                    #         self.audio_chunks.append(audio_chunk)
+
+                    #         # Check if this is the last chunk (you may need to implement a way to signal the end of recording)
+                    #         if len(audio_chunk) == 0 or (query_type == "audio" and action == "stop"):
+                    #             self.is_recording = False
+                    #             await self.process_audio()        
                     else:
                         user_prompt = query['content']
                         await session(user_prompt, web_agent, 'web', True, websocket.send_json, query)

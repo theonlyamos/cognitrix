@@ -1,6 +1,7 @@
 export interface MessageInterface {
   id?: string | number;
   role: string;
+  type?: string;
   content: string;
   image?: string;
   thought?: string;
@@ -32,9 +33,12 @@ export interface TaskInterface extends Object {
 
 export interface SessionInterface {
   id: string;
-  agent_id: string;
+  agent_id?: string;
+  task_id?: string;
+  team_id?: string;
   chat: object[];
-  datetime: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ProviderInterface extends Object {

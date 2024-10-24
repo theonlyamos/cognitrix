@@ -1,5 +1,5 @@
 from openai import OpenAI as OpenAILLM
-from cognitrix.llms.base import LLM, LLMResponse
+from cognitrix.providers.base import LLM, LLMResponse
 from cognitrix.tools.base import Tool
 from cognitrix.utils import image_to_base64
 from typing import Any, List, Optional

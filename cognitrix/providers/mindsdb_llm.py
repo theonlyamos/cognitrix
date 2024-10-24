@@ -1,4 +1,4 @@
-from cognitrix.llms import OpenAI
+from cognitrix.providers import OpenAI
 import os
 import asyncio
 

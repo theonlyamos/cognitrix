@@ -4,18 +4,21 @@ import logging
 from rich import print
 from enum import Enum
 from datetime import datetime
-from typing import Callable, Dict, List, Literal, Optional, Self, TypeAlias, Union, Type, Any
+from typing import Callable, Dict, List, Literal, Optional, Self, TypeAlias, Union, Type, Any, TYPE_CHECKING
 
 from fastapi import WebSocket
 from pydantic import Field
 from odbms import Model
 
-from cognitrix.llms.base import LLM
+from cognitrix.providers.base import LLM
 from cognitrix.tools.base import Tool
 from cognitrix.transcriber import Transcriber
 from cognitrix.utils.llm_response import LLMResponse
 from cognitrix.utils import extract_json, parse_tool_call_results
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
+
+if TYPE_CHECKING:
+    from cognitrix.providers.session import Session
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -84,22 +87,22 @@ class Agent(Model):
         for callback in self.notification_callbacks:
             callback(message)
 
-    async def receive_message(self, message: Message):
+    async def receive_message(self, message: Message, session: Optional['Session'] = None):
         self.inbox.append(message)
         self.notify(message)
-        await self.process_messages()
+        await self.process_messages(session)
 
-    async def process_messages(self):
+    async def process_messages(self, session: Optional['Session'] = None):
         # Sort messages by priority (higher priority first)
         self.inbox.sort(key=lambda m: m.priority.value, reverse=True)
         
         while self.inbox:
             message = self.inbox.pop(0)
-            response = await self.process_message(message)
+            response = await self.process_message(message, session)
             self.response_list.append((message, response))
             message.read = True
 
-    async def process_message(self, message: Message):
+    async def process_message(self, message: Message, session: Optional['Session'] = None):
         content = f"{message.sender}: {message.content}"
         
         new_llm = LLM.load_llm(self.llm.provider)
@@ -107,32 +110,23 @@ class Agent(Model):
             new_llm.temperature = self.llm.temperature
             self.llm = new_llm
         
-        response: LLMResponse
-        async for response in self.generate(content):
-            pass
+        result: str = ''
         
-        print(f"\n{self.name} responded: {response.result}")
-
-        # Check for queue keyword
-        if "queue" in str(response.result).lower():
-            return await self.queue_response(message, str(response.result))
+        async def generate_response(data: Dict[str, Any]):
+            nonlocal result
+            result += data['content']
+        
+        if session:
+            await session(message.content, self, 'task', True, generate_response, {'type': 'start_task', 'action': 'process_message'})
         else:
-            return response
-
-    async def queue_response(self, message: Message, response: str):
-        # Extract time delay from response (assuming format: "queue for: 5 minutes")
-        delay_str = response.split("queue for:")[-1].strip()
-        try:
-            delay_minutes = int(delay_str.split()[0])
-            asyncio.create_task(self.send_delayed_response(message, delay_minutes))
-            return f"Response queued for {delay_minutes} minutes"
-        except ValueError:
-            return "Invalid queue time format"
-
-    async def send_delayed_response(self, message: Message, delay_minutes: int):
-        await asyncio.sleep(delay_minutes * 60)
-        async for response in self.generate(f"Delayed response to: {message.content}"):
-            self.response_list.append((message, response))
+            async for response in self.generate(content):
+                result += response.result # type: ignore
+        
+        print(f"\n{self.name} responded: {result}")
+        response = LLMResponse()
+        response.add_chunk(result)
+        
+        return response
 
     @property
     def available_tools(self) -> List[str]:
@@ -187,21 +181,21 @@ class Agent(Model):
                 if isinstance(result, list):
                     if result[0] == 'image':
                         prompt['type'] = 'image'
-                        prompt['image'] = result[1]
+                        prompt['content'] = result[1]
                     elif result[0] == 'agent':
                         new_agent: Agent = result[1]
                         new_agent.parent_id = self.id
                         self.add_sub_agent(new_agent) # type: ignore
 
-                        prompt['message'] = result[2]
+                        prompt['content'] = result[2]
                     else:
-                        prompt['message'] = result[2]
+                        prompt['content'] = result[2]
                 else:
-                    prompt['message'] = result
+                    prompt['content'] = result
             else:
                 print(processed_query)
         else:
-            prompt['message'] = processed_query
+            prompt['content'] = processed_query
 
         return prompt
 
@@ -217,18 +211,18 @@ class Agent(Model):
     def get_tool_by_name(self, name: str) -> Optional[Tool]:
         return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
 
-    async def call_tools(self, tool_calls: dict) -> Union[dict, str]:
+    async def call_tools(self, tool_calls: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Union[dict, str]:
         print(f"Tool calls: {tool_calls}")
         try:
             if tool_calls:
                 tool_calls_result = []
                 agent_tool_calls = []
 
-                if isinstance(tool_calls['tool'], list):
-                    for t in tool_calls['tool']:
+                if isinstance(tool_calls, list):
+                    for t in tool_calls:
                         agent_tool_calls.append(t)
                 else: 
-                    agent_tool_calls.append(tool_calls['tool'])
+                    agent_tool_calls.append(tool_calls)
                     
                 for t in agent_tool_calls:
                     tool = Tool.get_by_name(t['name'])

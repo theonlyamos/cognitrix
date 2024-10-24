@@ -4,6 +4,7 @@ from typing import List
 
 from cognitrix.common.security import get_current_user
 
+from cognitrix.providers.session import Session
 from cognitrix.teams.base import Team
 
 teams_api = APIRouter(
@@ -51,21 +52,21 @@ async def delete_team(team_id: str):
     Team.remove({'id': team_id})
     return JSONResponse({"message": "Team deleted successfully"})
 
-@teams_api.get(path="/generate")
-async def sse_endpoint(request: Request):
-    sse_manager = request.state.sse_manager
-    return await sse_manager.sse_endpoint(request)
+@teams_api.get("/{team_id}/sessions")
+async def sessions(team_id: str):
+    sessions = Session.find({'team_id': team_id})
+    return JSONResponse([session.model_dump() for session in sessions])
 
-from fastapi import APIRouter, HTTPException
-from cognitrix.teams.base import Team
-from cognitrix.tasks.base import Task
 
-router = APIRouter()
-
-@router.get("/teams/{team_id}/tasks")
+@teams_api.get("/teams/{team_id}/tasks")
 async def get_tasks_by_team(team_id: str):
     team = Team.get(team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     tasks = team.get_assigned_tasks()
     return tasks
+
+@teams_api.get(path="/generate")
+async def sse_endpoint(request: Request):
+    sse_manager = request.state.sse_manager
+    return await sse_manager.sse_endpoint(request)

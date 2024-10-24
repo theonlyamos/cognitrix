@@ -1,6 +1,6 @@
 from odbms import Model
 from pydantic import Field
-from typing import Any, List, Dict, TypeAlias
+from typing import Any, List, Dict, TypeAlias, Union
 from openai import OpenAI
 import os
 import logging
@@ -72,7 +72,7 @@ class LLM(Model):
         if not 'provider' in data.keys():
             self.provider = self.__class__.__name__
     
-    def format_query(self, message: dict[str, str], chat_history: List[Dict[str, str]] = []) -> list:
+    def format_query(self, message: dict[str, str], chat_history: List[Dict[str, Any]] = []) -> list:
         """Formats a message for the Claude API.
 
         Args:
@@ -88,12 +88,17 @@ class LLM(Model):
         
         for fm in formatted_message:
             if fm['type'] == 'text':
-                messages.append({
-                    "role": fm['role'].lower(),
-                    "content": fm['message']
-                })
+                new_message: Union[str, Dict[str, Any]] = fm['content']
+                text_message = new_message['llm_response'] if isinstance(new_message, dict) else new_message
+                text_message = text_message if fm['role'].lower() in ['user', 'assistant'] else "User: " + text_message
+                message_role = fm['role'].lower() if fm['role'].lower() in ['user', 'assistant'] else 'user'
+                full_message = {
+                    "role": message_role,
+                    "content": text_message
+                }
+                messages.append(full_message)
             elif fm['type'] == 'image':
-                base64_image = image_to_base64(fm['image']) # type: ignore
+                base64_image = image_to_base64(fm['content']) # type: ignore
                 messages.append({
                     "role": fm['role'].lower(),
                     "content": [
@@ -159,7 +164,7 @@ class LLM(Model):
             logging.exception(e)
             return None
     
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, **kwds: Any):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -183,21 +188,39 @@ class LLM(Model):
             
             formatted_messages = self.format_query(query, chat_history)
             
-            stream = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    *formatted_messages
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=True,
-            )
+            if self.model in ['o1-mini', 'o1-preview']:
+                stream = False
+                
+                completion = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "user", "content": system_prompt},
+                        *formatted_messages
+                    ],
+                    max_tokens=65536 if self.model == 'o1-mini' else 32768,
+                )
+
+            else:
+                completion = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        *formatted_messages
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    stream=stream
+                )
             response = LLMResponse()
-            for chunk in stream:
-                if chunk.choices and len(chunk.choices) and chunk.choices[0].delta.content is not None:
-                    response.add_chunk(chunk.choices[0].delta.content)
+            
+            if stream:
+                for chunk in completion:
+                    if chunk.choices and len(chunk.choices) and chunk.choices[0].delta.content is not None:
+                        response.add_chunk(chunk.choices[0].delta.content)
                     yield response
+            else:
+                response.add_chunk(completion.choices[0].message.content)
+                yield response
         except OpenAIError as e:
             logger.error(f"OpenAI API error: {str(e)}")
             yield LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")
@@ -207,3 +230,4 @@ class LLM(Model):
         except Exception as e:
             logger.exception(f"Unexpected error in LLM __call__ method: {str(e)}")
             yield LLMResponse(llm_response=f"An unexpected error occurred: {str(e)}")
+            

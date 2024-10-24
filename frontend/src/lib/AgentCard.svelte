@@ -89,7 +89,7 @@
       <i class="fas fa-trash-alt"></i> Delete
     </button>
     <button on:click={handleRun} class="option-button run">
-      <i class="fas fa-play"></i> Run
+      <i class="fa-solid fa-comments"></i> Chat
     </button>
     <button on:click={handleViewHistory} class="option-button history">
       <i class="fas fa-history"></i> History

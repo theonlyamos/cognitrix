@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from ...llms import LLM
+from ...providers import LLM
 
 providers_api = APIRouter(
     prefix='/llms'

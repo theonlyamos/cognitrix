@@ -4,6 +4,9 @@
   import RadioItem from "./RadioItem.svelte";
 
   export let task: TaskDetailInterface;
+  export let onEdit: (task: TaskDetailInterface) => void = () => {};
+  export let onDelete: (task: TaskDetailInterface) => void = () => {};
+  export let onRun: (task: TaskDetailInterface) => void = () => {};
 
   function calculateDuration(startedAt: string, completedAt: string) {
     const startDate: Date = new Date(startedAt);
@@ -25,22 +28,22 @@
   }
 
   function handleEdit() {
-    console.log(`Edit task ${task.id}`);
+    onEdit(task);
   }
 
   function handleDelete() {
-    console.log(`Delete task ${task.id}`);
+    onDelete(task);
   }
 
   function handleRun() {
-    console.log(`Run task ${task.id}`);
+    onRun(task);
   }
 
   function formatDate(dateString: string) {
     return new Date(dateString).toLocaleDateString();
   }
 
-  function getShortDescription(description: string, maxLength: number = 50) {
+  function getShortDescription(description: string, maxLength: number = 210) {
     return description && description.length > maxLength 
       ? description.slice(0, maxLength) + '...' 
       : description;
@@ -55,16 +58,12 @@
     </p>
     <div class="task-details">
       <div class="task-detail">
-        <i class="fas fa-tasks"></i>
-        <span>{task.status}</span>
+        <i class="fas fa-clock"></i>
+        <span>Status: {task.status}</span>
       </div>
       <div class="task-detail">
-        <i class="fas fa-users"></i>
-        <span
-          >{task.assigned_agents.length} agent{task.assigned_agents.length !== 1
-            ? "s"
-            : ""}</span
-        >
+        <i class="fas fa-user-friends"></i>
+        <span>Agents: {task.assigned_agents.length}</span>
       </div>
       {#if task.tools && task.tools.length > 0}
         <div class="task-detail">
@@ -118,7 +117,7 @@
     border-radius: 12px;
     background: var(--bg-1);
     color: var(--fg-1);
-    min-inline-size: 300px;
+    inline-size: 400px;
     max-inline-size: 100vmin;
     block-size: auto;
     box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
@@ -150,7 +149,8 @@
   .task-description {
     font-size: 0.9em;
     color: var(--fg-2);
-    margin: 0;
+    text-overflow: ellipsis;
+    text-align: start;
   }
 
   .task-details {
@@ -169,71 +169,6 @@
   .task-detail i {
     width: 20px;
     text-align: center;
-    color: var(--accent-color, #2196F3);
-  }
-
-  .task-card__title {
-    font-size: 1.3em;
-    font-weight: 600;
-    margin-bottom: 10px;
-    color: var(--accent-color, #2196F3);
-  }
-
-  .task-card__step-instructions {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    max-block-size: 75%;
-    overflow-y: auto;
-    padding-block-end: 10px;
-    flex-grow: 1;
-  }
-
-  .task-card__description {
-    text-align: justify;
-    font-size: 0.9em;
-    color: var(--fg-2);
-    display: -webkit-box;
-    line-clamp: 8;
-    -webkit-line-clamp: 8;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    max-block-size: 75%;
-    overflow-y: auto;
-    padding-block-end: 10px;
-    flex-grow: 1;
-  }
-
-  .task-card__step-instructions::-webkit-scrollbar,
-  .task-card__description::-webkit-scrollbar {
-    width: 5px;
-  }
-
-  .task-card-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: auto;
-    padding-top: 10px;
-  }
-
-  .task-card-footer__status {
-    padding-block: 5px;
-    padding-inline: 10px;
-    font-size: 0.9em;
-    font-weight: bold;
-    border-radius: 10px;
-    background-color: var(--bg-2);
-  }
-
-  .task-card-footer__duration {
-    font-size: 0.9em;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-  }
-
-  .task-card-footer__duration i {
     color: var(--accent-color, #2196F3);
   }
 

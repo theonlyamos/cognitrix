@@ -5,8 +5,8 @@ from pydantic import BaseModel
 
 from cognitrix.agents import Agent
 from cognitrix.common.security import get_current_user
-from cognitrix.llms import Session
-from ...llms import LLM
+from cognitrix.providers import Session
+from ...providers import LLM
 
 agents_api = APIRouter(
     prefix='/agents',

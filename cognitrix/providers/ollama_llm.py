@@ -1,6 +1,6 @@
 import asyncio
 import aiohttp
-from cognitrix.llms.base import LLM, LLMResponse
+from cognitrix.providers.base import LLM, LLMResponse
 from cognitrix.utils import image_to_base64
 from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
@@ -76,10 +76,10 @@ class Ollama(LLM):
             if fm['type'] == 'text':
                 messages.append({
                     "role": fm['role'].lower(),
-                    "content": fm['message']
+                    "content": fm['content']
                 })
             else:
-                base64_image = image_to_base64(fm['image']) # type: ignore
+                base64_image = image_to_base64(fm['content']) # type: ignore
                 self.model = self.vision_model
                 new_message = {
                     "role": fm['role'].lower(),
