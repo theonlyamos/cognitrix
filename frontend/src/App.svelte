@@ -58,6 +58,16 @@
       <Route path="/teams/:team_id/tasks/:task_id/interact" let:params>
         <TeamInteraction team_id={params.team_id} task_id={params.task_id} />
       </Route>
+      <Route
+        path="/teams/:team_id/tasks/:task_id/sessions/:session_id/interact"
+        let:params
+      >
+        <TeamInteraction
+          team_id={params.team_id}
+          task_id={params.task_id}
+          session_id={params.session_id}
+        />
+      </Route>
     </Container>
   </div>
 </Router>

@@ -46,8 +46,11 @@ class Cohere(LLM):
         
         for fm in chat_history:
             msg = fm.copy()
+            msg['message'] = fm['content']
             if fm['role'].lower() != 'user':
+                msg['message'] = f"{fm['role']}: {fm['content']}"
                 msg['role'] = 'Chatbot'
+            del msg['content']
             formatted_messages.append(msg)
 
         return formatted_messages

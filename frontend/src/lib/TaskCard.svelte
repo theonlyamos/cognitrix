@@ -4,6 +4,9 @@
   import RadioItem from "./RadioItem.svelte";
 
   export let task: TaskDetailInterface;
+  export let onEdit: (task: TaskDetailInterface) => void = () => {};
+  export let onDelete: (task: TaskDetailInterface) => void = () => {};
+  export let onRun: (task: TaskDetailInterface) => void = () => {};
 
   function calculateDuration(startedAt: string, completedAt: string) {
     const startDate: Date = new Date(startedAt);
@@ -25,15 +28,15 @@
   }
 
   function handleEdit() {
-    console.log(`Edit task ${task.id}`);
+    onEdit(task);
   }
 
   function handleDelete() {
-    console.log(`Delete task ${task.id}`);
+    onDelete(task);
   }
 
   function handleRun() {
-    console.log(`Run task ${task.id}`);
+    onRun(task);
   }
 
   function formatDate(dateString: string) {

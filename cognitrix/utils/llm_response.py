@@ -75,6 +75,9 @@ class LLMResponse(Model):
                         setattr(self, key, value)
                 else:
                     self.result = response
+        
+        except ValueError:
+            pass
 
         except Exception as e:
             logger.exception(e)

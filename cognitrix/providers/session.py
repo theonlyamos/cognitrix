@@ -88,7 +88,7 @@ class Session(Model):
         """Retrieve a session by task_id"""
         return cls.find({'task_id': task_id}) # type: ignore
     
-    async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: Dict[str, str]= {}, save_history: bool = True):
+    async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: Dict[str, str]= {}, save_history: bool = True):
         from cognitrix.agents.base import Agent
         
         system_prompt = agent.formatted_system_prompt()
@@ -149,7 +149,7 @@ class Session(Model):
                     if not message:
                         break
                 except Exception as e:
-                    logger.warn(e)
+                    logger.exception(e)
                     continue
                 
         except Exception as e:

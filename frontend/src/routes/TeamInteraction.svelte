@@ -11,9 +11,11 @@
   import Message from '$lib/Message.svelte';
     import Accordion from '$lib/Accordion.svelte';
     import Alert from '$lib/Alert.svelte';
+    import { Link, navigate } from 'svelte-routing';
 
   export let team_id: string = "";
   export let task_id: string | null = null;
+  export let session_id: string | null = null;
   
   let team: TeamInterface | undefined;
   let messages: MessageInterface[] = [];
@@ -38,9 +40,9 @@
     error = null;
     try {
       team = await getTeam(team_id);
-      if (!task_id) {
-        allTasks = await getAllTasks() as TaskDetailInterface[];
-      }
+      // if (!task_id) {
+      allTasks = await getAllTasks() as TaskDetailInterface[];
+      // }
     } catch (err) {
       console.error('Failed to load team:', err);
       error = 'Failed to load team data. Please try again.';
@@ -49,12 +51,25 @@
     }
   };
 
+  const loadAllTasks = async () => {
+    isLoading = true; 
+    // error = null;
+    try {
+      allTasks = await getAllTasks() as TaskDetailInterface[];
+    } catch (err) {
+      console.error('Failed to load all tasks:', err);
+      // error = 'Failed to load all tasks. Please try again.';
+    } finally {
+      isLoading = false;
+    }
+  }
+
   const loadTask = async (task_id: string) => {
     isLoading = true;
     error = null;
     try {
       task = await getTask(task_id) as TaskDetailInterface;
-      taskStarted = true;
+      // taskStarted = true;
       await loadTaskSessions(task_id);
     } catch (err) {
       console.error('Failed to load task:', err);
@@ -66,8 +81,9 @@
 
   const loadTaskSessions = async (task_id: string) => {
     try {
-      const tasks = await getTasksByTeam(team_id);
-      taskSessions = tasks.filter(task => task.id === task_id) as unknown as SessionInterface[];
+      // const tasks = await getS(team_id);
+      const sessions = await getSessionsByTeam(team_id);
+      taskSessions = sessions.filter(session => session.task_id === task_id) as SessionInterface[];
     } catch (err) {
       console.error('Failed to load task sessions:', err);
       error = 'Failed to load task sessions. Please try again.';
@@ -81,17 +97,20 @@
       const sessionData = await getTaskSession(session_id);
       selectedSession = sessionData;
       messages = sessionData.chat as MessageInterface[];
+      const task = allTasks.find(task => task.id === sessionData.task_id) as TaskDetailInterface;
+      generatedTask = task;
     } catch (err) {
       console.error('Failed to load session chat:', err);
       error = 'Failed to load chat history. Please try again.';
     } finally {
       isLoading = false;
+      taskStarted = true;
     }
   };
 
   function handleSendMessage(message: string) {
     if (!taskStarted) {
-      startTask(message);
+      generateTaskDetails(message);
     } else {
       addMessage({ role: 'user', content: message });
       webSocketStore.send(JSON.stringify({
@@ -101,7 +120,7 @@
     }
   }
 
-  function startTask(description: string) {
+  function generateTaskDetails(description: string) {
     if (team) {
       generatingTask = true;
       webSocketStore.send(JSON.stringify({
@@ -113,12 +132,13 @@
     }
   }
 
-  function handleStartTask() {
-    if (generatedTask) {
-      taskStarted = true;
-      showTaskModal = false;
-      addMessage({ role: 'system', content: `Task "${generatedTask.title}" started. You can now interact with the agents.` });
-      handleTaskSubmit();
+  async function handleStartTask() {
+    taskStarted = true;
+    showTaskModal = false;
+    handleTaskSubmit();
+    if (selectedTaskId) {
+      generatedTask = allTasks.find(task => task.id === selectedTaskId) as TaskDetailInterface;
+      addMessage({ role: 'system', content: `Task "${generatedTask?.title}" started. You can now interact with the agents.` });
     }
   }
 
@@ -151,7 +171,10 @@
       await loadTeam(team_id);
       await loadTeamSessions(team_id);
     }
-    if (task_id) {
+    if (session_id){
+      await loadSessionChat(session_id);
+    }
+    else if (task_id) {
       await loadTask(task_id);
     }
   });
@@ -162,17 +185,20 @@
         const data = JSON.parse(event.data);
         
         if (data.type === 'team_message') {
-          console.log(data);
-          const new_message = {
+          // console.log(data);
+          const newMessage = {
             role: data.sender,
             content: data.content,
           };
 
-          if (messages[messages.length - 1].role !== new_message.role) {
-            addMessage(new_message);
+          let lastMessage: MessageInterface = messages[messages.length - 1];
+
+          if (lastMessage.role.toLowerCase() === newMessage.role.toLowerCase()) {
+            lastMessage.content += newMessage.content
+            messages = [...messages.slice(0, -1), lastMessage];
           }
           else {
-            messages[messages.length - 1].content = new_message.content;
+            addMessage(newMessage);
           }
         } else if (data.type === 'generate' && data.action === 'task_details') {
           generatingTask = false;
@@ -191,7 +217,8 @@
       webSocketStore.send(JSON.stringify({
         type: 'start_task',
         team_id: team_id,
-        task: generatedTask
+        task: selectedTaskId ? "" : generatedTask ,
+        task_id: selectedTaskId
       }));
     } catch (err) {
       console.error('Failed to submit task:', err);
@@ -217,8 +244,6 @@
   $: if (generatedTaskDetails) {
     let parsedTask = convertXmlToJson(generatedTaskDetails);
 
-    console.log(parsedTask);
-
     if (parsedTask.description && typeof parsedTask.description === 'object') {
       let description = parsedTask.description['#text'];
       description += '\n\n<steps>' + parsedTask.description.steps + '</steps>';
@@ -240,6 +265,14 @@
 
   $: if (team_id) {
     loadTeam(team_id);
+  }
+
+  $: if (task_id && !selectedTaskId && !session_id) {
+    selectedTaskId = task_id;
+  }
+
+  $: if (selectedTaskId) {
+    navigate(`/teams/${team_id}/tasks/${selectedTaskId}/interact`);
   }
 </script>
 
@@ -272,13 +305,12 @@
         {#if teamSessions.length > 0}
           <Accordion title="Team Sessions" opened={true}>
             {#each teamSessions as session}
-              <button
+              <Link
+                to={`/teams/${team_id}/tasks/${session?.task_id}/sessions/${session.id}/interact`}
                 class="btn session-item"
-                class:active={selectedSession?.id === session.id}
-                on:click={() => loadSessionChat(session.id)}
               >
                 {new Date(session?.created_at).toLocaleString()}
-              </button>
+              </Link>
             {/each}
           </Accordion>
         {/if}
@@ -288,25 +320,23 @@
           <i class="fa-solid fa-users fa-3x fa-fw"></i>
           <h1>{team.name}</h1>
           {#if !taskStarted}
-            {#if !task_id}
-              <div class="task-selection">
-                <label for="task-dropdown">Select a task</label>
-                <select bind:value={selectedTaskId} class="task-dropdown">
-                  <option value="" selected disabled>Select a task</option>
-                  {#each allTasks as task}
-                    <option value={task.id}>{task.title}</option>
-                  {/each}
-                </select>
-                <button
-                  class="btn primary"
-                  on:click={handleTaskSelection}
-                  disabled={!selectedTaskId}
-                >
-                  Start Selected Task
-                </button>
-              </div>
-              <p>Or start a new task by typing a description below.</p>
-            {/if}
+            <div class="task-selection">
+              <label for="task-dropdown">Select a task</label>
+              <select bind:value={selectedTaskId} class="task-dropdown">
+                <option value="" selected disabled>Select a task</option>
+                {#each allTasks as task}
+                  <option value={task.id}>{task.title}</option>
+                {/each}
+              </select>
+              <button
+                class="btn primary"
+                on:click={handleStartTask}
+                disabled={!selectedTaskId}
+              >
+                Start Selected Task
+              </button>
+            </div>
+            <p>Or start a new task by typing a description below.</p>
             {#if generatingTask}
               <div class="generating-task">
                 <p>Generating task details...</p>
@@ -317,7 +347,6 @@
               <Inputbar
                 onSubmit={handleSendMessage}
                 onFileSelect={handleFileUpload}
-                onClearMessages={handleClearMessages}
                 inputPlaceholder="Describe the task to start..."
               />
             </div>
@@ -340,7 +369,6 @@
             <Inputbar
               onSubmit={handleSendMessage}
               onFileSelect={handleFileUpload}
-              onClearMessages={handleClearMessages}
               inputPlaceholder="Type your message..."
             />
           </div>
@@ -388,13 +416,15 @@
   }
 
   .chat-area {
+    display: flex;
+    flex-direction: column;
     flex-grow: 1;
     overflow-y: auto;
     margin-bottom: 20px;
     padding: 10px;
     border-radius: 8px;
-    background-color: var(--bg-1);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    gap: 40px;
+    background-color: var(--bg-2);
   }
 /* 
   .message {
@@ -542,7 +572,7 @@
     gap: 20px;
   }
 
-  .session-item {
+  /* .session-item {
     padding: 10px;
     margin-bottom: 5px;
     cursor: pointer;
@@ -552,7 +582,7 @@
 
   .session-item:hover, .session-item.active {
     background-color: var(--bg-2);
-  }
+  } */
 
   .chat-container {
     flex-grow: 1;
@@ -606,6 +636,7 @@
   }
 
   .main-content {
+    inline-size: fit-content;
     flex-grow: 1;
     display: flex;
     flex-direction: column;

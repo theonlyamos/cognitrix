@@ -72,3 +72,18 @@ async def delete_chat(session_id: str):
     session.chat = []
     session.save()
     return JSONResponse({"message": "Chat deleted successfully"})
+
+@sessions_api.get("/agents/{agent_id}")
+async def sessions_by_agent(agent_id: str):
+    sessions = Session.find({'agent_id': agent_id})
+    return JSONResponse([session.model_dump() for session in sessions])
+
+@sessions_api.get("/teams/{team_id}")
+async def sessions_by_team(team_id: str):
+    sessions = Session.find({'team_id': team_id})
+    return JSONResponse([session.model_dump() for session in sessions])
+
+@sessions_api.get("/tasks/{task_id}")
+async def sessions_by_task(task_id: str):
+    sessions = Session.find({'task_id': task_id})
+    return JSONResponse([session.model_dump() for session in sessions])

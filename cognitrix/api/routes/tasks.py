@@ -60,3 +60,8 @@ async def load_task(task_id: str):
         response = task.dict()
     
     return JSONResponse(response)
+
+@tasks_api.delete('/{task_id}')
+async def delete_task(task_id: str):
+    Task.remove(query={'id': task_id})
+    return JSONResponse({'message': 'Task deleted successfully'})

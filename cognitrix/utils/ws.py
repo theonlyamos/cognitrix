@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import WebSocket
 import json
 import logging
+from cognitrix.tasks.base import Task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import Tool
 from cognitrix.utils import xml_to_dict
@@ -123,13 +124,21 @@ class WebSocketManager:
                 
                     elif query_type == 'start_task':
                         task = query['task']
+                        task_id = query.get('task_id', '')
                         team_id = query['team_id']
                         team = Team.get(team_id)
                         if team:
-                            task = team.create_task(task['title'], task['description'])
-                            task_session = Session(team_id=team_id, task_id=task.id)
-                            task_session.save()
-                            await team.work_on_task(task.id, task_session, self)
+                            if task_id:
+                                task = Task.get(task_id)
+                            else:
+                                task = team.create_task(task['title'], task['description'])
+                            if task:
+                                if team.assign_task(task.id):
+                                    task_session = Session(team_id=team_id, task_id=task.id)
+                                    task_session.save()
+                                    await team.work_on_task(task.id, task_session, self)
+                            else:
+                                await websocket.send_json({'type': 'error', 'content': 'Task not found'})
                         else:
                             await websocket.send_json({'type': 'error', 'content': 'Team not found'})
                     # elif query_type == "websocket.receive":

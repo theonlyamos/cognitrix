@@ -11,13 +11,12 @@ from functools import lru_cache
 
 from fastapi.responses import JSONResponse
 
-from cognitrix.providers import (
-    Cohere, Clarifai, LLM
-)
-
+from cognitrix.providers import LLM
 from cognitrix.agents import  Agent
 from cognitrix.providers.session import Session
-from cognitrix.tools import Tool
+from cognitrix.tasks.base import Task
+from cognitrix.tools.base import Tool
+from cognitrix.teams.base import Team
 from cognitrix.utils.ws import WebSocketManager
 from cognitrix.utils.sse import SSEManager
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
@@ -103,7 +102,51 @@ def delete_agent(agent_name_or_index: str):
 
 @lru_cache(maxsize=None)
 def get_agents():
-    return asyncio.run(Agent.list_agents())
+    return Agent.all()
+
+@lru_cache(maxsize=None)
+def get_tasks():
+    return Task.all()
+
+@lru_cache(maxsize=None)
+def get_teams():
+    return Team.all()
+
+def list_teams():
+    teams = get_teams()
+    team_names = [team.name for team in teams]
+    max_col = len(max(team_names, key=len))
+    max_width = 10
+    max_col = max_col if max_col >= max_width else max_width
+    
+    print("\nAvailable Teams:")
+    print(f" {'_'*(int(len(teams)/10)+3)} {'_'*(max_col+2)}")
+    print(f"| #{' '*(int(len(teams)/10))} | {'Task Title'+' '*(max_col-max_width)} |")
+    print(f"|{'-'*(int(len(teams)/10)+3)}|-{'-'*(max_col)}-|")
+    for index, t in enumerate(teams):
+        padding = (len(str(index)))-int(len(teams)/10)
+        padding = padding if padding else padding + 2
+        print(f"| {str(index+1) + ' '*padding}| {t.name + ' '*(max_col-len(t.name))} |")
+    print(f"|{'-'*(int(len(teams)/10)+3)}|{'-'*(max_col+2)}|")
+    print()
+    
+def list_tasks():
+    tasks = get_tasks()
+    task_names = [task.title for task in tasks]
+    max_col = len(max(task_names, key=len))
+    max_width = 10
+    max_col = max_col if max_col >= max_width else max_width
+    
+    print("\nAvailable Tasks:")
+    print(f" {'_'*(int(len(tasks)/10)+3)} {'_'*(max_col+2)}")
+    print(f"| #{' '*(int(len(tasks)/10))} | {'Task Title'+' '*(max_col-max_width)} |")
+    print(f"|{'-'*(int(len(tasks)/10)+3)}|-{'-'*(max_col)}-|")
+    for index, t in enumerate(tasks):
+        padding = (len(str(index)))-int(len(tasks)/10)
+        padding = padding if padding else padding + 2
+        print(f"| {str(index+1) + ' '*padding}| {t.title + ' '*(max_col-len(t.title))} |")
+    print(f"|{'-'*(int(len(tasks)/10)+3)}|{'-'*(max_col+2)}|")
+    print()
 
 def list_agents():
     agents = get_agents()
@@ -113,13 +156,15 @@ def list_agents():
     max_col = max_col if max_col >= max_width else max_width
     
     print("\nAvailable Agents:")
-    print(f" {'_'*((int(len(agents)/10)+5)+max_width+1)}")
+    print(f" {'_'*(int(len(agents)/10)+3)} {'_'*(max_col+2)}")
     print(f"| #{' '*(int(len(agents)/10))} | {'Agent Name'+' '*(max_col-max_width)} |")
-    print(f"|{'-'*(int(len(agents)/10)+3)}|-{'-'*(max_col)}-|")
+    print(f"|{'-'*(int(len(agents)/10)+3)}|{'-'*(max_col+1)}-|")
     for index, a in enumerate(agents):
         padding = (len(str(index)))-int(len(agents)/10)
         padding = padding if padding else padding + 2
-        print(f"| {str(index) + ' '*padding}| {a.name + ' '*(max_col-len(a.name))} |")
+        print(f"| {str(index+1) + ' '*padding}| {a.name + ' '*(max_col-len(a.name))} |")
+    print(f"|{'-'*(int(len(agents)/10)+3)}|{'-'*(max_col+2)}|")
+    print()
     
 @lru_cache(maxsize=None)
 def get_providers():
@@ -133,14 +178,16 @@ def list_providers():
     max_col = max_col if max_col >= max_width else max_width
 
     print("\nAvailable Providers:")
-    print(f" {'_'*((int(len(providers)/10)+5)+max_width+1)}")
+    print(f" {'_'*(int(len(providers)/10)+3)} {'_'*(max_col+2)}")
     print(f"| #{' '*(int(len(providers)/10))} | {'Provider'+' '*(max_col-7)}|")
-    print(f"|{'-'*(int(len(providers)/10)+3)}|-{'-'*(max_col)}-|")
+    print(f"|{'-'*(int(len(providers)/10)+3)}|{'-'*(max_col+1)}-|")
     for index, p in enumerate(providers):
         padding = (len(str(index)))-int(len(providers)/10)
         padding = padding if padding else padding + 2
-        print(f"| {str(index) + ' '*padding}| {p.__name__ + ' '*(max_col-len(p.__name__))} |")
-        
+        print(f"| {str(index+1) + ' '*padding}| {p.__name__ + ' '*(max_col-len(p.__name__))} |")
+    print(f"|{'-'*(int(len(providers)/10)+3)}|{'-'*(max_col+2)}|")
+    print()
+
 @lru_cache(maxsize=None)
 def get_tools(category='all'):
     return Tool.get_tools_by_category(category)
@@ -222,9 +269,9 @@ async def initialize(session: Session, agent: Agent, stream: bool = False):
                 break
 
             command_handlers = {
-                'add agent': lambda: add_agent(),
+                'add agent': add_agent,
                 'list tools': lambda: print("\nAvailable Tools:\n" + "\n".join(f"[{i}] {tool.name}" for i, tool in enumerate(agent.tools))),
-                'list agents': lambda: print("\nAvailable Agents:\n" + "\n".join(f"[{i}] {a.name}" for i, a in enumerate(asyncio.run(Agent.list_agents())) if a.parent_id == agent.id)),
+                'list agents': lambda: print("\nAvailable Agents:\n" + "\n".join(f"[{i}] {a.name}" for i, a in enumerate(get_agents()) if a.parent_id == agent.id)),
                 'show history': lambda: print("\nChat History:\n" + "\n".join(f"[{chat['role']}]: {chat['message']}" for chat in session.chat))
             }
 
@@ -248,7 +295,13 @@ def start(args: Namespace):
             list_providers()
             sys.exit()
         elif args.agents:
-            list_agents()              #type: ignore
+            list_agents()              
+            sys.exit()
+        elif args.tasks:
+            list_tasks()
+            sys.exit()
+        elif args.teams:
+            list_teams()
             sys.exit()
         elif args.sessions:
             asyncio.run(list_sessions())
@@ -298,7 +351,7 @@ def start(args: Namespace):
             session.save()
             
         assistant.verbose = args.verbose
-        assistant.formatted_system_prompt()
+        # print(assistant.formatted_system_prompt())
             
         assistant.save()
         
@@ -341,6 +394,8 @@ def get_arguments():
         parser.add_argument('--provider', default='groq', help='Set llm provider to use')
         parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
         parser.add_argument('--agents', action='store_true', help='List all saved agents')
+        parser.add_argument('--tasks', action='store_true', help='List all saved tasks')
+        parser.add_argument('--teams', action='store_true', help='List all saved teams')
         parser.add_argument('--ui', default='cli', help='Determine preferred user interface')
         parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
         parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='', help='Add tools by categories to agent')
