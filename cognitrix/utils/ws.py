@@ -1,25 +1,25 @@
-import time
-from typing import Optional
-from fastapi import WebSocket
 import json
 import logging
+from typing import Optional
+from fastapi import WebSocket
+from cognitrix.agents import Agent
 from cognitrix.tasks.base import Task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import Tool
-from cognitrix.utils import xml_to_dict
-from starlette.websockets import WebSocketDisconnect
 from cognitrix.agents import PromptGenerator
-from cognitrix.agents import TaskInstructor
-
 from cognitrix.providers.session import Session
-from cognitrix.agents import Agent
+from cognitrix.celery_worker import run_team_task
+from starlette.websockets import WebSocketDisconnect
 from cognitrix.prompts.generator import team_details_generator, agent_details_generator, task_details_generator
+
 
 logger = logging.getLogger('cognitrix.log')
 
 class WebSocketManager:
     def __init__(self, agent):
         self.agent = agent
+        from cognitrix.utils.core import register_websocket_manager
+        register_websocket_manager(agent.id, self)
     
     async def websocket_endpoint(self, websocket: WebSocket):
         web_agent = self.agent
@@ -133,10 +133,12 @@ class WebSocketManager:
                             else:
                                 task = team.create_task(task['title'], task['description'])
                             if task:
-                                if team.assign_task(task.id):
-                                    task_session = Session(team_id=team_id, task_id=task.id)
-                                    task_session.save()
-                                    await team.work_on_task(task.id, task_session, self)
+                                from cognitrix.utils.core import register_websocket_manager
+                                ws_proxy = WebSocketManagerProxy(self.agent.id)
+                                register_websocket_manager(task.id, self)
+                                result = run_team_task.delay(team_id, task.id)
+                                task.pid = result.id
+                                task.save()
                             else:
                                 await websocket.send_json({'type': 'error', 'content': 'Task not found'})
                         else:
@@ -168,8 +170,6 @@ class WebSocketManager:
                         user_prompt = query['content']
                         await session(user_prompt, web_agent, 'web', True, websocket.send_json, query)
                         # await websocket.send_json({'type': 'chat_reply', 'content': response})
-                    
-
                 except Exception as e:
                     logger.exception(e)
                     continue
@@ -192,3 +192,15 @@ class WebSocketManager:
             })
         else:
             logger.warning("WebSocket is not connected. Unable to send team message.")
+
+class WebSocketManagerProxy:
+    """A serializable proxy for WebSocketManager that stores only the essential data"""
+    def __init__(self, task_id: str):
+        self.task_id = task_id
+
+    async def send_team_message(self, sender: str, receiver: str, content: str):
+        # Find the active WebSocketManager instance and delegate the message
+        from cognitrix.utils.core import get_websocket_manager
+        ws_manager = get_websocket_manager(self.task_id)
+        if ws_manager:
+            await ws_manager.send_team_message(sender, receiver, content)

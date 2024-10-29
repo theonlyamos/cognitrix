@@ -8,9 +8,7 @@
   let model: string = "";
 
   onMount(() => {
-    console.log(agent);
     agentModel = agent?.llm?.model?.split("/");
-    console.log(agentModel);
   });
 
   $: if (agentModel) model = agentModel[agentModel.length - 1];

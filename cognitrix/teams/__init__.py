@@ -1,0 +1,1 @@
+from cognitrix.teams.base import Team

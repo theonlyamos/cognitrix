@@ -564,7 +564,6 @@
     inline-size: 250px;
     padding: 10px;
     overflow-y: auto;
-    padding: 10px;
     overflow-y: auto;
     border-right: 1px solid var(--fg-2);
     display: flex;

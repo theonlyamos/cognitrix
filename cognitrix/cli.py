@@ -45,7 +45,7 @@ def start_web_ui(agent: Agent ):
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
-        await ws_manager.websocket_endpoint(websocket)
+        await ws_manager.websocket_endpoint(websocket) # type: ignore
 
     uvicorn.run(app, forwarded_allow_ips="*")
     
@@ -398,7 +398,7 @@ def get_arguments():
         parser.add_argument('--teams', action='store_true', help='List all saved teams')
         parser.add_argument('--ui', default='cli', help='Determine preferred user interface')
         parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
-        parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='', help='Add tools by categories to agent')
+        parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')], default='all', help='Add tools by categories to agent')
         parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
         parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
         parser.add_argument('--api-base', type=str, default='', help='Set api base of selected llm. Set if using local llm.')

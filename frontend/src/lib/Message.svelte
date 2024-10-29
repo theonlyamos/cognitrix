@@ -61,11 +61,16 @@
       }
     }
 
+    
     let parsedContent = convertXmlToJson(content);
+    if (role === 'CodeMaster'){
+      // console.log(parsedContent)
+    }
     
     if (!parsedContent) return content as string;
 
     for (let key in parsedContent) {
+      
       if (key === "artifact") {
         let artifactsObjects = parsedContent[key];
         if (Array.isArray(artifactsObjects)) {
@@ -74,14 +79,12 @@
           artifacts = [artifactsObjects];
         }
 
-      } else if (key === "tool_calls") {
+      } else if (key === "tool_call") {
         let tool_calls = parsedContent[key];
-        if (Object.keys(tool_calls).length) {
-          if (Array.isArray(tool_calls.tool)) {
-            toolCalls = tool_calls.tool;
-          } else {
-            toolCalls = [tool_calls.tool];
-          }
+        if (Array.isArray(tool_calls)) {
+          toolCalls = tool_calls;
+        } else {
+          toolCalls = [tool_calls];
         }
       } else if (key === "tool_call_results") {
         let tool_call_results = [];
@@ -111,8 +114,10 @@
       if (typeof node === "string") return node;
       if (typeof node !== "object") return String(node);
       
-      if (Object.keys(node).includes('result')) {
-        return `${formatNode(node.result)}\n\n`;
+      for (let key in node){
+        if (['result', '#text'].includes(key)) {
+          return `${formatNode(node[key])}\n\n`;
+        }
       }
 
       return "";
@@ -165,10 +170,10 @@
       {#each toolCalls as tool_call}
         <div class="tool-call">
           <i class="fas fa-anchor fa-fw"></i>
-          <span
-            ><em>Running Tool <b>{tool_call.name}</b></em> with parameters:
-            <em>{JSON.stringify(tool_call.arguments)}</em></span
-          >
+          <span>
+            <em>Running Tool <b>{tool_call.name}</b></em> with parameters:
+            <CodeBlock htmlContent={JSON.stringify(tool_call.arguments)} />
+          </span>
         </div>
       {/each}
       {#if role.toLowerCase() === "user"}

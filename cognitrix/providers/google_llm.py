@@ -34,7 +34,7 @@ class Google(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    model: str = 'gemini-1.5-pro-002'
+    model: str = 'gemini-1.5-flash-002'
     """model endpoint to use""" 
     
     temperature: float = 0.2

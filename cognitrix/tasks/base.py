@@ -108,12 +108,12 @@ class Task(Model):
                     if self.status == 'in-progress':
                         prompt = f'Step #{key + 1}: '+ value['step']
                         
-                        await session(prompt, agent, streaming=True)
+                        await session(prompt, agent, stream=True)
                         
                         eval_prompt = "Task: "+value['step']
                         eval_prompt += "\n\nAgent Response:\n"+session.chat[-1]['message']
                         
-                        await session(eval_prompt, evaluator, streaming=True)
+                        await session(eval_prompt, evaluator, stream=True)
                         self.step_instructions[key]['done'] = True
                         
                         self.save()
