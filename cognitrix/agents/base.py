@@ -117,7 +117,7 @@ class Agent(Model):
             result += data['content']
         
         if session:
-            await session(message.content, self, 'task', True, generate_response, {'type': 'start_task', 'action': 'process_message'})
+            await session(message.content, self, 'cli', True, generate_response, {'type': 'start_task', 'action': 'process_message'})
         else:
             async for response in self.generate(content):
                 result += response.result # type: ignore

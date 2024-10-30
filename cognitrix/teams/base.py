@@ -161,7 +161,7 @@ class Team(Model):
             "Do not forget to include 'Responsibilities:' right before the responsibilities."
         )
 
-        await session(prompt, self.leader, 'task', True, parse_agent_response, {'type': 'start_task', 'action': 'create_workflow'})
+        await session(prompt, self.leader, 'cli', True, parse_agent_response, {'type': 'start_task', 'action': 'create_workflow'})
         
         if response:
             steps = response.split('\n\n')
@@ -191,6 +191,8 @@ class Team(Model):
         if not workflow:
             print(f"Warning: No workflow response received for task '{task.title}'")
             return []
+        
+        print(f"Workflow: {workflow}")
         
         for step in workflow:
             for responsibility in step["responsibilities"]:
@@ -255,7 +257,7 @@ After your review, conclude with one of the following actions:
 Your review:
 """
                     
-                    await session(review_prompt, self.leader, 'task', True, parse_review_response, {'type': 'start_task', 'action': 'review_agent_task'})
+                    await session(review_prompt, self.leader, 'cli', True, parse_review_response, {'type': 'start_task', 'action': 'review_agent_task'})
                     
                     # Leader provides feedback to the agent
                     print(f"[!] Review response for {agent.name} on task '{task.title}' (Step: {step['step']}):\n{review_response}")

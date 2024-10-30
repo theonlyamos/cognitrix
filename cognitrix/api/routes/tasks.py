@@ -45,7 +45,7 @@ async def update_task_status(request: Request, task_id: str, background_tasks: B
             task.status = TaskStatus.IN_PROGRESS
             task.pid = result.id
             task.save()
-            response = task.dict()
+            response = task.model_dump()
     
     return JSONResponse(response)
 
@@ -56,8 +56,9 @@ async def load_task(task_id: str):
     if task:
         if task.pid:
             task_result = AsyncResult(task.pid)
+            print(task_result.result, task_result.state)
             print('[+] Task Result',task_result)
-        response = task.dict()
+        response = task.model_dump()
     
     return JSONResponse(response)
 
