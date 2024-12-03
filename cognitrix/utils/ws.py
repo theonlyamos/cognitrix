@@ -8,7 +8,7 @@ from cognitrix.tasks.base import Task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import Tool
 from cognitrix.agents import PromptGenerator
-from cognitrix.sessions.session import Session
+from cognitrix.sessions.base import Session
 from cognitrix.celery_worker import run_team_task
 from starlette.websockets import WebSocketDisconnect
 from cognitrix.prompts.generator import team_details_generator, agent_details_generator, task_details_generator

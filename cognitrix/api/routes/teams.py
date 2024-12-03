@@ -4,7 +4,7 @@ from typing import List
 
 from cognitrix.common.security import get_current_user
 
-from cognitrix.sessions.session import Session
+from cognitrix.sessions.base import Session
 from cognitrix.teams.base import Team
 
 teams_api = APIRouter(

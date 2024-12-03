@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from cognitrix.providers import LLM
 from cognitrix.agents import  Agent
-from cognitrix.sessions.session import Session
+from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task
 from cognitrix.tools.base import Tool
 from cognitrix.teams.base import Team

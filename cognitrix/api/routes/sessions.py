@@ -5,7 +5,7 @@ from typing import List
 
 from cognitrix.common.security import get_current_user
 
-from cognitrix.sessions.session import Session
+from cognitrix.sessions.base import Session
 
 sessions_api = APIRouter(
     prefix='/sessions',

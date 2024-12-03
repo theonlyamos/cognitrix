@@ -10,7 +10,7 @@ from functools import cached_property
 
 if TYPE_CHECKING:
     from cognitrix.providers.base import LLM
-    from cognitrix.sessions.session import Session
+    from cognitrix.sessions.base import Session
     from cognitrix.utils.ws import WebSocketManager
 
 class Team(Model):
@@ -384,7 +384,7 @@ Your review:
 
     @classmethod
     def get_session(cls, team_id: str) -> 'Session':
-        from cognitrix.sessions.session import Session
+        from cognitrix.sessions.base import Session
         session = Session.find_one({'team_id': team_id})
         if not session:
             session = Session(team_id=team_id)

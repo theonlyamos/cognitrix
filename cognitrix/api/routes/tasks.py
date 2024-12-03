@@ -7,7 +7,7 @@ from cognitrix.common.security import get_current_user
 from cognitrix.tasks.base import TaskStatus
 
 from ...celery_worker import run_task
-from cognitrix.sessions.session import Session
+from cognitrix.sessions.base import Session
 from cognitrix.tasks import Task
 from ...providers import LLM
 
