@@ -1,7 +1,7 @@
 import asyncio
 from celery import Celery
 from celery.signals import task_prerun, task_postrun, task_success, task_failure
-from cognitrix.providers.session import Session
+from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.teams.base import Team
 from cognitrix.config import run_configure
@@ -45,7 +45,7 @@ def task_postrun_handler(task_id, task, *args, retval=None, state=None, **kwargs
         
 @task_success.connect
 def task_success_handler(sender=None, result=None, **kwargs):
-    logger.info(f"Task succeeded: {sender.request.id}")
+    logger.info(f"Task succeeded: {sender.request.id}") # type: ignore
 
 @task_failure.connect
 def task_failure_handler(sender=None, task_id=None, exception=None, **kwargs):

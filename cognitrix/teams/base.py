@@ -10,7 +10,7 @@ from functools import cached_property
 
 if TYPE_CHECKING:
     from cognitrix.providers.base import LLM
-    from cognitrix.providers.session import Session
+    from cognitrix.sessions.session import Session
     from cognitrix.utils.ws import WebSocketManager
 
 class Team(Model):
@@ -146,7 +146,8 @@ class Team(Model):
         
         prompt = (
             f"Task: {task.title}\nDescription: {task.description}\n"
-            f"Team members: {', '.join(agent.name for agent in self.agents if agent.id != self.leader_id)}\n\n"
+            f"Team members: {', '.join(agent.name for agent in self.agents if agent.id != self.leader_id)}\n"
+            "All team members are AI agents. Factor this into your decision when giving time estimates.\n\n"
             "Create a detailed workflow for this task. For each step, provide the following information in a structured format:\n"
             "1. Step number and title\n"
             "2. Responsibilities (one per line, format: 'Agent Name: Specific task')\n"
@@ -158,10 +159,11 @@ class Team(Model):
             "- [Agent Name]: [Specific task]\n"
             "Estimated Time: [Duration]\n\n"
             "Repeat this structure for each step in the workflow."
-            "Do not forget to include 'Responsibilities:' right before the responsibilities."
+            "Do not forget to include 'Responsibilities:' right before the responsibilities.\n"
+            "Your response should not be in json format and should not contain any decorators."
         )
 
-        await session(prompt, self.leader, 'cli', True, parse_agent_response, {'type': 'start_task', 'action': 'create_workflow'})
+        await session(prompt, self.leader, 'task', True, parse_agent_response, {'type': 'start_task', 'action': 'create_workflow'})
         
         if response:
             steps = response.split('\n\n')
@@ -257,7 +259,7 @@ After your review, conclude with one of the following actions:
 Your review:
 """
                     
-                    await session(review_prompt, self.leader, 'cli', True, parse_review_response, {'type': 'start_task', 'action': 'review_agent_task'})
+                    await session(review_prompt, self.leader, 'task', True, parse_review_response, {'type': 'start_task', 'action': 'review_agent_task'})
                     
                     # Leader provides feedback to the agent
                     print(f"[!] Review response for {agent.name} on task '{task.title}' (Step: {step['step']}):\n{review_response}")
@@ -382,7 +384,7 @@ Your review:
 
     @classmethod
     def get_session(cls, team_id: str) -> 'Session':
-        from cognitrix.providers.session import Session
+        from cognitrix.sessions.session import Session
         session = Session.find_one({'team_id': team_id})
         if not session:
             session = Session(team_id=team_id)

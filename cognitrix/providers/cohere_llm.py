@@ -56,7 +56,7 @@ class Cohere(LLM):
         return formatted_messages
     
     def format_tools(self, tools: list[dict[str, Any]]):
-        """Format tools for the groq sdk"""
+        """Format tools for cohere sdk"""
         for tool in tools:
             f_tool = {
                 "name": tool['name'],
@@ -71,7 +71,7 @@ class Cohere(LLM):
             
             # self.tools.append(f_tool)
 
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, tools: Any = [], **kwds: Any):
         try:
             if not self.client:
                 self.client = cohere.Client(api_key=self.api_key)
@@ -79,7 +79,7 @@ class Cohere(LLM):
             response = LLMResponse()
             chat_history = self.format_query(chat_history)
             
-            stream = self.client.chat_stream( 
+            completion = self.client.chat_stream( 
                 model=self.model,
                 message=query['content'],
                 temperature=self.temperature,
@@ -95,7 +95,7 @@ class Cohere(LLM):
                 # ]
             )
             
-            for event in stream:
+            for event in completion:
                 if event.event_type == 'text-generation' or event.event_type == 'tool-calls-chunk':
                     if hasattr(event, 'text'):
                         response.add_chunk(event.text)

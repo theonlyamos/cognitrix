@@ -18,7 +18,7 @@ from cognitrix.utils import extract_json, parse_tool_call_results
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 
 if TYPE_CHECKING:
-    from cognitrix.providers.session import Session
+    from cognitrix.sessions.base import Session
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -117,7 +117,7 @@ class Agent(Model):
             result += data['content']
         
         if session:
-            await session(message.content, self, 'cli', True, generate_response, {'type': 'start_task', 'action': 'process_message'})
+            await session(message.content, self, 'task', True, generate_response, {'type': 'start_task', 'action': 'process_message'})
         else:
             async for response in self.generate(content):
                 result += response.result # type: ignore
@@ -142,10 +142,10 @@ class Agent(Model):
         prompt += self.system_prompt
         prompt = prompt.replace("{name}", self.name)
         
-        prompt = prompt.replace("{tools}", tools_str)
+        # prompt = prompt.replace("{tools}", tools_str)
         prompt = prompt.replace("{subagents}", subagents_str)
         
-        prompt = prompt.replace("{available_tools}", json.dumps(self.available_tools))
+        # prompt = prompt.replace("{available_tools}", json.dumps(self.available_tools))
         prompt = prompt.replace("{llms}", llms_str)
 
         return prompt
@@ -228,7 +228,7 @@ class Agent(Model):
                     tool = Tool.get_by_name(t['name'])
                     
                     if not tool:
-                        print(f"Tool '{t['name']}' not found")
+                        # print(f"Tool '{t['name']}' not found")
                         raise Exception(f"Tool '{t['name']}' not found")
                     
                     print(f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}")

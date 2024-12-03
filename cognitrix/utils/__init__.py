@@ -82,6 +82,9 @@ def tool_to_functions(tool: Tool) -> Dict:
     Returns:
         str: A JSON string representing the tool in the OpenAI API format.
     """
+    # Add parameters and required fields from the tool's run() method signature
+    import inspect
+    
     tool_json = {
         "type": "function",
         "function": {
@@ -95,8 +98,6 @@ def tool_to_functions(tool: Tool) -> Dict:
         }
     }
     
-    # Add parameters and required fields from the tool's run() method signature
-    import inspect
     run_signature = inspect.signature(tool.run)
     for param_name, param in run_signature.parameters.items():
         if param.default is param.empty:

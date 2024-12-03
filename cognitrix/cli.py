@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from cognitrix.providers import LLM
 from cognitrix.agents import  Agent
-from cognitrix.providers.session import Session
+from cognitrix.sessions.session import Session
 from cognitrix.tasks.base import Task
 from cognitrix.tools.base import Tool
 from cognitrix.teams.base import Team
@@ -359,10 +359,10 @@ def start(args: Namespace):
             asyncio.run(session(args.generate, assistant, stream=args.stream))
                 
         elif args.ui.lower() == 'web':
-            start_worker()
+            # start_worker()
             start_web_ui(assistant)
         else:
-            start_worker()
+            # start_worker()
             asyncio.run(initialize(session, assistant, stream=args.stream))
     except KeyboardInterrupt:
         print("\nExiting...")
@@ -424,7 +424,7 @@ def get_arguments():
 def start_worker():
     try:
         # Assuming your Celery app is defined in cognitrix.celery_app
-        celery_args = ['celery', '-A', 'cognitrix.celery_worker', 'worker', '--loglevel=error']
+        celery_args = ['celery', '-A', 'cognitrix.celery_worker', 'worker', '--loglevel=info']
         worker_process = subprocess.Popen(celery_args)
         print("Celery worker started.")
         return worker_process

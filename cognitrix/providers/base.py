@@ -1,7 +1,9 @@
+import json
 from odbms import Model
 from pydantic import Field
 from typing import Any, List, Dict, TypeAlias, Union
 from openai import OpenAI
+from rich import print
 import os
 import logging
 import inspect
@@ -120,25 +122,30 @@ class LLM(Model):
         return messages
 
     
-    # def format_tools(self, tools: list[dict[str, Any]]):
-    #     """Format tools for the provider sdk"""
-    #     for tool in tools:
-    #         f_tool = {
-    #             "type": "function",
-    #             "function": {
-    #                 "name": tool['name'].replace(' ', '_'),
-    #                 "description": tool['description'][:1024],
-    #                 "parameters": {
-    #                     "type": "object",
-    #                     "properties": {},
-    #                     "required": tool['required'],
-    #                 },
-    #             },
-    #         }
-    #         for key, value in tool['parameters'].items():
-    #             f_tool['function']['parameters']['properties'][key] = {'type': value}
+    def format_tools(self, tools: list[dict[str, Any]]):
+        """Format tools for the provider sdk"""
+        
+        formatted_tools = []
+        
+        for tool in tools:
+            f_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool['name'].replace(' ', '_'),
+                    "description": tool['description'][:1024],
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": tool['required'],
+                    },
+                },
+            }
+            for key, value in tool['parameters'].items():
+                f_tool['function']['parameters']['properties'][key] = {'type': value}
             
-    #         self.tools.append(f_tool)
+            formatted_tools.append(f_tool)
+            
+        return formatted_tools
     
     @staticmethod
     def list_llms():
@@ -164,7 +171,7 @@ class LLM(Model):
             logging.exception(e)
             return None
     
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, tools: Any = [], **kwds: Any):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -207,20 +214,33 @@ class LLM(Model):
                         {"role": "system", "content": system_prompt},
                         *formatted_messages
                     ],
+                    tools=tools,
                     temperature=self.temperature,
                     max_tokens=self.max_tokens,
                     stream=stream
                 )
             response = LLMResponse()
             
-            if stream:
+            if not stream:
+                if hasattr(completion.choices[0].message, 'tool_calls') and completion.choices[0].message.tool_calls:
+                    for tool_call in completion.choices[0].message.tool_calls:
+                        response.tool_call.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
+                if completion.choices[0].message.content:
+                    response.add_chunk(completion.choices[0].message.content)
+                yield response
+            elif stream and hasattr(completion, 'choices'):
                 for chunk in completion:
+                    if (hasattr(chunk, 'choices') and 
+                        chunk.choices and 
+                        hasattr(chunk.choices[0].delta, 'tool_calls') and 
+                        chunk.choices[0].delta.tool_calls):
+                        for tool_call in chunk.choices[0].delta.tool_calls:
+                            response.tool_call.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
+                        yield response
                     if chunk.choices and len(chunk.choices) and chunk.choices[0].delta.content is not None:
                         response.add_chunk(chunk.choices[0].delta.content)
-                    yield response
-            else:
-                response.add_chunk(completion.choices[0].message.content)
-                yield response
+                        yield response
+            
         except OpenAIError as e:
             logger.error(f"OpenAI API error: {str(e)}")
             yield LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")

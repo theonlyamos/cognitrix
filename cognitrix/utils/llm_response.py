@@ -24,7 +24,7 @@ class LLMResponse(Model):
     result: Optional[str] = None
     """Result"""
     
-    tool_call: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None
+    tool_call: List[Dict[str, Any]] = []
     """Tool calls"""
     
     artifact: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None

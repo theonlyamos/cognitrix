@@ -1,3 +1,4 @@
+import json
 import os
 import logging
 import inspect
@@ -5,7 +6,7 @@ import asyncio
 from odbms import Model
 from pydantic import Field
 from typing import Any, List, Dict, TypeAlias
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 from azure.ai.inference import ChatCompletionsClient
 from azure.ai.inference.models import (
     AssistantMessage, 
@@ -98,7 +99,7 @@ class Azure(LLM):
         return messages
 
     
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, tools: Any = [], **kwds: Any):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -118,25 +119,58 @@ class Azure(LLM):
             
             formatted_messages = self.format_query(query, chat_history)
             
-            result = self.client.complete(
-                stream=True,
-                messages=[
-                    SystemMessage(content=system_prompt),
-                    *formatted_messages,
-                ],
-                model=self.model,
-            )
+            if self.model in ['o1-mini', 'o1-preview']:
+                stream = False
+                
+                completion = self.client.complete(
+                    model=self.model,
+                    messages=[
+                        SystemMessage(content=system_prompt),
+                        *formatted_messages
+                    ],
+                    max_tokens=65536 if self.model == 'o1-mini' else 32768,
+                )
 
+            else:
+                completion = self.client.complete(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        *formatted_messages
+                    ],
+                    tools=tools,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    stream=stream
+                )
             response = LLMResponse()
-            for update in result:
-                if update.choices:
-                    if update.choices[0].delta.content:
-                        response.add_chunk(update.choices[0].delta.content)
+            
+            if not stream:
+                if hasattr(completion.choices[0].message, 'tool_calls') and completion.choices[0].message.tool_calls:
+                    for tool_call in completion.choices[0].message.tool_calls:
+                        response.tool_call.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
+                if completion.choices[0].message.content:
+                    response.add_chunk(completion.choices[0].message.content)
+                yield response
+            elif stream and hasattr(completion, 'choices'):
+                for chunk in completion:
+                    if (hasattr(chunk, 'choices') and 
+                        chunk.choices and 
+                        hasattr(chunk.choices[0].delta, 'tool_calls') and 
+                        chunk.choices[0].delta.tool_calls):
+                        for tool_call in chunk.choices[0].delta.tool_calls:
+                            response.tool_call.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
                         yield response
-
+                    if chunk.choices and len(chunk.choices) and chunk.choices[0].delta.content is not None:
+                        response.add_chunk(chunk.choices[0].delta.content)
+                        yield response
+            
+        except OpenAIError as e:
+            logger.error(f"OpenAI API error: {str(e)}")
+            yield LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")
         except asyncio.TimeoutError:
             logger.error("Request to OpenAI API timed out")
             yield LLMResponse(llm_response="Error: Request timed out. Please try again later.")
         except Exception as e:
-            logger.exception(e)
+            logger.exception(f"Unexpected error in LLM __call__ method: {str(e)}")
             yield LLMResponse(llm_response=f"An unexpected error occurred: {str(e)}")

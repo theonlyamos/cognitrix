@@ -12,5 +12,5 @@ from cognitrix.providers.mindsdb_llm import MindsDB
 from cognitrix.providers.aimlapi_llm import AIMLAPI
 from cognitrix.providers.ollama_llm import Ollama
 from cognitrix.providers.azure_llm import Azure
-from cognitrix.providers.session import Session
+from cognitrix.sessions.base import Session
 

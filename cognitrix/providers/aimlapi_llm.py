@@ -1,3 +1,4 @@
+import json
 from openai import OpenAI
 from cognitrix.providers import OpenAI as OpenAILLM
 from typing import List, Dict, Any
@@ -29,7 +30,7 @@ class AIMLAPI(OpenAILLM):
     is_multimodal: bool = True
     """Whether the model is multimodal."""
     
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, tools: List[Dict[str, Any]] = [], **kwds: Any):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -76,20 +77,33 @@ class AIMLAPI(OpenAILLM):
                         {"role": "system", "content": system_prompt},
                         *formatted_messages
                     ],
+                    tools=tools,
                     temperature=self.temperature,
                     max_tokens=self.max_tokens,
                     stream=stream
                 )
-                
             response = LLMResponse()
-            if stream:
+            
+            if not stream:
+                if hasattr(completion.choices[0].message, 'tool_calls') and completion.choices[0].message.tool_calls:
+                    for tool_call in completion.choices[0].message.tool_calls:
+                        response.tool_call.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
+                if completion.choices[0].message.content:
+                    response.add_chunk(completion.choices[0].message.content)
+                yield response
+            elif stream and hasattr(completion, 'choices'):
                 for chunk in completion:
+                    if (hasattr(chunk, 'choices') and 
+                        chunk.choices and 
+                        hasattr(chunk.choices[0].delta, 'tool_calls') and 
+                        chunk.choices[0].delta.tool_calls):
+                        for tool_call in chunk.choices[0].delta.tool_calls:
+                            response.tool_call.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
+                        yield response
                     if chunk.choices and len(chunk.choices) and chunk.choices[0].delta.content is not None:
                         response.add_chunk(chunk.choices[0].delta.content)
-                    yield response
-            else:
-                response.add_chunk(completion.choices[0].message.content)
-                yield response
+                        yield response
+            
         except OpenAIError as e:
             logger.error(f"OpenAI API error: {str(e)}")
             yield LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Callable, Self, TypeAlias
 
 from cognitrix.agents.evaluator import Evaluator
 from cognitrix.agents.base import Agent
-from cognitrix.providers.session import Session
+from cognitrix.sessions.base import Session
 
 from odbms import Model
 

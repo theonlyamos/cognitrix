@@ -21,6 +21,7 @@ import logging
 import aiohttp
 import sys
 import os
+import multiprocessing
 
 NotImplementedErrorMessage = 'this tool does not suport async'
 
@@ -68,388 +69,258 @@ def Calculator(math_expression: str):
 
     return result
 
-class YoutubePlayer(Tool):
-    name: str =  "Youtube Player"
-    category: str = "web"
-    description: str =  """
-    use this tool when you need to play a youtube video
+@tool(category='web')
+def play_youtube(topic: str):
+    """Use this tool when you need to play a youtube video.
     
-    :param topic (optional): The topic to search for
-    """
+    Args:
+        topic (str): The topic to search for on YouTube
     
-    def run(self, topic: str):
-        """Play a YouTube Video"""
-
-        url = f"https://www.youtube.com/results?q={topic}"
-        count = 0
-        cont = requests.get(url)
-        data = cont.content
-        data = str(data)
-        lst = data.split('"')
-        for i in lst:
-            count += 1
-            if i == "WEB_PAGE_TYPE_WATCH":
-                break
-        if lst[count - 5] == "/results":
-            raise Exception("No Video Found for this Topic!")
-
-        open_new_tab(f"https://www.youtube.com{lst[count - 5]}")
-        return f"https://www.youtube.com{lst[count - 5]}"
-    
-    async def arun(self, url: str):
-        raise NotImplementedError(NotImplementedErrorMessage)
-
-class InternetBrowser(Tool):
-    name: str =  "Internet Browser"
-    description: str =  """
-    use this tool when you need to visit a website
+    Returns:
+        str: The URL of the played video
     
     Example:
-    User: Visit https://example.com
-    AI Assistant: 
-        <observation>The user or system has requested to open a web page at https://example.com using the Internet Browser tool.</observation>
-        <mindspace>
-    Web Browsing: URL structure, web protocols (HTTP/HTTPS)
-    Internet Security: Website trustworthiness, potential risks
-    User Interface: Browser interaction, web page rendering
-    Network: Internet connectivity, domain name resolution
-        </mindspace>
-        <thought>Step 1) The request is to open a specific web page, so we need to use the Internet Browser tool.
-    Step 2) The URL provided is "https://example.com", which is a secure (HTTPS) website.
-    Step 3) This appears to be a generic example URL, often used for testing or demonstration purposes.
-    Step 4) Opening a web page is a common operation but may have implications for user privacy and security.</thought>
-        <type>tool_call</type>
-        <tool_call>
-            <name>Internet Browser</name>
-            <arguments>
-                <url>https://example.com</url>
-            </arguments>
-        </tool_call>
-    
-    
-    :param url: The url to visit
+        User: Play a video about cats
+        AI Assistant: 
+            <observation>The user wants to watch a YouTube video about cats.</observation>
+            <mindspace>
+            Video Content: Cat-related videos, pet content
+            User Experience: Video playback, browser interaction
+            Search: YouTube search algorithms, relevant results
+            Media Platform: YouTube functionality, video streaming
+            </mindspace>
+            <thought>Step 1) I'll use the Play YouTube tool to search for and play a video about cats.
+            Step 2) The tool will search YouTube and open the most relevant video in a new browser tab.</thought>
+            <type>tool_call</type>
+            <tool_call>
+                <name>Play Youtube</name>
+                <arguments>
+                    <topic>cats</topic>
+                </arguments>
+            </tool_call>
     """
-    category: str = "web"
-    
-    def run(self, url: str):
-        print(f"Opening {url} on the internet browser")
-        
-        open_new_tab(url)
-        
-        return f"Opened {url} on the internet browser"
-    
-    def arun(self, url: str):
-        raise NotImplementedError(NotImplementedErrorMessage)
+    url = f"https://www.youtube.com/results?q={topic}"
+    count = 0
+    cont = requests.get(url)
+    data = cont.content
+    data = str(data)
+    lst = data.split('"')
+    for i in lst:
+        count += 1
+        if i == "WEB_PAGE_TYPE_WATCH":
+            break
+    if lst[count - 5] == "/results":
+        raise Exception("No Video Found for this Topic!")
 
-# class WorldNews(Tool):
-#     name: str =  "World News"
-#     categories: list = ["business","entertainment","general",
-#                   "health","science","sports","technology"]
-#     description: str =  f"""
-#     Use this tool to fetch current news headlines.
-#     Only titles of the news should be presented to
-#     the user.
-    
-#     Allowed categories are: {categories}
-#     The parameters for the news should be intuited
-#     from the user's query.
-    
-#     Always convert the country to its 2-letter ISO 3166-1 code
-#     if the country parameter is needed before being used.
-    
-#     Never use 'world' as a country.
-    
-#     The results of this tool should alwasy be returned
-#     to the user as bullet points.
-    
-#     :param topic: The topic to search for
-#     :param category: Category selected from categories {categories}
-#     :param country (optional): Country to search news from
-    
-#     Example:
-#     User: Get me the latest news on technology in the united states
-#     AI Assistant: {{
-#         "type": "tool_call",
-#         "tool_call": [
-#           {
-#                "name": "World News",
-#                "arguments": {
-#                   "topic": "latest news on technology", 
-#                   "category": "technology", 
-#                   "country": "US"},
-#               }
-#         ]
-#     }}
-    
-#     User: Get me news headlines from around the world
-#     AI Assistant: {{
-#         "type": "tool_call",
-#         "tool_call": [
-#           {
-#                "name": "World News",
-#                "arguments": {
-#                   "topic": "news headlines around the world", 
-#                   "category": "general"
-#               }
-#         ]
-#     }}
-#     """
-#     def run(self, topic: Optional[str] = None, category: Optional[str] = 'general', country: Optional[str] = 'world'):
-#         try:
-#             url = "https://newsapi.org/v2/top-headlines"
-#             params={
-#                 "apiKey": os.getenv('NEWSAPI_API_KEY'),
-#                 "language": "en",
-#                 "sources": "bbc-news,the-verge,google-news",
-#                 "pageSize": 5
-#             }
-            
-#             if topic:
-#                 params["q"] = topic
-            
-#             if any([category, country]) and category != 'general' and country not in ('world',''):
-#                 del params['sources']
-            
-#                 if category:
-#                     params["category"] = category
-            
-#                 if country:
-#                     params["country"] = country
-            
-#             response = requests.get(
-#                 url,
-#                 params=params
-#             )
-            
-#             results = response.json()
-#             articles = results['articles']
-#             headlines = [line['title'] for line in articles]
-            
-#             return json.dumps(headlines)
-#         except Exception as e:
-#             return f"Error: {str(e)}"
-    
-#     def arun(self, url: str):
-#         raise NotImplementedError(NotImplementedErrorMessage)
+    video_url = f"https://www.youtube.com{lst[count - 5]}"
+    open_new_tab(video_url)
+    return video_url
 
-platform = sys.platform
-home_path: str = str(Path.home())
-desktop_path: str = str(Path.home().joinpath('Desktop'))
-documents_path: str = str(Path.home().joinpath('Documents'))
-
-class FSBrowser(Tool):
-    name: str =  "File System Browser"
-    category: str = "system"
-    description: str =  f"""use this tool when you need to perform
-    file system operations like listing of directories,
-    opening a file, creating a file, updating a file,
-    reading from a file or deleting a file.
+@tool(category='web')
+def open_website(url: str):
+    """Use this tool when you need to visit a website.
     
-    This tool is for file reads and file writes
-    actions.
+    Args:
+        url (str): The URL to visit
     
-    platform is the {platform}.
-    {home_path} is the home path.
-    
-    The operation to perform should be in this 
-    list:- ['open', 'list', 'create', "mkdir", 
-    'read', 'write', 'delete', 'execute'].
-    
-    The path should always be converted to absolute
-    path before inputting to tool.
-    
-    For all operations except 'execute',
-    always append the filename to the specified 
-    directory.
+    Returns:
+        str: A confirmation message
     
     Example:
-    User: create test.py on Desktop.
-    AI Assistant: 
-        <observation>The user has requested to create a new file named 'test.py' on the desktop with content 'gibberish'.</observation>
-        <mindspace>
-    File System: File creation, directory structure, file permissions
-    Programming: Python files, code editing, file naming conventions
-    User Interface: Desktop environment, file management
-    Security: File access, potential risks of creating files
-        </mindspace>
-        <thought>Step 1) The user wants to create a new file, so we need to use the File System Browser tool.
-    Step 2) The file should be created on the desktop, which is specified by the 'desktop_path' argument.
-    Step 3) The filename is set to 'test.py', indicating it's likely a Python script.
-    Step 4) The content of the file is set to 'gibberish', which may not be valid Python code.</thought>
-        <type>tool_call</type>
-        <tool_call>
-            <name>File System Browser</name>
-            <arguments>
-                <path>{desktop_path}</path>
-                <operation>create</operation>
-                <filename>test.py</filename>
-                <content>gibberish</content>
-            </arguments>
-        </tool_call>
-    
-    
-    User: write new content to test.py on Desktop.
-    AI Assistant: 
-        <observation>The user has requested to write 'gibberish' content to a file named 'test.py' on the desktop.</observation>
-        <mindspace>
-    File System: File writing operations, file permissions
-    Programming: Python files, code editing, file content management
-    User Interface: Desktop environment, file access and modification
-    Security: File overwriting, data integrity, potential risks
-        </mindspace>
-        <thought>Step 1) The user wants to write to a file, so we need to use the File System Browser tool.
-    Step 2) The file is located on the desktop, specified by the 'desktop_path' argument.
-    Step 3) The operation is 'write', which means we'll be modifying the content of an existing file or creating it if it doesn't exist.
-    Step 4) The target file is 'test.py', which is likely a Python script.
-    Step 5) The content to be written is 'gibberish', which may not be valid Python code and could potentially overwrite existing content.</thought>
-        <type>tool_call</type>
-        <tool_call>
-            <name>File System Browser</name>
-            <arguments>
-                <path>{desktop_path}</path>
-                <operation>write</operation>
-                <filename>test.py</filename>
-                <content>gibberish</content>
-            </arguments>
-        </tool_call>
-    
-    
-    User: create folder called NewApp on Desktop.
-    AI Assistant: 
-        <observation>The user has requested to create a new folder called 'NewApp' on the Desktop.</observation>
-        <mindspace>
-    File System: Directory creation, folder structure, permissions
-    User Interface: Desktop organization, file management
-    Project Management: Application development, workspace setup
-    Naming Conventions: Folder naming best practices
-        </mindspace>
-        <thought>Step 1) The user wants to create a new folder, so we need to use the File System Browser tool.
-    Step 2) The folder should be created on the desktop, which is specified by the 'desktop_path' argument.
-    Step 3) The operation is 'mkdir', which stands for 'make directory', indicating we're creating a new folder.
-    Step 4) The name of the new folder is set to 'NewApp', suggesting it might be used for a new application or project.
-    Step 5) Creating a folder is generally a safe operation, but we should be aware of potential naming conflicts.</thought>
-        <type>tool_call</type>
-        <tool_call>
-            <name>File System Browser</name>
-            <arguments>
-                <path>{desktop_path}</path>
-                <operation>mkdir</operation>
-                <filename>NewApp</filename>
-            </arguments>
-        </tool_call>
-    
-    
-    User: How many files are in my documents.
-    AI Assistant: 
-        <observation>The user has asked to count the number of files in their documents folder.</observation>
-        <mindspace>
-    File System: Directory structure, file counting
-    User Data: Personal document management, file organization
-    System Information: File system queries, directory contents
-    Privacy: Access to user's personal files, data sensitivity
-        </mindspace>
-        <thought>Step 1) To count the files in the documents folder, we first need to list its contents.
-    Step 2) We'll use the File System Browser tool to accomplish this task.
-    Step 3) The path should be set to 'documents_path' to target the user's documents folder.
-    Step 4) The operation is 'list', which will retrieve the contents of the specified directory.
-    Step 5) After getting the list, we'll need to count the number of files (excluding subdirectories).</thought>
-        <type>tool_call</type>
-        <tool_call>
-            <name>File System Browser</name>
-            <arguments>
-                <path>{documents_path}</path>
-                <operation>list</operation>
-            </arguments>
-        </tool_call>
-    
-    
-    
-    :param path: The specific path (realpath)
-    :param operation: The operation to perform
-    :param filename: (Optional) Name of file or folder to create
-    :param content: (Optional) Content to write to file
+        User: Visit https://example.com
+        AI Assistant: 
+            <observation>The user wants to open a webpage at https://example.com</observation>
+            <mindspace>
+            Web Browsing: URL validation, webpage loading
+            User Interface: Browser interaction, new tab creation
+            Internet: Web protocols, domain resolution
+            Security: URL safety, HTTPS verification
+            </mindspace>
+            <thought>Step 1) I'll use the Open Website tool to open the specified URL.
+            Step 2) The tool will open the URL in a new browser tab.</thought>
+            <type>tool_call</type>
+            <tool_call>
+                <name>Open Website</name>
+                <arguments>
+                    <url>https://example.com</url>
+                </arguments>
+            </tool_call>
     """
+    print(f"Opening {url} in the internet browser")
+    open_new_tab(url)
+    return f"Opened {url} in the internet browser"
+
+@tool(category='system')
+def list_directory(path: str):
+    """List contents of a directory.
     
-    def run(self, path: str | Path, operation: str, filename: Optional[str] = None, content: Optional[str] = None):
-        try:
-            path = Path(path).resolve()
-            operations = {
-                'open': self.execute,
-                'list': self.listdir,
-                'create': self.create_file,
-                'mkdir': self.mkdir,
-                'read': self.read_path,
-                # 'create': self.write_file,
-                'write': self.write_file,
-                'delete': self.delete_path
-            }
-            
-            if operation in ['write', 'create']:
-                return operations[operation](path, filename, content)
-            elif operation in ['open', 'read', 'mkdir']:
-                return operations[operation](path, filename)
-            return operations[operation](path)
-        except Exception as e:
-            return str(e)
+    Args:
+        path (str|Path): The directory path to list
     
-    def arun(self, url: str):
-        raise NotImplementedError(NotImplementedErrorMessage)
+    Returns:
+        str: JSON string containing directory contents
+    """
+    npath = Path(path).resolve()
+    if npath.is_dir():
+        return 'The content of the directory are: \n' + json.dumps(os.listdir(npath))
+    return "The path you provided isn't a directory"
+
+@tool(category='system')
+def open_file(path: str, filename: Optional[str] = None):
+    """Open a file or folder using the system's default application.
     
-    def execute(self, path: Path, filename: Optional[str])->str:
-        if filename and path.joinpath(filename).exists():
-            os.startfile(path.joinpath(filename))
-            return 'Successfully opened file'
-        elif os.path.exists(path):
-            os.startfile(path)
-            return 'Successfully opened folder'
-        return 'Unable to open file'
+    Args:
+        path (str|Path): The path to the file or folder
+        filename (str, optional): The name of the file to open
+    
+    Returns:
+        str: Success or error message
+    """
+    npath = Path(path).resolve()
+    if filename and npath.joinpath(filename).exists():
+        os.startfile(npath.joinpath(filename))
+        return 'Successfully opened file'
+    elif os.path.exists(npath):
+        os.startfile(npath)
+        return 'Successfully opened folder'
+    return 'Unable to open file'
+
+@tool(category='system')
+def create_file(path: str, filename: str, content: Optional[str] = None):
+    """Create a new file with optional content.
+    
+    Args:
+        path (str|Path): The directory path where to create the file
+        filename (str): The name of the file to create
+        content (str, optional): The content to write to the file
+    
+    Returns:
+        str: Success message
+    """
+    npath = Path(path).resolve()
+    full_path = npath.joinpath(filename)
+    
+    if not full_path.exists():
+        with full_path.open('wt') as file:
+            if content:
+                file.write(content)
+    
+    return 'Operation done'
+
+@tool(category='system')
+def create_directory(path: str, dirname: str):
+    """Create a new directory.
+    
+    Args:
+        path (str|Path): The parent directory path
+        dirname (str): The name of the directory to create
+    
+    Returns:
+        str: Success message
+    """
+    npath = Path(path).resolve()
+    full_path = npath.joinpath(dirname)
+    if not full_path.exists() and not full_path.is_dir():
+        full_path.mkdir()
+    
+    return 'Operation done'
+
+@tool(category='system')
+def read_file(path: str, filename: Optional[str] = None):
+    """Read contents of a file.
+    
+    Args:
+        path (str|Path): The path to the file
+        filename (str, optional): The name of the file to read
+    
+    Returns:
+        str: The file contents or directory listing
+    """
+    npath = Path(path).resolve()
+    full_path = npath.joinpath(filename) if filename else Path(path)
+    if full_path.is_file():
+        with full_path.open('rt') as file:
+            return file.read()
+    elif full_path.is_dir(): 
+        return json.dumps(os.listdir(full_path))
+    else:
+        return "Path wasn't found"
+
+@tool(category='system')
+def write_file(path: str, filename: str, content: str):
+    """Write content to a file.
+    
+    Args:
+        path (str|Path): The directory path where the file is located
+        filename (str): The name of the file to write to
+        content (str): The content to write to the file
+    
+    Returns:
+        str: Success message
+    """
+    npath = Path(path).resolve()
+    with npath.joinpath(filename).open('wt') as file:
+        file.write(content)
+    
+    return 'Write operation successful.'
+
+@tool(category='system')
+def delete_path(path: str):
+    """Delete a file or directory.
+    
+    Args:
+        path (str|Path): The path to delete
+    
+    Returns:
+        str: Success message
+    """
+    npath = Path(path).resolve()
+    if npath.is_file():
+        npath.unlink()
+    elif npath.is_dir():
+        shutil.rmtree(npath)
+    
+    return 'Delete operation successful'
+
+@tool(category='system')
+def python_repl(code: str, timeout: Optional[int] = None):
+    """Execute Python code in a REPL environment.
+    
+    Args:
+        code (str): The Python code to execute
+        timeout (int, optional): Timeout in seconds
+    
+    Returns:
+        str: The output of the code execution
+    
+    Warning:
+        This tool can execute arbitrary code. Use with caution.
+    """
+    import functools
+    from cognitrix.tools.python import PythonREPL, warn_once
+
+    warn_once()
+    
+    queue = multiprocessing.Queue()
+    globals_dict = {}
+    locals_dict = {}
+
+    if timeout is not None:
+        p = multiprocessing.Process(
+            target=PythonREPL.worker,
+            args=(code, globals_dict, locals_dict, queue)
+        )
+        p.start()
+        p.join(timeout)
         
-    def listdir(self, path: Path):
-        if path.is_dir():
-            return 'The content of the directory are: \n'+json.dumps(os.listdir(path))
-        return "The path you provided isn't a directory"
+        if p.is_alive():
+            p.terminate()
+            return "Execution timed out"
+    else:
+        PythonREPL.worker(code, globals_dict, locals_dict, queue)
     
-    def create_file(self, path: Path, filename: Optional[str], content: Optional[str]):
-        full_path = path.joinpath(filename) if filename else path
-        
-        if not full_path.exists():
-            with full_path.open('wt') as file:
-                if content:
-                    file.write(content)
-        
-        return 'Operation done'
-    
-    def mkdir(self, path: Path, filename: Optional[str]):
-        full_path = path.joinpath(filename) if filename else path
-        if not full_path.exists() and not full_path.is_dir():
-            full_path.mkdir()
-        
-        return 'Operation done'
-    
-    def read_path(self, path: Path, filename: Optional[str] = None):
-        full_path = path.joinpath(filename) if filename else path
-        if full_path.is_file():
-            with full_path.open('rt') as file:
-                return file.read()
-        elif full_path.is_dir(): 
-            return json.dumps(os.listdir(full_path))
-        else:
-            return "Path wasn't found"
-    
-    def write_file(self, path: Path, filename: str, content: str):
-        with path.joinpath(filename).open('wt') as file:
-            file.write(content)
-        
-        return 'Write operation successful.'
-    
-    def delete_path(self, path: Path):
-        if path.is_file():
-            path.unlink()
-        elif path.is_dir():
-            shutil.rmtree(path)
-        
-        return 'Delete operation successfull'
-    
+    return queue.get()
+
 @tool(category='system')
 def take_screenshot():
     """Use this tool to take a screenshot of the screen.
@@ -989,8 +860,7 @@ def web_scraper(url: str|List[str]):
             results.append(text_content)
 
     return '\n'.join(results)
-    
-    
+     
 @tool(category='web')
 def brave_search(query: str):
     """Use this to retrieve up-to-date information from the internet 
@@ -1044,7 +914,7 @@ def brave_search(query: str):
         results = ""
         for news in response.json()['web']['results']:
             results += f"Title: {news['title']}\nDescripion: {news['description']}\nLink: {news['url']}\n\n"
-        # print(results)
+        
         return results
     else:
         return f"Error: {response.status_code}, {response.text}"

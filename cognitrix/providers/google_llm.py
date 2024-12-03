@@ -34,7 +34,7 @@ class Google(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    model: str = 'gemini-1.5-flash-002'
+    model: str = 'gemini-1.5-flash'
     """model endpoint to use""" 
     
     temperature: float = 0.2
@@ -78,7 +78,7 @@ class Google(LLM):
 
         return messages
 
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, tools: Any = [], **kwds: Any):
         try:
             genai.configure(
                 api_key=self.api_key,
@@ -104,14 +104,15 @@ class Google(LLM):
             if not self.client:
                 self.client = genai.GenerativeModel(model_name=self.model, generation_config=generation_config)
             
-            response = LLMResponse()
             
-            stream =  self.client.generate_content(
+            completion =  self.client.generate_content(
                 contents,
                 stream=True
             )
+             
+            response = LLMResponse()
             
-            for chunk in stream:
+            for chunk in completion:
                 response.add_chunk(chunk.text)
                 yield response
             

@@ -7,7 +7,7 @@ from cognitrix.common.security import get_current_user
 from cognitrix.tasks.base import TaskStatus
 
 from ...celery_worker import run_task
-from cognitrix.providers.session import Session
+from cognitrix.sessions.session import Session
 from cognitrix.tasks import Task
 from ...providers import LLM
 
@@ -56,7 +56,7 @@ async def load_task(task_id: str):
     if task:
         if task.pid:
             task_result = AsyncResult(task.pid)
-            print(task_result.result, task_result.state)
+            print(task_result.result, task_result.state, task_result.info, task_result.traceback)
             print('[+] Task Result',task_result)
         response = task.model_dump()
     

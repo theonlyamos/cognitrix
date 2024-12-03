@@ -26,7 +26,7 @@ class Clarifai(LLM):
     model: str = "https://clarifai.com/anthropic/completion/models/claude-3_5-sonnet"
     """model endpoint to use""" 
     
-    temperature: float = 0.1
+    temperature: float = 0.2
     """What sampling temperature to use.""" 
     
     chat_history: list[str] = []

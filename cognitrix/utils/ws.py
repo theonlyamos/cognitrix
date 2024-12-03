@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -7,7 +8,7 @@ from cognitrix.tasks.base import Task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import Tool
 from cognitrix.agents import PromptGenerator
-from cognitrix.providers.session import Session
+from cognitrix.sessions.session import Session
 from cognitrix.celery_worker import run_team_task
 from starlette.websockets import WebSocketDisconnect
 from cognitrix.prompts.generator import team_details_generator, agent_details_generator, task_details_generator
@@ -133,12 +134,16 @@ class WebSocketManager:
                             else:
                                 task = team.create_task(task['title'], task['description'])
                             if task:
-                                from cognitrix.utils.core import register_websocket_manager
-                                ws_proxy = WebSocketManagerProxy(self.agent.id)
-                                register_websocket_manager(task.id, self)
-                                result = run_team_task.delay(team_id, task.id)
-                                task.pid = result.id
-                                task.save()
+                                # from cognitrix.utils.core import register_websocket_manager
+                                # ws_proxy = WebSocketManagerProxy(self.agent.id)
+                                # register_websocket_manager(task.id, self)
+                                # result = run_team_task.delay(team_id, task.id)
+                                # task.pid = result.id
+                                # task.save()
+                                team.assign_task(task_id=task.id)
+                                task_session = Session(team_id=team.id, task_id=task.id)
+                                task_session.save()
+                                asyncio.create_task(team.work_on_task(task.id, task_session, self))
                             else:
                                 await websocket.send_json({'type': 'error', 'content': 'Task not found'})
                         else:
