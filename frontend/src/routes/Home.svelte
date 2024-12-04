@@ -5,10 +5,14 @@
   import { createSession, deleteSession, getAllSessions } from "../common/utils";
   import ChatComponent from "../lib/ChatContent.svelte";
 
-  export let session_id: string = "";
-  export let agent_id: string = "";
+  interface Props {
+    session_id?: string;
+    agent_id?: string;
+  }
 
-  let sessions: SessionInterface[] = [];
+  let { session_id = "", agent_id = "" }: Props = $props();
+
+  let sessions: SessionInterface[] = $state([]);
   let loading: boolean = true;
 
 
@@ -58,7 +62,7 @@
   <div class="chat-sessions">
     <div class="session-header">
       <h3>Sessions</h3>
-      <button on:click={createNewSession} title="Create new session">
+      <button onclick={createNewSession} title="Create new session">
         <i class="fa-solid fa-plus"></i>
       </button>
     </div>
@@ -66,7 +70,7 @@
       <a href="/{session.id}" use:link class="session-item">
         <span>{new Date(session.created_at).toLocaleString()}</span>
         {#if session.id !== session_id}
-          <button on:click={(e) => removeSession(e, session.id)}>
+          <button onclick={(e) => removeSession(e, session.id)}>
             <i class="fa-solid fa-xmark"></i>
           </button>
         {/if}

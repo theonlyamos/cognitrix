@@ -1,3 +1,4 @@
+from functools import lru_cache
 import json
 from odbms import Model
 from pydantic import Field
@@ -170,6 +171,10 @@ class LLM(Model):
         except Exception as e:
             logging.exception(e)
             return None
+    
+    def get_supported_models(self):
+        client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        return client.models.list()
     
     async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, tools: Any = [], **kwds: Any):
         """Generates a response to a query using the OpenAI API.

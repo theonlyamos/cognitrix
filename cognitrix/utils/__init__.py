@@ -308,9 +308,9 @@ def xml_to_dict(xml_string) -> dict | str:
 def item_to_xml(item):
     elem = ET.Element('tool')
     name = ET.Element('name')
-    name.text = str(item[0])
+    name.text = str(item.tool_name)
     value = ET.Element('result')
-    value.text = str(item[1])
+    value.text = str(item.content)
     elem.append(name)
     elem.append(value)
 

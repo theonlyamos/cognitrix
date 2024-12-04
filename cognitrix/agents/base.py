@@ -212,7 +212,7 @@ class Agent(Model):
         return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
 
     async def call_tools(self, tool_calls: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Union[dict, str]:
-        print(f"Tool calls: {tool_calls}")
+
         try:
             if tool_calls:
                 tool_calls_result = []
@@ -223,6 +223,8 @@ class Agent(Model):
                         agent_tool_calls.append(t)
                 else: 
                     agent_tool_calls.append(tool_calls)
+                    
+                tasks = []
                     
                 for t in agent_tool_calls:
                     tool = Tool.get_by_name(t['name'])
@@ -236,11 +238,12 @@ class Agent(Model):
                         t['arguments']['parent'] = self
                     if tool.name.lower() == 'create sub agent':
                         t['arguments']['parent'] = self
-                        result = await tool.arun(**t['arguments'])
-                    else:
-                        result = tool.run(**t['arguments'])
                     
-                    tool_calls_result.append([tool.name, result])
+                    tasks.append(asyncio.create_task(tool.run(**t['arguments'])))
+     
+                    tool_calls_result = await asyncio.gather(*tasks)
+                    print(tool_calls_result)
+                    # tool_calls_result.append([tool.name, result])
                 
                 return {
                     'type': 'tool_calls_result',

@@ -2,7 +2,11 @@
   import { link } from "svelte-routing";
   import type { TeamInterface } from "../common/interfaces";
 
-  export let team: TeamInterface;
+  interface Props {
+    team: TeamInterface;
+  }
+
+  let { team }: Props = $props();
 
   function handleEdit() {
     console.log(`Edit team ${team.id}`);
@@ -58,13 +62,13 @@
     </div>
   </a>
   <div class="team-options">
-    <button on:click={handleManage} class="option-button manage">
+    <button onclick={handleManage} class="option-button manage">
       <i class="fas fa-cogs"></i> Manage
     </button>
-    <button on:click={handleDelete} class="option-button delete">
+    <button onclick={handleDelete} class="option-button delete">
       <i class="fas fa-trash-alt"></i> Delete
     </button>
-    <button on:click={handleTask} class="option-button task">
+    <button onclick={handleTask} class="option-button task">
       <i class="fas fa-tasks"></i> Task
     </button>
     <a href="/teams/{team.id}/interact" use:link class="option-button interact">

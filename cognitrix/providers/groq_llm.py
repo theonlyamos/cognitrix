@@ -1,3 +1,4 @@
+from functools import lru_cache
 from cognitrix.providers.base import LLM
 from dotenv import load_dotenv
 import logging
@@ -46,3 +47,17 @@ class Groq(LLM):
     
     max_tokens: int = 4096
     """Maximum output tokens"""
+    
+    def get_supported_models(self):
+        import requests
+
+        url = "https://api.groq.com/openai/v1/models"
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.get(url, headers=headers)
+
+        return [entry['id'] for entry in response.json()['data']]

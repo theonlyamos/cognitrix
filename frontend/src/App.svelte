@@ -17,7 +17,7 @@
   import ThemeToggle from "$lib/ThemeToggle.svelte";
   import "./app.css";
 
-  let user: any;
+  let user: any = $state();
 
   userStore.subscribe((value) => {
     user = value;
@@ -29,7 +29,11 @@
     webSocketStore.connect();
   });
 
-  export let url = '';
+  interface Props {
+    url?: string;
+  }
+
+  let { url = '' }: Props = $props();
 </script>
 
 <Router {url}>
@@ -52,22 +56,28 @@
       <Route path="/teams" component={Teams}></Route>
       <Route path="/teams/new" component={TeamPage}></Route>
       <Route path="/teams/:team_id" component={TeamPage}></Route>
-      <Route path="/teams/:team_id/interact" let:params>
-        <TeamInteraction team_id={params.team_id} />
-      </Route>
-      <Route path="/teams/:team_id/tasks/:task_id/interact" let:params>
-        <TeamInteraction team_id={params.team_id} task_id={params.task_id} />
-      </Route>
+      <Route path="/teams/:team_id/interact" >
+        {#snippet children({ params })}
+                <TeamInteraction team_id={params.team_id} />
+                      {/snippet}
+            </Route>
+      <Route path="/teams/:team_id/tasks/:task_id/interact" >
+        {#snippet children({ params })}
+                <TeamInteraction team_id={params.team_id} task_id={params.task_id} />
+                      {/snippet}
+            </Route>
       <Route
         path="/teams/:team_id/tasks/:task_id/sessions/:session_id/interact"
-        let:params
+        
       >
-        <TeamInteraction
-          team_id={params.team_id}
-          task_id={params.task_id}
-          session_id={params.session_id}
-        />
-      </Route>
+        {#snippet children({ params })}
+                <TeamInteraction
+            team_id={params.team_id}
+            task_id={params.task_id}
+            session_id={params.session_id}
+          />
+                      {/snippet}
+            </Route>
     </Container>
   </div>
 </Router>

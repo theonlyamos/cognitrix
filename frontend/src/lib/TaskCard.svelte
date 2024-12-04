@@ -3,10 +3,19 @@
   import type { TaskDetailInterface } from "../common/interfaces";
   import RadioItem from "./RadioItem.svelte";
 
-  export let task: TaskDetailInterface;
-  export let onEdit: (task: TaskDetailInterface) => void = () => {};
-  export let onDelete: (task: TaskDetailInterface) => void = () => {};
-  export let onRun: (task: TaskDetailInterface) => void = () => {};
+  interface Props {
+    task: TaskDetailInterface;
+    onEdit?: (task: TaskDetailInterface) => void;
+    onDelete?: (task: TaskDetailInterface) => void;
+    onRun?: (task: TaskDetailInterface) => void;
+  }
+
+  let {
+    task,
+    onEdit = () => {},
+    onDelete = () => {},
+    onRun = () => {}
+  }: Props = $props();
 
   function calculateDuration(startedAt: string, completedAt: string) {
     const startDate: Date = new Date(startedAt);
@@ -96,13 +105,13 @@
     </div>
   </a>
   <div class="task-options">
-    <button on:click={handleEdit} class="option-button edit">
+    <button onclick={handleEdit} class="option-button edit">
       <i class="fas fa-edit"></i> Edit
     </button>
-    <button on:click={handleDelete} class="option-button delete">
+    <button onclick={handleDelete} class="option-button delete">
       <i class="fas fa-trash-alt"></i> Delete
     </button>
-    <button on:click={handleRun} class="option-button run">
+    <button onclick={handleRun} class="option-button run">
       <i class="fas fa-play"></i> Run
     </button>
   </div>

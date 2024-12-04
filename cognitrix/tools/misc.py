@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger('cognitrix.log')
 
 @tool(category='general')
-def Calculator(math_expression: str):
+def calculator(math_expression: str):
     """
     Useful for getting the result of a math expression.
     The input to this tool should be a valid mathematical expression that could be executed by a simple calculator.
@@ -65,9 +65,7 @@ def Calculator(math_expression: str):
     :param math_expression: The math expression to evaluate
     """
 
-    result = eval(math_expression)
-
-    return result
+    return eval(math_expression)
 
 @tool(category='web')
 def play_youtube(topic: str):

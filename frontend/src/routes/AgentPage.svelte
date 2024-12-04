@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { run } from 'svelte/legacy';
+
   import { link, navigate } from "svelte-routing";
   import {
     getAgent,
@@ -43,8 +45,12 @@
   } from "$lib/components/ui/tabs"
   
 
-  export let agent_id: string = "";
-  let agent: AgentDetailInterface = {
+  interface Props {
+    agent_id?: string;
+  }
+
+  let { agent_id = $bindable("") }: Props = $props();
+  let agent: AgentDetailInterface = $state({
     name: "",
     system_prompt: "",
     is_sub_agent: false,
@@ -57,26 +63,26 @@
       is_multimodal: false,
       supports_tool_use: false,
     },
-  };
-  let providers: ProviderInterface[] = []; 
-  let tools: ToolInterface[] = [];
+  });
+  let providers: ProviderInterface[] = $state([]); 
+  let tools: ToolInterface[] = $state([]);
   let agentTools: string[] = [];
 
-  let confirmModal: boolean = false;
+  let confirmModal: boolean = $state(false);
   let toolsShown: boolean = false;
   let llmsShown: boolean = false;
-  let selectedTools: string[] = [];
+  let selectedTools: string[] = $state([]);
   let loading: boolean = false;
-  let submitting: boolean = false;
+  let submitting: boolean = $state(false);
   let unsubscribe: Unsubscriber | null = null;
   let socket: WebSocket;
   let newPromptTemplate: string = "";
-  let isGenerativeMode = false;
-  let generativeDescription = "";
+  let isGenerativeMode = $state(false);
+  let generativeDescription = $state("");
 
-  let alertMessage = "";
-  let alertType: "default" | "success" | "warning" | "danger" | "loading" = "default";
-  let showAlert = false;
+  let alertMessage = $state("");
+  let alertType: "default" | "success" | "warning" | "danger" | "loading" = $state("default");
+  let showAlert = $state(false);
 
   const { value, setValue } = createTabs({ defaultValue: 'tab1' });
 
@@ -216,20 +222,24 @@
   //   agent.system_prompt = agent.system_prompt + newPromptTemplate;
   // }
 
-  $: if (generativeDescription) {
-    const parsedGenerativeDescription = convertXmlToJson(generativeDescription) as {name: string, description: string, tools: string[]}
-    agent.name = parsedGenerativeDescription.name
-    agent.system_prompt = parsedGenerativeDescription.description
-    if (parsedGenerativeDescription.tools && parsedGenerativeDescription.tools.length) {
-      selectedTools = parsedGenerativeDescription.tools
+  run(() => {
+    if (generativeDescription) {
+      const parsedGenerativeDescription = convertXmlToJson(generativeDescription) as {name: string, description: string, tools: string[]}
+      agent.name = parsedGenerativeDescription.name
+      agent.system_prompt = parsedGenerativeDescription.description
+      if (parsedGenerativeDescription.tools && parsedGenerativeDescription.tools.length) {
+        selectedTools = parsedGenerativeDescription.tools
+      }
     }
-  }
+  });
 
-  $: if (Array.isArray(selectedTools) && selectedTools.length){
-    agent.tools = selectedTools
-      .map((tool) => tools.find((t) => t.name === tool))
-      .filter((tool): tool is ToolInterface => tool !== undefined);
-  }
+  run(() => {
+    if (Array.isArray(selectedTools) && selectedTools.length){
+      agent.tools = selectedTools
+        .map((tool) => tools.find((t) => t.name === tool))
+        .filter((tool): tool is ToolInterface => tool !== undefined);
+    }
+  });
 </script>
 
 <Modal
@@ -284,13 +294,13 @@
         <i class="fa-solid fa-tools fa-fw"></i>
         <span>Assign Task</span>
       </button>
-      <button on:click={chatWithAgent} class="btn">
+      <button onclick={chatWithAgent} class="btn">
         <i class="fa-regular fa-comments fa-fw"></i>
         <span>Chat</span>
       </button>
     </div>
   {/if}
-  <button class="btn" disabled={submitting} on:click={handleAgentSubmit}>
+  <button class="btn" disabled={submitting} onclick={handleAgentSubmit}>
     <i class="fa-solid fa-save fa-fw"></i>
     <span
       >{submitting
@@ -303,7 +313,7 @@
   <button
     class="btn"
     disabled={submitting}
-    on:click={() => {
+    onclick={() => {
       confirmModal = false;
       confirmModal = true;
     }}
@@ -316,13 +326,13 @@
   <div use:tabsList={{}}>
     <button
       use:tabsTrigger={{ value: "tab1", activeValue: $value }}
-      on:click={() => setValue("tab1")}
+      onclick={() => setValue("tab1")}
     >
       Tab 1
     </button>
     <button
       use:tabsTrigger={{ value: "tab2", activeValue: $value }}
-      on:click={() => setValue("tab2")}
+      onclick={() => setValue("tab2")}
     >
       Tab 2
     </button>
@@ -375,7 +385,7 @@
       <div class="form-group">
         <select
           bind:value={agent.llm.provider}
-          on:change={(e) => {
+          onchange={(e) => {
             handleLLMChange(e);
           }}
         >

@@ -1,11 +1,23 @@
 <script lang="ts">
-  export let label = "";
-  export let name = "";
-  export let value: any = "";
-  export let checked: boolean = false;
-  export let disabled: boolean = false;
-  export let group: string[] = [];
-  export let onChange = (e: Event) => {};
+  interface Props {
+    label?: string;
+    name?: string;
+    value?: any;
+    checked?: boolean;
+    disabled?: boolean;
+    group?: string[];
+    onChange?: any;
+  }
+
+  let {
+    label = "",
+    name = "",
+    value = "",
+    checked = $bindable(false),
+    disabled = false,
+    group = $bindable([]),
+    onChange = (e: Event) => {}
+  }: Props = $props();
 
   const handleChange = (event: Event) => {
     // const target = event.target as HTMLInputElement;
@@ -30,7 +42,7 @@
     {name}
     {checked}
     bind:group
-    on:change={onChange}
+    onchange={onChange}
     {disabled}
   />
   <span class="radio-icon">

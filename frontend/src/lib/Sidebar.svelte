@@ -5,9 +5,9 @@
   import { link, useLocation, navigate } from "svelte-routing";
   import { userStore } from "../common/stores";
 
-  let page: string = window.location.pathname;
-  let theme: string;
-  let isSidebarOpen = true;
+  let page: string = $state(window.location.pathname);
+  let theme: string = $state();
+  let isSidebarOpen = $state(true);
 
   function setTheme(newTheme: string) {
     theme = newTheme;
@@ -88,7 +88,7 @@
     </a>
   </nav>
 
-  <button on:click={toggleTheme}>
+  <button onclick={toggleTheme}>
     {#if theme === "light"}
       <i class="fas fa-moon"></i>
     {:else}
@@ -96,16 +96,16 @@
     {/if}
   </button>
 
-  <button on:click={handleSidebar} title="Sidebar">
+  <button onclick={handleSidebar} title="Sidebar">
     <i class="fas fa-bars"></i>
   </button>
 
-  <button on:click={handleLogout} title="Logout">
+  <button onclick={handleLogout} title="Logout">
     <i class="fas fa-power-off"></i>
   </button>
 </aside>
 
-<button on:click={handleSidebar} class="toggle-off" title="Sidebar">
+<button onclick={handleSidebar} class="toggle-off" title="Sidebar">
   <i class="fas fa-bars-staggered"></i>
 </button>
 

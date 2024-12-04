@@ -1,12 +1,23 @@
 <script lang="ts">
   import Switch from "./Switch.svelte";
 
-  export let model: string;
-  export let api_key: string;
-  export let base_url: string = "";
-  export let temperature: Number;
-  export let max_tokens: Number = 2086;
-  export let is_multimodal: boolean = false;
+  interface Props {
+    model: string;
+    api_key: string;
+    base_url?: string;
+    temperature: Number;
+    max_tokens?: Number;
+    is_multimodal?: boolean;
+  }
+
+  let {
+    model = $bindable(),
+    api_key = $bindable(),
+    base_url = $bindable(""),
+    temperature = $bindable(),
+    max_tokens = $bindable(2086),
+    is_multimodal = $bindable(false)
+  }: Props = $props();
 </script>
 
 <div class="form-group">

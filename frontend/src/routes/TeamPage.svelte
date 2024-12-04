@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { run } from 'svelte/legacy';
+
   import { link, navigate } from "svelte-routing";
   import { onMount, onDestroy } from "svelte";
   import { getTeam, saveTeam, deleteTeam, getAllAgents, generateTeam, convertXmlToJson } from "../common/utils";
@@ -12,26 +14,30 @@
   import Modal from "$lib/Modal.svelte";
   import Alert from "../lib/Alert.svelte";
 
-  export let team_id: string = "";
-  let team: TeamInterface = {
+  interface Props {
+    team_id?: string;
+  }
+
+  let { team_id = $bindable("") }: Props = $props();
+  let team: TeamInterface = $state({
     name: "",
     assigned_agents: [],
     description: "",
     leader_id: "",
-  };
-  let agents: AgentInterface[] = [];
-  let selectedAgents: string[] = [];
-  let isGenerativeMode = false;
-  let generativeDescription = "";
-  let teamDetails = "";
+  });
+  let agents: AgentInterface[] = $state([]);
+  let selectedAgents: string[] = $state([]);
+  let isGenerativeMode = $state(false);
+  let generativeDescription = $state("");
+  let teamDetails = $state("");
   let teamDetailsLoading = false;
   let unsubscribe: Unsubscriber | null = null;
   let socket: WebSocket;
   let loading = false;
 
-  let alertMessage = "";
-  let alertType: "default" | "success" | "warning" | "danger" | "loading" = "default";
-  let showAlert = false;
+  let alertMessage = $state("");
+  let alertType: "default" | "success" | "warning" | "danger" | "loading" = $state("default");
+  let showAlert = $state(false);
 
   const loadTeam = async (team_id: string) => {
     try {
@@ -171,22 +177,24 @@
     }
   })();
 
-  $: if (team_id) {
-    loadTeam(team_id);
-  }
+  run(() => {
+    if (team_id) {
+      loadTeam(team_id);
+    }
+  });
 
-  $: {
+  run(() => {
     team.assigned_agents = selectedAgents;
-  }
+  });
 
-  $: {
+  run(() => {
     let parsedTeamDetails: any = convertXmlToJson(teamDetails);
     console.log(parsedTeamDetails);
     team.name = parsedTeamDetails?.name;
     team.description = parsedTeamDetails?.description;
     // team.assigned_agents = parsedTeamDetails.members;
     // team._leader = parsedTeamDetails.leader;
-  }
+  });
 </script>
 
 <Modal
@@ -231,12 +239,12 @@
 {/if}
 
 <div class="toolbar">
-  <button class="btn" on:click={handleTeamSubmit}>
+  <button class="btn" onclick={handleTeamSubmit}>
     <i class="fa-solid fa-save fa-fw"></i>
     <span>{team_id ? "Update Team" : "Save Team"}</span>
   </button>
   {#if team_id}
-    <button class="btn delete" on:click={handleDeleteTeam}>
+    <button class="btn delete" onclick={handleDeleteTeam}>
       <i class="fa-solid fa-trash fa-fw"></i>
       <span>Delete Team</span>
     </button>

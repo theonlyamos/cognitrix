@@ -1,9 +1,19 @@
 <script lang="ts">
-  export let label: string = "";
-  export let name: string = "";
-  export let checked: boolean = false;
-  export let disabled: boolean = false;
-  export let onChange = (e: CustomEvent<boolean>) => {};
+  interface Props {
+    label?: string;
+    name?: string;
+    checked?: boolean;
+    disabled?: boolean;
+    onChange?: any;
+  }
+
+  let {
+    label = "",
+    name = "",
+    checked = $bindable(false),
+    disabled = false,
+    onChange = (e: CustomEvent<boolean>) => {}
+  }: Props = $props();
 
   function toggle() {
     if (!disabled) {
@@ -17,12 +27,12 @@
   <label for={name}>{label}</label>
   <button
     class={`switch ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}`}
-    on:click={toggle}
+    onclick={toggle}
     {disabled}
     aria-checked={checked}
     role="switch"
   >
-    <span class="slider" />
+    <span class="slider"></span>
   </button>
 </div>
 

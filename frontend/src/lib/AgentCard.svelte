@@ -1,17 +1,25 @@
 <script lang="ts">
+  import { run } from 'svelte/legacy';
+
   import { link } from "svelte-routing";
   import type { AgentDetailInterface } from "../common/interfaces";
   import { onMount } from "svelte";
 
-  export let agent: AgentDetailInterface;
-  let agentModel: string[] | null = null;
-  let model: string = "";
+  interface Props {
+    agent: AgentDetailInterface;
+  }
+
+  let { agent }: Props = $props();
+  let agentModel: string[] | null = $state(null);
+  let model: string = $state("");
 
   onMount(() => {
     agentModel = agent?.llm?.model?.split("/");
   });
 
-  $: if (agentModel) model = agentModel[agentModel.length - 1];
+  run(() => {
+    if (agentModel) model = agentModel[agentModel.length - 1];
+  });
 
   function handleEdit() {
     // TODO: Implement edit functionality
@@ -80,16 +88,16 @@
     </div>
   </a>
   <div class="agent-options">
-    <button on:click={handleEdit} class="option-button edit">
+    <button onclick={handleEdit} class="option-button edit">
       <i class="fas fa-edit"></i> Edit
     </button>
-    <button on:click={handleDelete} class="option-button delete">
+    <button onclick={handleDelete} class="option-button delete">
       <i class="fas fa-trash-alt"></i> Delete
     </button>
-    <button on:click={handleRun} class="option-button run">
+    <button onclick={handleRun} class="option-button run">
       <i class="fa-solid fa-comments"></i> Chat
     </button>
-    <button on:click={handleViewHistory} class="option-button history">
+    <button onclick={handleViewHistory} class="option-button history">
       <i class="fas fa-history"></i> History
     </button>
   </div>

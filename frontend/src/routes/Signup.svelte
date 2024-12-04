@@ -1,12 +1,14 @@
 <script lang="ts">
+  import { preventDefault } from 'svelte/legacy';
+
   import { navigate, link } from "svelte-routing";
   import { API_BACKEND_URI } from "../common/constants";
 
-  let name = "";
-  let email = "";
-  let password = "";
-  let confirmPassword = "";
-  let error = "";
+  let name = $state("");
+  let email = $state("");
+  let password = $state("");
+  let confirmPassword = $state("");
+  let error = $state("");
 
   async function handleSignup() {
     if (password !== confirmPassword) {
@@ -37,7 +39,7 @@
 
 <div class="container">
   <h1>Sign Up</h1>
-  <form on:submit|preventDefault={handleSignup}>
+  <form onsubmit={preventDefault(handleSignup)}>
     <div class="form-group">
       <label for="name">Name</label>
       <input type="text" id="name" bind:value={name} required />

@@ -1,13 +1,23 @@
 <script lang="ts">
-  export let type: "default" | "success" | "warning" | "danger" | "loading" = "default";
-  export let message: string = "";
-  export let onClose: (() => void) | null = null;
-  export let autoClose: boolean = false;
-  export let autoCloseDelay: number = 5000; // 5 seconds
 
   import { onMount } from 'svelte';
+  interface Props {
+    type?: "default" | "success" | "warning" | "danger" | "loading";
+    message?: string;
+    onClose?: (() => void) | null;
+    autoClose?: boolean;
+    autoCloseDelay?: number;
+  }
 
-  let visible = true;
+  let {
+    type = "default",
+    message = "",
+    onClose = null,
+    autoClose = false,
+    autoCloseDelay = 5000
+  }: Props = $props();
+
+  let visible = $state(true);
 
   function getTypeColor(type: "default" | "success" | "warning" | "danger" | "loading"): string {
     const colorMap = {
@@ -43,7 +53,7 @@
       <span>{message}</span>
     </div>
     {#if onClose}
-      <button class="close-btn" on:click={handleClose}>&times;</button>
+      <button class="close-btn" onclick={handleClose}>&times;</button>
     {/if}
   </div>
 {/if}

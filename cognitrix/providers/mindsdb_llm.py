@@ -1,3 +1,4 @@
+from functools import lru_cache
 from cognitrix.providers import OpenAI
 import os
 import asyncio
@@ -13,3 +14,20 @@ class MindsDB(OpenAI):
     
     is_multimodal: bool = True
     """Whether the model is multimodal."""
+    
+    @staticmethod
+    @lru_cache(maxsize=None)
+    def get_supported_models():
+        import requests
+
+        api_key = os.environ.get("MINDS_API_KEY")
+        url = "https://llm.mdb.ai/models"
+
+        headers = {
+            "X-API-KEY": api_key,
+            "Content-Type": "application/json"
+        }
+
+        response = requests.get(url, headers=headers)
+
+        return response.json()

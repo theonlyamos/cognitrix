@@ -1,3 +1,4 @@
+<!-- @migration-task Error while migrating Svelte code: Can't migrate code with afterUpdate and beforeUpdate. Please migrate by hand. -->
 <script lang="ts">
   import { afterUpdate, beforeUpdate, onDestroy } from "svelte";
   import Loader from "./Loader.svelte";

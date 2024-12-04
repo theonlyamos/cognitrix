@@ -1,7 +1,11 @@
 <script lang="ts">
-  export let options: { value: string; label: string }[] = [];
-  export let value: string = "";
-  export let placeholder: string = "Select an option";
+  interface Props {
+    options?: { value: string; label: string }[];
+    value?: string;
+    placeholder?: string;
+  }
+
+  let { options = [], value = $bindable(""), placeholder = "Select an option" }: Props = $props();
 
   function handleChange(event: Event) {
     const target = event.target as HTMLSelectElement;
@@ -9,7 +13,7 @@
   }
 </script>
 
-<select {value} on:change={handleChange}>
+<select {value} onchange={handleChange}>
   <option value="" disabled selected>{placeholder}</option>
   {#each options as option}
     <option value={option.value}>{option.label}</option>

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { run } from 'svelte/legacy';
+
   import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import Inputbar from '../lib/Inputbar.svelte';
@@ -13,27 +15,31 @@
     import Alert from '$lib/Alert.svelte';
     import { Link, navigate } from 'svelte-routing';
 
-  export let team_id: string = "";
-  export let task_id: string | null = null;
-  export let session_id: string | null = null;
+  interface Props {
+    team_id?: string;
+    task_id?: string | null;
+    session_id?: string | null;
+  }
+
+  let { team_id = "", task_id = null, session_id = null }: Props = $props();
   
-  let team: TeamInterface | undefined;
-  let messages: MessageInterface[] = [];
-  let taskStarted = false;
-  let task: TaskDetailInterface | null = null;
-  let chatContainer: HTMLElement;
-  let showTaskModal = false;
-  let generatedTask: TaskDetailInterface | null = null;
-  let generatedTaskDetails: string  = '';
-  let generatingTask = false;
+  let team: TeamInterface | undefined = $state();
+  let messages: MessageInterface[] = $state([]);
+  let taskStarted = $state(false);
+  let task: TaskDetailInterface | null = $state(null);
+  let chatContainer: HTMLElement = $state();
+  let showTaskModal = $state(false);
+  let generatedTask: TaskDetailInterface | null = $state(null);
+  let generatedTaskDetails: string  = $state('');
+  let generatingTask = $state(false);
   let streaming_response: boolean = false;
   let taskSessions: SessionInterface[] = [];
   let selectedSession: SessionInterface | null = null;
-  let isLoading = false;
-  let error: string | null = null;
-  let allTasks: TaskDetailInterface[] = [];
-  let selectedTaskId: string | null = null;
-  let teamSessions: SessionInterface[] = [];
+  let isLoading = $state(false);
+  let error: string | null = $state(null);
+  let allTasks: TaskDetailInterface[] = $state([]);
+  let selectedTaskId: string | null = $state(null);
+  let teamSessions: SessionInterface[] = $state([]);
 
   const loadTeam = async (team_id: string) => {
     isLoading = true;
@@ -241,39 +247,47 @@
     showTaskModal = !showTaskModal;
   }
 
-  $: if (generatedTaskDetails) {
-    let parsedTask = convertXmlToJson(generatedTaskDetails);
+  run(() => {
+    if (generatedTaskDetails) {
+      let parsedTask = convertXmlToJson(generatedTaskDetails);
 
-    if (parsedTask.description && typeof parsedTask.description === 'object') {
-      let description = parsedTask.description['#text'];
-      description += '\n\n<steps>' + parsedTask.description.steps + '</steps>';
-      parsedTask.description = description;
+      if (parsedTask.description && typeof parsedTask.description === 'object') {
+        let description = parsedTask.description['#text'];
+        description += '\n\n<steps>' + parsedTask.description.steps + '</steps>';
+        parsedTask.description = description;
+      }
+
+      generatedTask = {
+        title: parsedTask.title,
+        description: parsedTask.description,
+        assigned_agents: team?.assigned_agents || [],
+        status: "pending",
+        autostart: true,
+        done: false
+      };
+
+      generatingTask = false;
+      showTaskModal = true;
     }
+  });
 
-    generatedTask = {
-      title: parsedTask.title,
-      description: parsedTask.description,
-      assigned_agents: team?.assigned_agents || [],
-      status: "pending",
-      autostart: true,
-      done: false
-    };
+  run(() => {
+    if (team_id) {
+      loadTeam(team_id);
+    }
+  });
 
-    generatingTask = false;
-    showTaskModal = true;
-  }
+  run(() => {
+    if (task_id && !selectedTaskId && !session_id) {
+      selectedTaskId = task_id;
+    }
+  });
 
-  $: if (team_id) {
-    loadTeam(team_id);
-  }
-
-  $: if (task_id && !selectedTaskId && !session_id) {
-    selectedTaskId = task_id;
-  }
-
-  $: if (selectedTaskId) {
-    navigate(`/teams/${team_id}/tasks/${selectedTaskId}/interact`);
-  }
+  run(() => {
+    if (selectedTaskId) {
+      navigate(`/teams/${team_id}/tasks/${selectedTaskId}/interact`);
+    }
+  });
 </script>
 
 <Modal
@@ -330,7 +344,7 @@
               </select>
               <button
                 class="btn primary"
-                on:click={handleStartTask}
+                onclick={handleStartTask}
                 disabled={!selectedTaskId}
               >
                 Start Selected Task
@@ -357,7 +371,7 @@
           <div class="chat-container">
             <div class="chat-header">
               <h2>Task: {task?.title || generatedTask?.title}</h2>
-              <button class="btn secondary" on:click={toggleTaskModal}>
+              <button class="btn secondary" onclick={toggleTaskModal}>
                 <i class="fas fa-info-circle"></i> View Task Details
               </button>
             </div>

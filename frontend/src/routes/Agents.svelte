@@ -4,7 +4,7 @@
     import AgentCard from "../lib/AgentCard.svelte";
     import { link } from "svelte-routing";
     
-    let agents: AgentDetailInterface[] = [];
+    let agents: AgentDetailInterface[] = $state([]);
 
     const loadAgents = async()=> {
         try {

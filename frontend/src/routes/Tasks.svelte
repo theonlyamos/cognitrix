@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { run } from 'svelte/legacy';
+
   import { link } from "svelte-routing";
   import { deleteTask, getAllTasks, getAllTeams, getTasksByTeam } from "../common/utils";
   import type { TaskDetailInterface, TaskInterface, TeamInterface } from "../common/interfaces";
@@ -6,11 +8,11 @@
   import Select from "$lib/Select.svelte";
     import Modal from "$lib/Modal.svelte";
 
-  let tasks: TaskInterface[] = [];
-  let teams: TeamInterface[] = [];
-  let selectedTeam: string = "";
+  let tasks: TaskInterface[] = $state([]);
+  let teams: TeamInterface[] = $state([]);
+  let selectedTeam: string = $state("");
 
-  let confirmModal = false;
+  let confirmModal = $state(false);
   let taskToDelete: string = "";
   let confirmTitle: string = "Delete this task!";
 
@@ -50,9 +52,11 @@
     }
   }
 
-  $: if (selectedTeam !== undefined) {
-    filterTasksByTeam();
-  }
+  run(() => {
+    if (selectedTeam !== undefined) {
+      filterTasksByTeam();
+    }
+  });
 </script>
 
 <Modal

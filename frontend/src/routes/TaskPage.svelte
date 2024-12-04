@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { run } from 'svelte/legacy';
+
   import { getTask, getTools, saveTask, getAllAgents, updateTaskStatus, getAllTeams, getTasksByTeam } from "../common/utils";
   import type { TaskDetailInterface, ToolInterface, AgentDetailInterface, TeamInterface } from "../common/interfaces";
   import Checkbox from "../lib/Checkbox.svelte";
@@ -11,9 +13,13 @@
     import type { Unsubscriber } from "svelte/store";
   import Alert from "../lib/Alert.svelte";
 
-  export let task_id: string = "";
-  let agents: AgentDetailInterface[] = [];
-  let task: TaskDetailInterface = {
+  interface Props {
+    task_id?: string;
+  }
+
+  let { task_id = $bindable("") }: Props = $props();
+  let agents: AgentDetailInterface[] = $state([]);
+  let task: TaskDetailInterface = $state({
     title: "",
     description: "",
     assigned_agents: [],
@@ -22,27 +28,27 @@
     status: "pending",
     done: false,
     team_id: "",
-  };
-  let tools: ToolInterface[] = [];
+  });
+  let tools: ToolInterface[] = $state([]);
   let taskAgents: string[] = [];
-  let taskTools: string[] = [];
+  let taskTools: string[] = $state([]);
 
-  let selectedAgents: string[] = [];
+  let selectedAgents: string[] = $state([]);
   let selectedTools: string[] = [];
-  let selectedTeam: string = "";
+  let selectedTeam: string = $state("");
   let loading: boolean = false;
-  let submitting: boolean = false;
+  let submitting: boolean = $state(false);
   let unsubscribe: Unsubscriber | null = null;
   let socket: WebSocket;
-  let newTaskDescription: string = "";
-  let isGenerativeMode = false;
-  let generativeDescription = "";
+  let newTaskDescription: string = $state("");
+  let isGenerativeMode = $state(false);
+  let generativeDescription = $state("");
 
-  let teams: TeamInterface[] = [];
+  let teams: TeamInterface[] = $state([]);
 
-  let alertMessage = "";
-  let alertType: "default" | "success" | "warning" | "danger" | "loading" = "default";
-  let showAlert = false;
+  let alertMessage = $state("");
+  let alertType: "default" | "success" | "warning" | "danger" | "loading" = $state("default");
+  let showAlert = $state(false);
 
   const loadTask = async (task_id: string) => {
     try {
@@ -221,15 +227,19 @@
     if (unsubscribe) unsubscribe();
   });
 
-  $: if (newTaskDescription) {
-    task.description = newTaskDescription;
-  }
+  run(() => {
+    if (newTaskDescription) {
+      task.description = newTaskDescription;
+    }
+  });
 
-  $: task.assigned_agents = selectedAgents;
+  let task.assigned_agents = $derived(selectedAgents);
 
-  $: if (task.team_id) {
-    selectedTeam = task.team_id;
-  }
+  run(() => {
+    if (task.team_id) {
+      selectedTeam = task.team_id;
+    }
+  });
 </script>
 
 <Modal
@@ -269,7 +279,7 @@
       <button
         class="btn"
         disabled={task.status === "in-progress"}
-        on:click={onStartTask}
+        onclick={onStartTask}
       >
         <i class="fa-solid fa-tools fa-fw"></i>
         <span>Start Task</span>
@@ -277,14 +287,14 @@
       <button
         class="btn"
         disabled={["not-started", "completed"].includes(task.status)}
-        on:click={stopTask}
+        onclick={stopTask}
       >
         <i class="fa-solid fa-stop fa-fw"></i>
         <span>Stop Task</span>
       </button>
     </div>
   {/if}
-  <button class="btn" disabled={submitting} on:click={handleTaskSubmit}>
+  <button class="btn" disabled={submitting} onclick={handleTaskSubmit}>
     <i class="fa-solid fa-save fa-fw"></i>
     <span
       >{submitting ? "Saving..." : task_id ? "Update Task" : "Save Task"}</span

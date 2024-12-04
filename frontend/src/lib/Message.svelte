@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { run } from 'svelte/legacy';
+
   import { marked } from "marked";
   import CodeBlock from "./CodeBlock.svelte";
   import AgentImg from "../assets/ai-agent-icon.svg";
@@ -7,19 +9,33 @@
   import { fade, fly, slide } from 'svelte/transition';
     import Accordion from "./Accordion.svelte";
 
-  export let id: string | number = "";
-  export let role: string = "user";
-  export let type: string = "text";
-  export let content: string;
-  export let image: string = "";
-  export let thought: string | null = null;
-  export let observation: string | null = null;
-  export let reflection: string | null = null;
-  export let artifacts: object[] = [];
+  interface Props {
+    id?: string | number;
+    role?: string;
+    type?: string;
+    content: string;
+    image?: string;
+    thought?: string | null;
+    observation?: string | null;
+    reflection?: string | null;
+    artifacts?: object[];
+  }
 
-  let toolCalls: any[] = [];
+  let {
+    id = "",
+    role = "user",
+    type = "text",
+    content,
+    image = "",
+    thought = $bindable(null),
+    observation = $bindable(null),
+    reflection = $bindable(null),
+    artifacts = $bindable([])
+  }: Props = $props();
+
+  let toolCalls: any[] = $state([]);
   let toolCallResults: object[] = [];
-  let htmlContent: string | Promise<string> = "";
+  let htmlContent: string | Promise<string> = $state("");
 
   const formatOneArtifact = (artifact: any) => {
     let artifactContent = "";
@@ -126,8 +142,10 @@
     return formatNode(parsedContent);
   };
 
-  $: htmlContent = role.toLowerCase() === "user" ? formatContent(content) : marked(formatContent(content));
-  $: artifactsContent = marked(formatArtifacts(artifacts));
+  run(() => {
+    htmlContent = role.toLowerCase() === "user" ? formatContent(content) : marked(formatContent(content));
+  });
+  let artifactsContent = $derived(marked(formatArtifacts(artifacts)));
 </script>
 
 <article

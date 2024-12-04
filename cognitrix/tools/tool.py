@@ -1,6 +1,7 @@
 from functools import wraps
 from typing import Callable
 from cognitrix.tools import Tool
+from cognitrix.tools.utils import ToolCallResult
 from typing import Any
 import inspect
 
@@ -11,15 +12,12 @@ def tool(*args: Any, **kwargs: Any):
             return func(*args, **kwargs)
         
         class GenericTool(Tool):
-            def run(self, *args, **kwargs):
+            async def run(self, *args, **kwargs):
                 if inspect.iscoroutinefunction(func):
-                    raise NotImplementedError("Asynchronous execution is not supported for coroutine functions")
-                return wrapper(*args, **kwargs)
+                    return ToolCallResult(content=await wrapper(*args, **kwargs), tool_name=func.__name__)
+                else:
+                    return ToolCallResult(content=wrapper(*args, **kwargs), tool_name=func.__name__)
             
-            async def arun(self, *args, **kwargs):
-                if inspect.iscoroutinefunction(func):
-                    return await wrapper(*args, **kwargs)
-                raise NotImplementedError("Synchronous execution is not supported for synchronous functions")
 
         new_tool = GenericTool(
             name=' '.join(func.__name__.split('_')).title(),

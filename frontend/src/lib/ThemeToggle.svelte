@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  let darkMode = false;
+  let darkMode = $state(false);
 
   function toggleTheme() {
     darkMode = !darkMode;
@@ -25,7 +25,7 @@
 </script>
 
 <button
-  on:click={toggleTheme}
+  onclick={toggleTheme}
   class="p-2 rounded-full bg-gray-200 dark:bg-gray-700"
 >
   {#if darkMode}

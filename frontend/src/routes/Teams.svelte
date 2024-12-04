@@ -5,7 +5,7 @@
   import TeamCard from "../lib/TeamCard.svelte";
   import { onMount } from "svelte";
 
-  let teams: TeamInterface[] = [];
+  let teams: TeamInterface[] = $state([]);
 
   const loadTeams = async () => {
     try {

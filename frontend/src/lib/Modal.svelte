@@ -1,14 +1,29 @@
 <script lang="ts">
-  export let isOpen = false;
-  export let onClose: () => void;
-  export let type: "alert" | "confirm" | "info" | "success" | "warning" =
-    "info";
-  export let appearance: "default" | "minimal" | "bordered" | "floating" =
-    "default";
-  export let size: "small" | "medium" | "large" = "medium";
-  export let action: (() => void) | null = null;
-  export let actionLabel = "Confirm";
-  export let title = "";
+  import { stopPropagation } from 'svelte/legacy';
+
+  interface Props {
+    isOpen?: boolean;
+    onClose: () => void;
+    type?: "alert" | "confirm" | "info" | "success" | "warning";
+    appearance?: "default" | "minimal" | "bordered" | "floating";
+    size?: "small" | "medium" | "large";
+    action?: (() => void) | null;
+    actionLabel?: string;
+    title?: string;
+    children?: import('svelte').Snippet;
+  }
+
+  let {
+    isOpen = $bindable(false),
+    onClose,
+    type = "info",
+    appearance = "default",
+    size = "medium",
+    action = null,
+    actionLabel = "Confirm",
+    title = "",
+    children
+  }: Props = $props();
 
   function handleClose() {
     isOpen = false;
@@ -77,48 +92,48 @@
 </script>
 
 {#if isOpen}
-  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
     class="modal-overlay"
-    on:click={handleOutsideClick}
-    on:keydown={handleKeydown}
+    onclick={handleOutsideClick}
+    onkeydown={handleKeydown}
     role="dialog"
     aria-modal="true"
     tabindex="-1"
   >
-    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="modal-content card {getTypeClass(type)} {getAppearanceClass(
         appearance,
       )} {getSizeClass(size)}"
       style="--modal-color: {getTypeColor(type)};"
-      on:click|stopPropagation={handleModalContentClick}
+      onclick={stopPropagation(handleModalContentClick)}
     >
       <div class="modal-header">
         <div class="modal-title">{title}</div>
         <button
           class="close-btn"
-          on:click={handleClose}
-          on:keydown={handleCancelKeydown}
+          onclick={handleClose}
+          onkeydown={handleCancelKeydown}
           aria-label="Close modal"
         >
           &times;
         </button>
       </div>
-      <slot></slot>
+      {@render children?.()}
       <div class="action-buttons">
         <button
           class="cancel-btn"
-          on:click={handleClose}
-          on:keydown={handleCancelKeydown}
+          onclick={handleClose}
+          onkeydown={handleCancelKeydown}
         >
           Cancel
         </button>
         <button
           class="confirm-btn"
-          on:click={handleAction}
-          on:keydown={handleConfirmKeydown}
+          onclick={handleAction}
+          onkeydown={handleConfirmKeydown}
         >
           {actionLabel}
         </button>

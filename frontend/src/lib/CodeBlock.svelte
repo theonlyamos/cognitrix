@@ -1,9 +1,15 @@
 <script lang="ts">
+  import { run } from 'svelte/legacy';
+
   import { onMount } from "svelte";
 
-  export let htmlContent: string | Promise<string> = "";
+  interface Props {
+    htmlContent?: string | Promise<string>;
+  }
 
-  let formattedContent: string = "";
+  let { htmlContent = "" }: Props = $props();
+
+  let formattedContent: string = $state("");
 
   onMount(async () => {
     await highlightCodeBlocks();
@@ -28,9 +34,11 @@
     formattedContent = doc.body.innerHTML;
   }
 
-  $: if (htmlContent) {
-    highlightCodeBlocks();
-  }
+  run(() => {
+    if (htmlContent) {
+      highlightCodeBlocks();
+    }
+  });
 </script>
 
 <div class="content-container">

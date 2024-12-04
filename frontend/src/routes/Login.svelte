@@ -1,11 +1,13 @@
 <script lang="ts">
+  import { preventDefault } from 'svelte/legacy';
+
   import { navigate, link } from "svelte-routing";
   import { API_BACKEND_URI } from "../common/constants";
   import { userStore } from "../common/stores";
 
-  let username = "";
-  let password = "";
-  let error = "";
+  let username = $state("");
+  let password = $state("");
+  let error = $state("");
 
   async function handleLogin() {
     try {
@@ -34,7 +36,7 @@
 
 <div class="container">
   <h1>Log In</h1>
-  <form on:submit|preventDefault={handleLogin}>
+  <form onsubmit={preventDefault(handleLogin)}>
     <div class="form-group">
       <label for="email">Email</label>
       <input type="email" id="email" bind:value={username} required />

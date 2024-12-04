@@ -31,7 +31,7 @@ class Tool(Model):
     class Config:
         arbitrary_types_allowed = True
     
-    def run(self, *args, **kwargs):
+    async def run(self, *args, **kwargs):
         """Here is where you code what the tool does"""
         pass
     
@@ -79,8 +79,8 @@ class Tool(Model):
         try:
             module = __import__(__package__, fromlist=[name]) # type: ignore
             tools  = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool)]
-            class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
-            tools.extend(class_tools)
+            # class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
+            # tools.extend(class_tools)
             tool = next((t for t in tools if t.name.lower() == name.replace('_', ' ').lower()), None)
             
             return tool
