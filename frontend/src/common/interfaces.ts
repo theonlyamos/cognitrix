@@ -1,15 +1,10 @@
 export interface MessageInterface {
-  id?: string | number;
+  id?: string;
   role: string;
-  type?: string;
   content: string;
-  image?: string;
-  thought?: string;
-  observation?: string;
-  mindspace?: string;
-  reflection?: string;
-  artifacts?: object[];
-  tool_calls?: object[];
+  type?: string;
+  artifacts?: any;
+  timestamp?: string;
 }
 
 export interface AgentInterface extends Object {

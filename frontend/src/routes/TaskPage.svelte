@@ -1,8 +1,21 @@
 <script lang="ts">
-  import { run } from 'svelte/legacy';
+  import { run } from "svelte/legacy";
 
-  import { getTask, getTools, saveTask, getAllAgents, updateTaskStatus, getAllTeams, getTasksByTeam } from "../common/utils";
-  import type { TaskDetailInterface, ToolInterface, AgentDetailInterface, TeamInterface } from "../common/interfaces";
+  import {
+    getTask,
+    getTools,
+    saveTask,
+    getAllAgents,
+    updateTaskStatus,
+    getAllTeams,
+    getTasksByTeam,
+  } from "../common/utils";
+  import type {
+    TaskDetailInterface,
+    ToolInterface,
+    AgentDetailInterface,
+    TeamInterface,
+  } from "../common/interfaces";
   import Checkbox from "../lib/Checkbox.svelte";
   import Switch from "../lib/Switch.svelte";
   import Accordion from "../lib/Accordion.svelte";
@@ -10,7 +23,7 @@
   import Modal from "../lib/Modal.svelte";
   import { onMount, onDestroy } from "svelte";
   import { webSocketStore } from "../common/stores";
-    import type { Unsubscriber } from "svelte/store";
+  import type { Unsubscriber } from "svelte/store";
   import Alert from "../lib/Alert.svelte";
 
   interface Props {
@@ -47,7 +60,8 @@
   let teams: TeamInterface[] = $state([]);
 
   let alertMessage = $state("");
-  let alertType: "default" | "success" | "warning" | "danger" | "loading" = $state("default");
+  let alertType: "default" | "success" | "warning" | "danger" | "loading" =
+    $state("default");
   let showAlert = $state(false);
 
   const loadTask = async (task_id: string) => {
@@ -70,7 +84,7 @@
           action: "task_instructions",
           name: task?.title,
           prompt: task?.description,
-        })
+        }),
       );
       loading = true;
       task.description = "";
@@ -82,13 +96,17 @@
   };
 
   const generateTaskDetails = () => {
-    if (socket && socket.readyState === WebSocket.OPEN && generativeDescription) {
+    if (
+      socket &&
+      socket.readyState === WebSocket.OPEN &&
+      generativeDescription
+    ) {
       webSocketStore.send(
         JSON.stringify({
           type: "generate",
           action: "team_details",
           prompt: generativeDescription,
-        })
+        }),
       );
       loading = true;
     }
@@ -109,7 +127,7 @@
             }
           }
         }
-      }
+      },
     );
   };
 
@@ -233,7 +251,9 @@
     }
   });
 
-  let task.assigned_agents = $derived(selectedAgents);
+  run(() => {
+    task.assigned_agents = selectedAgents;
+  });
 
   run(() => {
     if (task.team_id) {

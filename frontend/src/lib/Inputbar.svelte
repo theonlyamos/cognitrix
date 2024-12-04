@@ -1,8 +1,8 @@
 <!-- @migration-task Error while migrating Svelte code: Can't migrate code with afterUpdate and beforeUpdate. Please migrate by hand. -->
 <script lang="ts">
-  import { afterUpdate, beforeUpdate, createEventDispatcher } from 'svelte';
-  import { onDestroy } from 'svelte';
-  import { liveTranscription } from '../common/deepgram';
+  import { afterUpdate, beforeUpdate, createEventDispatcher } from "svelte";
+  import { onDestroy } from "svelte";
+  import { liveTranscription } from "../common/deepgram";
 
   export let onFileSelect: Function;
   export let onSubmit: Function;
@@ -19,8 +19,11 @@
   const dispatch = createEventDispatcher();
 
   let isTranscribing = false;
-  let transcriptionController: { start: () => void; stop: () => void, onTranscript: (callback: (data: string) => void) => void } | null = null;
-
+  let transcriptionController: {
+    start: () => void;
+    stop: () => void;
+    onTranscript: (callback: (data: string) => void) => void;
+  } | null = null;
 
   beforeUpdate(() => {
     if (inputElement) {
@@ -35,7 +38,7 @@
       inputElement.scrollTo(0, inputElement.scrollHeight);
     }
   });
-  
+
   function handleKeyDown(event: KeyboardEvent) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -64,7 +67,7 @@
         transcriptionController.start();
         isTranscribing = true;
       } catch (error) {
-        console.error('Error starting live transcription:', error);
+        console.error("Error starting live transcription:", error);
       }
     } else {
       if (transcriptionController) {
@@ -83,9 +86,14 @@
 
 <div class="input-bar">
   <div class="input-container">
-    <button on:click={(event) => onFileSelect(event)}>
+    <button
+      class="action-btn"
+      on:click={(event) => onFileSelect(event)}
+      title="Attach file"
+    >
       <i class="fa-solid fa-paperclip"></i>
     </button>
+
     <div
       role="textbox"
       tabindex="0"
@@ -96,14 +104,21 @@
       bind:this={inputElement}
       placeholder={inputPlaceholder}
     ></div>
-    <div class="btn-group">
-      <button on:click={toggleRecording}>
+
+    <div class="action-buttons">
+      <button
+        class="action-btn"
+        on:click={toggleRecording}
+        title={isTranscribing ? "Stop recording" : "Start recording"}
+      >
         <i class="fa-solid fa-microphone" class:recording={isTranscribing}></i>
       </button>
+
       <button
+        class="action-btn send-btn"
         on:click={onSendMessage}
         disabled={!userInput.trim() || loading}
-        class={`${userInput.trim() && !loading ? "" : "disabled"}`}
+        title={loading ? "Stop" : "Send message"}
       >
         {#if loading}
           <i class="fa-solid fa-circle-stop"></i>
@@ -117,64 +132,81 @@
 
 <style>
   .input-bar {
-    align-items: end;
-    background: none;
-    display: flex;
-    padding: 12px 24px 6px 24px;
-    position: relative;
+    position: sticky;
+    bottom: 0;
+    padding: 1rem 1.5rem;
+    background: var(--bg-0);
+    border-top: 1px solid var(--bg-2);
   }
 
   .input-container {
-    width: 100%;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    border-radius: 20px;
-    font-size: 0.9rem;
-    background-color: var(--fg-1);
-    padding: 5px 20px;
+    gap: 0.75rem;
+    background: var(--bg-1);
+    border-radius: 1rem;
+    padding: 0.75rem 1rem;
+    box-shadow: 0 2px 4px rgb(0 0 0 / 0.1);
   }
 
   .input-box {
-    text-align: start;
-    outline: none;
-    padding: 10px;
-    width: 90%;
-    max-height: 100px;
+    flex: 1;
+    min-height: 1.5rem;
+    max-height: 150px;
     overflow-y: auto;
-    color: var(--bg-1) !important;
+    padding: 0.25rem;
+    color: var(--fg-1);
+    font-size: 0.9375rem;
+    line-height: 1.5;
     scrollbar-width: thin;
   }
 
   .input-box:empty::before {
     content: attr(placeholder);
-    color: var(--bg-2);
-    opacity: 0.6;
-  }
-
-  .input-container button {
-    background-color: var(--fg-1);
-    color: var(--bg-1);
-    padding: 0;
-    border: 0;
-    outline: none;
+    color: var(--fg-2);
     opacity: 0.7;
   }
 
-  .input-container button:hover,
-  .input-container button:focus {
-    border: none;
-    padding: 0 !important;
-    outline: none;
-    opacity: 1;
+  .action-buttons {
+    display: flex;
+    gap: 0.5rem;
   }
 
-  .btn-group {
+  .action-btn {
     display: flex;
-    gap: 10px;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.5rem;
+    border: none;
+    background: transparent;
+    color: var(--fg-2);
+    transition: all 150ms ease;
+    cursor: pointer;
+  }
+
+  .action-btn:hover {
+    background: var(--bg-2);
+    color: var(--fg-1);
+  }
+
+  .action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .send-btn {
+    background: var(--accent-color);
+    color: var(--bg-0);
+  }
+
+  .send-btn:hover:not(:disabled) {
+    background: var(--accent-color-dark);
+    color: var(--bg-0);
   }
 
   .fa-microphone.recording {
-    color: #ff4136; /* Red color when recording */
+    color: #ef4444;
   }
 </style>

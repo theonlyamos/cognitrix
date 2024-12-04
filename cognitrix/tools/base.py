@@ -47,8 +47,8 @@ class Tool(Model):
             tools = []
             func_tools  = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool)]
             tools.extend(func_tools)
-            class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
-            tools.extend(class_tools)
+            # class_tools  = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool']
+            # tools.extend(class_tools)
             return tools
         except Exception as e:
             logging.exception(e)
