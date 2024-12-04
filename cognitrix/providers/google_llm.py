@@ -55,6 +55,9 @@ class Google(LLM):
     is_multimodal: bool = True
     """Whether the model is multimodal."""
     
+    supports_tool_use: bool = False
+    """Whether the model supports tool use."""
+    
     def format_query(self, message: dict[str, Any], system_prompt: str, chat_history: List[Dict[str, str]]) -> list:
         """Formats messages for the Gemini API"""
         formatted_message = [*chat_history, message]
@@ -107,7 +110,7 @@ class Google(LLM):
             
             completion =  self.client.generate_content(
                 contents,
-                stream=True
+                # stream=True
             )
              
             response = LLMResponse()

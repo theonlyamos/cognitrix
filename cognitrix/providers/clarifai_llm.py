@@ -37,6 +37,8 @@ class Clarifai(LLM):
     
     is_multimodal: bool = True
     """Whether the model is multimodal."""
+    
+    supports_tool_use: bool = False
 
     async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
         """Generates a response to a query using the Clarifai API.

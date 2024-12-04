@@ -270,11 +270,11 @@ Your review:
                         # await self.send_message(self.leader, agent, f"Feedback on your work for task '{task.title}' (Step: {step['step']}):\n{feedback.strip()}", session=session)
                         print(f"[!] Action: {action}")
                         if action != 'done':
-                            if action == 'improve':
+                            if 'improve' in action:
                                 revision_prompt = f"Based on the feedback, please significantly improve your work on the task: {task.title} (Step: {step['step']})"
-                            elif action == 'revise':
+                            elif 'revise' in action:
                                 revision_prompt = f"Based on the feedback, please make minor revisions to your work on the task: {task.title} (Step: {step['step']})"
-                            elif action == 'continue':
+                            elif 'continue' in action:
                                 revision_prompt = f"Your previous response was cut off. Please continue your work on the task: {task.title} (Step: {step['step']})"
                             else:
                                 print(f"Warning: Unknown action '{action}' received for {agent.name}'s work on task '{task.title}' (Step: {step['step']})")

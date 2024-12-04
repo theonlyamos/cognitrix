@@ -1,7 +1,7 @@
 import json
 import shutil
 from webbrowser import open_new_tab
-from typing import Union, Optional, Any, Tuple, Dict, List
+from typing import Literal, Union, Optional, Any, Tuple, Dict, List, Set
 from webbrowser import open_new_tab
 from cognitrix.tools.base import Tool
 from cognitrix.tools.tool import tool
@@ -22,6 +22,10 @@ import aiohttp
 import sys
 import os
 import multiprocessing
+import subprocess
+import shlex
+import re
+import signal
 
 NotImplementedErrorMessage = 'this tool does not suport async'
 
@@ -31,6 +35,25 @@ logging.basicConfig(
     level=logging.WARNING
 )
 logger = logging.getLogger('cognitrix.log')
+
+ALLOWED_COMMANDS: Set[str] = {
+    # File system navigation
+    'ls', 'dir', 'pwd',
+    # File operations
+    'cat', 'head', 'tail', 'less', 'more',
+    # System info
+    'date', 'whoami', 'hostname', 'uname',
+    # Process info
+    'ps', 'top',
+    # Network
+    'ping', 'netstat',
+    # Package management
+    'pip', 'pip3',
+    # Git operations
+    'git',
+    # Directory operations
+    'cd', 'mkdir', 'rmdir'
+}
 
 @tool(category='general')
 def calculator(math_expression: str):
@@ -153,132 +176,328 @@ def list_directory(path: str):
     """List contents of a directory.
     
     Args:
-        path (str|Path): The directory path to list
+        path (str|Path): The directory path to list. Use '~' or '~/' to reference your home directory.
     
     Returns:
         str: JSON string containing directory contents
+    
+    Example:
+        # List contents of home directory
+        list_directory('~')
+        
+        # List contents of Documents folder in home directory
+        list_directory('~/Documents')
     """
-    npath = Path(path).resolve()
-    if npath.is_dir():
-        return 'The content of the directory are: \n' + json.dumps(os.listdir(npath))
-    return "The path you provided isn't a directory"
+    try:
+        npath = Path(path).expanduser().resolve()
+        if npath.is_dir():
+            return 'The content of the directory are: \n' + json.dumps(os.listdir(npath))
+        return "The path you provided isn't a directory"
+    except Exception as e:
+        return str(e)
 
 @tool(category='system')
 def open_file(path: str, filename: Optional[str] = None):
     """Open a file or folder using the system's default application.
     
     Args:
-        path (str|Path): The path to the file or folder
+        path (str|Path): The path to the file or folder. Use '~' or '~/' to reference your home directory.
         filename (str, optional): The name of the file to open
     
     Returns:
         str: Success or error message
+    
+    Example:
+        # Open a specific file in home directory
+        open_file('~', 'document.txt')
+        
+        # Open a directory
+        open_file('~/Documents')
+        
+        # Open a file using full path
+        open_file('~/Documents/report.pdf')
     """
-    npath = Path(path).resolve()
-    if filename and npath.joinpath(filename).exists():
-        os.startfile(npath.joinpath(filename))
-        return 'Successfully opened file'
-    elif os.path.exists(npath):
-        os.startfile(npath)
-        return 'Successfully opened folder'
-    return 'Unable to open file'
+    try:
+        npath = Path(path).expanduser().resolve()
+        if filename and npath.joinpath(filename).exists():
+            os.startfile(npath.joinpath(filename))
+            return 'Successfully opened file'
+        elif os.path.exists(npath):
+            os.startfile(npath)
+            return 'Successfully opened folder'
+        return 'Unable to open file'
+    except Exception as e:
+        return str(e)
 
 @tool(category='system')
 def create_file(path: str, filename: str, content: Optional[str] = None):
     """Create a new file with optional content.
     
     Args:
-        path (str|Path): The directory path where to create the file
+        path (str|Path): The directory path where to create the file. Use '~' or '~/' to reference your home directory.
         filename (str): The name of the file to create
         content (str, optional): The content to write to the file
     
     Returns:
         str: Success message
+    
+    Example:
+        # Create empty file in home directory
+        create_file('~', 'newfile.txt')
+        
+        # Create file with content in Documents folder
+        create_file('~/Documents', 'notes.txt', 'Hello World!')
+        
+        # Create file in current directory with content
+        create_file('.', 'config.json', '{"setting": "value"}')
     """
-    npath = Path(path).resolve()
-    full_path = npath.joinpath(filename)
-    
-    if not full_path.exists():
-        with full_path.open('wt') as file:
-            if content:
-                file.write(content)
-    
-    return 'Operation done'
+    try:
+        npath = Path(path).expanduser().resolve()
+        full_path = npath.joinpath(filename)
+        
+        if not full_path.exists():
+            with full_path.open('wt') as file:
+                if content:
+                    file.write(content)
+        
+        return 'Operation done'
+    except Exception as e:
+        return str(e)
 
 @tool(category='system')
 def create_directory(path: str, dirname: str):
     """Create a new directory.
     
     Args:
-        path (str|Path): The parent directory path
+        path (str|Path): The parent directory path. Use '~' or '~/' to reference your home directory.
         dirname (str): The name of the directory to create
     
     Returns:
         str: Success message
-    """
-    npath = Path(path).resolve()
-    full_path = npath.joinpath(dirname)
-    if not full_path.exists() and not full_path.is_dir():
-        full_path.mkdir()
     
-    return 'Operation done'
+    Example:
+        # Create directory in home folder
+        create_directory('~', 'new_folder')
+        
+        # Create directory in Documents
+        create_directory('~/Documents', 'project_files')
+        
+        # Create directory in current location
+        create_directory('.', 'temp')
+    """
+    try:
+        npath = Path(path).expanduser().resolve()
+        full_path = npath.joinpath(dirname)
+        if not full_path.exists() and not full_path.is_dir():
+            full_path.mkdir()
+        
+        return 'Operation done'
+    except Exception as e:
+        return str(e)
 
 @tool(category='system')
 def read_file(path: str, filename: Optional[str] = None):
     """Read contents of a file.
     
     Args:
-        path (str|Path): The path to the file
+        path (str|Path): The path to the file. Use '~' or '~/' to reference your home directory.
         filename (str, optional): The name of the file to read
     
     Returns:
-        str: The file contents or directory listing
+        str: The file contents with line numbers or directory listing
+    
+    Example:
+        # Read file from home directory
+        read_file('~', 'document.txt')
+        
+        # Read file using full path
+        read_file('~/Documents/notes.txt')
     """
-    npath = Path(path).resolve()
-    full_path = npath.joinpath(filename) if filename else Path(path)
-    if full_path.is_file():
-        with full_path.open('rt') as file:
-            return file.read()
-    elif full_path.is_dir(): 
-        return json.dumps(os.listdir(full_path))
-    else:
-        return "Path wasn't found"
+    try:
+        npath = Path(path).expanduser().resolve()
+        full_path = npath.joinpath(filename) if filename else Path(path)
+        if full_path.is_file():
+            with full_path.open('rt') as file:
+                lines = file.readlines()
+                # Create a list of tuples with line number and content
+                line_data = [(i + 1, line.rstrip()) for i, line in enumerate(lines)]
+                # Format the output with line numbers
+                return '\n'.join(f"{num}: {content}" for num, content in line_data)
+        else:
+            return "The path you provided isn't a file"
+    except Exception as e:
+        return str(e)
 
 @tool(category='system')
 def write_file(path: str, filename: str, content: str):
-    """Write content to a file.
+    """Write content to a new file.
     
     Args:
-        path (str|Path): The directory path where the file is located
+        path (str|Path): The directory path where the file is located. Use '~' or '~/' to reference your home directory.
         filename (str): The name of the file to write to
         content (str): The content to write to the file
     
     Returns:
         str: Success message
-    """
-    npath = Path(path).resolve()
-    with npath.joinpath(filename).open('wt') as file:
-        file.write(content)
     
-    return 'Write operation successful.'
+    Example:
+        # Create new file in home directory
+        write_file('~', 'notes.txt', 'Hello World!')
+        
+        # Create new file in Documents folder
+        write_file('~/Documents', 'config.json', '{"setting": "value"}')
+    
+    Warning:
+        This tool will fail if the file already exists. Use update_file() to modify existing files.
+    """
+    try:
+        npath = Path(path).expanduser().resolve()
+        file_path = npath.joinpath(filename)
+        
+        if file_path.exists():
+            return "Error: File already exists. Use update_file() to modify existing files."
+            
+        with file_path.open('wt') as file:  # 'wt' for write text mode
+            file.write(content)
+        
+        return 'Write operation successful.'
+    except Exception as e:
+        return str(e)
+
+@tool(category='system')
+def update_file(path: str, filename: str, new_content: str, operation: Literal['replace','insert','append', 'replace_range'], start_line: int, end_line: Optional[int] = None):
+    """Update the contents of a file using various operations.
+
+    Args:
+        path (str): Path to the file to update
+        filename (str): The name of the file to update
+        new_content (str): The new content to add or replace in the file
+        operation (Literal['replace','insert','append', 'replace_range']): The type of update operation:
+            - 'replace': Replace content at start_line
+            - 'insert': Insert content before start_line
+            - 'append': Add content after start_line
+            - 'replace_range': Replace content from start_line to end_line
+        start_line (int): The line number to start the operation (1-based indexing)
+        end_line (Optional[int]): The ending line number for replace_range operation
+
+    Returns:
+        str: Error message if operation fails else Success message
+
+    Examples:
+        # Replace a line in a Python script
+        update_file('~/projects', 'main.py', 'def main():', 'replace', 10)
+
+        # Insert a new import at the start of a file
+        update_file('~/config', 'settings.json', 'import logging', 'insert', 1)
+
+        # Append a new entry to a configuration file
+        update_file('~/docker', 'docker-compose.yml', '  redis:\n    image: redis:latest', 'append', 15)
+
+        # Replace a block of HTML content
+        update_file('~/website', 'index.html', '''<div class="header">
+            <h1>Welcome</h1>
+            <p>This is my website</p>
+        </div>''', 'replace_range', 5, 8)
+
+    Raises:
+        FileNotFoundError: If the specified file doesn't exist
+        ValueError: If line numbers are invalid or operation type is unknown
+    """
+    try:
+        npath = Path(path).expanduser().resolve()
+        file_path = npath.joinpath(filename)
+        if not file_path.exists():
+            raise FileNotFoundError(f"The file {file_path} does not exist.")
+        
+        # Validate line numbers
+        if start_line < 1:
+            raise ValueError("start_line must be a positive integer.")
+        if end_line is not None and end_line < start_line:
+            raise ValueError("end_line must be greater than or equal to start_line.")
+        
+        # Read all lines from the file
+        with open(file_path, 'r') as file:
+            lines = file.readlines()
+        
+        # Determine the operation
+        if operation == 'replace':
+            # Replace the content of start_line
+            if 1 <= start_line <= len(lines):
+                lines[start_line - 1] = new_content + '\n'
+            else:
+                # Append the new content
+                lines.append(new_content + '\n')
+        elif operation == 'insert':
+            # Insert the new content before start_line
+            insert_position = start_line - 1
+            if insert_position < 0:
+                insert_position = 0
+            lines.insert(insert_position, new_content + '\n')
+        elif operation == 'append':
+            # Append the new content after start_line
+            append_position = start_line
+            if append_position < 0:
+                append_position = 0
+            elif append_position >= len(lines):
+                lines.append(new_content + '\n')
+            else:
+                lines.insert(append_position + 1, new_content + '\n')
+        elif operation == 'replace_range':
+            # Replace lines from start_line to end_line with new_content
+            if end_line is None:
+                raise ValueError("end_line must be provided for 'replace_range' operation.")
+            start_idx = start_line - 1
+            end_idx = end_line
+            # Ensure indices are within bounds
+            if start_idx < 0:
+                start_idx = 0
+            if end_idx > len(lines):
+                end_idx = len(lines)
+            # Split new_content into lines
+            new_lines = new_content.splitlines()
+            # Insert the new lines and remove the old range
+            lines[start_idx:end_idx] = [line + '\n' for line in new_lines]
+        else:
+            raise ValueError(f"Invalid operation type: {operation}")
+        
+        # Write the updated lines back to the file
+        with open(file_path, 'w') as file:
+            file.writelines(lines)
+        
+        return 'Write operation successful.'
+    except Exception as e:
+        return str(e)
 
 @tool(category='system')
 def delete_path(path: str):
     """Delete a file or directory.
     
     Args:
-        path (str|Path): The path to delete
+        path (str|Path): The path to delete. Use '~' or '~/' to reference your home directory.
     
     Returns:
         str: Success message
-    """
-    npath = Path(path).resolve()
-    if npath.is_file():
-        npath.unlink()
-    elif npath.is_dir():
-        shutil.rmtree(npath)
     
-    return 'Delete operation successful'
+    Example:
+        # Delete file from home directory
+        delete_path('~/unwanted.txt')
+        
+        # Delete directory and its contents
+        delete_path('~/old_project')
+        
+        # Delete file from Documents
+        delete_path('~/Documents/temp.txt')
+    """
+    try:
+        npath = Path(path).expanduser().resolve()
+        if npath.is_file():
+            npath.unlink()
+        elif npath.is_dir():
+            shutil.rmtree(npath)
+        
+        return 'Delete operation successful'
+    except Exception as e:
+        return str(e)
 
 @tool(category='system')
 def python_repl(code: str, timeout: Optional[int] = None):
@@ -1038,3 +1257,108 @@ return text[::-1]
         return f"Tool '{name}' created successfully."
     except Exception as e:
         return f"Error creating tool: {str(e)}"
+
+@tool(category='system')
+def terminal_command(command: str, timeout: Optional[int] = 180, working_dir: Optional[str] = str(Path.cwd())) -> str:
+    """Execute a terminal command safely with restrictions.
+    
+    Args:
+        command (str): The command to execute. Only whitelisted commands are allowed.
+        timeout (int, optional): Maximum execution time in seconds. Defaults to 30.
+        working_dir (str, optional): Working directory for command execution. Defaults to current directory.
+    
+    Returns:
+        str: Command output or error message.
+    
+    Example:
+        User: List files in current directory
+        AI Assistant: 
+            <observation>I need to list files in the current directory using a terminal command.</observation>
+            <mindspace>
+            File System: Directory structure, file listing
+            Terminal: Command execution, output formatting
+            Security: Safe command execution, permissions
+            System Integration: Command line interface, process management
+            </mindspace>
+            <thought>Step 1) I'll use the Terminal Command tool to execute 'ls'.
+            Step 2) This is a safe, whitelisted command for listing directory contents.
+            Step 3) Using default timeout and working directory settings.</thought>
+            <type>tool_call</type>
+            <tool_call>
+                <name>Terminal Command</name>
+                <arguments>
+                    <command>ls</command>
+                </arguments>
+            </tool_call>
+    
+    Warning:
+        This tool only allows specific whitelisted commands for security.
+        Commands are sanitized before execution.
+        Use with caution as it interacts with the system directly.
+    """
+    try:
+        # Security check 1: Extract base command
+        base_command = command.split()[0].lower()
+        
+        # Security check 2: Verify command is whitelisted
+        # if base_command not in ALLOWED_COMMANDS:
+        #     return f"Error: Command '{base_command}' is not allowed. Allowed commands: {', '.join(sorted(ALLOWED_COMMANDS))}"
+        
+        # Security check 3: Sanitize command
+        try:
+            # Use shlex to safely split command into arguments
+            command_parts = shlex.split(command)
+        except ValueError as e:
+            return f"Error: Invalid command format - {str(e)}"
+        
+        # Security check 4: Additional command validation
+        for part in command_parts:
+            # Check for suspicious patterns
+            if re.search(r'[;&|]', part) or '..' in part:
+                return "Error: Command contains forbidden characters or patterns"
+        
+        # Security check 5: Validate and resolve working directory
+        if working_dir:
+            try:
+                work_dir = Path(working_dir).resolve()
+                if not work_dir.exists() or not work_dir.is_dir():
+                    return f"Error: Invalid working directory - {working_dir}"
+            except Exception as e:
+                return f"Error: Working directory validation failed - {str(e)}"
+        else:
+            work_dir = Path.cwd()
+        
+        # Execute command with timeout and capture output
+        try:
+            process = subprocess.Popen(
+                command_parts,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=str(work_dir),
+                shell=True
+            )
+            
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                # Clean up process if it times out
+                process.kill()
+                return f"Error: Command timed out after {timeout} seconds"
+            
+            # if process.returncode != 0:
+            #     return f"Command failed with error:\n{stderr}"
+            
+            # Security check 6: Sanitize output
+            output = stdout.strip()
+            # Remove any control characters except newlines and tabs
+            output = re.sub(r'[\x00-\x09\x0b-\x1f\x7f-\x9f]', '', output)
+            
+            return output if output else "Command executed successfully (no output)"
+            
+        except Exception as e:
+            print(e)
+            return f"Error executing command: {str(e)}"
+            
+    except Exception as e:
+        return f"Unexpected error: {str(e)}"

@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional, Union
-from cognitrix.utils import xml_to_dict
+from cognitrix.utils import extract_sections, extract_tool_calls, xml_to_dict
 from odbms import Model
 import logging
 
@@ -65,21 +65,27 @@ class LLMResponse(Model):
 
     def parse_llm_response(self):
         self.llm_response = ''.join(self.chunks)
-        response_data = xml_to_dict(self.llm_response)
-
+        # response_data = xml_to_dict(self.llm_response)
+        sections = extract_sections(self.llm_response)
+        self.tool_call = extract_tool_calls(self.llm_response)
         try:
-            if isinstance(response_data, dict):
-                response = response_data['response']
-                if isinstance(response, dict):
-                    for key, value in response.items():
-                        setattr(self, key, value)
+            for section in sections:
+                if section['type'] == 'text':
+                    self.result = section['text']
                 else:
-                    self.result = response
+                    setattr(self, section['type'], section[section['type']])
+            # if isinstance(response_data, dict):
+            #     response = response_data['response']
+            #     if isinstance(response, dict):
+            #         for key, value in response.items():
+            #             setattr(self, key, value)
+            #     else:
+            #         self.result = response
         
         except ValueError:
             pass
 
         except Exception as e:
             logger.exception(e)
-            self.result = str(response_data)
+            self.result = self.llm_response
             

@@ -1,6 +1,8 @@
 from PIL import Image
 from typing import Dict
 import xml.etree.ElementTree as ET
+
+from bs4 import BeautifulSoup
 from cognitrix.tools import Tool
 import base64
 import io
@@ -321,3 +323,91 @@ def parse_tool_call_results(lst):
     for item in lst:
         root.append(item_to_xml(item))
     return ET.tostring(root, encoding='unicode', method='xml')
+
+
+def extract_tool_calls(data):
+    # Find all tool_call sections
+    pattern = r'<type>tool_call</type>.*?(?=<type>tool_call</type>|$)'
+    matches = re.findall(pattern, data, re.DOTALL)
+    
+    tool_calls = []
+    for match in matches:
+        # Extract <name>
+        name_match = re.search(r'<name>(.*?)</name>', match, re.DOTALL)
+        name = name_match.group(1).strip() if name_match else ''
+        
+        # Extract <arguments> section
+        args_match = re.search(r'<arguments>(.*?)</arguments>', match, re.DOTALL)
+        args_section = args_match.group(1).strip() if args_match else ''
+        
+        # Extract all key-value pairs within <arguments>
+        arguments = {}
+        # Find all patterns like <tag>content</tag>
+        tag_pattern = r'<(\w+)>(.*?)</\1>'
+        for tag in re.finditer(tag_pattern, args_section, re.DOTALL):
+            tag_name = tag.group(1)
+            tag_content = tag.group(2).strip()
+            # Handle special characters in content
+            # tag_content = tag_content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            arguments[tag_name] = tag_content
+        
+        tool_calls.append({
+            'type': 'tool_call',
+            'name': name,
+            'arguments': arguments
+        })
+    
+    return tool_calls
+
+def extract_sections(data):
+    section_types = ['observation', 'thought', 'mindspace', 'reflection', 'text', 'artifact']
+    soup = BeautifulSoup(data, 'html.parser')
+    sections = []
+    result_texts = []
+    
+    # Function to convert a tag and its children to a dictionary
+    def tag_to_dict(tag):
+        content_dict = {}
+        for child in tag.children:
+            if child.name:
+                if child.name in content_dict:
+                    # If the tag appears multiple times, store as a list
+                    if isinstance(content_dict[child.name], list):
+                        content_dict[child.name].append(child.get_text(strip=True))
+                    else:
+                        content_dict[child.name] = [content_dict[child.name], child.get_text(strip=True)]
+                else:
+                    content_dict[child.name] = child.get_text(strip=True)
+            else:
+                # Add text content directly
+                content = child.strip()
+                if content:
+                    content_dict = content
+        return content_dict
+    
+    # Initialize result section
+    result_content = []
+    
+    # Iterate through all root-level children
+    for child in soup.children:
+        if child.name in section_types: # type: ignore
+            # Extract section type content
+            content = tag_to_dict(child)
+            sections.append({
+                'type': child.name, # type: ignore
+                child.name: content # type: ignore
+            })
+        elif isinstance(child, str):
+            # Collect text outside of section types
+            stripped_text = child.strip()
+            if stripped_text:
+                result_content.append(stripped_text)
+    
+    # Add result section if there is any collected text
+    if result_content:
+        sections.append({
+            'type': 'text',
+            'text': ' '.join(result_content)
+        })
+    
+    return sections

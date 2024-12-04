@@ -16,7 +16,7 @@ class Utils(object):
         :return: True if email is valid, False otherwise
         """
         
-        email_address_matcher = re.compile('^[\w-]+@([\w-]+\.)+[\w]+$')
+        email_address_matcher = re.compile(r'^[\w-]+@([\w-]+\.)+[\w]+$')
         return True if email_address_matcher.match(email) else False
 
     @staticmethod

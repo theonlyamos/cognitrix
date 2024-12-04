@@ -8,15 +8,17 @@ import inspect
 def tool(*args: Any, **kwargs: Any):
     def decorator(func: Callable):
         @wraps(func)
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
+        async def wrapper(*args, **kwargs):
+            try:
+                if inspect.iscoroutinefunction(func):
+                    return await func(*args, **kwargs)
+                return func(*args, **kwargs)
+            except Exception as e:
+                return str(e)
         
         class GenericTool(Tool):
             async def run(self, *args, **kwargs):
-                if inspect.iscoroutinefunction(func):
-                    return ToolCallResult(content=await wrapper(*args, **kwargs), tool_name=func.__name__)
-                else:
-                    return ToolCallResult(content=wrapper(*args, **kwargs), tool_name=func.__name__)
+                return ToolCallResult(content=await wrapper(*args, **kwargs), tool_name=func.__name__)
             
 
         new_tool = GenericTool(

@@ -110,9 +110,15 @@ class Session(Model):
                             else:
                                 await output({'type': wsquery['type'], 'content': response.current_chunk, 'action': wsquery['action'], 'complete': False})
                         
-                        if response.tool_call and not called_tools and not response.result:
-                            called_tools = True
+                        if response.result and not stream:
+                            if interface == 'cli':
+                                output(f"\n{agent.name}:", response.result)
+                            else:
+                                await output({'type': wsquery['type'], 'content': response.result, 'action': wsquery['action'], 'complete': False})
+                        
+                        if response.tool_call and not called_tools:
                             result: dict[Any, Any] | str = await agent.call_tools(response.tool_call)
+                            called_tools = True
                             
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                                 message = result

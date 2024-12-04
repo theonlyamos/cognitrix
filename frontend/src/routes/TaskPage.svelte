@@ -364,7 +364,9 @@
             value={agent.id}
             label={agent.name}
             onChange={handleAgentsChange}
-            checked={task.assigned_agents.includes(agent?.id)}
+            checked={agent?.id
+              ? task.assigned_agents.includes(agent?.id)
+              : false}
           />
         {/each}
       </div>

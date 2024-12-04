@@ -142,7 +142,9 @@ class Agent(Model):
         prompt += self.system_prompt
         prompt = prompt.replace("{name}", self.name)
         
-        # prompt = prompt.replace("{tools}", tools_str)
+        if not self.llm.supports_tool_use:
+            prompt = prompt.replace("{tools}", tools_str)
+            
         prompt = prompt.replace("{subagents}", subagents_str)
         
         # prompt = prompt.replace("{available_tools}", json.dumps(self.available_tools))
@@ -242,7 +244,7 @@ class Agent(Model):
                     tasks.append(asyncio.create_task(tool.run(**t['arguments'])))
      
                     tool_calls_result = await asyncio.gather(*tasks)
-                    print(tool_calls_result)
+                    # print(tool_calls_result)
                     # tool_calls_result.append([tool.name, result])
                 
                 return {
