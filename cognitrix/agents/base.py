@@ -244,7 +244,7 @@ class Agent(Model):
                     tasks.append(asyncio.create_task(tool.run(**t['arguments'])))
      
                     tool_calls_result = await asyncio.gather(*tasks)
-                    # print(tool_calls_result)
+                    print(tool_calls_result)
                     # tool_calls_result.append([tool.name, result])
                 
                 return {

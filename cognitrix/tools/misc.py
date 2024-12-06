@@ -55,6 +55,14 @@ ALLOWED_COMMANDS: Set[str] = {
     'cd', 'mkdir', 'rmdir'
 }
 
+def get_file_content(full_path: Path):
+    with full_path.open('rt') as file:
+        lines = file.readlines()
+        # Create a list of tuples with line number and content
+        line_data = [(i + 1, line.rstrip()) for i, line in enumerate(lines)]
+        # Format the output with line numbers
+        return '\n'.join(f"{num}: {content}" for num, content in line_data)
+
 @tool(category='general')
 def calculator(math_expression: str):
     """
@@ -260,7 +268,8 @@ def create_file(path: str, filename: str, content: Optional[str] = None):
                 if content:
                     file.write(content)
         
-        return 'Operation done'
+        file_content = get_file_content(full_path)
+        return f'Operation done. The content of the file is: \n{file_content}'
     except Exception as e:
         return str(e)
 
@@ -329,12 +338,13 @@ def read_file(path: str, filename: Optional[str] = None):
         return str(e)
 
 @tool(category='system')
-def write_file(path: str, filename: str, content: str):
+def write_file(path: str, filename: str, overwrite: bool = False, content: str = ""):
     """Write content to a new file.
     
     Args:
         path (str|Path): The directory path where the file is located. Use '~' or '~/' to reference your home directory.
         filename (str): The name of the file to write to
+        overwrite (bool): Whether to overwrite the file if it already exists. Defaults to False.
         content (str): The content to write to the file
     
     Returns:
@@ -342,10 +352,10 @@ def write_file(path: str, filename: str, content: str):
     
     Example:
         # Create new file in home directory
-        write_file('~', 'notes.txt', 'Hello World!')
+        write_file('~', 'notes.txt', False, 'Hello World!')
         
         # Create new file in Documents folder
-        write_file('~/Documents', 'config.json', '{"setting": "value"}')
+        write_file('~/Documents', 'config.json', True, '{"setting": "value"}')
     
     Warning:
         This tool will fail if the file already exists. Use update_file() to modify existing files.
@@ -354,55 +364,58 @@ def write_file(path: str, filename: str, content: str):
         npath = Path(path).expanduser().resolve()
         file_path = npath.joinpath(filename)
         
-        if file_path.exists():
+        if file_path.exists() and not overwrite:
             return "Error: File already exists. Use update_file() to modify existing files."
             
         with file_path.open('wt') as file:  # 'wt' for write text mode
             file.write(content)
         
-        return 'Write operation successful.'
+        file_content = get_file_content(file_path)
+        return f'Write operation successful. The current content of the file is: \n{file_content}'
     except Exception as e:
         return str(e)
 
 @tool(category='system')
-def update_file(path: str, filename: str, new_content: str, operation: Literal['replace','insert','append', 'replace_range'], start_line: int, end_line: Optional[int] = None):
+def update_file(path: str, filename: str, operation: Literal['replace','insert','append', 'replace_range'], start_line: int, end_line: int = 0, new_content: str = ""):
     """Update the contents of a file using various operations.
 
     Args:
         path (str): Path to the file to update
         filename (str): The name of the file to update
-        new_content (str): The new content to add or replace in the file
         operation (Literal['replace','insert','append', 'replace_range']): The type of update operation:
             - 'replace': Replace content at start_line
             - 'insert': Insert content before start_line
             - 'append': Add content after start_line
             - 'replace_range': Replace content from start_line to end_line
         start_line (int): The line number to start the operation (1-based indexing)
-        end_line (Optional[int]): The ending line number for replace_range operation
+        end_line (int): The ending line number for replace_range operation. Set as 0 if not used.
+        new_content (str): The new content to add or replace in the file
 
     Returns:
         str: Error message if operation fails else Success message
 
     Examples:
         # Replace a line in a Python script
-        update_file('~/projects', 'main.py', 'def main():', 'replace', 10)
+        update_file('~/projects', 'main.py', 'replace', 10, 0, 'def main():')
 
         # Insert a new import at the start of a file
-        update_file('~/config', 'settings.json', 'import logging', 'insert', 1)
+        update_file('~/config', 'settings.json', 'insert', 1, 0, 'import logging')
 
         # Append a new entry to a configuration file
-        update_file('~/docker', 'docker-compose.yml', '  redis:\n    image: redis:latest', 'append', 15)
+        update_file('~/docker', 'docker-compose.yml', 'append', 15, 0, '  redis:\n    image: redis:latest')
 
         # Replace a block of HTML content
-        update_file('~/website', 'index.html', '''<div class="header">
+        update_file('~/website', 'index.html', 'replace_range', 5, 8, '''<div class="header">
             <h1>Welcome</h1>
             <p>This is my website</p>
-        </div>''', 'replace_range', 5, 8)
+        </div>''')
 
     Raises:
         FileNotFoundError: If the specified file doesn't exist
         ValueError: If line numbers are invalid or operation type is unknown
     """
+    start_line = int(start_line)
+    end_line = int(end_line)
     try:
         npath = Path(path).expanduser().resolve()
         file_path = npath.joinpath(filename)
@@ -463,8 +476,9 @@ def update_file(path: str, filename: str, new_content: str, operation: Literal['
         # Write the updated lines back to the file
         with open(file_path, 'w') as file:
             file.writelines(lines)
-        
-        return 'Write operation successful.'
+            
+        file_content = get_file_content(file_path)
+        return f'Write operation successful. The current content of the file is: \n{file_content}'
     except Exception as e:
         return str(e)
 

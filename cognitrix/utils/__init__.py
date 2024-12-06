@@ -2,7 +2,7 @@ from PIL import Image
 from typing import Dict
 import xml.etree.ElementTree as ET
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from cognitrix.tools import Tool
 import base64
 import io
@@ -114,8 +114,6 @@ def tool_to_functions(tool: Tool) -> Dict:
     
     return tool_json
 
-import json
-import logging
 
 # def extract_json(content: str) -> dict | str:
 #     """
@@ -324,39 +322,30 @@ def parse_tool_call_results(lst):
         root.append(item_to_xml(item))
     return ET.tostring(root, encoding='unicode', method='xml')
 
-
 def extract_tool_calls(data):
-    # Find all tool_call sections
-    pattern = r'<type>tool_call</type>.*?(?=<type>tool_call</type>|$)'
-    matches = re.findall(pattern, data, re.DOTALL)
-    
     tool_calls = []
-    for match in matches:
-        # Extract <name>
-        name_match = re.search(r'<name>(.*?)</name>', match, re.DOTALL)
-        name = name_match.group(1).strip() if name_match else ''
+    sections = data.split('<type>tool_call</type>')
+    # Skip the first element if empty
+    for section in sections[1:]:
+        soup_section = BeautifulSoup('<type>tool_call</type>' + section, 'html.parser')
+        name_tag = soup_section.find('name')
+        name = name_tag.get_text(strip=True) if name_tag else ''
         
-        # Extract <arguments> section
-        args_match = re.search(r'<arguments>(.*?)</arguments>', match, re.DOTALL)
-        args_section = args_match.group(1).strip() if args_match else ''
-        
-        # Extract all key-value pairs within <arguments>
+        arguments_tag = soup_section.find('arguments')
         arguments = {}
-        # Find all patterns like <tag>content</tag>
-        tag_pattern = r'<(\w+)>(.*?)</\1>'
-        for tag in re.finditer(tag_pattern, args_section, re.DOTALL):
-            tag_name = tag.group(1)
-            tag_content = tag.group(2).strip()
-            # Handle special characters in content
-            # tag_content = tag_content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            arguments[tag_name] = tag_content
+        if arguments_tag:
+            for child in arguments_tag.children: # type: ignore
+                if isinstance(child, Tag):
+                    tag_name = child.name
+                    # Get all contents of the tag as a string, including nested tags
+                    tag_content = ''.join(str(c) for c in child.contents)
+                    arguments[tag_name] = tag_content.strip()
         
         tool_calls.append({
             'type': 'tool_call',
             'name': name,
             'arguments': arguments
         })
-    
     return tool_calls
 
 def extract_sections(data):

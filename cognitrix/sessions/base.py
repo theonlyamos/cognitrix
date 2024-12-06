@@ -143,11 +143,11 @@ class Session(Model):
                         }
                         self.update_history(response_dict)
                         
-                        if response.result and not stream:
-                            if interface == 'cli':
-                                output(f"\n{agent.name}:", response.result)
-                            else:
-                                await output({'type': wsquery['type'], 'content': response.result, 'action': wsquery['action'], 'complete': True})
+                        # if response.result and not stream:
+                        #     if interface == 'cli':
+                        #         output(f"\n{agent.name}:", response.result)
+                        #     else:
+                        #         await output({'type': wsquery['type'], 'content': response.result, 'action': wsquery['action'], 'complete': True})
                     
                     if not tool_calls:
                         stream = False  
