@@ -214,7 +214,6 @@ class Agent(Model):
         return next((tool for tool in self.tools if tool.name.lower() == name.lower()), None)
 
     async def call_tools(self, tool_calls: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Union[dict, str]:
-
         try:
             if tool_calls:
                 tool_calls_result = []
@@ -244,7 +243,6 @@ class Agent(Model):
                     tasks.append(asyncio.create_task(tool.run(**t['arguments'])))
      
                     tool_calls_result = await asyncio.gather(*tasks)
-                    print(tool_calls_result)
                     # tool_calls_result.append([tool.name, result])
                 
                 return {
@@ -300,18 +298,19 @@ class Agent(Model):
             
             new_agent = cls(name=name, llm=llm, system_prompt=system_prompt, tools=agent_tools, is_sub_agent=is_sub_agent, parent_id=parent_id) # type: ignore
 
-            new_agent.save()
+            await new_agent.save()
 
             return new_agent
 
         except Exception as e:
+            logger.exception(e)
             logger.error(f"Error creating agent: {str(e)}")
             return None
 
     @classmethod
     async def list_agents(cls, parent_id: Optional[str] = None) -> List[Self]:
-        return cls.all()
+        return await cls.all()
 
     @classmethod
     async def load_agent(cls, agent_name: str) -> Optional['Agent']:
-        return cls.find_one({'name': agent_name})
+        return await cls.find_one({'name': agent_name})

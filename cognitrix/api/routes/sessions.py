@@ -14,7 +14,7 @@ sessions_api = APIRouter(
 
 @sessions_api.get("")
 async def get_all_sessions():
-    sessions = [session.model_dump() for session in Session.all()]
+    sessions = [session.json() for session in await Session.all()]
     
     return JSONResponse(sessions)
 
@@ -22,23 +22,23 @@ async def get_all_sessions():
 async def new_session(request: Request, session: Session):
     session.agent_id = request.state.agent.id
     session.save()
-    return JSONResponse(session.model_dump())
+    return session.json()
 
 @sessions_api.get("/{session_id}")
 async def get_session(session_id: str):
-    session = Session.get(session_id)
+    session = await Session.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    return JSONResponse(session.model_dump())
+    return session.json()
 
 @sessions_api.delete("/{session_id}")
 async def delete_session(session_id: str):
-    session = Session.get(session_id)
+    session = await Session.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    Session.remove({'id': session_id})
+    await session.remove({'id': session_id})
     return JSONResponse({"message": "Session deleted successfully"})
 
 @sessions_api.get("/{session_id}/events")
@@ -65,25 +65,25 @@ async def get_chat(session_id: str):
 
 @sessions_api.delete("/{session_id}/chat")
 async def delete_chat(session_id: str):
-    session = Session.get(session_id)
+    session = await Session.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     
     session.chat = []
-    session.save()
+    await session.save()
     return JSONResponse({"message": "Chat deleted successfully"})
 
 @sessions_api.get("/agents/{agent_id}")
 async def sessions_by_agent(agent_id: str):
-    sessions = Session.find({'agent_id': agent_id})
-    return JSONResponse([session.model_dump() for session in sessions])
+    sessions = await Session.find({'agent_id': agent_id})
+    return [session.json() for session in sessions]
 
 @sessions_api.get("/teams/{team_id}")
 async def sessions_by_team(team_id: str):
-    sessions = Session.find({'team_id': team_id})
-    return JSONResponse([session.model_dump() for session in sessions])
+    sessions = await Session.find({'team_id': team_id})
+    return [session.json() for session in sessions]
 
 @sessions_api.get("/tasks/{task_id}")
 async def sessions_by_task(task_id: str):
-    sessions = Session.find({'task_id': task_id})
-    return JSONResponse([session.model_dump() for session in sessions])
+    sessions = await Session.find({'task_id': task_id})
+    return [session.json() for session in sessions]

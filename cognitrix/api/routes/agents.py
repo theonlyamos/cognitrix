@@ -15,11 +15,9 @@ agents_api = APIRouter(
 
 @agents_api.get('')
 async def list_agents():
-    agents = Agent.all()
+    agents = await Agent.all()
 
-    response = [agent.model_dump() for agent in agents]
-    
-    return JSONResponse(response)
+    return [agent.json() for agent in agents]
 
 @agents_api.post('')
 async def save_agent(request: Request, agent: Agent):
@@ -29,12 +27,12 @@ async def save_agent(request: Request, agent: Agent):
     llm.provider = data['llm']['provider']
 
     agent.llm = llm
-    agent.save()
+    await agent.save()
     
     if request.state.agent.id == agent.id:
         request.state.agent = agent
     
-    return JSONResponse(agent.json())
+    return agent
 
 @agents_api.get("/sse")
 async def sse_endpoint(request: Request):
@@ -52,16 +50,15 @@ async def chat_endpoint(request: Request):
 
 @agents_api.get('/{agent_id}')
 async def load_agent(agent_id: str):
-    agent = Agent.find_one({'id': agent_id})
+    agent = await Agent.find_one({'id': agent_id})
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    response = agent.json()
     
-    return JSONResponse(response)
+    return agent
 
 @agents_api.get('/{agent_id}/session')
 async def load_session(agent_id: str):
-    agent = Agent.find_one({'id': agent_id})
+    agent = await Agent.find_one({'id': agent_id})
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     session_id: str = ''
@@ -71,7 +68,7 @@ async def load_session(agent_id: str):
             session = Session(agent_id=agent_id)
             
         session_id = session.id
-        session.save()
+        await session.save()
         
     return JSONResponse({'session_id': session_id})
 

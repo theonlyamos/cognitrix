@@ -48,9 +48,6 @@ class Task(Model):
     autostart: bool = False
     """Automatically start the task when it is ready"""
     
-    created_at: str = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
-    """Creation date of the task"""
-    
     status: TaskStatus = Field(default=TaskStatus.PENDING)
     """Status of the task"""
 

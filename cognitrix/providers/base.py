@@ -58,7 +58,7 @@ class LLM(Model):
     is_multimodal: bool = Field(default=False)
     """Whether the model is multimodal."""
     
-    provider: str = Field(default="")
+    provider: str = Field(default="openai")
     """This is set to the name of the class"""
     
     # tools: List[Dict] = []
@@ -188,22 +188,33 @@ class LLM(Model):
             A string containing the generated response.
         """
         try:
-            if not self.client:
-                self.client = OpenAI(api_key=self.api_key)
-                if 'helicone' in self.base_url:
-                    self.client = OpenAI(
-                        api_key=self.api_key, 
-                        default_headers={'Helicone-Auth': f'Bearer {os.getenv("HELICONE_API_KEY")}'}
-                    )
-                if self.base_url:
-                    self.client.base_url = self.base_url
-            
+            # print('[1]', self.client)
+            # if not self.client:
+            #     self.client = OpenAI(api_key=self.api_key)
+            #     print('[3]', self.client)
+            #     if 'helicone' in self.base_url:
+            #         self.client = OpenAI(
+            #             api_key=self.api_key, 
+            #             default_headers={'Helicone-Auth': f'Bearer {os.getenv("HELICONE_API_KEY")}'}
+            #         )
+            #     if self.base_url:
+            #         self.client.base_url = self.base_url
+            client = OpenAI(api_key=self.api_key)
+
+            if 'helicone' in self.base_url:
+                client = OpenAI(
+                    api_key=self.api_key, 
+                    default_headers={'Helicone-Auth': f'Bearer {os.getenv("HELICONE_API_KEY")}'}
+                )
+            if self.base_url:
+                client.base_url = self.base_url     
+                
             formatted_messages = self.format_query(query, chat_history)
             
             if self.model in ['o1-mini', 'o1-preview']:
                 stream = False
                 
-                completion = self.client.chat.completions.create(
+                completion = client.chat.completions.create(
                     model=self.model,
                     messages=[
                         {"role": "user", "content": system_prompt},
@@ -213,10 +224,10 @@ class LLM(Model):
                 )
 
             else:
-                completion = self.client.chat.completions.create(
+                completion = client.chat.completions.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": system_prompt},
+                        # {"role": "system", "content": system_prompt},
                         *formatted_messages
                     ],
                     tools=tools,
@@ -224,6 +235,7 @@ class LLM(Model):
                     max_tokens=self.max_tokens,
                     stream=stream
                 )
+
             response = LLMResponse()
             
             if not stream:
@@ -232,6 +244,7 @@ class LLM(Model):
                         response.tool_call.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
                 if completion.choices[0].message.content:
                     response.add_chunk(completion.choices[0].message.content)
+                # print(response)
                 yield response
             elif stream and hasattr(completion, 'choices'):
                 for chunk in completion:

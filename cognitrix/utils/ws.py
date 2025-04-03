@@ -101,7 +101,7 @@ class WebSocketManager:
                         if action == 'team_details':
                             agent = PromptGenerator(llm=web_agent.llm)
                             agent.system_prompt = team_details_generator
-                            available_agents = [agent.name for agent in Agent.all()]
+                            available_agents = [agent.name for agent in await Agent.all()]
                             agent.system_prompt = agent.system_prompt.replace("{agents}", "\n".join(available_agents))
                             
                             prompt += f"""{default_prompt}"""
@@ -127,12 +127,12 @@ class WebSocketManager:
                         task = query['task']
                         task_id = query.get('task_id', '')
                         team_id = query['team_id']
-                        team = Team.get(team_id)
+                        team = await Team.get(team_id)
                         if team:
                             if task_id:
-                                task = Task.get(task_id)
+                                task = await Task.get(task_id)
                             else:
-                                task = team.create_task(task['title'], task['description'])
+                                task = await team.create_task(task['title'], task['description'])
                             if task:
                                 # from cognitrix.utils.core import register_websocket_manager
                                 # ws_proxy = WebSocketManagerProxy(self.agent.id)
@@ -140,9 +140,9 @@ class WebSocketManager:
                                 # result = run_team_task.delay(team_id, task.id)
                                 # task.pid = result.id
                                 # task.save()
-                                team.assign_task(task_id=task.id)
+                                await team.assign_task(task_id=task.id)
                                 task_session = Session(team_id=team.id, task_id=task.id)
-                                task_session.save()
+                                await task_session.save()
                                 asyncio.create_task(team.work_on_task(task.id, task_session, self))
                             else:
                                 await websocket.send_json({'type': 'error', 'content': 'Task not found'})

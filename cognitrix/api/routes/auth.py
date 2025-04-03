@@ -30,7 +30,7 @@ class LoginForm(BaseModel):
 
 @auth_api.post("/login", response_model=Token)
 async def login(form_data: LoginForm):
-    user = authenticate(form_data.username, form_data.password)
+    user = await authenticate(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -42,13 +42,16 @@ async def login(form_data: LoginForm):
         data={"sub": user.email}, expires_delta=access_token_expires
     )
 
-    user_data = user.model_dump()
+    user_data = user.json()
+    # user_data['created_at'] = user_data['created_at'].isoformat()
+    # user_data['updated_at'] = user_data['updated_at'].isoformat()
 
     return JSONResponse({"user": user_data, "access_token": access_token, "token_type": "bearer"})
 
 @auth_api.post("/signup")
 async def signup(new_user: User):
-    existing_user = User.find_one({'email': new_user.email})
+    existing_user = await User.find_one({'email': new_user.email})
+
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -57,7 +60,7 @@ async def signup(new_user: User):
     hashed_password = Utils.hash_password(new_user.password)
     new_user.password = hashed_password
     
-    new_user.save()
+    await new_user.save()
     return {"message": "User created successfully"}
 
 @auth_api.get("/user")

@@ -1,9 +1,9 @@
 import { XMLParser } from 'fast-xml-parser';
-import type { 
-    AgentDetailInterface, 
-    TaskDetailInterface, 
-    TeamInterface,
-    SessionInterface  // Add this import
+import type {
+  AgentDetailInterface,
+  TaskDetailInterface,
+  TeamInterface,
+  SessionInterface  // Add this import
 } from "./interfaces";
 import { API_BACKEND_URI, DEEPGRAM_API_KEY } from './constants';
 import axios from 'axios';
@@ -14,7 +14,7 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
-  
+
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -23,67 +23,67 @@ api.interceptors.request.use((config) => {
   return Promise.reject(error);
 });
 
-export const sendChatMessage = async(query: String): Promise<string> => {
-    const response = await api.get(`/?query=${query}`)
-    return response.data
+export const sendChatMessage = async (query: String): Promise<string> => {
+  const response = await api.get(`/?query=${query}`)
+  return response.data
 }
 
-export const generatePrompt = async(agentName='', prompt: string): Promise<Object> => {
+export const generatePrompt = async (agentName = '', prompt: string): Promise<Object> => {
   const response = await api.post('/generate', { agentName, prompt });
   return response.data;
 }
 
-export const getAllAgents = async(): Promise<Object[]> => {
+export const getAllAgents = async (): Promise<Object[]> => {
   const response = await api.get('/agents');
   return response.data;
 }
 
-export const getAgent = async(agentId: string): Promise<Object> => {
+export const getAgent = async (agentId: string): Promise<Object> => {
   const response = await api.get(`/agents/${agentId}`);
   return response.data;
 }
 
-export const saveAgent = async(agent: AgentDetailInterface): Promise<Object> => {
+export const saveAgent = async (agent: AgentDetailInterface): Promise<Object> => {
   const response = await api.post('/agents', agent);
   return response.data;
 }
 
-export const getAgentSession = async(agentId: string): Promise<Object> => {
+export const getAgentSession = async (agentId: string): Promise<Object> => {
   const response = await api.get(`/agents/${agentId}/session`);
   return response.data;
 }
 
-export const getLLMProviders = async(): Promise<Object[]> => {
-  const response = await api.get('/llms');
+export const getLLMProviders = async (): Promise<Object[]> => {
+  const response = await api.get('/providers');
   return response.data;
 }
 
-export const getTools = async(): Promise<Object[]> => {
+export const getTools = async (): Promise<Object[]> => {
   const response = await api.get('/tools');
   return response.data;
 }
 
-export const getAllTasks = async(): Promise<TaskDetailInterface[]> => {
+export const getAllTasks = async (): Promise<TaskDetailInterface[]> => {
   const response = await api.get('/tasks');
   return response.data;
 }
 
-export const getTask = async(taskId: string): Promise<Object> => {
+export const getTask = async (taskId: string): Promise<Object> => {
   const response = await api.get(`/tasks/${taskId}`);
   return response.data;
 }
 
-export const saveTask = async(task: TaskDetailInterface): Promise<Object> => {
+export const saveTask = async (task: TaskDetailInterface): Promise<Object> => {
   const response = await api.post('/tasks', task);
   return response.data;
 }
 
-export const deleteTask = async(taskId: string): Promise<Object> => {
+export const deleteTask = async (taskId: string): Promise<Object> => {
   const response = await api.delete(`/tasks/${taskId}`);
   return response.data;
 }
 
-export const getTaskSession = async(sessionId: string): Promise<SessionInterface> => {
+export const getTaskSession = async (sessionId: string): Promise<SessionInterface> => {
   const response = await api.get(`/sessions/${sessionId}`);
   if (response.status !== 200) {
     throw new Error('Failed to fetch session');
@@ -91,9 +91,9 @@ export const getTaskSession = async(sessionId: string): Promise<SessionInterface
   return response.data;
 };
 
-export const updateTaskStatus = async(task_id: any): Promise<Object> => {
-    const response = await api.get(`/tasks/start/${task_id}`)
-    return response.data
+export const updateTaskStatus = async (task_id: any): Promise<Object> => {
+  const response = await api.get(`/tasks/start/${task_id}`)
+  return response.data
 }
 
 export const convertXmlToJson = (xmlText: string) => {
@@ -141,41 +141,41 @@ export const convertXmlToJson = (xmlText: string) => {
   }
 };
 
-export const startMicrophoneStream = async(): Promise<MediaStream> => {
+export const startMicrophoneStream = async (): Promise<MediaStream> => {
   return await navigator.mediaDevices.getUserMedia({ audio: true });
 }
 
 export async function getAllTeams(): Promise<TeamInterface[]> {
-    const response = await api.get(`/teams`);
-    if (response.status !== 200) {
-      throw new Error('Failed to fetch teams');
-    }
-    return response.data
+  const response = await api.get(`/teams`);
+  if (response.status !== 200) {
+    throw new Error('Failed to fetch teams');
   }
-  
-  export async function getTeam(teamId: string): Promise<TeamInterface> {
-    const response = await api.get(`/teams/${teamId}`);
-    if (response.status !== 200) {
-      throw new Error('Failed to fetch team');
-    }
-    return response.data
+  return response.data
+}
+
+export async function getTeam(teamId: string): Promise<TeamInterface> {
+  const response = await api.get(`/teams/${teamId}`);
+  if (response.status !== 200) {
+    throw new Error('Failed to fetch team');
   }
-  
+  return response.data
+}
+
 export async function saveTeam(team: TeamInterface): Promise<TeamInterface> {
-    const response = await api.post(`/teams`, team);
-    if (response.status !== 200) {
-      throw new Error('Failed to save team');
-    }
-    return response.data;
+  const response = await api.post(`/teams`, team);
+  if (response.status !== 200) {
+    throw new Error('Failed to save team');
   }
-  
+  return response.data;
+}
+
 export async function deleteTeam(teamId: string): Promise<void> {
-    const response = await api.delete(`/teams/${teamId}`);
-  
-    if (response.status !== 200) {
-      throw new Error('Failed to delete team');
-    }
-    return response.data
+  const response = await api.delete(`/teams/${teamId}`);
+
+  if (response.status !== 200) {
+    throw new Error('Failed to delete team');
+  }
+  return response.data
 }
 
 export async function generateTeam(description: string): Promise<Partial<TeamInterface>> {

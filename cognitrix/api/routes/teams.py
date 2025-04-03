@@ -14,53 +14,54 @@ teams_api = APIRouter(
 
 @teams_api.get("")
 async def get_all_teams():
-    teams = [team.model_dump() for team in Team.all()]
-    
-    return JSONResponse(teams)
+    teams = await Team.all()
+
+    return [team.json() for team in teams]
 
 @teams_api.post("")
 async def save_team(team: Team):
-    if Team.get(team.id):
-        update = Team.update({'id': team.id}, team.model_dump())
+    result = await Team.get(team.id)
+    if result:
+        update = await Team.update_one({'id': team.id}, team.json())
         
         if update:
-            result = Team.get(team.id)
+            result = await Team.get(team.id)
             if result:  
                 team = result
-                return JSONResponse(team.model_dump())
+                return team.json()
             else:
                 raise HTTPException(status_code=503, detail="Error updating team")
     else:
-        team.save()
+        await team.save()
 
-    return JSONResponse(team.model_dump())
+    return team.json()
 
 @teams_api.get("/{team_id}")
 async def get_team(team_id: str):
-    team = Team.get(team_id)
+    team = await Team.get(team_id)
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found")
     
-    return JSONResponse(team.model_dump())
+    return team.json()
 
 @teams_api.delete("/{team_id}")
 async def delete_team(team_id: str):
-    team = Team.get(team_id)
+    team = await Team.get(team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     
-    Team.remove({'id': team_id})
-    return JSONResponse({"message": "Team deleted successfully"})
+    await Team.remove_one({'id': team_id})
+    return {"message": "Team deleted successfully"}
 
 @teams_api.get("/{team_id}/sessions")
 async def sessions(team_id: str):
-    sessions = Session.find({'team_id': team_id})
-    return JSONResponse([session.model_dump() for session in sessions])
+    sessions = await Session.find({'team_id': team_id})
+    return [session.json() for session in sessions]
 
 
 @teams_api.get("/teams/{team_id}/tasks")
 async def get_tasks_by_team(team_id: str):
-    team = Team.get(team_id)
+    team = await Team.get(team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     tasks = team.get_assigned_tasks()

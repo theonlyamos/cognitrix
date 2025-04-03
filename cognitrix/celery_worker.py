@@ -29,20 +29,28 @@ celery.conf.update(
 def task_prerun_handler(task_id, task, *args, **kwargs):
     logger.info(f"Task started: {task_id}")
     # Update task status in your database if needed
-    task_obj = Task.find_one({'pid': task_id})
+    loop = asyncio.get_event_loop()
+    task_obj = loop.run_until_complete(Task.find_one({'pid': task_id}))
     if task_obj:
         task_obj.status = TaskStatus.IN_PROGRESS
-        task_obj.save()
+        loop.run_until_complete(task_obj.save())
+
 
 @task_postrun.connect
 def task_postrun_handler(task_id, task, *args, retval=None, state=None, **kwargs):
     logger.info(f"Task completed: {task_id}, State: {state}")
     # Update task status in your database if needed
-    task_obj = Task.find_one({'pid': task_id})
+    # get async loop
+    loop = asyncio.get_event_loop()
+    task_obj = loop.run_until_complete(Task.find_one({'pid': task_id}))
     if task_obj:
+        loop.run_until_complete(task_obj.save())
+
+
         task_obj.status = TaskStatus.COMPLETED if state == 'SUCCESS' else TaskStatus.PENDING
-        task_obj.save()
+        loop.run_until_complete(task_obj.save())
         
+
 @task_success.connect
 def task_success_handler(sender=None, result=None, **kwargs):
     logger.info(f"Task succeeded: {sender.request.id}") # type: ignore
@@ -53,33 +61,39 @@ def task_failure_handler(sender=None, task_id=None, exception=None, **kwargs):
 
 @celery.task(name="generic_task")
 def run_task(task_id): 
-    task = Task.get(task_id)  # Change here: use asyncio.run
+    loop = asyncio.get_event_loop()
+    task = loop.run_until_complete(Task.get(task_id))  # Change here: use asyncio.run
+
 
     result = None
     
     if task:
-        result = asyncio.run(task.start())  # Call the method here
-    
+        result = loop.run_until_complete(task.start())  # Call the method here
+
     return result
 
 @celery.task(name="team_task")
 def run_team_task(team_id: str, task_id: str): 
-    team = Team.get(team_id)
-    task = Task.get(task_id)
+    loop = asyncio.get_event_loop()
+    team = loop.run_until_complete(Team.get(team_id))
+    task = loop.run_until_complete(Task.get(task_id))
     if task and team:
         from cognitrix.utils.core import get_websocket_manager
+
         websocket_manager = get_websocket_manager(task_id)
         if websocket_manager:
             try:    
-                team.assign_task(task.id)
+                loop.run_until_complete(team.assign_task(task.id))
                 task_session = Session(team_id=team.id, task_id=task.id)
-                task_session.save()
+                loop.run_until_complete(task_session.save())
                 # await team.work_on_task(task.id, task_session, self)
             finally:
                 from cognitrix.utils.core import unregister_websocket_manager
+
                 unregister_websocket_manager(task_id)
 
-            return asyncio.run(team.work_on_task(task.id, task_session, websocket_manager))  # Call the method here
+            return loop.run_until_complete(team.work_on_task(task.id, task_session, websocket_manager))  # Call the method here
+
 
 if __name__ == '__main__':
     celery.start()

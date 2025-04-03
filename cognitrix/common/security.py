@@ -1,7 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Annotated, Optional
-import secrets
-import os
+from typing import Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
@@ -27,11 +25,12 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     username: Optional[str] = None
 
-def get_user(email: str) -> User | None:
-       return User.find_one({'email': email})
+async def get_user(email: str) -> User | None:
+    return await User.find_one({'email': email})
     
-def authenticate(email: str, password: str):
-    user = get_user(email)
+
+async def authenticate(email: str, password: str):
+    user = await get_user(email)
     if not user:
         return False
     if not pwd_context.verify(password, user.password):
@@ -66,7 +65,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     if not isinstance(username, str):
         raise credentials_exception
     
-    user = get_user(email=username)
+    user = await get_user(email=username)
     if user is None:
         raise credentials_exception
     

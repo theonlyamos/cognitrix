@@ -67,7 +67,8 @@ class LLMResponse(Model):
         self.llm_response = ''.join(self.chunks)
         # response_data = xml_to_dict(self.llm_response)
         sections = extract_sections(self.llm_response)
-        self.tool_call = extract_tool_calls(self.llm_response)
+        if '</tool_call>' in self.llm_response:
+            self.tool_call = extract_tool_calls(self.llm_response)
         try:
             for section in sections:
                 if section['type'] == 'text':

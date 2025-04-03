@@ -93,7 +93,7 @@ class Tool(Model):
     @classmethod
     def get_by_user_id(cls, user_id: str) -> list[Self]:
         """Retrieve all tools by user ID"""
-        return [cls(**tool.model_dump()) for tool in Tool.find({"user_id": user_id})]
+        return [cls(**tool.json()) for tool in Tool.find({"user_id": user_id})]
     
     def to_dict_format(self) -> Dict[str, Any]:
         """

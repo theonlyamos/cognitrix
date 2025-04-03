@@ -46,20 +46,21 @@ class Session(Model):
     @classmethod
     async def load(cls, session_id: str) -> Self:
         """Load an existing session or create a new one if it doesn't exist"""
-        session = cls.get(session_id)
+        session = await cls.get(session_id)
         if not session:
             session = cls()
-            session.save()
+            await session.save()
         return session
 
     @classmethod
     async def list_sessions(cls) -> List[Self]:
-        return cls.all()
+        return await cls.all()
 
     @classmethod
     async def delete(cls, session_id: str):
         """Delete session by id"""
-        return cls.remove({'id': session_id})
+        return await cls.delete_one({'id': session_id})
+
 
     def update_history(self, message: Dict[str, str]):
         self.chat.append(message)
@@ -67,26 +68,29 @@ class Session(Model):
     @property
     async def agent(self):
         from cognitrix.agents.base import Agent
-        return Agent.get(self.agent_id) if self.agent_id else None
+        return await Agent.get(self.agent_id) if self.agent_id else None
         
     @property
-    def team(self) -> Optional['Team']:
+    async def team(self) -> Optional['Team']:
         from cognitrix.teams.base import Team
-        return Team.get(self.team_id) if self.team_id else None
+        return await Team.get(self.team_id) if self.team_id else None
+
+
 
     @classmethod
     async def get_by_agent_id(cls, agent_id: str) -> Self:
         """Retrieve a session by agent_id"""
-        session = cls.find_one({'agent_id': agent_id})
+        session = await cls.find_one({'agent_id': agent_id})
         if not session:
             session = cls(agent_id=agent_id)
-            session.save()
+            await session.save()
         return session
     
+
     @classmethod
     async def get_by_task_id(cls, task_id: str) -> List[Self]:
         """Retrieve a session by task_id"""
-        return cls.find({'task_id': task_id}) # type: ignore
+        return await cls.find({'task_id': task_id}) # type: ignore
     
     async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: Dict[str, str]= {}, save_history: bool = True):
         from cognitrix.agents.base import Agent
@@ -100,7 +104,7 @@ class Session(Model):
                 try:
                     full_prompt = agent.process_prompt(message)
                     message = ''
-                    # response: LLMResponse | None = None
+                    response: LLMResponse = LLMResponse()
                     called_tools: bool = False
                     
                     async for response in agent.llm(full_prompt, system_prompt, self.chat, stream=stream, tools=formatted_tools):
@@ -108,14 +112,21 @@ class Session(Model):
                             if interface == 'cli':
                                 output(f"{response.current_chunk}", end="")
                             else:
+
                                 await output({'type': wsquery['type'], 'content': response.current_chunk, 'action': wsquery['action'], 'complete': False})
                         
-                        if response.result and not stream:
+                        if response.result:
+                            if not stream:
+                                if interface == 'cli':
+                                    output(f"\n{agent.name}:", response.result)
+                                else:
+                                    await output({'type': wsquery['type'], 'content': response.result, 'action': wsquery['action'], 'complete': False})
+                        else:
                             if interface == 'cli':
-                                output(f"\n{agent.name}:", response.result)
+                                output(f"\n{agent.name}:", response.llm_response)
                             else:
-                                await output({'type': wsquery['type'], 'content': response.result, 'action': wsquery['action'], 'complete': False})
-                        
+                                await output({'type': wsquery['type'], 'content': response.llm_response, 'action': wsquery['action'], 'complete': False})
+
                         if response.tool_call and not called_tools:
                             result: dict[Any, Any] | str = await agent.call_tools(response.tool_call)
                             called_tools = True
@@ -152,7 +163,7 @@ class Session(Model):
                     if not tool_calls:
                         stream = False  
                     if save_history:
-                        self.save()
+                        await self.save()
                     if not message:
                         break
                 except Exception as e:

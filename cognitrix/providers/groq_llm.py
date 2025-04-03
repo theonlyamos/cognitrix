@@ -23,7 +23,7 @@ class Groq(LLM):
         temperature: The temperature to use when generating text.
         api_key: Your Groq API key.
     """
-    model: str = 'llama-3.1-70b-versatile'
+    model: str = 'qwen-qwq-32b'
     """model endpoint to use""" 
     
     temperature: float = 0.2

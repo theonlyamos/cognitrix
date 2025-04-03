@@ -111,11 +111,13 @@
         on:click={toggleRecording}
         title={isTranscribing ? "Stop recording" : "Start recording"}
       >
-        <i class="fa-solid fa-microphone" class:recording={isTranscribing}></i>
+        <i class="fa-solid fa-microphone" class:recording={isTranscribing}
+          >{""}</i
+        >
       </button>
 
       <button
-        class="action-btn send-btn"
+        class="action-btn"
         on:click={onSendMessage}
         disabled={!userInput.trim() || loading}
         title={loading ? "Stop" : "Send message"}
@@ -134,7 +136,7 @@
   .input-bar {
     position: sticky;
     bottom: 0;
-    padding: 1rem 1.5rem;
+    padding: 0 1.5rem;
     background: var(--bg-0);
     border-top: 1px solid var(--bg-2);
   }
@@ -159,6 +161,8 @@
     font-size: 0.9375rem;
     line-height: 1.5;
     scrollbar-width: thin;
+    outline: none;
+    cursor: text;
   }
 
   .input-box:empty::before {

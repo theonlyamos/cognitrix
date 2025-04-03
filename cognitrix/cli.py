@@ -28,13 +28,12 @@ import subprocess
 logger = logging.getLogger('cognitrix.log')
 parser = argparse.ArgumentParser(description="Build and run AI agents on your computer")
 
-def start_web_ui(agent: Agent ):
+async def start_web_ui(agent: Agent):
     from .api.main import app
     from fastapi import WebSocket
     import uvicorn
     ws_manager = WebSocketManager(agent)
     # sse_manager = SSEManager(agent)
-    
 
     @app.middleware("http")
     async def add_middleware_data(request: Request, call_next):
@@ -47,7 +46,10 @@ def start_web_ui(agent: Agent ):
     async def websocket_endpoint(websocket: WebSocket):
         await ws_manager.websocket_endpoint(websocket) # type: ignore
 
-    uvicorn.run(app, forwarded_allow_ips="*")
+    # Use uvicorn's Server class for async operation instead of uvicorn.run()
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000, forwarded_allow_ips="*")
+    server = uvicorn.Server(config)
+    await server.serve()
     
 def add_agent():
     name = None
@@ -288,89 +290,90 @@ async def initialize(session: Session, agent: Agent, stream: bool = False):
             break
 
 
-def start(args: Namespace):
+async def start(args: Namespace):
     run_configure()
-    try:
-        if args.providers:
-            list_providers()
-            sys.exit()
-        elif args.agents:
-            list_agents()              
-            sys.exit()
-        elif args.tasks:
-            list_tasks()
-            sys.exit()
-        elif args.teams:
-            list_teams()
-            sys.exit()
-        elif args.sessions:
-            asyncio.run(list_sessions())
-            sys.exit()
+    # try:
+    if args.providers:
+        list_providers()
+        sys.exit()
+    elif args.agents:
+        list_agents()              
+        sys.exit()
+    elif args.tasks:
+        list_tasks()
+        sys.exit()
+    elif args.teams:
+        list_teams()
+        sys.exit()
+    elif args.sessions:
+        await list_sessions()
+        sys.exit()
+    
+    assistant = None
+    
+    if args.agent:
+        assistant = await Agent.find_one({'name': args.agent})
+    if not assistant:
+        assistant = await Agent.create_agent(name=args.agent, provider=args.provider, model=args.model, temperature=args.temperature, system_prompt=ASSISTANT_SYSTEM_PROMPT)
+    
         
-        assistant = None
-        
-        if args.agent:
-            assistant = Agent.find_one({'name': args.agent})
-        if not assistant:
-            assistant = asyncio.run(Agent.create_agent(name=args.agent, provider=args.provider, model=args.model, temperature=args.temperature, system_prompt=ASSISTANT_SYSTEM_PROMPT))
-        
-            
-        if not assistant:
-            raise Exception("Agent not found")
+    if not assistant:
+        raise Exception("Agent not found")
 
-        if args.provider:
-            provider = LLM.load_llm(args.provider)
-            if provider:
-                assistant.llm = provider
-        
-        if args.model and (assistant.llm.model.lower() != args.model.lower()):
-            assistant.llm.model = args.model
-        
-        # if args.temperature and (assistant.llm.temperature != args.temperature):
-        #     assistant.llm.temperature = args.temperature
-        
-        
-        if len(args.load_tools) and not len(assistant.tools):
-            tools = []
-            for cat in args.load_tools:
-                tools = get_tools(cat.strip().lower())
-                
-                tool_by_name = Tool.get_by_name(cat.strip().lower())
+    if args.provider:
+        provider = LLM.load_llm(args.provider)
+        if provider:
+            provider.provider = args.provider
+            assistant.llm = provider
+    
+    if args.model and (assistant.llm.model.lower() != args.model.lower()):
+        assistant.llm.model = args.model
+    
+    # if args.temperature and (assistant.llm.temperature != args.temperature):
+    #     assistant.llm.temperature = args.temperature
+    
+    
+    if len(args.load_tools) and not len(assistant.tools):
+        tools = []
+        for cat in args.load_tools:
+            tools = get_tools(cat.strip().lower())
+            
+            tool_by_name = Tool.get_by_name(cat.strip().lower())
 
-                if tool_by_name:
-                    tools.append(tool_by_name)
+            if tool_by_name:
+                tools.append(tool_by_name)
+    
+        assistant.tools = tools
+    
+    session = await Session.get_by_agent_id(assistant.id)
+    if not session:
+        session = Session(agent_id=assistant.id)
         
-            assistant.tools = tools
+    if args.clear_history:
+        session.chat = []
+        await session.save()
         
-        session = asyncio.run(Session.get_by_agent_id(assistant.id))
-        if not session:
-            session = Session(agent_id=assistant.id)
+    assistant.verbose = args.verbose
+    # print(assistant.formatted_system_prompt())
+    
+    await assistant.save()
+    
+    if args.generate:
+        await session(args.generate, assistant, stream=args.stream)
             
-        if args.clear_history:
-            session.chat = []
-            session.save()
-            
-        assistant.verbose = args.verbose
-        # print(assistant.formatted_system_prompt())
-            
-        assistant.save()
-        
-        if args.generate:
-            asyncio.run(session(args.generate, assistant, stream=args.stream))
-                
-        elif args.ui.lower() == 'web':
-            # start_worker()
-            start_web_ui(assistant)
-        else:
-            # start_worker()
-            asyncio.run(initialize(session, assistant, stream=args.stream))
-    except KeyboardInterrupt:
-        print("\nExiting...")
-        sys.exit(1)            
-    except Exception as e:
-        logging.exception(e)
-        # parser.print_help()
-        sys.exit(1)
+    elif args.ui.lower() == 'web':
+        # start_worker()
+        await start_web_ui(assistant)
+    else:
+        # start_worker()
+        await initialize(session, assistant, stream=args.stream)
+    # except KeyboardInterrupt:
+    #     print("\nExiting...")
+    #     sys.exit(1)            
+    # except Exception as e:
+    #     logging.exception(e)
+    #     # parser.print_help()
+    #     sys.exit(1)
 
 def get_arguments():
     global parser
@@ -391,7 +394,7 @@ def get_arguments():
         agents_parser.set_defaults(func=manage_tools)
 
         parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
-        parser.add_argument('--provider', default='groq', help='Set llm provider to use')
+        parser.add_argument('--provider', default='google', help='Set llm provider to use')
         parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
         parser.add_argument('--agents', action='store_true', help='List all saved agents')
         parser.add_argument('--tasks', action='store_true', help='List all saved tasks')
@@ -436,7 +439,13 @@ def main():
     global parser
     try:
         args = get_arguments()
-        args.func(args)
+
+        # check if args.func is a coroutine
+        if asyncio.iscoroutinefunction(args.func):
+            asyncio.run(args.func(args))
+        else:
+            args.func(args)
+
 
     except Exception as e:
         logging.exception(e)

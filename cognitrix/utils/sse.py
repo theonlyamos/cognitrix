@@ -60,7 +60,7 @@ class SSEManager:
                             
                 elif action['type'] == 'sessions':
                     if action['action'] == 'list':
-                        sessions = [sess.model_dump() for sess in await Session.list_sessions()]
+                        sessions = [sess.json() for sess in await Session.list_sessions()]
                         yield {'event': 'message', 'data': json.dumps({'type': 'sessions', 'content': sessions, 'action': 'list'})}
                     
                     elif action['action'] == 'get':

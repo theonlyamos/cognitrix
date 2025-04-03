@@ -18,18 +18,17 @@ tasks_api = APIRouter(
 
 @tasks_api.get('')
 async def list_tasks():
-    tasks = Task.all()
-    response = [task.dict() for task in tasks]
-    return JSONResponse(response)
+    tasks = await Task.all()
+    return [task.json() for task in tasks]
 
 @tasks_api.post('')
 async def save_task(request: Request, task: Task, background_tasks: BackgroundTasks):
-    task.save()
+    await task.save()
     
     if task.autostart:
         background_tasks.add_task(task.start)
     
-    return JSONResponse(task.dict())
+    return task.json()
 
 @tasks_api.get('/start/{task_id}')
 async def update_task_status(request: Request, task_id: str, background_tasks: BackgroundTasks):
@@ -37,32 +36,32 @@ async def update_task_status(request: Request, task_id: str, background_tasks: B
     response = {}
 
     if task_id:
-        task = Task.get(task_id)
+        task = await Task.get(task_id)
 
         if task:
             result = run_task.delay(task_id)
             print('[+] Task process', result)
             task.status = TaskStatus.IN_PROGRESS
             task.pid = result.id
-            task.save()
-            response = task.model_dump()
+            await task.save()
+            response = task.json()
     
-    return JSONResponse(response)
+    return response
 
 @tasks_api.get('/{task_id}')
 async def load_task(task_id: str):
-    task = Task.get(task_id)
+    task = await Task.get(task_id)
     response = {}
     if task:
         if task.pid:
             task_result = AsyncResult(task.pid)
             print(task_result.result, task_result.state, task_result.info, task_result.traceback)
             print('[+] Task Result',task_result)
-        response = task.model_dump()
+        response = task.json()
     
-    return JSONResponse(response)
+    return response
 
 @tasks_api.delete('/{task_id}')
 async def delete_task(task_id: str):
-    Task.remove(query={'id': task_id})
-    return JSONResponse({'message': 'Task deleted successfully'})
+    await Task.remove(query={'id': task_id})
+    return {'message': 'Task deleted successfully'}

@@ -33,12 +33,12 @@ class Team(Model):
         arbitrary_types_allowed = True
 
     @cached_property
-    def agents(self) -> List[Agent]:
-        return [agent for aid in self.assigned_agents if (agent := Agent.get(aid)) is not None]
+    async def agents(self) -> List[Agent]:
+        return [agent for aid in self.assigned_agents if (agent := await Agent.get(aid)) is not None]
 
     @property
-    def leader(self) -> Optional[Agent]:
-        leader = Agent.get(self.leader_id) if self.leader_id else None
+    async def leader(self) -> Optional[Agent]:
+        leader = await Agent.get(self.leader_id) if self.leader_id else None
         if leader:
             from cognitrix.providers.base import LLM
             new_llm = LLM.load_llm(leader.llm.provider)
@@ -48,21 +48,21 @@ class Team(Model):
         return leader
 
     @leader.setter
-    def leader(self, agent: Agent):
+    async def leader(self, agent: Agent):
         if agent.id in self.assigned_agents:
             self.leader_id = agent.id
         else:
             raise ValueError("The leader must be a member of the team.")
 
-    def add_agent(self, agent: Agent):
+    async def add_agent(self, agent: Agent):
         if agent.id not in self.assigned_agents:
             self.assigned_agents.append(agent.id)
 
-    def remove_agent(self, agent_id: str):
+    async def remove_agent(self, agent_id: str):
         self.assigned_agents = [aid for aid in self.assigned_agents if aid != agent_id]
 
     async def broadcast_message(self, sender: Agent, content: str, priority: MessagePriority = MessagePriority.NORMAL):
-        for agent in self.agents:
+        for agent in await self.agents:
             if agent.id != sender.id:
                 message = Message(sender=sender.name, receiver=agent.name, content=content, priority=priority)
                 await agent.receive_message(message)
@@ -73,29 +73,29 @@ class Team(Model):
 
     async def start_communication(self):
         while True:
-            for agent in self.agents:
+            for agent in await self.agents:
                 while agent.response_list:
                     message, response = agent.response_list.pop(0)
                     processed_response = await self.process_agent_message(agent, message, response.result)
                     print(f"{agent.name} processed message from {message.sender}: {processed_response}")
             await asyncio.sleep(0.1)  # Small delay to prevent busy-waiting
 
-    def create_task(self, title: str, description: str) -> Task:
+    async def create_task(self, title: str, description: str) -> Task:
         task = Task(title=title, description=description, assigned_agents=self.assigned_agents, team_id=self.id)
-        task.save()
+        await task.save()
         self.tasks.append(task)
         return task
 
-    def assign_task(self, task_id: str):
+    async def assign_task(self, task_id: str):
         check_assigned = next((t for t in self.tasks if t.id == task_id), None)
         if check_assigned:
             return check_assigned
-        task = Task.get(task_id)
+        task = await Task.get(task_id)
         if task:
             task.assigned_agents = self.assigned_agents
             task.status = TaskStatus.IN_PROGRESS
             task.team_id = self.id
-            task.save()
+            await task.save()
             self.tasks.append(task)
             return task
         return None
@@ -106,7 +106,7 @@ class Team(Model):
             try:
                 # Planning phase
                 task.status = TaskStatus.IN_PROGRESS
-                task.save()
+                await task.save()
                 print(f"Creating workflow for task: {task.title}")
                 workflow = await self.leader_create_workflow(task, session, websocket_manager)
                 print(workflow)
@@ -120,11 +120,11 @@ class Team(Model):
                 
                 task.results = [final_result]
                 task.status = TaskStatus.COMPLETED
-                task.save()
+                await task.save()
             except ValueError as e:
                 print(f"Error while working on task: {e}")
                 task.status = TaskStatus.PENDING
-                task.save()
+                await task.save()
 
     async def leader_create_workflow(self, task: Task, session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> List[Dict[str, Any]]:
         response = ''
@@ -133,20 +133,27 @@ class Team(Model):
         async def parse_agent_response(data: Dict[str, Any]):
             nonlocal response
 
-            if not self.leader:
+            if not await self.leader:
                 raise ValueError("No team leader assigned to create the workflow.")
             
             response = response + data['content']
 
             if websocket_manager:
-                await websocket_manager.send_team_message(self.leader.name, "system", data['content'])
+                leader = await self.leader
+                if leader:
+                    await websocket_manager.send_team_message(leader.name, "system", data['content'])
         
-        if not self.leader:
+        if not await self.leader:
             raise ValueError("No team leader assigned to create the workflow.")
         
+        leader = await self.leader # Fetch leader once
+        agents_list = await self.agents # Fetch agents list once
+        leader_id = leader.id if leader else None # Safely get leader ID
+        member_names = [agent.name for agent in agents_list if agent.id != leader_id] # Create a list
+
         prompt = (
             f"Task: {task.title}\nDescription: {task.description}\n"
-            f"Team members: {', '.join(agent.name for agent in self.agents if agent.id != self.leader_id)}\n"
+            f"Team members: {', '.join(member_names)}\n" # Join the list of names
             "All team members are AI agents. Factor this into your decision when giving time estimates.\n\n"
             "Create a detailed workflow for this task. For each step, provide the following information in a structured format:\n"
             "1. Step number and title\n"
@@ -163,7 +170,7 @@ class Team(Model):
             "Your response should not be in json format and should not contain any decorators."
         )
 
-        await session(prompt, self.leader, 'task', True, parse_agent_response, {'type': 'start_task', 'action': 'create_workflow'})
+        await session(prompt, await self.leader, 'task', True, parse_agent_response, {'type': 'start_task', 'action': 'create_workflow'})
         
         if response:
             steps = response.split('\n\n')
@@ -198,16 +205,19 @@ class Team(Model):
         
         for step in workflow:
             for responsibility in step["responsibilities"]:
-                agent = Agent.find_one({'name': responsibility["agent"]})
+                agent = await Agent.find_one({'name': responsibility["agent"]})
                 if agent:
                     message = f"Your role in {step['step']} of task '{task.title}': {responsibility['task']}. Estimated time: {step['estimated_time']}"
-                    await self.send_message(self.leader, agent, message, session=session)
+                    leader = await self.leader
+                    if leader:
+                        await self.send_message(leader, agent, message, session=session)
+
         
         return workflow
 
     async def leader_coordinate_workflow(self, task: Task, workflow: List[Dict[str, Any]], session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> str:
         from cognitrix.providers.base import LLM
-        if not self.leader:
+        if not await self.leader:
             raise ValueError("No team leader assigned to coordinate the workflow.")
         
         result: str = ''
@@ -224,13 +234,18 @@ class Team(Model):
         
         for step in workflow:
             for responsibility in step["responsibilities"]:
-                agent = Agent.find_one({'name': responsibility["agent"]})
+                agent = await Agent.find_one({'name': responsibility["agent"]})
                 if agent:
                     # Leader assigns the task to the agent
+
                     message = f"Please start working on your part of the task: {task.title}\nStep: {step['step']}\nYour responsibility: {responsibility['task']}"
-                    await self.send_message(self.leader, agent, message, session=session)
+                    leader = await self.leader
+                    if leader:
+                        await self.send_message(leader, agent, message, session=session)
                     if websocket_manager:
-                        await websocket_manager.send_team_message(self.leader.name, agent.name, message)
+                        leader = await self.leader
+                        if leader:
+                            await websocket_manager.send_team_message(leader.name, agent.name, message)
                     
                     # Agent works on the task
                     agent_result = await self.process_agent_task(agent, task, result, session, websocket_manager)
@@ -259,7 +274,7 @@ After your review, conclude with one of the following actions:
 Your review:
 """
                     
-                    await session(review_prompt, self.leader, 'task', True, parse_review_response, {'type': 'start_task', 'action': 'review_agent_task'})
+                    await session(review_prompt, await self.leader, 'task', True, parse_review_response, {'type': 'start_task', 'action': 'review_agent_task'})
                     
                     # Leader provides feedback to the agent
                     print(f"[!] Review response for {agent.name} on task '{task.title}' (Step: {step['step']}):\n{review_response}")
@@ -295,7 +310,7 @@ Your review:
         return result
 
     async def leader_evaluate_and_finalize(self, task: Task, result: str, session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> str:
-        if not self.leader:
+        if not await self.leader:
             raise ValueError("No team leader assigned to evaluate and finalize the task.")
         
         evaluation_response: str = ''
@@ -306,18 +321,22 @@ Your review:
             
         evaluation_prompt = f"Task: {task.title}\nFull results:\n{result}\nEvaluate the overall quality of the work, highlight key findings, and create a comprehensive summary."
         
-        await session(evaluation_prompt, self.leader, 'task', True, parse_evaluation_response, {'type': 'start_task', 'action': 'evaluate_task'})
+        await session(evaluation_prompt, await self.leader, 'task', True, parse_evaluation_response, {'type': 'start_task', 'action': 'evaluate_task'})
         
         if evaluation_response:
             final_result = f"Task Results:\n{result}\n\nTeam Leader Evaluation and Summary:\n{evaluation_response}"
             
             # Inform all team members about the task completion and share the summary
-            for agent in self.agents:
-                if agent.id != self.leader_id:
+            for agent in await self.agents:
+                if agent.id != (await self.leader).id:
                     message = f"Task '{task.title}' has been completed. Here's the summary:\n{evaluation_response}"
-                    await self.send_message(self.leader, agent, message, session=session)
+                    leader = await self.leader
+                    if leader:
+                        await self.send_message(leader, agent, message, session=session)
                     if websocket_manager:
-                        await websocket_manager.send_team_message(self.leader.name, agent.name, message)
+                        leader = await self.leader
+                        if leader:
+                            await websocket_manager.send_team_message(leader.name, agent.name, message)
         else:
             final_result = f"Task Results:\n{result}\n\nWarning: No evaluation response received from the team leader."
             print(f"Warning: No evaluation response received for task '{task.title}'")
@@ -358,8 +377,9 @@ Your review:
         return f"{agent.name}'s contribution: {task_result}"
 
     async def delegate_task(self, sender: Agent, message: Message, delegate_name: str):
-        delegate = Agent.find_one({'name': delegate_name})
+        delegate = await Agent.find_one({'name': delegate_name})
         if delegate:
+
             new_message = Message(
                 sender=sender.name,
                 receiver=delegate.name,
@@ -378,18 +398,20 @@ Your review:
         else:
             return response
 
-    def get_assigned_tasks(self):
+    async def get_assigned_tasks(self):
         """Get all tasks assigned to this team"""
-        return Task.find({'team_id': self.id})
+        return await Task.find({'team_id': self.id})
 
     @classmethod
-    def get_session(cls, team_id: str) -> 'Session':
+    async def get_session(cls, team_id: str) -> 'Session':
         from cognitrix.sessions.base import Session
-        session = Session.find_one({'team_id': team_id})
+        session = await Session.find_one({'team_id': team_id})
         if not session:
+
             session = Session(team_id=team_id)
-            session.save()
+            await session.save()
         return session
+
 
 class TeamManager:
     def __init__(self):
@@ -421,68 +443,3 @@ class TeamManager:
             priority=priority
         )
         await receiver_agent.receive_message(message)
-
-# Example usage
-async def main():
-    def print_notification(message: Message):
-        print(f"Notification: New message for {message.receiver} from {message.sender} (Priority: {message.priority.name})")
-
-    manager = TeamManager()
-    research_team = manager.create_team("Research Team", "A team dedicated to conducting cutting-edge research in artificial intelligence and machine learning.")
-
-    alice = await Agent.create_agent(name="Alice", system_prompt="Research Assistant", ephemeral=True)
-    bob = await Agent.create_agent(name="Bob", system_prompt="Data Analyst", ephemeral=True)
-    charlie = await Agent.create_agent(name="Charlie", system_prompt="Domain Expert", ephemeral=True)
-
-    if alice and bob and charlie:
-        research_team.add_agent(alice)
-        research_team.add_agent(bob)
-        research_team.add_agent(charlie)
-        research_team.leader = alice  # Set Alice as the team leader
-
-    # Start the communication system
-    # communication_task = asyncio.create_task(research_team.start_communication())
-
-    # Send messages with different priorities
-    # if alice and bob:
-    #     await research_team.send_message(alice, bob, "Can you analyze the latest dataset?", MessagePriority.HIGH)
-    # if charlie:
-    #     await research_team.broadcast_message(charlie, "Team meeting at 2 PM today.", MessagePriority.NORMAL)
-    # if bob and alice:
-    #     await research_team.send_message(bob, alice, "Urgent: Client needs the report ASAP!", MessagePriority.URGENT)
-
-    # Create and assign a task
-    task = research_team.create_task(
-        title="Stock Options",
-        description="Get me best ai-related stock options to invest in"
-    )
-    research_team.assign_task(task.id)
-
-    # Work on the task
-    await research_team.work_on_task(task.id, research_team.get_session(research_team.id))
-
-    # Check task status and results
-    task_status = research_team.get_task_status(task.id)
-    if task_status == TaskStatus.COMPLETED:
-        results = research_team.get_task_results(task.id)
-        if results is not None:
-            print("Task completed. Results:")
-            for result in results:
-                print(result)
-        else:
-            print("Task completed, but no results were found.")
-    else:
-        print(f"Task is not completed. Current status: {task_status}")
-
-    # Allow some time for message processing
-    await asyncio.sleep(10)
-
-    # Cancel the communication task
-    # communication_task.cancel()
-    # try:
-    #     await communication_task
-    # except asyncio.CancelledError:
-    #     pass
-
-if __name__ == "__main__":
-    asyncio.run(main())
