@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Self, get_type_hints
 from rich import print
 
 from pydantic import Field
+from cognitrix.tools.utils import ToolCallResult
 
 class Tool(Model):
     """
@@ -64,7 +65,15 @@ class Tool(Model):
             
             module = __import__(__package__, fromlist=['__init__'])  # type: ignore
             tools_by_category: list[Tool] = [f[1] for f in inspect.getmembers(module) if not f[0].startswith('__') and f[0].lower() != 'tool' and isinstance(f[1], Tool) and f[1].category == category]
-            class_tools_by_category: list[Tool] = [f[1]() for f in inspect.getmembers(module, inspect.isclass) if not f[0].startswith('__') and f[0].lower() != 'tool'  and isinstance(f[1](), Tool) and f[1]().category == category]
+            class_tools_by_category: list[Tool] = [
+                f[1]() for f in inspect.getmembers(module, inspect.isclass)
+                if not f[0].startswith('__')
+                and f[0].lower() != 'tool'
+                and issubclass(f[1], Tool)
+                and f[1] is not Tool
+                and f[1] is not ToolCallResult
+                and f[1]().category == category
+            ]
             tools.extend(tools_by_category)
             tools.extend(class_tools_by_category)
             

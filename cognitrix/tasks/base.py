@@ -75,7 +75,6 @@ class Task(Model):
         return await Session.get_by_task_id(self.id)
     
     async def start(self):
-
         if len(self.assigned_agents):
             team = await self.team()
 

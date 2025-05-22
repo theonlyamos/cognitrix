@@ -1,6 +1,6 @@
 from cognitrix.providers.base import LLM, LLMResponse
 from typing import Any, Dict, List, Union
-from google import genai
+import google.genai as genai
 from google.genai.types import GenerateContentConfig, Content, Tool, GoogleSearch, Part, FunctionDeclaration
 from dotenv import load_dotenv
 from PIL import Image
@@ -34,7 +34,7 @@ class Google(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    model: str = 'gemini-2.5-pro-exp-03-25'
+    model: str = 'gemini-2.5-flash-preview-04-17'
     """model endpoint to use""" 
     
     temperature: float = 0.2
@@ -55,7 +55,7 @@ class Google(LLM):
     is_multimodal: bool = True
     """Whether the model is multimodal."""
     
-    supports_tool_use: bool = True
+    supports_tool_use: bool = False
     """Whether the model supports tool use."""
     
     def format_tools(self, tools: list[dict[str, Any]]) -> List[FunctionDeclaration]:
@@ -102,7 +102,7 @@ class Google(LLM):
                 messages.append(Content(role=role, parts=[
                     Part.from_bytes(screenshot_bytes.getvalue(), mime_type='image/jpeg'), # type: ignore
                     Part.from_text(text='Above is the screenshot')
-                    ]))
+                ]))
                 
 
         return messages
@@ -114,8 +114,8 @@ class Google(LLM):
             )
             
             tools = [
-                # Tool(google_search=GoogleSearch()),
-                Tool(function_declarations=self.format_tools(tools))
+                Tool(google_search=GoogleSearch()),
+                # Tool(function_declarations=self.format_tools(tools))
             ]
             
             generate_content_config = GenerateContentConfig(
@@ -151,9 +151,11 @@ class Google(LLM):
             )
             
             response = LLMResponse()
+    
             for chunk in completion:
-                response.add_chunk(chunk.text)
-                yield response
+                if chunk.text:
+                    response.add_chunk(chunk.text)
+            yield response
 
         except google_exceptions.GoogleAPIError as e:
             logger.error(f"Google API error: {str(e)}")

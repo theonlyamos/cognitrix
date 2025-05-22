@@ -35,7 +35,6 @@ python-dotenv = "^1.0.1"
 pydantic = "^2.6.2"
 aiohttp = "^3.9.3"
 cohere = "^5.5.6"
-together = "^0.2.11"
 clarifai = "^10.1.0"
 openai = "^1.12.0"
 groq = "^0.4.1"
@@ -65,6 +64,7 @@ azure-ai-inference = "^1.0.0b4"
 bcrypt = "^4.3.0"
 google-genai = "^1.9.0"
 ollama = "^0.4.7"
+mcp = {extras = ["cli"], version = "^1.9.1"}
 
 [build-system]
 requires = ["poetry-core"]

@@ -795,12 +795,12 @@ def mouse_right_click(x: int, y: int):
     return 'Mouse double-click completed.'
 
 @tool(category='system')
-async def create_new_agent(name: str, llm: str, description: str, tools: List[str], parent: Agent):
+async def create_agent(name: str, provider: str, description: str, tools: List[str], parent: Optional[Agent] = None):
     """Use this tool to create sub agents for specific tasks.
     
     Args:
         name (str): The name of the agent
-        llm (str): The name of the llm to use. Select from [openai, google, anthropic, groq, together, clarifai].
+        provider (str): The name of the provider to use. Select from [openai, google, anthropic, groq, together, clarifai].
         description (str): Prompt describing the agent's role and functionalities. Should include the agent's role, capabilities and any other info the agent needs to be able to complete it's task. Be as thorough as possible.
         tools (list): Tools the agent needs to complete it's tasks if any.
     
@@ -864,31 +864,31 @@ async def create_new_agent(name: str, llm: str, description: str, tools: List[st
         
     """
     
-    sub_agent: Optional[Agent] = None
+    agent: Optional[Agent] = None
         
     description += '\n\n{tools}'
     
     if not "return_format" in description:
         description += f"\n{xml_return_format}"
         
-    sub_agent = await Agent.create_agent(
+    agent = await Agent.create_agent(
         name=name,
         system_prompt=description,
-        provider=llm,
-        is_sub_agent=True,
-        parent_id=parent.id,
+        provider=provider,
+        is_sub_agent=True if parent else False,
+        parent_id=parent.id if parent else None,
         tools=tools
     )
         
-    if sub_agent:
-        sub_agent.system_prompt = description
-        sub_agent.save()
-        return ['agent', sub_agent, 'Sub agent created successfully']
+    if agent:
+        agent.system_prompt = description
+        await agent.save()
+        return {'status': 'success', 'message': f'Agent "{name}" created successfully'}
     
-    return "Error creating sub agent"
+    return {'status': 'error', 'message': f'Error creating agent "{name}"'}
 
 @tool(category='system')
-def call_agent(name: str, task: str, parent: Agent):
+async def call_agent(name: str, task: str):
     """Run a task with a sub agent
     
     Args:
@@ -919,7 +919,12 @@ def call_agent(name: str, task: str, parent: Agent):
             </tool_call>
         
     """
-    parent.call_sub_agent(name, task)
+    agent = await Agent.load_agent(name)
+    if agent:
+        result = await agent.call_sub_agent(task)
+        return result
+    else:
+        return {'status': 'error', 'message': f'Agent "{name}" not found'}
     
     return "Agent running"
 
