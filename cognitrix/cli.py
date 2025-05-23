@@ -274,7 +274,7 @@ async def initialize(session, agent, stream: bool = False):
     hostname = socket.gethostname()
 
     builtins = ['cd', 'exit', 'quit', 'q']
-    custom_commands = ['add agent', 'list tools', 'list agents', 'show history', '/mcp', '/mcp-tools', '/mcp-tool-info', '/mcp-connect', '/mcp-disconnect', '/add', '/delete', '/show']
+    custom_commands = ['add agent', 'list tools', 'list agents', 'show history', '/mcp', '/mcp-tools', '/mcp-tool-info', '/mcp-call', '/mcp-connect', '/mcp-disconnect', '/add', '/delete', '/show']
     session_completer = CognitrixCompleter(builtins, custom_commands)
     prompt_session = PromptSession(completer=session_completer, history=InMemoryHistory())
 
@@ -406,6 +406,45 @@ async def initialize(session, agent, stream: bool = False):
                     else:
                         error_msg = tools[0].get('error', 'Failed to list tools') if tools else 'No tools available'
                         console.print(Panel(error_msg, border_style="red"))
+                    continue
+                # Handle /mcp-call <tool_name> [server_name] [args...] command
+                elif cmd == 'mcp-call':
+                    if not args:
+                        console.print(Panel("Usage: /mcp-call <tool_name> [server_name] [arg1=value1] [arg2=value2]...", border_style="red"))
+                        continue
+                    
+                    tool_name = args[0]
+                    
+                    # Parse arguments - check if second arg is a server name or tool argument
+                    server_name = None
+                    tool_args = {}
+                    
+                    remaining_args = args[1:]
+                    
+                    # If first remaining arg doesn't contain '=', treat it as server name
+                    if remaining_args and '=' not in remaining_args[0]:
+                        server_name = remaining_args[0]
+                        remaining_args = remaining_args[1:]
+                    
+                    # Parse tool arguments (key=value format)
+                    for arg in remaining_args:
+                        if '=' in arg:
+                            key, value = arg.split('=', 1)
+                            # Try to parse as JSON for complex types, otherwise use as string
+                            try:
+                                import json
+                                tool_args[key] = json.loads(value)
+                            except:
+                                tool_args[key] = value
+                        else:
+                            console.print(Panel(f"Invalid argument format: {arg}. Use key=value format.", border_style="red"))
+                            continue
+                    
+                    from cognitrix.tools.mcp_client import mcp_call_tool
+                    result = await mcp_call_tool(tool_name, tool_args, server_name)
+                    
+                    # Display result in a nice format
+                    console.print(Panel(str(result), title=f"Tool Result: {tool_name}", border_style="green"))
                     continue
                 # Handle /mcp-connect <server_name> command
                 elif cmd == 'mcp-connect':
