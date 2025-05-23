@@ -34,7 +34,7 @@ class Google(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    model: str = 'gemini-2.5-flash-preview-04-17'
+    model: str = 'gemini-2.5-flash-preview-05-20'
     """model endpoint to use""" 
     
     temperature: float = 0.2
@@ -114,8 +114,8 @@ class Google(LLM):
             )
             
             tools = [
-                Tool(google_search=GoogleSearch()),
-                # Tool(function_declarations=self.format_tools(tools))
+                # Tool(google_search=GoogleSearch()),
+                Tool(function_declarations=self.format_tools(tools))
             ]
             
             generate_content_config = GenerateContentConfig(

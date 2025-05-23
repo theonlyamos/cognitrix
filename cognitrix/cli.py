@@ -274,7 +274,7 @@ async def initialize(session, agent, stream: bool = False):
     hostname = socket.gethostname()
 
     builtins = ['cd', 'exit', 'quit', 'q']
-    custom_commands = ['add agent', 'list tools', 'list agents', 'show history']
+    custom_commands = ['add agent', 'list tools', 'list agents', 'show history', '/mcp', '/mcp-tools', '/mcp-tool-info', '/mcp-connect', '/mcp-disconnect', '/add', '/delete', '/show']
     session_completer = CognitrixCompleter(builtins, custom_commands)
     prompt_session = PromptSession(completer=session_completer, history=InMemoryHistory())
 
@@ -317,13 +317,117 @@ async def initialize(session, agent, stream: bool = False):
                     elif cmd == 'teams':
                         list_teams()
                     elif cmd == 'mcp':
-                        from cognitrix.tools.mcp_client import mcp_list_tools
-                        tools = await mcp_list_tools()
-                        if tools and isinstance(tools, list) and 'error' in tools[0]:
-                            console.print(Panel(tools[0]['error'], title="MCP Server Tools", border_style="red"))
+                        from cognitrix.tools.mcp_client import mcp_list_servers
+                        servers = await mcp_list_servers()
+                        if servers and isinstance(servers, list) and len(servers) > 0 and 'error' in servers[0]:
+                            console.print(Panel(servers[0]['error'], title="MCP Servers", border_style="red"))
                         else:
-                            console.print(Panel("\n".join(f"[{i}] {t.get('name', str(t))}" for i, t in enumerate(tools)), title="MCP Server Tools", border_style="blue"))
+                            if not servers:
+                                console.print(Panel("No MCP servers configured.", title="MCP Servers", border_style="yellow"))
+                            else:
+                                server_list = []
+                                for i, server in enumerate(servers):
+                                    status = "🟢 Connected" if server.get('connected') else "🔴 Disconnected"
+                                    transport = server.get('transport', 'unknown')
+                                    name = server.get('name', 'unnamed')
+                                    description = server.get('description', 'No description')
+                                    server_list.append(f"[{i+1}] {name} ({transport}) - {status}")
+                                    if description and description != 'No description':
+                                        server_list.append(f"    {description}")
+                                console.print(Panel("\n".join(server_list), title="MCP Servers", border_style="blue"))
                         continue
+                    continue
+                # Handle /mcp-tools [server_name] command
+                elif cmd == 'mcp-tools':
+                    from cognitrix.tools.mcp_client import mcp_list_tools
+                    server_name = args[0] if args else None
+                    tools = await mcp_list_tools(server_name)
+                    if tools and isinstance(tools, list) and len(tools) > 0 and 'error' in tools[0]:
+                        console.print(Panel(tools[0]['error'], title=f"MCP Tools{' - ' + server_name if server_name else ''}", border_style="red"))
+                    else:
+                        if not tools:
+                            console.print(Panel("No tools available.", title=f"MCP Tools{' - ' + server_name if server_name else ''}", border_style="yellow"))
+                        else:
+                            tool_list = []
+                            for i, tool in enumerate(tools):
+                                tool_name = tool.get('name', str(tool))
+                                tool_desc = tool.get('description', 'No description')
+                                server = tool.get('server', server_name or 'unknown')
+                                tool_list.append(f"[{i+1}] {tool_name} ({server})")
+                                if tool_desc and tool_desc != 'No description':
+                                    tool_list.append(f"    {tool_desc}")
+                            console.print(Panel("\n".join(tool_list), title=f"MCP Tools{' - ' + server_name if server_name else ''}", border_style="green"))
+                    continue
+                # Handle /mcp-tool-info <tool_name> [server_name] command
+                elif cmd == 'mcp-tool-info':
+                    if not args:
+                        console.print(Panel("Usage: /mcp-tool-info <tool_name> [server_name]", border_style="red"))
+                        continue
+                    
+                    tool_name = args[0]
+                    server_name = args[1] if len(args) > 1 else None
+                    
+                    from cognitrix.tools.mcp_client import mcp_list_tools
+                    tools = await mcp_list_tools(server_name)
+                    
+                    if tools and isinstance(tools, list) and len(tools) > 0 and 'error' not in tools[0]:
+                        # Find the specific tool
+                        target_tool = None
+                        for tool in tools:
+                            if tool.get('name') == tool_name:
+                                target_tool = tool
+                                break
+                        
+                        if target_tool:
+                            details = []
+                            details.append(f"Name: {target_tool.get('name', 'Unknown')}")
+                            details.append(f"Server: {target_tool.get('server', 'Unknown')}")
+                            details.append(f"Description: {target_tool.get('description', 'No description')}")
+                            
+                            # Show input schema
+                            schema = target_tool.get('input_schema', {})
+                            if schema:
+                                details.append("\nParameters:")
+                                properties = schema.get('properties', {})
+                                required = schema.get('required', [])
+                                
+                                for prop_name, prop_info in properties.items():
+                                    prop_type = prop_info.get('type', 'unknown')
+                                    prop_desc = prop_info.get('description', 'No description')
+                                    is_required = prop_name in required
+                                    req_str = " (required)" if is_required else " (optional)"
+                                    details.append(f"  • {prop_name} ({prop_type}){req_str}: {prop_desc}")
+                            else:
+                                details.append("\nParameters: None")
+                            
+                            console.print(Panel("\n".join(details), title=f"Tool Info: {tool_name}", border_style="blue"))
+                        else:
+                            console.print(Panel(f"Tool '{tool_name}' not found.", border_style="red"))
+                    else:
+                        error_msg = tools[0].get('error', 'Failed to list tools') if tools else 'No tools available'
+                        console.print(Panel(error_msg, border_style="red"))
+                    continue
+                # Handle /mcp-connect <server_name> command
+                elif cmd == 'mcp-connect':
+                    if not args:
+                        console.print(Panel("Usage: /mcp-connect <server_name>", border_style="red"))
+                        continue
+                    
+                    server_name = args[0]
+                    from cognitrix.tools.mcp_client import mcp_connect_server
+                    result = await mcp_connect_server(server_name)
+                    console.print(Panel(result, border_style="green" if "Successfully" in result else "red"))
+                    continue
+                # Handle /mcp-disconnect <server_name> command
+                elif cmd == 'mcp-disconnect':
+                    if not args:
+                        console.print(Panel("Usage: /mcp-disconnect <server_name>", border_style="red"))
+                        continue
+                    
+                    server_name = args[0]
+                    from cognitrix.tools.mcp_client import mcp_disconnect_server
+                    result = await mcp_disconnect_server(server_name)
+                    console.print(Panel(result, border_style="green" if "Successfully" in result else "red"))
                     continue
                 # /add <entity> [args]
                 elif cmd == 'add' and args:
@@ -353,9 +457,55 @@ async def initialize(session, agent, stream: bool = False):
                         team.save()
                         print(f"Team '{name}' added.")
                     elif entity == 'mcp':
-                        # For MCP server, just prompt for URL and store in a config or print for now
-                        url = input("MCP Server URL: ")
-                        print(f"MCP server '{url}' added (set this in your config as needed).")
+                        # Interactive MCP server configuration
+                        from cognitrix.tools.mcp_client import mcp_add_server
+                        
+                        console.print(Panel("Adding new MCP server configuration", title="MCP Server Setup", border_style="blue"))
+                        
+                        name = input("Server name: ").strip()
+                        if not name:
+                            console.print(Panel("Server name is required!", border_style="red"))
+                            continue
+                        
+                        description = input("Description (optional): ").strip()
+                        
+                        console.print("\nTransport types:")
+                        console.print("1. STDIO (local command/script)")
+                        console.print("2. HTTP (remote API)")
+                        console.print("3. SSE (Server-Sent Events)")
+                        
+                        transport_choice = input("Choose transport type (1-3): ").strip()
+                        
+                        if transport_choice == "1":
+                            command = input("Command (e.g., 'python', 'npx'): ").strip()
+                            args_input = input("Arguments (space-separated, optional): ").strip()
+                            args = args_input.split() if args_input else []
+                            
+                            result = await mcp_add_server(
+                                name=name,
+                                transport="stdio",
+                                command=command,
+                                args=args,
+                                description=description
+                            )
+                        elif transport_choice in ["2", "3"]:
+                            url = input("Server URL: ").strip()
+                            if not url:
+                                console.print(Panel("URL is required for HTTP/SSE transport!", border_style="red"))
+                                continue
+                            
+                            transport = "http" if transport_choice == "2" else "sse"
+                            result = await mcp_add_server(
+                                name=name,
+                                transport=transport,
+                                url=url,
+                                description=description
+                            )
+                        else:
+                            console.print(Panel("Invalid transport choice!", border_style="red"))
+                            continue
+                        
+                        console.print(Panel(result, border_style="green" if "Successfully" in result else "red"))
                     else:
                         console.print(Panel(f"Unknown entity for /add: {entity}", style="bold red"))
                     continue
@@ -390,7 +540,9 @@ async def initialize(session, agent, stream: bool = False):
                         else:
                             print(f"Team '{identifier}' not found.")
                     elif entity == 'mcp' and identifier:
-                        print(f"To delete MCP server '{identifier}', remove it from your config or MCP server list.")
+                        from cognitrix.tools.mcp_client import mcp_remove_server
+                        result = await mcp_remove_server(identifier)
+                        console.print(Panel(result, border_style="green" if "Successfully" in result else "red"))
                     else:
                         console.print(Panel(f"Unknown or missing identifier for /delete {entity}", style="bold red"))
                     continue
@@ -427,7 +579,39 @@ async def initialize(session, agent, stream: bool = False):
                         else:
                             print(f"Team '{identifier}' not found.")
                     elif entity == 'mcp' and identifier:
-                        print(f"MCP server info: {identifier}")
+                        from cognitrix.tools.mcp_client import mcp_list_servers, mcp_test_server
+                        servers = await mcp_list_servers()
+                        server = next((s for s in servers if s.get('name') == identifier), None)
+                        if server:
+                            # Show server details
+                            details = []
+                            details.append(f"Name: {server.get('name', 'Unknown')}")
+                            details.append(f"Transport: {server.get('transport', 'Unknown')}")
+                            details.append(f"Status: {'🟢 Connected' if server.get('connected') else '🔴 Disconnected'}")
+                            details.append(f"Enabled: {'Yes' if server.get('enabled', True) else 'No'}")
+                            
+                            if server.get('description'):
+                                details.append(f"Description: {server['description']}")
+                            
+                            if server.get('command'):
+                                details.append(f"Command: {server['command']}")
+                                if server.get('args'):
+                                    details.append(f"Arguments: {' '.join(server['args'])}")
+                            
+                            if server.get('url'):
+                                details.append(f"URL: {server['url']}")
+                            
+                            console.print(Panel("\n".join(details), title=f"MCP Server: {identifier}", border_style="blue"))
+                            
+                            # Test connection
+                            console.print("\n[bold yellow]Testing connection...[/bold yellow]")
+                            test_result = await mcp_test_server(identifier)
+                            if test_result.get('success'):
+                                console.print(Panel(f"✅ {test_result.get('message', 'Connection successful')}", border_style="green"))
+                            else:
+                                console.print(Panel(f"❌ {test_result.get('error', 'Connection failed')}", border_style="red"))
+                        else:
+                            console.print(Panel(f"MCP server '{identifier}' not found.", border_style="red"))
                     else:
                         console.print(Panel(f"Unknown or missing identifier for /show {entity}", style="bold red"))
                     continue

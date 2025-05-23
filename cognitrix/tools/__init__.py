@@ -17,5 +17,7 @@ from cognitrix.tools.python import PythonREPL as Python
 from cognitrix.tools.utils import ToolCallResult
 from cognitrix.tools.mcp_client import (
     call_mcp_tool, list_mcp_tools, list_mcp_resources,
-    get_mcp_context_window
+    get_mcp_context_window, add_mcp_server, remove_mcp_server,
+    list_mcp_servers, connect_mcp_server, disconnect_mcp_server,
+    test_mcp_server
 )

@@ -1,5 +1,5 @@
+import json
 from typing import Any, Dict, List, Optional, Union
-from cognitrix.utils import extract_sections, extract_tool_calls, xml_to_dict
 from odbms import Model
 import logging
 
@@ -11,10 +11,10 @@ logging.basicConfig(
 logger = logging.getLogger('cognitrix.log')
 
 class LLMResponse(Model):
-    """Class to handle llm responses"""
+    """Class to handle llm responses (now expects JSON output)"""
     
     llm_response: Optional[str] = None
-    """LLM response"""
+    """LLM response (raw string)"""
     
     chunks: List[str] = []
     """List of chunks"""
@@ -22,35 +22,32 @@ class LLMResponse(Model):
     """Current chunk"""
     
     result: Optional[str] = None
-    """Result"""
-    
-    tool_call: List[Dict[str, Any]] = []
-    """Tool calls"""
-    
-    artifact: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None
-    """Artifacts"""
-    
+    tool_calls: List[Dict[str, Any]] = []
+    artifacts: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None
     observation: Optional[str] = None
-    """Observation"""
-    
-    thought: Optional[str] = None
-    """Thought"""
-    
-    mindspace: Optional[str] = None
-    """Mindspace"""
-    
-    reflection: Optional[str] = None
-    """Reflection"""
-    
+    thought: Optional[Union[str, List[str]]] = None
+    mindspace: Optional[Union[str, List[str]]] = None
+    reflection: Optional[Union[str, List[str]]] = None
     type: Optional[str] = None
-    """Type"""
-    
     before: Optional[str] = None
-    """Before"""
-    
     after: Optional[str] = None
-    """After"""
-    
+    scratchpad: Optional[str] = None
+    todo: Optional[List[str]] = None
+    response_overview: Optional[str] = None
+    task_summary: Optional[str] = None
+    evaluation: Optional[Dict[str, Any]] = None
+    overall_assessment: Optional[str] = None
+    suggestions: Optional[List[str]] = None
+    finalscore: Optional[Union[str, float, int]] = None
+    title: Optional[str] = None
+    task_title: Optional[str] = None
+    task_description: Optional[str] = None
+    steps: Optional[List[str]] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    tools: Optional[List[str]] = None
+    members: Optional[List[str]] = None
+
     class Config:
         arbitrary_types_allowed = True
     
@@ -65,27 +62,22 @@ class LLMResponse(Model):
 
     def parse_llm_response(self):
         self.llm_response = ''.join(self.chunks)
-        # response_data = xml_to_dict(self.llm_response)
-        sections = extract_sections(self.llm_response)
-        if '</tool_call>' in self.llm_response:
-            self.tool_call = extract_tool_calls(self.llm_response)
+        if not self.llm_response:
+            return
         try:
-            for section in sections:
-                if section['type'] == 'text':
-                    self.result = section['text']
+            data = json.loads(self.llm_response)
+            # Map JSON fields to class attributes
+            for key, value in data.items():
+                # Support both 'tool_call' and 'tool_calls' for backward compatibility
+                if key == 'tool_call':
+                    setattr(self, 'tool_calls', value)
                 else:
-                    setattr(self, section['type'], section[section['type']])
-            # if isinstance(response_data, dict):
-            #     response = response_data['response']
-            #     if isinstance(response, dict):
-            #         for key, value in response.items():
-            #             setattr(self, key, value)
-            #     else:
-            #         self.result = response
-        
-        except ValueError:
-            pass
-
+                    setattr(self, key, value)
+            # For result, try to set from 'result', 'response', or fallback to 'llm_response'
+            self.result = data.get('result') or data.get('response') or self.result
+        except json.JSONDecodeError:
+            # logger.warning('Failed to parse LLM response as JSON. Returning raw response.')
+            self.result = self.llm_response
         except Exception as e:
             logger.exception(e)
             self.result = self.llm_response

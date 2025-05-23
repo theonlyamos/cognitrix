@@ -127,8 +127,8 @@ class Session(Model):
                             else:
                                 await output({'type': wsquery['type'], 'content': response.llm_response, 'action': wsquery['action'], 'complete': False})
 
-                        if response.tool_call and not called_tools:
-                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_call)
+                        if response.tool_calls and not called_tools:
+                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls)
                             called_tools = True
                             
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
@@ -139,9 +139,9 @@ class Session(Model):
                                 else:
                                     await output({'type': wsquery['type'], 'content': result, 'action': wsquery['action'], 'complete': False})
                         
-                        if response.artifact:
+                        if response.artifacts:
                             if interface == 'ws':
-                                await output({'type': wsquery['type'], 'content': '', 'action': wsquery['action'], 'artifacts': response.artifact, 'complete': False})
+                                await output({'type': wsquery['type'], 'content': '', 'action': wsquery['action'], 'artifacts': response.artifacts, 'complete': False})
                         
                         await asyncio.sleep(0.01)
                     
