@@ -15,9 +15,7 @@ from cognitrix.tools.misc import (
 
 from cognitrix.tools.python import PythonREPL as Python
 from cognitrix.tools.utils import ToolCallResult
-from cognitrix.tools.mcp_client import (
-    call_mcp_tool, list_mcp_tools, list_mcp_resources,
-    get_mcp_context_window, add_mcp_server, remove_mcp_server,
-    list_mcp_servers, connect_mcp_server, disconnect_mcp_server,
-    test_mcp_server
-)
+
+# MCP imports temporarily disabled due to formatting issues in mcp_client.py
+# The mcp_client.py file has malformed tool registrations that need to be fixed
+# You can still import MCP functions directly: from cognitrix.tools.mcp_client import mcp_list_servers

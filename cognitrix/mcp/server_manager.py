@@ -187,27 +187,7 @@ class MCPServerManager:
         self._save_configuration()
         logger.info(f"Updated MCP server: {name}")
         return True
-    
-    async def test_server_connection(self, name: str) -> Dict[str, Any]:
-        """Test connection to a specific server"""
-        server = self.get_server(name)
-        if not server:
-            return {"success": False, "error": "Server not found"}
-        
-        if not server.enabled:
-            return {"success": False, "error": "Server is disabled"}
-        
-        try:
-            from cognitrix.tools.mcp_client_dynamic import DynamicMCPClient
-            client = DynamicMCPClient()
-            
-            result = await client.test_connection(server)
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error testing server connection: {e}")
-            return {"success": False, "error": str(e)}
-    
+
     def export_config(self, output_file: Optional[Path] = None) -> Path:
         """Export configuration to a file"""
         if output_file is None:

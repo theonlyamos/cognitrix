@@ -1,8 +1,14 @@
-from cognitrix.tools.tool import tool
+"""
+Dynamic MCP client for connecting to multiple server types.
+Handles STDIO, SSE, and HTTP MCP server connections.
+"""
+
 import asyncio
 import logging
-from typing import Dict, Any, Optional, List
+import platform
+import shutil
 from contextlib import AsyncExitStack
+from typing import Dict, Any, Optional, List
 
 # Import MCP SDK
 from mcp import ClientSession, StdioServerParameters
@@ -10,8 +16,9 @@ from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 
-# Import the new dynamic system
-from cognitrix.tools.mcp_server_manager import mcp_server_manager, MCPServerConfig, MCPTransportType
+# Import the server manager and status tracking
+from cognitrix.mcp.server_manager import MCPServerConfig, MCPTransportType
+from cognitrix.mcp.status import update_connection_status
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -28,20 +35,31 @@ class DynamicMCPClient:
         try:
             if server_config.name in self.sessions:
                 logger.warning(f"Already connected to server: {server_config.name}")
+                update_connection_status(server_config.name, True, {'transport': server_config.transport.value})
                 return True
             
+            success = False
             if server_config.transport == MCPTransportType.STDIO:
-                return await self._connect_stdio(server_config)
+                success = await self._connect_stdio(server_config)
             elif server_config.transport == MCPTransportType.SSE:
-                return await self._connect_sse(server_config)
+                success = await self._connect_sse(server_config)
             elif server_config.transport == MCPTransportType.HTTP:
-                return await self._connect_http(server_config)
+                success = await self._connect_http(server_config)
             else:
                 logger.error(f"Unsupported transport type: {server_config.transport}")
-                return False
+                success = False
+            
+            # Update global connection status
+            update_connection_status(server_config.name, success, {
+                'transport': server_config.transport.value,
+                'description': server_config.description
+            })
+            
+            return success
                 
         except Exception as e:
             logger.error(f"Error connecting to server {server_config.name}: {e}")
+            update_connection_status(server_config.name, False, {'error': str(e)})
             return False
     
     async def _connect_stdio(self, server_config: MCPServerConfig) -> bool:
@@ -57,8 +75,6 @@ class DynamicMCPClient:
             args = server_config.args or []
             
             # On Windows, handle commands like 'npx' that need shell resolution
-            import platform
-            import shutil
             if platform.system() == "Windows":
                 # Common Node.js commands that need .cmd extension on Windows
                 node_commands = ['npm', 'npx', 'node', 'yarn', 'pnpm']
@@ -225,6 +241,9 @@ class DynamicMCPClient:
             if server_name in self.connections:
                 del self.connections[server_name]
             
+            # Update connection status
+            update_connection_status(server_name, False)
+            
             logger.info(f"Disconnected from MCP server: {server_name}")
             return True
             
@@ -340,289 +359,4 @@ async def get_dynamic_client():
     global _dynamic_client
     if _dynamic_client is None:
         _dynamic_client = DynamicMCPClient()
-    return _dynamic_client
-
-# --- Enhanced functions for dynamic server management ---
-async def mcp_add_server(name: str, transport: str, **kwargs) -> str:
-    """
-    Add a new MCP server configuration.
-    Args:
-        name (str): Server name
-        transport (str): Transport type (stdio, http, sse)
-        **kwargs: Additional configuration based on transport type
-    Returns:
-        str: Success or error message
-    """
-    try:
-        transport_enum = MCPTransportType(transport.lower())
-        
-        # Create server config based on transport type
-        if transport_enum == MCPTransportType.STDIO:
-            server_config = MCPServerConfig(
-                name=name,
-                transport=transport_enum,
-                command=kwargs.get('command'),
-                args=kwargs.get('args', []),
-                env=kwargs.get('env'),
-                working_directory=kwargs.get('working_directory'),
-                description=kwargs.get('description', '')
-            )
-        elif transport_enum in [MCPTransportType.HTTP, MCPTransportType.SSE]:
-            server_config = MCPServerConfig(
-                name=name,
-                transport=transport_enum,
-                url=kwargs.get('url'),
-                headers=kwargs.get('headers'),
-                timeout=kwargs.get('timeout', 30),
-                description=kwargs.get('description', '')
-            )
-        else:
-            return f"Unsupported transport type: {transport}"
-        
-        success = mcp_server_manager.add_server(server_config)
-        if success:
-            return f"Successfully added MCP server '{name}' with {transport} transport"
-        else:
-            return f"Failed to add MCP server '{name}'"
-            
-    except ValueError as e:
-        return f"Invalid transport type '{transport}'. Must be one of: stdio, http, sse"
-    except Exception as e:
-        return f"Error adding MCP server: {e}"
-
-async def mcp_remove_server(name: str) -> str:
-    """
-    Remove an MCP server configuration.
-    Args:
-        name (str): Server name to remove
-    Returns:
-        str: Success or error message
-    """
-    try:
-        # Disconnect if currently connected
-        client = await get_dynamic_client()
-        if client.is_connected(name):
-            await client.disconnect_from_server(name)
-        
-        success = mcp_server_manager.remove_server(name)
-        if success:
-            return f"Successfully removed MCP server '{name}'"
-        else:
-            return f"MCP server '{name}' not found"
-    except Exception as e:
-        return f"Error removing MCP server: {e}"
-
-async def mcp_list_servers() -> List[Dict[str, Any]]:
-    """
-    List all configured MCP servers.
-    Returns:
-        List[Dict[str, Any]]: List of server configurations
-    """
-    try:
-        servers = mcp_server_manager.list_servers()
-        client = await get_dynamic_client()
-        connected_servers = client.get_connected_servers()
-        
-        result = []
-        for server in servers:
-            server_info = server.to_dict()
-            server_info['connected'] = server.name in connected_servers
-            result.append(server_info)
-        
-        return result
-    except Exception as e:
-        return [{"error": f"Error listing MCP servers: {e}"}]
-
-async def mcp_connect_server(name: str) -> str:
-    """
-    Connect to a configured MCP server.
-    Args:
-        name (str): Server name to connect to
-    Returns:
-        str: Success or error message
-    """
-    try:
-        server_config = mcp_server_manager.get_server(name)
-        if not server_config:
-            return f"MCP server '{name}' not found in configuration"
-        
-        if not server_config.enabled:
-            return f"MCP server '{name}' is disabled"
-        
-        client = await get_dynamic_client()
-        success = await client.connect_to_server(server_config)
-        
-        if success:
-            return f"Successfully connected to MCP server '{name}'"
-        else:
-            return f"Failed to connect to MCP server '{name}'"
-    except Exception as e:
-        return f"Error connecting to MCP server: {e}"
-
-async def mcp_disconnect_server(name: str) -> str:
-    """
-    Disconnect from an MCP server.
-    Args:
-        name (str): Server name to disconnect from
-    Returns:
-        str: Success or error message
-    """
-    try:
-        client = await get_dynamic_client()
-        success = await client.disconnect_from_server(name)
-        
-        if success:
-            return f"Successfully disconnected from MCP server '{name}'"
-        else:
-            return f"Failed to disconnect from MCP server '{name}'"
-    except Exception as e:
-        return f"Error disconnecting from MCP server: {e}"
-
-async def mcp_test_server(name: str) -> Dict[str, Any]:
-    """
-    Test connection to an MCP server.
-    Args:
-        name (str): Server name to test
-    Returns:
-        Dict[str, Any]: Test result
-    """
-    try:
-        return await mcp_server_manager.test_server_connection(name)
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-# --- Enhanced versions of original functions ---
-async def mcp_call_tool(tool_name: str, arguments: Optional[Dict[str, Any]] = None, server_name: Optional[str] = None) -> str:
-    """
-    Call a tool on an MCP server.
-    Args:
-        tool_name (str): The name of the tool to call
-        arguments (dict, optional): Arguments to pass to the tool
-        server_name (str, optional): Specific server to use, if None uses first available
-    Returns:
-        str: The result from the MCP server tool call
-    """
-    arguments = arguments or {}
-    
-    try:
-        client = await get_dynamic_client()
-        connected_servers = client.get_connected_servers()
-        
-        if not connected_servers:
-            return "No MCP servers connected. Please add and connect to MCP servers first."
-        
-        # Use specified server or first available
-        target_server = server_name if server_name and server_name in connected_servers else connected_servers[0]
-        
-        result = await client.call_tool(target_server, tool_name, arguments)
-        if result:
-            return str(result)
-        else:
-            return f"Tool call failed or returned no result"
-            
-    except Exception as e:
-        return f"MCP tool call failed: {e}"
-
-async def mcp_list_tools(server_name: Optional[str] = None) -> List[Dict[str, Any]]:
-    """
-    List available tools from MCP servers.
-    Args:
-        server_name (str, optional): Specific server to query, if None queries all connected servers
-    Returns:
-        List[Dict[str, Any]]: List of tool metadata
-    """
-    try:
-        client = await get_dynamic_client()
-        connected_servers = client.get_connected_servers()
-        
-        if not connected_servers:
-            return [{"error": "No MCP servers connected. Please add and connect to MCP servers first."}]
-        
-        if server_name:
-            if server_name not in connected_servers:
-                return [{"error": f"Server '{server_name}' not connected"}]
-            tools = await client.list_tools(server_name)
-            return tools or [{"error": f"Failed to list tools from server '{server_name}'"}]
-        else:
-            # Query all connected servers
-            all_tools = []
-            for server in connected_servers:
-                tools = await client.list_tools(server)
-                if tools:
-                    for tool in tools:
-                        tool['server'] = server
-                    all_tools.extend(tools)
-            return all_tools
-            
-    except Exception as e:
-        return [{"error": f"MCP list_tools failed: {e}"}]
-
-async def mcp_list_resources(server_name: Optional[str] = None) -> List[Dict[str, Any]]:
-    """
-    List available resources from MCP servers.
-    Args:
-        server_name (str, optional): Specific server to query, if None queries all connected servers
-    Returns:
-        List[Dict[str, Any]]: List of resource metadata
-    """
-    try:
-        client = await get_dynamic_client()
-        connected_servers = client.get_connected_servers()
-        
-        if not connected_servers:
-            return [{"error": "No MCP servers connected. Please add and connect to MCP servers first."}]
-        
-        if server_name:
-            if server_name not in connected_servers:
-                return [{"error": f"Server '{server_name}' not connected"}]
-            resources = await client.list_resources(server_name)
-            return resources or [{"error": f"Failed to list resources from server '{server_name}'"}]
-        else:
-            # Query all connected servers
-            all_resources = []
-            for server in connected_servers:
-                resources = await client.list_resources(server)
-                if resources:
-                    for resource in resources:
-                        resource['server'] = server
-                    all_resources.extend(resources)
-            return all_resources
-            
-    except Exception as e:
-        return [{"error": f"MCP list_resources failed: {e}"}]
-
-async def mcp_get_context_window() -> Dict[str, Any]:
-    """
-    Retrieve context window information from connected MCP servers.
-    Returns:
-        Dict[str, Any]: Context window details
-    """
-    try:
-        client = await get_dynamic_client()
-        connected_servers = client.get_connected_servers()
-        
-        if not connected_servers:
-            return {"info": "No MCP servers connected"}
-        
-        context_info = {
-            "connected_servers": connected_servers,
-            "info": "Context window management varies by server implementation"
-        }
-        return context_info
-        
-    except Exception as e:
-        return {"error": f"MCP get_context_window failed: {e}"}
-
-# --- Register enhanced tools for agent use ---
-call_mcp_tool = tool(category="mcp")(mcp_call_tool)
-list_mcp_tools = tool(category="mcp")(mcp_list_tools)
-list_mcp_resources = tool(category="mcp")(mcp_list_resources)
-get_mcp_context_window = tool(category="mcp")(mcp_get_context_window)
-
-# --- Register new management tools ---
-add_mcp_server = tool(category="mcp")(mcp_add_server)
-remove_mcp_server = tool(category="mcp")(mcp_remove_server)
-list_mcp_servers = tool(category="mcp")(mcp_list_servers)
-connect_mcp_server = tool(category="mcp")(mcp_connect_server)
-disconnect_mcp_server = tool(category="mcp")(mcp_disconnect_server)
-test_mcp_server = tool(category="mcp")(mcp_test_server) 
+    return _dynamic_client 

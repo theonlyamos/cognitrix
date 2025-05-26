@@ -56,7 +56,7 @@ sse-starlette = "^2.1.2"
 wikipedia = "^1.4.0"
 celery = {extras = ["redis"], version = "^5.4.0"}
 fastapi = "^0.112.0"
-odbms = "^0.3.6"
+odbms = "^0.4.4"
 passlib = "^1.7.4"
 python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 python-multipart = "^0.0.9"
@@ -71,7 +71,7 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-cognitrix = "cognitrix.cli:main"
+cognitrix = "cognitrix.cli.main:main"
 
 [tool.pytest.ini_options]
 filterwarnings = [

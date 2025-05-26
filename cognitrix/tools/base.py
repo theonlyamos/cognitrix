@@ -1,10 +1,8 @@
 import inspect
 import logging
-from pathlib import Path
-import sys
+import uuid
 from odbms import Model
-from typing import Any, Dict, Optional, Self, get_type_hints
-from rich import print
+from typing import Any, Dict, Optional, Self
 
 from pydantic import Field
 from cognitrix.tools.utils import ToolCallResult
@@ -13,6 +11,9 @@ class Tool(Model):
     """
     Base tool class
     """
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    """Unique identifier for the tool"""
     
     name: str 
     """Name of the tool"""

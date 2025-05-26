@@ -1,5 +1,6 @@
 from cognitrix.providers.base import LLM, LLMResponse
 from typing import Any, Dict, List, Union
+import json
 import google.genai as genai
 from google.genai.types import GenerateContentConfig, Content, Tool, GoogleSearch, Part, FunctionDeclaration
 from dotenv import load_dotenv
@@ -153,7 +154,10 @@ class Google(LLM):
             response = LLMResponse()
     
             for chunk in completion:
-                if chunk.text:
+                if chunk.function_calls:
+                    for function_call in chunk.function_calls:
+                        response.tool_calls.append({'name': function_call.name, 'arguments': function_call.args})
+                elif chunk.text:
                     response.add_chunk(chunk.text)
             yield response
 
@@ -166,4 +170,3 @@ class Google(LLM):
         except Exception as e:
             logger.exception(f"Unexpected error in GoogleLLM __call__ method: {str(e)}")
             yield LLMResponse(llm_response=f"An unexpected error occurred in GoogleLLM: {str(e)}")
-

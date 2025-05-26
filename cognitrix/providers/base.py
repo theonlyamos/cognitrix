@@ -1,5 +1,6 @@
 from functools import lru_cache
 import json
+import uuid
 from odbms import Model
 from pydantic import Field
 from typing import Any, List, Dict, TypeAlias, Union
@@ -36,6 +37,9 @@ class LLM(Model):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    """Unique identifier for the LLM provider"""
 
     model: str = Field(default=None)
     """model endpoint to use""" 
@@ -241,7 +245,7 @@ class LLM(Model):
             if not stream:
                 if hasattr(completion.choices[0].message, 'tool_calls') and completion.choices[0].message.tool_calls:
                     for tool_call in completion.choices[0].message.tool_calls:
-                        response.tool_call.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
+                        response.tool_calls.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
                 if completion.choices[0].message.content:
                     response.add_chunk(completion.choices[0].message.content)
                 # print(response)
