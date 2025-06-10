@@ -11,7 +11,7 @@ from cognitrix.agents import PromptGenerator
 from cognitrix.sessions.base import Session
 from cognitrix.celery_worker import run_team_task
 from starlette.websockets import WebSocketDisconnect
-from cognitrix.prompts.generator import team_details_generator, agent_details_generator, task_details_generator
+from cognitrix.prompts.generator import team_details_generator, agent_generator, task_details_generator
 
 
 logger = logging.getLogger('cognitrix.log')
@@ -108,7 +108,7 @@ class WebSocketManager:
                         
                         if action == 'agent_details':
                             agent = PromptGenerator(llm=web_agent.llm)
-                            agent.system_prompt = agent_details_generator
+                            agent.system_prompt = agent_generator
                             available_tools = [tool.name for tool in Tool.list_all_tools()]
                             agent.system_prompt = agent.system_prompt.replace("{available_tools}", "\n".join(available_tools))
                             

@@ -6,7 +6,7 @@ import sys
 import getpass
 import socket
 import subprocess
-from typing import List
+from typing import Any, List
 import re
 
 from rich.console import Console
@@ -17,6 +17,9 @@ from prompt_toolkit.completion import Completer, Completion, PathCompleter, Word
 from prompt_toolkit.document import Document
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.formatted_text import HTML
+
+from cognitrix.agents.base import Agent
+from cognitrix.sessions.base import Session
 
 from .handlers import list_agents, list_tasks, list_teams, list_tools, add_agent
 
@@ -76,23 +79,25 @@ def run_shell_command(command: str) -> bool:
         return False
 
 
-async def handle_slash_command(query: str, agent, session) -> bool:
+async def handle_slash_command(query: str, agent, session) -> bool | tuple:
     """Handle slash commands and return True if command was processed."""
     if not query.startswith('/'):
         return False
         
     parts = query[1:].strip().split()
     if not parts:
-        console.print(Panel("Empty command.", style="bold red"))
+        console.print(Panel("[bold red]Empty command.[/bold red]", title="[red]Error[/red]", border_style="red"))
         return True
         
     cmd = parts[0].lower()
-    args = parts[1:]
+    args: List[Any] = parts[1:]
     
     # Entity listing commands
-    if cmd in ['tools', 'agents', 'tasks', 'teams', 'mcp'] and not args:
+    if cmd in ['tools', 'agents', 'tasks', 'teams', 'mcp']:
         if cmd == 'tools':
-            list_tools()
+            # List available tools for the current agent
+            console.print(Panel("\n".join(f"[bold cyan][{i}][/bold cyan] [white]{tool.name}[/white]" for i, tool in enumerate(agent.tools)), 
+                               title="[bold blue]🛠️  Available Tools[/bold blue]", border_style="blue"))
         elif cmd == 'agents':
             await list_agents()
         elif cmd == 'tasks':
@@ -103,17 +108,137 @@ async def handle_slash_command(query: str, agent, session) -> bool:
             await handle_mcp_list()
         return True
     
+    # Agent management commands
+    if cmd == 'add' and args:
+        entity = args[0].lower()
+        if entity == 'agent':
+            from cognitrix.prompts.generator import agent_generator
+            
+            console.print(Panel("[bold cyan]Provide a complete description of the new agent.[/bold cyan]\n\n[white]Include the following details:[/white]\n[bold yellow]•[/bold yellow] [cyan]Name[/cyan] of the agent\n[bold yellow]•[/bold yellow] [cyan]Description[/cyan] of the agent\n[bold yellow]•[/bold yellow] [cyan]Role[/cyan] of the agent\n[bold yellow]•[/bold yellow] [cyan]Tools[/cyan] that the agent will use", 
+                               title="[bold blue]🤖 Create New Agent[/bold blue]", border_style="blue"))
+            description = input("📝 Description: ")
+            old_system_prompt = agent.system_prompt
+            agent.system_prompt = agent_generator
+            await session(description, agent, stream=False)
+            agent.system_prompt = old_system_prompt
+        else:
+            console.print(Panel(f"[bold red]Unknown entity type:[/bold red] [yellow]{entity}[/yellow]", 
+                               title="[red]Entity Error[/red]", border_style="red"))
+        return True
+    
+    # History command
+    if cmd == 'history':
+        console.print(Panel("\n".join(f"[bold cyan][{chat['role']}][/bold cyan]: [white]{chat['message']}[/white]" for chat in session.chat), 
+                           title="[bold magenta]💬 Chat History[/bold magenta]", border_style="magenta"))
+        return True
+    
+    # Agent switching command
+    if cmd == 'switch':
+        if not args:
+            # List available agents for switching
+            from cognitrix.agents.base import Agent
+            agents = await Agent.all()
+            if agents:
+                console.print(Panel("\n".join(f"[bold cyan][{i}][/bold cyan] [white]{a.name}[/white]" for i, a in enumerate(agents)), 
+                                   title="[bold blue]🔄 Available Agents[/bold blue]", border_style="blue"))
+                console.print(Panel("[bold yellow]Usage:[/bold yellow] [cyan]/switch <agent_name_or_index>[/cyan]", 
+                                   title="[yellow]How to Switch[/yellow]", border_style="yellow"))
+            else:
+                console.print(Panel("[bold red]No agents available to switch to.[/bold red]", 
+                                   title="[red]No Agents[/red]", border_style="red"))
+        else:
+            # Switch to specified agent
+            agent_identifier = args[0]
+            from cognitrix.agents.base import Agent
+            from cognitrix.sessions.base import Session
+            
+            # Try to find agent by name first, then by index
+            target_agent = await Agent.find_one({'name': agent_identifier})
+            
+            if not target_agent:
+                # Try by index
+                try:
+                    agent_index = int(agent_identifier)
+                    agents = await Agent.all()
+                    if 0 <= agent_index < len(agents):
+                        target_agent = agents[agent_index]
+                except (ValueError, IndexError):
+                    pass
+            
+            if target_agent:
+                # Get/create session for new agent
+                new_session = await Session.get_by_agent_id(target_agent.id)
+                if not new_session:
+                    new_session = Session(agent_id=target_agent.id)
+                    await new_session.save()
+                
+                console.print(Panel(f"[bold green]✅ Switched to agent:[/bold green] [bold cyan]{target_agent.name}[/bold cyan]", 
+                                   title="[green]Agent Switched[/green]", border_style="green"))
+                
+                # Return the new agent and session
+                return (target_agent, new_session)
+            else:
+                console.print(Panel(f"[bold red]Agent not found:[/bold red] [yellow]{agent_identifier}[/yellow]", 
+                                   title="[red]Switch Failed[/red]", border_style="red"))
+        return True
+
+    # Help command
+    if cmd == 'help':
+        help_text = """[bold green]Available Commands:[/bold green]
+
+[bold cyan]Entity Management:[/bold cyan]
+[yellow]• /add agent[/yellow] - Create a new agent
+[yellow]• /agents[/yellow] - List all agents
+[yellow]• /switch [agent_name_or_index][/yellow] - Switch to another agent
+[yellow]• /tools[/yellow] - List available tools
+[yellow]• /tasks[/yellow] - List all tasks
+[yellow]• /teams[/yellow] - List all teams
+
+[bold cyan]MCP Commands:[/bold cyan]
+[yellow]• /mcp[/yellow] - List MCP servers
+[yellow]• /mcp-tools [server_name][/yellow] - List MCP tools
+[yellow]• /mcp-tool-info <tool_name> [server_name][/yellow] - Get tool details
+[yellow]• /mcp-call <tool_name> [server_name] [args][/yellow] - Call MCP tool
+[yellow]• /mcp-connect <server_name>[/yellow] - Connect to MCP server
+[yellow]• /mcp-disconnect <server_name>[/yellow] - Disconnect from MCP server
+
+[bold cyan]Session Commands:[/bold cyan]
+[yellow]• /history[/yellow] - Show chat history
+[yellow]• /help[/yellow] - Show this help message
+[yellow]• /clear[/yellow] - Clear the screen
+
+[bold cyan]System Commands:[/bold cyan]
+[yellow]• cd <path>[/yellow] - Change directory
+[yellow]• q, quit, exit[/yellow] - Exit the shell"""
+        
+        console.print(Panel(help_text, title="[bold blue]📚 Cognitrix Shell Help[/bold blue]", border_style="blue"))
+        return True
+    
+    # Clear screen command
+    if cmd == 'clear':
+        import os
+        os.system('cls' if os.name == 'nt' else 'clear')
+        # Re-display welcome banner after clearing
+        console.print(Panel(
+            f"[bold cyan]🚀 Welcome to Cognitrix AI Shell![/bold cyan]\n\n[white]Type your message or a shell command.[/white]\n[bold yellow]💡 Tip:[/bold yellow] [dim]Type [bold yellow]/help[/bold yellow] for available commands[/dim]",
+            title=f"[bold blue]🤖 Agent: {agent.name}[/bold blue]",
+            border_style="cyan"
+        ))
+        return True
+    
     # MCP-specific commands
     if cmd.startswith('mcp-'):
+        # Remove agent and session from args for MCP commands
         await handle_mcp_command(cmd, args)
         return True
     
     # Other slash commands
-    if cmd in ['add', 'delete', 'show']:
-        await handle_entity_command(cmd, args)
+    if cmd in ['delete', 'show']:
+        await handle_entity_command(cmd, args + [agent, session])
         return True
         
-    console.print(Panel(f"Unknown slash command: {query}", style="bold red"))
+    console.print(Panel(f"[bold red]Unknown slash command:[/bold red] [yellow]{query}[/yellow]\n[dim]Type [bold yellow]/help[/bold yellow] for available commands[/dim]", 
+                       title="[red]Command Error[/red]", border_style="red"))
     return True
 
 
@@ -123,21 +248,24 @@ async def handle_mcp_list():
     servers = await mcp_list_servers()
     
     if servers and isinstance(servers, list) and len(servers) > 0 and 'error' in servers[0]:
-        console.print(Panel(servers[0]['error'], title="MCP Servers", border_style="red"))
+        console.print(Panel(f"[bold red]{servers[0]['error']}[/bold red]", 
+                           title="[red]MCP Servers Error[/red]", border_style="red"))
     else:
         if not servers:
-            console.print(Panel("No MCP servers configured.", title="MCP Servers", border_style="yellow"))
+            console.print(Panel("[bold yellow]No MCP servers configured.[/bold yellow]", 
+                               title="[yellow]MCP Servers[/yellow]", border_style="yellow"))
         else:
             server_list = []
             for i, server in enumerate(servers):
-                status = "🟢 Connected" if server.get('connected') else "🔴 Disconnected"
+                status = "[bold green]🟢 Connected[/bold green]" if server.get('connected') else "[bold red]🔴 Disconnected[/bold red]"
                 transport = server.get('transport', 'unknown')
                 name = server.get('name', 'unnamed')
                 description = server.get('description', 'No description')
-                server_list.append(f"[{i+1}] {name} ({transport}) - {status}")
+                server_list.append(f"[bold cyan][{i+1}][/bold cyan] [bold white]{name}[/bold white] [dim]({transport})[/dim] - {status}")
                 if description and description != 'No description':
-                    server_list.append(f"    {description}")
-            console.print(Panel("\n".join(server_list), title="MCP Servers", border_style="blue"))
+                    server_list.append(f"    [dim italic]{description}[/dim italic]")
+            console.print(Panel("\n".join(server_list), 
+                               title="[bold blue]🔧 MCP Servers[/bold blue]", border_style="blue"))
 
 
 async def handle_mcp_command(cmd: str, args: List[str]):
@@ -148,13 +276,13 @@ async def handle_mcp_command(cmd: str, args: List[str]):
         tools = await mcp_list_tools(server_name)
         
         if tools and isinstance(tools, list) and len(tools) > 0 and 'error' in tools[0]:
-            console.print(Panel(tools[0]['error'], 
-                               title=f"MCP Tools{' - ' + server_name if server_name else ''}", 
+            console.print(Panel(f"[bold red]{tools[0]['error']}[/bold red]", 
+                               title=f"[red]MCP Tools Error{' - ' + server_name if server_name else ''}[/red]", 
                                border_style="red"))
         else:
             if not tools:
-                console.print(Panel("No tools available.", 
-                                   title=f"MCP Tools{' - ' + server_name if server_name else ''}", 
+                console.print(Panel("[bold yellow]No tools available.[/bold yellow]", 
+                                   title=f"[yellow]MCP Tools{' - ' + server_name if server_name else ''}[/yellow]", 
                                    border_style="yellow"))
             else:
                 tool_list = []
@@ -162,11 +290,11 @@ async def handle_mcp_command(cmd: str, args: List[str]):
                     tool_name = tool.get('name', str(tool))
                     tool_desc = tool.get('description', 'No description')
                     server = tool.get('server', server_name or 'unknown')
-                    tool_list.append(f"[{i+1}] {tool_name} ({server})")
+                    tool_list.append(f"[bold cyan][{i+1}][/bold cyan] [bold white]{tool_name}[/bold white] [dim]({server})[/dim]")
                     if tool_desc and tool_desc != 'No description':
-                        tool_list.append(f"    {tool_desc}")
+                        tool_list.append(f"    [dim italic]{tool_desc}[/dim italic]")
                 console.print(Panel("\n".join(tool_list), 
-                                   title=f"MCP Tools{' - ' + server_name if server_name else ''}", 
+                                   title=f"[bold green]🛠️  MCP Tools{' - ' + server_name if server_name else ''}[/bold green]", 
                                    border_style="green"))
     
     elif cmd == 'mcp-tool-info':
@@ -182,7 +310,8 @@ async def handle_mcp_command(cmd: str, args: List[str]):
 async def handle_mcp_tool_info(args: List[str]):
     """Handle MCP tool info command."""
     if not args:
-        console.print(Panel("Usage: /mcp-tool-info <tool_name> [server_name]", border_style="red"))
+        console.print(Panel("[bold red]Usage:[/bold red] [yellow]/mcp-tool-info <tool_name> [server_name][/yellow]", 
+                           title="[red]Usage Error[/red]", border_style="red"))
         return
     
     tool_name = args[0]
@@ -200,14 +329,14 @@ async def handle_mcp_tool_info(args: List[str]):
         
         if target_tool:
             details = []
-            details.append(f"Name: {target_tool.get('name', 'Unknown')}")
-            details.append(f"Server: {target_tool.get('server', 'Unknown')}")
-            details.append(f"Description: {target_tool.get('description', 'No description')}")
+            details.append(f"[bold cyan]Name:[/bold cyan] [white]{target_tool.get('name', 'Unknown')}[/white]")
+            details.append(f"[bold cyan]Server:[/bold cyan] [white]{target_tool.get('server', 'Unknown')}[/white]")
+            details.append(f"[bold cyan]Description:[/bold cyan] [white]{target_tool.get('description', 'No description')}[/white]")
             
             # Show input schema
             schema = target_tool.get('input_schema', {})
             if schema:
-                details.append("\nParameters:")
+                details.append("\n[bold yellow]Parameters:[/bold yellow]")
                 properties = schema.get('properties', {})
                 required = schema.get('required', [])
                 
@@ -215,23 +344,28 @@ async def handle_mcp_tool_info(args: List[str]):
                     prop_type = prop_info.get('type', 'unknown')
                     prop_desc = prop_info.get('description', 'No description')
                     is_required = prop_name in required
-                    req_str = " (required)" if is_required else " (optional)"
-                    details.append(f"  • {prop_name} ({prop_type}){req_str}: {prop_desc}")
+                    req_str = " [bold red](required)[/bold red]" if is_required else " [dim](optional)[/dim]"
+                    details.append(f"  [bold green]•[/bold green] [cyan]{prop_name}[/cyan] [dim]({prop_type})[/dim]{req_str}: [white]{prop_desc}[/white]")
             else:
-                details.append("\nParameters: None")
+                details.append("\n[bold yellow]Parameters:[/bold yellow] [dim]None[/dim]")
             
-            console.print(Panel("\n".join(details), title=f"Tool Info: {tool_name}", border_style="blue"))
+            console.print(Panel("\n".join(details), 
+                               title=f"[bold blue]🔍 Tool Info: {tool_name}[/bold blue]", 
+                               border_style="blue"))
         else:
-            console.print(Panel(f"Tool '{tool_name}' not found.", border_style="red"))
+            console.print(Panel(f"[bold red]Tool '[yellow]{tool_name}[/yellow]' not found.[/bold red]", 
+                               title="[red]Tool Not Found[/red]", border_style="red"))
     else:
         error_msg = tools[0].get('error', 'Failed to list tools') if tools else 'No tools available'
-        console.print(Panel(error_msg, border_style="red"))
+        console.print(Panel(f"[bold red]{error_msg}[/bold red]", 
+                           title="[red]Error[/red]", border_style="red"))
 
 
 async def handle_mcp_tool_call(args: List[str]):
     """Handle MCP tool call command."""
     if not args:
-        console.print(Panel("Usage: /mcp-call <tool_name> [server_name] [arg1=value1] [arg2=value2]...", border_style="red"))
+        console.print(Panel("[bold red]Usage:[/bold red] [yellow]/mcp-call <tool_name> [server_name] [arg1=value1] [arg2=value2]...[/yellow]", 
+                           title="[red]Usage Error[/red]", border_style="red"))
         return
     
     tool_name = args[0]
@@ -256,13 +390,16 @@ async def handle_mcp_tool_call(args: List[str]):
             except:
                 tool_args[key] = value
         else:
-            console.print(Panel(f"Invalid argument format: {arg}. Use key=value format.", border_style="red"))
+            console.print(Panel(f"[bold red]Invalid argument format:[/bold red] [yellow]{arg}[/yellow]. [white]Use key=value format.[/white]", 
+                               title="[red]Argument Error[/red]", border_style="red"))
             return
     
     from cognitrix.mcp import mcp_call_tool
     result = await mcp_call_tool(tool_name, tool_args, server_name)
     
-    console.print(Panel(str(result), title=f"Tool Result: {tool_name}", border_style="green"))
+    console.print(Panel(f"[white]{str(result)}[/white]", 
+                       title=f"[bold green]✅ Tool Result: {tool_name}[/bold green]", 
+                       border_style="green"))
 
 
 async def handle_mcp_connection(cmd: str, args: List[str]):
@@ -271,95 +408,72 @@ async def handle_mcp_connection(cmd: str, args: List[str]):
     
     if cmd == 'mcp-connect':
         if not args:
-            console.print(Panel("Usage: /mcp-connect <server_name>", border_style="red"))
+            console.print(Panel("[bold red]Usage:[/bold red] [yellow]/mcp-connect <server_name>[/yellow]", 
+                               title="[red]Usage Error[/red]", border_style="red"))
             return
         result = await mcp_connect_server(args[0])
         if result.get('success'):
-            console.print(Panel(f"✅ {result.get('message', 'Connected successfully')}", border_style="green"))
+            console.print(Panel(f"[bold green]✅ {result.get('message', 'Connected successfully')}[/bold green]", 
+                               title="[green]Connection Success[/green]", border_style="green"))
         else:
-            console.print(Panel(f"❌ {result.get('error', 'Connection failed')}", border_style="red"))
+            console.print(Panel(f"[bold red]❌ {result.get('error', 'Connection failed')}[/bold red]", 
+                               title="[red]Connection Failed[/red]", border_style="red"))
     
     elif cmd == 'mcp-disconnect':
         if not args:
-            console.print(Panel("Usage: /mcp-disconnect <server_name>", border_style="red"))
+            console.print(Panel("[bold red]Usage:[/bold red] [yellow]/mcp-disconnect <server_name>[/yellow]", 
+                               title="[red]Usage Error[/red]", border_style="red"))
             return
         result = await mcp_disconnect_server(args[0])
         if result.get('success'):
-            console.print(Panel(f"✅ {result.get('message', 'Disconnected successfully')}", border_style="green"))
+            console.print(Panel(f"[bold green]✅ {result.get('message', 'Disconnected successfully')}[/bold green]", 
+                               title="[green]Disconnection Success[/green]", border_style="green"))
         else:
-            console.print(Panel(f"❌ {result.get('error', 'Disconnection failed')}", border_style="red"))
-    
-    # elif cmd == 'mcp-sync':
-    #     result = await mcp_sync_tools()
-    #     if result.get('success'):
-    #         console.print(Panel(f"✅ {result.get('message', 'Tools synced successfully')}", border_style="green"))
-    #     else:
-    #         console.print(Panel(f"❌ {result.get('error', 'Sync failed')}", border_style="red"))
+            console.print(Panel(f"[bold red]❌ {result.get('error', 'Disconnection failed')}[/bold red]", 
+                               title="[red]Disconnection Failed[/red]", border_style="red"))
 
 
-async def handle_entity_command(cmd: str, args: List[str]):
-    """Handle entity management commands (add, delete, show)."""
-    if cmd == 'add' and args:
+async def handle_entity_command(cmd: str, args: List[Any]):
+    """Handle entity management commands (delete, show)."""
+    if cmd == 'show' and len(args) >= 2:
         entity = args[0].lower()
-        if entity == 'agent':
-            add_agent()
-    
-    # elif cmd == 'show' and len(args) >= 2:
-    #     entity = args[0].lower()
-    #     identifier = args[1]
+        identifier = args[1]
         
-    #     if entity == 'mcp':
-    #         from cognitrix.mcp import mcp_test_server
-    #         test_result = await mcp_test_server(identifier)
-    #         if test_result.get('success'):
-    #             console.print(Panel(f"✅ {test_result.get('message', 'Connection successful')}", border_style="green"))
-    #         else:
-    #             console.print(Panel(f"❌ {test_result.get('error', 'Connection failed')}", border_style="red"))
-    #     else:
-    #         console.print(Panel(f"Unknown entity type: {entity}", style="bold red"))
+        if entity == 'mcp':
+            from cognitrix.mcp import mcp_health_check, mcp_get_server_info
+            try:
+                # Get server info first
+                server_info = await mcp_get_server_info(identifier)
+                if 'error' not in server_info:
+                    console.print(Panel(f"[bold green]✅ Server '{identifier}' found[/bold green]\n[white]Info: {server_info}[/white]", 
+                                       title="[green]MCP Server Info[/green]", border_style="green"))
+                else:
+                    console.print(Panel(f"[bold red]❌ {server_info.get('error', 'Server not found')}[/bold red]", 
+                                       title="[red]MCP Server Error[/red]", border_style="red"))
+            except Exception as e:
+                console.print(Panel(f"[bold red]❌ Error checking server: {e}[/bold red]", 
+                               title="[red]MCP Server Error[/red]", border_style="red"))
+        else:
+            console.print(Panel(f"[bold red]Unknown entity type:[/bold red] [yellow]{entity}[/yellow]", 
+                               title="[red]Entity Error[/red]", border_style="red"))
+    elif cmd == 'delete':
+        console.print(Panel("[bold yellow]Delete functionality not yet implemented.[/bold yellow]", 
+                           title="[yellow]Coming Soon[/yellow]", border_style="yellow"))
     else:
-        console.print(Panel(f"Unknown or malformed command: /{cmd} {' '.join(args)}", style="bold red"))
+        console.print(Panel(f"[bold red]Unknown or malformed command:[/bold red] [yellow]/{cmd} {' '.join(str(arg) for arg in args)}[/yellow]", 
+                           title="[red]Command Error[/red]", border_style="red"))
 
 
-async def handle_legacy_commands(query: str, agent, session):
-    """Handle legacy command format for backward compatibility."""
-    command_handlers = {
-        'add agent': add_agent,
-        'list tools': lambda: console.print(Panel("\n".join(f"[{i}] {tool.name}" for i, tool in enumerate(agent.tools)), 
-                                                  title="Available Tools", border_style="blue")),
-        'list agents': lambda: list_agents(),
-        'show history': lambda: console.print(Panel("\n".join(f"[{chat['role']}]: {chat['message']}" for chat in session.chat), 
-                                                    title="Chat History", border_style="magenta"))
-    }
-    
-    if query in command_handlers:
-        handler = command_handlers[query]
-        if hasattr(handler, '__call__'):
-            import asyncio
-            if asyncio.iscoroutinefunction(handler):
-                await handler()
-            else:
-                handler()
-        return True
-    return False
+
 
 
 async def initialize_shell(session, agent, stream: bool = False):
     """Initialize and run the interactive shell."""
-    async def _handle_list_agents():
-        """Helper function to list child agents."""
-        child_agents = agent.child_agents or []
-        table = Table(title="Child Agents")
-        table.add_column("#", style="cyan")
-        table.add_column("Name", style="bold")
-        for i, a in enumerate(child_agents):
-            table.add_row(str(i), a.name)
-        console.print(table)
 
     # Welcome banner
     console.print(Panel(
-        f"[bold cyan]Welcome to Cognitrix AI Shell!\n[white]Type your message or a shell command. Type [bold yellow]q[/bold yellow] to quit.",
-        title=f"[bold blue]Agent: {agent.name}",
+        f"[bold cyan]🚀 Welcome to Cognitrix AI Shell![/bold cyan]\n\n[white]Type your message or a shell command.[/white]\n[bold yellow]💡 Tip:[/bold yellow] [dim]Type [bold yellow]/help[/bold yellow] for available commands or [bold yellow]q[/bold yellow] to quit[/dim]\n\n[bold green]Quick Commands:[/bold green]\n[cyan]• /help[/cyan] - Show all commands\n[cyan]• /tools[/cyan] - List available tools\n[cyan]• /add agent[/cyan] - Create a new agent\n[cyan]• /history[/cyan] - Show chat history",
+        title=f"[bold blue]🤖 Agent: {agent.name}[/bold blue]",
         border_style="cyan"
     ))
 
@@ -368,9 +482,9 @@ async def initialize_shell(session, agent, stream: bool = False):
 
     builtins = ['cd', 'exit', 'quit', 'q']
     custom_commands = [
-        'add agent', 'list tools', 'list agents', 'show history', 
-        '/mcp', '/mcp-tools', '/mcp-tool-info', '/mcp-call', '/mcp-sync', 
-        '/mcp-connect', '/mcp-disconnect', '/add', '/delete', '/show'
+        '/help', '/clear', '/history', '/tools', '/agents', '/tasks', '/teams',
+        '/add', '/delete', '/show', '/switch', '/mcp', '/mcp-tools', '/mcp-tool-info', 
+        '/mcp-call', '/mcp-connect', '/mcp-disconnect'
     ]
     
     session_completer = CognitrixCompleter(builtins, custom_commands)
@@ -392,7 +506,7 @@ async def initialize_shell(session, agent, stream: bool = False):
             if sep != '/':
                 display_cwd = display_cwd.replace('/', sep)
                 
-            prompt_str = HTML(f'<ansigreen>{username}@{hostname}</ansigreen>:<ansiblue>{display_cwd}</ansiblue>$ ')
+            prompt_str = HTML(f'<ansigreen><b>{username}@{hostname}</b></ansigreen>:<ansiblue><b>{display_cwd}</b></ansiblue><ansiyellow>$</ansiyellow> ')
             query = await prompt_session.prompt_async(prompt_str)
             query = query.strip()
             
@@ -401,11 +515,23 @@ async def initialize_shell(session, agent, stream: bool = False):
                 
             # Check for exit commands
             if query.lower() in ['q', 'quit', 'exit']:
-                console.print(Panel("Exiting...", style="bold yellow"))
+                console.print(Panel("[bold yellow]👋 Goodbye! Thanks for using Cognitrix![/bold yellow]", 
+                                   title="[yellow]Exiting[/yellow]", border_style="yellow"))
                 break
             
             # Handle slash commands
-            if await handle_slash_command(query, agent, session):
+            slash_result = await handle_slash_command(query, agent, session)
+            if slash_result is True:
+                continue
+            elif isinstance(slash_result, tuple):
+                # Agent switch occurred, update agent and session
+                agent, session = slash_result
+                # Re-display welcome banner with new agent
+                console.print(Panel(
+                    f"[bold cyan]🚀 Welcome to Cognitrix AI Shell![/bold cyan]\n\n[white]Type your message or a shell command.[/white]\n[bold yellow]💡 Tip:[/bold yellow] [dim]Type [bold yellow]/help[/bold yellow] for available commands or [bold yellow]q[/bold yellow] to quit[/dim]\n\n[bold green]Quick Commands:[/bold green]\n[cyan]• /help[/cyan] - Show all commands\n[cyan]• /tools[/cyan] - List available tools\n[cyan]• /add agent[/cyan] - Create a new agent\n[cyan]• /history[/cyan] - Show chat history",
+                    title=f"[bold blue]🤖 Agent: {agent.name}[/bold blue]",
+                    border_style="cyan"
+                ))
                 continue
             
             # Handle built-in shell commands
@@ -414,29 +540,32 @@ async def initialize_shell(session, agent, stream: bool = False):
                 path = parts[1].strip() if len(parts) > 1 else os.path.expanduser('~')
                 try:
                     os.chdir(path)
-                    console.print(Panel(f"Changed directory to [bold blue]{os.getcwd()}[/bold blue]", border_style="green"))
+                    console.print(Panel(f"[bold green]📁 Changed directory to[/bold green] [bold blue]{os.getcwd()}[/bold blue]", 
+                                       title="[green]Directory Changed[/green]", border_style="green"))
                 except Exception as e:
-                    console.print(Panel(f"[bold red]cd: {e}", border_style="red"))
+                    console.print(Panel(f"[bold red]❌ cd: {e}[/bold red]", 
+                                       title="[red]Directory Error[/red]", border_style="red"))
                 continue
             
-            # Handle legacy commands
-            if await handle_legacy_commands(query, agent, session):
-                continue
+
             
             # Try to execute as shell command
             if run_shell_command(query):
                 continue
             
             # Send to AI agent
-            console.print(Panel(f"[bold blue]Sending to AI...", border_style="blue"))
+            console.print(Panel(f"[bold blue]🤖 Sending to AI...[/bold blue]", 
+                               title="[blue]Processing[/blue]", border_style="blue"))
             await session(query, agent, stream=stream)
             console.print()
             
         except KeyboardInterrupt:
-            console.print(Panel("Exiting...", style="bold yellow"))
+            console.print(Panel("[bold yellow]👋 Interrupted! Goodbye![/bold yellow]", 
+                               title="[yellow]Exiting[/yellow]", border_style="yellow"))
             break
         except Exception as e:
             import logging
             logging.exception(e)
-            console.print(Panel(f"[bold red]Error: {e}", border_style="red"))
+            console.print(Panel(f"[bold red]💥 Error: {e}[/bold red]", 
+                               title="[red]System Error[/red]", border_style="red"))
             break 
