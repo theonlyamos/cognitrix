@@ -549,15 +549,22 @@ async def call_agent(name: str, task: str):
     Args:
         name (str): Name of the agent to call
         task (str): The task|query to perform|answer
-    """
-    agent = await Agent.load_agent(name)
-    if agent:
-        result = await agent.call_sub_agent(task)
-        return result
-    else:
-        return {'status': 'error', 'message': f'Agent "{name}" not found'}
     
-    return "Agent running"
+    Returns:
+        str: The result of the task
+    
+    Raises:
+        Exception: If the agent is not found or the task fails
+    """
+    try:
+        agent = await Agent.load_agent(name)
+        if agent:
+            result = agent.call_sub_agent(agent_name=name, task_description=task)
+            return result
+        else:
+            return f"Error calling agent: {name} not found"
+    except Exception as e:
+        return f"Error calling agent: {str(e)}"
 
 @tool(category='system')
 async def create_new_team(name: str, description: str, agent_names: List[str], leader_name: Optional[str] = None):
