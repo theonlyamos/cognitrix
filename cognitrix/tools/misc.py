@@ -521,11 +521,6 @@ async def create_agent(name: str, provider: str, description: str, tools: List[s
     
     agent: Optional[Agent] = None
         
-    description += '\n\n{tools}'
-    
-    if not "return_format" in description:
-        description += f"\n{xml_return_format}"
-        
     agent = await Agent.create_agent(
         name=name,
         system_prompt=description,
