@@ -184,8 +184,17 @@ class Session(Model):
             logger.exception(e)
 
 class SessionManager:
+    """Manager for Session business logic"""
+
     def __init__(self, session: Session):
         self.session = session
+
+    # Provide a convenience creator to match the uniform API requested.
+    @staticmethod
+    async def create(agent_id: str | None = None, team_id: str | None = None, task_id: str | None = None) -> 'Session':
+        session = Session(agent_id=agent_id, team_id=team_id, task_id=task_id)
+        await session.save()
+        return session
 
     async def __call__(self, message: str | dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None = None, save_history: bool = True):
         # This is a temporary fix for the agent's process_prompt method which is not yet refactored.
@@ -263,3 +272,19 @@ class SessionManager:
 
         except Exception as e:
             logger.exception(e)
+
+# ---------------------------------------------------------------------------
+# Attach SessionManager helpers to the Session model so that all management
+# logic lives in SessionManager while existing call-sites can still use
+# Session.load / list_sessions etc.                                           
+# ---------------------------------------------------------------------------
+
+def _session_manager(self: Session) -> 'SessionManager':  # type: ignore[name-defined]
+    return SessionManager(self)
+
+setattr(Session, 'manager', property(_session_manager))  # type: ignore[attr-defined]
+
+# Delegate class-level helpers
+setattr(Session, 'load', staticmethod(Session.load))  # already exists, keep for compatibility
+setattr(Session, 'list_sessions', staticmethod(Session.list_sessions))  # type: ignore[attr-defined]
+setattr(Session, 'delete', staticmethod(Session.delete))  # type: ignore[attr-defined]

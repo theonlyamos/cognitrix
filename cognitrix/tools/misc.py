@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import logging
 import multiprocessing
@@ -7,7 +9,7 @@ import shlex
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 from webbrowser import open_new_tab
 
 import pyautogui
@@ -17,12 +19,9 @@ from bs4 import BeautifulSoup
 from rich import print
 from tavily import TavilyClient
 
-from cognitrix.agents import Agent
 from cognitrix.config import settings
 from cognitrix.teams.base import TeamManager
 from cognitrix.tools.tool import tool
-
-NotImplementedErrorMessage = 'this tool does not suport async'
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -500,7 +499,7 @@ def mouse_right_click(x: int, y: int):
     return 'Mouse double-click completed.'
 
 @tool(category='system')
-async def create_agent(name: str, provider: str, description: str, tools: list[str], parent: Agent | None = None):
+async def create_agent(name: str, provider: str, description: str, tools: list[str], parent: Any | None = None):
     """Use this tool to create sub agents for specific tasks.
 
     Args:
@@ -513,9 +512,10 @@ async def create_agent(name: str, provider: str, description: str, tools: list[s
         str: A message indicating whether the the sub agent was created or not.
     """
 
-    agent: Agent | None = None
+    # Local import to avoid circular-import issues.
+    from cognitrix.agents import Agent  # noqa: WPS433  (allow internal import)
 
-    agent = await Agent.create_agent(
+    agent = await Agent.create_agent(  # type: ignore[attr-defined]
         name=name,
         system_prompt=description,
         provider=provider,
@@ -546,7 +546,8 @@ async def call_agent(name: str, task: str):
         Exception: If the agent is not found or the task fails
     """
     try:
-        agent = await Agent.load_agent(name)
+        from cognitrix.agents import Agent  # noqa: WPS433
+        agent = await Agent.load_agent(name)  # type: ignore[attr-defined]
         if agent:
             result = agent.call_sub_agent(agent_name=name, task_description=task)
             return result
@@ -574,28 +575,30 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
         new_team = team_manager.create_team(name, description)
         new_team.description = description
 
+        from cognitrix.agents import Agent  # noqa: WPS433
+
         for agent_name in agent_names:
-            agent = await Agent.load_agent(agent_name)
+            agent = await Agent.load_agent(agent_name)  # type: ignore[attr-defined]
             if agent:
                 await new_team.add_agent(agent)
             else:
                 print(f"Warning: Agent '{agent_name}' not found and couldn't be added to the team.")
 
         if leader_name:
-            leader = await Agent.load_agent(leader_name)
+            leader = await Agent.load_agent(leader_name)  # type: ignore[attr-defined]
             if leader and leader.id in new_team.assigned_agents:
                 new_team.leader = leader
             else:
                 print(f"Warning: Leader '{leader_name}' not found or not in the team. No leader set.")
 
-        new_team.save()
+        await new_team.save()
 
         return ['team', new_team, f"Team '{name}' created successfully with {len(new_team.assigned_agents)} agents."]
     except Exception as e:
         return f"Error creating team: {str(e)}"
 
 @tool(category='web')
-def internet_search(query: str, search_depth: str = "basic"):
+def internet_search(query: str, search_depth: Literal['basic', 'advanced'] = "basic"):
     """Use this to retrieve up-to-date information from the internet
     and generate more accurate and informative responses.
 

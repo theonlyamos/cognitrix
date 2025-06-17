@@ -142,6 +142,21 @@ class Team(Model):
 
         return session
 
+# ---------------------------------------------------------------------------
+# Attach TeamManager helpers to the Team model for centralised management and
+# backward-compatibility with any legacy call-sites.                         
+# ---------------------------------------------------------------------------
+
+# Instance-level manager
+def _team_manager(self: 'Team') -> 'TeamManager':
+    return TeamManager()
+
+setattr(Team, 'manager', property(_team_manager))  # type: ignore[attr-defined]
+
+# Class-level helpers
+setattr(Team, 'create_team', staticmethod(TeamManager.create_team))  # type: ignore[attr-defined]
+setattr(Team, 'get_team', staticmethod(TeamManager.get_team))  # type: ignore[attr-defined]
+setattr(Team, 'delete_team', staticmethod(TeamManager.delete_team))  # type: ignore[attr-defined]
 
 class TeamManager:
     """
@@ -320,3 +335,9 @@ class TeamManager:
         """Process a message from an agent"""
         # Implementation would go here - simplified for now
         return f"Processed message from {agent.name}: {response[:50]}..."
+
+    # Convenience alias so callers can do `TeamManager.create(...)`
+    @staticmethod
+    async def create(name: str, description: str) -> Team:  # type: ignore[override]
+        manager = TeamManager()
+        return manager.create_team(name, description)

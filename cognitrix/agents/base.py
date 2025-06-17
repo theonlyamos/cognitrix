@@ -299,3 +299,33 @@ class AgentManager:
     @staticmethod
     async def load_agent(agent_name: str) -> Agent | None:
         return await Agent.find_one({'name': agent_name})
+
+    # -------------------------------------------------------------------
+    # Public convenience aliases
+    # -------------------------------------------------------------------
+
+    @staticmethod
+    async def create(*args, **kwargs) -> Agent | None:  # noqa: D401, ANN001
+        """Alias for :py:meth:`create_agent` so users can call
+        ``assistant = await AgentManager.create(...)`` uniformly.
+        """
+        return await AgentManager.create_agent(*args, **kwargs)
+
+# ---------------------------------------------------------------------------
+# Attach the manager interface to the Agent model to centralise management   
+# logic while keeping backward-compatibility with existing call-sites that   
+# invoke `Agent.create_agent(...)`, etc.                                      
+# ---------------------------------------------------------------------------
+
+# Instance-level manager
+def _agent_manager(self: Agent) -> 'AgentManager':  # type: ignore[name-defined]
+    """Return an `AgentManager` bound to this Agent instance."""
+    return AgentManager(self)
+
+# Add property dynamically (avoids circular import at class definition time)
+setattr(Agent, 'manager', property(_agent_manager))  # type: ignore[attr-defined]
+
+# Class-level convenience methods that delegate to AgentManager
+setattr(Agent, 'create_agent', staticmethod(AgentManager.create_agent))  # type: ignore[attr-defined]
+setattr(Agent, 'list_agents', staticmethod(AgentManager.list_agents))  # type: ignore[attr-defined]
+setattr(Agent, 'load_agent', staticmethod(AgentManager.load_agent))  # type: ignore[attr-defined]
