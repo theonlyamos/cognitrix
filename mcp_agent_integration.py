@@ -8,31 +8,25 @@ making MCP tools directly available to the LLM without needing to use call_mcp_t
 Usage examples:
     # Auto-sync MCP tools when creating an agent
     python mcp_agent_integration.py --agent my_agent --auto-sync
-    
+
     # Manually refresh MCP tools for an existing agent
     python mcp_agent_integration.py --agent my_agent --refresh
-    
+
     # List available MCP tools
     python mcp_agent_integration.py --list-tools
 """
 
-import asyncio
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
 # Add Cognitrix to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from cognitrix.tools.mcp_client import (
-    get_dynamic_client, 
-    refresh_agent_mcp_tools,
-    sync_mcp_tools_for_agent,
-    mcp_list_servers,
-    mcp_connect_server,
-    _dynamic_mcp_tools
-)
 from cognitrix.agents.base import Agent
+from cognitrix.tools.mcp_client import get_dynamic_client, mcp_connect_server, mcp_list_servers, refresh_agent_mcp_tools
+
 
 async def auto_connect_and_sync_agent(agent_name: str) -> str:
     """Auto-connect to available MCP servers and sync tools with agent"""
@@ -41,7 +35,7 @@ async def auto_connect_and_sync_agent(agent_name: str) -> str:
         try:
             agent = Agent.load(agent_name)
             print(f"✓ Loaded existing agent: {agent_name}")
-        except:
+        except Exception:
             print(f"Creating new agent: {agent_name}")
             agent = Agent(
                 name=agent_name,
@@ -49,11 +43,11 @@ async def auto_connect_and_sync_agent(agent_name: str) -> str:
                 system_prompt=f"You are {agent_name}, an AI assistant with access to MCP server tools."
             )
             agent.save()
-        
+
         # Get configured servers
         servers = await mcp_list_servers()
         connected_count = 0
-        
+
         for server in servers:
             if not server.get('connected', False):
                 server_name = server.get('name')
@@ -65,14 +59,14 @@ async def auto_connect_and_sync_agent(agent_name: str) -> str:
                         print(f"✓ {result}")
                     else:
                         print(f"✗ {result}")
-        
+
         # Sync MCP tools with agent
-        print(f"🔄 Syncing MCP tools with agent...")
+        print("🔄 Syncing MCP tools with agent...")
         sync_result = await refresh_agent_mcp_tools(agent)
         print(f"✓ {sync_result}")
-        
+
         return f"Successfully set up agent '{agent_name}' with MCP tools"
-        
+
     except Exception as e:
         return f"Error setting up agent: {e}"
 
@@ -90,12 +84,12 @@ async def list_mcp_tools() -> str:
     try:
         client = await get_dynamic_client()
         connected_servers = client.get_connected_servers()
-        
+
         if not connected_servers:
             return "No MCP servers connected. Connect to servers first."
-        
+
         output = ["📋 Available MCP Tools:", ""]
-        
+
         for server_name in connected_servers:
             tools = await client.list_tools(server_name)
             if tools:
@@ -106,9 +100,9 @@ async def list_mcp_tools() -> str:
                     unique_name = f"{server_name}_{tool_name}"
                     output.append(f"  • {unique_name}: {description}")
                 output.append("")
-        
+
         return "\n".join(output)
-        
+
     except Exception as e:
         return f"Error listing MCP tools: {e}"
 
@@ -116,9 +110,9 @@ async def show_agent_tools(agent_name: str) -> str:
     """Show tools available to a specific agent"""
     try:
         agent = Agent.load(agent_name)
-        
+
         output = [f"🤖 Tools available to agent '{agent_name}':", ""]
-        
+
         # Group tools by category
         tools_by_category = {}
         for tool in agent.tools:
@@ -126,7 +120,7 @@ async def show_agent_tools(agent_name: str) -> str:
             if category not in tools_by_category:
                 tools_by_category[category] = []
             tools_by_category[category].append(tool)
-        
+
         for category, tools in tools_by_category.items():
             output.append(f"📂 {category.upper()} ({len(tools)} tools)")
             for tool in tools:
@@ -135,9 +129,9 @@ async def show_agent_tools(agent_name: str) -> str:
                 first_line = tool_doc.split('\n')[0].strip()
                 output.append(f"  • {tool_name}: {first_line}")
             output.append("")
-        
+
         return "\n".join(output)
-        
+
     except Exception as e:
         return f"Error showing agent tools: {e}"
 
@@ -148,9 +142,9 @@ async def main():
     parser.add_argument("--refresh", action="store_true", help="Refresh MCP tools for existing agent")
     parser.add_argument("--list-tools", action="store_true", help="List available MCP tools")
     parser.add_argument("--show-agent-tools", action="store_true", help="Show tools available to agent")
-    
+
     args = parser.parse_args()
-    
+
     if args.list_tools:
         result = await list_mcp_tools()
         print(result)
@@ -171,4 +165,4 @@ async def main():
         print("  python mcp_agent_integration.py --agent my_agent --show-agent-tools")
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

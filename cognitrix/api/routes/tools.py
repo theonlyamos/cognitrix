@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+
 from ...tools import Tool
 
 tools_api = APIRouter(
@@ -10,7 +11,7 @@ tools_api = APIRouter(
 async def list_tools():
     tools = Tool.list_all_tools()
     response = [tool.dict() for tool in tools]
-    
+
     return response
 
 @tools_api.get('/{tool_name}')
@@ -19,5 +20,5 @@ async def load_agent(tool_name: str):
     response = {}
     if tool:
         response = tool.dict()
-    
+
     return JSONResponse(response)

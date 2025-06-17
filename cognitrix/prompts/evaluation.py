@@ -1,15 +1,17 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+
 
 class EvaluationOutput(BaseModel):
     task_summary: str
     response_overview: str
-    scratchpad: Optional[str] = None  # All running notes, observations, reasoning, and planning
-    todo: List[str] = Field(default_factory=list)
-    evaluation: Dict[str, Any]
+    scratchpad: str | None = None  # All running notes, observations, reasoning, and planning
+    todo: list[str] = Field(default_factory=list)
+    evaluation: dict[str, Any]
     overall_assessment: str
-    suggestions: List[str] = Field(default_factory=list)
-    finalscore: Optional[str] = None
+    suggestions: list[str] = Field(default_factory=list)
+    finalscore: str | None = None
 
 evaluation_prompt="""
 You are an AI agent designed to evaluate the responses of other AI agents concisely and robustly.

@@ -1,11 +1,13 @@
 import asyncio
+import logging
+
 from celery import Celery
-from celery.signals import task_prerun, task_postrun, task_success, task_failure
+from celery.signals import task_failure, task_postrun, task_prerun, task_success
+
+from cognitrix.config import initialize_database
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.teams.base import Team
-from cognitrix.config import initialize_database
-import logging
 
 initialize_database()
 
@@ -49,7 +51,7 @@ def task_postrun_handler(task_id, task, *args, retval=None, state=None, **kwargs
 
         task_obj.status = TaskStatus.COMPLETED if state == 'SUCCESS' else TaskStatus.PENDING
         loop.run_until_complete(task_obj.save())
-        
+
 
 @task_success.connect
 def task_success_handler(sender=None, result=None, **kwargs):
@@ -60,20 +62,20 @@ def task_failure_handler(sender=None, task_id=None, exception=None, **kwargs):
     logger.error(f"Task failed: {task_id}, Exception: {exception}")
 
 @celery.task(name="generic_task")
-def run_task(task_id): 
+def run_task(task_id):
     loop = asyncio.get_event_loop()
     task = loop.run_until_complete(Task.get(task_id))  # Change here: use asyncio.run
 
 
     result = None
-    
+
     if task:
         result = loop.run_until_complete(task.start())  # Call the method here
 
     return result
 
 @celery.task(name="team_task")
-def run_team_task(team_id: str, task_id: str): 
+def run_team_task(team_id: str, task_id: str):
     loop = asyncio.get_event_loop()
     team = loop.run_until_complete(Team.get(team_id))
     task = loop.run_until_complete(Task.get(task_id))
@@ -82,7 +84,7 @@ def run_team_task(team_id: str, task_id: str):
 
         websocket_manager = get_websocket_manager(task_id)
         if websocket_manager:
-            try:    
+            try:
                 loop.run_until_complete(team.assign_task(task.id))
                 task_session = Session(team_id=team.id, task_id=task.id)
                 loop.run_until_complete(task_session.save())

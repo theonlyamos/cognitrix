@@ -1,4 +1,15 @@
-from ..agents.base import Agent
-from ..agents.generators import PromptGenerator
-from ..agents.generators import TaskInstructor
-from ..agents.evaluator import Evaluator
+from .base import Agent as Agent
+from .evaluator import Evaluator as Evaluator
+from .generators import (
+    PromptGenerator as PromptGenerator,
+)
+from .generators import (
+    TaskInstructor as TaskInstructor,
+)
+
+__all__ = [
+    "Agent",
+    "PromptGenerator",
+    "TaskInstructor",
+    "Evaluator",
+]

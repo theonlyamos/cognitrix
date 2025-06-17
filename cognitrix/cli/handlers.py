@@ -1,10 +1,12 @@
 """
 Command handlers for managing different entity types.
 """
-import sys
 import asyncio
 import logging
+import sys
 from argparse import Namespace
+
+from rich import print
 
 from .utils import print_table
 
@@ -24,8 +26,8 @@ async def list_agents():
 
 def add_agent():
     """Interactive agent creation."""
-    from cognitrix.providers import LLM
     from cognitrix.agents import Agent
+    from cognitrix.providers import LLM
     name = None
     provider = None
     system_prompt = None
@@ -118,25 +120,25 @@ def list_teams():
 # =====================
 # Tool Management
 # =====================
-def list_tools(category='all'):
-    """List tools by category."""
-    from cognitrix.tools.base import Tool
-    tools = Tool.get_tools_by_category(category)
+def list_tools(category: str):
+    """List all available tools, optionally filtered by category."""
+    print(f"\nAvailable Tools (Category: {category.title()}):")
+
+    from cognitrix.tools.base import ToolManager
+    tools = ToolManager.get_tools_by_category(category)
+
+    if not tools:
+        print("No tools found for this category.")
+        return
+
     rows = [[i+1, t.name, t.category] for i, t in enumerate(tools)]
     print_table(rows, ["#", "Tool Name", "Tool Category"])
 
 
 def manage_tools(args: Namespace):
     """Handle tool management commands."""
-    try:
-        if args.list:
-            list_tools(args.list)
-    except KeyboardInterrupt:
-        print()
-        sys.exit()
-    except Exception as e:
-        logging.exception(e)
-        sys.exit(1)
+    if args.list:
+        list_tools(args.list)
 
 
 # =====================
@@ -175,4 +177,4 @@ def start_worker():
         return worker_process
     except Exception as e:
         print(f"Error starting Celery worker: {e}")
-        return None 
+        return None

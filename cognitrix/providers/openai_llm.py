@@ -1,12 +1,9 @@
-from openai import OpenAI as OpenAILLM
-from cognitrix.providers.base import LLM, LLMResponse
-from cognitrix.tools.base import Tool
-from cognitrix.utils import image_to_base64
-from typing import Any, List, Optional
-from dotenv import load_dotenv
 import logging
-import sys
-import os
+
+from dotenv import load_dotenv
+
+from cognitrix.config import settings
+from cognitrix.providers.base import LLM
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -29,27 +26,27 @@ class OpenAI(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    
+
     model: str = 'gpt-4o-mini-2024-07-18'
-    """model endpoint to use""" 
-    
+    """model endpoint to use"""
+
     temperature: float = 0.1
-    """What sampling temperature to use.""" 
-    
-    api_key: str = os.getenv('OPENAI_API_KEY', '')
-    """OpenAI API key""" 
-    
+    """What sampling temperature to use."""
+
+    api_key: str = settings.get_api_key('openai')
+    """OpenAI API key"""
+
     max_tokens: int = 4096
-    """The maximum number of tokens to generate in the completion.""" 
-    
-    base_url: str = 'https://oai.helicone.ai/v1'
+    """The maximum number of tokens to generate in the completion."""
+
+    base_url: str = 'https://oai.helicone.ai/v1' if settings.has_api_key('helicone') else 'https://api.openai.com/v1'
     """Base URL for the OpenAI API"""
-    
+
     chat_history: list[str] = []
     """Chat history"""
-    
+
     supports_system_prompt: bool = True
     """Flag to indicate if system prompt should be supported"""
-    
+
     is_multimodal: bool = True
     """Whether the model is multimodal."""

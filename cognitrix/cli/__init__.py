@@ -1,27 +1,35 @@
 # CLI Module for Cognitrix
 # Modern modular CLI package
 
-from .main import main
 from .args import get_arguments
 from .core import start
 from .handlers import (
-    list_agents, add_agent, delete_agent, manage_agents,
-    list_tasks, list_teams, list_tools, manage_tools,
-    list_providers, list_sessions, start_worker
+    add_agent,
+    delete_agent,
+    list_agents,
+    list_providers,
+    list_sessions,
+    list_tasks,
+    list_teams,
+    list_tools,
+    manage_agents,
+    manage_tools,
+    start_worker,
 )
-from .shell import initialize_shell, CognitrixCompleter
-from .ui import start_web_ui, prompt_agent
-from .utils import print_table, str_or_file, create_rich_table
+from .main import main
+from .shell import CognitrixCompleter, initialize_shell
+from .ui import prompt_agent, start_web_ui
+from .utils import create_rich_table, print_table, str_or_file
 
 __all__ = [
     # Main entry points
     'main', 'get_arguments', 'start',
     # Handlers
     'list_agents', 'add_agent', 'delete_agent', 'manage_agents',
-    'list_tasks', 'list_teams', 'list_tools', 'manage_tools', 
+    'list_tasks', 'list_teams', 'list_tools', 'manage_tools',
     'list_providers', 'list_sessions', 'start_worker',
     # Shell and UI
     'initialize_shell', 'CognitrixCompleter', 'start_web_ui', 'prompt_agent',
     # Utilities
     'print_table', 'str_or_file', 'create_rich_table'
-] 
+]

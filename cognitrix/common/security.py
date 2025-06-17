@@ -1,15 +1,14 @@
 from datetime import datetime, timedelta
-from typing import Optional
 
-from fastapi import Depends, HTTPException, Request, status
+from dotenv import load_dotenv
+from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
-from dotenv import load_dotenv
-from jose import JWTError, jwt
 
 from ..models import User
-from .constants import JWT_SECRET_KEY, JWT_ALGORITHM, JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+from .constants import JWT_ALGORITHM, JWT_SECRET_KEY
 
 load_dotenv()
 
@@ -23,11 +22,11 @@ class Token(BaseModel):
     token_type: str
 
 class TokenData(BaseModel):
-    username: Optional[str] = None
+    username: str | None = None
 
 async def get_user(email: str) -> User | None:
     return await User.find_one({'email': email})
-    
+
 
 async def authenticate(email: str, password: str):
     user = await get_user(email)
@@ -37,7 +36,7 @@ async def authenticate(email: str, password: str):
         return False
     return user
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -58,17 +57,17 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         username: str | None = payload.get("sub")
         if username is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
+        TokenData(username=username)
     except JWTError:
-        raise credentials_exception
-    
+        raise credentials_exception from None
+
     if not isinstance(username, str):
         raise credentials_exception
-    
+
     user = await get_user(email=username)
     if user is None:
         raise credentials_exception
-    
+
     del user.password
     return user
 

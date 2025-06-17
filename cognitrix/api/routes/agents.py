@@ -1,11 +1,12 @@
 import json
-from fastapi import APIRouter, Depends, Request, HTTPException
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
 from cognitrix.agents import Agent
 from cognitrix.common.security import get_current_user
 from cognitrix.providers import Session
+
 from ...providers import LLM
 
 agents_api = APIRouter(
@@ -22,16 +23,16 @@ async def list_agents():
 @agents_api.post('')
 async def save_agent(request: Request, agent: Agent):
     data = await request.json()
-    
+
     llm = LLM(**data['llm'])
     llm.provider = data['llm']['provider']
 
     agent.llm = llm
     await agent.save()
-    
+
     if request.state.agent.id == agent.id:
         request.state.agent = agent
-    
+
     return agent
 
 @agents_api.get("/sse")
@@ -53,7 +54,7 @@ async def load_agent(agent_id: str):
     agent = await Agent.find_one({'id': agent_id})
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    
+
     return agent
 
 @agents_api.get('/{agent_id}/session')
@@ -66,9 +67,9 @@ async def load_session(agent_id: str):
         session = await Session.get_by_agent_id(agent_id)
         if not session:
             session = Session(agent_id=agent_id)
-            
+
         session_id = session.id
         await session.save()
-        
+
     return JSONResponse({'session_id': session_id})
 

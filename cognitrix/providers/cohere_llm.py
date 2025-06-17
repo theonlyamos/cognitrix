@@ -1,13 +1,12 @@
+import logging
+import os
+from typing import Any
+
 import cohere
 from cohere.errors.client_closed_request_error import ClientClosedRequestError
-from cognitrix.providers.base import LLM, LLMResponse
-from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
-import logging
-import sys
-import os
-import ast
-import asyncio
+
+from cognitrix.providers.base import LLM, LLMResponse
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -30,20 +29,22 @@ class Cohere(LLM):
         system_prompt (str): System prompt to prepend to queries
     """
     model: str = 'command-r-plus'
-    """model endpoint to use""" 
-    
+    """model endpoint to use"""
+
     temperature: float = 0.1
-    """What sampling temperature to use.""" 
-    
+    """What sampling temperature to use."""
+
     api_key: str = os.getenv('CO_API_KEY', '')
-    """Cohere API key""" 
-    
+    """Cohere API key"""
+
     supports_tool_use: bool = False
-    
-    def format_query(self, chat_history: List[Dict[str, str]] = []) -> list:
+
+    def format_query(self, chat_history: list[dict[str, str]] = None) -> list:
         """Formats messages for the Gemini API"""
+        if chat_history is None:
+            chat_history = []
         formatted_messages = []
-        
+
         for fm in chat_history:
             msg = fm.copy()
             msg['message'] = fm['content']
@@ -54,7 +55,7 @@ class Cohere(LLM):
             formatted_messages.append(msg)
 
         return formatted_messages
-    
+
     def format_tools(self, tools: list[dict[str, Any]]):
         """Format tools for cohere sdk"""
         for tool in tools:
@@ -68,18 +69,22 @@ class Cohere(LLM):
                     'type': value,
                     'required': (key in tool['required'])
                 }
-            
+
             # self.tools.append(f_tool)
 
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, tools: Any = [], **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: list[dict[str, str]] = None, stream: bool = False, tools: Any = None, **kwds: Any):
+        if tools is None:
+            tools = []
+        if chat_history is None:
+            chat_history = []
         try:
             if not self.client:
                 self.client = cohere.Client(api_key=self.api_key)
-            
+
             response = LLMResponse()
             chat_history = self.format_query(chat_history)
-            
-            completion = self.client.chat_stream( 
+
+            completion = self.client.chat_stream(
                 model=self.model,
                 message=query['content'],
                 temperature=self.temperature,
@@ -94,7 +99,7 @@ class Cohere(LLM):
                 #     {"name":"internet_search"}
                 # ]
             )
-            
+
             for event in completion:
                 if event.event_type == 'text-generation' or event.event_type == 'tool-calls-chunk':
                     if hasattr(event, 'text'):
@@ -103,13 +108,13 @@ class Cohere(LLM):
                     elif event.event_type == 'stream-end':
                         response.add_chunk(event.response.result)
                         yield response
-            
+
             # yield response
 
         except ClientClosedRequestError as e:
             logger.error(f"Cohere API error: {str(e)}")
             yield LLMResponse(llm_response=f"Error: Cohere API encountered an issue - {str(e)}")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Request to Cohere API timed out")
             yield LLMResponse(llm_response="Error: Request to Cohere timed out. Please try again later.")
         except Exception as e:

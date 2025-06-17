@@ -56,7 +56,7 @@ sse-starlette = "^2.1.2"
 wikipedia = "^1.4.0"
 celery = {extras = ["redis"], version = "^5.4.0"}
 fastapi = "^0.112.0"
-odbms = "^0.4.4"
+odbms = "0.4.5"
 passlib = "^1.7.4"
 python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 python-multipart = "^0.0.9"
@@ -78,3 +78,22 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning"
 ]
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.4.4"
+
+[tool.ruff]
+line-length = 120
+# Target the same Python version declared for the project
+# This helps Ruff apply version-specific rules correctly.
+target-version = "py311"
+# Enable common rule sets: 
+# E and W (pycodestyle), F (pyflakes), I (isort), B (bugbear), UP (pyupgrade)
+select = ["E", "W", "F", "I", "B", "UP"]
+# Fix issues automatically when --fix is passed.
+fix = true
+show-fixes = true
+ignore = ["E501", "B008", "B904"]

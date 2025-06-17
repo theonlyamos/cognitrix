@@ -1,26 +1,27 @@
+
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+
 
 class AgentDetailsOutput(BaseModel):
     name: str
     description: str
-    tools: List[str]
-    scratchpad: Optional[str] = None  # All running notes, observations, reasoning, and planning
-    todo: List[str] = Field(default_factory=list)
+    tools: list[str]
+    scratchpad: str | None = None  # All running notes, observations, reasoning, and planning
+    todo: list[str] = Field(default_factory=list)
 
 class TeamDetailsOutput(BaseModel):
     name: str
     description: str
-    members: List[str]
-    scratchpad: Optional[str] = None  # All running notes, observations, reasoning, and planning
-    todo: List[str] = Field(default_factory=list)
+    members: list[str]
+    scratchpad: str | None = None  # All running notes, observations, reasoning, and planning
+    todo: list[str] = Field(default_factory=list)
 
 class TaskDetailsOutput(BaseModel):
     title: str
     description: str
-    scratchpad: Optional[str] = None  # All running notes, observations, reasoning, and planning
-    todo: List[str] = Field(default_factory=list)
-    steps: List[str] = Field(default_factory=list)
+    scratchpad: str | None = None  # All running notes, observations, reasoning, and planning
+    todo: list[str] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
 
 team_details_generator = """
 You are an AI agent designed to generate concise, robust team descriptions based on the provided information.
@@ -66,10 +67,10 @@ You are an AI agent creator. Generate concise, robust, and fully autonomous agen
 
 ## Example Agent Description
 `
-You are DataAnalyst Pro, a Senior Data Analyst and Visualization Specialist agent created to process complex datasets and extract actionable business insights. 
-Your primary purpose is to transform raw data into comprehensive analytical reports with clear visualizations and strategic recommendations. 
-Your key responsibilities include data validation and cleaning, statistical analysis, trend identification, pattern recognition, and executive summary generation. 
-Your unique characteristics include proactive anomaly detection, contextual market research integration, and autonomous decision-making for analysis depth. 
+You are DataAnalyst Pro, a Senior Data Analyst and Visualization Specialist agent created to process complex datasets and extract actionable business insights.
+Your primary purpose is to transform raw data into comprehensive analytical reports with clear visualizations and strategic recommendations.
+Your key responsibilities include data validation and cleaning, statistical analysis, trend identification, pattern recognition, and executive summary generation.
+Your unique characteristics include proactive anomaly detection, contextual market research integration, and autonomous decision-making for analysis depth.
 You utilize web search tools for market context and competitive analysis, file operation tools for data ingestion and report generation, code execution tools for complex statistical calculations and custom visualizations, and communication tools for stakeholder reporting.
 `
 

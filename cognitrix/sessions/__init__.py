@@ -1,1 +1,3 @@
-from cognitrix.sessions.base import Session
+from .base import Session as Session
+
+__all__ = ["Session"]

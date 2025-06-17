@@ -3,6 +3,7 @@ CLI utility functions for common operations.
 """
 import os
 from pathlib import Path
+
 from rich.console import Console
 from rich.table import Table
 
@@ -13,7 +14,7 @@ def print_table(rows, headers):
     if not rows:
         print("\nNo data found.")
         return
-    col_widths = [max(len(str(cell)) for cell in col) for col in zip(*([headers] + rows))]
+    col_widths = [max(len(str(cell)) for cell in col) for col in zip(*([headers] + rows), strict=False)]
     fmt = '| ' + ' | '.join(f'{{:<{w}}}' for w in col_widths) + ' |'
     sep = '|-' + '-|-'.join('-' * w for w in col_widths) + '-|'
     print('\n' + fmt.format(*headers))
@@ -27,7 +28,7 @@ def str_or_file(string):
     if len(string) > 100:
         return string
     if Path(string).is_file() or Path(os.curdir, string).is_file():
-        with open(Path(string), 'rt') as file:
+        with open(Path(string)) as file:
             return file.read()
     return string
 
@@ -38,4 +39,4 @@ def create_rich_table(headers, rows, title=None):
         table.add_column(header, style="bold")
     for row in rows:
         table.add_row(*[str(cell) for cell in row])
-    return table 
+    return table

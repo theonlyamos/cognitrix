@@ -4,10 +4,10 @@ Handles server configuration, connection, and disconnection operations.
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Any
 
-from cognitrix.mcp.server_manager import mcp_server_manager, MCPServerConfig, MCPTransportType
 from cognitrix.mcp.client import get_dynamic_client
+from cognitrix.mcp.server_manager import MCPServerConfig, MCPTransportType, mcp_server_manager
 from cognitrix.mcp.status import get_all_connection_status
 
 logger = logging.getLogger('cognitrix.log')
@@ -24,7 +24,7 @@ async def mcp_add_server(name: str, transport: str, **kwargs) -> str:
     """
     try:
         transport_enum = MCPTransportType(transport.lower())
-        
+
         # Create server config based on transport type
         if transport_enum == MCPTransportType.STDIO:
             server_config = MCPServerConfig(
@@ -47,14 +47,14 @@ async def mcp_add_server(name: str, transport: str, **kwargs) -> str:
             )
         else:
             return f"Unsupported transport type: {transport}"
-        
+
         success = mcp_server_manager.add_server(server_config)
         if success:
             return f"Successfully added MCP server '{name}' with {transport} transport"
         else:
             return f"Failed to add MCP server '{name}'"
-            
-    except ValueError as e:
+
+    except ValueError:
         return f"Invalid transport type '{transport}'. Must be one of: stdio, http, sse"
     except Exception as e:
         return f"Error adding MCP server: {e}"
@@ -72,7 +72,7 @@ async def mcp_remove_server(name: str) -> str:
         client = await get_dynamic_client()
         if client.is_connected(name):
             await client.disconnect_from_server(name)
-        
+
         success = mcp_server_manager.remove_server(name)
         if success:
             return f"Successfully removed MCP server '{name}'"
@@ -81,7 +81,7 @@ async def mcp_remove_server(name: str) -> str:
     except Exception as e:
         return f"Error removing MCP server: {e}"
 
-async def mcp_list_servers() -> List[Dict[str, Any]]:
+async def mcp_list_servers() -> list[dict[str, Any]]:
     """
     List all configured MCP servers.
     Returns:
@@ -92,20 +92,20 @@ async def mcp_list_servers() -> List[Dict[str, Any]]:
         client = await get_dynamic_client()
         connected_servers = client.get_connected_servers()
         connection_statuses = get_all_connection_status()
-        
+
         result = []
         for server in servers:
             server_info = server.to_dict()
             # Check both active connection and persistent status
             is_connected = server.name in connected_servers
             persistent_status = connection_statuses.get(server.name, {}).get('connected', False)
-            
+
             server_info['connected'] = is_connected or persistent_status
             server_info['active_session'] = is_connected
             server_info['persistent_status'] = persistent_status
-            
+
             result.append(server_info)
-        
+
         return result
     except Exception as e:
         return [{"error": f"Error listing MCP servers: {e}"}]
@@ -164,7 +164,7 @@ async def mcp_disconnect_all() -> str:
     except Exception as e:
         return f"Error disconnecting from all servers: {e}"
 
-async def mcp_get_connection_info() -> Dict[str, Any]:
+async def mcp_get_connection_info() -> dict[str, Any]:
     """
     Get detailed connection information for all servers.
     Returns:
@@ -174,7 +174,7 @@ async def mcp_get_connection_info() -> Dict[str, Any]:
         client = await get_dynamic_client()
         connected_servers = client.get_connected_servers()
         connection_statuses = get_all_connection_status()
-        
+
         return {
             "active_connections": connected_servers,
             "persistent_statuses": connection_statuses,
@@ -182,4 +182,4 @@ async def mcp_get_connection_info() -> Dict[str, Any]:
             "total_connected": len(connected_servers)
         }
     except Exception as e:
-        return {"error": f"Error getting connection info: {e}"} 
+        return {"error": f"Error getting connection info: {e}"}

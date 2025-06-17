@@ -1,12 +1,11 @@
-import asyncio
+import logging
+from typing import Any
+
+from dotenv import load_dotenv
 from openai import OpenAI as OpenAILLM
+
 from cognitrix.providers.base import LLM, LLMResponse
 from cognitrix.utils import image_to_base64
-from typing import Any, Dict, List, Optional
-from dotenv import load_dotenv
-import logging
-import sys
-import os
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -29,31 +28,31 @@ class Local(LLM):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    
+
     model: str = 'local-model'
-    """model endpoint to use""" 
-    
+    """model endpoint to use"""
+
     vision_model: str = 'local-model'
-    """vision model endpoint to use""" 
-    
+    """vision model endpoint to use"""
+
     temperature: float = 0.1
-    """What sampling temperature to use.""" 
-    
+    """What sampling temperature to use."""
+
     api_key: str = 'not-needed'
-    """API key""" 
-    
+    """API key"""
+
     base_url: str = 'http://localhost:1234/v1'
     """Base url of local llm server"""
-    
+
     max_tokens: int = 2048
-    """The maximum number of tokens to generate in the completion.""" 
-    
+    """The maximum number of tokens to generate in the completion."""
+
     chat_history: list[str] = []
     """Chat history"""
-    
+
     supports_system_prompt: bool = True
     """Flag to indicate if system prompt should be supported"""
-    
+
     def format_query(self, message: dict[str, str]) -> list:
         """Formats a message for the Claude API.
 
@@ -63,11 +62,11 @@ class Local(LLM):
         Returns:
             list: A list of formatted messages for the Claude API.
         """
-        
+
         formatted_message = [*self.chat_history, message]
-        
+
         messages = []
-        
+
         for fm in formatted_message:
             if fm['type'] == 'text':
                 messages.append({
@@ -90,10 +89,10 @@ class Local(LLM):
                         }
                     ]
                 })
-            
+
         return messages
 
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: list[dict[str, str]] = None, **kwds: Any):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -103,12 +102,14 @@ class Local(LLM):
         Returns:
             A string containing the generated response.
         """
+        if chat_history is None:
+            chat_history = []
         try:
             if not self.client:
                 self.client = OpenAILLM(base_url=self.base_url, api_key=self.api_key)
-            
+
             formatted_messages = self.format_query(query)
-            
+
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -118,15 +119,15 @@ class Local(LLM):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens
             )
-                
+
             response = LLMResponse()
             response.add_chunk(response.choices[0].message.content) # type: ignore
             yield response
-        
+
         except RuntimeError as e:
             logger.error(f"Local LLM error: {str(e)}")
             yield LLMResponse(llm_response=f"Error: Local LLM encountered an issue - {str(e)}")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Local LLM processing timed out")
             yield LLMResponse(llm_response="Error: Local LLM processing timed out. Please try again later.")
         except Exception as e:

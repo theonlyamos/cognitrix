@@ -1,16 +1,11 @@
-from functools import lru_cache
-import json
-import uuid
-from odbms import Model
-from pydantic import Field
-from typing import Any, List, Dict, TypeAlias, Union
-from openai import OpenAI
-from rich import print
-import os
-import logging
 import inspect
-import asyncio
-from openai import OpenAIError
+import logging
+import uuid
+from typing import Any, TypeAlias
+
+from odbms import Model
+from openai import OpenAI, OpenAIError
+from pydantic import Field
 
 from cognitrix.utils import image_to_base64
 from cognitrix.utils.llm_response import LLMResponse
@@ -21,8 +16,6 @@ logging.basicConfig(
     level=logging.WARNING
 )
 logger = logging.getLogger('cognitrix.log')
-
-LLMList: TypeAlias = List['LLM']
 
 class LLM(Model):
     """
@@ -37,77 +30,110 @@ class LLM(Model):
         supports_system_prompt (bool): Flag to indicate if system prompt should be supported
         system_prompt (str): System prompt to prepend to queries
     """
-    
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     """Unique identifier for the LLM provider"""
 
-    model: str = Field(default=None)
-    """model endpoint to use""" 
-  
-    temperature: float = Field(default=0.4)
-    """What sampling temperature to use.""" 
+    model: str = Field(default='')
+    """model endpoint to use"""
 
-    api_key: str = Field(default=None)
-    """API key""" 
-    
+    temperature: float = Field(default=0.4)
+    """What sampling temperature to use."""
+
+    api_key: str = Field(default='')
+    """API key"""
+
     base_url: str = ''
     """Base url of local llm server"""
-    
+
     max_tokens: int = Field(default=512)
-    """The maximum number of tokens to generate in the completion.""" 
-    
+    """The maximum number of tokens to generate in the completion."""
+
     supports_system_prompt: bool = Field(default=False)
     """Whether the model supports system prompts."""
-    
+
     is_multimodal: bool = Field(default=False)
     """Whether the model is multimodal."""
-    
+
     provider: str = Field(default="openai")
     """This is set to the name of the class"""
-    
-    # tools: List[Dict] = []
-    # """Functions calling tools formatted for this specific llm provider"""
-    
+
     supports_tool_use: bool = True
     """Whether the provider supports tool use"""
-    
+
     client: Any = None
     """The client object for the llm provider"""
-    
-    def __init__(self, *args, **data):
+
+    def __init__(self, **data: Any):
         super().__init__(**data)
-        if not 'provider' in data.keys():
+        if 'provider' not in data:
             self.provider = self.__class__.__name__
-    
-    def format_query(self, message: dict[str, str], chat_history: List[Dict[str, Any]] = []) -> list:
-        """Formats a message for the Claude API.
+
+    def format_query(self, messages: list[dict[str, Any]]) -> list:
+        """Delegate to LLMManager"""
+        return LLMManager.format_query(self, messages)
+
+    def format_tools(self, tools: list[dict[str, Any]]):
+        """Delegate to LLMManager"""
+        return LLMManager.format_tools(tools)
+
+    @staticmethod
+    def list_llms():
+        """Delegate to LLMManager"""
+        return LLMManager.list_llms()
+
+    @staticmethod
+    def load_llm(provider: str):
+        """Delegate to LLMManager"""
+        return LLMManager.load_llm(provider)
+
+    def get_supported_models(self):
+        """Delegate to LLMManager"""
+        return LLMManager.get_supported_models(self)
+
+    async def __call__(self, prompt: list[dict[str, Any]], stream: bool = False, tools: Any = None, **kwds: Any):
+        """Delegate to LLMManager"""
+        if tools is None:
+            tools = []
+        return await LLMManager.generate_response(self, prompt, stream, tools, **kwds)
+
+LLMList: TypeAlias = list[LLM]
+
+class LLMManager:
+    """Manager class for LLM-related business logic"""
+
+    @staticmethod
+    def format_query(llm: LLM, messages: list[dict[str, Any]]) -> list:
+        """Formats a message list for an LLM API.
 
         Args:
-            message (dict[str, str]): The message to be formatted for the Claude API.
+            llm (LLM): The LLM instance
+            messages (List[Dict[str, Any]]): The list of messages to be formatted.
 
         Returns:
-            list: A list of formatted messages for the Claude API.
+            list: A list of formatted messages.
         """
-        
-        formatted_message = [*chat_history, message]
-        
-        messages = []
-        
-        for fm in formatted_message:
-            if fm['type'] == 'text':
-                new_message: Union[str, Dict[str, Any]] = fm['content']
-                text_message = new_message['llm_response'] if isinstance(new_message, dict) else new_message
-                text_message = text_message if fm['role'].lower() in ['user', 'assistant'] else "User: " + text_message
-                message_role = fm['role'].lower() if fm['role'].lower() in ['user', 'assistant'] else 'user'
-                full_message = {
-                    "role": message_role,
-                    "content": text_message
-                }
-                messages.append(full_message)
-            elif fm['type'] == 'image':
-                base64_image = image_to_base64(fm['content']) # type: ignore
-                messages.append({
-                    "role": fm['role'].lower(),
+
+        formatted_messages = []
+
+        for fm in messages:
+            role = fm.get('role', 'user').lower()
+            # Ensure role is one of the accepted values for most APIs
+            if role not in ['system', 'user', 'assistant']:
+                role = 'user'
+
+            content = fm.get('content', '')
+            msg_type = fm.get('type', 'text')
+
+            if msg_type == 'text':
+                formatted_messages.append({
+                    "role": role,
+                    "content": content
+                })
+            elif msg_type == 'image' and llm.is_multimodal:
+                base64_image = image_to_base64(content) # type: ignore
+                formatted_messages.append({
+                    "role": role,
                     "content": [
                         {
                             "type": "text",
@@ -121,17 +147,15 @@ class LLM(Model):
                         }
                     ]
                 })
-            else:
-                print(fm)
-        
-        return messages
 
-    
-    def format_tools(self, tools: list[dict[str, Any]]):
+        return formatted_messages
+
+    @staticmethod
+    def format_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Format tools for the provider sdk"""
-        
+
         formatted_tools = []
-        
+
         for tool in tools:
             f_tool = {
                 "type": "function",
@@ -147,11 +171,11 @@ class LLM(Model):
             }
             for key, value in tool['parameters'].items():
                 f_tool['function']['parameters']['properties'][key] = {'type': value}
-            
+
             formatted_tools.append(f_tool)
-            
+
         return formatted_tools
-    
+
     @staticmethod
     def list_llms():
         """List all supported LLMs"""
@@ -161,115 +185,104 @@ class LLM(Model):
         except Exception as e:
             logging.exception(e)
             return []
-    
+
     @staticmethod
-    def load_llm(provider: str):
+    def load_llm(provider: str) -> LLM | None:
         """Dynamically load LLMs based on name"""
         try:
             provider = provider.lower()
             module = __import__(str(__package__), fromlist=[provider])
-            llm: type[LLM] | None = next((f[1] for f in inspect.getmembers(module, inspect.isclass) if (len(f) and f[0].lower() == provider)), None)
-            if not llm:
+            llm_class: type[LLM] | None = next((f[1] for f in inspect.getmembers(module, inspect.isclass) if (len(f) and f[0].lower() == provider)), None)
+            if not llm_class:
                 raise Exception(f"LLM {provider} not found")
-            return llm()
+            return llm_class()
         except Exception as e:
             logging.exception(e)
             return None
-    
-    def get_supported_models(self):
-        client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+
+    @staticmethod
+    def get_supported_models(llm: LLM):
+        """Get supported models for an LLM"""
+        client = OpenAI(api_key=llm.api_key, base_url=llm.base_url)
         return client.models.list()
-    
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, tools: Any = [], **kwds: Any):
-        """Generates a response to a query using the OpenAI API.
+
+    @staticmethod
+    async def generate_response(llm: LLM, prompt: list[dict[str, Any]], stream: bool = False, tools: Any = None, **kwds: Any):
+        """Generates a response to a query using the LLM.
 
         Args:
-            query (dict): The query to generate a response to.
-            system_prompt (str): System prompt for the agent
-            chat_history (list): Chat history
+            llm (LLM): The LLM instance
+            prompt (List[Dict[str, Any]]): A list of messages comprising the full context,
+                                           including a 'system' role message.
+            stream (bool): Whether to stream the response.
+            tools (Any): A list of tools available for the LLM to use.
 
         Returns:
-            A string containing the generated response.
+            An LLMResponse object containing the generated response.
         """
+        if tools is None:
+            tools = []
         try:
-            # print('[1]', self.client)
-            # if not self.client:
-            #     self.client = OpenAI(api_key=self.api_key)
-            #     print('[3]', self.client)
-            #     if 'helicone' in self.base_url:
-            #         self.client = OpenAI(
-            #             api_key=self.api_key, 
-            #             default_headers={'Helicone-Auth': f'Bearer {os.getenv("HELICONE_API_KEY")}'}
-            #         )
-            #     if self.base_url:
-            #         self.client.base_url = self.base_url
-            client = OpenAI(api_key=self.api_key)
+            client = OpenAI(api_key=llm.api_key)
 
-            if 'helicone' in self.base_url:
+            if 'helicone' in llm.base_url:
+                from cognitrix.config import settings
                 client = OpenAI(
-                    api_key=self.api_key, 
-                    default_headers={'Helicone-Auth': f'Bearer {os.getenv("HELICONE_API_KEY")}'}
-                )
-            if self.base_url:
-                client.base_url = self.base_url     
-                
-            formatted_messages = self.format_query(query, chat_history)
-            
-            if self.model in ['o1-mini', 'o1-preview']:
-                stream = False
-                
-                completion = client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "user", "content": system_prompt},
-                        *formatted_messages
-                    ],
-                    max_tokens=65536 if self.model == 'o1-mini' else 32768,
+                    api_key=llm.api_key,
+                    default_headers={'Helicone-Auth': f'Bearer {settings.get_api_key("helicone")}'}
                 )
 
+            formatted_messages = LLMManager.format_query(llm, prompt)
+            formatted_tools = LLMManager.format_tools(tools) if tools else None
+
+            completion_params = {
+                "model": llm.model,
+                "messages": formatted_messages,
+                "max_tokens": llm.max_tokens,
+                "temperature": llm.temperature,
+                "stream": stream,
+            }
+
+            if formatted_tools:
+                completion_params["tools"] = formatted_tools
+
+            if stream:
+                return LLMManager._handle_streaming_response(client, completion_params)
             else:
-                completion = client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        # {"role": "system", "content": system_prompt},
-                        *formatted_messages
-                    ],
-                    tools=tools,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    stream=stream
-                )
+                return await LLMManager._handle_non_streaming_response(client, completion_params)
 
-            response = LLMResponse()
-            
-            if not stream:
-                if hasattr(completion.choices[0].message, 'tool_calls') and completion.choices[0].message.tool_calls:
-                    for tool_call in completion.choices[0].message.tool_calls:
-                        response.tool_calls.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
-                if completion.choices[0].message.content:
-                    response.add_chunk(completion.choices[0].message.content)
-                # print(response)
-                yield response
-            elif stream and hasattr(completion, 'choices'):
-                for chunk in completion:
-                    if (hasattr(chunk, 'choices') and 
-                        chunk.choices and 
-                        hasattr(chunk.choices[0].delta, 'tool_calls') and 
-                        chunk.choices[0].delta.tool_calls):
-                        for tool_call in chunk.choices[0].delta.tool_calls:
-                            response.tool_call.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
-                        yield response
-                    if chunk.choices and len(chunk.choices) and chunk.choices[0].delta.content is not None:
-                        response.add_chunk(chunk.choices[0].delta.content)
-                        yield response
-            
         except OpenAIError as e:
             logger.error(f"OpenAI API error: {str(e)}")
-            yield LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")
-        except asyncio.TimeoutError:
+            return LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")
+        except TimeoutError:
             logger.error("Request to OpenAI API timed out")
-            yield LLMResponse(llm_response="Error: Request timed out. Please try again later.")
+            return LLMResponse(llm_response="Error: Request timed out. Please try again later.")
         except Exception as e:
-            logger.exception(f"Unexpected error in LLM __call__ method: {str(e)}")
-            yield LLMResponse(llm_response=f"An unexpected error occurred: {str(e)}")
-            
+            logger.exception(f"Unexpected error in LLM generate_response: {str(e)}")
+            return LLMResponse(llm_response=f"An unexpected error occurred: {str(e)}")
+
+    @staticmethod
+    async def _handle_streaming_response(client: OpenAI, params: dict[str, Any]):
+        """Handle streaming response from LLM"""
+        try:
+            stream = client.chat.completions.create(**params)
+            response = LLMResponse()
+
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    response.add_chunk(chunk.choices[0].delta.content)
+                    yield response
+        except Exception as e:
+            logger.exception(f"Error in streaming response: {str(e)}")
+            yield LLMResponse(llm_response=f"Streaming error: {str(e)}")
+
+    @staticmethod
+    async def _handle_non_streaming_response(client: OpenAI, params: dict[str, Any]):
+        """Handle non-streaming response from LLM"""
+        try:
+            response = client.chat.completions.create(**params)
+            content = response.choices[0].message.content or ""
+            return LLMResponse(llm_response=content)
+        except Exception as e:
+            logger.exception(f"Error in non-streaming response: {str(e)}")
+            return LLMResponse(llm_response=f"Response error: {str(e)}")

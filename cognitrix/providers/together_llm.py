@@ -1,13 +1,11 @@
+# ruff: noqa
 import asyncio
 import os
-import sys
 import logging
 from together import Together
 from together.error import TogetherException
 from cognitrix.providers.base import LLM, LLMResponse
 from dotenv import load_dotenv
-from pydantic import Extra, Field, root_validator
-from typing import Any, Dict, List, Mapping, Optional 
 
 load_dotenv()
 

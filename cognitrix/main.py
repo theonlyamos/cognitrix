@@ -1,6 +1,8 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from cognitrix.api.routes.auth import auth_api as auth_router, get_current_user
+
+from cognitrix.api.routes.auth import auth_api as auth_router
+from cognitrix.api.routes.auth import get_current_user
 from cognitrix.config import initialize_database
 
 app = FastAPI()

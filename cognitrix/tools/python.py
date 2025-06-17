@@ -1,11 +1,12 @@
-from pydantic import Field
-from typing import Dict, Optional
-from cognitrix.tools.base import Tool
-from io import StringIO
-import multiprocessing
 import functools
 import logging
+import multiprocessing
 import sys
+from io import StringIO
+
+from pydantic import Field
+
+from cognitrix.tools.base import Tool
 
 NotImplementedErrorMessage = 'this tool does not suport async'
 
@@ -17,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger('cognitrix.log')
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def warn_once() -> None:
     """Warn once about the dangers of PythonREPL."""
     logger.warning("Python REPL can execute arbitrary code. Use with caution.")
@@ -26,13 +27,13 @@ def warn_once() -> None:
 class PythonREPL(Tool):
     """Simulates a standalone Python REPL."""
 
-    globals: Optional[Dict] = Field(default_factory=dict, alias="_globals")
-    locals: Optional[Dict] = Field(default_factory=dict, alias="_locals")
-    
+    globals: dict | None = Field(default_factory=dict, alias="_globals")
+    locals: dict | None = Field(default_factory=dict, alias="_locals")
+
     name: str = "Python"
     category: str = "system"
     description: str = """Use this tool to execute python code.
-    
+
     :param code: the valid python code to execute
     """
 
@@ -40,8 +41,8 @@ class PythonREPL(Tool):
     def worker(
         cls,
         command: str,
-        globals: Optional[Dict],
-        locals: Optional[Dict],
+        globals: dict | None,
+        locals: dict | None,
         queue: multiprocessing.Queue,
     ) -> None:
         old_stdout = sys.stdout
@@ -54,7 +55,7 @@ class PythonREPL(Tool):
             sys.stdout = old_stdout
             queue.put(repr(e))
 
-    def run(self, code: str, timeout: Optional[int] = None) -> str:
+    def run(self, code: str, timeout: int | None = None) -> str:
         """Run code with own globals/locals and returns anything printed.
         Timeout after the specified number of seconds."""
 

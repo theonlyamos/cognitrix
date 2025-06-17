@@ -1,12 +1,13 @@
-import asyncio
-from cognitrix.providers.base import LLM
-from cognitrix.utils import image_to_base64
-from typing import Any, Dict, List
-from dotenv import load_dotenv
-from anthropic import AnthropicError, AsyncAnthropic as AnthropicLLM
-from cognitrix.providers.base import LLM, LLMResponse
 import logging
-import os
+from typing import Any
+
+from anthropic import AnthropicError
+from anthropic import AsyncAnthropic as AnthropicLLM
+from dotenv import load_dotenv
+
+from cognitrix.config import settings
+from cognitrix.providers.base import LLM, LLMResponse
+from cognitrix.utils import image_to_base64
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -30,29 +31,29 @@ class Anthropic(LLM):
         system_prompt (str): System prompt to prepend to queries
     """
     model: str = 'claude-3-5-sonnet-20240620'
-    """model endpoint to use""" 
-    
+    """model endpoint to use"""
+
     temperature: float = 0.1
-    """What sampling temperature to use.""" 
-    
-    base_url: str = 'https://anthropic.helicone.ai'
+    """What sampling temperature to use."""
+
+    base_url: str = 'https://anthropic.helicone.ai' if settings.has_api_key('helicone') else 'https://api.anthropic.com'
     """Base URL for the Anthropic API"""
-    
+
     chat_history: list[str] = []
     """Chat history"""
-    
-    api_key: str = os.getenv('ANTHROPIC_API_KEY', '')
-    """ANTHROPIC API key""" 
-    
+
+    api_key: str = settings.get_api_key('anthropic')
+    """ANTHROPIC API key"""
+
     max_tokens: int = 4000
-    """The maximum number of tokens to generate in the completion.""" 
-    
+    """The maximum number of tokens to generate in the completion."""
+
     supports_system_prompt: bool = True
     """Flag to indicate if system prompt should be supported"""
-    
+
     is_multimodal: bool = True
     """Whether the model is multimodal."""
-    
+
     def format_query(self, message: dict[str, str]) -> list:
         """Formats a message for the Claude API.
 
@@ -62,11 +63,11 @@ class Anthropic(LLM):
         Returns:
             list: A list of formatted messages for the Claude API.
         """
-        
+
         formatted_message = [*self.chat_history, message]
-        
+
         messages = []
-        
+
         for fm in formatted_message:
             if fm['type'] == 'text':
                 role = 'assistant' if fm['role'].lower() != 'user' else fm['role'].lower()
@@ -89,7 +90,7 @@ class Anthropic(LLM):
                             "source": {
                                 "type": "base64",
                                 "media_type": "image/jpeg",
-                                "data": base64_image 
+                                "data": base64_image
                             }
                         },
                         {
@@ -98,10 +99,10 @@ class Anthropic(LLM):
                         }
                     ]
                 })
-            
+
         return messages
 
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: list[dict[str, str]] = None, **kwds: Any):
         """Generates a response to a query using the Claude API.
 
         Args:
@@ -111,11 +112,13 @@ class Anthropic(LLM):
         Returns:
             str|None: A string containing the generated response.
         """
+        if chat_history is None:
+            chat_history = []
         try:
             client = AnthropicLLM(
                 api_key=self.api_key,
                 base_url=self.base_url,
-                default_headers={'Helicone-Auth': f'Bearer {os.getenv("HELICONE_API_KEY")}'}
+                default_headers={'Helicone-Auth': f'Bearer {settings.get_api_key("helicone")}'} if settings.has_api_key('helicone') else None
             )
             stream = await client.messages.create(
                 model=self.model,
@@ -125,9 +128,9 @@ class Anthropic(LLM):
                 messages=self.format_query(query),
                 stream=True
             )
-            
+
             response = LLMResponse()
-            
+
             async for event in stream:
                 if event.type == 'content_block_delta':
                     response.add_chunk(event.delta.text)
@@ -135,7 +138,7 @@ class Anthropic(LLM):
         except AnthropicError as e:
             logger.error(f"Anthropic API error: {str(e)}")
             yield LLMResponse(llm_response=f"Error: Anthropic API encountered an issue - {str(e)}")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Request to Anthropic API timed out")
             yield LLMResponse(llm_response="Error: Request to Anthropic timed out. Please try again later.")
         except Exception as e:

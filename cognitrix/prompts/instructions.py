@@ -1,12 +1,13 @@
+
 from pydantic import BaseModel, Field
-from typing import List, Optional
+
 
 class TaskInstructionOutput(BaseModel):
     task_title: str
     task_description: str
-    scratchpad: Optional[str] = None  # All running notes, observations, reasoning, and planning
-    todo: List[str] = Field(default_factory=list)
-    steps: List[str] = Field(default_factory=list)
+    scratchpad: str | None = None  # All running notes, observations, reasoning, and planning
+    todo: list[str] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
 
 tasks_instructor="""
 You are an AI agent designed to analyze tasks and provide concise, robust breakdowns and instructions.

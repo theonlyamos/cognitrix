@@ -1,18 +1,19 @@
-from PIL import Image
-from typing import Dict
+import base64
+import io
+import json
+import re
 import xml.etree.ElementTree as ET
 
 from bs4 import BeautifulSoup, Tag
+from PIL import Image
+
 from cognitrix.tools import Tool
-import base64
-import io
-import re
 
 json_return_format: str = """
 Your response should be in a valid json format which can
-be directly converted into a python dictionary with  
+be directly converted into a python dictionary with
 json.loads()
-Return the response in the following format only:    
+Return the response in the following format only:
 {
 "observation": "Observations made by the ai agent"
 "thought": "Thoughts of the ai agent on a task. Should include steps for completing the task.",
@@ -72,21 +73,19 @@ def image_to_base64(image: Image.Image) -> str:
     # Convert the BytesIO object to base64
     return base64.b64encode(screenshot_bytes.getvalue()).decode('utf-8')
 
-import json
-
-def tool_to_functions(tool: Tool) -> Dict:
+def tool_to_functions(tool: Tool) -> dict:
     """
     Converts an instance of the Tool class to a JSON string in the OpenAI API format.
-    
+
     Args:
         tool (Tool): An instance of the Tool class.
-        
+
     Returns:
         str: A JSON string representing the tool in the OpenAI API format.
     """
     # Add parameters and required fields from the tool's run() method signature
     import inspect
-    
+
     tool_json = {
         "type": "function",
         "function": {
@@ -99,7 +98,7 @@ def tool_to_functions(tool: Tool) -> Dict:
             }
         }
     }
-    
+
     run_signature = inspect.signature(tool.run)
     for param_name, param in run_signature.parameters.items():
         if param.default is param.empty:
@@ -111,53 +110,8 @@ def tool_to_functions(tool: Tool) -> Dict:
         }
         if param_type == "str" and hasattr(param.annotation, "__args__"):
             tool_json["function"]["parameters"]["properties"][param_name]["enum"] = list(param.annotation.__args__)
-    
+
     return tool_json
-
-
-# def extract_json(content: str) -> dict | str:
-#     """
-#     Extract JSON content from a response string.
-
-#     Args:
-#         content (str): The response string to extract JSON from.
-
-#     Returns:
-#         dict|str: Extracted JSON as a dictionary if valid, otherwise the original string.
-#     """
-#     # Check if the content contains JSON-like structure
-#     if '{' not in content or '}' not in content:
-#         return content
-
-#     try:
-#         # Attempt to directly parse the content as JSON
-#         return json.loads(content)
-#     except json.JSONDecodeError:
-#         # If direct parsing fails, try to extract the JSON part
-#         start_index = content.find('{')
-#         end_index = content.rfind('}') + 1
-
-#         json_str = content[start_index:end_index]
-
-#         # Clean up the JSON string
-#         json_str = json_str.replace('\n', '').replace('\\n', '').replace("'", "\"")
-
-#         try:
-#             return json.loads(json_str)
-#         except json.JSONDecodeError:
-#             # Attempt to further clean and parse the JSON string
-#             try:
-#                 # Remove any trailing commas
-#                 json_str = json_str.rstrip(', ')
-#                 # Replace any invalid escape sequences
-#                 json_str = json_str.replace('\\"', '"').replace('\\\'', "'")
-#                 return json.loads(json_str)
-#             except json.JSONDecodeError:
-#                 return content
-#     except Exception as e:
-#         # Log the exception if needed
-#         logging.exception(e)
-#         return content
 
 def extract_json(content: str) -> dict | str:
         """
@@ -171,7 +125,7 @@ def extract_json(content: str) -> dict | str:
         """
         # print(rf"{content}")
         default_content = content
-        
+
         if '{' not in content:
             return content
         try:
@@ -180,61 +134,15 @@ def extract_json(content: str) -> dict | str:
             # Extract the JSON string
             content = content[start_index:end_index]
             return json.loads(content)
-        # except json.JSONDecodeError:
-        #     print(content)
-        #     # Split the JSON string into key-value pairs
-        #     pairs = content.split('\n')
-
-        #     # Initialize an empty list to store the escaped pairs
-        #     escaped_pairs = []
-            
-        #     # Iterate over the key-value pairs
-        #     for pair in pairs:
-        #         # Split the pair into key and value
-        #         pair = pair.strip()
-                
-        #         if pair:
-        #             key, value = pair.split('":')
-                    
-        #             # Remove any whitespace from the key and value
-        #             key = key.strip()
-        #             q_mark = '"' if key.startswith('"') else "'"
-        #             a_mark = '"' if key.startswith("'") else "'"
-        #             key = key.replace(q_mark, '')
-        #             value = value.strip()
-                    
-        #             if not value.startswith('[') and not value.endswith('{'):
-        #                 start_index = value.find('"') + 1
-        #                 end_index = value.rfind('"')
-        #                 value = value[start_index:end_index]
-        #                 # value = value.replace(a_mark, f'\{a_mark}').replace(q_mark, f"\{q_mark}")
-        #             else:
-        #                 value = value.replace('\n', '')
-        #                 value = json.loads(value)
-
-        #             # If the value is a string, escape any double quotes
-        #             if isinstance(value, str):
-        #                 if value.startswith(q_mark) and value.endswith(q_mark):
-        #                     quote_start = value.find(q_mark)
-        #                     quote_end = value.rfind(q_mark)
-        #                     for i, char in enumerate(value):
-        #                         if char == q_mark and (i != quote_start and i != quote_end):
-        #                             value = value.replace(q_mark, f'\\{q_mark}', 1)
-        #                         break
-
-        #             # Add the escaped pair to the list
-        #             escaped_pairs.append([key, value])
-            
-        #     return dict(escaped_pairs)
-        except Exception as e:
+        except Exception:
             # logging.exception(e)
             return default_content
-    
+
 def extract_parts(text):
     pattern = r'(.*?)<response>(.*?)(.*)'
-    
+
     match = re.search(pattern, text, re.DOTALL)
-    
+
     if match:
         before = match.group(1).strip()
         response = match.group(2).strip()
@@ -265,7 +173,7 @@ def xml_to_dict(xml_string) -> dict | str:
     """
     try:
         before, extracted, after = extract_parts(xml_string)
-        
+
         if extracted:
             xml_string = extracted
 
@@ -274,16 +182,16 @@ def xml_to_dict(xml_string) -> dict | str:
             xml_string = xml_string[6:]
         if xml_string.endswith("```"):
             xml_string = xml_string[:-3]
-        
+
         xml_string = f"<response>{xml_string.strip()}</response>"
-        
+
         root = ET.fromstring(xml_string)
-        
+
         def parse_element(element):
             result = {}
             if element.text and element.text.strip():
                 return element.text.strip()
-            
+
             for child in element:
                 child_data = parse_element(child)
                 if child.tag in result:
@@ -297,11 +205,11 @@ def xml_to_dict(xml_string) -> dict | str:
             if element.tag.lower() == 'response':
                 result['before'] = before
                 result['after'] = after
-            
+
             return result
-        
+
         return {root.tag: parse_element(root)}
-    except Exception as e:
+    except Exception:
         # logging.exception(e)
         return xml_string
 
@@ -330,7 +238,7 @@ def extract_tool_calls(data):
         soup_section = BeautifulSoup('<type>tool_call</type>' + section, 'html.parser')
         name_tag = soup_section.find('name')
         name = name_tag.get_text(strip=True) if name_tag else ''
-        
+
         arguments_tag = soup_section.find('arguments')
         arguments = {}
         if arguments_tag:
@@ -340,7 +248,7 @@ def extract_tool_calls(data):
                     # Get all contents of the tag as a string, including nested tags
                     tag_content = ''.join(str(c) for c in child.contents)
                     arguments[tag_name] = tag_content.strip()
-        
+
         tool_calls.append({
             'type': 'tool_call',
             'name': name,
@@ -352,8 +260,7 @@ def extract_sections(data):
     section_types = ['observation', 'thought', 'mindspace', 'reflection', 'text', 'artifact']
     soup = BeautifulSoup(data, 'html.parser')
     sections = []
-    result_texts = []
-    
+
     # Function to convert a tag and its children to a dictionary
     def tag_to_dict(tag):
         content_dict = {}
@@ -373,10 +280,10 @@ def extract_sections(data):
                 if content:
                     content_dict = content
         return content_dict
-    
+
     # Initialize result section
     result_content = []
-    
+
     # Iterate through all root-level children
     for child in soup.children:
         if child.name in section_types: # type: ignore
@@ -391,12 +298,12 @@ def extract_sections(data):
             stripped_text = child.strip()
             if stripped_text:
                 result_content.append(stripped_text)
-    
+
     # Add result section if there is any collected text
     if result_content:
         sections.append({
             'type': 'text',
             'text': ' '.join(result_content)
         })
-    
+
     return sections

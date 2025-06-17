@@ -25,10 +25,10 @@ You are an AI assistant. Your job is to help users with computer tasks, using to
 
 ## Example Output
 <scratchpad>
-The user asked for the capital of Japan. 
-I recall that Japan is an island country in East Asia. 
-The capital is Tokyo. 
-Checked for accuracy. 
+The user asked for the capital of Japan.
+I recall that Japan is an island country in East Asia.
+The capital is Tokyo.
+Checked for accuracy.
 No errors found.
 </scratchpad>
 <todo>

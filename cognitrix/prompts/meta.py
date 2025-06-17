@@ -1,12 +1,14 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+
 
 class SystemPromptOutput(BaseModel):
-    scratchpad: Optional[str] = None  # All running notes, observations, reasoning, and planning
-    todo: List[str] = Field(default_factory=list)
+    scratchpad: str | None = None  # All running notes, observations, reasoning, and planning
+    todo: list[str] = Field(default_factory=list)
     type: str
-    result: Optional[str] = None
-    artifacts: List[Dict[str, Any]] = Field(default_factory=list)
+    result: str | None = None
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
 
 meta_template = '''
 You are an expert AI prompt engineer tasked with creating system prompts for advanced AI agents. Your goal is to generate clear, concise, and effective prompts that will guide the behavior and capabilities of these agents based on the provided descriptions.

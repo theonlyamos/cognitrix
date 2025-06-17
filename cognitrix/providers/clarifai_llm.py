@@ -1,11 +1,12 @@
-from clarifai.client.model import Model
-from cognitrix.providers.base import LLM, LLMResponse
-from typing import Any, Dict, List
-from dotenv import load_dotenv
-import logging
 import json
+import logging
 import os
-import asyncio
+from typing import Any
+
+from clarifai.client.model import Model
+from dotenv import load_dotenv
+
+from cognitrix.providers.base import LLM, LLMResponse
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -24,23 +25,23 @@ class Clarifai(LLM):
         api_key: Your Clarifai Personal Access Token.
     """
     model: str = "https://clarifai.com/anthropic/completion/models/claude-3_5-sonnet"
-    """model endpoint to use""" 
-    
+    """model endpoint to use"""
+
     temperature: float = 0.2
-    """What sampling temperature to use.""" 
-    
+    """What sampling temperature to use."""
+
     chat_history: list[str] = []
     """Chat history"""
-    
+
     api_key: str = os.getenv('CLARIFAI_ACCESS_TOKEN', '')
-    """Clarifai Personal Access Token""" 
-    
+    """Clarifai Personal Access Token"""
+
     is_multimodal: bool = True
     """Whether the model is multimodal."""
-    
+
     supports_tool_use: bool = False
 
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: list[dict[str, str]] = None, **kwds: Any):
         """Generates a response to a query using the Clarifai API.
 
         Args:
@@ -50,18 +51,20 @@ class Clarifai(LLM):
         Returns:
         A string containing the generated response.
         """
+        if chat_history is None:
+            chat_history = []
         try:
             if not self.client:
                 self.client = Model(url=self.model, pat=self.api_key)
-                
+
             formatted_messages = self.format_query(query, chat_history)
-            
+
             message = f"{system_prompt}\n {json.dumps(formatted_messages)}"
             result = self.client.predict_by_bytes(message.encode(), input_type="text")
             response = LLMResponse()
             response.add_chunk(result.outputs[0].data.text.raw)
             yield response
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Request to Anthropic API timed out")
             yield LLMResponse(llm_response="Error: Request to Clarifai timed out. Please try again later.")
         except Exception as e:

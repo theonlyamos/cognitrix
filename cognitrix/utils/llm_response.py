@@ -1,7 +1,8 @@
 import json
-from typing import Any, Dict, List, Optional, Union
-from odbms import Model
 import logging
+from typing import Any
+
+from odbms import Model
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -12,49 +13,49 @@ logger = logging.getLogger('cognitrix.log')
 
 class LLMResponse(Model):
     """Class to handle llm responses (now expects JSON output)"""
-    
-    llm_response: Optional[str] = None
+
+    llm_response: str | None = None
     """LLM response (raw string)"""
-    
-    chunks: List[str] = []
+
+    chunks: list[str] = []
     """List of chunks"""
     current_chunk: str = ''
     """Current chunk"""
-    
-    result: Optional[str] = None
-    tool_calls: List[Dict[str, Any]] = []
-    artifacts: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None
-    observation: Optional[str] = None
-    thought: Optional[Union[str, List[str]]] = None
-    mindspace: Optional[Union[str, List[str]]] = None
-    reflection: Optional[Union[str, List[str]]] = None
-    type: Optional[str] = None
-    before: Optional[str] = None
-    after: Optional[str] = None
-    scratchpad: Optional[str] = None
-    todo: Optional[List[str]] = None
-    response_overview: Optional[str] = None
-    task_summary: Optional[str] = None
-    evaluation: Optional[Dict[str, Any]] = None
-    overall_assessment: Optional[str] = None
-    suggestions: Optional[List[str]] = None
-    finalscore: Optional[Union[str, float, int]] = None
-    title: Optional[str] = None
-    task_title: Optional[str] = None
-    task_description: Optional[str] = None
-    steps: Optional[List[str]] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-    tools: Optional[List[str]] = None
-    members: Optional[List[str]] = None
+
+    result: str | None = None
+    tool_calls: list[dict[str, Any]] = []
+    artifacts: dict[str, Any] | list[dict[str, Any]] | None = None
+    observation: str | None = None
+    thought: str | list[str] | None = None
+    mindspace: str | list[str] | None = None
+    reflection: str | list[str] | None = None
+    type: str | None = None
+    before: str | None = None
+    after: str | None = None
+    scratchpad: str | None = None
+    todo: list[str] | None = None
+    response_overview: str | None = None
+    task_summary: str | None = None
+    evaluation: dict[str, Any] | None = None
+    overall_assessment: str | None = None
+    suggestions: list[str] | None = None
+    finalscore: str | float | int | None = None
+    title: str | None = None
+    task_title: str | None = None
+    task_description: str | None = None
+    steps: list[str] | None = None
+    name: str | None = None
+    description: str | None = None
+    tools: list[str] | None = None
+    members: list[str] | None = None
 
     class Config:
         arbitrary_types_allowed = True
-    
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.parse_llm_response()
-    
+
     def add_chunk(self, chunk: str):
         self.current_chunk = chunk
         self.chunks.append(chunk)
@@ -70,7 +71,7 @@ class LLMResponse(Model):
             for key, value in data.items():
                 # Support both 'tool_call' and 'tool_calls' for backward compatibility
                 if key == 'tool_call':
-                    setattr(self, 'tool_calls', value)
+                    self.tool_calls = value
                 else:
                     setattr(self, key, value)
             # For result, try to set from 'result', 'response', or fallback to 'llm_response'
@@ -81,4 +82,4 @@ class LLMResponse(Model):
         except Exception as e:
             logger.exception(e)
             self.result = self.llm_response
-            
+

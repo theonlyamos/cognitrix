@@ -1,10 +1,9 @@
-from functools import lru_cache
-from cognitrix.providers.base import LLM
-from dotenv import load_dotenv
 import logging
 import os
 
-from cognitrix.utils import image_to_base64
+from dotenv import load_dotenv
+
+from cognitrix.providers.base import LLM
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -24,30 +23,30 @@ class Groq(LLM):
         api_key: Your Groq API key.
     """
     model: str = 'qwen-qwq-32b'
-    """model endpoint to use""" 
-    
+    """model endpoint to use"""
+
     temperature: float = 0.2
-    """What sampling temperature to use.""" 
-    
+    """What sampling temperature to use."""
+
     chat_history: list[str] = []
     """Chat history"""
-    
+
     api_key: str = os.getenv('GROQ_API_KEY', '')
-    """Groq API key""" 
-    
+    """Groq API key"""
+
     # base_url: str = 'https://api.groq.com/openai/v1'
     base_url: str = 'https://groq.helicone.ai/openai/v1'
     """Base URL for the Groq API"""
-    
+
     supports_system_prompt: bool = True
     """Flag to indicate if system prompt should be supported"""
-    
+
     system_prompt: str = ""
     """System prompt to prepend to queries"""
-    
+
     max_tokens: int = 4096
     """Maximum output tokens"""
-    
+
     def get_supported_models(self):
         import requests
 

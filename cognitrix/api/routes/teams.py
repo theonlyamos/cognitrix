@@ -1,9 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
-from typing import List
 
 from cognitrix.common.security import get_current_user
-
 from cognitrix.sessions.base import Session
 from cognitrix.teams.base import Team
 
@@ -23,10 +20,10 @@ async def save_team(team: Team):
     result = await Team.get(team.id)
     if result:
         update = await Team.update_one({'id': team.id}, team.json())
-        
+
         if update:
             result = await Team.get(team.id)
-            if result:  
+            if result:
                 team = result
                 return team.json()
             else:
@@ -41,7 +38,7 @@ async def get_team(team_id: str):
     team = await Team.get(team_id)
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found")
-    
+
     return team.json()
 
 @teams_api.delete("/{team_id}")
@@ -49,7 +46,7 @@ async def delete_team(team_id: str):
     team = await Team.get(team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    
+
     await Team.remove_one({'id': team_id})
     return {"message": "Team deleted successfully"}
 

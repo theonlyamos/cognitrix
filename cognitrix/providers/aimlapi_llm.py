@@ -1,12 +1,11 @@
 import json
-from openai import OpenAI
-from cognitrix.providers import OpenAI as OpenAILLM
-from typing import List, Dict, Any
-from openai import OpenAIError
-import asyncio
 import logging
 import os
+from typing import Any
 
+from openai import OpenAI, OpenAIError
+
+from cognitrix.providers import OpenAI as OpenAILLM
 from cognitrix.providers.base import LLMResponse
 
 logging.basicConfig(
@@ -18,17 +17,17 @@ logger = logging.getLogger('cognitrix.log')
 
 class AIMLAPI(OpenAILLM):
     """A class for interacting with the aimlapi API."""
-    
+
     model: str ='gpt-4o'
-    
+
     api_key: str = os.getenv('AIMLAPI_API_KEY', '')
-    
+
     base_url: str = 'https://gateway.helicone.ai'
-    
+
     is_multimodal: bool = True
     """Whether the model is multimodal."""
-    
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, tools: List[Dict[str, Any]] = [], **kwds: Any):
+
+    async def __call__(self, query: dict, system_prompt: str, chat_history: list[dict[str, str]] = None, stream: bool = False, tools: list[dict[str, Any]] = None, **kwds: Any):
         """Generates a response to a query using the OpenAI API.
 
         Args:
@@ -39,12 +38,16 @@ class AIMLAPI(OpenAILLM):
         Returns:
             A string containing the generated response.
         """
+        if tools is None:
+            tools = []
+        if chat_history is None:
+            chat_history = []
         try:
             if not self.client:
                 self.client = OpenAI(api_key=self.api_key)
                 if 'helicone' in self.base_url:
                     self.client = OpenAI(
-                        api_key=self.api_key, 
+                        api_key=self.api_key,
                         default_headers={
                             "Helicone-Auth": f"Bearer {os.environ.get('HELICONE_API_KEY', '')}",
                             "Helicone-Target-Url": "https://api.aimlapi.com",
@@ -53,12 +56,12 @@ class AIMLAPI(OpenAILLM):
                     )
                 if self.base_url:
                     self.client.base_url = self.base_url
-            
+
             formatted_messages = self.format_query(query, chat_history)
-            
+
             if self.model in ['o1-mini', 'o1-preview']:
                 stream = False
-                
+
                 completion = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
@@ -81,7 +84,7 @@ class AIMLAPI(OpenAILLM):
                     stream=stream
                 )
             response = LLMResponse()
-            
+
             if not stream:
                 if hasattr(completion.choices[0].message, 'tool_calls') and completion.choices[0].message.tool_calls:
                     for tool_call in completion.choices[0].message.tool_calls:
@@ -91,9 +94,9 @@ class AIMLAPI(OpenAILLM):
                 yield response
             elif stream and hasattr(completion, 'choices'):
                 for chunk in completion:
-                    if (hasattr(chunk, 'choices') and 
-                        chunk.choices and 
-                        hasattr(chunk.choices[0].delta, 'tool_calls') and 
+                    if (hasattr(chunk, 'choices') and
+                        chunk.choices and
+                        hasattr(chunk.choices[0].delta, 'tool_calls') and
                         chunk.choices[0].delta.tool_calls):
                         for tool_call in chunk.choices[0].delta.tool_calls:
                             response.tool_call.append({'name': tool_call.function.name, 'arguments': json.loads(tool_call.function.arguments)})
@@ -101,14 +104,13 @@ class AIMLAPI(OpenAILLM):
                     if chunk.choices and len(chunk.choices) and chunk.choices[0].delta.content is not None:
                         response.add_chunk(chunk.choices[0].delta.content)
                         yield response
-            
+
         except OpenAIError as e:
             logger.error(f"OpenAI API error: {str(e)}")
             yield LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Request to OpenAI API timed out")
             yield LLMResponse(llm_response="Error: Request timed out. Please try again later.")
         except Exception as e:
             logger.exception(f"Unexpected error in LLM __call__ method: {str(e)}")
             yield LLMResponse(llm_response=f"An unexpected error occurred: {str(e)}")
-            

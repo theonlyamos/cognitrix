@@ -1,18 +1,14 @@
-from cognitrix.providers.base import LLM, LLMResponse
-from typing import Any, Dict, List, Union
-import json
-import google.genai as genai
-from google.genai.types import GenerateContentConfig, Content, Tool, GoogleSearch, Part, FunctionDeclaration
-from dotenv import load_dotenv
-from PIL import Image
-import logging
-import sys
-import os
 import io
-import asyncio
-from google.api_core import exceptions as google_exceptions
+import logging
+import os
+from typing import Any
 
-from cognitrix.utils import image_to_base64
+import google.genai as genai
+from dotenv import load_dotenv
+from google.api_core import exceptions as google_exceptions
+from google.genai.types import Content, FunctionDeclaration, GenerateContentConfig, Part, Tool
+
+from cognitrix.providers.base import LLM, LLMResponse
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -36,30 +32,30 @@ class Google(LLM):
         system_prompt (str): System prompt to prepend to queries
     """
     model: str = 'gemini-2.5-flash-preview-05-20'
-    """model endpoint to use""" 
-    
+    """model endpoint to use"""
+
     temperature: float = 0.2
-    """What sampling temperature to use.""" 
-    
+    """What sampling temperature to use."""
+
     chat_history: list[str] = []
     """Chat history"""
-    
+
     api_key: str = os.getenv('GOOGLE_API_KEY', '')
-    """GOOGLE API key""" 
-    
+    """GOOGLE API key"""
+
     max_tokens: int = 8192
     """Maximum output tokens"""
-    
+
     supports_system_prompt: bool = True
     """Flag to indicate if system prompt should be supported"""
-    
+
     is_multimodal: bool = True
     """Whether the model is multimodal."""
-    
+
     supports_tool_use: bool = False
     """Whether the model supports tool use."""
-    
-    def format_tools(self, tools: list[dict[str, Any]]) -> List[FunctionDeclaration]:
+
+    def format_tools(self, tools: list[dict[str, Any]]) -> list[FunctionDeclaration]:
         """Formats tools into the specified JSON schema structure."""
         formatted_tools = []
         for tool_spec in tools:
@@ -80,23 +76,23 @@ class Google(LLM):
             formatted_tools.append(formatted_tool)
 
         return formatted_tools
-    
-    def format_query(self, message: dict[str, Any], chat_history: List[Dict[str, str]]) -> list:
+
+    def format_query(self, message: dict[str, Any], chat_history: list[dict[str, str]]) -> list:
         """Formats messages for the Gemini API"""
         formatted_message = [*chat_history, message]
-        
+
         messages = []
-        
+
         for fm in formatted_message:
-            if fm['type'] == 'text': 
-                new_message: Union[str, Dict[str, Any]] = fm['content']
+            if fm['type'] == 'text':
+                new_message: str | dict[str, Any] = fm['content']
                 text_message = new_message['llm_response'] if isinstance(new_message, dict) else new_message
                 role = "user" if fm['role'].lower() == "user" else "model"
                 messages.append(Content(role=role, parts=[Part.from_text(text=text_message)]))
-                
+
             elif fm['type'] == 'image':
                 screenshot_bytes = io.BytesIO()
-                
+
                 fm['content'].save(screenshot_bytes, format='JPEG') # type: ignore
                 # upload_image = Image.open(screenshot_bytes)
                 role = "user" if fm['role'].lower() == "user" else "model"
@@ -104,21 +100,25 @@ class Google(LLM):
                     Part.from_bytes(screenshot_bytes.getvalue(), mime_type='image/jpeg'), # type: ignore
                     Part.from_text(text='Above is the screenshot')
                 ]))
-                
+
 
         return messages
 
-    async def __call__(self, query: dict, system_prompt: str, chat_history: List[Dict[str, str]] = [], stream: bool = False, tools: Any = [], **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: list[dict[str, str]] = None, stream: bool = False, tools: Any = None, **kwds: Any):
+        if tools is None:
+            tools = []
+        if chat_history is None:
+            chat_history = []
         try:
             client = genai.Client(
                 api_key=self.api_key
             )
-            
+
             tools = [
                 # Tool(google_search=GoogleSearch()),
                 Tool(function_declarations=self.format_tools(tools))
             ]
-            
+
             generate_content_config = GenerateContentConfig(
                 tools=tools,
                 response_mime_type="text/plain",
@@ -126,7 +126,7 @@ class Google(LLM):
                     Part.from_text(text=system_prompt)
                 ]
             )
-            
+
             # genai.configure(
             #     api_key=self.api_key,
             #     client_options={
@@ -138,7 +138,7 @@ class Google(LLM):
             #     ],
             #     transport="rest"
             # )
-            
+
             contents = self.format_query(query, chat_history)
 
             # if not self.client:
@@ -150,9 +150,9 @@ class Google(LLM):
                 contents=contents,
                 config=generate_content_config,
             )
-            
+
             response = LLMResponse()
-    
+
             for chunk in completion:
                 if chunk.function_calls:
                     for function_call in chunk.function_calls:
@@ -164,7 +164,7 @@ class Google(LLM):
         except google_exceptions.GoogleAPIError as e:
             logger.error(f"Google API error: {str(e)}")
             yield LLMResponse(llm_response=f"Error: Google API encountered an issue - {str(e)}")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Request to Google API timed out")
             yield LLMResponse(llm_response="Error: Request to Google timed out. Please try again later.")
         except Exception as e:

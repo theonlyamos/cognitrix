@@ -1,26 +1,27 @@
 import os
-from threading import Thread
-from dotenv import load_dotenv
+from collections.abc import Callable
 from multiprocessing import Pool
-from typing import Callable, Optional
+from threading import Thread
 
 from deepgram import (
     DeepgramClient,
     DeepgramClientOptions,
-    LiveTranscriptionEvents,
     LiveOptions,
+    LiveTranscriptionEvents,
     Microphone,
-    SpeakOptions
+    SpeakOptions,
 )
-
+from dotenv import load_dotenv
 from pydub import AudioSegment
 from pydub.playback import play
+
+from cognitrix.config import settings
 
 load_dotenv()
 
 class Transcriber:
-    def __init__(self, api_key: Optional[str] = None, on_message_callback: Optional[Callable[[str, 'Transcriber'], None]]=None):
-        self.api_key = api_key if api_key else os.getenv('DEEPGRAM_API_KEY', '')
+    def __init__(self, api_key: str | None = None, on_message_callback: Callable[[str, 'Transcriber'], None] | None=None):
+        self.api_key = api_key if api_key else settings.get_api_key('deepgram')
         self.client = None
         self.connection = None
         self.microphone = None
@@ -41,14 +42,14 @@ class Transcriber:
     def setup_client(self):
         config = DeepgramClientOptions(options={"keepalive": "true"})
         self.client = DeepgramClient(self.api_key, config)
-    
+
     def text_to_speech(self, text: str, filename: str = "output.mp3"):
         try:
             if self.client:
                 speak_options = SpeakOptions(
                     model="aura-asteria-en",  # Customize the model as needed
                 )
-                response = self.client.speak.v("1").save(filename, {"text": text}, speak_options)
+                self.client.speak.v("1").save(filename, {"text": text}, speak_options)
                 # print(f"Audio content written to file '{filename}'")
                 # print(response.to_json(indent=4))
 

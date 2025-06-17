@@ -1,10 +1,9 @@
 import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from typing import List
 
 from cognitrix.common.security import get_current_user
-
 from cognitrix.sessions.base import Session
 
 sessions_api = APIRouter(
@@ -15,7 +14,7 @@ sessions_api = APIRouter(
 @sessions_api.get("")
 async def get_all_sessions():
     sessions = [session.json() for session in await Session.all()]
-    
+
     return JSONResponse(sessions)
 
 @sessions_api.post("")
@@ -29,7 +28,7 @@ async def get_session(session_id: str):
     session = await Session.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     return session.json()
 
 @sessions_api.delete("/{session_id}")
@@ -37,7 +36,7 @@ async def delete_session(session_id: str):
     session = await Session.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     await session.remove({'id': session_id})
     return JSONResponse({"message": "Session deleted successfully"})
 
@@ -60,7 +59,7 @@ async def get_chat(session_id: str):
     session = Session.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     return JSONResponse(session.chat)
 
 @sessions_api.delete("/{session_id}/chat")
@@ -68,7 +67,7 @@ async def delete_chat(session_id: str):
     session = await Session.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     session.chat = []
     await session.save()
     return JSONResponse({"message": "Chat deleted successfully"})

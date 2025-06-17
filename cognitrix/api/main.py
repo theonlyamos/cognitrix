@@ -1,11 +1,11 @@
 import aiofiles
-from fastapi.responses import HTMLResponse
 from fastapi import FastAPI, Request
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
-from .routes import api_router
 from ..config import FRONTEND_BUILD_DIR
+from .routes import api_router
 
 app = FastAPI()
 
@@ -26,9 +26,9 @@ app.mount('/webfonts', StaticFiles(directory=FRONTEND_BUILD_DIR / 'webfonts', ht
 async def index(request: Request, path: str):
     index_file = FRONTEND_BUILD_DIR / 'index.html'
     content = ''
-    async with aiofiles.open(index_file, 'r') as file:
+    async with aiofiles.open(index_file) as file:
         content = await file.read()
-    
+
     return HTMLResponse(content)
 
 @app.get('/health')

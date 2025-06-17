@@ -1,25 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from datetime import timedelta
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-from datetime import datetime, timedelta
-from typing import Annotated, Optional
 
-from cognitrix.models import User
-from cognitrix.common.security import (
-    authenticate, get_current_user, create_access_token, 
-    Token
-)
 from cognitrix.common.constants import JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+from cognitrix.common.security import Token, authenticate, create_access_token, get_current_user
 from cognitrix.common.utils import Utils
-
+from cognitrix.models import User
 
 auth_api = APIRouter(
     prefix='/auth'
 )
-   
+
 # Secret key for JWT encoding/decoding
 
 
@@ -59,7 +53,7 @@ async def signup(new_user: User):
         )
     hashed_password = Utils.hash_password(new_user.password)
     new_user.password = hashed_password
-    
+
     await new_user.save()
     return {"message": "User created successfully"}
 
