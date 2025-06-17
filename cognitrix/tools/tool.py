@@ -3,7 +3,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any
 
-from cognitrix.tools import Tool
+from cognitrix.models.tool import Tool
 from cognitrix.tools.utils import ToolCallResult
 
 

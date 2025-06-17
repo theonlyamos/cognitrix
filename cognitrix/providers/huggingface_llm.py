@@ -1,7 +1,7 @@
 import logging
 import os
 
-from cognitrix.providers import OpenAI as OpenAILLM
+from cognitrix.providers.openai_llm import OpenAI as OpenAILLM
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',

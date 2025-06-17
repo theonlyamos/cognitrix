@@ -1,7 +1,7 @@
 import os
 from functools import cache
 
-from cognitrix.providers import OpenAI
+from cognitrix.providers.openai_llm import OpenAI
 
 
 class MindsDB(OpenAI):

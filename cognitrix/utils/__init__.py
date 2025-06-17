@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup, Tag
 from PIL import Image
 
-from cognitrix.tools import Tool
+from cognitrix.models.tool import Tool
 
 json_return_format: str = """
 Your response should be in a valid json format which can

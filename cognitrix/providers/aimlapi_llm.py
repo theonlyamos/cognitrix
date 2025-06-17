@@ -5,7 +5,7 @@ from typing import Any
 
 from openai import OpenAI, OpenAIError
 
-from cognitrix.providers import OpenAI as OpenAILLM
+from cognitrix.providers.openai_llm import OpenAI as OpenAILLM
 from cognitrix.providers.base import LLMResponse
 
 logging.basicConfig(
@@ -27,7 +27,7 @@ class AIMLAPI(OpenAILLM):
     is_multimodal: bool = True
     """Whether the model is multimodal."""
 
-    async def __call__(self, query: dict, system_prompt: str, chat_history: list[dict[str, str]] = None, stream: bool = False, tools: list[dict[str, Any]] = None, **kwds: Any):
+    async def __call__(self, query: dict, system_prompt: str, chat_history: list[dict[str, str]] | None = None, stream: bool = False, tools: list[dict[str, Any]] | None = None, **kwds: Any):
         """Generates a response to a query using the OpenAI API.
 
         Args:

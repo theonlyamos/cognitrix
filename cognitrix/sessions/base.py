@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, Self
 from odbms import Model
 from rich import print
 
-from cognitrix.models import Agent
 from cognitrix.providers.base import LLMResponse
 
 # from cognitrix.teams.base import Team
@@ -188,8 +187,7 @@ class SessionManager:
     def __init__(self, session: Session):
         self.session = session
 
-    async def __call__(self, message: str | dict, agent: Agent, interface: Literal['cli', 'task', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None = None, save_history: bool = True):
-
+    async def __call__(self, message: str | dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None = None, save_history: bool = True):
         # This is a temporary fix for the agent's process_prompt method which is not yet refactored.
         if wsquery is None:
             wsquery = {}
