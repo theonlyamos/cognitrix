@@ -4,6 +4,13 @@ Core CLI functionality and main startup logic.
 import sys
 import logging
 from argparse import Namespace
+from cognitrix.providers import LLM
+from cognitrix.agents import Agent
+from cognitrix.sessions.base import Session
+from cognitrix.tasks.base import Task
+from cognitrix.tools.base import Tool
+from cognitrix.teams.base import Team
+from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 
 from .handlers import list_providers, list_agents, list_tasks, list_teams, list_sessions
 from .ui import start_web_ui
@@ -11,21 +18,25 @@ from .shell import initialize_shell
 
 logger = logging.getLogger('cognitrix.log')
 
+async def run_configuration():
+    """Run the configuration for the CLI"""
+    from cognitrix.config import initialize_database
+    
+    initialize_database()
+    
+    # Create tables if they don't exist and not using mongodb
+    await Agent.create_table()
+    await Task.create_table()
+    await Team.create_table()
+    await Session.create_table()
+    await Tool.create_table()
+    
 
 async def start(args: Namespace):
     """Main startup function that handles CLI arguments and initializes the system."""
-    from cognitrix.providers import LLM
-    from cognitrix.agents import Agent
-    from cognitrix.sessions.base import Session
-    from cognitrix.tasks.base import Task
-    from cognitrix.tools.base import Tool
-    from cognitrix.teams.base import Team
-    from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
-    from cognitrix.config import VERSION, run_configure
-    
-    # Initialize configuration
-    run_configure()
-    
+
+    await run_configuration()
+
     try:
         # Handle list commands
         if args.providers:

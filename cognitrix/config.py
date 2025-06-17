@@ -26,15 +26,11 @@ def ensure_cognitrix_home():
     return COGNITRIX_HOME
 
 def initialize_database():
-    db_type = os.getenv('DB_TYPE', 'mongodb')
-    db_name = os.getenv('DB_NAME', 'cognitrix')
-    db_host = os.getenv('DB_HOST', 'localhost')
-    db_port = int(os.getenv('DB_PORT', 27017))
-    db_user = os.getenv('DB_USER', '')
-    db_password = os.getenv('DB_PASSWORD', '')
+    db_type = os.getenv('DB_TYPE', default='sqlite')
+    db_name = os.getenv('DB_NAME', str(Path.home() / '.cognitrix' / 'cognitrix.db'))
+    # db_host = os.getenv('DB_HOST', 'localhost')
+    # db_port = int(os.getenv('DB_PORT', 27017))
+    # db_user = os.getenv('DB_USER', '')
+    # db_password = os.getenv('DB_PASSWORD', '')
 
-    DBMS.initialize(db_type, host=db_host, port=db_port, username=db_user, password=db_password, database=db_name) # type: ignore
-
-
-def run_configure():
-    initialize_database()
+    DBMS.initialize(db_type, host="", port="", username="", password="", database=db_name) # type: ignore

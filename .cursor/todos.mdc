@@ -1,0 +1,12 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+Features to be implemented
+
+1. Ability for agents to choose their context
+2. Ability for agents to list available tools
+3. Ability for agents to list mcp servers
+
+4. Ability for agents to list mcp server tools

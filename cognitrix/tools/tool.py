@@ -30,7 +30,10 @@ def tool(*args: Any, **kwargs: Any):
         func_signatures = inspect.signature(func)
         func_parameters = func_signatures.parameters
         
-        new_tool.parameters = {key: value.annotation.__name__ for key, value in func_parameters.items()}
+        new_tool.parameters = {
+            key: value.annotation if isinstance(value.annotation, str) else value.annotation.__name__
+            for key, value in func_parameters.items()
+        }
 
         return new_tool
     

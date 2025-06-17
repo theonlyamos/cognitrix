@@ -16,6 +16,7 @@ from cognitrix.transcriber import Transcriber
 from cognitrix.utils.llm_response import LLMResponse
 from cognitrix.utils import extract_json, parse_tool_call_results
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
+from cognitrix.mcp.client import get_dynamic_client
 
 if TYPE_CHECKING:
     from cognitrix.sessions.base import Session
@@ -37,6 +38,21 @@ class Message(Model):
     priority: MessagePriority = MessagePriority.NORMAL
     read: bool = False
 
+class MCPTool(Tool):
+    """A dynamic tool created from an MCP server definition."""
+    mcp_schema: Dict[str, Any] = Field(default_factory=dict)
+
+    def to_dict_format(self) -> Dict[str, Any]:
+        """Returns the tool's schema directly from the MCP server's definition."""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name.replace(' ', '_'),
+                "description": self.description,
+                "parameters": self.mcp_schema,
+            }
+        }
+
 class Agent(Model):
     name: str = Field(default='Agent')
     """Name of the agent"""
@@ -55,6 +71,9 @@ class Agent(Model):
     
     sub_agents: List[Self] = Field(default=[])
     """List of sub agents which can be called by this agent"""
+    
+    mcp_servers: List[str] = Field(default_factory=list)
+    """List of permitted MCP servers for this agent"""
     
     is_sub_agent: bool = Field(default=False)
     """Whether this agent is a sub agent for another agent"""
@@ -239,6 +258,8 @@ class Agent(Model):
                         t['arguments']['parent'] = self
                     if tool.name.lower() == 'create sub agent':
                         t['arguments']['parent'] = self
+                    if tool and tool.category == 'mcp':
+                        t['arguments']['parent'] = self
                     
                     tasks.append(asyncio.create_task(tool.run(**t['arguments'])))
      
@@ -256,7 +277,18 @@ class Agent(Model):
             return str(e)
 
     def add_tool(self, tool: Tool):
+        """Add a tool to the agent's tools"""
         self.tools.append(tool)
+    
+    def add_mcp_server(self, server: str):
+        """Add an MCP server to the agent's permitted MCP servers"""
+        if server not in self.mcp_servers:
+            self.mcp_servers.append(server)
+    
+    def remove_mcp_server(self, server: str):
+        """Remove an MCP server from the agent's permitted MCP servers"""
+        if server in self.mcp_servers:
+            self.mcp_servers.remove(server)
 
     def generate(self, prompt: str):
         full_prompt = self.process_prompt(prompt)
@@ -265,9 +297,59 @@ class Agent(Model):
     def call_sub_agent(self, agent_name: str, task_description: str):
         sub_agent = self.get_sub_agent_by_name(agent_name)
 
+    async def init_mcp_tools(self):
+        """Initializes and imports tools from all permitted MCP servers."""
+        # Clear any previously imported MCP tools to avoid duplicates
+        self.tools = [t for t in self.tools if not isinstance(t, MCPTool)]
+        
+        for server in self.mcp_servers:
+            await self.import_mcp_tools(server)
+
+    async def import_mcp_tools(self, server: str):
+        """Dynamically imports tools from a single MCP server and adds them to the agent."""
+        if server not in self.mcp_servers:
+            logger.warning(f"Agent '{self.name}' does not have permission for MCP server '{server}'.")
+            return
+
+        client = await get_dynamic_client()
+        if not client.is_connected(server):
+            logger.warning(f"Not connected to MCP server '{server}'. Cannot import tools.")
+            return
+
+        try:
+            mcp_tool_defs = await client.list_tools(server)
+            if not mcp_tool_defs:
+                logger.info(f"No tools found on MCP server '{server}'.")
+                return
+
+            for mcp_tool_def in mcp_tool_defs:
+                tool_name = mcp_tool_def['name']
+                
+                # Create a closure to run the tool, capturing server and tool name
+                def create_mcp_tool_runner(server_name, tool_name_to_call):
+                    async def mcp_tool_runner(**kwargs):
+                        mcp_client = await get_dynamic_client()
+                        logger.info(f"Agent '{self.name}' is dynamically calling MCP tool '{tool_name_to_call}' on server '{server_name}' with args: {kwargs}")
+                        return await mcp_client.call_tool(server_name, tool_name_to_call, kwargs)
+                    return mcp_tool_runner
+
+                new_tool = MCPTool(
+                    name=tool_name,
+                    description=mcp_tool_def.get('description', ''),
+                    category=f'mcp_{server}',
+                    mcp_schema=mcp_tool_def.get('parameters', {}),
+                )
+                new_tool.run = create_mcp_tool_runner(server, tool_name)
+                
+                self.add_tool(new_tool)
+                logger.info(f"Imported MCP tool '{tool_name}' from server '{server}' for agent '{self.name}'.")
+        except Exception as e:
+            logger.error(f"Failed to import tools from MCP server '{server}' for agent '{self.name}': {e}")
+
     @classmethod
     async def create_agent(cls, name: str, system_prompt: str, provider: str = 'groq', 
                            model: Optional[str] = '', temperature: float = 0.0,  tools: List[str] = [], 
+                           mcp_servers: List[str] = [],
                            is_sub_agent: bool = False, parent_id=None,
                            ephemeral: bool = False) -> Optional[Self]:
         try:
@@ -296,9 +378,12 @@ class Agent(Model):
                         loaded_tools.append(tool_by_name)
                     agent_tools.extend(loaded_tools)
             
-            new_agent = cls(name=name, llm=llm, system_prompt=system_prompt, tools=agent_tools, is_sub_agent=is_sub_agent, parent_id=parent_id) # type: ignore
+            new_agent = cls(name=name, llm=llm, system_prompt=system_prompt, tools=agent_tools, mcp_servers=mcp_servers, is_sub_agent=is_sub_agent, parent_id=parent_id) # type: ignore
 
             await new_agent.save()
+            
+            # Initialize MCP tools for the current session after saving
+            await new_agent.init_mcp_tools()
 
             return new_agent
 
@@ -313,4 +398,8 @@ class Agent(Model):
 
     @classmethod
     async def load_agent(cls, agent_name: str) -> Optional['Agent']:
-        return await cls.find_one({'name': agent_name})
+        agent = await cls.find_one({'name': agent_name})
+        if agent:
+            # Initialize MCP tools for the current session after loading
+            await agent.init_mcp_tools()
+        return agent

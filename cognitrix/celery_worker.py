@@ -4,10 +4,10 @@ from celery.signals import task_prerun, task_postrun, task_success, task_failure
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.teams.base import Team
-from cognitrix.config import run_configure
+from cognitrix.config import initialize_database
 import logging
 
-run_configure()
+initialize_database()
 
 celery = Celery('tasks', broker='redis://localhost:6379/0', backend='redis://localhost:6379/0')
 
