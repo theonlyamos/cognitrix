@@ -15,9 +15,9 @@ from pathlib import Path
 from rich import print
 from PIL import Image
 import wikipedia as wk
-import pyautogui
+# import pyautogui
 import requests
-import logging 
+import logging
 import aiohttp
 import sys
 import os
@@ -417,93 +417,93 @@ def python_repl(code: str, timeout: Optional[int] = None):
     
     return queue.get()
 
-@tool(category='system')
-def take_screenshot():
-    """Use this tool to take a screenshot of the screen."""
-    screenshot = pyautogui.screenshot()
+# @tool(category='system')
+# def take_screenshot():
+#     """Use this tool to take a screenshot of the screen."""
+#     screenshot = pyautogui.screenshot()
     
-    return ['image', screenshot]
+#     return ['image', screenshot]
 
-@tool(category='system')
-def text_input(text: str):
-    """Use this tool to take make text inputs.
-    Args:
-        text (str): Text to input.
+# @tool(category='system')
+# def text_input(text: str):
+#     """Use this tool to take make text inputs.
+#     Args:
+#         text (str): Text to input.
     
-    Returns:
-        str: Text input completed.
-    """
-    screenshot = pyautogui.write(text, 0.15)
+#     Returns:
+#         str: Text input completed.
+#     """
+#     screenshot = pyautogui.write(text, 0.15)
     
-    return 'Text input completed'
+#     return 'Text input completed'
 
-@tool(category='system')
-def key_press(key: str):
-    """Use this tool to take make key presses.
-    Args:
-        key (str): Name of key to press.
+# @tool(category='system')
+# def key_press(key: str):
+#     """Use this tool to take make key presses.
+#     Args:
+#         key (str): Name of key to press.
     
-    Returns:
-        str: Keypress completed.
-    """
-    screenshot = pyautogui.press(key.lower())
+#     Returns:
+#         str: Keypress completed.
+#     """
+#     screenshot = pyautogui.press(key.lower())
     
-    return 'Keypress completed'
+#     return 'Keypress completed'
 
-@tool(category='system')
-def hot_key(hotkeys: list):
-    """Use this tool to take make hot key presses.
-    Args:
-        hotkeys (list): list of keys to press together.
+# @tool(category='system')
+# def hot_key(hotkeys: list):
+#     """Use this tool to take make hot key presses.
+#     Args:
+#         hotkeys (list): list of keys to press together.
     
-    Returns:
-        str: Keypress completed.
-    """
-    screenshot = pyautogui.hotkey(*hotkeys)
+#     Returns:
+#         str: Keypress completed.
+#     """
+#     screenshot = pyautogui.hotkey(*hotkeys)
     
-    return 'Keypress completed'
+#     return 'Keypress completed'
 
-@tool(category='system')
-def mouse_click(x: int, y: int):
-    """Use this tool to take make mouse clicks.
-    Args:
-        x (int): X coordinate of mouse click.
-        y (int): y coordinate of mouse click.
+# @tool(category='system')
+# def mouse_click(x: int, y: int):
+#     """Use this tool to take make mouse clicks.
+#     Args:
+#         x (int): X coordinate of mouse click.
+#         y (int): y coordinate of mouse click.
     
-    Returns:
-        str: Mouse click completed.
-    """
-    screenshot = pyautogui.click(x, y)
+#     Returns:
+#         str: Mouse click completed.
+#     """
+#     screenshot = pyautogui.click(x, y)
     
-    return 'Mouse Click completed'
+#     return 'Mouse Click completed'
 
-@tool(category='system')
-def mouse_double_click(x: int, y: int):
-    """Use this tool to take make mouse double clicks.
-    Args:
-        x (int): X coordinate of mouse click.
-        y (int): y coordinate of mouse click.
+# @tool(category='system')
+# def mouse_double_click(x: int, y: int):
+#     """Use this tool to take make mouse double clicks.
+#     Args:
+#         x (int): X coordinate of mouse click.
+#         y (int): y coordinate of mouse click.
     
-    Returns:
-        str: Mouse double-click completed.
-    """
-    screenshot = pyautogui.doubleClick(x, y)
+#     Returns:
+#         str: Mouse double-click completed.
+#     """
+#     screenshot = pyautogui.doubleClick(x, y)
     
-    return 'Mouse double-click completed.'
+#     return 'Mouse double-click completed.'
 
-@tool(category='system')
-def mouse_right_click(x: int, y: int):
-    """Use this tool to take make mouse right clicks.
-    Args:
-        x (int): X coordinate of mouse click.
-        y (int): y coordinate of mouse click.
+# @tool(category='system')
+# def mouse_right_click(x: int, y: int):
+#     """Use this tool to take make mouse right clicks.
+#     Args:
+#         x (int): X coordinate of mouse click.
+#         y (int): y coordinate of mouse click.
     
-    Returns:
-        str: Mouse right-click completed.
-    """
-    screenshot = pyautogui.rightClick(x, y)
+#     Returns:
+#         str: Mouse right-click completed.
+#     """
+#     screenshot = pyautogui.rightClick(x, y)
     
-    return 'Mouse double-click completed.'
+#     return 'Mouse double-click completed.'
 
 @tool(category='system')
 async def create_agent(name: str, provider: str, description: str, tools: List[str], parent: Optional[Agent] = None):
