@@ -380,7 +380,10 @@ def _agent_manager(self: Agent) -> 'AgentManager':  # type: ignore[name-defined]
     return AgentManager(self)
 
 # Add property dynamically (avoids circular import at class definition time)
-setattr(Agent, 'manager', property(_agent_manager))  # type: ignore[attr-defined]
+setattr(Agent, 'manager', property(_agent_manager))
+
+# Add process_prompt method to Agent model (delegates to manager)
+setattr(Agent, 'process_prompt', lambda self, query, role='User': AgentManager(self).process_prompt(query, role))  # type: ignore[attr-defined]
 
 # Class-level convenience methods that delegate to AgentManager
 setattr(Agent, 'create_agent', staticmethod(AgentManager.create_agent))  # type: ignore[attr-defined]
