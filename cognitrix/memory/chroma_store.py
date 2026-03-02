@@ -40,11 +40,12 @@ class ChromaMemoryStore(BaseMemory):
 
         self.persist_directory = persist_directory
 
-        self.client = chromadb.Client(Settings(
-            chroma_db_impl="duckdb+parquet",
-            persist_directory=persist_directory,
-            anonymized_telemetry=False
-        ))
+        self.client = chromadb.PersistentClient(
+            path=persist_directory,
+            settings=Settings(
+                anonymized_telemetry=False
+            )
+        )
 
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
