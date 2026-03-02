@@ -8,7 +8,6 @@ from rich import print
 from cognitrix.agents.base import Agent, Message, MessagePriority
 from cognitrix.agents.router import AgentRouter
 from cognitrix.tasks.base import Task, TaskStatus
-from cognitrix.teams.workflow_executor import WorkflowExecutor
 from cognitrix.planning.structured_planner import StructuredPlanner
 
 if TYPE_CHECKING:
@@ -158,16 +157,6 @@ class Team(Model):
 # ---------------------------------------------------------------------------
 
 # Instance-level manager
-def _team_manager(self: 'Team') -> 'TeamManager':
-    return TeamManager()
-
-setattr(Team, 'manager', property(_team_manager))  # type: ignore[attr-defined]
-
-# Class-level helpers
-setattr(Team, 'create_team', staticmethod(TeamManager.create_team))  # type: ignore[attr-defined]
-setattr(Team, 'get_team', staticmethod(TeamManager.get_team))  # type: ignore[attr-defined]
-setattr(Team, 'delete_team', staticmethod(TeamManager.delete_team))  # type: ignore[attr-defined]
-
 class TeamManager:
     """
     Manager class for Team-related business logic.
@@ -349,3 +338,14 @@ class TeamManager:
     async def create(name: str, description: str) -> Team:  # type: ignore[override]
         manager = TeamManager()
         return manager.create_team(name, description)
+
+
+def _team_manager(self: 'Team') -> 'TeamManager':
+    return TeamManager()
+
+setattr(Team, 'manager', property(_team_manager))  # type: ignore[attr-defined]
+
+# Class-level helpers
+setattr(Team, 'create_team', staticmethod(TeamManager.create_team))  # type: ignore[attr-defined]
+setattr(Team, 'get_team', staticmethod(TeamManager.get_team))  # type: ignore[attr-defined]
+setattr(Team, 'delete_team', staticmethod(TeamManager.delete_team))  # type: ignore[attr-defined]

@@ -1,7 +1,9 @@
 """Tool wrapper with retry, validation, and LLM-powered recovery."""
 
+import html
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -27,6 +29,12 @@ class ResilientToolManager:
     
     def __init__(self, llm: Optional[LLM] = None):
         self.llm = llm
+    
+    def _sanitize_for_prompt(self, text: str) -> str:
+        """Sanitize text to prevent prompt injection."""
+        text = html.escape(text, quote=True)
+        text = ''.join(char for char in text if ord(char) >= 32 or char in '\n\r\t')
+        return text[:1000]
     
     async def run_tool(
         self,
@@ -115,31 +123,26 @@ class ResilientToolManager:
         
         prompt = f"""The following tool call failed. Fix the parameters.
 
-Tool: {tool.name}
-Description: {tool.description}
-Original parameters: {json.dumps(original_params, indent=2)}
-Error: {error}
+Tool: {self._sanitize_for_prompt(tool.name)}
+Description: {self._sanitize_for_prompt(tool.description)}
+Original parameters: {self._sanitize_for_prompt(json.dumps(original_params, indent=2))}
+Error: {self._sanitize_for_prompt(error)}
 
 Provide corrected parameters as valid JSON only. If unrecoverable, return {{"_unrecoverable": true}}.
 """
         
         try:
-            # Generate recovery suggestion
             response = await self.llm([{'role': 'user', 'content': prompt}])
             
-            # Parse response
             if hasattr(response, 'llm_response'):
                 response_text = response.llm_response
             else:
                 response_text = str(response)
             
-            # Extract JSON
-            import re
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if json_match:
                 recovered = json.loads(json_match.group())
                 
-                # Check if unrecoverable
                 if recovered.get('_unrecoverable'):
                     return None
                 

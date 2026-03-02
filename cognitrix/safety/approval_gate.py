@@ -4,8 +4,10 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Optional, Callable
 
 from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
@@ -60,18 +62,43 @@ class ApprovalGate:
     caches approvals to avoid repeated prompts.
     """
     
-    def __init__(self):
-        self.session_cache: set[str] = set()  # Approved in this session
-        self.permanent_cache: set[str] = set()  # Permanently approved
+    def __init__(self, cache_dir: str = None):
+        self.session_cache: set[str] = set()
+        self.permanent_cache: set[str] = set()
         self.pending_requests: dict[str, ApprovalRequest] = {}
         self.request_counter = 0
         
+        self.cache_dir = Path(cache_dir) if cache_dir else Path.home() / '.cognitrix'
+        self._load_permanent_cache()
+        
         logger.info("ApprovalGate initialized")
+    
+    def _cache_file(self) -> Path:
+        return self.cache_dir / 'approval_cache.json'
+    
+    def _load_permanent_cache(self):
+        cache_file = self._cache_file()
+        if cache_file.exists():
+            try:
+                with open(cache_file) as f:
+                    data = json.load(f)
+                    self.permanent_cache = set(data.get('approved', []))
+                    logger.info(f"Loaded {len(self.permanent_cache)} permanent approvals")
+            except Exception as e:
+                logger.warning(f"Failed to load approval cache: {e}")
+    
+    def _save_permanent_cache(self):
+        try:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            with open(self._cache_file(), 'w') as f:
+                json.dump({'approved': list(self.permanent_cache)}, f)
+        except Exception as e:
+            logger.error(f"Failed to save approval cache: {e}")
     
     def _hash_operation(self, tool_call: ToolCall) -> str:
         """Generate hash for operation caching."""
         content = f"{tool_call.tool_name}:{json.dumps(tool_call.params, sort_keys=True)}"
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
+        return hashlib.sha256(content.encode()).hexdigest()
     
     async def check_approval(
         self,
@@ -124,6 +151,7 @@ class ApprovalGate:
         if result.approved:
             if result.permanent:
                 self.permanent_cache.add(op_hash)
+                self._save_permanent_cache()
             elif result.remember:
                 self.session_cache.add(op_hash)
         
@@ -219,6 +247,7 @@ class ApprovalGate:
     def clear_permanent_cache(self):
         """Clear permanent approvals."""
         self.permanent_cache.clear()
+        self._save_permanent_cache()
         logger.info("Permanent approval cache cleared")
     
     def get_cache_stats(self) -> dict:

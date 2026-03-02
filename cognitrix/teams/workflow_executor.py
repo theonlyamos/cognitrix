@@ -60,14 +60,12 @@ class WorkflowExecutor:
         Returns:
             Combined result of all steps
         """
-        # Convert to WorkflowStep objects
         steps = [WorkflowStep(**step) for step in workflow]
         
-        # Build dependency graph
-        dependency_graph = self._build_dependency_graph(steps)
+        self._build_dependency_graph(steps)
         
-        # Track completed steps
         completed = set()
+        completed_results = {}  # step_number -> result output
         results = []
         
         while len(completed) < len(steps):
@@ -88,7 +86,7 @@ class WorkflowExecutor:
             
             # Execute ready steps in parallel
             tasks = [
-                self._execute_step_with_semaphore(step, team, session)
+                self._execute_step_with_semaphore(step, team, session, completed_results)
                 for step in ready_steps
             ]
             step_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -98,33 +96,35 @@ class WorkflowExecutor:
                 if isinstance(result, Exception):
                     step.status = StepStatus.FAILED
                     step.result = StepResult(success=False, error=str(result))
-                    # Try recovery or fail workflow
                     if not await self._handle_step_failure(step, result, team, session):
                         raise WorkflowError(f"Step {step.step_number} failed: {result}")
                 else:
                     step.status = StepStatus.COMPLETED
                     step.result = result
                     completed.add(step.step_number)
+                    completed_results[step.step_number] = result.output
                     results.append(result.output)
         
         # Synthesize final result
-        return await self._synthesize_results(steps, team, session)
+        return await self._synthesize_results(steps, team, session, completed_results)
     
     async def _execute_step_with_semaphore(
         self, 
         step: WorkflowStep, 
         team: Team, 
-        session: Session
+        session: Session,
+        completed_results: dict
     ) -> StepResult:
         """Execute step with concurrency control."""
         async with self.semaphore:
-            return await self._execute_step(step, team, session)
+            return await self._execute_step(step, team, session, completed_results)
     
     async def _execute_step(
         self, 
         step: WorkflowStep, 
         team: Team, 
-        session: Session
+        session: Session,
+        completed_results: dict
     ) -> StepResult:
         """Execute a single workflow step."""
         import time
@@ -132,7 +132,6 @@ class WorkflowExecutor:
         
         step.status = StepStatus.IN_PROGRESS
         
-        # Find assigned agent
         agent = await self._get_agent_for_step(step, team)
         if not agent:
             return StepResult(
@@ -141,10 +140,8 @@ class WorkflowExecutor:
             )
         
         try:
-            # Build step prompt with context from dependencies
-            prompt = await self._build_step_prompt(step, team)
+            prompt = await self._build_step_prompt(step, completed_results)
             
-            # Execute through session
             response = ""
             async def capture_response(data: dict):
                 nonlocal response
@@ -153,7 +150,6 @@ class WorkflowExecutor:
             await session(prompt, agent, 'task', True, capture_response, 
                          {'type': 'workflow_step', 'action': f'step_{step.step_number}'})
             
-            # Verify result
             if await self._verify_step_result(step, response, agent):
                 return StepResult(
                     success=True,
@@ -183,21 +179,19 @@ class WorkflowExecutor:
             None
         )
     
-    async def _build_step_prompt(self, step: WorkflowStep, team: Team) -> str:
-        """Build prompt with context from completed dependencies."""
+    async def _build_step_prompt(self, step: WorkflowStep, completed_results: dict) -> str:
+        """Build prompt with context from completed dependency steps."""
         prompt_parts = [
             f"Step #{step.step_number}: {step.title}",
             f"Description: {step.description}",
             ""
         ]
         
-        # Add results from dependency steps
         if step.dependencies:
             prompt_parts.append("Context from previous steps:")
             for dep_num in step.dependencies:
-                dep_step = next((s for s in team.tasks if s.step_number == dep_num), None)
-                if dep_step and dep_step.result:
-                    prompt_parts.append(f"Step {dep_num} result: {dep_step.result.output[:500]}")
+                if dep_num in completed_results:
+                    prompt_parts.append(f"Step {dep_num} result: {completed_results[dep_num][:500]}")
             prompt_parts.append("")
         
         prompt_parts.append("Execute this step and provide your output.")
@@ -236,7 +230,8 @@ class WorkflowExecutor:
         self, 
         steps: list[WorkflowStep], 
         team: Team, 
-        session: Session
+        session: Session,
+        completed_results: dict
     ) -> str:
         """Combine all step results into final output."""
         results = []

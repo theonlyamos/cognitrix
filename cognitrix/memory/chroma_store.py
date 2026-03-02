@@ -1,5 +1,6 @@
 """ChromaDB-based vector memory implementation."""
 
+import asyncio
 import hashlib
 import logging
 from datetime import datetime
@@ -8,9 +9,9 @@ from typing import Any, Optional
 
 import chromadb
 from chromadb.config import Settings
-from sentence_transformers import SentenceTransformer
 
 from cognitrix.memory.base import BaseMemory, MemoryEntry
+from cognitrix.utils.embedding_model import get_embedding_model
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -30,32 +31,27 @@ class ChromaMemoryStore(BaseMemory):
         Args:
             collection_name: Name of the ChromaDB collection
             persist_directory: Where to persist DB (default: ./chroma_db)
-            embedding_model: Sentence transformer model name
+            embedding_model: Sentence transformer model name (kept for API compatibility)
         """
         self.collection_name = collection_name
 
-        # Set up persistence
         if persist_directory is None:
             persist_directory = str(Path.cwd() / "chroma_db")
 
         self.persist_directory = persist_directory
 
-        # Initialize ChromaDB client
         self.client = chromadb.Client(Settings(
             chroma_db_impl="duckdb+parquet",
             persist_directory=persist_directory,
             anonymized_telemetry=False
         ))
 
-        # Get or create collection
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
             metadata={"hnsw:space": "cosine"}
         )
 
-        # Initialize embedding model
-        logger.info(f"Loading embedding model: {embedding_model}")
-        self.embedding_model = SentenceTransformer(embedding_model)
+        self.embedding_model = get_embedding_model(embedding_model)
 
         logger.info(f"ChromaMemoryStore initialized: {collection_name}")
 
@@ -64,9 +60,14 @@ class ChromaMemoryStore(BaseMemory):
         return hashlib.md5(content.encode()).hexdigest()
 
     def _embed(self, text: str) -> list[float]:
-        """Generate embedding for text."""
+        """Generate embedding for text (sync wrapper for compatibility)."""
         embedding = self.embedding_model.encode(text)
         return embedding.tolist()
+
+    async def _embed_async(self, text: str) -> list[float]:
+        """Generate embedding for text without blocking event loop."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._embed, text)
 
     async def store(
         self,
@@ -77,8 +78,7 @@ class ChromaMemoryStore(BaseMemory):
         """Store a memory with embedding."""
         memory_id = self._generate_id(content + str(datetime.now()))
 
-        # Generate embedding
-        embedding = self._embed(content)
+        embedding = await self._embed_async(content)
 
         # Prepare metadata
         chroma_metadata = {
@@ -106,8 +106,7 @@ class ChromaMemoryStore(BaseMemory):
         filter_metadata: Optional[dict] = None
     ) -> list[MemoryEntry]:
         """Retrieve relevant memories using semantic search."""
-        # Generate query embedding
-        query_embedding = self._embed(query)
+        query_embedding = await self._embed_async(query)
 
         # Build where clause if filter provided
         where_clause = None

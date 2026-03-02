@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from cognitrix.agents.base import Agent
 from cognitrix.models.tool import Tool
+from cognitrix.utils.embedding_model import get_embedding_model
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -35,9 +35,9 @@ class CapabilityRegistry:
         Initialize capability registry.
         
         Args:
-            embedding_model: Sentence transformer model for embeddings
+            embedding_model: Sentence transformer model for embeddings (kept for API compat)
         """
-        self.embedding_model = SentenceTransformer(embedding_model)
+        self.embedding_model = get_embedding_model(embedding_model)
         self.agents: dict[str, AgentCapability] = {}
         
         logger.info("CapabilityRegistry initialized")

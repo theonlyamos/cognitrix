@@ -32,8 +32,16 @@ def tool(*args: Any, **kwargs: Any):
         func_signatures = inspect.signature(func)
         func_parameters = func_signatures.parameters
 
+        def get_type_name(annotation):
+            if isinstance(annotation, str):
+                return annotation
+            if hasattr(annotation, '__name__'):
+                return annotation.__name__
+            # Handle Union types (e.g., str | None)
+            return str(annotation).replace('typing.', '')
+        
         new_tool.parameters = {
-            key: value.annotation if isinstance(value.annotation, str) else value.annotation.__name__
+            key: get_type_name(value.annotation)
             for key, value in func_parameters.items()
         }
 

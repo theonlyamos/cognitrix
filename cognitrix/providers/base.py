@@ -223,14 +223,16 @@ class LLMManager:
         if tools is None:
             tools = []
         try:
-            client = OpenAI(api_key=llm.api_key)
-
+            client_kwargs = {"api_key": llm.api_key}
+            
+            if llm.base_url:
+                client_kwargs["base_url"] = llm.base_url
+            
             if 'helicone' in llm.base_url:
                 from cognitrix.config import settings
-                client = OpenAI(
-                    api_key=llm.api_key,
-                    default_headers={'Helicone-Auth': f'Bearer {settings.get_api_key("helicone")}'}
-                )
+                client_kwargs["default_headers"] = {'Helicone-Auth': f'Bearer {settings.get_api_key("helicone")}'}
+            
+            client = OpenAI(**client_kwargs)
 
             formatted_messages = LLMManager.format_query(llm, prompt)
             formatted_tools = LLMManager.format_tools(tools) if tools else None

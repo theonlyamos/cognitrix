@@ -16,6 +16,7 @@ from .huggingface_llm import Huggingface as Huggingface
 from .local_llm import Local as Local
 from .mindsdb_llm import MindsDB as MindsDB
 from .ollama_llm import Ollama as Ollama
+from .openrouter_llm import OpenRouter as OpenRouter
 from .together_llm import TogetherAI as TogetherAI
 
 __all__ = [
@@ -34,5 +35,6 @@ __all__ = [
     "AIMLAPI",
     "Ollama",
     "Azure",
+    "OpenRouter",
 ]
 

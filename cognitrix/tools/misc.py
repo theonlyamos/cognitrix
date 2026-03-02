@@ -20,7 +20,6 @@ from rich import print
 from tavily import TavilyClient
 
 from cognitrix.config import settings
-from cognitrix.teams.base import TeamManager
 from cognitrix.tools.tool import tool
 
 logging.basicConfig(
@@ -572,6 +571,7 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
 
     try:
         team_manager = TeamManager()
+        from cognitrix.teams.base import TeamManager
         new_team = team_manager.create_team(name, description)
         new_team.description = description
 
