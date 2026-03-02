@@ -92,15 +92,17 @@ class HybridContextManager(BaseContextManager):
         """
         self.agent_id = agent_id
         self.short_term = SlidingWindowContextManager(max_short_term)
-        self.long_term = ChromaMemoryStore(
-            collection_name=f"agent_{agent_id}",
-            persist_directory=persist_directory
-        )
+        # Lazy load ChromaDB
+        self._chroma_config = {
+            'collection_name': f"agent_{agent_id}",
+            'persist_directory': persist_directory
+        }
+        self._chroma_store = None
         self.importance_scorer = ImportanceScorer()
         self.importance_threshold = importance_threshold
         self.max_long_term = max_long_term
 
-        logger.info(f"HybridContextManager initialized for agent: {agent_id}")
+        logger.info(f"HybridContextManager initialized (lazy) for agent: {agent_id}")
 
     def build_prompt(
         self,

@@ -58,21 +58,27 @@ class Agent(Model):
     tools: list[Tool] = Field(default=[])
     """List of tools to be use by the agent"""
 
-    _context_manager: Any = None
-    """Transient storage for context manager (not persisted to DB)"""
-
-    @property
-    def context_manager(self) -> 'BaseContextManager':
-        """Get context manager, creating if needed."""
-        if self._context_manager is None:
+    def get_context_manager(self) -> 'BaseContextManager':
+        """Get context manager, creating lazily to avoid slow startup."""
+        # Store in __dict__ to avoid odbms __getattr__ interception
+        if '_ctx_mgr' not in self.__dict__:
             from cognitrix.memory.hybrid_context import HybridContextManager
-            self._context_manager = HybridContextManager(agent_id=str(self.id) if self.id else "default")
-        return self._context_manager
-
-    @context_manager.setter
-    def context_manager(self, value: 'BaseContextManager'):
-        """Set context manager."""
-        self._context_manager = value
+            # Don't initialize yet - just store config
+            self.__dict__['_ctx_mgr'] = None
+            self.__dict__['_ctx_mgr_config'] = {
+                'agent_id': str(self.id) if self.id else "default"
+            }
+        # Lazy initialize on first use
+        if self.__dict__['_ctx_mgr'] is None:
+            config = self.__dict__['_ctx_mgr_config']
+            from cognitrix.memory.hybrid_context import HybridContextManager
+            self.__dict__['_ctx_mgr'] = HybridContextManager(**config)
+        return self.__dict__['_ctx_mgr']
+    
+    # Backward compatibility
+    def get_memory(self) -> 'BaseContextManager':
+        """Alias for get_context_manager."""
+        return self.get_context_manager()
 
     system_prompt: str
     """Agent's prompt template"""

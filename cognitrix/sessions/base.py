@@ -100,7 +100,7 @@ class Session(Model):
             self.update_history(agent.process_prompt(message))
 
         # Build the context-aware prompt using the manager
-        prompt = agent.context_manager.build_prompt(agent, self)
+        prompt = agent.get_context_manager().build_prompt(agent, self)
 
         formatted_tools = [tool.to_dict_format() for tool in agent.tools if len(tool.to_dict_format().keys())]
 
@@ -148,7 +148,7 @@ class Session(Model):
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                                 # If a tool call has a result, add it to history and rebuild the prompt
                                 self.update_history(agent.process_prompt(result))
-                                prompt = agent.context_manager.build_prompt(agent, self)
+                                prompt = agent.get_context_manager().build_prompt(agent, self)
                                 continue  # Continue the loop to re-prompt the LLM with the tool result
                             else:
                                 if interface == 'cli':
@@ -222,7 +222,7 @@ class SessionManager:
         if save_history:
             self.session.update_history(agent_manager.process_prompt(message))
 
-        prompt = agent.context_manager.build_prompt(agent, self.session)
+        prompt = agent.get_context_manager().build_prompt(agent, self.session)
 
         formatted_tools = [tool.to_dict_format() for tool in agent.tools if len(tool.to_dict_format().keys())]
 
@@ -260,7 +260,7 @@ class SessionManager:
 
                         if isinstance(result, dict) and result.get('type') == 'tool_calls_result':
                             self.session.update_history(agent_manager.process_prompt(result))
-                            prompt = agent.context_manager.build_prompt(agent, self.session)
+                            prompt = agent.get_context_manager().build_prompt(agent, self.session)
                             continue
                         else:
                             if interface == 'cli':
