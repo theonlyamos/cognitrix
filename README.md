@@ -5,7 +5,7 @@ Cognitrix is an open-source autonomous AI agents orchestrator built in Python. I
 ## Features
 
 - **Agent Creation and Management:** Create, list, and load AI agents with customizable names, tasks, and configurations.
-- **LLM Integration:** Integrates with multiple LLM providers, including Anthropic (Claude), Cohere, Groq, Google, OpenAI, and Together.
+- **LLM Integration:** Integrates with multiple LLM providers via OpenRouter (200+ models including OpenAI, Anthropic, Google, Meta, Mistral) plus local models via Ollama.
 - **Modular Architecture:** Easily extensible, allowing the addition of new tools, agents, and LLM integrations.
 - **Conversational Interface:** Interact with AI agents through a command-line interface, providing queries and receiving responses.
 - **Tool Integration:** Agents can utilize a variety of tools, including calculators, web searches, file system browsers, and more.
@@ -17,7 +17,7 @@ Cognitrix is an open-source autonomous AI agents orchestrator built in Python. I
 Cognitrix's architecture is designed to be highly modular and extensible:
 
 - **Agents:** The base `Agent` class is for creating and managing AI agents.
-- **LLMs:** A collection of classes for integrating with various LLM providers (Cohere, OpenAI, Claude, etc.).
+- **LLMs:** Provider classes for OpenRouter (primary - 200+ models), OpenAI (direct), and Ollama (local).
 - **Tools:** A set of tools that agents can utilize. Each tool has a `category` attribute for grouping and management.
 - **Templates:** Customizable prompt templates guide the behavior and output formats of LLMs.
 
