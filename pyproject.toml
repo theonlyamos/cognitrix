@@ -16,13 +16,9 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.6",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
 [tool.poetry.urls]
@@ -30,44 +26,53 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = "^3.11"
+
+# Core
+aiohttp = "^3.9.3"
+aiofiles = "^23.2.1"
 requests = "^2.31.0"
 python-dotenv = "^1.0.1"
 pydantic = "^2.6.2"
-aiohttp = "^3.9.3"
-cohere = "^5.5.6"
-clarifai = "^10.1.0"
+
+# LLM Providers (OpenRouter + Ollama)
 openai = "^1.12.0"
-groq = "^0.4.1"
-uuid = "^1.30"
+ollama = "^0.4.7"
+
+# Vector Memory & Embeddings
+chromadb = "^1.5.0"
+sentence-transformers = "^5.2.0"
+numpy = "^2.0.0"
+
+# Web Framework
+fastapi = "^0.112.0"
+uvicorn = "^0.30.1"
+flask = "^3.0.3"
+sse-starlette = "^2.1.2"
+python-multipart = "^0.0.9"
+
+# Tools & Automation
 pillow = "^10.2.0"
 pyautogui = "^0.9.54"
-anthropic = "^0.17.0"
-aiofiles = "^23.2.1"
-xmltodict = "^0.13.0"
-deepgram-sdk = "==3.*"
 beautifulsoup4 = "^4.12.3"
 pyaudio = "^0.2.14"
 pydub = "^0.25.1"
-flask = "^3.0.3"
-uvicorn = "^0.30.1"
-tavily-python = "^0.3.3"
-rich = "^13.7.1"
-sentence-transformers = "^5.2.0"
-sse-starlette = "^2.1.2"
 wikipedia = "^1.4.0"
-celery = {extras = ["redis"], version = "^5.4.0"}
-chromadb = "^1.5.0"
-fastapi = "^0.112.0"
+tavily-python = "^0.3.3"
+deepgram-sdk = "==3.*"
+xmltodict = "^0.13.0"
+
+# Database & Auth
 odbms = "0.4.5"
 passlib = "^1.7.4"
 python-jose = {extras = ["cryptography"], version = "^3.3.0"}
-python-multipart = "^0.0.9"
-azure-ai-inference = "^1.0.0b4"
 bcrypt = "^4.3.0"
-google-genai = "^1.9.0"
-ollama = "^0.4.7"
+
+# Utilities
+rich = "^13.7.1"
+celery = {extras = ["redis"], version = "^5.4.0"}
+
+# MCP (Model Context Protocol)
 mcp = {extras = ["cli"], version = "^1.9.1"}
-numpy = "^2.0.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -90,13 +95,8 @@ ruff = "^0.4.4"
 
 [tool.ruff]
 line-length = 120
-# Target the same Python version declared for the project
-# This helps Ruff apply version-specific rules correctly.
 target-version = "py311"
-# Enable common rule sets: 
-# E and W (pycodestyle), F (pyflakes), I (isort), B (bugbear), UP (pyupgrade)
 select = ["E", "W", "F", "I", "B", "UP"]
-# Fix issues automatically when --fix is passed.
 fix = true
 show-fixes = true
 ignore = ["E501", "B008", "B904"]
