@@ -12,8 +12,12 @@ from cognitrix.mcp.client import get_dynamic_client
 from cognitrix.models import Agent, MCPTool, Message, Tool
 from cognitrix.providers.base import LLM
 from cognitrix.tools.base import ToolManager
+from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
 from cognitrix.utils import extract_json
 from cognitrix.utils.llm_response import LLMResponse
+from cognitrix.utils.retry import with_retry, RETRY_CONFIGS
+from cognitrix.safety.destructive_ops import DestructiveOpDetector
+from cognitrix.safety.approval_gate import ApprovalGate, ToolCall
 
 if TYPE_CHECKING:
     from cognitrix.sessions.base import Session
@@ -30,6 +34,9 @@ class MessagePriority(Enum):
 
 class AgentManager:
     """Handles the business logic for agents."""
+
+    detector = DestructiveOpDetector()
+    approval_gate = ApprovalGate()
 
     def __init__(self, agent: Agent):
         self.agent = agent
@@ -165,33 +172,83 @@ class AgentManager:
     def get_tool_by_name(self, name: str) -> Tool | None:
         return next((tool for tool in self.agent.tools if tool.name.lower() == name.lower()), None)
 
-    async def call_tools(self, tool_calls: dict[str, Any] | list[dict[str, Any]]) -> dict[str, Any] | str:
+    async def call_tools(
+        self, 
+        tool_calls: dict[str, Any] | list[dict[str, Any]]
+    ) -> dict[str, Any] | str:
+        """Execute tool calls with safety checks and retry logic."""
         try:
             if tool_calls:
                 agent_tool_calls = tool_calls if isinstance(tool_calls, list) else [tool_calls]
+                
+                # Create resilient tool manager
+                resilient_manager = ResilientToolManager(llm=self.agent.llm)
+                
                 tasks = []
-
                 for t in agent_tool_calls:
                     tool = ToolManager.get_by_name(t['name'])
 
                     if not tool:
                         raise Exception(f"Tool '{t['name']}' not found")
 
+                    # Safety check
+                    tool_call = ToolCall(tool_name=tool.name, params=t['arguments'])
+                    risk = self.detector.analyze(tool.name, t['arguments'])
+                    
+                    if risk.risk_level.value in ['medium', 'high']:
+                        print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
+                        print(f"   Details: {risk.details}")
+                        
+                        approval = await self.approval_gate.check_approval(
+                            tool_call=tool_call,
+                            risk=risk,
+                            interface='cli'
+                        )
+                        
+                        if not approval.approved:
+                            return {
+                                'type': 'tool_calls_result',
+                                'result': [f"Operation blocked: User denied approval for {tool.name}"]
+                            }
+                        
+                        if approval.cached:
+                            print("   (Using cached approval)")
+
                     print(f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}")
+                    
+                    # Add parent reference for sub-agent tools
                     if 'sub agent' in tool.name.lower() or tool.name.lower() == 'create sub agent' or tool.category == 'mcp':
                         t['arguments']['parent'] = self.agent
 
-                    tasks.append(asyncio.create_task(tool.run(**t['arguments'])))
+                    # Execute with retry
+                    tasks.append(
+                        resilient_manager.run_tool(
+                            tool=tool,
+                            params=t['arguments'],
+                            max_retries=3,
+                            attempt_recovery=True
+                        )
+                    )
 
-                tool_calls_result = await asyncio.gather(*tasks)
+                tool_results = await asyncio.gather(*tasks)
+                
+                # Convert ToolResults to expected format
+                results = []
+                for result in tool_results:
+                    if result.success:
+                        results.append(result.data)
+                    else:
+                        results.append(f"Error: {result.error} (attempted {result.attempts} times)")
 
                 return {
                     'type': 'tool_calls_result',
-                    'result': tool_calls_result
+                    'result': results
                 }
+                
         except Exception as e:
-            print(e)
+            print(f"Tool execution error: {e}")
             return str(e)
+        
         return ''
 
     def add_tool(self, tool: Tool):

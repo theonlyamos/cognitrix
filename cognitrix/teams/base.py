@@ -7,6 +7,8 @@ from rich import print
 
 from cognitrix.agents.base import Agent, Message, MessagePriority
 from cognitrix.tasks.base import Task, TaskStatus
+from cognitrix.teams.workflow_executor import WorkflowExecutor
+from cognitrix.planning.structured_planner import StructuredPlanner
 
 if TYPE_CHECKING:
     from cognitrix.sessions.base import Session
@@ -230,87 +232,45 @@ class TeamManager:
 
     @staticmethod
     async def leader_create_workflow(team: Team, task: Task, session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> list[dict[str, Any]]:
-        """Have the team leader create a workflow for the task"""
-        response = ''
-        workflow = []
-
-        async def parse_agent_response(data: dict[str, Any]):
-            nonlocal response
-
-            if not await team.leader:
-                raise ValueError("No team leader assigned to create the workflow.")
-
-            response = response + data['content']
-
-            if websocket_manager:
-                leader = await team.leader
-                if leader:
-                    await websocket_manager.send_team_message(leader.name, "system", data['content'])
-
-        if not await team.leader:
-            raise ValueError("No team leader assigned to create the workflow.")
-
-        leader = await team.leader # Fetch leader once
-        agents_list = await team.agents # Fetch agents list once
-        leader_id = leader.id if leader else None # Safely get leader ID
-        member_names = [agent.name for agent in agents_list if agent.id != leader_id] # Create a list
-
-        prompt = (
-            f"Task: {task.title}\nDescription: {task.description}\n"
-            f"Team members: {', '.join(member_names)}\n" # Join the list of names
-            "All team members are AI agents. Factor this into your decision when giving time estimates.\n\n"
-            "Create a detailed workflow for this task. For each step, provide the following information in a structured format:\n"
-            "1. Step number and title\n"
-            "2. Responsibilities (one per line, format: 'Agent Name: Specific task')\n"
-            "3. Estimated time\n\n"
-            "Use the following format for each step:\n"
-            "Step X: [Step Title]\n"
-            "Responsibilities:\n"
-            "- [Agent Name]: [Specific task]\n"
-            "- [Agent Name]: [Specific task]\n"
-            "Estimated Time: [Duration]\n\n"
-            "Repeat this structure for each step in the workflow."
-            "Do not forget to include 'Responsibilities:' right before the responsibilities.\n"
-            "Your response should not be in json format and should not contain any decorators."
+        """Generate structured workflow using planner."""
+        leader = await team.leader
+        if not leader:
+            raise ValueError("No team leader assigned")
+        
+        # Create planner with leader's LLM
+        planner = StructuredPlanner(leader.llm)
+        
+        # Get available agents and tools
+        agents = await team.agents
+        all_tools = []
+        for agent in agents:
+            all_tools.extend(agent.tools)
+        
+        # Generate plan
+        plan = await planner.create_plan(
+            task=task.description,
+            available_agents=agents,
+            available_tools=list({t.name: t for t in all_tools}.values())  # Deduplicate
         )
-
-        await session(prompt, await team.leader, 'task', True, parse_agent_response, {'type': 'start_task', 'action': 'create_workflow'})
-
-        if response:
-            steps = response.split('\n\n')
-            for step in steps: # type: ignore
-                if step.strip().startswith("Step"):
-                    lines = step.strip().split('\n')
-                    current_step = {
-                        "step": lines[0].strip(),
-                        "responsibilities": [],
-                        "estimated_time": ""
-                    }
-
-                    for line in lines[1:]:
-                        if line.startswith("Responsibilities:"):
-                            continue
-                        elif line.startswith("- "):
-                            agent, task_str = line[2:].split(": ")
-                            current_step["responsibilities"].append({
-                                "agent": agent.strip(),
-                                "task": task_str.strip()
-                            })
-                        elif line.startswith("Estimated Time:"):
-                            current_step["estimated_time"] = line.split(": ", 1)[1].strip()
-
-                    workflow.append(current_step)
-
-        if not workflow:
-            raise ValueError("Failed to create workflow. Leader response was empty or malformed.")
-
+        
+        # Convert to workflow format expected by executor
+        workflow = []
+        for step in plan.steps:
+            workflow.append({
+                'step_number': step.step_number,
+                'title': step.title,
+                'description': step.description,
+                'assigned_agent': step.assigned_agent,
+                'dependencies': step.dependencies
+            })
+        
         return workflow
 
     @staticmethod
     async def leader_coordinate_workflow(team: Team, task: Task, workflow: list[dict[str, Any]], session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> str:
-        """Have the team leader coordinate the workflow execution"""
-        # Implementation would go here - simplified for now
-        return "Workflow coordinated successfully"
+        """Execute workflow using WorkflowExecutor."""
+        executor = WorkflowExecutor(max_parallel=3)
+        return await executor.execute(team, workflow, session)
 
     @staticmethod
     async def leader_evaluate_and_finalize(team: Team, task: Task, result: str, session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> str:

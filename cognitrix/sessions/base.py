@@ -180,6 +180,23 @@ class Session(Model):
             if save_history:
                 await self.save()
 
+            # Add to agent's memory
+            if save_history and hasattr(agent, 'context_manager'):
+                try:
+                    await agent.context_manager.add_to_memory({
+                        'role': 'user',
+                        'type': 'text',
+                        'content': message if isinstance(message, str) else str(message)
+                    })
+                    if response:
+                        await agent.context_manager.add_to_memory({
+                            'role': agent.name,
+                            'type': 'text',
+                            'content': response.llm_response
+                        })
+                except Exception as e:
+                    logger.error(f"Failed to add to memory: {e}")
+
         except Exception as e:
             logger.exception(e)
 
@@ -269,6 +286,23 @@ class SessionManager:
 
             if save_history:
                 await self.session.save()
+
+            # Add to agent's memory
+            if save_history and hasattr(agent, 'context_manager'):
+                try:
+                    await agent.context_manager.add_to_memory({
+                        'role': 'user',
+                        'type': 'text',
+                        'content': message if isinstance(message, str) else str(message)
+                    })
+                    if response:
+                        await agent.context_manager.add_to_memory({
+                            'role': agent.name,
+                            'type': 'text',
+                            'content': response.llm_response
+                        })
+                except Exception as e:
+                    logger.error(f"Failed to add to memory: {e}")
 
         except Exception as e:
             logger.exception(e)

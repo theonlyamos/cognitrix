@@ -16,6 +16,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger('cognitrix.log')
 
 
+def _get_default_context_manager():
+    """Factory function to create default context manager."""
+    from cognitrix.memory.hybrid_context import HybridContextManager
+    return HybridContextManager(agent_id="default")
+
+
 class MessagePriority(Enum):
     LOW = 1
     NORMAL = 2
@@ -54,8 +60,15 @@ class Agent(Model):
     tools: list[Tool] = Field(default=[])
     """List of tools to be use by the agent"""
 
-    context_manager: 'BaseContextManager' # type: ignore
+    context_manager: 'BaseContextManager' = Field(default_factory=_get_default_context_manager)
     """The context manager for the agent."""
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Initialize context manager with agent ID if not provided
+        if isinstance(self.context_manager, str) or self.context_manager is None:
+            from cognitrix.memory.hybrid_context import HybridContextManager
+            self.context_manager = HybridContextManager(agent_id=self.id)
 
     system_prompt: str
     """Agent's prompt template"""
