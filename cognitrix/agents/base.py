@@ -389,3 +389,10 @@ setattr(Agent, 'process_prompt', lambda self, query, role='User': AgentManager(s
 setattr(Agent, 'create_agent', staticmethod(AgentManager.create_agent))  # type: ignore[attr-defined]
 setattr(Agent, 'list_agents', staticmethod(AgentManager.list_agents))  # type: ignore[attr-defined]
 setattr(Agent, 'load_agent', staticmethod(AgentManager.load_agent))  # type: ignore[attr-defined]
+
+# Add formatted_system_prompt to Agent model (delegates to manager)
+# This is a regular method that calls the manager's method
+def _formatted_system_prompt(self):
+    return AgentManager(self).formatted_system_prompt()
+
+setattr(Agent, 'formatted_system_prompt', _formatted_system_prompt)
