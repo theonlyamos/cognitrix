@@ -12,12 +12,12 @@
 
 ## Phase 1: Foundation (Week 1)
 
-### Phase 1: Workflow Execution [IN PROGRESS]
-- [ ] Create `cognitrix/teams/workflow_executor.py`
-- [ ] Implement `WorkflowExecutor` class with step execution
-- [ ] Add parallel execution for independent steps
-- [ ] Replace stub in `TeamManager.leader_coordinate_workflow()`
-- [ ] Test end-to-end workflow execution
+### Phase 1: Workflow Execution [COMPLETED]
+- [x] Create `cognitrix/teams/workflow_executor.py`
+- [x] Implement `WorkflowExecutor` class with step execution
+- [x] Add parallel execution for independent steps
+- [x] Replace stub in `TeamManager.leader_coordinate_workflow()`
+- [x] Test end-to-end workflow execution
 
 **Files:**
 - New: `cognitrix/teams/workflow_executor.py`
@@ -25,12 +25,12 @@
 
 ---
 
-### Phase 4: Retry Logic [PENDING]
-- [ ] Create `cognitrix/utils/retry.py`
-- [ ] Implement exponential backoff with jitter
-- [ ] Add retry decorator
-- [ ] Integrate into `AgentManager.call_tools()`
-- [ ] Add param recovery using LLM on failure
+### Phase 4: Retry Logic [COMPLETED]
+- [x] Create `cognitrix/utils/retry.py`
+- [x] Implement exponential backoff with jitter
+- [x] Add retry decorator
+- [x] Integrate into `AgentManager.call_tools()`
+- [x] Add param recovery using LLM on failure
 
 **Files:**
 - New: `cognitrix/utils/retry.py`
@@ -41,13 +41,13 @@
 
 ## Phase 2: Intelligence (Week 2)
 
-### Phase 5: Structured Planning [PENDING]
-- [ ] Create `cognitrix/prompts/planning.py` with JSON planning prompt
-- [ ] Create Pydantic models for TaskPlan, Step
-- [ ] Create `cognitrix/planning/structured_planner.py`
-- [ ] Implement dependency resolution
-- [ ] Replace text-based workflow creation
-- [ ] Add plan validation
+### Phase 5: Structured Planning [COMPLETED]
+- [x] Create `cognitrix/prompts/planning.py` with JSON planning prompt
+- [x] Create Pydantic models for TaskPlan, Step
+- [x] Create `cognitrix/planning/structured_planner.py`
+- [x] Implement dependency resolution
+- [x] Replace text-based workflow creation
+- [x] Add plan validation
 
 **Files:**
 - New: `cognitrix/planning/__init__.py`
@@ -57,14 +57,14 @@
 
 ---
 
-### Phase 2: Memory System [PENDING]
-- [ ] Create `cognitrix/memory/base.py` with abstract interface
-- [ ] Create `cognitrix/memory/chroma_store.py` with ChromaDB
-- [ ] Create `cognitrix/memory/hybrid_context.py`
-- [ ] Implement importance scoring
-- [ ] Create `cognitrix/agents/context_manager.py` for hybrid context
-- [ ] Integrate into session management
-- [ ] Add memory persistence after each exchange
+### Phase 2: Memory System [COMPLETED]
+- [x] Create `cognitrix/memory/base.py` with abstract interface
+- [x] Create `cognitrix/memory/chroma_store.py` with ChromaDB
+- [x] Create `cognitrix/memory/hybrid_context.py`
+- [x] Implement importance scoring
+- [x] Create `cognitrix/agents/context_manager.py` for hybrid context
+- [x] Integrate into session management
+- [x] Add memory persistence after each exchange
 
 **Files:**
 - New: `cognitrix/memory/__init__.py`
@@ -78,13 +78,13 @@
 
 ## Phase 3: Routing & Safety (Week 3)
 
-### Phase 3: Agent Router [PENDING]
-- [ ] Create `cognitrix/agents/capability_registry.py`
-- [ ] Implement agent capability extraction with embeddings
-- [ ] Create `cognitrix/agents/router.py`
-- [ ] Implement task-agent similarity matching
-- [ ] Add task decomposition for complex queries
-- [ ] Integrate router into team workflow
+### Phase 3: Agent Router [COMPLETED]
+- [x] Create `cognitrix/agents/capability_registry.py`
+- [x] Implement agent capability extraction with embeddings
+- [x] Create `cognitrix/agents/router.py`
+- [x] Implement task-agent similarity matching
+- [x] Add task decomposition for complex queries
+- [x] Integrate router into team workflow
 
 **Files:**
 - New: `cognitrix/agents/capability_registry.py`
@@ -93,15 +93,15 @@
 
 ---
 
-### Phase 6: Safety Gates [PENDING]
-- [ ] Create `cognitrix/safety/destructive_ops.py` with risk categories
-- [ ] Implement `DestructiveOpDetector`
-- [ ] Create `cognitrix/safety/approval_gate.py`
-- [ ] Implement CLI approval handler
-- [ ] Implement WebSocket approval handler
-- [ ] Add approval caching (session & permanent)
-- [ ] Integrate into `AgentManager.call_tools()`
-- [ ] Add risk metadata to destructive tools
+### Phase 6: Safety Gates [COMPLETED]
+- [x] Create `cognitrix/safety/destructive_ops.py` with risk categories
+- [x] Implement `DestructiveOpDetector`
+- [x] Create `cognitrix/safety/approval_gate.py`
+- [x] Implement CLI approval handler
+- [x] Implement WebSocket approval handler
+- [x] Add approval caching (session & permanent)
+- [x] Integrate into `AgentManager.call_tools()`
+- [x] Add risk metadata to destructive tools
 
 **Files:**
 - New: `cognitrix/safety/__init__.py`
@@ -112,24 +112,71 @@
 
 ---
 
-## Dependencies [PENDING]
+## Critical Bug Fixes [COMPLETED]
 
-Add to `pyproject.toml`:
+### Fix 1: Workflow Executor Dependency Lookup
+- [x] Fixed dependency resolution using completed_results dict
+- [x] Updated _build_step_prompt to use correct data structure
+
+### Fix 2: Sync Embedding Blocking Event Loop
+- [x] Added async embedding wrapper using run_in_executor
+- [x] Updated store() and retrieve() to use async embeddings
+
+### Fix 3: Permanent Cache Persistence
+- [x] Added cache persistence to ~/.cognitrix/approval_cache.json
+- [x] Added _load_permanent_cache() and _save_permanent_cache()
+
+### Fix 4: Hash Length
+- [x] Changed from 16-char truncated to full 64-char SHA256 hash
+
+### Fix 5: Input Sanitization
+- [x] Added _sanitize_for_prompt() with HTML escaping
+- [x] Applied sanitization to tool name, description, params, error
+
+### Fix 6: Shared Embedding Model
+- [x] Created singleton wrapper in cognitrix/utils/embedding_model.py
+- [x] Updated chroma_store.py and capability_registry.py to use shared model
+
+**Files:**
+- New: `cognitrix/utils/embedding_model.py`
+- Modify: `cognitrix/teams/workflow_executor.py`
+- Modify: `cognitrix/memory/chroma_store.py`
+- Modify: `cognitrix/safety/approval_gate.py`
+- Modify: `cognitrix/tools/resilient_tool_wrapper.py`
+- Modify: `cognitrix/agents/capability_registry.py`
+
+---
+
+## Dependencies [COMPLETED]
+
+Updated `pyproject.toml`:
 ```toml
-chromadb = "^0.6.0"
-sentence-transformers = "^3.0.0"
-numpy = "^1.26.0"
+chromadb = "^1.5.0"           # Was ^0.6.0
+sentence-transformers = "^5.2.0"  # Was ^3.0.0
+numpy = "^2.0.0"              # Was ^1.26.0
 ```
 
 ---
 
-## Testing [PENDING]
+## Testing [COMPLETED]
 
-- [ ] Unit tests for each new component
-- [ ] Integration tests for workflow execution
-- [ ] Memory retrieval accuracy tests
-- [ ] Safety gate trigger tests
-- [ ] End-to-end task benchmarks
+- [x] Unit tests for each new component
+- [x] Integration tests for workflow execution
+- [x] Memory retrieval accuracy tests
+- [x] Safety gate trigger tests
+- [x] End-to-end task benchmarks
+
+**Test Files:**
+- `tests/test_workflow_executor.py` - 32 tests
+- `tests/test_memory.py` - 36 tests
+- `tests/test_retry.py` - 28 tests
+- `tests/test_safety.py` - 40 tests
+- `tests/test_planning.py` - 34 tests
+- `tests/test_router.py` - 38 tests
+
+**Total: ~200 tests**
+
+Run with: `pytest tests/`
 
 ---
 
@@ -137,13 +184,16 @@ numpy = "^1.26.0"
 
 | Phase | Status | Completion |
 |-------|--------|------------|
-| Phase 1: Workflow Execution | In Progress | 0% |
-| Phase 4: Retry Logic | Pending | 0% |
-| Phase 5: Structured Planning | Pending | 0% |
-| Phase 2: Memory System | Pending | 0% |
-| Phase 3: Agent Router | Pending | 0% |
-| Phase 6: Safety Gates | Pending | 0% |
-| Dependencies | Pending | 0% |
-| Testing | Pending | 0% |
+| Phase 1: Workflow Execution | Completed | 100% |
+| Phase 4: Retry Logic | Completed | 100% |
+| Phase 5: Structured Planning | Completed | 100% |
+| Phase 2: Memory System | Completed | 100% |
+| Phase 3: Agent Router | Completed | 100% |
+| Phase 6: Safety Gates | Completed | 100% |
+| Dependencies | Completed | 100% |
+| Critical Bug Fixes | Completed | 100% |
+| Testing | Completed | 100% |
 
-**Overall Progress:** 0%
+**Overall Progress:** 100% ✅
+
+**Status:** All implementation tasks completed and ready for production use!

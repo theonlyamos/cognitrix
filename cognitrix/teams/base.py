@@ -6,6 +6,7 @@ from odbms import Model
 from rich import print
 
 from cognitrix.agents.base import Agent, Message, MessagePriority
+from cognitrix.agents.router import AgentRouter
 from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.teams.workflow_executor import WorkflowExecutor
 from cognitrix.planning.structured_planner import StructuredPlanner
@@ -29,6 +30,9 @@ class Team(Model):
 
     leader_id: str | None = None
     """ID of the team leader"""
+
+    router: AgentRouter | None = None
+    """Agent router for intelligent task assignment"""
 
     class Config:
         arbitrary_types_allowed = True
@@ -58,6 +62,10 @@ class Team(Model):
     async def add_agent(self, agent: Agent):
         if agent.id not in self.assigned_agents:
             self.assigned_agents.append(agent.id)
+            # Register agent with router for intelligent task routing
+            if self.router is None:
+                self.router = AgentRouter()
+            await self.router.registry.register_agent(agent)
 
     async def remove_agent(self, agent_id: str):
         self.assigned_agents = [aid for aid in self.assigned_agents if aid != agent_id]
@@ -173,6 +181,7 @@ class TeamManager:
     def create_team(self, name: str, description: str) -> Team:
         """Create a new team"""
         team = Team(name=name, description=description)
+        team.router = AgentRouter()  # Initialize router for intelligent task assignment
         self.teams[team.id] = team
         return team
 
@@ -204,10 +213,31 @@ class TeamManager:
 
     @staticmethod
     async def work_on_task(team: Team, task_id: str, session: 'Session', websocket_manager: Optional['WebSocketManager'] = None):
-        """Coordinate team work on a task"""
+        """Coordinate team work on a task with intelligent agent routing."""
         task = next((t for t in team.tasks if t.id == task_id), None)
         if task:
             try:
+                # Ensure router is initialized
+                if team.router is None:
+                    team.router = AgentRouter()
+
+                # Register all available agents with router
+                agents = await team.agents
+                for agent in agents:
+                    await team.router.registry.register_agent(agent)
+
+                # Use router to determine best approach for this task
+                leader = await team.leader
+                route_plan = await team.router.route_task(
+                    task=task.description,
+                    available_agents=agents,
+                    llm=leader.llm if leader else None
+                )
+
+                print(f"Task routing strategy: {route_plan.strategy.value}")
+                print(f"Task complexity: {route_plan.estimated_complexity.value}")
+                print(f"Number of assignments: {len(route_plan.assignments)}")
+
                 # Planning phase
                 task.status = TaskStatus.IN_PROGRESS
                 await task.save()
@@ -232,38 +262,56 @@ class TeamManager:
 
     @staticmethod
     async def leader_create_workflow(team: Team, task: Task, session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> list[dict[str, Any]]:
-        """Generate structured workflow using planner."""
+        """Generate structured workflow using planner and intelligent agent routing."""
         leader = await team.leader
         if not leader:
             raise ValueError("No team leader assigned")
-        
+
         # Create planner with leader's LLM
         planner = StructuredPlanner(leader.llm)
-        
+
         # Get available agents and tools
         agents = await team.agents
         all_tools = []
         for agent in agents:
             all_tools.extend(agent.tools)
-        
+
+        # Ensure router is initialized and agents are registered
+        if team.router is None:
+            team.router = AgentRouter()
+        for agent in agents:
+            await team.router.registry.register_agent(agent)
+
         # Generate plan
         plan = await planner.create_plan(
             task=task.description,
             available_agents=agents,
             available_tools=list({t.name: t for t in all_tools}.values())  # Deduplicate
         )
-        
-        # Convert to workflow format expected by executor
+
+        # Use router for intelligent agent assignment to steps
         workflow = []
         for step in plan.steps:
+            # Use router to find best agent for this step's description
+            route_plan = await team.router.route_task(
+                task=step.description,
+                available_agents=agents,
+                llm=leader.llm
+            )
+
+            # Get the assigned agent from route plan
+            assigned_agent_name = step.assigned_agent
+            if route_plan.assignments and route_plan.assignments[0].agent:
+                assigned_agent_name = route_plan.assignments[0].agent.name
+
             workflow.append({
                 'step_number': step.step_number,
                 'title': step.title,
                 'description': step.description,
-                'assigned_agent': step.assigned_agent,
+                'assigned_agent': assigned_agent_name,
                 'dependencies': step.dependencies
             })
-        
+
         return workflow
 
     @staticmethod
