@@ -61,7 +61,10 @@ class ImportanceScorer:
         return min(score, self.max_importance)
 
 
-class HybridContextManager:
+from cognitrix.sessions.context import BaseContextManager
+
+
+class HybridContextManager(BaseContextManager):
     """
     Combines sliding window short-term memory with vector long-term memory.
 

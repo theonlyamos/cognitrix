@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Callable
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Self
+from typing import Any, Self
 
 from fastapi import WebSocket
 from odbms import Model
@@ -9,9 +9,7 @@ from pydantic import Field
 
 from cognitrix.models.tool import Tool
 from cognitrix.providers.base import LLM
-
-if TYPE_CHECKING:
-    from cognitrix.sessions.context import BaseContextManager
+from cognitrix.sessions.context import BaseContextManager
 
 logger = logging.getLogger('cognitrix.log')
 
