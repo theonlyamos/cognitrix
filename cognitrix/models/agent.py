@@ -58,15 +58,21 @@ class Agent(Model):
     tools: list[Tool] = Field(default=[])
     """List of tools to be use by the agent"""
 
-    context_manager: 'BaseContextManager' = Field(default_factory=_get_default_context_manager)
-    """The context manager for the agent."""
+    _context_manager: Any = None
+    """Transient storage for context manager (not persisted to DB)"""
 
-    def __init__(self, **data):
-        super().__init__(**data)
-        # Initialize context manager with agent ID if not provided
-        if isinstance(self.context_manager, str) or self.context_manager is None:
+    @property
+    def context_manager(self) -> 'BaseContextManager':
+        """Get context manager, creating if needed."""
+        if self._context_manager is None:
             from cognitrix.memory.hybrid_context import HybridContextManager
-            self.context_manager = HybridContextManager(agent_id=self.id)
+            self._context_manager = HybridContextManager(agent_id=str(self.id) if self.id else "default")
+        return self._context_manager
+
+    @context_manager.setter
+    def context_manager(self, value: 'BaseContextManager'):
+        """Set context manager."""
+        self._context_manager = value
 
     system_prompt: str
     """Agent's prompt template"""
