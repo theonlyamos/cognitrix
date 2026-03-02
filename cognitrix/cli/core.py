@@ -79,6 +79,10 @@ async def start(args: Namespace):
             provider = LLM.load_llm(args.provider)
             if provider:
                 provider.provider = args.provider
+                if args.api_key:
+                    provider.api_key = args.api_key
+                if args.api_base:
+                    provider.base_url = args.api_base
                 assistant.llm = provider
 
         if args.model and (assistant.llm.model.lower() != args.model.lower()):
