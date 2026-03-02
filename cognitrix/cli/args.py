@@ -33,7 +33,7 @@ def get_arguments():
 
     # Main arguments
     parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
-    parser.add_argument('--provider', default='groq', help='Set llm provider to use')
+    parser.add_argument('--provider', default='openrouter', help='Set llm provider to use')
     parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--tasks', action='store_true', help='List all saved tasks')
@@ -42,7 +42,7 @@ def get_arguments():
     parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
     parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')],
                        default='all', help='Add tools by categories to agent')
-    parser.add_argument('--model', type=str, default='', help='Specify model or model_url to use')
+    parser.add_argument('--model', type=str, default='z-ai/glm-4.5-air:free', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
     parser.add_argument('--api-base', type=str, default='',
                        help='Set api base of selected llm. Set if using local llm.')

@@ -29,13 +29,13 @@ class OpenRouter(LLM):
         - Automatic provider fallback
 
     Args:
-        model: The name of the model to use (default: meta-llama/llama-3.1-8b-instruct)
+        model: The name of the model to use (default: z-ai/glm-4.5-air:free)
         temperature: The temperature to use when generating text.
         api_key: Your OpenRouter API key.
         referer: Your website URL (required for OpenRouter tracking)
         title: Your application name (optional, for OpenRouter tracking)
     """
-    model: str = 'meta-llama/llama-3.1-8b-instruct'
+    model: str = 'z-ai/glm-4.5-air:free'
     """model endpoint to use"""
 
     temperature: float = 0.7
