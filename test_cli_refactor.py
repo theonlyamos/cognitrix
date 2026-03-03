@@ -20,6 +20,7 @@ def test_modular_imports():
 
         # Test UI imports
         from cognitrix.cli.ui import start_web_ui
+        from cognitrix.cli.tui import CognitrixApp
 
         # Test utils imports
         from cognitrix.cli.utils import print_table, str_or_file

@@ -37,7 +37,7 @@ def get_arguments():
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--tasks', action='store_true', help='List all saved tasks')
     parser.add_argument('--teams', action='store_true', help='List all saved teams')
-    parser.add_argument('--ui', default='cli', help='Determine preferred user interface')
+    parser.add_argument('--ui', default='tui', help='Determine preferred user interface')
     parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
     parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')],
                        default='all', help='Add tools by categories to agent')

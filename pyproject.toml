@@ -68,11 +68,12 @@ python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 bcrypt = "^4.3.0"
 
 # Utilities
-rich = "^13.7.1"
+rich = ">=13.7.1"
 celery = {extras = ["redis"], version = "^5.4.0"}
 
 # MCP (Model Context Protocol)
 mcp = {extras = ["cli"], version = "^1.9.1"}
+textual = "^8.0.1"
 
 [build-system]
 requires = ["poetry-core"]

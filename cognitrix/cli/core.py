@@ -18,6 +18,7 @@ from cognitrix.tools.base import ToolManager
 from .handlers import list_agents, list_sessions, list_tasks, list_teams
 from .shell import initialize_shell
 from .ui import start_web_ui
+from .tui import CognitrixApp
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -142,8 +143,12 @@ async def start(args: Namespace):
         elif args.ui.lower() == 'web':
             # Web UI mode
             await start_web_ui(assistant)
+        elif args.ui.lower() in ['tui', 'cli']:
+            # CLI mode has been replaced with the new beautiful Textual TUI
+            app = CognitrixApp(agent=assistant, session=session)
+            await app.run_async()
         else:
-            # Interactive CLI mode
+            # Fallback legacy interactive CLI mode
             await initialize_shell(session, assistant, stream=args.stream)
 
     except KeyboardInterrupt:
