@@ -160,16 +160,16 @@ class LLMManager:
             f_tool = {
                 "type": "function",
                 "function": {
-                    "name": tool['name'].replace(' ', '_'),
-                    "description": tool['description'][:1024],
+                    "name": tool['function']['name'].replace(' ', '_'),
+                    "description": tool['function']['description'][:1024],
                     "parameters": {
                         "type": "object",
                         "properties": {},
-                        "required": tool['required'],
+                        "required": tool['function']['parameters']['required'],
                     },
                 },
             }
-            for key, value in tool['parameters'].items():
+            for key, value in tool['function']['parameters']['properties'].items():
                 f_tool['function']['parameters']['properties'][key] = {'type': value}
 
             formatted_tools.append(f_tool)
