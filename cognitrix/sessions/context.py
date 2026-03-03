@@ -9,7 +9,7 @@ class BaseContextManager(ABC):
     """Abstract base class for context managers."""
 
     @abstractmethod
-    def build_prompt(self, agent: 'Agent', session: 'Session') -> list[dict[str, Any]]:
+    async def build_prompt(self, agent: 'Agent', session: 'Session') -> list[dict[str, Any]]:
         """
         Builds a context-aware prompt for the LLM.
 
@@ -29,7 +29,7 @@ class SlidingWindowContextManager(BaseContextManager):
     def __init__(self, max_messages: int = 10):
         self.max_messages = max_messages
 
-    def build_prompt(self, agent: 'Agent', session: 'Session') -> list[dict[str, Any]]:
+    async def build_prompt(self, agent: 'Agent', session: 'Session') -> list[dict[str, Any]]:
         """
         Builds a prompt using the system prompt and the last `max_messages` from the history.
         """

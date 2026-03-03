@@ -104,7 +104,17 @@ class HybridContextManager(BaseContextManager):
 
         logger.info(f"HybridContextManager initialized (lazy) for agent: {agent_id}")
 
-    def build_prompt(
+    @property
+    def long_term(self) -> ChromaMemoryStore:
+        """Lazy-initialize ChromaDB-backed long-term memory store."""
+        if self._chroma_store is None:
+            self._chroma_store = ChromaMemoryStore(
+                collection_name=self._chroma_config['collection_name'],
+                persist_directory=self._chroma_config.get('persist_directory')
+            )
+        return self._chroma_store
+
+    async def build_prompt(
         self,
         agent: 'Agent',
         session: 'Session'
@@ -129,7 +139,7 @@ class HybridContextManager(BaseContextManager):
 
             if query:
                 try:
-                    memories = self.long_term.retrieve(query, k=self.max_long_term)
+                    memories = await self.long_term.retrieve(query, k=self.max_long_term)
                     if memories:
                         memory_context = self._format_memories(memories)
                         system_content += f"\n\n## Relevant Past Context\n{memory_context}"
@@ -143,7 +153,7 @@ class HybridContextManager(BaseContextManager):
         })
 
         # 3. Add short-term conversation history
-        recent_messages = self.short_term.build_prompt(agent, session)
+        recent_messages = await self.short_term.build_prompt(agent, session)
         # Skip the system message from short_term (we built our own)
         prompt_parts.extend(recent_messages[1:])
 

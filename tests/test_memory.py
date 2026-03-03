@@ -318,20 +318,22 @@ class TestHybridContextManager:
         assert manager.importance_threshold == 0.7
         assert isinstance(manager.importance_scorer, ImportanceScorer)
     
-    def test_build_prompt_structure(self, hybrid_manager, mock_agent, mock_session):
+    @pytest.mark.asyncio
+    async def test_build_prompt_structure(self, hybrid_manager, mock_agent, mock_session):
         """Test that prompt is built with correct structure."""
         manager, _ = hybrid_manager
         
         with patch.object(manager.long_term, 'retrieve', new_callable=AsyncMock) as mock_retrieve:
             mock_retrieve.return_value = []
             
-            prompt = manager.build_prompt(mock_agent, mock_session)
+            prompt = await manager.build_prompt(mock_agent, mock_session)
         
         assert len(prompt) >= 1
         assert prompt[0]['role'] == 'system'
         assert 'System prompt for testing' in prompt[0]['content']
     
-    def test_build_prompt_with_memories(self, hybrid_manager, mock_agent, mock_session):
+    @pytest.mark.asyncio
+    async def test_build_prompt_with_memories(self, hybrid_manager, mock_agent, mock_session):
         """Test that long-term memories are included in prompt."""
         manager, _ = hybrid_manager
         
@@ -339,21 +341,10 @@ class TestHybridContextManager:
         mock_memory.content = "Relevant past information"
         mock_memory.timestamp = datetime.now()
         
-        # build_prompt might be async, handle both cases
-        import inspect
-        if inspect.iscoroutinefunction(manager.build_prompt):
-            import asyncio
-            async def test():
-                with patch.object(manager.long_term, 'retrieve', new_callable=AsyncMock) as mock_retrieve:
-                    mock_retrieve.return_value = [mock_memory]
-                    prompt = await manager.build_prompt(mock_agent, mock_session)
-                    assert len(prompt) >= 1
-            asyncio.run(test())
-        else:
-            with patch.object(manager.long_term, 'retrieve', new_callable=AsyncMock) as mock_retrieve:
-                mock_retrieve.return_value = [mock_memory]
-                prompt = manager.build_prompt(mock_agent, mock_session)
-                assert len(prompt) >= 1
+        with patch.object(manager.long_term, 'retrieve', new_callable=AsyncMock) as mock_retrieve:
+            mock_retrieve.return_value = [mock_memory]
+            prompt = await manager.build_prompt(mock_agent, mock_session)
+            assert len(prompt) >= 1
     
     @pytest.mark.asyncio
     async def test_add_to_memory_below_threshold(self, hybrid_manager):
