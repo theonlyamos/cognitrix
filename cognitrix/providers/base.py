@@ -340,17 +340,63 @@ class LLMManager:
         return None
 
     @staticmethod
+    def _parse_native_tool_calls(tool_calls: list[Any] | None) -> list[dict[str, Any]]:
+        """
+        Map OpenAI-style message.tool_calls to [{name, arguments}] for agent.call_tools.
+        arguments is parsed from JSON string to dict.
+        """
+        if not tool_calls:
+            return []
+        result: list[dict[str, Any]] = []
+        for tc in tool_calls:
+            fn = getattr(tc, 'function', None) or (tc.get('function') if isinstance(tc, dict) else None)
+            if not fn:
+                continue
+            name = getattr(fn, 'name', None) or (fn.get('name') if isinstance(fn, dict) else None)
+            args_raw = getattr(fn, 'arguments', None) or (fn.get('arguments') if isinstance(fn, dict) else None)
+            if not name:
+                continue
+            args: dict[str, Any] = {}
+            if args_raw:
+                try:
+                    args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
+                except json.JSONDecodeError:
+                    args = {}
+            result.append({'name': name, 'arguments': args})
+        return result
+
+    @staticmethod
     async def _handle_streaming_response(client: OpenAI, params: dict[str, Any]):
         try:
             stream = client.chat.completions.create(**params)
             response = LLMResponse()
             in_reasoning = False
+            # Accumulate partial tool calls by index for streaming
+            tool_call_accum: dict[int, dict[str, Any]] = {}
             for chunk in stream:
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
                 reasoning = LLMManager._get_reasoning_from_delta(delta)
                 content = delta.content if hasattr(delta, 'content') else None
+                # Accumulate delta.tool_calls
+                delta_tc = getattr(delta, 'tool_calls', None) or []
+                for dtc in delta_tc:
+                    idx = getattr(dtc, 'index', None)
+                    if idx is None and isinstance(dtc, dict):
+                        idx = dtc.get('index')
+                    if idx is None:
+                        continue
+                    if idx not in tool_call_accum:
+                        tool_call_accum[idx] = {'name': '', 'arguments': ''}
+                    fn = getattr(dtc, 'function', None) or (dtc.get('function') if isinstance(dtc, dict) else None)
+                    if fn:
+                        n = getattr(fn, 'name', None) or (fn.get('name') if isinstance(fn, dict) else None)
+                        a = getattr(fn, 'arguments', None) or (fn.get('arguments') if isinstance(fn, dict) else None)
+                        if n:
+                            tool_call_accum[idx]['name'] = (tool_call_accum[idx]['name'] or '') + (n or '')
+                        if a:
+                            tool_call_accum[idx]['arguments'] = (tool_call_accum[idx]['arguments'] or '') + (a or '')
                 if reasoning:
                     response.add_reasoning_chunk(reasoning)
                     if not in_reasoning:
@@ -367,9 +413,23 @@ class LLMManager:
                     response.add_chunk(content)
                     response.current_chunk = emit_chunk
                     yield response
+            # Finalize native tool calls from accumulated fragments
+            if tool_call_accum:
+                sorted_items = sorted(tool_call_accum.items())
+                parsed = []
+                for _idx, acc in sorted_items:
+                    name = (acc.get('name') or '').strip()
+                    args_raw = acc.get('arguments') or '{}'
+                    try:
+                        args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
+                    except json.JSONDecodeError:
+                        args = {}
+                    if name:
+                        parsed.append({'name': name, 'arguments': args})
+                response.tool_calls = parsed
             if in_reasoning:
                 response.current_chunk = '\n</think>\n'
-                yield response
+            yield response
         except Exception as e:
             logger.exception(f"Error in streaming response: {str(e)}")
             yield LLMResponse(llm_response=f"Streaming error: {str(e)}")
@@ -392,11 +452,14 @@ class LLMManager:
             msg = response.choices[0].message
             content = msg.content or ""
             reasoning = LLMManager._get_reasoning_from_message(msg)
+            native_tool_calls = LLMManager._parse_native_tool_calls(getattr(msg, 'tool_calls', None))
             if reasoning:
                 llm_resp = LLMResponse(llm_response=f'<think>{reasoning}</think>\n\n{content}')
                 llm_resp.reasoning = reasoning
             else:
                 llm_resp = LLMResponse(llm_response=content)
+            if native_tool_calls:
+                llm_resp.tool_calls = native_tool_calls
             return llm_resp
         except Exception as e:
             logger.exception(f"Error in non-streaming response: {str(e)}")

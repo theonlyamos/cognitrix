@@ -138,20 +138,29 @@ class AgentManager:
                 print("=======is sub agent===========")
                 print(processed_query)
 
-            if 'result' in processed_query.keys():
+            if processed_query.get('type') == 'tool_calls_result':
+                results = processed_query.get('result', [])
+                if isinstance(results, list):
+                    parts = [str(r) for r in results]
+                    prompt['content'] = '\n\n'.join(parts) if parts else ''
+                else:
+                    prompt['content'] = str(results)
+            elif 'result' in processed_query.keys():
                 result = processed_query['result']
                 if isinstance(result, list):
-                    if result[0] == 'image':
+                    if len(result) >= 2 and result[0] == 'image':
                         prompt['type'] = 'image'
                         prompt['content'] = result[1]
-                    elif result[0] == 'agent':
+                    elif len(result) >= 3 and result[0] == 'agent':
                         new_agent: Agent = result[1]
                         new_agent.parent_id = self.agent.id
                         self.add_sub_agent(new_agent) # type: ignore
 
                         prompt['content'] = result[2]
-                    else:
+                    elif len(result) >= 3:
                         prompt['content'] = result[2]
+                    else:
+                        prompt['content'] = '\n\n'.join(str(r) for r in result) if result else ''
                 else:
                     prompt['content'] = result
             else:
@@ -385,6 +394,14 @@ setattr(Agent, 'manager', property(_agent_manager))
 
 # Add process_prompt method to Agent model (delegates to manager)
 setattr(Agent, 'process_prompt', lambda self, query, role='User': AgentManager(self).process_prompt(query, role))  # type: ignore[attr-defined]
+
+
+async def _agent_call_tools(self, tool_calls):
+    """Delegate call_tools to AgentManager."""
+    return await AgentManager(self).call_tools(tool_calls)
+
+
+setattr(Agent, 'call_tools', _agent_call_tools)  # type: ignore[attr-defined]
 
 # Class-level convenience methods that delegate to AgentManager
 setattr(Agent, 'create_agent', staticmethod(AgentManager.create_agent))  # type: ignore[attr-defined]

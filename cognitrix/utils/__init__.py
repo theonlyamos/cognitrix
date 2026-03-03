@@ -18,19 +18,10 @@ Return the response in the following format only:
 "observation": "Observations made by the ai agent"
 "thought": "Thoughts of the ai agent on a task. Should include steps for completing the task.",
 "type": "result",
-"result": "
-}
-if it's the final anwers or
-{
-"observation": "Observations made by the ai agent"
-"thought": "Thoughts of the ai agent on a task. Should include steps for completing the task.",
-"type": "tool_calls",
-"tool_calls": [{
-"name": "<tool_name>",
-"arguments": {}
-}]
+"result": "<your final answer>"
 }
 
+Use the model's native tool-calling when you need to invoke tools; do not embed tool_calls in JSON.
 Do not include the json decorator in the response.
 """
 
@@ -40,18 +31,8 @@ xml_return_format: str = """
         [Multi-dimensional representations of the problem, each on a new line]
     </mindspace>
     <thought>[Step-by-step reasoning process, with each step on a new line]</thought>
-    <type>[Either "result" or "tool_calls"]</type>
+    <type>result</type>
     <result>[The result, if applicable]</result>
-    <tool_calls>
-        <tool>
-            <name>[Name of the tool to be called]</name>
-            <arguments>
-                <[argument_name]>[argument_value]</[argument_name]>
-                <!-- Repeat for each argument -->
-            </arguments>
-        </tool>
-        <!-- Repeat <tool> element for multiple tool calls -->
-    </tool_calls>
     <artifacts>
         <artifact>
             <identifier>[Unique identifier for the artifact]</identifier>

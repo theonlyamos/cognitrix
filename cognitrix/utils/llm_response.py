@@ -75,17 +75,14 @@ class LLMResponse(Model):
             return
         try:
             data = json.loads(self.llm_response)
-            # Map JSON fields to class attributes
+            # Map JSON fields to class attributes (tool_calls come from native provider, not content)
             for key, value in data.items():
-                # Support both 'tool_call' and 'tool_calls' for backward compatibility
-                if key == 'tool_call':
-                    self.tool_calls = value
-                else:
-                    setattr(self, key, value)
+                if key in ('tool_call', 'tool_calls'):
+                    continue  # Native tool calls only; do not overwrite from content
+                setattr(self, key, value)
             # For result, try to set from 'result', 'response', or fallback to 'llm_response'
             self.result = data.get('result') or data.get('response') or self.result
         except json.JSONDecodeError:
-            # logger.warning('Failed to parse LLM response as JSON. Returning raw response.')
             self.result = self.llm_response
         except Exception as e:
             logger.exception(e)
