@@ -19,8 +19,10 @@ class LLMResponse(Model):
 
     chunks: list[str] = []
     """List of chunks"""
+    reasoning_chunks: list[str] = []
+    """Reasoning/thinking chunks (streamed separately)"""
     current_chunk: str = ''
-    """Current chunk"""
+    """Current chunk (content or wrapped reasoning for display)"""
 
     result: str | None = None
     tool_calls: list[dict[str, Any]] = []
@@ -61,6 +63,11 @@ class LLMResponse(Model):
         self.current_chunk = chunk
         self.chunks.append(chunk)
         self.parse_llm_response()
+
+    def add_reasoning_chunk(self, chunk: str):
+        """Accumulate reasoning; caller sets current_chunk to incremental display."""
+        self.reasoning_chunks.append(chunk)
+        self.reasoning = (self.reasoning or '') + chunk
 
     def parse_llm_response(self):
         self.llm_response = ''.join(self.chunks)

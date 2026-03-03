@@ -126,20 +126,18 @@ class Session(Model):
                             if interface == 'cli':
                                 output(f"{response.current_chunk}", end="")
                             else:
-
                                 await output({'type': wsquery['type'], 'content': response.current_chunk, 'action': wsquery['action'], 'complete': False})
-
-                        if response.result:
-                            if not stream:
+                        else:
+                            if response.result:
                                 if interface == 'cli':
                                     output(f"\n{agent.name}:", response.result)
                                 else:
                                     await output({'type': wsquery['type'], 'content': response.result, 'action': wsquery['action'], 'complete': False})
-                        else:
-                            if interface == 'cli':
-                                output(f"\n{agent.name}:", response.llm_response)
                             else:
-                                await output({'type': wsquery['type'], 'content': response.llm_response, 'action': wsquery['action'], 'complete': False})
+                                if interface == 'cli':
+                                    output(f"\n{agent.name}:", response.llm_response)
+                                else:
+                                    await output({'type': wsquery['type'], 'content': response.llm_response, 'action': wsquery['action'], 'complete': False})
 
                         if response.tool_calls and not called_tools:
                             result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls)
@@ -164,7 +162,7 @@ class Session(Model):
 
                     if response and save_history:
                         response_dict = {
-                            'role': agent.name,
+                            'role': 'assistant',
                             'type': 'text',
                             'content': response.llm_response
                         }
@@ -190,7 +188,7 @@ class Session(Model):
                     })
                     if response:
                         await agent.context_manager.add_to_memory({
-                            'role': agent.name,
+                            'role': 'assistant',
                             'type': 'text',
                             'content': response.llm_response
                         })
@@ -247,12 +245,17 @@ class SessionManager:
                             output(f"{response.current_chunk}", end="")
                         else:
                             await output({'type': wsquery.get('type'), 'content': response.current_chunk, 'action': wsquery.get('action'), 'complete': False})
-
-                    if not stream and response.result:
-                        if interface == 'cli':
-                            output(f"\n{agent.name}:", response.result)
+                    else:
+                        if response.result:
+                            if interface == 'cli':
+                                output(f"\n{agent.name}:", response.result)
+                            else:
+                                await output({'type': wsquery.get('type'), 'content': response.result, 'action': wsquery.get('action'), 'complete': False})
                         else:
-                            await output({'type': wsquery.get('type'), 'content': response.result, 'action': wsquery.get('action'), 'complete': False})
+                            if interface == 'cli':
+                                output(f"\n{agent.name}:", response.llm_response)
+                            else:
+                                await output({'type': wsquery.get('type'), 'content': response.llm_response, 'action': wsquery.get('action'), 'complete': False})
 
                     if response.tool_calls and not called_tools:
                         result = await agent_manager.call_tools(response.tool_calls)
@@ -276,7 +279,7 @@ class SessionManager:
 
                 if response and save_history:
                     self.session.update_history({
-                        'role': agent.name,
+                        'role': 'assistant',
                         'type': 'text',
                         'content': response.llm_response
                     })
@@ -297,7 +300,7 @@ class SessionManager:
                     })
                     if response:
                         await agent.context_manager.add_to_memory({
-                            'role': agent.name,
+                            'role': 'assistant',
                             'type': 'text',
                             'content': response.llm_response
                         })

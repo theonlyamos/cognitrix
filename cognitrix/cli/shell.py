@@ -122,7 +122,12 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
 
     # History command
     if cmd == 'history':
-        console.print(Panel("\n".join(f"[bold cyan][{chat['role']}][/bold cyan]: [white]{chat['message']}[/white]" for chat in session.chat),
+        def _speaker(chat: dict) -> str:
+            role = (chat.get('role') or '').lower()
+            return agent.name if role == 'assistant' else 'User'
+        def _content(chat: dict) -> str:
+            return chat.get('content') or chat.get('message', '')
+        console.print(Panel("\n".join(f"[bold cyan][{_speaker(c)}][/bold cyan]: [white]{_content(c)}[/white]" for c in session.chat),
                            title="[bold magenta]💬 Chat History[/bold magenta]", border_style="magenta"))
         return True
 

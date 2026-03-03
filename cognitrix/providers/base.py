@@ -193,12 +193,21 @@ class LLMManager:
     """Manager for provider-agnostic LLM logic."""
 
     @staticmethod
+    def _normalize_role(role: str) -> str:
+        """Map role variants to canonical system/user/assistant for API compatibility."""
+        r = (role or '').strip().lower()
+        if r in ('system',):
+            return 'system'
+        if r in ('user',):
+            return 'user'
+        # Assistant, agent names, and any other non-user role -> assistant
+        return 'assistant'
+
+    @staticmethod
     def format_query(llm: LLM, messages: list[dict[str, Any]]) -> list:
         formatted_messages = []
         for fm in messages:
-            role = fm.get('role', 'user').lower()
-            if role not in ['system', 'user', 'assistant']:
-                role = 'user'
+            role = LLMManager._normalize_role(fm.get('role', 'user'))
             content = fm.get('content', '')
             msg_type = fm.get('type', 'text')
             if msg_type == 'text':
@@ -320,28 +329,74 @@ class LLMManager:
             return LLMResponse(llm_response=f"An unexpected error occurred: {str(e)}")
 
     @staticmethod
+    def _get_reasoning_from_delta(delta) -> str | None:
+        """Extract reasoning from delta (provider-agnostic)."""
+        if delta is None:
+            return None
+        for key in ('reasoning_content', 'reasoning', 'thinking'):
+            val = getattr(delta, key, None)
+            if val is not None and val != '':
+                return str(val)
+        return None
+
+    @staticmethod
     async def _handle_streaming_response(client: OpenAI, params: dict[str, Any]):
         try:
             stream = client.chat.completions.create(**params)
             response = LLMResponse()
+            in_reasoning = False
             for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content is not None:
-                    response.add_chunk(chunk.choices[0].delta.content)
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                reasoning = LLMManager._get_reasoning_from_delta(delta)
+                content = delta.content if hasattr(delta, 'content') else None
+                if reasoning:
+                    response.add_reasoning_chunk(reasoning)
+                    if not in_reasoning:
+                        response.current_chunk = '<think>' + reasoning
+                        in_reasoning = True
+                    else:
+                        response.current_chunk = reasoning
                     yield response
+                if content:
+                    emit_chunk = content
+                    if in_reasoning:
+                        emit_chunk = '\n</think>\n' + content
+                        in_reasoning = False
+                    response.add_chunk(content)
+                    response.current_chunk = emit_chunk
+                    yield response
+            if in_reasoning:
+                response.current_chunk = '\n</think>\n'
+                yield response
         except Exception as e:
             logger.exception(f"Error in streaming response: {str(e)}")
             yield LLMResponse(llm_response=f"Streaming error: {str(e)}")
 
     @staticmethod
+    def _get_reasoning_from_message(msg) -> str | None:
+        """Extract reasoning from message (provider-agnostic)."""
+        if msg is None:
+            return None
+        for key in ('reasoning_content', 'reasoning', 'thinking'):
+            val = getattr(msg, key, None)
+            if val is not None and val != '':
+                return str(val)
+        return None
+
+    @staticmethod
     async def _handle_non_streaming_response(client: OpenAI, params: dict[str, Any]):
         try:
             response = client.chat.completions.create(**params)
-            content = response.choices[0].message.content or ""
-            llm_resp = LLMResponse(llm_response=content)
-            if hasattr(response.choices[0].message, 'reasoning_content'):
-                reasoning = response.choices[0].message.reasoning_content
-                if reasoning:
-                    llm_resp.reasoning = reasoning
+            msg = response.choices[0].message
+            content = msg.content or ""
+            reasoning = LLMManager._get_reasoning_from_message(msg)
+            if reasoning:
+                llm_resp = LLMResponse(llm_response=f'<think>{reasoning}</think>\n\n{content}')
+                llm_resp.reasoning = reasoning
+            else:
+                llm_resp = LLMResponse(llm_response=content)
             return llm_resp
         except Exception as e:
             logger.exception(f"Error in non-streaming response: {str(e)}")
