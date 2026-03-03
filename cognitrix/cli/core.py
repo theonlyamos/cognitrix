@@ -4,6 +4,7 @@ Core CLI functionality and main startup logic.
 import logging
 import sys
 from argparse import Namespace
+from typing import Any
 
 from cognitrix.agents import Agent
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
@@ -14,7 +15,7 @@ from cognitrix.tasks.base import Task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import ToolManager
 
-from .handlers import list_agents, list_providers, list_sessions, list_tasks, list_teams
+from .handlers import list_agents, list_sessions, list_tasks, list_teams
 from .shell import initialize_shell
 from .ui import start_web_ui
 
@@ -41,10 +42,7 @@ async def start(args: Namespace):
 
     try:
         # Handle list commands
-        if args.providers:
-            list_providers()
-            sys.exit()
-        elif args.agents:
+        if args.agents:
             await list_agents()
             sys.exit()
         elif args.tasks:
@@ -74,19 +72,22 @@ async def start(args: Namespace):
         if not assistant:
             raise Exception("Agent not found or could not be created")
 
-        # Configure agent with provided options
+        # Configure agent with provided options (CLI overrides env)
         if args.provider:
-            provider = LLM.load_llm(args.provider)
+            overrides: dict[str, Any] = {'provider': args.provider}
+            if args.api_key:
+                overrides['api_key'] = args.api_key
+            if args.api_base:
+                overrides['base_url'] = args.api_base
+            if args.model:
+                overrides['model'] = args.model
+            if args.temperature is not None:
+                overrides['temperature'] = args.temperature
+            if getattr(args, 'max_tokens', 0) > 0:
+                overrides['max_tokens'] = args.max_tokens
+            provider = LLM.load_llm(overrides)
             if provider:
-                provider.provider = args.provider
-                if args.api_key:
-                    provider.api_key = args.api_key
-                if args.api_base:
-                    provider.base_url = args.api_base
                 assistant.llm = provider
-
-        if args.model and (assistant.llm.model.lower() != args.model.lower()):
-            assistant.llm.model = args.model
 
         # Load tools if specified
         if len(args.load_tools) and not len(assistant.tools):

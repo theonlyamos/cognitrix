@@ -55,6 +55,10 @@ class CognitrixSettings:
 
         # Monitoring and Analytics
         self.helicone_api_key = os.getenv('HELICONE_API_KEY', '')
+        self.helicone_base_url = os.getenv('HELICONE_BASE_URL', 'https://gateway.helicone.ai/v1')
+
+        # LLM provider config (AI_PROVIDER, OPENROUTER_*, OPENAI_*, etc.)
+        self.ai_provider = os.getenv('AI_PROVIDER', 'openrouter')
 
         # MCP Configuration
         self.mcp_config_file = self.workdir / 'mcp.json'
@@ -70,9 +74,10 @@ class CognitrixSettings:
     def get_api_key(self, provider: str) -> str:
         """Get API key for a specific provider"""
         key_mapping = {
-            'openai': self.openai_api_key,
+            'openai': self.openai_api_key or os.getenv('OPENAI_API_KEY', ''),
+            'openrouter': os.getenv('OPENROUTER_API_KEY', ''),
             'anthropic': self.anthropic_api_key,
-            'google': self.google_api_key,
+            'google': self.google_api_key or os.getenv('GOOGLE_API_KEY', ''),
             'groq': self.groq_api_key,
             'cohere': self.cohere_api_key,
             'together': self.together_api_key,

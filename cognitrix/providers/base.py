@@ -1,5 +1,13 @@
-import inspect
+"""
+Provider-agnostic OpenAI-compatible LLM layer.
+
+Runtime config (provider, base_url, api_key, model) from env or CLI.
+Groq and Ollama: direct. Others: route through Helicone.
+"""
+import hashlib
+import json
 import logging
+import os
 import uuid
 from typing import Any, TypeAlias
 
@@ -10,6 +18,9 @@ from pydantic import Field
 from cognitrix.utils import image_to_base64
 from cognitrix.utils.llm_response import LLMResponse
 
+# Cache OpenAI clients by effective config to avoid per-request overhead
+_client_cache: dict[str, OpenAI] = {}
+
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
     datefmt='%d-%b-%y %H:%M:%S',
@@ -17,241 +28,277 @@ logging.basicConfig(
 )
 logger = logging.getLogger('cognitrix.log')
 
+# Defaults for optional fields (overridable via CLI)
+DEFAULT_TEMPERATURE = 0.4
+DEFAULT_MAX_TOKENS = 8192
+
+# Well-known base URLs when env does not provide them
+_DEFAULT_BASE_URLS: dict[str, str] = {
+    'groq': 'https://api.groq.com/openai/v1',
+    'ollama': 'http://localhost:11434/v1',
+    'openrouter': 'https://openrouter.ai/api/v1',
+    'openai': 'https://api.openai.com/v1',
+}
+
+
+def _env_key(provider: str, suffix: str) -> str:
+    """Derive env key from provider: e.g. OPENROUTER_BASE_URL."""
+    return f"{provider.upper()}_{suffix}"
+
+
+def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    """
+    Resolve runtime config from env and overrides.
+    Provider name drives env keys: <PROVIDER>_BASE_URL, <PROVIDER>_API_KEY, <PROVIDER>_MODEL.
+    AI_PROVIDER used when provider not explicitly passed.
+    """
+    from cognitrix.config import settings
+
+    provider = str(provider).strip().lower()
+    overrides = overrides or {}
+
+    # Resolve provider: explicit or AI_PROVIDER
+    effective_provider = provider or os.getenv('AI_PROVIDER', 'openrouter').lower()
+
+    base_url = (
+        overrides.get('base_url')
+        or os.getenv(_env_key(effective_provider, 'BASE_URL'))
+        or _DEFAULT_BASE_URLS.get(effective_provider, '')
+    )
+    api_key = (
+        overrides.get('api_key')
+        or os.getenv(_env_key(effective_provider, 'API_KEY'))
+        or settings.get_api_key(effective_provider)
+        or ''
+    )
+    model = (
+        overrides.get('model')
+        or os.getenv(_env_key(effective_provider, 'MODEL'))
+        or ''
+    )
+    temperature = overrides.get('temperature')
+    if temperature is None:
+        temp_env = os.getenv(_env_key(effective_provider, 'TEMPERATURE'))
+        temperature = float(temp_env) if temp_env else DEFAULT_TEMPERATURE
+    max_tokens = overrides.get('max_tokens')
+    if max_tokens is None:
+        tok_env = os.getenv(_env_key(effective_provider, 'MAX_TOKENS'))
+        max_tokens = int(tok_env) if tok_env else DEFAULT_MAX_TOKENS
+
+    # Validate required fields with clear errors
+    if not base_url:
+        raise ValueError(
+            f"Missing base_url for provider '{effective_provider}'. "
+            f"Set {_env_key(effective_provider, 'BASE_URL')} or pass base_url."
+        )
+    if not api_key:
+        raise ValueError(
+            f"Missing api_key for provider '{effective_provider}'. "
+            f"Set {_env_key(effective_provider, 'API_KEY')} or pass api_key."
+        )
+    if not model:
+        raise ValueError(
+            f"Missing model for provider '{effective_provider}'. "
+            f"Set {_env_key(effective_provider, 'MODEL')} or pass model."
+        )
+
+    config: dict[str, Any] = {
+        'provider': effective_provider,
+        'base_url': base_url,
+        'api_key': api_key,
+        'model': model,
+        'temperature': temperature,
+        'max_tokens': max_tokens,
+    }
+    for k in ('extra_headers', 'extra_body', 'response_format'):
+        if k in overrides and overrides[k] is not None:
+            config[k] = overrides[k]
+    return config
+
+
+def _client_cache_key(base_url: str, api_key: str, headers: dict[str, str] | None) -> str:
+    """Stable cache key for OpenAI client config."""
+    payload = {'base_url': base_url, 'api_key': api_key, 'headers': headers or {}}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _get_or_create_client(
+    base_url: str, api_key: str, default_headers: dict[str, str] | None = None
+) -> OpenAI:
+    """Reuse OpenAI client per effective config."""
+    key = _client_cache_key(base_url, api_key, default_headers)
+    if key not in _client_cache:
+        kwargs: dict[str, Any] = {'api_key': api_key, 'base_url': base_url}
+        if default_headers:
+            kwargs['default_headers'] = default_headers
+        _client_cache[key] = OpenAI(**kwargs)
+    return _client_cache[key]
+
+
 class LLM(Model):
     """
-    A class for representing a large language model.
-
-    Args:
-        model (str): The name of the OpenAI model to use
-        temperature (float): The temperature to use when generating text
-        api_key (str): Your OpenAI API key
-        chat_history (list): Chat history
-        max_tokens (int): The maximum number of tokens to generate in the completion
-        supports_system_prompt (bool): Flag to indicate if system prompt should be supported
-        system_prompt (str): System prompt to prepend to queries
+    Provider-agnostic LLM backed by OpenAI-compatible API.
+    Config: provider, base_url, api_key, model (+ optional temperature, max_tokens).
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    """Unique identifier for the LLM provider"""
-
+    provider: str = Field(default='openrouter')
     model: str = Field(default='')
-    """model endpoint to use"""
-
-    temperature: float = Field(default=0.4)
-    """What sampling temperature to use."""
-
+    temperature: float = Field(default=DEFAULT_TEMPERATURE)
     api_key: str = Field(default='')
-    """API key"""
-
     base_url: str = ''
-    """Base url of local llm server"""
-
-    max_tokens: int = Field(default=512)
-    """The maximum number of tokens to generate in the completion."""
-
-    supports_system_prompt: bool = Field(default=False)
-    """Whether the model supports system prompts."""
-
-    is_multimodal: bool = Field(default=False)
-    """Whether the model is multimodal."""
-
-    provider: str = Field(default="openai")
-    """This is set to the name of the class"""
-
-    supports_tool_use: bool = True
-    """Whether the provider supports tool use"""
-
+    max_tokens: int = Field(default=DEFAULT_MAX_TOKENS)
+    is_multimodal: bool = Field(default=True)
+    supports_tool_use: bool = Field(default=True)
     client: Any = None
-    """The client object for the llm provider"""
+    extra_headers: dict[str, str] = Field(default_factory=dict)
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+    response_format: dict[str, Any] | None = None
 
-    def __init__(self, **data: Any):
+    def __init__(self, provider: str | None = None, **data: Any):
+        if provider is not None or any(k in data for k in ('base_url', 'api_key', 'model')):
+            overrides = {k: v for k, v in data.items() if v is not None and v != ''}
+            resolved = _resolve_runtime_config(provider or data.get('provider', 'openrouter'), overrides)
+            data = {**resolved, **overrides}
         super().__init__(**data)
-        if 'provider' not in data:
-            self.provider = self.__class__.__name__
+        if provider and 'provider' not in data:
+            self.provider = provider.lower()
 
     def format_query(self, messages: list[dict[str, Any]]) -> list:
-        """Delegate to LLMManager"""
         return LLMManager.format_query(self, messages)
 
     def format_tools(self, tools: list[dict[str, Any]]):
-        """Delegate to LLMManager"""
         return LLMManager.format_tools(tools)
 
     @staticmethod
-    def list_llms():
-        """Delegate to LLMManager"""
-        return LLMManager.list_llms()
-
-    @staticmethod
-    def load_llm(provider: str):
-        """Delegate to LLMManager"""
+    def load_llm(provider: str | dict[str, Any]) -> 'LLM | None':
         return LLMManager.load_llm(provider)
 
     def get_supported_models(self):
-        """Delegate to LLMManager"""
         return LLMManager.get_supported_models(self)
 
     async def __call__(self, prompt: list[dict[str, Any]], stream: bool = False, tools: Any = None, **kwds: Any):
-        """Delegate to LLMManager"""
         if tools is None:
             tools = []
         return await LLMManager.generate_response(self, prompt, stream, tools, **kwds)
 
+
 LLMList: TypeAlias = list[LLM]
 
+
 class LLMManager:
-    """Manager class for LLM-related business logic"""
+    """Manager for provider-agnostic LLM logic."""
 
     @staticmethod
     def format_query(llm: LLM, messages: list[dict[str, Any]]) -> list:
-        """Formats a message list for an LLM API.
-
-        Args:
-            llm (LLM): The LLM instance
-            messages (List[Dict[str, Any]]): The list of messages to be formatted.
-
-        Returns:
-            list: A list of formatted messages.
-        """
-
         formatted_messages = []
-
         for fm in messages:
             role = fm.get('role', 'user').lower()
-            # Ensure role is one of the accepted values for most APIs
             if role not in ['system', 'user', 'assistant']:
                 role = 'user'
-
             content = fm.get('content', '')
             msg_type = fm.get('type', 'text')
-
             if msg_type == 'text':
-                formatted_messages.append({
-                    "role": role,
-                    "content": content
-                })
+                formatted_messages.append({'role': role, 'content': content})
             elif msg_type == 'image' and llm.is_multimodal:
-                base64_image = image_to_base64(content) # type: ignore
+                base64_image = image_to_base64(content)  # type: ignore
                 formatted_messages.append({
-                    "role": role,
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "This is the result of the latest screenshot"
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
-                        }
-                    ]
+                    'role': role,
+                    'content': [
+                        {'type': 'text', 'text': 'This is the result of the latest screenshot'},
+                        {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{base64_image}'}},
+                    ],
                 })
-
         return formatted_messages
 
     @staticmethod
     def format_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Format tools for the provider sdk"""
-
         formatted_tools = []
-
         for tool in tools:
             f_tool = {
-                "type": "function",
-                "function": {
-                    "name": tool['function']['name'].replace(' ', '_'),
-                    "description": tool['function']['description'][:1024],
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": tool['function']['parameters']['required'],
+                'type': 'function',
+                'function': {
+                    'name': tool['function']['name'].replace(' ', '_'),
+                    'description': tool['function']['description'][:1024],
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {},
+                        'required': tool['function']['parameters']['required'],
                     },
                 },
             }
             for key, value in tool['function']['parameters']['properties'].items():
                 f_tool['function']['parameters']['properties'][key] = {'type': value}
-
             formatted_tools.append(f_tool)
-
         return formatted_tools
 
     @staticmethod
-    def list_llms():
-        """List all supported LLMs"""
+    def load_llm(provider: str | dict[str, Any]) -> LLM | None:
         try:
-            module = __import__(str(__package__), fromlist=['__init__'])
-            return  [f[1] for f in inspect.getmembers(module, inspect.isclass) if f[0] != 'LLM' and f[0] != 'LLMResponse']
-        except Exception as e:
-            logging.exception(e)
-            return []
-
-    @staticmethod
-    def load_llm(provider: str) -> LLM | None:
-        """Dynamically load LLMs based on name"""
-        try:
-            provider = provider.lower()
-            module = __import__(str(__package__), fromlist=[provider])
-            llm_class: type[LLM] | None = next((f[1] for f in inspect.getmembers(module, inspect.isclass) if (len(f) and f[0].lower() == provider)), None)
-            if not llm_class:
-                raise Exception(f"LLM {provider} not found")
-            return llm_class()
+            if isinstance(provider, dict):
+                return LLM(**provider)
+            return LLM(provider=str(provider))
         except Exception as e:
             logging.exception(e)
             return None
 
     @staticmethod
     def get_supported_models(llm: LLM):
-        """Get supported models for an LLM"""
+        if llm.provider == 'openrouter':
+            return _openrouter_list_models(llm.api_key)
         client = OpenAI(api_key=llm.api_key, base_url=llm.base_url)
         return client.models.list()
 
     @staticmethod
-    async def generate_response(llm: LLM, prompt: list[dict[str, Any]], stream: bool = False, tools: Any = None, **kwds: Any):
-        """Generates a response to a query using the LLM.
-
-        Args:
-            llm (LLM): The LLM instance
-            prompt (List[Dict[str, Any]]): A list of messages comprising the full context,
-                                           including a 'system' role message.
-            stream (bool): Whether to stream the response.
-            tools (Any): A list of tools available for the LLM to use.
-
-        Returns:
-            An LLMResponse object containing the generated response.
-        """
+    async def generate_response(
+        llm: LLM, prompt: list[dict[str, Any]], stream: bool = False, tools: Any = None, **kwds: Any
+    ):
         if tools is None:
             tools = []
         try:
-            client_kwargs = {"api_key": llm.api_key}
-            
-            if llm.base_url:
-                client_kwargs["base_url"] = llm.base_url
-            
-            if 'helicone' in llm.base_url:
-                from cognitrix.config import settings
-                client_kwargs["default_headers"] = {'Helicone-Auth': f'Bearer {settings.get_api_key("helicone")}'}
-            
-            client = OpenAI(**client_kwargs)
+            from cognitrix.config import settings
 
+            # Groq and Ollama: direct. Others: Helicone.
+            use_helicone = (
+                llm.provider not in ('groq', 'ollama')
+                and settings.has_api_key('helicone')
+                and (settings.helicone_base_url or 'https://gateway.helicone.ai/v1')
+            )
+            helicone_base = settings.helicone_base_url or 'https://gateway.helicone.ai/v1'
+
+            if use_helicone:
+                headers: dict[str, str] = {
+                    'Helicone-Auth': f'Bearer {settings.get_api_key("helicone")}',
+                    'Helicone-Target-Url': llm.base_url,
+                    'Helicone-Target-Provider': llm.provider.upper(),
+                }
+                if llm.extra_headers:
+                    for k, v in llm.extra_headers.items():
+                        headers[k] = str(v)
+                client = _get_or_create_client(helicone_base, llm.api_key, headers)
+            else:
+                default_headers = dict(llm.extra_headers) if llm.extra_headers else None
+                client = _get_or_create_client(llm.base_url, llm.api_key, default_headers)
             formatted_messages = LLMManager.format_query(llm, prompt)
             formatted_tools = LLMManager.format_tools(tools) if tools else None
 
-            completion_params = {
-                "model": llm.model,
-                "messages": formatted_messages,
-                "max_tokens": llm.max_tokens,
-                "temperature": llm.temperature,
-                "stream": stream,
+            completion_params: dict[str, Any] = {
+                'model': llm.model,
+                'messages': formatted_messages,
+                'max_tokens': llm.max_tokens,
+                'temperature': llm.temperature,
+                'stream': stream,
             }
-
             if formatted_tools:
-                completion_params["tools"] = formatted_tools
+                completion_params['tools'] = formatted_tools
+            if llm.response_format:
+                completion_params['response_format'] = llm.response_format
+            if llm.extra_body:
+                completion_params['extra_body'] = llm.extra_body
 
             if stream:
                 return LLMManager._handle_streaming_response(client, completion_params)
-            else:
-                return await LLMManager._handle_non_streaming_response(client, completion_params)
+            return await LLMManager._handle_non_streaming_response(client, completion_params)
 
         except OpenAIError as e:
             logger.error(f"OpenAI API error: {str(e)}")
@@ -265,13 +312,11 @@ class LLMManager:
 
     @staticmethod
     async def _handle_streaming_response(client: OpenAI, params: dict[str, Any]):
-        """Handle streaming response from LLM"""
         try:
             stream = client.chat.completions.create(**params)
             response = LLMResponse()
-
             for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
+                if chunk.choices and chunk.choices[0].delta.content is not None:
                     response.add_chunk(chunk.choices[0].delta.content)
                     yield response
         except Exception as e:
@@ -280,11 +325,31 @@ class LLMManager:
 
     @staticmethod
     async def _handle_non_streaming_response(client: OpenAI, params: dict[str, Any]):
-        """Handle non-streaming response from LLM"""
         try:
             response = client.chat.completions.create(**params)
             content = response.choices[0].message.content or ""
-            return LLMResponse(llm_response=content)
+            llm_resp = LLMResponse(llm_response=content)
+            if hasattr(response.choices[0].message, 'reasoning_content'):
+                reasoning = response.choices[0].message.reasoning_content
+                if reasoning:
+                    llm_resp.reasoning = reasoning
+            return llm_resp
         except Exception as e:
             logger.exception(f"Error in non-streaming response: {str(e)}")
             return LLMResponse(llm_response=f"Response error: {str(e)}")
+
+
+def _openrouter_list_models(api_key: str) -> list[str]:
+    """Fetch model ids from OpenRouter API."""
+    try:
+        import requests
+        r = requests.get(
+            'https://openrouter.ai/api/v1/models',
+            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return [e['id'] for e in r.json().get('data', [])]
+    except Exception as e:
+        logger.exception(e)
+    return []

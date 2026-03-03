@@ -44,6 +44,7 @@ class LLMResponse(Model):
     task_title: str | None = None
     task_description: str | None = None
     steps: list[str] | None = None
+    reasoning: str | None = None
     name: str | None = None
     description: str | None = None
     tools: list[str] | None = None

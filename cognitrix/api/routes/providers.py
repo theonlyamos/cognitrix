@@ -7,18 +7,13 @@ providers_api = APIRouter(
     prefix='/providers'
 )
 
-@providers_api.get('')
-async def list_tools():
-    providers = LLM.list_llms()
-    response = [provider().dict() for provider in providers]
+def _llm_to_dict(llm) -> dict:
+    """Serialize LLM to dict (Pydantic v1/v2 compatible)."""
+    return getattr(llm, 'model_dump', getattr(llm, 'dict', lambda: {}))()
 
-    return response
 
 @providers_api.get('/{provider_name}')
 async def load_provider(provider_name: str):
     provider = LLM.load_llm(provider_name)
-    response = {}
-    if provider:
-        response = provider.dict()
-
+    response: dict = _llm_to_dict(provider) if provider else {}
     return JSONResponse(response)

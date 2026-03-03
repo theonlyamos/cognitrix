@@ -34,9 +34,8 @@ requests = "^2.31.0"
 python-dotenv = "^1.0.1"
 pydantic = "^2.6.2"
 
-# LLM Providers (OpenRouter + Ollama + Google)
+# LLM Providers (OpenAI-compatible SDK for all providers)
 openai = "^1.14.0"
-ollama = ">=0.4.7,<0.7.0"
 
 # Vector Memory & Embeddings
 chromadb = "^1.5.0"

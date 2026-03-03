@@ -33,8 +33,7 @@ def get_arguments():
 
     # Main arguments
     parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
-    parser.add_argument('--provider', default='openrouter', help='Set llm provider to use')
-    parser.add_argument('--providers', action='store_true', help='Get a list of all supported providers')
+    parser.add_argument('--provider', default='openrouter', help='LLM provider. Config from env: AI_PROVIDER, *_BASE_URL, *_API_KEY, *_MODEL')
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--tasks', action='store_true', help='List all saved tasks')
     parser.add_argument('--teams', action='store_true', help='List all saved teams')
@@ -45,8 +44,9 @@ def get_arguments():
     parser.add_argument('--model', type=str, default='z-ai/glm-4.5-air:free', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
     parser.add_argument('--api-base', type=str, default='',
-                       help='Set api base of selected llm. Set if using local llm.')
-    parser.add_argument('--temperature', type=float, default=0.1, help='Set temperature of model')
+                       help='Override provider base_url (e.g. for local Ollama).')
+    parser.add_argument('--temperature', type=float, default=0.4, help='Override model temperature (default 0.4)')
+    parser.add_argument('--max-tokens', type=int, default=0, help='Override max tokens (default 4096, 0=use default)')
     parser.add_argument('--system-prompt', type=str_or_file, default='',
                        help='Set system prompt of model. Can be a string or a text file path')
     parser.add_argument('--prompt-template', type=str_or_file, default='',

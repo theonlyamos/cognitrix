@@ -29,28 +29,26 @@ def add_agent():
     from cognitrix.agents import Agent
     from cognitrix.providers import LLM
     name = None
-    provider = None
+    provider_id = None
+    model_override = None
+    temperature = 0.1
     system_prompt = None
     try:
         while not name:
             name = input("Enter agent name: ")
-            while not provider:
-                llms = LLM.list_llms()
-                llms_str = "\nAvailable LLMs:"
-                for index, llm_l in enumerate(llms):
-                    llms_str += (f"\n[{index}] {llm_l.__name__}")
-                print(llms_str)
-                agent_llm = int(input("\n[Select LLM]: "))
-                loaded_llm = llms[agent_llm]
-                if loaded_llm:
-                    provider = loaded_llm()
-                    if provider:
-                        provider.model = input(f"\nEnter model name [{provider.model}]: ") or provider.model
-                        temp = input(f"\nEnter model temperature [{provider.temperature}]: ")
-                        provider.temperature = float(temp) if temp else provider.temperature
+            while not provider_id:
+                provider_id = input("\nEnter provider name (e.g. openai, openrouter, ollama, groq): ").strip()
+            llm = LLM.load_llm(provider_id)
+            if llm:
+                model_override = input(f"\nEnter model name [{llm.model}]: ") or llm.model
+                temp = input(f"\nEnter model temperature [{llm.temperature}]: ")
+                temperature = float(temp) if temp else llm.temperature
             while not system_prompt:
                 system_prompt = input("\n[Enter agent system prompt]: ")
-            new_agent = asyncio.run(Agent.create_agent(name, system_prompt=system_prompt, provider=provider, is_sub_agent=True))
+            new_agent = asyncio.run(Agent.create_agent(
+                name, system_prompt=system_prompt, provider=provider_id,
+                model=model_override or '', temperature=temperature, is_sub_agent=True
+            ))
             if not new_agent:
                 raise Exception("Error creating agent")
             print(f"\nAgent **{new_agent.name}** added successfully!")
@@ -139,17 +137,6 @@ def manage_tools(args: Namespace):
     """Handle tool management commands."""
     if args.list:
         list_tools(args.list)
-
-
-# =====================
-# Provider Management
-# =====================
-def list_providers():
-    """List all available LLM providers."""
-    from cognitrix.providers import LLM
-    providers = LLM.list_llms()
-    rows = [[i+1, p.__name__] for i, p in enumerate(providers)]
-    print_table(rows, ["#", "Provider"])
 
 
 # =====================

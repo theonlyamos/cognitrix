@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 from cognitrix.agents import Agent
 from cognitrix.common.security import get_current_user
-from cognitrix.providers import Session
+from cognitrix.sessions.base import Session
 
 from ...providers import LLM
 

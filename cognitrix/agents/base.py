@@ -124,9 +124,10 @@ class AgentManager:
         return subagents_str
 
     def _format_llms_string(self) -> str:
-        llms = LLM.list_llms()
-        llms_str = "Available LLM Providers:\n" + ", ".join([llm.__name__ for llm in llms]) + "\nChoose one for each subagent."
-        return llms_str
+        return (
+            "Provider is configured via env (AI_PROVIDER, PROVIDER_BASE_URL, PROVIDER_API_KEY, PROVIDER_MODEL) "
+            "or CLI (--provider, --api-base, --api-key, --model). Choose provider for each subagent."
+        )
 
     def process_prompt(self, query: str | dict, role: str = 'User') -> dict:
         processed_query = self._process_query(query)
