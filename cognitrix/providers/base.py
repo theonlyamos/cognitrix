@@ -11,8 +11,9 @@ import os
 import uuid
 from typing import Any, TypeAlias
 
+import openai
 from odbms import Model
-from openai import OpenAI, OpenAIError
+from openai import OpenAI
 from pydantic import Field
 
 from cognitrix.utils import image_to_base64
@@ -38,6 +39,8 @@ _DEFAULT_BASE_URLS: dict[str, str] = {
     'ollama': 'http://localhost:11434/v1',
     'openrouter': 'https://openrouter.ai/api/v1',
     'openai': 'https://api.openai.com/v1',
+    'cerebras': 'https://api.cerebras.com/v1',
+    'google': 'https://generativelanguage.googleapis.com/v1beta/',
 }
 
 
@@ -265,6 +268,12 @@ class LLMManager:
                 and (settings.helicone_base_url or 'https://gateway.helicone.ai/v1')
             )
             helicone_base = settings.helicone_base_url or 'https://gateway.helicone.ai/v1'
+            
+            if llm.provider == 'openrouter':
+                helicone_base = helicone_base.replace('v1', 'api/v1')
+            
+            if llm.provider in ('google', 'gemini'):
+                helicone_base = helicone_base + 'beta'
 
             if use_helicone:
                 headers: dict[str, str] = {
@@ -300,7 +309,7 @@ class LLMManager:
                 return LLMManager._handle_streaming_response(client, completion_params)
             return await LLMManager._handle_non_streaming_response(client, completion_params)
 
-        except OpenAIError as e:
+        except openai.OpenAIError as e:
             logger.error(f"OpenAI API error: {str(e)}")
             return LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")
         except TimeoutError:

@@ -54,7 +54,7 @@ def get_arguments():
     parser.add_argument('--generate', type=str, default='',
                        help='Prompt the agent to generate text and then exit after printing out the response.')
     parser.add_argument('--audio', action='store_true', help='Get input from microphone')
-    parser.add_argument('--stream', action='store_true', help='Enable response stream')
+    parser.add_argument('--stream', type=bool, default=True, help='Enable response stream')
     parser.add_argument('--session', type=str, default="", help='Load saved session')
     parser.add_argument('--clear-history', action='store_true', default="", help='Clear agent history')
     parser.add_argument('--sessions', action='store_true', help='Get a list of all saved sessions')

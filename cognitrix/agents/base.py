@@ -304,7 +304,7 @@ class AgentManager:
                 logger.error(f"Failed to import tools from MCP server '{server}': {e}")
 
     @staticmethod
-    async def create_agent(name: str, system_prompt: str, provider: str = 'groq',
+    async def create_agent(name: str, system_prompt: str, provider: str | dict[str, Any] = 'groq',
                            model: str | None = '', temperature: float = 0.0,  tools: list[str] = None,
                            mcp_servers: list[str] = None,
                            is_sub_agent: bool = False, parent_id=None,

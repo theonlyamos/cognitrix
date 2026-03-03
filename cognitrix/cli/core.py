@@ -61,9 +61,27 @@ async def start(args: Namespace):
             assistant = await Agent.find_one({'name': args.agent})
 
         if not assistant:
+            provider_input: str | dict[str, Any] = args.provider
+            # Build provider config for first-time agent creation so CLI flags
+            # (--api-key, --api-base, --model, --temperature, --max-tokens)
+            # are honored before LLM validation runs.
+            if args.provider:
+                provider_overrides: dict[str, Any] = {'provider': args.provider}
+                if args.api_key:
+                    provider_overrides['api_key'] = args.api_key
+                if args.api_base:
+                    provider_overrides['base_url'] = args.api_base
+                if args.model:
+                    provider_overrides['model'] = args.model
+                if args.temperature is not None:
+                    provider_overrides['temperature'] = args.temperature
+                if getattr(args, 'max_tokens', 0) > 0:
+                    provider_overrides['max_tokens'] = args.max_tokens
+                provider_input = provider_overrides
+
             assistant = await Agent.create_agent(
                 name=args.agent,
-                provider=args.provider,
+                provider=provider_input,
                 model=args.model,
                 temperature=args.temperature,
                 system_prompt=ASSISTANT_SYSTEM_PROMPT
