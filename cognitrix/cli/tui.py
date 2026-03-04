@@ -57,7 +57,7 @@ Header {
     padding-top: 1;
 }
 
-#sidebar-tools {
+#sidebar-sessions {
     height: 1fr;
     padding: 1 2;
 }
@@ -68,7 +68,18 @@ Header {
     margin-bottom: 1;
 }
 
-.tool-item {
+.session-item {
+    color: #a6adc8;
+    padding: 0 1;
+}
+
+.session-item.active {
+    color: #89b4fa;
+    text-style: bold;
+}
+
+#new-session-btn {
+    margin-top: 1;
     color: #a6e3a1;
     padding: 0 1;
 }
@@ -355,7 +366,7 @@ class CognitrixApp(App):
         Binding("ctrl+b", "toggle_sidebar", "Toggle Sidebar"),
         Binding("ctrl+k", "show_command_palette", "Command Palette"),
         Binding("ctrl+l", "clear_chat", "Clear Chat"),
-        Binding("ctrl+t", "show_tools", "Show Tools"),
+        Binding("ctrl+n", "new_session", "New Session"),
         Binding("escape", "close_modal", "Close", show=False),
         Binding("enter", "send_message", "Send", show=False),
     ]
@@ -381,13 +392,10 @@ class CognitrixApp(App):
                     classes="sidebar-header"
                 )
                 
-                with VerticalScroll(id="sidebar-tools"):
-                    yield Static("Tools", classes="sidebar-section-title")
-                    if self.agent.tools:
-                        for tool in self.agent.tools:
-                            yield Static(f"→ {tool.name}", classes="tool-item")
-                    else:
-                        yield Static("No tools available", classes="tool-item")
+                with VerticalScroll(id="sidebar-sessions"):
+                    yield Static("Sessions", classes="sidebar-section-title")
+                    yield Vertical(id="session-list")
+                    yield Static("+ New Session", id="new-session-btn")
 
             with Container(id="main-area"):
                 with Container(id="welcome-splash"):
@@ -412,12 +420,15 @@ class CognitrixApp(App):
 
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.query_one("#message-input").focus()
         
         # If there's existing chat history, hide the welcome splash
         if self.app_session.chat:
             self.query_one("#welcome-splash").add_class("hidden")
+
+        # Load sessions into sidebar
+        await self._load_sessions()
 
     def watch_sidebar_visible(self, visible: bool):
         sidebar = self.query_one("#sidebar")
@@ -453,7 +464,7 @@ class CognitrixApp(App):
         elif cmd["id"] == "clear":
             self.action_clear_chat()
         elif cmd["id"] == "tools":
-            self.show_tools_list()
+            pass  # Tools are no longer displayed in sidebar
         elif cmd["id"] == "history":
             self.show_history()
         elif cmd["id"] == "toggle-sidebar":
@@ -464,15 +475,48 @@ class CognitrixApp(App):
         chat_area.remove_children()
         self.add_system_message("Chat cleared.")
 
-    def action_show_tools(self):
-        self.show_tools_list()
+    async def action_new_session(self):
+        """Create a new session for the current agent."""
+        new_session = Session(agent_id=self.agent.id)
+        await new_session.save()
+        self.app_session = new_session
+        # Clear the chat area
+        chat_area = self.query_one("#chat-area", Vertical)
+        chat_area.remove_children()
+        # Show welcome splash again
+        self.query_one("#welcome-splash").remove_class("hidden")
+        # Refresh sessions list
+        await self._load_sessions()
 
-    def show_tools_list(self):
-        if self.agent.tools:
-            tools_text = "\n".join(f"• {tool.name}: {tool.description or 'No description'}" for tool in self.agent.tools)
-        else:
-            tools_text = "No tools available."
-        self.add_system_message(f"**Available Tools:**\n{tools_text}")
+    async def _load_sessions(self):
+        """Load all sessions and populate the sidebar."""
+        session_list = self.query_one("#session-list", Vertical)
+        session_list.remove_children()
+        
+        try:
+            sessions = await Session.all()
+            # Filter to sessions for this agent and sort by datetime
+            agent_sessions = [s for s in sessions if s.agent_id == str(self.agent.id)]
+            
+            for s in agent_sessions:
+                # Build a label from the session datetime or first message
+                label = s.datetime if s.datetime else "Untitled"
+                if s.chat:
+                    # Use the first user message as label if available
+                    for msg in s.chat:
+                        if msg.get("role") == "user" and msg.get("content"):
+                            label = msg["content"][:24]
+                            if len(msg["content"]) > 24:
+                                label += "..."
+                            break
+                
+                item = Static(f"→ {label}", classes="session-item")
+                item.session_id = str(s.id)  # type: ignore[attr-defined]
+                if str(s.id) == str(self.app_session.id):
+                    item.add_class("active")
+                await session_list.mount(item)
+        except Exception:
+            await session_list.mount(Static("No sessions found", classes="session-item"))
 
     def show_history(self):
         if self.app_session.chat:
