@@ -535,11 +535,13 @@ class CognitrixApp(App):
 
         chat_area = self.query_one("#chat-area", Vertical)
         
-        chat_area.mount(ChatBubble(text, "user"))
+        user_bubble = ChatBubble(text, "user")
+        await chat_area.mount(user_bubble)
+        user_bubble.scroll_visible(animate=False)
         
         self.active_message = ChatBubble("", "agent")
-        chat_area.mount(self.active_message)
-        chat_area.scroll_end(animate=False)
+        await chat_area.mount(self.active_message)
+        self.active_message.scroll_visible(animate=False)
         
         self.streaming = True
 
@@ -547,29 +549,36 @@ class CognitrixApp(App):
             if isinstance(text_chunk, str):
                 self.call_from_thread(self._update_active_message, text_chunk)
 
-        async def run_session():
+        def run_session_sync():
+            """Run session in a worker thread so call_from_thread works."""
+            import asyncio as _asyncio
+            loop = _asyncio.new_event_loop()
             try:
-                await self.app_session(
-                    text,
-                    self.agent,
-                    interface="cli",
-                    stream=True,
-                    output=tui_stream_output
+                loop.run_until_complete(
+                    self.app_session(
+                        text,
+                        self.agent,
+                        interface="cli",
+                        stream=True,
+                        output=tui_stream_output
+                    )
                 )
             except Exception as e:
                 self.call_from_thread(self._add_error, str(e))
             finally:
+                loop.close()
                 self.call_from_thread(self._finish_streaming)
 
-        asyncio.create_task(run_session())
+        self.run_worker(run_session_sync, thread=True)
 
     def _update_active_message(self, chunk: str):
         if self.active_message:
             self.active_message.update_content(chunk)
-            self.query_one("#chat-area", Vertical).scroll_end(animate=False)
+            self.active_message.scroll_visible(animate=False)
 
     def _add_error(self, error: str):
         self.add_system_message(f"**Error:** {error}")
 
     def _finish_streaming(self):
         self.streaming = False
+
