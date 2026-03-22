@@ -26,14 +26,14 @@ async def run_configuration():
     """Run the configuration for the CLI"""
     from cognitrix.config import initialize_database
 
-    initialize_database()
+    await initialize_database()
 
     # Create tables if they don't exist and not using mongodb
-    await Agent.create_table()
-    await Task.create_table()
-    await Team.create_table()
-    await Session.create_table()
-    await Tool.create_table()
+    Agent.create_table()
+    Task.create_table()
+    Team.create_table()
+    Session.create_table()
+    Tool.create_table()
 
 
 async def start(args: Namespace):
@@ -143,7 +143,7 @@ async def start(args: Namespace):
         elif args.ui.lower() == 'web':
             # Web UI mode
             await start_web_ui(assistant)
-        elif args.ui.lower() in ['tui', 'cli']:
+        elif args.ui.lower() == 'tui':
             # CLI mode has been replaced with the new beautiful Textual TUI
             app = CognitrixApp(agent=assistant, session=session)
             await app.run_async()

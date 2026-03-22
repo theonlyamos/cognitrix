@@ -159,11 +159,11 @@ def ensure_cognitrix_home():
     settings.workdir.mkdir(exist_ok=True)
     return settings.workdir
 
-def initialize_database():
+async def initialize_database():
     """Initialize database with current settings"""
     config = settings.get_database_config()
     from odbms import DBMS
-    DBMS.initialize(
+    await DBMS.initialize_async(
         config['type'],
         host=config['host'],
         port=config['port'],
