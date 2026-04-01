@@ -89,6 +89,12 @@ def calculator(math_expression: str) -> Any:
 # - web_scraper -> web-scraper skill
 # - brave_search -> brave-search skill
 # - wikipedia -> wikipedia skill
+# - text_input -> text-input skill
+# - key_press -> key-press skill
+# - hot_key -> hot-key skill
+# - mouse_click -> mouse-click skill
+# - mouse_double_click -> mouse-double-click skill
+# - mouse_right_click -> mouse-right-click skill
 
 
 @tool(category='system')
@@ -113,22 +119,6 @@ def open_file(path: str, filename: str | None = None):
         return 'Unable to open file'
     except Exception as e:
         return str(e)
-
-# REMOVED TOOLS (replaced by skills):
-# - create_file -> write-file skill
-# - create_directory -> bash (mkdir)
-# - read_file -> read-file skill
-# - write_file -> write-file skill
-# - update_file -> edit-file skill
-# - delete_path -> delete-path skill
-# - list_directory -> list-dir skill
-# - take_screenshot -> take-screenshot skill
-# - play_youtube -> play-youtube skill
-# - open_website -> open-website skill
-# - internet_search -> internet-search skill
-# - web_scraper -> web-scraper skill
-# - brave_search -> brave-search skill
-# - wikipedia -> wikipedia skill
 
 
 @tool(category='system')

@@ -6,15 +6,9 @@ from cognitrix.tools.misc import (
     create_agent,
     create_new_team,
     create_tool,
-    hot_key,
-    key_press,
-    mouse_click,
-    mouse_double_click,
-    mouse_right_click,
     open_file,
     python_repl,
     bash,
-    text_input,
 )
 from cognitrix.tools.python import PythonREPL as Python
 from cognitrix.tools.skill_tool import use_skill
@@ -25,10 +19,7 @@ __all__ = [
     'Tool',
     'tool',
     'calculator', 'open_file', 'python_repl',
-    'text_input', 'key_press',
-    'mouse_click', 'mouse_double_click',
-    'mouse_right_click', 'hot_key', 'create_agent',
-    'call_agent', 'create_new_team',
+    'create_agent', 'call_agent', 'create_new_team',
     'create_tool', 'bash', 'Python',
     'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool',
     'use_skill'
