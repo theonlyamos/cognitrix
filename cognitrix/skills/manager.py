@@ -11,7 +11,7 @@ from cognitrix.skills.parser import SkillParser, SkillParseError
 from cognitrix.skills.loaders import (
     SkillLoader,
     LocalDirectoryLoader,
-    DatabaseLoader,
+    # DatabaseLoader,  # Disabled - requires async Model.find() await fix
     RemoteRegistryLoader,
 )
 
@@ -65,12 +65,12 @@ class SkillManager:
 
         self.register_loader(LocalDirectoryLoader(dirs))
 
-        # Database loader
-        self.register_loader(DatabaseLoader())
+        # Database loader (disabled - requires async Model.find() await fix)
+        # self.register_loader(DatabaseLoader())
 
-        # Remote registry loader
-        registry_url = 'https://github.com/theonlyamos/cognitrix-skills'
-        self.register_loader(RemoteRegistryLoader(registry_url, cache_dir))
+        # Remote registry loader (disabled - network issues)
+        # registry_url = 'https://github.com/theonlyamos/cognitrix-skills'
+        # self.register_loader(RemoteRegistryLoader(registry_url, cache_dir))
 
     # ── Loader management ──
 
