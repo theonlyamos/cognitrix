@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Optional, Self
@@ -16,6 +17,18 @@ if TYPE_CHECKING:
     from cognitrix.teams.base import Team
 
 logger = logging.getLogger('cognitrix.log')
+
+
+def format_duration(seconds: float) -> str:
+    """Format duration in human-readable format."""
+    if seconds < 1:
+        return f"{int(seconds * 1000)}ms"
+    elif seconds < 60:
+        return f"{seconds:.2f}s"
+    else:
+        mins = int(seconds // 60)
+        secs = seconds % 60
+        return f"{mins}m {secs:.1f}s"
 
 class Session(Model):
     chat: list[dict[str, Any]] = []
@@ -94,6 +107,9 @@ class Session(Model):
 
     async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True):
 
+        # Add timing for turn duration
+        turn_start_time = time.monotonic()
+        
         # Add the new message to the history before building the prompt
         if wsquery is None:
             wsquery = {}
@@ -170,11 +186,45 @@ class Session(Model):
                         self.update_history(response_dict)
 
                     if not called_tools:
+                        # Calculate turn duration
+                        turn_duration = time.monotonic() - turn_start_time
+                        duration_str = format_duration(turn_duration)
+                        
+                        # Store timing in history
+                        if save_history:
+                            self.update_history({
+                                'role': 'system',
+                                'type': 'turn_timing',
+                                'content': f"Took {duration_str}",
+                                'duration': turn_duration
+                            })
+                        
+                        # Display timing for CLI
+                        if interface == 'cli':
+                            print(f"\n[dim]⏱️ Took {duration_str}[/dim]")
+                        
                         break # Exit loop if no tools were called
 
                 except Exception as e:
                     logger.exception(e)
                     break # Exit on error
+
+            # Calculate turn duration for all exit paths
+            turn_duration = time.monotonic() - turn_start_time
+            duration_str = format_duration(turn_duration)
+            
+            # Store timing in history (only if not already stored in 'not called_tools' block)
+            if save_history and called_tools:
+                self.update_history({
+                    'role': 'system',
+                    'type': 'turn_timing',
+                    'content': f"Took {duration_str}",
+                    'duration': turn_duration
+                })
+            
+            # Display timing for CLI (only if not already displayed)
+            if interface == 'cli' and called_tools:
+                print(f"\n[dim]⏱️ Took {duration_str}[/dim]")
 
             if save_history:
                 await self.save()
