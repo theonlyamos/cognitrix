@@ -90,8 +90,11 @@ class SkillExecutor:
         )
 
         try:
+            # Parse arguments with shlex to preserve quoted strings
+            args_list = shlex.split(arguments) if arguments else []
+            
             # 1. Resolve argument substitutions
-            rendered = self._resolve_arguments(manifest.body, arguments)
+            rendered = self._resolve_arguments(manifest.body, args_list)
             # 2. Resolve environment substitutions (including ${COGNITRIX_SKILL_DIR})
             rendered = self._resolve_env_substitutions(rendered, session, manifest)
 
@@ -159,11 +162,12 @@ class SkillExecutor:
 
     # ── Substitution ──
 
-    def _resolve_arguments(self, body: str, arguments: str) -> str:
+    def _resolve_arguments(self, body: str, args_list: list[str]) -> str:
         """Replace $ARGUMENTS, $ARGUMENTS[N], and $N with actual values."""
-        arguments = arguments or ""
-        args_list = arguments.split() if arguments else []
-
+        if not args_list:
+            args_list = []
+        
+        arguments = " ".join(args_list)
         result = body.replace("$ARGUMENTS", arguments)
 
         result = _ARGUMENTS_BRACKET_PATTERN.sub(
