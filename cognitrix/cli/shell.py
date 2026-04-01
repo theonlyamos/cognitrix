@@ -87,7 +87,7 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
     args: list[Any] = parts[1:]
 
     # Entity listing commands
-    if cmd in ['tools', 'agents', 'tasks', 'teams', 'mcp']:
+    if cmd in ['tools', 'agents', 'tasks', 'teams', 'mcp', 'skills']:
         if cmd == 'tools':
             # List available tools for the current agent
             console.print(Panel("\n".join(f"[bold cyan][{i}][/bold cyan] [white]{tool.name}[/white]" for i, tool in enumerate(agent.tools)),
@@ -100,6 +100,11 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
             list_teams()
         elif cmd == 'mcp':
             await handle_mcp_list()
+        elif cmd == 'skills':
+            from cognitrix.skills.manager import get_skill_manager
+            from cognitrix.cli.handlers_skills import _list_skills
+            manager = get_skill_manager()
+            await _list_skills(manager)
         return True
 
     # Agent management commands
@@ -190,6 +195,7 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
 [yellow]• /agents[/yellow] - List all agents
 [yellow]• /switch [agent_name_or_index][/yellow] - Switch to another agent
 [yellow]• /tools[/yellow] - List available tools
+[yellow]• /skills[/yellow] - List installed skills
 [yellow]• /tasks[/yellow] - List all tasks
 [yellow]• /teams[/yellow] - List all teams
 
@@ -200,11 +206,6 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
 [yellow]• /mcp-call <tool_name> [server_name] [args][/yellow] - Call MCP tool
 [yellow]• /mcp-connect <server_name>[/yellow] - Connect to MCP server
 [yellow]• /mcp-disconnect <server_name>[/yellow] - Disconnect from MCP server
-
-[bold cyan]Session Commands:[/bold cyan]
-[yellow]• /history[/yellow] - Show chat history
-[yellow]• /help[/yellow] - Show this help message
-[yellow]• /clear[/yellow] - Clear the screen
 
 [bold cyan]System Commands:[/bold cyan]
 [yellow]• cd <path>[/yellow] - Change directory
@@ -234,6 +235,33 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
     # Other slash commands
     if cmd in ['delete', 'show']:
         await handle_entity_command(cmd, args + [agent, session])
+        return True
+
+    # Check if the command matches a skill
+    from cognitrix.skills.manager import get_skill_manager
+    manager = get_skill_manager()
+    skill_manifest = await manager.get_skill(cmd)
+    
+    if skill_manifest:
+        from cognitrix.skills.executor import SkillExecutor
+        from cognitrix.agents.base import AgentManager
+        from cognitrix.skills.models import SkillEventType
+
+        agent_manager = AgentManager(agent)
+        executor = SkillExecutor(agent_manager=agent_manager, llm=agent.llm)
+
+        console.print(f"\n[bold cyan]🔧 Executing skill: {skill_manifest.name}[/bold cyan]")
+        console.print("─" * 40)
+
+        arguments = " ".join(args)
+        divider = "─" * 40
+        async for event in executor.execute(skill_manifest, arguments, session):
+            if event.type == SkillEventType.SKILL_PROGRESS and event.data:
+                print(event.data, end="", flush=True)
+            elif event.type == SkillEventType.SKILL_COMPLETE:
+                console.print(f"\n\n{divider}\n[green]✅ Skill completed[/green]")
+            elif event.type == SkillEventType.SKILL_ERROR:
+                console.print(f"\n[red]✗ Error: {event.data}[/red]")
         return True
 
     console.print(Panel(f"[bold red]Unknown slash command:[/bold red] [yellow]{query}[/yellow]\n[dim]Type [bold yellow]/help[/bold yellow] for available commands[/dim]",
@@ -481,10 +509,21 @@ async def initialize_shell(session, agent, stream: bool = False):
 
     builtins = ['cd', 'exit', 'quit', 'q']
     custom_commands = [
-        '/help', '/clear', '/history', '/tools', '/agents', '/tasks', '/teams',
+        '/help', '/clear', '/history', '/tools', '/skills', '/agents', '/tasks', '/teams',
         '/add', '/delete', '/show', '/switch', '/mcp', '/mcp-tools', '/mcp-tool-info',
         '/mcp-call', '/mcp-connect', '/mcp-disconnect'
     ]
+
+    # Dynamically add available skills to tab completion
+    try:
+        import logging
+        from cognitrix.skills.manager import get_skill_manager
+        manager = get_skill_manager()
+        await manager.discover_all()
+        for skill in manager.list_skills_sync():
+            custom_commands.append(f"/{skill.name}")
+    except Exception as e:
+        logging.getLogger('cognitrix.log').debug(f"Failed to load skills for tab completion: {e}")
 
     session_completer = CognitrixCompleter(builtins, custom_commands)
     prompt_session = PromptSession(completer=session_completer, history=InMemoryHistory())

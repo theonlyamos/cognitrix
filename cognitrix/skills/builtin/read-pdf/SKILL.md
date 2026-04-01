@@ -8,7 +8,7 @@ tags: [pdf, document, extract, read]
 category: document
 version: "1.0.0"
 author: theonlyamos
-allowed-tools: [Terminal Command, Read File, Python Repl]
+allowed-tools: [Bash, Read File, Python Repl]
 dependencies:
   pip: [pymupdf]
 ---

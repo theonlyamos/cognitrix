@@ -42,7 +42,7 @@ DESTRUCTIVE_CATEGORIES = {
         'description': 'File content modification'
     },
     'code_execution': {
-        'tools': ['python_repl', 'terminal_command', 'execute_code', 'eval'],
+        'tools': ['python_repl', 'bash', 'execute_code', 'eval'],
         'keywords': [
             'exec', 'eval', 'execfile', 'compile', '__import__',
             'subprocess', 'os.system', 'os.popen', 'spawn',

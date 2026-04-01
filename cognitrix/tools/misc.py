@@ -755,8 +755,8 @@ def create_tool(name: str, description: str, category: str, function_code: str):
         return f"Error creating tool: {str(e)}"
 
 @tool(category='system')
-def terminal_command(command: str, timeout: int | None = 180, working_dir: str | None = str(Path.cwd())) -> str:
-    """Execute a terminal command safely with restrictions.
+def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(Path.cwd())) -> str:
+    """Execute a bash/terminal command safely with restrictions.
 
     Args:
         command (str): The command to execute. Only whitelisted commands are allowed.

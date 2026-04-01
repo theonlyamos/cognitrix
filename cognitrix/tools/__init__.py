@@ -23,7 +23,7 @@ from cognitrix.tools.misc import (
     python_repl,
     read_file,
     take_screenshot,
-    terminal_command,
+    bash,
     text_input,
     update_file,
     web_scraper,
@@ -47,7 +47,7 @@ __all__ = [
     'mouse_right_click', 'hot_key', 'create_agent',
     'call_agent', 'web_scraper', 'internet_search',
     'brave_search', 'wikipedia', 'create_new_team',
-    'create_tool', 'terminal_command', 'Python',
+    'create_tool', 'bash', 'Python',
     'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool',
     'use_skill'
 ]
