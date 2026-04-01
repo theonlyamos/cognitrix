@@ -170,9 +170,6 @@ class LLM(Model):
     def format_query(self, messages: list[dict[str, Any]]) -> list:
         return LLMManager.format_query(self, messages)
 
-    def format_tools(self, tools: list[dict[str, Any]]):
-        return LLMManager.format_tools(tools)
-
     @staticmethod
     def load_llm(provider: str | dict[str, Any]) -> 'LLM | None':
         return LLMManager.load_llm(provider)
@@ -222,27 +219,6 @@ class LLMManager:
                     ],
                 })
         return formatted_messages
-
-    @staticmethod
-    def format_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        formatted_tools = []
-        for tool in tools:
-            f_tool = {
-                'type': 'function',
-                'function': {
-                    'name': tool['function']['name'].replace(' ', '_'),
-                    'description': tool['function']['description'][:1024],
-                    'parameters': {
-                        'type': 'object',
-                        'properties': {},
-                        'required': tool['function']['parameters']['required'],
-                    },
-                },
-            }
-            for key, value in tool['function']['parameters']['properties'].items():
-                f_tool['function']['parameters']['properties'][key] = {'type': value}
-            formatted_tools.append(f_tool)
-        return formatted_tools
 
     @staticmethod
     def load_llm(provider: str | dict[str, Any]) -> LLM | None:
@@ -298,7 +274,7 @@ class LLMManager:
                 default_headers = dict(llm.extra_headers) if llm.extra_headers else None
                 client = _get_or_create_client(llm.base_url, llm.api_key, default_headers)
             formatted_messages = LLMManager.format_query(llm, prompt)
-            formatted_tools = LLMManager.format_tools(tools) if tools else None
+            formatted_tools = tools if tools else None
 
             completion_params: dict[str, Any] = {
                 'model': llm.model,
