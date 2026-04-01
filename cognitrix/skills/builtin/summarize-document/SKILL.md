@@ -8,6 +8,7 @@ tags: [summary, document, tldr]
 category: writing
 version: "1.0.0"
 author: theonlyamos
+allowed-tools: [Bash, Read File, Python Repl]
 ---
 
 # Summarize Document

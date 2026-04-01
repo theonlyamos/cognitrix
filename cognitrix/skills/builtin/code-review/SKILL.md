@@ -8,6 +8,7 @@ tags: [code, review, quality]
 category: development
 version: "1.0.0"
 author: theonlyamos
+allowed-tools: [Bash, Read File, Glob, Grep, Python Repl]
 ---
 
 # Code Review

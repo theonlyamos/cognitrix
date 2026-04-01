@@ -92,7 +92,6 @@ class SkillExecutor:
         try:
             # 1. Resolve argument substitutions
             rendered = self._resolve_arguments(manifest.body, arguments)
-
             # 2. Resolve environment substitutions (including ${COGNITRIX_SKILL_DIR})
             rendered = self._resolve_env_substitutions(rendered, session, manifest)
 
@@ -185,7 +184,7 @@ class SkillExecutor:
         import os
 
         replacements = {
-            '${COGNITRIX_SESSION_ID}': session.id if session else '',
+            '${COGNITRIX_SESSION_ID}': session.id if session.id else '',
             '${COGNITRIX_USER}': os.getenv('USER', os.getenv('USERNAME', '')),
             '${COGNITRIX_SKILL_DIR}': manifest.source_path or '' if manifest else '',
         }
@@ -193,7 +192,6 @@ class SkillExecutor:
         result = body
         for placeholder, value in replacements.items():
             result = result.replace(placeholder, value)
-
         return result
 
     async def _resolve_dynamic_context(self, body: str) -> str:
