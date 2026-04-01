@@ -79,9 +79,10 @@ class Session(Model):
     @classmethod
     async def get_by_agent_id(cls, agent_id: str) -> Self:
         """Retrieve a session by agent_id"""
-        session = await cls.find_one({'agent_id': agent_id})
+        agent_id_str = str(agent_id)
+        session = await cls.find_one({'agent_id': agent_id_str})
         if not session:
-            session = cls(agent_id=agent_id)
+            session = cls(agent_id=agent_id_str)
             await session.save()
         return session
 

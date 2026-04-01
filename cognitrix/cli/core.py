@@ -24,16 +24,30 @@ logger = logging.getLogger('cognitrix.log')
 
 async def run_configuration():
     """Run the configuration for the CLI"""
+    import asyncio
     from cognitrix.config import initialize_database
+    from cognitrix.skills.manager import get_skill_manager
 
     await initialize_database()
 
     # Create tables if they don't exist and not using mongodb
-    Agent.create_table()
-    Task.create_table()
-    Team.create_table()
-    Session.create_table()
-    Tool.create_table()
+    from cognitrix.agents import Agent
+    from cognitrix.tasks.base import Task
+    from cognitrix.teams.base import Team
+    from cognitrix.sessions.base import Session
+    from cognitrix.models.tool import Tool
+    from odbms import DBMS
+    
+    if DBMS.Database is not None and DBMS.Database.dbms != 'mongodb':
+        await Agent._create_table_async()
+        await Task._create_table_async()
+        await Team._create_table_async()
+        await Session._create_table_async()
+        await Tool._create_table_async()
+
+    # Pre-warm skill cache at startup to avoid per-prompt I/O
+    skill_mgr = get_skill_manager()
+    await skill_mgr.discover_all()
 
 
 async def start(args: Namespace):

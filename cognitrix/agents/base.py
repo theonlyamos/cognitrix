@@ -139,8 +139,17 @@ class AgentManager:
             import asyncio
             from cognitrix.skills.manager import get_skill_manager
             manager = get_skill_manager()
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(manager.discover_all())
+            
+            # Use cached data if available (pre-warmed at startup)
+            if not manager._cache:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        return ''
+                    loop.run_until_complete(manager.discover_all())
+                except RuntimeError:
+                    asyncio.run(manager.discover_all())
+            
             summaries = manager.get_skill_summaries()
             if not summaries:
                 return ''
