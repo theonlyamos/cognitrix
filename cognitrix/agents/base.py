@@ -97,6 +97,7 @@ class AgentManager:
         tools_str = self._format_tools_string()
         subagents_str = self._format_subagents_string()
         llms_str = self._format_llms_string()
+        skills_str = self._format_skills_string()
 
         today = (datetime.now()).strftime("%a %b %d %Y")
         prompt = f"Today is {today}.\n\n"
@@ -108,6 +109,9 @@ class AgentManager:
 
         prompt = prompt.replace("{subagents}", subagents_str)
         prompt = prompt.replace("{llms}", llms_str)
+
+        if skills_str:
+            prompt += "\n\n" + skills_str
 
         return prompt
 
@@ -128,6 +132,26 @@ class AgentManager:
             "Provider is configured via env (AI_PROVIDER, PROVIDER_BASE_URL, PROVIDER_API_KEY, PROVIDER_MODEL) "
             "or CLI (--provider, --api-base, --api-key, --model). Choose provider for each subagent."
         )
+
+    def _format_skills_string(self) -> str:
+        """Build skill awareness section for system prompt."""
+        try:
+            import asyncio
+            from cognitrix.skills.manager import get_skill_manager
+            manager = get_skill_manager()
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(manager.discover_all())
+            summaries = manager.get_skill_summaries()
+            if not summaries:
+                return ''
+            lines = ["Available Skills (invoke with the 'Use Skill' tool):"]
+            for s in summaries:
+                hint = f" {s['argument_hint']}" if s.get('argument_hint') else ""
+                invocable = "" if s.get('user_invocable') == 'True' else " [auto-only]"
+                lines.append(f"  - /{s['name']}{hint}: {s['description'][:100]}{invocable}")
+            return '\n'.join(lines)
+        except Exception:
+            return ''
 
     def process_prompt(self, query: str | dict, role: str = 'User') -> dict:
         processed_query = self._process_query(query)
