@@ -11,6 +11,8 @@ author: theonlyamos
 allowed-tools: [bash, read_file]
 dependencies:
   pip: [pymupdf]
+safety:
+  risk-level: low
 ---
 
 # Read PDF

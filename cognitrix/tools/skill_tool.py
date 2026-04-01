@@ -7,12 +7,18 @@ from typing import Any
 
 from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import ToolCallResult
+from cognitrix.skills.models import RiskLevel
 
 logger = logging.getLogger('cognitrix.log')
 
 
 @tool(category='skills')
-async def use_skill(skill_name: str, arguments: str = "", parent: Any = None) -> str:
+async def use_skill(
+    skill_name: str,
+    arguments: str = "",
+    risk_level: str | None = None,
+    parent: Any = None
+) -> str:
     """Execute a registered skill by name.
 
     Use this tool to invoke a skill when you detect that the user's request
@@ -22,6 +28,8 @@ async def use_skill(skill_name: str, arguments: str = "", parent: Any = None) ->
     Args:
         skill_name: Name of the skill to execute (e.g. 'web-research', 'code-review')
         arguments: Arguments to pass to the skill (e.g. 'src/auth/login.ts', 'AI agents 2025')
+        risk_level: Optional risk level override (low, medium, high). If provided, overrides
+                    the skill's default risk level for approval purposes.
     """
     from cognitrix.skills.manager import get_skill_manager
     from cognitrix.skills.executor import SkillExecutor
@@ -33,6 +41,18 @@ async def use_skill(skill_name: str, arguments: str = "", parent: Any = None) ->
     if not manifest:
         available = [s.name for s in manager.list_skills_sync()]
         return f"Skill '{skill_name}' not found. Available skills: {available}"
+
+    # Create a copy of the manifest to avoid mutating the cached original
+    manifest = manifest.model_copy(deep=True)
+
+    # Override risk level if parameter provided (falls back to LOW on invalid input)
+    if risk_level:
+        try:
+            manifest.safety.risk_level = RiskLevel(risk_level.lower())
+            logger.info(f"Risk level overridden to '{risk_level}' for skill '{skill_name}'")
+        except ValueError:
+            logger.warning(f"Invalid risk_level '{risk_level}' for skill '{skill_name}', defaulting to LOW")
+            manifest.safety.risk_level = RiskLevel.LOW
 
     # Check if agent is allowed to invoke this skill
     if manifest.disable_model_invocation:

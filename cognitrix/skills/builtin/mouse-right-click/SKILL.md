@@ -10,6 +10,8 @@ author: cognitrix
 allowed-tools: [bash]
 dependencies:
   pip: [pyautogui]
+safety:
+  risk-level: medium
 ---
 
 # Mouse Right Click

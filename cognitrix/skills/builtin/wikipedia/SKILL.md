@@ -10,6 +10,8 @@ author: cognitrix
 allowed-tools: [bash]
 dependencies:
   pip: [wikipedia]
+safety:
+  risk-level: low
 ---
 
 # Wikipedia Search

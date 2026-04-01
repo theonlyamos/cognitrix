@@ -10,6 +10,8 @@ author: cognitrix
 allowed-tools: [bash]
 dependencies:
   pip: [requests, beautifulsoup4]
+safety:
+  risk-level: low
 ---
 
 # Web Scraper

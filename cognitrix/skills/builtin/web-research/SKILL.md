@@ -10,6 +10,8 @@ category: research
 version: "1.0.0"
 author: theonlyamos
 allowed-tools: [internet_search, web_scraper, bash]
+safety:
+  risk-level: low
 ---
 
 # Web Research

@@ -10,6 +10,8 @@ author: cognitrix
 allowed-tools: [bash]
 dependencies:
   pip: [tavily]
+safety:
+  risk-level: low
 ---
 
 # Internet Search

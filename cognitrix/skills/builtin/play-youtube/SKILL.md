@@ -10,6 +10,8 @@ author: cognitrix
 allowed-tools: [bash]
 dependencies:
   pip: [requests]
+safety:
+  risk-level: low
 ---
 
 # Play YouTube

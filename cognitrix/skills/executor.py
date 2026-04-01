@@ -111,8 +111,8 @@ class SkillExecutor:
             if manifest.dependencies.pip or manifest.dependencies.system:
                 await self._ensure_dependencies(manifest)
 
-            # 5. Safety check
-            if manifest.safety.requires_approval or manifest.safety.risk_level == RiskLevel.HIGH:
+            # 5. Safety check - require approval for MEDIUM or HIGH risk
+            if manifest.safety.risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH):
                 approved = await self._request_approval(manifest)
                 if not approved:
                     yield SkillEvent(

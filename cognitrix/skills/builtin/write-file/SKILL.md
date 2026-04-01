@@ -8,6 +8,8 @@ category: system
 version: "1.0.0"
 author: cognitrix
 allowed-tools: [bash]
+safety:
+  risk-level: medium
 ---
 
 # Write File

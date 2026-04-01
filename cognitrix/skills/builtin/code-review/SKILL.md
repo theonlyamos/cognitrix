@@ -8,7 +8,9 @@ tags: [code, review, quality]
 category: development
 version: "1.0.0"
 author: theonlyamos
-allowed-tools: [Bash, Read File, Glob, Grep, Python Repl]
+allowed-tools: [bash, read_file, python_repl]
+safety:
+  risk-level: low
 ---
 
 # Code Review
