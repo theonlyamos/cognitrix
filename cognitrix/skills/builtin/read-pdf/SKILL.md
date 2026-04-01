@@ -3,7 +3,13 @@ name: read-pdf
 description: >
   Extract and analyze content from PDF files. Use when the user asks to read,
   parse, summarize, or extract information from a PDF document.
-argument-hint: <pdf-file-path> [page-range]
+args:
+  - name: pdf_file_path
+    description: Path to the PDF file to read
+    required: true
+  - name: page_range
+    description: Optional page range (e.g., "5", "1-10", "1,3,5")
+    required: false
 tags: [pdf, document, extract, read]
 category: document
 version: "1.0.0"
@@ -17,11 +23,11 @@ safety:
 
 # Read PDF
 
-Extract content from the PDF at `$0`:
+Extract content from the PDF at "$(arg pdf_file_path)":
 
 1. **Extract text** using the helper script:
    ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/extract_pdf.py "$0" $1
+   python ${COGNITRIX_SKILL_DIR}/scripts/extract_pdf.py "$(arg pdf_file_path)" "$(arg page_range)"
    ```
 2. **Read the extracted output** and present it clearly
 3. If the user asked a specific question about the PDF, **answer it** based on the extracted content
@@ -29,7 +35,7 @@ Extract content from the PDF at `$0`:
 
 ## Page Range (optional)
 
-The second argument `$1` is an optional page range:
+The page_range argument is optional:
 - `5` — extract only page 5
 - `1-10` — extract pages 1 through 10
 - `1,3,5` — extract specific pages

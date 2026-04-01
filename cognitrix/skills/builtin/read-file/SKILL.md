@@ -2,7 +2,10 @@
 name: read-file
 description: Read the contents of a file with line numbers for easy reference
 context: fork
-argument-hint: <file_path>
+args:
+  - name: file_path
+    description: Path to the file to read
+    required: true
 tags: [file, read, view]
 category: system
 version: "1.0.0"
@@ -14,7 +17,7 @@ safety:
 
 # Read File
 
-Read the file at "$ARGUMENTS" with appropriate tool based on use case.
+Read the file at "$(arg file_path)" with appropriate tool based on use case.
 
 ## Use Cases
 

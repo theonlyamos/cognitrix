@@ -2,7 +2,13 @@
 name: mouse-double-click
 description: Perform a mouse double-click at specified screen coordinates
 context: fork
-argument-hint: <x> <y>
+args:
+  - name: x
+    description: X coordinate (pixels from left edge)
+    required: true
+  - name: y
+    description: Y coordinate (pixels from top edge)
+    required: true
 tags: [mouse, double-click, automation, ui]
 category: system
 version: "1.0.0"
@@ -26,9 +32,9 @@ Example: `100 200` (double-click at x=100, y=200)
 
 ## Steps
 
-1. Run the double click script:
+1. Run the double click script with x and y coordinates:
    ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/double_click.py "$ARGUMENTS"
+   python ${COGNITRIX_SKILL_DIR}/scripts/double_click.py "$(arg x)" "$(arg y)"
    ```
 2. Report success
 

@@ -2,7 +2,13 @@
 name: write-file
 description: Write content to a file, creating it if it doesn't exist
 context: fork
-argument-hint: <file_path> <content>
+args:
+  - name: file_path
+    description: Path to the file to write
+    required: true
+  - name: content
+    description: Content to write to the file
+    required: true
 tags: [file, write, create]
 category: system
 version: "1.0.0"
@@ -14,7 +20,7 @@ safety:
 
 # Write File
 
-Write content to a file at "$ARGUMENTS".
+Write content to a file at "$(arg file_path)".
 
 ## Input Format
 
@@ -25,8 +31,8 @@ Example: `example.txt "Hello world"`
 ## Steps
 
 1. Parse the filepath and content from arguments
-2. Use `printf "%s" "<content>" > <filepath>` to write content to file
-3. Use `cat -n <filepath>` to verify the file was created correctly
+2. Use `printf "%s" "$(arg content)" > "$(arg file_path)"` to write content to file
+3. Use `cat -n "$(arg file_path)"` to verify the file was created correctly
 4. If file already exists and you want to append, use `printf "%s" "<content>" >> <filepath>`
 
 ## Notes

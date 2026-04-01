@@ -3,7 +3,14 @@ name: summarize-document
 description: >
   Summarize a document or file. Use when asked to summarize, give an overview,
   or create a TL;DR of a file or text.
-argument-hint: <file-path> [short|medium|detailed]
+args:
+  - name: file_path
+    description: Path to the file to summarize
+    required: true
+  - name: depth
+    description: Summary depth - short (TL;DR), medium (key points), detailed (section-by-section)
+    required: false
+    default: medium
 tags: [summary, document, tldr]
 category: writing
 version: "1.0.0"
@@ -15,7 +22,7 @@ safety:
 
 # Summarize Document
 
-Summarize the document at `$0`:
+Summarize the document at "$(arg file_path)":
 
 1. **Read** the entire file
 2. **Identify** the main topics, arguments, and conclusions
@@ -23,7 +30,7 @@ Summarize the document at `$0`:
 
 ## Depth Levels
 
-Use depth "$1" (default to "medium" if not specified):
+Use depth "$(arg depth)" (defaults to "medium" if not specified):
 
 - **short**: 2-3 sentence TL;DR. Just the absolute essentials.
 - **medium**: 1-2 paragraph summary with key points as bullet list.

@@ -2,7 +2,10 @@
 name: open-website
 description: Open a URL in the default web browser
 context: fork
-argument-hint: <url>
+args:
+  - name: url
+    description: The URL to open in the browser
+    required: true
 tags: [web, browser, open]
 category: web
 version: "1.0.0"
@@ -18,9 +21,9 @@ Open the specified URL in the default web browser.
 
 ## Steps
 
-1. Run the open script:
+1. Run the open script with the url:
    ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/open.py "$ARGUMENTS"
+   python ${COGNITRIX_SKILL_DIR}/scripts/open.py "$(arg url)"
    ```
 2. Report success or any errors
 

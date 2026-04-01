@@ -18,7 +18,7 @@ from typing import Any
 
 import yaml
 
-from cognitrix.skills.models import SkillManifest, SkillSafety, RiskLevel
+from cognitrix.skills.models import SkillManifest, SkillSafety, RiskLevel, SkillArg
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -28,6 +28,7 @@ HYPHEN_TO_UNDERSCORE = {
     'user-invocable': 'user_invocable',
     'allowed-tools': 'allowed_tools',
     'argument-hint': 'argument_hint',
+    'args': 'args',
     'risk-level': 'risk_level',
     'requires-approval': 'requires_approval',
     'source-path': 'source_path',
@@ -87,10 +88,15 @@ class SkillParser:
         safety_data = normalised.pop('safety', None)
         safety = self._parse_safety(safety_data) if safety_data else SkillSafety()
 
+        # Extract args sub-object
+        args_data = normalised.pop('args', None)
+        args = self._parse_args(args_data) if args_data else None
+
         # Build manifest
         manifest = SkillManifest(
             body=body.strip(),
             safety=safety,
+            args=args,
             source_path=source_path,
             **normalised,
         )
@@ -150,6 +156,16 @@ class SkillParser:
             fm['effort'] = manifest.effort
         if manifest.argument_hint:
             fm['argument-hint'] = manifest.argument_hint
+        if manifest.args:
+            fm['args'] = [
+                {
+                    'name': a.name,
+                    'description': a.description,
+                    'required': a.required,
+                }
+                | ({'default': a.default} if a.default is not None else {})
+                for a in manifest.args
+            ]
         if manifest.safety.risk_level != RiskLevel.LOW or manifest.safety.requires_approval:
             fm['safety'] = {
                 'risk_level': manifest.safety.risk_level.value,
@@ -208,3 +224,18 @@ class SkillParser:
                 requires_approval=normalised.get('requires_approval', False),
             )
         return SkillSafety()
+
+    def _parse_args(self, data: Any) -> list[SkillArg] | None:
+        """Parse args list from frontmatter."""
+        if isinstance(data, list):
+            args = []
+            for item in data:
+                if isinstance(item, dict):
+                    args.append(SkillArg(
+                        name=item.get('name', ''),
+                        description=item.get('description', ''),
+                        required=item.get('required', False),
+                        default=item.get('default'),
+                    ))
+            return args
+        return None

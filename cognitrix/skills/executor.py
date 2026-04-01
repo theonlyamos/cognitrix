@@ -35,6 +35,7 @@ MAX_DYNAMIC_CONTEXT_SIZE = 100_000  # 100KB
 # Pre-compiled regex for argument substitution
 _ARG_NUM_PATTERN = re.compile(r'\$(\d+)(?!\d)')
 _ARGUMENTS_BRACKET_PATTERN = re.compile(r'\$ARGUMENTS\[(\d+)\]')
+_ARG_PATTERN = re.compile(r'\$\(arg\s+(\w+)\)')
 
 # Allowed shell commands for dynamic context (whitelist)
 ALLOWED_COMMANDS = frozenset({
@@ -68,6 +69,7 @@ class SkillExecutor:
         manifest: SkillManifest,
         arguments: str = "",
         session: 'Session | None' = None,
+        skill_args: dict[str, Any] | None = None,
     ) -> AsyncGenerator[SkillEvent, None]:
         """Execute a skill, streaming events.
 
@@ -75,6 +77,7 @@ class SkillExecutor:
             manifest:   Parsed skill manifest
             arguments:  Arguments string (e.g. "src/auth/login.ts")
             session:    Optional session for history tracking
+            skill_args: Optional dict of structured args from use_skill kwargs
 
         Yields:
             SkillEvent for each significant moment
@@ -93,8 +96,24 @@ class SkillExecutor:
             # Parse arguments with shlex to preserve quoted strings
             args_list = shlex.split(arguments) if arguments else []
             
+            # If structured args provided, merge them into args_list
+            if skill_args and manifest.args:
+                # Map skill args by name to position
+                arg_mapping = {arg.name: idx for idx, arg in enumerate(manifest.args) if arg.name in skill_args}
+                for name, idx in arg_mapping.items():
+                    if idx < len(args_list):
+                        args_list[idx] = str(skill_args[name])
+                    else:
+                        args_list.append(str(skill_args[name]))
+            
+            # 0. Resolve $(arg name) syntax with skill_args
+            if skill_args:
+                rendered = self._resolve_arg_syntax(manifest.body, skill_args, manifest.args)
+            else:
+                rendered = manifest.body
+            
             # 1. Resolve argument substitutions
-            rendered = self._resolve_arguments(manifest.body, args_list)
+            rendered = self._resolve_arguments(rendered, args_list)
             # 2. Resolve environment substitutions (including ${COGNITRIX_SKILL_DIR})
             rendered = self._resolve_env_substitutions(rendered, session, manifest)
 
@@ -161,6 +180,29 @@ class SkillExecutor:
             )
 
     # ── Substitution ──
+
+    def _resolve_arg_syntax(
+        self, body: str, skill_args: dict[str, Any], args_def: list
+    ) -> str:
+        """Replace $(arg name) with values from skill_args, using defaults if not provided."""
+        # Build a lookup: arg name -> value (or default)
+        arg_values = {}
+        for arg_def in args_def:
+            name = arg_def.name
+            if name in skill_args:
+                arg_values[name] = skill_args[name]
+            elif arg_def.default is not None:
+                arg_values[name] = arg_def.default
+            elif arg_def.required:
+                # Required but not provided - leave placeholder for error
+                arg_values[name] = f"$(arg {name})"
+
+        # Replace $(arg name) with the value
+        def replace_arg(m):
+            name = m.group(1)
+            return str(arg_values.get(name, m.group(0)))
+
+        return _ARG_PATTERN.sub(replace_arg, body)
 
     def _resolve_arguments(self, body: str, args_list: list[str]) -> str:
         """Replace $ARGUMENTS, $ARGUMENTS[N], and $N with actual values."""
@@ -335,22 +377,8 @@ class SkillExecutor:
         formatted_tools = [t.to_dict_format() for t in tools]
         response = await self.llm(messages, tools=formatted_tools, stream=True)
 
-        if hasattr(response, '__aiter__'):
-            async for chunk in response:
-                if hasattr(chunk, 'current_chunk'):
-                    text = chunk.current_chunk
-                elif isinstance(chunk, str):
-                    text = chunk
-                else:
-                    text = str(chunk)
-                if text:
-                    yield text
-        else:
-            # Non-streaming fallback
-            if hasattr(response, 'llm_response'):
-                yield response.llm_response
-            else:
-                yield str(response)
+        async for chunk in self._stream_response(response):
+            yield chunk
 
     async def _execute_forked(
         self,
@@ -398,6 +426,11 @@ class SkillExecutor:
         formatted_tools = [t.to_dict_format() for t in agent.tools]
         response = await self.llm(messages, tools=formatted_tools, stream=True)
 
+        async for chunk in self._stream_response(response):
+            yield chunk
+
+    async def _stream_response(self, response) -> AsyncGenerator[str, None]:
+        """Shared streaming logic for both execution modes."""
         if hasattr(response, '__aiter__'):
             async for chunk in response:
                 if hasattr(chunk, 'current_chunk'):
@@ -409,6 +442,7 @@ class SkillExecutor:
                 if text:
                     yield text
         else:
+            # Non-streaming fallback
             if hasattr(response, 'llm_response'):
                 yield response.llm_response
             else:

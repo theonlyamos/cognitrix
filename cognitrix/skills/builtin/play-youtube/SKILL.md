@@ -2,7 +2,10 @@
 name: play-youtube
 description: Search YouTube for a topic and open the first video result in browser
 context: fork
-argument-hint: <search_topic>
+args:
+  - name: search_topic
+    description: The topic to search for on YouTube
+    required: true
 tags: [youtube, video, search]
 category: web
 version: "1.0.0"
@@ -20,9 +23,9 @@ Search YouTube for a topic and open the first video result.
 
 ## Steps
 
-1. Run the search script to get video URL:
+1. Run the search script with the search_topic to get video URL:
    ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/search.py "$ARGUMENTS"
+   python ${COGNITRIX_SKILL_DIR}/scripts/search.py "$(arg search_topic)"
    ```
 2. If a video URL is found, open it in the browser:
    - Linux: `xdg-open "<url>"`

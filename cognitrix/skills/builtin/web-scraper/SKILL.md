@@ -2,7 +2,10 @@
 name: web-scraper
 description: Extract text content from web pages by scraping HTML
 context: fork
-argument-hint: <url> [url2] [url3] ...
+args:
+  - name: urls
+    description: One or more URLs to scrape (space-separated)
+    required: true
 tags: [web, scrape, extract]
 category: web
 version: "1.0.0"
@@ -26,9 +29,9 @@ One or more URLs (space-separated):
 
 ## Steps
 
-1. Run the scrape script:
+1. Run the scrape script with the urls:
    ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/scrape.py "$ARGUMENTS"
+   python ${COGNITRIX_SKILL_DIR}/scripts/scrape.py "$(arg urls)"
    ```
 2. Return the extracted text content from each URL
 

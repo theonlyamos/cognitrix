@@ -3,7 +3,10 @@ name: code-review
 description: >
   Review code for bugs, style issues, and improvements. Use when asked to
   review, audit, or critique code quality.
-argument-hint: <file-or-directory>
+args:
+  - name: file_or_directory
+    description: Path to the file or directory to review
+    required: true
 tags: [code, review, quality]
 category: development
 version: "1.0.0"
@@ -15,7 +18,7 @@ safety:
 
 # Code Review
 
-Review the code at `$ARGUMENTS`:
+Review the code at "$(arg file_or_directory)":
 
 1. **Read the file(s)** thoroughly
 2. **Analyze** for the following categories:

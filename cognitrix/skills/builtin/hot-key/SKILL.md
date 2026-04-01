@@ -2,7 +2,10 @@
 name: hot-key
 description: Press a combination of keys simultaneously (e.g., Ctrl+C, Alt+Tab)
 context: fork
-argument-hint: <key1> <key2> [key3...]
+args:
+  - name: keys
+    description: The keys to press together (space-separated, e.g., "ctrl c", "alt tab")
+    required: true
 tags: [keyboard, hotkey, combo, shortcut, automation]
 category: system
 version: "1.0.0"
@@ -26,9 +29,9 @@ Example: `ctrl c` (copy), `alt tab` (switch window), `ctrl shift escape`
 
 ## Steps
 
-1. Run the combo script:
+1. Run the combo script with the keys:
    ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/combo.py "$ARGUMENTS"
+   python ${COGNITRIX_SKILL_DIR}/scripts/combo.py "$(arg keys)"
    ```
 2. Report success
 

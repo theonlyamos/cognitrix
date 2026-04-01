@@ -17,7 +17,8 @@ async def use_skill(
     skill_name: str,
     arguments: str = "",
     risk_level: str | None = None,
-    parent: Any = None
+    parent: Any = None,
+    **kwargs: Any
 ) -> str:
     """Execute a registered skill by name.
 
@@ -30,6 +31,7 @@ async def use_skill(
         arguments: Arguments to pass to the skill (e.g. 'src/auth/login.ts', 'AI agents 2025')
         risk_level: Optional risk level override (low, medium, high). If provided, overrides
                     the skill's default risk level for approval purposes.
+        **kwargs: Skill-specific arguments from args definition
     """
     from cognitrix.skills.manager import get_skill_manager
     from cognitrix.skills.executor import SkillExecutor
@@ -41,6 +43,18 @@ async def use_skill(
     if not manifest:
         available = [s.name for s in manager.list_skills_sync()]
         return f"Skill '{skill_name}' not found. Available skills: {available}"
+
+    # Validate kwargs against skill's args definition
+    if manifest.args:
+        for arg_def in manifest.args:
+            if arg_def.name in kwargs:
+                # Type check: ensure value is string
+                if not isinstance(kwargs[arg_def.name], str):
+                    return f"Invalid argument '{arg_def.name}': expected string, got {type(kwargs[arg_def.name]).__name__}"
+            elif arg_def.required:
+                # Check if required arg is missing
+                if arg_def.name not in kwargs and not arguments:
+                    return f"Missing required argument '{arg_def.name}' for skill '{skill_name}'"
 
     # Create a copy of the manifest to avoid mutating the cached original
     manifest = manifest.model_copy(deep=True)
@@ -80,7 +94,8 @@ async def use_skill(
 
     # Execute and collect result
     result_parts: list[str] = []
-    async for event in executor.execute(manifest, arguments):
+    skill_args = kwargs if kwargs else None
+    async for event in executor.execute(manifest, arguments, skill_args=skill_args):
         if event.type == SkillEventType.SKILL_PROGRESS:
             if event.data:
                 result_parts.append(str(event.data))

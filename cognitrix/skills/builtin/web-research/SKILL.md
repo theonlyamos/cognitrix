@@ -4,7 +4,10 @@ description: >
   Research a topic on the web. Use when the user asks to research, find information,
   or needs up-to-date data about a topic.
 context: fork
-argument-hint: <topic>
+args:
+  - name: topic
+    description: The topic to research
+    required: true
 tags: [research, web, search]
 category: research
 version: "1.0.0"
@@ -16,7 +19,7 @@ safety:
 
 # Web Research
 
-Research "$ARGUMENTS" thoroughly:
+Research "$(arg topic)" thoroughly:
 
 1. **Search the web** for the topic using the Internet Search tool
 2. **Scrape the top 5** most relevant results using the Web Scraper tool

@@ -20,6 +20,14 @@ class RiskLevel(str, Enum):
     HIGH = "high"
 
 
+class SkillArg(BaseModel):
+    """Argument definition for a skill."""
+    name: str
+    description: str
+    required: bool = False
+    default: str | None = None
+
+
 class SkillEventType(str, Enum):
     """Events emitted during streaming skill execution."""
     SKILL_START = "skill_start"
@@ -63,6 +71,7 @@ class SkillManifest(BaseModel):
     agent: str | None = None                # agent name for forked context
     effort: str | None = None               # "low" | "medium" | "high" | "max"
     argument_hint: str | None = None        # e.g. "<topic> [depth]"
+    args: list[SkillArg] | None = None     # Structured argument definitions
 
     # Metadata
     tags: list[str] = Field(default_factory=list)

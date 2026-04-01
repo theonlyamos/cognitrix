@@ -2,7 +2,22 @@
 name: edit-file
 description: Edit an existing file using replace, insert, append, or line range operations
 context: fork
-argument-hint: <file_path> <operation> <line_number> [end_line] <new_content>
+args:
+  - name: file_path
+    description: Path to the file to edit
+    required: true
+  - name: operation
+    description: Operation to perform (replace, insert, append, replace_range)
+    required: true
+  - name: line_number
+    description: Line number for the operation
+    required: true
+  - name: end_line
+    description: End line for replace_range operation
+    required: false
+  - name: new_content
+    description: New content to insert/replace
+    required: true
 tags: [file, edit, modify]
 category: system
 version: "1.0.0"

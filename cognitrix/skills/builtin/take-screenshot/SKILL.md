@@ -2,7 +2,11 @@
 name: take-screenshot
 description: Take a screenshot of the screen and save to a file
 context: fork
-argument-hint: "<output_path>"
+args:
+  - name: output_path
+    description: Optional path to save the screenshot (defaults to screenshot.png)
+    required: false
+    default: screenshot.png
 tags: [screenshot, capture, screen]
 category: system
 version: "1.0.0"
@@ -25,9 +29,9 @@ Optional argument: `[output_path]`
 
 ## Steps
 
-1. Run the capture script:
+1. Run the capture script with the output_path:
    ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/capture.py "$ARGUMENTS"
+   python ${COGNITRIX_SKILL_DIR}/scripts/capture.py "$(arg output_path)"
    ```
 2. Report the file path where screenshot was saved
 

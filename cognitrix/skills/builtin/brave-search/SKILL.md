@@ -2,7 +2,10 @@
 name: brave-search
 description: Search the web using Brave Search API for up-to-date information
 context: fork
-argument-hint: <search_query>
+args:
+  - name: search_query
+    description: The search query to look up
+    required: true
 tags: [search, web, brave]
 category: web
 version: "1.0.0"
@@ -21,9 +24,9 @@ Search the web using Brave Search API for current information.
 ## Steps
 
 1. Ensure BRAVE_API_KEY environment variable is set
-2. Run the search script:
+2. Run the search script with the search_query:
    ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/search.py "$ARGUMENTS"
+   python ${COGNITRIX_SKILL_DIR}/scripts/search.py "$(arg search_query)"
    ```
 3. Format and return search results
 

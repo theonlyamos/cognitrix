@@ -2,7 +2,10 @@
 name: text-input
 description: Type text into the currently focused application
 context: fork
-argument-hint: <text_to_type>
+args:
+  - name: text_to_type
+    description: The text to type into the focused application
+    required: true
 tags: [keyboard, type, input, automation, ui]
 category: system
 version: "1.0.0"
@@ -26,9 +29,9 @@ Example: `Hello World` or `filename.txt`
 
 ## Steps
 
-1. Run the type script:
+1. Run the type script with the text_to_type:
    ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/type.py "$ARGUMENTS"
+   python ${COGNITRIX_SKILL_DIR}/scripts/type.py "$(arg text_to_type)"
    ```
 2. Report success
 

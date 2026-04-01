@@ -2,7 +2,14 @@
 name: wikipedia
 description: Search and retrieve information from Wikipedia
 context: fork
-argument-hint: <search_query> [basic|advanced]
+args:
+  - name: search_query
+    description: The search query to look up on Wikipedia
+    required: true
+  - name: mode
+    description: Search mode - basic for short summary, advanced for full page content
+    required: false
+    default: basic
 tags: [wikipedia, encyclopedia, search]
 category: web
 version: "1.0.0"
@@ -27,9 +34,9 @@ Arguments: `<search_query> [basic|advanced]`
 
 ## Steps
 
-1. Run the search script:
+1. Run the search script with the search_query:
    ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/search.py "$ARGUMENTS"
+   python ${COGNITRIX_SKILL_DIR}/scripts/search.py "$(arg search_query)" "$(arg mode)"
    ```
 2. Format and return search results
 
