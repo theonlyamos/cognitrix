@@ -31,6 +31,7 @@ from cognitrix.tools.misc import (
     write_file,
 )
 from cognitrix.tools.python import PythonREPL as Python
+from cognitrix.tools.skill_tool import use_skill
 from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import ToolCallResult
 
@@ -47,5 +48,6 @@ __all__ = [
     'call_agent', 'web_scraper', 'internet_search',
     'brave_search', 'wikipedia', 'create_new_team',
     'create_tool', 'terminal_command', 'Python',
-    'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool'
+    'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool',
+    'use_skill'
 ]

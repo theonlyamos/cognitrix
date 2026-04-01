@@ -4,6 +4,7 @@ CLI argument parsing and configuration.
 import argparse
 
 from .handlers import manage_agents, manage_tools
+from .handlers_skills import manage_skills
 from .utils import str_or_file
 
 
@@ -30,6 +31,20 @@ def get_arguments():
                             choices=['all', 'general', 'system', 'web'],
                             help='List tools by category')
     tools_parser.set_defaults(func=manage_tools)
+
+    # Skills subcommand
+    skills_parser = subparsers.add_parser('skills', help="Manage skills")
+    skills_parser.add_argument('name', type=str, nargs='?', help='Skill name')
+    skills_parser.add_argument('-l', '--list', action='store_true', help='List installed skills')
+    skills_parser.add_argument('--show', type=str, help='Show skill details')
+    skills_parser.add_argument('--create', action='store_true', help='Create a new skill')
+    skills_parser.add_argument('--install', type=str, help='Install from path/URL/registry')
+    skills_parser.add_argument('--remove', type=str, help='Remove a skill')
+    skills_parser.add_argument('--validate', type=str, help='Validate a SKILL.md')
+    skills_parser.add_argument('--run', type=str, help='Run a skill by name')
+    skills_parser.add_argument('--search', type=str, help='Search for skills')
+    skills_parser.add_argument('args', nargs='*', help='Arguments for --run')
+    skills_parser.set_defaults(func=manage_skills)
 
     # Main arguments
     parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')

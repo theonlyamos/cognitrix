@@ -154,6 +154,23 @@ FRONTEND_STATIC_DIR = FRONTEND_BUILD_DIR.joinpath('assets')
 COGNITRIX_HOME = settings.workdir
 MCP_CONFIG_FILE = settings.mcp_config_file
 
+# Skills configuration
+SKILLS_BUILTIN_DIR = BASE_DIR / 'skills' / 'builtin'
+SKILLS_GLOBAL_DIR = Path.home() / '.agents' / 'skills'
+SKILLS_CACHE_DIR = SKILLS_GLOBAL_DIR / '.cache'
+SKILLS_REGISTRY_URL = 'https://github.com/theonlyamos/cognitrix-skills'
+
+
+def get_skills_project_dir() -> Path:
+    """Get project-scoped skills directory (.agents/skills/ relative to cwd)."""
+    return Path.cwd() / '.agents' / 'skills'
+
+
+def ensure_skills_dirs():
+    """Ensure skills directories exist."""
+    SKILLS_GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
+    SKILLS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 def ensure_cognitrix_home():
     """Ensure the .cognitrix directory exists"""
     settings.workdir.mkdir(exist_ok=True)
