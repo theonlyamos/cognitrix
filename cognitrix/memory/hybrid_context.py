@@ -77,8 +77,7 @@ class HybridContextManager(BaseContextManager):
         agent_id: str,
         max_short_term: int = 10,
         max_long_term: int = 5,
-        importance_threshold: float = 0.7,
-        persist_directory: str = None
+        importance_threshold: float = 0.7
     ):
         """
         Initialize hybrid context manager.
@@ -88,14 +87,12 @@ class HybridContextManager(BaseContextManager):
             max_short_term: Number of recent messages to keep in context
             max_long_term: Number of relevant memories to retrieve
             importance_threshold: Minimum importance to store in long-term
-            persist_directory: Where to persist ChromaDB
         """
         self.agent_id = agent_id
         self.short_term = SlidingWindowContextManager(max_short_term)
-        # Lazy load ChromaDB
+        # Lazy load ChromaDB - uses default persist directory from ChromaMemoryStore
         self._chroma_config = {
-            'collection_name': f"agent_{agent_id}",
-            'persist_directory': persist_directory
+            'collection_name': f"agent_{agent_id}"
         }
         self._chroma_store = None
         self.importance_scorer = ImportanceScorer()
@@ -109,8 +106,7 @@ class HybridContextManager(BaseContextManager):
         """Lazy-initialize ChromaDB-backed long-term memory store."""
         if self._chroma_store is None:
             self._chroma_store = ChromaMemoryStore(
-                collection_name=self._chroma_config['collection_name'],
-                persist_directory=self._chroma_config.get('persist_directory')
+                collection_name=self._chroma_config['collection_name']
             )
         return self._chroma_store
 

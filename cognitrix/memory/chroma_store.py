@@ -12,6 +12,7 @@ from chromadb.config import Settings
 
 from cognitrix.memory.base import BaseMemory, MemoryEntry
 from cognitrix.utils.embedding_model import get_embedding_model
+from cognitrix.config import COGNITRIX_WORKDIR
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -22,7 +23,7 @@ class ChromaMemoryStore(BaseMemory):
     def __init__(
         self,
         collection_name: str = "agent_memory",
-        persist_directory: Optional[str] = None,
+        persist_directory: Optional[str] = str(COGNITRIX_WORKDIR / "chroma_db"),
         embedding_model: str = "all-MiniLM-L6-v2"
     ):
         """
@@ -30,13 +31,10 @@ class ChromaMemoryStore(BaseMemory):
 
         Args:
             collection_name: Name of the ChromaDB collection
-            persist_directory: Where to persist DB (default: ./chroma_db)
+            persist_directory: Where to persist DB (default: COGNITRIX_WORKDIR/chroma_db)
             embedding_model: Sentence transformer model name (kept for API compatibility)
         """
         self.collection_name = collection_name
-
-        if persist_directory is None:
-            persist_directory = str(Path.cwd() / "chroma_db")
 
         self.persist_directory = persist_directory
 
