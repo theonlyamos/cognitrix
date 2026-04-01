@@ -162,6 +162,7 @@ class SkillExecutor:
 
     def _resolve_arguments(self, body: str, arguments: str) -> str:
         """Replace $ARGUMENTS, $ARGUMENTS[N], and $N with actual values."""
+        arguments = arguments or ""
         args_list = arguments.split() if arguments else []
 
         result = body.replace("$ARGUMENTS", arguments)
