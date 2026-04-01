@@ -2,6 +2,7 @@
 Interactive shell implementation with command completion and MCP support.
 """
 import getpass
+import logging
 import os
 import socket
 import subprocess
@@ -16,8 +17,16 @@ from rich.console import Console
 from rich.panel import Panel
 
 from .handlers import list_agents, list_tasks, list_teams
+from cognitrix.skills.manager import get_skill_manager
+from cognitrix.skills.executor import SkillExecutor
+from cognitrix.agents.base import AgentManager
+from cognitrix.skills.models import SkillEventType
 
 console = Console()
+logger = logging.getLogger('cognitrix.log')
+
+# Module-level skill command cache for fast lookups
+_skill_command_cache: dict[str, Any] = {}
 
 
 class CognitrixCompleter(Completer):
@@ -237,16 +246,18 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
         await handle_entity_command(cmd, args + [agent, session])
         return True
 
-    # Check if the command matches a skill
-    from cognitrix.skills.manager import get_skill_manager
-    manager = get_skill_manager()
-    skill_manifest = await manager.get_skill(cmd)
+    # Check if the command matches a skill (using cached lookup)
+    global _skill_command_cache
+    skill_manifest = _skill_command_cache.get(cmd)
+    
+    if not skill_manifest:
+        # Cache miss - try to get from manager
+        manager = get_skill_manager()
+        skill_manifest = await manager.get_skill(cmd)
+        if skill_manifest:
+            _skill_command_cache[cmd] = skill_manifest
     
     if skill_manifest:
-        from cognitrix.skills.executor import SkillExecutor
-        from cognitrix.agents.base import AgentManager
-        from cognitrix.skills.models import SkillEventType
-
         agent_manager = AgentManager(agent)
         executor = SkillExecutor(agent_manager=agent_manager, llm=agent.llm)
 
@@ -514,16 +525,20 @@ async def initialize_shell(session, agent, stream: bool = False):
         '/mcp-call', '/mcp-connect', '/mcp-disconnect'
     ]
 
-    # Dynamically add available skills to tab completion
+    # Pre-warm skill cache at startup for faster command lookups
     try:
-        import logging
-        from cognitrix.skills.manager import get_skill_manager
         manager = get_skill_manager()
-        await manager.discover_all()
+        # Use cached data if available, otherwise discover
+        if not manager._cache:
+            await manager.discover_all()
+        
+        # Build skill command cache for fast lookups
+        global _skill_command_cache
         for skill in manager.list_skills_sync():
             custom_commands.append(f"/{skill.name}")
+            _skill_command_cache[f"/{skill.name}"] = skill
     except Exception as e:
-        logging.getLogger('cognitrix.log').debug(f"Failed to load skills for tab completion: {e}")
+        logger.debug(f"Failed to load skills for tab completion: {e}")
 
     session_completer = CognitrixCompleter(builtins, custom_commands)
     prompt_session = PromptSession(completer=session_completer, history=InMemoryHistory())

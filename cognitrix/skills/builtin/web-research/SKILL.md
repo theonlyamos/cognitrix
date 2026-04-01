@@ -9,7 +9,7 @@ tags: [research, web, search]
 category: research
 version: "1.0.0"
 author: theonlyamos
-allowed-tools: [Bash, Read File, Internet Search, Web Scraper, Python Repl]
+allowed-tools: [internet_search, web_scraper, bash]
 ---
 
 # Web Research
