@@ -75,17 +75,10 @@ def run_shell_command(command: str) -> bool:
 
 async def handle_slash_command(query: str, agent, session) -> bool | tuple:
     """Handle slash commands and return True if command was processed."""
-    import shlex
-    
     if not query.startswith('/'):
         return False
 
-    # Use shlex.split to properly handle quoted arguments
-    try:
-        parts = shlex.split(query[1:].strip())
-    except ValueError:
-        parts = query[1:].strip().split()
-    
+    parts = query[1:].strip().split()
     if not parts:
         console.print(Panel("[bold red]Empty command.[/bold red]", title="[red]Error[/red]", border_style="red"))
         return True

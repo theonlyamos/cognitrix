@@ -332,7 +332,8 @@ class SkillExecutor:
             tools = [t for t in tools if t.name.lower() in allowed_lower]
 
         # Stream the LLM response
-        response = await self.llm(messages, tools=tools, stream=True)
+        formatted_tools = [t.to_dict_format() for t in tools]
+        response = await self.llm(messages, tools=formatted_tools, stream=True)
 
         if hasattr(response, '__aiter__'):
             async for chunk in response:
@@ -394,8 +395,8 @@ class SkillExecutor:
             {'role': 'system', 'content': sub_manager.formatted_system_prompt()},
             {'role': 'user', 'content': prompt},
         ]
-
-        response = await self.llm(messages, tools=agent.tools, stream=True)
+        formatted_tools = [t.to_dict_format() for t in agent.tools]
+        response = await self.llm(messages, tools=formatted_tools, stream=True)
 
         if hasattr(response, '__aiter__'):
             async for chunk in response:
