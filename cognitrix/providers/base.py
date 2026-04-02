@@ -4,6 +4,7 @@ Provider-agnostic OpenAI-compatible LLM layer.
 Runtime config (provider, base_url, api_key, model) from env or CLI.
 Groq and Ollama: direct. Others: route through Helicone.
 """
+import functools
 import hashlib
 import json
 import logging
@@ -222,10 +223,24 @@ class LLMManager:
 
     @staticmethod
     def load_llm(provider: str | dict[str, Any]) -> LLM | None:
+        """Load LLM with caching to avoid repeated instantiation."""
+        cache_key = json.dumps(provider, sort_keys=True) if isinstance(provider, dict) else provider
+        
+        if not hasattr(LLMManager, '_llm_cache'):
+            LLMManager._llm_cache = {}
+        
+        if cache_key in LLMManager._llm_cache:
+            cached = LLMManager._llm_cache[cache_key]
+            if isinstance(cached, LLM):
+                return cached
+        
         try:
             if isinstance(provider, dict):
-                return LLM(**provider)
-            return LLM(provider=str(provider))
+                llm = LLM(**provider)
+            else:
+                llm = LLM(provider=str(provider))
+            LLMManager._llm_cache[cache_key] = llm
+            return llm
         except Exception as e:
             logging.exception(e)
             return None

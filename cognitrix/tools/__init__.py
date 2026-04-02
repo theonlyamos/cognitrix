@@ -1,13 +1,11 @@
 from cognitrix.tools.base import Tool
 from cognitrix.tools.mcp import list_mcp_tools, run_mcp_tool
 from cognitrix.tools.misc import (
-    calculator,
     call_agent,
     create_agent,
     create_new_team,
     create_tool,
     open_file,
-    python_repl,
     bash,
 )
 from cognitrix.tools.python import PythonREPL as Python
@@ -18,7 +16,7 @@ from cognitrix.tools.utils import ToolCallResult
 __all__ = [
     'Tool',
     'tool',
-    'calculator', 'open_file', 'python_repl',
+    'open_file',
     'create_agent', 'call_agent', 'create_new_team',
     'create_tool', 'bash', 'Python',
     'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool',

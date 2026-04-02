@@ -15,7 +15,7 @@ tags: [summary, document, tldr]
 category: writing
 version: "1.0.0"
 author: theonlyamos
-allowed-tools: [bash, read_file, python_repl]
+allowed-tools: [bash, read-file]
 safety:
   risk-level: low
 ---

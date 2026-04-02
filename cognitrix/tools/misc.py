@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
-import multiprocessing
 import os
 import re
 import shlex
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING
 from webbrowser import open_new_tab
 
 import pyautogui
@@ -51,50 +50,8 @@ ALLOWED_COMMANDS: set[str] = {
 def get_file_content(full_path: Path):
     with full_path.open('rt') as file:
         lines = file.readlines()
-        # Create a list of tuples with line number and content
         line_data = [(i + 1, line.rstrip()) for i, line in enumerate(lines)]
-        # Format the output with line numbers
         return '\n'.join(f"{num}: {content}" for num, content in line_data)
-
-@tool(category='general')
-def calculator(math_expression: str) -> Any:
-    """
-    Useful for getting the result of a math expression.
-    The input to this tool should be a valid mathematical expression that could be executed by a simple calculator.
-    The code will be executed in a python environment so the input should be in a format it can be executed.
-    Always present the answer from this tool to the user in a sentence.
-
-    Args:
-        math_expression (str): The math expression to evaluate
-
-    Returns:
-        Any: The result of the math expression
-    """
-
-    return eval(math_expression)
-
-
-# REMOVED - Replaced by skills:
-# - play_youtube -> play-youtube skill
-# - open_website -> open-website skill
-# - list_directory -> list-dir skill
-# - create_file -> bash (touch/printf)
-# - create_directory -> bash (mkdir)
-# - read_file -> read-file skill
-# - write_file -> write-file skill
-# - update_file -> edit-file skill
-# - delete_path -> delete-path skill
-# - take_screenshot -> take-screenshot skill
-# - internet_search -> internet-search skill
-# - web_scraper -> web-scraper skill
-# - brave_search -> brave-search skill
-# - wikipedia -> wikipedia skill
-# - text_input -> text-input skill
-# - key_press -> key-press skill
-# - hot_key -> hot-key skill
-# - mouse_click -> mouse-click skill
-# - mouse_double_click -> mouse-double-click skill
-# - mouse_right_click -> mouse-right-click skill
 
 
 @tool(category='system')
@@ -120,44 +77,6 @@ def open_file(path: str, filename: str | None = None):
     except Exception as e:
         return str(e)
 
-
-@tool(category='system')
-def python_repl(code: str, timeout: int | None = None):
-    """Execute Python code in a REPL environment.
-
-    Args:
-        code (str): The Python code to execute
-        timeout (int, optional): Timeout in seconds
-
-    Returns:
-        str: The output of the code execution
-
-    Warning:
-        This tool can execute arbitrary code. Use with caution.
-    """
-    from cognitrix.tools.python import PythonREPL, warn_once
-
-    warn_once()
-
-    queue = multiprocessing.Queue()
-    globals_dict = {}
-    locals_dict = {}
-
-    if timeout is not None:
-        p = multiprocessing.Process(
-            target=PythonREPL.worker,
-            args=(code, globals_dict, locals_dict, queue)
-        )
-        p.start()
-        p.join(timeout)
-
-        if p.is_alive():
-            p.terminate()
-            return "Execution timed out"
-    else:
-        PythonREPL.worker(code, globals_dict, locals_dict, queue)
-
-    return queue.get()
 
 @tool(category='system')
 def take_screenshot():
