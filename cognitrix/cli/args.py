@@ -56,7 +56,7 @@ def get_arguments():
     parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
     parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')],
                        default='all', help='Add tools by categories to agent')
-    parser.add_argument('--model', type=str, default='z-ai/glm-4.5-air:free', help='Specify model or model_url to use')
+    parser.add_argument('--model', type=str, default='qwen/qwen3.6-plus-preview:free', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
     parser.add_argument('--api-base', type=str, default='',
                        help='Override provider base_url (e.g. for local Ollama).')

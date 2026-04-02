@@ -1,7 +1,7 @@
 ---
 name: list-dir
 description: List contents of a directory with details (files, folders, permissions)
-context: fork
+context: same
 args:
   - name: path
     description: Path to the directory to list

@@ -205,21 +205,26 @@ class SkillExecutor:
         return _ARG_PATTERN.sub(replace_arg, body)
 
     def _resolve_arguments(self, body: str, args_list: list[str]) -> str:
-        """Replace $ARGUMENTS, $ARGUMENTS[N], and $N with actual values."""
+        """Replace $ARGUMENTS, $ARGUMENTS[N], and $N with actual values.
+        
+        $N and $ARGUMENTS[N] use 1-based indexing (like shell positional args).
+        """
         if not args_list:
             args_list = []
         
         arguments = " ".join(args_list)
         result = body.replace("$ARGUMENTS", arguments)
 
+        # $ARGUMENTS[N] - 1-based to 0-based conversion
         result = _ARGUMENTS_BRACKET_PATTERN.sub(
-            lambda m: args_list[int(m.group(1))] if int(m.group(1)) < len(args_list) else m.group(0),
+            lambda m: args_list[int(m.group(1)) - 1] if 0 < int(m.group(1)) <= len(args_list) else m.group(0),
             result
         )
 
         def replace_dollar_n(m):
             idx = int(m.group(1))
-            return args_list[idx] if idx < len(args_list) else m.group(0)
+            # Convert from 1-based to 0-based indexing
+            return args_list[idx - 1] if 0 < idx <= len(args_list) else m.group(0)
 
         return _ARG_NUM_PATTERN.sub(replace_dollar_n, result)
 
@@ -389,7 +394,6 @@ class SkillExecutor:
         """Create sub-agent with skill prompt as system prompt, stream response."""
         from cognitrix.agents.base import AgentManager
         from cognitrix.models import Agent
-        from cognitrix.providers.base import LLM
 
         # Create an ephemeral agent for this skill
         agent = Agent(

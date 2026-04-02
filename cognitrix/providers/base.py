@@ -77,7 +77,7 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
     model = (
         overrides.get('model')
         or os.getenv(_env_key(effective_provider, 'MODEL'))
-        or ''
+        or settings.get_default_model(effective_provider)
     )
     temperature = overrides.get('temperature')
     if temperature is None:

@@ -405,8 +405,15 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
         Use with caution as it interacts with the system directly.
     """
     try:
-        # Security check 1: Extract base command
-        command.split()[0].lower()
+        # Convert timeout to int if passed as string (e.g., from LLM)
+        if timeout is not None:
+            try:
+                timeout = int(timeout)
+            except (ValueError, TypeError):
+                return f"Error: Invalid timeout value '{timeout}'. Must be an integer."
+
+        # Security check 1: Extract base command (for logging/validation)
+        base_command = command.split()[0].lower() if command else ""
 
         # Security check 2: Verify command is whitelisted
         # if base_command not in ALLOWED_COMMANDS:

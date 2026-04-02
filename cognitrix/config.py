@@ -92,6 +92,28 @@ class CognitrixSettings:
             'helicone': self.helicone_api_key,
         }
         return key_mapping.get(provider.lower(), '')
+    
+    def get_default_model(self, provider: str) -> str:
+        """Get default model for a provider"""
+        model_mapping = {
+            'openai': 'gpt-4o',
+            'openrouter': 'qwen/qwen3.6-plus-preview:free',
+            'anthropic': 'claude-4-5-sonnet',
+            'google': 'gemini-3.1-flash-lite-preview',
+            'groq': 'llama-3.3-70b-versatile',
+            'cohere': 'command-r-plus',
+            'together': 'meta-llama/llama-3.3-70b-instruct',
+            'huggingface': 'meta-llama/llama-3.3-70b-instruct',
+            'clarifai': 'meta-llama/llama-3.3-70b-instruct',
+            'aimlapi': 'meta-llama/llama-3.3-70b-instruct',
+            'minds': 'meta-llama/llama-3.3-70b-instruct',
+            'github': 'meta-llama/llama-3.3-70b-instruct',
+            'tavily': 'meta-llama/llama-3.3-70b-instruct',
+            'brave': 'meta-llama/llama-3.3-70b-instruct',
+            'deepgram': 'meta-llama/llama-3.3-70b-instruct',
+            'helicone': 'meta-llama/llama-3.3-70b-instruct',
+        }
+        return model_mapping.get(provider.lower(), '')
 
     def has_api_key(self, provider: str) -> bool:
         """Check if API key is available for a provider"""
