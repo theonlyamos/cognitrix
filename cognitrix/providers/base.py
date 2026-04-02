@@ -41,7 +41,7 @@ _DEFAULT_BASE_URLS: dict[str, str] = {
     'openrouter': 'https://openrouter.ai/api/v1',
     'openai': 'https://api.openai.com/v1',
     'cerebras': 'https://api.cerebras.com/v1',
-    'google': 'https://generativelanguage.googleapis.com/v1beta/',
+    'google': 'https://generativelanguage.googleapis.com/v1beta/openai/v1',
 }
 
 
@@ -273,7 +273,7 @@ class LLMManager:
                 helicone_base = helicone_base.replace('v1', 'api/v1')
             
             if llm.provider in ('google', 'gemini'):
-                helicone_base = helicone_base + 'beta'
+                helicone_base = helicone_base + 'beta/openai/v1'
 
             if use_helicone:
                 headers: dict[str, str] = {

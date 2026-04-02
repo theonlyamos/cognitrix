@@ -87,7 +87,11 @@ async def use_skill(
         if not llm:
             return "Failed to initialise LLM for skill execution"
         from cognitrix.models import Agent
-        fallback_agent = Agent(name="skill-executor", llm=llm)
+        fallback_agent = Agent(
+            name="skill-executor",
+            llm=llm,
+            system_prompt="You are a skill execution agent that runs skills on behalf of the user.",
+        )
         agent_manager = AgentManager(fallback_agent)
 
     executor = SkillExecutor(agent_manager=agent_manager, llm=llm)

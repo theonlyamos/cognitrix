@@ -97,7 +97,7 @@ class CognitrixSettings:
         """Get default model for a provider"""
         model_mapping = {
             'openai': 'gpt-4o',
-            'openrouter': 'qwen/qwen3.6-plus-preview:free',
+            'openrouter': 'google/gemini-3.1-flash-lite-preview',
             'anthropic': 'claude-4-5-sonnet',
             'google': 'gemini-3.1-flash-lite-preview',
             'groq': 'llama-3.3-70b-versatile',
