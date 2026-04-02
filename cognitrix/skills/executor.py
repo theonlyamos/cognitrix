@@ -106,13 +106,31 @@ class SkillExecutor:
                     else:
                         args_list.append(str(skill_args[name]))
             
-            # 0. Resolve $(arg name) syntax with skill_args
-            if skill_args:
+            # Auto-build skill_args from positional arguments when not
+            # explicitly provided.  This covers CLI slash-command invocations
+            # (e.g. /web-research AI agents 2025) and use_skill calls that
+            # only pass an `arguments` string.
+            if not skill_args and manifest.args and args_list:
+                skill_args = {}
+                num_defs = len(manifest.args)
+                for idx, arg_def in enumerate(manifest.args):
+                    if idx < len(args_list):
+                        if idx == num_defs - 1 and len(args_list) > num_defs:
+                            # Last defined arg absorbs all remaining words
+                            # e.g. args=["AI","agents","2025"] → topic="AI agents 2025"
+                            skill_args[arg_def.name] = " ".join(args_list[idx:])
+                        else:
+                            skill_args[arg_def.name] = args_list[idx]
+                    elif arg_def.default is not None:
+                        skill_args[arg_def.name] = arg_def.default
+            
+            # Resolve $(arg name) syntax whenever we have skill_args + definitions
+            if skill_args and manifest.args:
                 rendered = self._resolve_arg_syntax(manifest.body, skill_args, manifest.args)
             else:
                 rendered = manifest.body
             
-            # 1. Resolve argument substitutions
+            # Resolve $ARGUMENTS, $N, $ARGUMENTS[N] substitutions
             rendered = self._resolve_arguments(rendered, args_list)
             # 2. Resolve environment substitutions (including ${COGNITRIX_SKILL_DIR})
             rendered = self._resolve_env_substitutions(rendered, session, manifest)
@@ -235,7 +253,7 @@ class SkillExecutor:
         import os
 
         replacements = {
-            '${COGNITRIX_SESSION_ID}': session.id if session.id else '',
+            '${COGNITRIX_SESSION_ID}': session.id if (session and session.id) else '',
             '${COGNITRIX_USER}': os.getenv('USER', os.getenv('USERNAME', '')),
             '${COGNITRIX_SKILL_DIR}': manifest.source_path or '' if manifest else '',
         }
@@ -367,7 +385,7 @@ class SkillExecutor:
     ) -> AsyncGenerator[str, None]:
         """Inject skill prompt into current agent conversation, stream response."""
         # Prepare messages
-        messages = [
+        messages: list[dict[str, Any]] = [
             {'role': 'system', 'content': self.agent_manager.formatted_system_prompt()},
             {'role': 'user', 'content': prompt},
         ]
@@ -378,12 +396,60 @@ class SkillExecutor:
             allowed_lower = frozenset(t.lower() for t in manifest.allowed_tools)
             tools = [t for t in tools if t.name.lower() in allowed_lower]
 
-        # Stream the LLM response
         formatted_tools = [t.to_dict_format() for t in tools]
-        response = await self.llm(messages, tools=formatted_tools, stream=True)
 
-        async for chunk in self._stream_response(response):
-            yield chunk
+        # Tool call loop — keep prompting until LLM gives a final text response
+        max_iterations = 15  # safety limit
+        for _ in range(max_iterations):
+            response = await self.llm(messages, tools=formatted_tools, stream=True)
+
+            last_response = None
+            async for chunk in self._stream_response(response):
+                if isinstance(chunk, str):
+                    yield chunk
+                last_response = chunk  # keep reference to last LLMResponse
+
+            # Check for tool calls in the final response object
+            tool_calls = self._extract_tool_calls(last_response)
+            if not tool_calls:
+                break  # No tools — we're done
+
+            # Execute tools and add results to messages
+            logger.info(f"Skill '{manifest.name}' executing tools: {[tc.get('name') for tc in tool_calls]}")
+            result = await self.agent_manager.call_tools(tool_calls)
+
+            if isinstance(result, dict) and result.get('type') == 'tool_calls_result':
+                # Add assistant message with tool_calls (required by OpenAI API format)
+                messages.append({
+                    'role': 'assistant',
+                    'content': None,
+                    'tool_calls': self._format_tool_calls_for_message(tool_calls),
+                })
+                # Add tool result messages
+                tool_results = result.get('result', [])
+                if isinstance(tool_results, list):
+                    for tr in tool_results:
+                        if isinstance(tr, dict):
+                            messages.append({
+                                'role': 'tool',
+                                'tool_call_id': tr.get('tool_call_id'),
+                                'content': str(tr.get('data', '')),
+                            })
+                        else:
+                            messages.append({
+                                'role': 'tool',
+                                'tool_call_id': None,
+                                'content': str(tr),
+                            })
+                else:
+                    messages.append({
+                        'role': 'tool',
+                        'tool_call_id': None,
+                        'content': str(tool_results),
+                    })
+            else:
+                # Non-dict result (error string, etc.) — inject as user context
+                messages.append({'role': 'user', 'content': f"Tool result: {result}"})
 
     async def _execute_forked(
         self,
@@ -413,7 +479,6 @@ class SkillExecutor:
 
         # Use the specified agent type or default
         if manifest.agent:
-            # Try to find the named agent
             try:
                 found = Agent.find_one({'name': manifest.agent})
                 if found:
@@ -423,20 +488,70 @@ class SkillExecutor:
                 pass
 
         sub_manager = AgentManager(agent)
-        messages = [
+        messages: list[dict[str, Any]] = [
             {'role': 'system', 'content': sub_manager.formatted_system_prompt()},
             {'role': 'user', 'content': prompt},
         ]
         formatted_tools = [t.to_dict_format() for t in agent.tools]
-        response = await self.llm(messages, tools=formatted_tools, stream=True)
 
-        async for chunk in self._stream_response(response):
-            yield chunk
+        # Tool call loop
+        max_iterations = 15
+        for _ in range(max_iterations):
+            response = await self.llm(messages, tools=formatted_tools, stream=True)
 
-    async def _stream_response(self, response) -> AsyncGenerator[str, None]:
-        """Shared streaming logic for both execution modes."""
+            last_response = None
+            async for chunk in self._stream_response(response):
+                if isinstance(chunk, str):
+                    yield chunk
+                last_response = chunk
+
+            tool_calls = self._extract_tool_calls(last_response)
+            if not tool_calls:
+                break
+
+            logger.info(f"Skill '{manifest.name}' (forked) executing tools: {[tc.get('name') for tc in tool_calls]}")
+            result = await sub_manager.call_tools(tool_calls)
+
+            if isinstance(result, dict) and result.get('type') == 'tool_calls_result':
+                messages.append({
+                    'role': 'assistant',
+                    'content': None,
+                    'tool_calls': self._format_tool_calls_for_message(tool_calls),
+                })
+                tool_results = result.get('result', [])
+                if isinstance(tool_results, list):
+                    for tr in tool_results:
+                        if isinstance(tr, dict):
+                            messages.append({
+                                'role': 'tool',
+                                'tool_call_id': tr.get('tool_call_id'),
+                                'content': str(tr.get('data', '')),
+                            })
+                        else:
+                            messages.append({
+                                'role': 'tool',
+                                'tool_call_id': None,
+                                'content': str(tr),
+                            })
+                else:
+                    messages.append({
+                        'role': 'tool',
+                        'tool_call_id': None,
+                        'content': str(tool_results),
+                    })
+            else:
+                messages.append({'role': 'user', 'content': f"Tool result: {result}"})
+
+    async def _stream_response(self, response) -> AsyncGenerator[str | Any, None]:
+        """Shared streaming logic for both execution modes.
+        
+        Yields text chunks (str) for display, and also yields the raw
+        LLMResponse object so the caller can inspect tool_calls afterward.
+        """
+        last_response = None
         if hasattr(response, '__aiter__'):
             async for chunk in response:
+                last_response = chunk
                 if hasattr(chunk, 'current_chunk'):
                     text = chunk.current_chunk
                 elif isinstance(chunk, str):
@@ -446,8 +561,41 @@ class SkillExecutor:
                 if text:
                     yield text
         else:
+            last_response = response
             # Non-streaming fallback
             if hasattr(response, 'llm_response'):
                 yield response.llm_response
             else:
                 yield str(response)
+
+        # Always yield the final response object so the caller can check tool_calls
+        if last_response is not None:
+            yield last_response
+
+    def _extract_tool_calls(self, response_obj: Any) -> list[dict[str, Any]]:
+        """Extract tool_calls from a response object (LLMResponse or similar)."""
+        if response_obj is None:
+            return []
+        tool_calls = getattr(response_obj, 'tool_calls', None)
+        if tool_calls and isinstance(tool_calls, list) and len(tool_calls) > 0:
+            return tool_calls
+        return []
+
+    @staticmethod
+    def _format_tool_calls_for_message(
+        tool_calls: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Format tool_calls for inclusion in an assistant message (OpenAI API format)."""
+        import json as _json
+        formatted = []
+        for tc in tool_calls:
+            formatted.append({
+                'id': tc.get('tool_call_id') or 'call_0',
+                'type': 'function',
+                'function': {
+                    'name': tc.get('name', ''),
+                    'arguments': _json.dumps(tc.get('arguments', {})),
+                },
+            })
+        return formatted
+

@@ -111,7 +111,6 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
             await handle_mcp_list()
         elif cmd == 'skills':
             from cognitrix.cli.handlers_skills import _list_skills
-            from cognitrix.skills.manager import get_skill_manager
             manager = get_skill_manager()
             await _list_skills(manager)
         return True
