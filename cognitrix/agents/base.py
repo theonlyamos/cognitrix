@@ -174,10 +174,28 @@ class AgentManager:
             if processed_query.get('type') == 'tool_calls_result':
                 results = processed_query.get('result', [])
                 if isinstance(results, list):
-                    parts = [str(r) for r in results]
-                    prompt['content'] = '\n\n'.join(parts) if parts else ''
+                    # Build tool result messages with role: tool
+                    tool_messages = []
+                    for r in results:
+                        if isinstance(r, dict):
+                            tool_call_id = r.get('tool_call_id')
+                            content = str(r.get('data', ''))
+                        else:
+                            tool_call_id = None
+                            content = str(r)
+                        tool_messages.append({
+                            'role': 'tool',
+                            'tool_call_id': tool_call_id,
+                            'content': content
+                        })
+                    # Return list of tool messages instead of single prompt
+                    return tool_messages
                 else:
-                    prompt['content'] = str(results)
+                    return [{
+                        'role': 'tool',
+                        'tool_call_id': None,
+                        'content': str(results)
+                    }]
             elif 'result' in processed_query.keys():
                 result = processed_query['result']
                 if isinstance(result, list):
@@ -275,13 +293,21 @@ class AgentManager:
 
                 tool_results = await asyncio.gather(*tasks)
                 
-                # Convert ToolResults to expected format
+                # Convert ToolResults to expected format with tool_call_id mapping
                 results = []
-                for result in tool_results:
+                tool_call_ids = [t.get('tool_call_id') for t in agent_tool_calls if t.get('tool_call_id')]
+                for i, result in enumerate(tool_results):
+                    tool_call_id = tool_call_ids[i] if i < len(tool_call_ids) else None
                     if result.success:
-                        results.append(result.data)
+                        results.append({
+                            'tool_call_id': tool_call_id,
+                            'data': result.data
+                        })
                     else:
-                        results.append(f"Error: {result.error} (attempted {result.attempts} times)")
+                        results.append({
+                            'tool_call_id': tool_call_id,
+                            'data': f"Error: {result.error} (attempted {result.attempts} times)"
+                        })
 
                 return {
                     'type': 'tool_calls_result',
@@ -310,7 +336,9 @@ class AgentManager:
         # This assumes the context manager will be used by the session/caller
         # to construct the full prompt before calling the LLM.
         processed_prompt = self.process_prompt(prompt)
-        async for response in self.agent.llm([processed_prompt]):
+        # Handle both single dict and list of dicts (for tool results)
+        messages = processed_prompt if isinstance(processed_prompt, list) else [processed_prompt]
+        async for response in self.agent.llm(messages):
             yield response
 
     def call_sub_agent(self, agent_name: str, task_description: str):

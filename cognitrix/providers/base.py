@@ -192,12 +192,14 @@ class LLMManager:
 
     @staticmethod
     def _normalize_role(role: str) -> str:
-        """Map role variants to canonical system/user/assistant for API compatibility."""
+        """Map role variants to canonical system/user/assistant/tool for API compatibility."""
         r = (role or '').strip().lower()
         if r in ('system',):
             return 'system'
         if r in ('user',):
             return 'user'
+        if r in ('tool',):
+            return 'tool'
         # Assistant, agent names, and any other non-user role -> assistant
         return 'assistant'
 
@@ -208,8 +210,13 @@ class LLMManager:
             role = LLMManager._normalize_role(fm.get('role', 'user'))
             content = fm.get('content', '')
             msg_type = fm.get('type', 'text')
+            tool_call_id = fm.get('tool_call_id')
             if msg_type == 'text':
-                formatted_messages.append({'role': role, 'content': content})
+                msg = {'role': role, 'content': content}
+                # Add tool_call_id for tool role messages (OpenAI format)
+                if role == 'tool' and tool_call_id:
+                    msg['tool_call_id'] = tool_call_id
+                formatted_messages.append(msg)
             elif msg_type == 'image' and llm.is_multimodal:
                 base64_image = image_to_base64(content)  # type: ignore
                 formatted_messages.append({
@@ -333,7 +340,7 @@ class LLMManager:
     @staticmethod
     def _parse_native_tool_calls(tool_calls: list[Any] | None) -> list[dict[str, Any]]:
         """
-        Map OpenAI-style message.tool_calls to [{name, arguments}] for agent.call_tools.
+        Map OpenAI-style message.tool_calls to [{name, arguments, tool_call_id}] for agent.call_tools.
         arguments is parsed from JSON string to dict.
         """
         if not tool_calls:
@@ -345,6 +352,7 @@ class LLMManager:
                 continue
             name = getattr(fn, 'name', None) or (fn.get('name') if isinstance(fn, dict) else None)
             args_raw = getattr(fn, 'arguments', None) or (fn.get('arguments') if isinstance(fn, dict) else None)
+            tool_call_id = getattr(tc, 'id', None) or (tc.get('id') if isinstance(tc, dict) else None)
             if not name:
                 continue
             args: dict[str, Any] = {}
@@ -353,7 +361,7 @@ class LLMManager:
                     args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
                 except json.JSONDecodeError:
                     args = {}
-            result.append({'name': name, 'arguments': args})
+            result.append({'name': name, 'arguments': args, 'tool_call_id': tool_call_id})
         return result
 
     @staticmethod
@@ -379,7 +387,7 @@ class LLMManager:
                     if idx is None:
                         continue
                     if idx not in tool_call_accum:
-                        tool_call_accum[idx] = {'name': '', 'arguments': ''}
+                        tool_call_accum[idx] = {'name': '', 'arguments': '', 'tool_call_id': None}
                     fn = getattr(dtc, 'function', None) or (dtc.get('function') if isinstance(dtc, dict) else None)
                     if fn:
                         n = getattr(fn, 'name', None) or (fn.get('name') if isinstance(fn, dict) else None)
@@ -388,6 +396,9 @@ class LLMManager:
                             tool_call_accum[idx]['name'] = (tool_call_accum[idx]['name'] or '') + (n or '')
                         if a:
                             tool_call_accum[idx]['arguments'] = (tool_call_accum[idx]['arguments'] or '') + (a or '')
+                    tc_id = getattr(dtc, 'id', None) or (dtc.get('id') if isinstance(dtc, dict) else None)
+                    if tc_id:
+                        tool_call_accum[idx]['tool_call_id'] = tc_id
                 if reasoning:
                     response.add_reasoning_chunk(reasoning)
                     if not in_reasoning:
@@ -416,7 +427,7 @@ class LLMManager:
                     except json.JSONDecodeError:
                         args = {}
                     if name:
-                        parsed.append({'name': name, 'arguments': args})
+                        parsed.append({'name': name, 'arguments': args, 'tool_call_id': acc.get('tool_call_id')})
                 response.tool_calls = parsed
             if in_reasoning:
                 response.current_chunk = '\n</think>\n'

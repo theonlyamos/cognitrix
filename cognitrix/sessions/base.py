@@ -74,8 +74,11 @@ class Session(Model):
         return await cls.delete(session_id)
 
 
-    def update_history(self, message: dict[str, Any]):
-        self.chat.append(message)
+    def update_history(self, message: dict[str, Any] | list[dict[str, Any]]):
+        if isinstance(message, list):
+            self.chat.extend(message)
+        else:
+            self.chat.append(message)
 
     @property
     async def agent(self):
