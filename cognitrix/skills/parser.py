@@ -84,6 +84,13 @@ class SkillParser:
         # Normalize hyphenated keys to underscored
         normalised = self._normalise_keys(frontmatter)
 
+        # Handle string allowed-tools: split on whitespace, preserving parentheses groups
+        if 'allowed_tools' in normalised:
+            value = normalised['allowed_tools']
+            if isinstance(value, str):
+                parts = re.split(r'\s+(?![^()]*\))', value)
+                normalised['allowed_tools'] = parts
+
         # Extract safety sub-object
         safety_data = normalised.pop('safety', None)
         safety = self._parse_safety(safety_data) if safety_data else SkillSafety()

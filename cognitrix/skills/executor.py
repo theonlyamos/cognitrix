@@ -10,6 +10,7 @@ Handles:
 """
 
 import asyncio
+import fnmatch
 import logging
 import re
 import shlex
@@ -36,6 +37,28 @@ MAX_DYNAMIC_CONTEXT_SIZE = 100_000  # 100KB
 _ARG_NUM_PATTERN = re.compile(r'\$(\d+)(?!\d)')
 _ARGUMENTS_BRACKET_PATTERN = re.compile(r'\$ARGUMENTS\[(\d+)\]')
 _ARG_PATTERN = re.compile(r'\$\(arg\s+(\w+)\)')
+
+# Tool alias map for AgentSkills compatibility
+# Standard Anthropic skill names -> Cognitrix native tool names
+TOOL_ALIASES = {
+    'bash': 'Bash',
+    'shell': 'Bash',
+    'read': 'Open File',
+    'write': 'write_to_file',
+    'edit': 'multi_replace_file_content',
+    'grep': 'grep_search',
+    'glob': 'list_dir',
+}
+
+# Tool name for argument extraction (first param by convention)
+TOOL_FIRST_ARG = {
+    'Bash': 'command',
+    'Open File': 'path',
+    'write_to_file': 'content',
+    'multi_replace_file_content': 'filePath',
+    'grep_search': 'pattern',
+    'list_dir': 'pattern',
+}
 
 # Allowed shell commands for dynamic context (whitelist)
 ALLOWED_COMMANDS = frozenset({
@@ -377,6 +400,84 @@ class SkillExecutor:
 
     # ── Execution Modes ──
 
+    def _resolve_allowed_tools(
+        self, allowed_tools: list[str]
+    ) -> tuple[set[str], dict[str, list[str]]]:
+        """Resolve tool aliases and extract restrictions.
+
+        Parses strings like 'Bash(git *)' into:
+        - allowed_set: {'Bash'} (native tool names)
+        - restriction_map: {'Bash': ['git', '*']} (glob patterns)
+
+        Returns:
+            Tuple of (allowed_tool_names, restriction_map)
+        """
+        tool_pattern = re.compile(r'^([^\(]+)(?:\((.*)\))?$')
+
+        allowed_set: set[str] = set()
+        restriction_map: dict[str, list[str]] = {}
+
+        for tool_spec in allowed_tools:
+            match = tool_pattern.match(tool_spec.strip())
+            if not match:
+                continue
+
+            base = match.group(1).strip().lower()
+            restriction = match.group(2) or ''
+
+            resolved = TOOL_ALIASES.get(base, base.title())
+            allowed_set.add(resolved)
+
+            if restriction:
+                patterns = restriction.split()
+                restriction_map.setdefault(resolved, []).extend(patterns)
+
+        return allowed_set, restriction_map
+
+    def _apply_tool_restrictions(
+        self,
+        tool_calls: list[dict[str, Any]],
+        restriction_map: dict[str, list[str]],
+    ) -> list[dict[str, Any]]:
+        """Validate tool calls against restrictions, blocking violations.
+
+        Args:
+            tool_calls: List of tool calls to validate
+            restriction_map: {tool_name: [patterns]} for allowed arguments
+
+        Returns:
+            Modified tool_calls with violations replaced by error results
+        """
+        error_msg = "Error: Skill Constraint Violation. Tool execution blocked by allowed-tools restriction"
+        result: list[dict[str, Any]] = []
+
+        for tc in tool_calls:
+            tool_name = tc.get('name', '')
+
+            if tool_name not in restriction_map:
+                result.append(tc)
+                continue
+
+            patterns = restriction_map.get(tool_name, [])
+            if not patterns:
+                result.append(tc)
+                continue
+
+            args = tc.get('arguments', {})
+            param_name = TOOL_FIRST_ARG.get(tool_name, next(iter(args), ''))
+            first_arg = args.get(param_name, '') if args else ''
+
+            if any(fnmatch.fnmatch(first_arg, p) for p in patterns):
+                result.append(tc)
+            else:
+                result.append({
+                    'name': tool_name,
+                    'arguments': {},
+                    'error': error_msg,
+                })
+
+        return result
+
     async def _execute_same_context(
         self,
         prompt: str,
@@ -392,9 +493,11 @@ class SkillExecutor:
 
         # Filter tools if allowed-tools is specified
         tools = self.agent_manager.agent.tools
+        allowed_set: set[str] = set()
+        restriction_map: dict[str, list[str]] = {}
         if manifest.allowed_tools is not None:
-            allowed_lower = frozenset(t.lower() for t in manifest.allowed_tools)
-            tools = [t for t in tools if t.name.lower() in allowed_lower]
+            allowed_set, restriction_map = self._resolve_allowed_tools(manifest.allowed_tools)
+            tools = [t for t in tools if t.name in allowed_set]
 
         formatted_tools = [t.to_dict_format() for t in tools]
 
@@ -413,6 +516,10 @@ class SkillExecutor:
             tool_calls = self._extract_tool_calls(last_response)
             if not tool_calls:
                 break  # No tools — we're done
+
+            # Enforce restrictions if any
+            if restriction_map:
+                tool_calls = self._apply_tool_restrictions(tool_calls, restriction_map)
 
             # Execute tools and add results to messages
             logger.info(f"Skill '{manifest.name}' executing tools: {[tc.get('name') for tc in tool_calls]}")
@@ -473,9 +580,11 @@ class SkillExecutor:
         )
 
         # Filter tools if specified
+        allowed_set: set[str] = set()
+        restriction_map: dict[str, list[str]] = {}
         if manifest.allowed_tools is not None:
-            allowed_lower = frozenset(t.lower() for t in manifest.allowed_tools)
-            agent.tools = [t for t in agent.tools if t.name.lower() in allowed_lower]
+            allowed_set, restriction_map = self._resolve_allowed_tools(manifest.allowed_tools)
+            agent.tools = [t for t in agent.tools if t.name in allowed_set]
 
         # Use the specified agent type or default
         if manifest.agent:
@@ -508,6 +617,10 @@ class SkillExecutor:
             tool_calls = self._extract_tool_calls(last_response)
             if not tool_calls:
                 break
+
+            # Enforce restrictions if any
+            if restriction_map:
+                tool_calls = self._apply_tool_restrictions(tool_calls, restriction_map)
 
             logger.info(f"Skill '{manifest.name}' (forked) executing tools: {[tc.get('name') for tc in tool_calls]}")
             result = await sub_manager.call_tools(tool_calls)
