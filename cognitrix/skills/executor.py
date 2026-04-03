@@ -48,7 +48,8 @@ TOOL_ALIASES = {
     'edit': 'Edit',
     'grep': 'Grep',
     'glob': 'Glob',
-    'webfetch': 'WebFetch',
+    'webfetch': 'Webfetch',
+    'search': 'Search',
 }
 
 # Tool name for argument extraction (first param by convention)
@@ -59,7 +60,8 @@ TOOL_FIRST_ARG = {
     'Edit': 'file_path',
     'Grep': 'pattern',
     'Glob': 'pattern',
-    'WebFetch': 'url',
+    'Webfetch': 'url',
+    'Search': 'query',
 }
 
 # Allowed shell commands for dynamic context (whitelist)

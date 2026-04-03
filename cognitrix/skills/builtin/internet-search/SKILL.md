@@ -1,48 +1,42 @@
 ---
 name: internet-search
-description: Search the web using Tavily API for up-to-date information
-context: fork
+description: Search the web for up-to-date information using Tavily API
+context: same
 args:
-  - name: search_query
-    description: The search query to look up
+  - name: query
+    description: The search query
     required: true
-  - name: mode
-    description: Search mode - basic for concise results, advanced for comprehensive results
+  - name: max_results
+    description: Maximum number of results
     required: false
-    default: basic
 tags: [search, web, tavily]
 category: web
 version: "1.0.0"
 author: cognitrix
-allowed-tools: [bash]
-dependencies:
-  pip: [tavily]
+allowed-tools: [Search]
 safety:
   risk-level: low
 ---
 
 # Internet Search
 
-Search the web using Tavily API for current information.
+Search the web for current information using the Search tool.
 
-## Input Format
+## Usage
 
-Arguments: `<search_query> [basic|advanced]`
+### Basic search
+```
+Search query="Python async await best practices"
+```
 
-- `basic` (default): Returns concise results
-- `advanced`: Returns more comprehensive results
-
-## Steps
-
-1. Ensure TAVILY_API_KEY environment variable is set
-2. Run the search script with the search_query:
-   ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/search.py "$(arg search_query)" "$(arg mode)"
-   ```
-3. Format and return search results
+### More results
+```
+Search query="AI news 2026" max_results=20
+```
 
 ## Notes
 
-- Requires Tavily API key (free tier available)
+- Requires TAVily API key (free tier available)
 - Set API key via: `export TAVILY_API_KEY=your-api-key`
+- Or set `tavily_api_key` in configuration
 - Returns search results with title, content snippet, and URL

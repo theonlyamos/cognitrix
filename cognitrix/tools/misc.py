@@ -388,6 +388,46 @@ def Glob(pattern: str, path: str = ".", recursive: bool = True, include_dirs: bo
 
 
 @tool(category='web')
+def Search(query: str, max_results: int = 10):
+    """Search the web for information using Tavily API.
+
+    Args:
+        query (str): The search query.
+        max_results (int, optional): Maximum number of results. Defaults to 10.
+
+    Returns:
+        str: Search results with titles, content, and URLs, or error message
+    """
+    from tavily import TavilyClient
+
+    try:
+        api_key = settings.Tavily_API_KEY if hasattr(settings, 'Tavily_API_KEY') else None
+        if not api_key:
+            api_key = os.getenv('TAVILY_API_KEY')
+        
+        if not api_key:
+            return "Error: Tavily API key not configured. Set TAVILY_API_KEY environment variable."
+
+        client = TavilyClient(api_key=api_key)
+        results = client.search(query=query, max_results=max_results)
+
+        if not results:
+            return f"No results found for: {query}"
+
+        output = [f"Search results for '{query}':\n"]
+        for i, result in enumerate(results, 1):
+            output.append(f"{i}. {result.get('title', 'No title')}")
+            output.append(f"   {result.get('content', 'No description')[:200]}...")
+            output.append(f"   URL: {result.get('url', 'No URL')}")
+            output.append("")
+
+        return '\n'.join(output)
+
+    except Exception as e:
+        return f"Error during search: {str(e)}"
+
+
+@tool(category='web')
 def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
     """Fetch and extract content from web pages.
 

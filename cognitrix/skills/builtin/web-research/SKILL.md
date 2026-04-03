@@ -3,7 +3,7 @@ name: web-research
 description: >
   Research a topic on the web. Use when the user asks to research, find information,
   or needs up-to-date data about a topic.
-context: fork
+context: same
 args:
   - name: topic
     description: The topic to research
@@ -12,7 +12,7 @@ tags: [research, web, search]
 category: research
 version: "1.0.0"
 author: theonlyamos
-allowed-tools: [internet_search, web_scraper, bash]
+allowed-tools: [Search, WebFetch]
 safety:
   risk-level: low
 ---
@@ -21,8 +21,8 @@ safety:
 
 Research "$(arg topic)" thoroughly:
 
-1. **Search the web** for the topic using the Internet Search tool
-2. **Scrape the top 5** most relevant results using the Web Scraper tool
+1. **Search the web** for the topic using the `Search` tool
+2. **Fetch the top results** using the `WebFetch` tool
 3. **Synthesize** the information into a well-structured markdown summary
 4. **Include citations** with [n] notation
 5. **List all source URLs** at the end
@@ -57,3 +57,9 @@ Brief 2-3 sentence overview.
 1. [Title](url)
 2. [Title](url)
 ```
+
+## Notes
+
+- Use `Search` with query parameter to search the web
+- Use `WebFetch` with url parameter to fetch individual pages
+- Requires TAVILY_API_KEY environment variable for search
