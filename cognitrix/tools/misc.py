@@ -387,6 +387,56 @@ def Glob(pattern: str, path: str = ".", recursive: bool = True, include_dirs: bo
         return f"Error during glob: {str(e)}"
 
 
+@tool(category='web')
+def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
+    """Fetch and extract content from web pages.
+
+    Args:
+        url (str): The URL to fetch content from.
+        max_length (int, optional): Maximum characters to return. Defaults to 5000.
+        include_images (bool, optional): Include image URLs in the output. Defaults to False.
+
+    Returns:
+        str: Extracted text content from the web page, or error message
+
+    Examples:
+        - Fetch a page: WebFetch("https://example.com")
+        - Longer content: WebFetch("https://example.com", max_length=10000)
+    """
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.get(url, timeout=15, headers=headers)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        for script in soup(['script', 'style', 'nav', 'footer', 'header']):
+            script.decompose()
+
+        text = soup.get_text(separator='\n', strip=True)
+
+        lines = [line.strip() for line in text.split('\n')]
+        text = '\n'.join(line for line in lines if line)
+
+        if len(text) > max_length:
+            text = text[:max_length] + '\n... (truncated)'
+
+        if include_images:
+            images = [img.get('src') or img.get('data-src') for img in soup.find_all('img')]
+            images = [img for img in images if img]
+            if images:
+                text += f'\n\nImages found: {", ".join(images[:10])}'
+
+        return f"URL: {url}\n\n{text}"
+
+    except requests.exceptions.RequestException as e:
+        return f"Error fetching URL: {str(e)}"
+    except Exception as e:
+        return f"Error processing page: {str(e)}"
+
+
 @tool(category='system')
 def take_screenshot():
     """Use this tool to take a screenshot of the screen."""

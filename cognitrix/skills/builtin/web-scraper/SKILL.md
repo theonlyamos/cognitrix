@@ -1,43 +1,50 @@
 ---
 name: web-scraper
-description: Extract text content from web pages by scraping HTML
-context: fork
+description: Fetch and extract text content from web pages
+context: same
 args:
-  - name: urls
-    description: One or more URLs to scrape (space-separated)
+  - name: url
+    description: URL of the web page to fetch
     required: true
-tags: [web, scrape, extract]
+  - name: max_length
+    description: Maximum characters to return
+    required: false
+  - name: include_images
+    description: Include image URLs in the output
+    required: false
+tags: [web, fetch, scrape, extract]
 category: web
 version: "1.0.0"
 author: cognitrix
-allowed-tools: [bash]
-dependencies:
-  pip: [requests, beautifulsoup4]
+allowed-tools: [WebFetch]
 safety:
   risk-level: low
 ---
 
 # Web Scraper
 
-Extract text content from one or more web pages.
+Fetch and extract text content from web pages using the WebFetch tool.
 
-## Input Format
+## Usage
 
-One or more URLs (space-separated):
-- `https://example.com`
-- `https://example.com https://example.org`
+### Fetch a web page
+```
+WebFetch url="https://example.com"
+```
 
-## Steps
+### Fetch with more content
+```
+WebFetch url="https://example.com" max_length=10000
+```
 
-1. Run the scrape script with the urls:
-   ```bash
-   python ${COGNITRIX_SKILL_DIR}/scripts/scrape.py "$(arg urls)"
-   ```
-2. Return the extracted text content from each URL
+### Include image URLs
+```
+WebFetch url="https://example.com" include_images=true
+```
 
 ## Notes
 
-- Requires requests and beautifulsoup4: `pip install requests beautifulsoup4`
 - Strips HTML tags and returns plain text
-- Limits output to 5000 characters per page
-- Handles errors gracefully for each URL individually
+- Limits output to 5000 characters by default
+- Handles errors gracefully
+- Returns error message if URL is invalid or unreachable
