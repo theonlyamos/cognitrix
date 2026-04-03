@@ -1,7 +1,7 @@
 ---
 name: write-file
 description: Write content to a file, creating it if it doesn't exist
-context: fork
+context: same
 args:
   - name: file_path
     description: Path to the file to write
@@ -9,34 +9,42 @@ args:
   - name: content
     description: Content to write to the file
     required: true
+  - name: append
+    description: If true, append to file instead of overwriting
+    required: false
 tags: [file, write, create]
 category: system
 version: "1.0.0"
 author: cognitrix
-allowed-tools: [bash]
+allowed-tools: [Write]
 safety:
   risk-level: medium
 ---
 
 # Write File
 
-Write content to a file at "$(arg file_path)".
+Write content to a file at `$(arg file_path)` using the Write tool.
 
-## Input Format
+## Usage
 
-The argument should be in format: `<filepath> <content>`
+### Write new file
+```
+<filepath> content="Hello world"
+```
 
-Example: `example.txt "Hello world"`
+### Write multi-line content
+```
+<filepath> content="Line 1\nLine 2\nLine 3"
+```
 
-## Steps
-
-1. Parse the filepath and content from arguments
-2. Use `printf "%s" "$(arg content)" > "$(arg file_path)"` to write content to file
-3. Use `cat -n "$(arg file_path)"` to verify the file was created correctly
-4. If file already exists and you want to append, use `printf "%s" "<content>" >> <filepath>`
+### Append to existing file
+```
+<filepath> content="New content" append=true
+```
 
 ## Notes
 
-- Use `printf` instead of `echo` for more reliable output
-- For multi-line content, use `\n` for newlines
-- If content contains special characters, ensure proper escaping
+- Supports both absolute and relative paths
+- Use `~` for home directory paths
+- Parent directories are created automatically if they don't exist
+- Set append=true to append instead of overwrite

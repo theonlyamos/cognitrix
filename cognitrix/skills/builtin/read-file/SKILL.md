@@ -1,71 +1,56 @@
 ---
 name: read-file
 description: Read the contents of a file with line numbers for easy reference
-context: fork
+context: same
 args:
   - name: file_path
     description: Path to the file to read
     required: true
+  - name: start_line
+    description: Starting line number (1-based). Defaults to 1.
+    required: false
+  - name: end_line
+    description: Ending line number (1-based). Leave empty to read to end.
+    required: false
 tags: [file, read, view]
 category: system
 version: "1.0.0"
 author: cognitrix
-allowed-tools: [bash]
+allowed-tools: [Read]
 safety:
   risk-level: low
 ---
 
 # Read File
 
-Read the file at "$(arg file_path)" with appropriate tool based on use case.
+Read the file at `$(arg file_path)` using the Read tool.
 
-## Use Cases
+## Usage
 
-### Basic file read (small files <200 lines)
-Use `cat -n "<filepath>"` to display with line numbers
+### Basic file read
+Use `Read` with the file path:
+```
+<filepath>
+```
 
-### Large files - show first N lines
-Use `head -n <N> "<filepath>"` to show first N lines
+### Read with line range
+To read lines 10-20:
+```
+<filepath> start_line=10 end_line=20
+```
 
-### Large files - show last N lines  
-Use `tail -n <N> "<filepath>"` to show last N lines
+### Read first N lines
+To read first 50 lines:
+```
+<filepath> end_line=50
+```
 
-### Read specific line number
-Use `sed -n '<line>p' "<filepath>"` to read a specific line
-
-### Read line range (e.g., lines 10-20)
-Use `sed -n '10,20p' "<filepath>"`
-
-### Search for pattern in file
-Use `grep -n "pattern" "<filepath>"` to find lines containing pattern
-
-### Search with context (show 3 lines before/after match)
-Use `grep -n -C 3 "pattern" "<filepath>"`
-
-### Recursive search in directory
-Use `grep -rn "pattern" <directory>` to search all files in directory recursively
-
-### Search specific file types only
-Use `grep -rn --include="*.py" "pattern" <directory>` to search only .py files
-
-### Search multiple patterns
-Use `grep -rn -e "pattern1" -e "pattern2" <directory>` to search multiple patterns
-
-### Exclude directories from search
-Use `grep -rn --exclude-dir="node_modules" --exclude-dir=".git" "pattern" <directory>`
-
-### Invert match (show lines NOT containing pattern)
-Use `grep -rn -v "pattern" "<filepath>"`
-
-### Count lines in file
-Use `wc -l "<filepath>"` to count lines
-
-### Find files matching pattern in directory
-Use `ls "<filepath>"` or `glob` equivalent (on Windows: `dir /b` or `Get-ChildItem`)
+### Read last N lines
+First read entire file, then use end_line parameter.
 
 ## Notes
 
 - Supports both absolute and relative paths
 - Use `~` for home directory paths
-- If file doesn't exist, report the error clearly
-- Windows: use `type` instead of `cat`, `findstr` instead of `grep`
+- Line numbers are 1-based
+- Set show_line_numbers=false to hide line numbers

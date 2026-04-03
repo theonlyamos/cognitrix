@@ -1,59 +1,54 @@
 ---
 name: edit-file
-description: Edit an existing file using replace, insert, append, or line range operations
-context: fork
+description: Edit an existing file by replacing text
+context: same
 args:
   - name: file_path
     description: Path to the file to edit
     required: true
-  - name: operation
-    description: Operation to perform (replace, insert, append, replace_range)
+  - name: old_string
+    description: The text to find and replace
     required: true
-  - name: line_number
-    description: Line number for the operation
+  - name: new_string
+    description: The replacement text
     required: true
-  - name: end_line
-    description: End line for replace_range operation
+  - name: replace_all
+    description: If true, replace all occurrences. Defaults to false.
     required: false
-  - name: new_content
-    description: New content to insert/replace
-    required: true
 tags: [file, edit, modify]
 category: system
 version: "1.0.0"
 author: cognitrix
-allowed-tools: [bash]
+allowed-tools: [Edit]
 safety:
   risk-level: medium
 ---
 
 # Edit File
 
-Edit an existing file using various operations.
+Edit an existing file by replacing text using the Edit tool.
 
-## Input Format
+## Usage
 
-The argument should be: `<filepath> <operation> <start_line> [end_line] <new_content>`
+### Replace first occurrence
+```
+<filepath> old_string="old text" new_string="new text"
+```
 
-Operations:
-- `replace` - Replace a specific line
-- `insert` - Insert before a line
-- `append` - Add content after a line  
-- `replace_range` - Replace range of lines
+### Replace all occurrences
+```
+<filepath> old_string="old text" new_string="new text" replace_all=true
+```
 
-Example: `test.txt replace 5 "new content"`
-
-## Steps
-
-1. Parse filepath, operation, line numbers, and content from arguments
-2. For `replace <n>`: Use `sed -i '<n>s/.*/new_content/' <filepath>`
-3. For `insert <n>`: Use `sed -i '<n>i new_content' <filepath>`
-4. For `append <n>`: Use `sed -i '$a new_content' <filepath>` or `sed -i '<n>a new_content' <filepath>`
-5. For `replace_range <start> <end>`: Use `sed -i '<start>,<end>c new_content' <filepath>`
-6. Verify with `cat -n <filepath>`
+### Create file if it doesn't exist
+```
+<filepath> old_string="" new_string="new content" create_if_missing=true
+```
 
 ## Notes
 
-- Line numbers are 1-based
-- For special characters in content, use proper escaping
-- Make a backup first with `cp <filepath> <filepath>.bak`
+- Supports both absolute and relative paths
+- Use `~` for home directory paths
+- old_string cannot be empty
+- The first occurrence is replaced by default
+- Set replace_all=true to replace all occurrences

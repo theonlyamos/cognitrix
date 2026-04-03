@@ -1,42 +1,60 @@
 ---
 name: list-dir
-description: List contents of a directory with details (files, folders, permissions)
+description: Find files matching a pattern in a directory
 context: same
 args:
-  - name: path
-    description: Path to the directory to list
+  - name: pattern
+    description: Glob pattern to match (e.g., "*.py", "*.txt")
     required: false
-tags: [directory, list, ls]
+  - name: path
+    description: Directory to search in
+    required: false
+  - name: recursive
+    description: Search recursively
+    required: false
+tags: [directory, list, glob]
 category: system
 version: "1.0.0"
 author: cognitrix
-allowed-tools: [bash]
+allowed-tools: [Glob]
 safety:
   risk-level: low
 ---
 
 # List Directory
 
-List the contents of a directory with detailed information.
+Find files matching a pattern using the Glob tool.
 
-## Steps
+## Usage
 
-1. Use `ls -la "$(arg path)"` to list all files with details (permissions, size, date, name)
-2. If no path provided, use current directory `.`
-3. Handle ~ for home directory: expand to actual path or use directly with ls
-4. If directory doesn't exist, report error
+### List all files in current directory
+```
+Glob pattern="*"
+```
 
-## Output Includes
+### List Python files
+```
+Glob pattern="*.py"
+```
 
-- File permissions (drwxr-xr-x)
-- Owner and group
-- File size
-- Last modified date
-- File/folder name
-- Symlinks
+### List files in specific directory
+```
+Glob pattern="*.py" path="src"
+```
+
+### Recursive search (default)
+```
+Glob pattern="**/*.py" path="src"
+```
+
+### Include directories in results
+```
+Glob pattern="*" path="." recursive=true include_dirs=true
+```
 
 ## Notes
 
-- Use `ls -lh` for human-readable file sizes
-- Use `ls -lt` to sort by modification time
-- Use `ls -R` for recursive listing
+- Supports both absolute and relative paths
+- Use `~` for home directory paths
+- Use `**` for recursive matching
+- Use `include_dirs=true` to include directories in results
