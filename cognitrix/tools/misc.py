@@ -200,6 +200,9 @@ def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
                 return f"Created file with content: {path}"
             return f"Error: File not found: {file_path}"
 
+        if not old_string:
+            return "Error: old_string cannot be empty"
+
         with open(path, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
 
@@ -245,7 +248,6 @@ def Grep(pattern: str, path: str = ".", include: str | None = None, exclude: str
         - Search Python files only: Grep("TODO", include="*.py")
         - Search with 3 lines context: Grep("error", context=3)
     """
-    import fnmatch
 
     try:
         search_path = Path(path).expanduser().resolve()
