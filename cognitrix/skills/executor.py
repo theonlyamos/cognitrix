@@ -43,21 +43,21 @@ _ARG_PATTERN = re.compile(r'\$\(arg\s+(\w+)\)')
 TOOL_ALIASES = {
     'bash': 'Bash',
     'shell': 'Bash',
-    'read': 'Open File',
-    'write': 'write_to_file',
-    'edit': 'multi_replace_file_content',
-    'grep': 'grep_search',
-    'glob': 'list_dir',
+    'read': 'Read',
+    'write': 'Write',
+    'edit': 'Edit',
+    'grep': 'Grep',
+    'glob': 'Glob',
 }
 
 # Tool name for argument extraction (first param by convention)
 TOOL_FIRST_ARG = {
     'Bash': 'command',
-    'Open File': 'path',
-    'write_to_file': 'content',
-    'multi_replace_file_content': 'filePath',
-    'grep_search': 'pattern',
-    'list_dir': 'pattern',
+    'Read': 'file_path',
+    'Write': 'file_path',
+    'Edit': 'file_path',
+    'Grep': 'pattern',
+    'Glob': 'pattern',
 }
 
 # Allowed shell commands for dynamic context (whitelist)

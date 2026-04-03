@@ -83,9 +83,11 @@ class TestToolAliases:
         """Test that TOOL_ALIASES maps standard names to Cognitrix tools"""
         assert TOOL_ALIASES['bash'] == 'Bash'
         assert TOOL_ALIASES['shell'] == 'Bash'
-        assert TOOL_ALIASES['read'] == 'Open File'
-        assert TOOL_ALIASES['grep'] == 'grep_search'
-        assert TOOL_ALIASES['glob'] == 'list_dir'
+        assert TOOL_ALIASES['read'] == 'Read'
+        assert TOOL_ALIASES['write'] == 'Write'
+        assert TOOL_ALIASES['edit'] == 'Edit'
+        assert TOOL_ALIASES['grep'] == 'Grep'
+        assert TOOL_ALIASES['glob'] == 'Glob'
 
     def test_unknown_alias_resolves_to_title(self):
         """Test unknown aliases resolve via .title()"""
@@ -107,13 +109,13 @@ class TestResolveAllowedTools:
         """Test resolving ['Bash', 'Read']"""
         allowed_set, restriction_map = executor._resolve_allowed_tools(['Bash', 'Read'])
         assert 'Bash' in allowed_set
-        assert 'Open File' in allowed_set
+        assert 'Read' in allowed_set
 
     def test_alias_names(self, executor):
         """Test using alias names 'bash' -> 'Bash'"""
         allowed_set, restriction_map = executor._resolve_allowed_tools(['bash', 'read'])
         assert 'Bash' in allowed_set
-        assert 'Open File' in allowed_set
+        assert 'Read' in allowed_set
 
     def test_restrictions_extracted(self, executor):
         """Test extracting restrictions from 'Bash(git *)'"""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import json
 import logging
 import os
@@ -76,6 +77,312 @@ def open_file(path: str, filename: str | None = None):
         return 'Unable to open file'
     except Exception as e:
         return str(e)
+
+
+@tool(category='filesystem')
+def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_line_numbers: bool = True):
+    """Read the contents of a file, optionally with line range selection.
+
+    Args:
+        file_path (str): Path to the file to read. Supports absolute and relative paths.
+        start_line (int, optional): Starting line number (1-based). Defaults to 1.
+        end_line (int, optional): Ending line number (1-based). If None, reads to end of file.
+        show_line_numbers (bool, optional): Whether to show line numbers. Defaults to True.
+
+    Returns:
+        str: File contents with line numbers, or error message
+
+    Examples:
+        - Read entire file: Read("path/to/file.py")
+        - Read first 100 lines: Read("file.py", end_line=100)
+        - Read lines 50-100: Read("file.py", start_line=50, end_line=100)
+    """
+    try:
+        path = Path(file_path).expanduser().resolve()
+
+        if not path.exists():
+            return f"Error: File not found: {file_path}"
+
+        if not path.is_file():
+            return f"Error: Not a file: {file_path}"
+
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+
+        total_lines = len(lines)
+
+        if start_line < 1:
+            start_line = 1
+        if end_line is None or end_line > total_lines:
+            end_line = total_lines
+        if start_line > end_line:
+            return f"Error: start_line ({start_line}) > end_line ({end_line})"
+
+        selected_lines = lines[start_line - 1:end_line]
+
+        if show_line_numbers:
+            result = []
+            for i, line in enumerate(selected_lines, start=start_line):
+                result.append(f"{i:6d}: {line.rstrip()}")
+            output = '\n'.join(result)
+        else:
+            output = ''.join(selected_lines)
+
+        return f"File: {path}\nLines: {start_line}-{end_line} of {total_lines}\n\n{output}"
+
+    except PermissionError:
+        return f"Error: Permission denied reading: {file_path}"
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
+
+
+@tool(category='filesystem')
+def Write(file_path: str, content: str, append: bool = False):
+    """Write content to a file, creating it if it doesn't exist.
+
+    Args:
+        file_path (str): Path to the file to write. Supports absolute and relative paths.
+        content (str): Content to write to the file.
+        append (bool, optional): If True, append to file instead of overwriting. Defaults to False.
+
+    Returns:
+        str: Success message with file info, or error message
+
+    Examples:
+        - Write new file: Write("path/to/file.txt", "Hello world")
+        - Append to file: Write("log.txt", "new entry\n", append=True)
+    """
+    try:
+        path = Path(file_path).expanduser().resolve()
+
+        parent = path.parent
+        if not parent.exists():
+            parent.mkdir(parents=True, exist_ok=True)
+
+        mode = 'a' if append else 'w'
+        with open(path, mode, encoding='utf-8') as f:
+            f.write(content)
+
+        action = "Appended to" if append else "Written to"
+        return f"{action} file: {path}\nSize: {path.stat().st_size} bytes"
+
+    except PermissionError:
+        return f"Error: Permission denied writing to: {file_path}"
+    except Exception as e:
+        return f"Error writing file: {str(e)}"
+
+
+@tool(category='filesystem')
+def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = False, create_if_missing: bool = False):
+    """Edit a file by replacing text. Supports single or all occurrences.
+
+    Args:
+        file_path (str): Path to the file to edit.
+        old_string (str): The text to find and replace.
+        new_string (str): The replacement text.
+        replace_all (bool, optional): If True, replace all occurrences. Defaults to False (first only).
+        create_if_missing (bool, optional): If True, create file with content if it doesn't exist. Defaults to False.
+
+    Returns:
+        str: Success message with changes made, or error message
+
+    Examples:
+        - Replace first occurrence: Edit("file.py", "old_text", "new_text")
+        - Replace all occurrences: Edit("file.py", "old_text", "new_text", replace_all=True)
+    """
+    try:
+        path = Path(file_path).expanduser().resolve()
+
+        if not path.exists():
+            if create_if_missing:
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(new_string)
+                return f"Created file with content: {path}"
+            return f"Error: File not found: {file_path}"
+
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+
+        if old_string not in content:
+            return f"Error: String not found in file: {old_string[:50]}..."
+
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+            count = content.count(old_string)
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+            count = 1
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+
+        return f"Replaced {count} occurrence(s) in: {path}"
+
+    except PermissionError:
+        return f"Error: Permission denied editing: {file_path}"
+    except Exception as e:
+        return f"Error editing file: {str(e)}"
+
+
+@tool(category='filesystem')
+def Grep(pattern: str, path: str = ".", include: str | None = None, exclude: str | None = None, context: int = 0, ignore_case: bool = True, max_results: int = 100):
+    """Search for text patterns in files, similar to grep.
+
+    Args:
+        pattern (str): The text pattern to search for. Supports regex if valid.
+        path (str, optional): Directory or file to search in. Defaults to current directory.
+        include (str, optional): Glob pattern for files to include (e.g., "*.py", "*.txt").
+        exclude (str, optional): Glob pattern for files to exclude (e.g., "*.log", "node_modules").
+        context (int, optional): Number of lines to show before/after match. Defaults to 0.
+        ignore_case (bool, optional): Case-insensitive search. Defaults to True.
+        max_results (int, optional): Maximum number of matching lines to return. Defaults to 100.
+
+    Returns:
+        str: Matching lines with file:line:content format, or error message
+
+    Examples:
+        - Search all files: Grep("function_name")
+        - Search Python files only: Grep("TODO", include="*.py")
+        - Search with 3 lines context: Grep("error", context=3)
+    """
+    import fnmatch
+
+    try:
+        search_path = Path(path).expanduser().resolve()
+
+        if not search_path.exists():
+            return f"Error: Path not found: {path}"
+
+        results = []
+        flags = re.IGNORECASE if ignore_case else 0
+
+        try:
+            re.compile(pattern)
+        except re.error:
+            pattern = re.escape(pattern)
+
+        files_to_search = []
+
+        if search_path.is_file():
+            files_to_search = [search_path]
+        else:
+            for root, dirs, files in os.walk(search_path):
+                if exclude:
+                    dirs[:] = [d for d in dirs if not fnmatch.fnmatch(d, exclude)]
+
+                for f in files:
+                    if include and not fnmatch.fnmatch(f, include):
+                        continue
+                    if exclude and fnmatch.fnmatch(f, exclude):
+                        continue
+                    files_to_search.append(Path(root) / f)
+
+        for file_path in files_to_search:
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    for line_num, line in enumerate(f, 1):
+                        if re.search(pattern, line, flags):
+                            results.append({
+                                'file': str(file_path),
+                                'line': line_num,
+                                'content': line.rstrip()
+                            })
+                            if len(results) >= max_results:
+                                break
+            except (PermissionError, UnicodeDecodeError):
+                continue
+
+            if len(results) >= max_results:
+                break
+
+        if not results:
+            return f"No matches found for: {pattern}"
+
+        output = [f"Found {len(results)} match(es) for '{pattern}':\n"]
+        for r in results:
+            if context > 0:
+                output.append(f"\n--- {r['file']} (line {r['line']}) ---")
+            output.append(f"{r['file']}:{r['line']}: {r['content']}")
+
+        return '\n'.join(output)
+
+    except Exception as e:
+        return f"Error during search: {str(e)}"
+
+
+@tool(category='filesystem')
+def Glob(pattern: str, path: str = ".", recursive: bool = True, include_dirs: bool = False, max_results: int = 100):
+    """Find files matching a glob pattern, similar to glob.
+
+    Args:
+        pattern (str): Glob pattern to match (e.g., "*.py", "**/*.js", "src/**/*.ts").
+        path (str, optional): Directory to search in. Defaults to current directory.
+        recursive (bool, optional): Search recursively. Defaults to True.
+        include_dirs (bool, optional): Include directories in results. Defaults to False.
+        max_results (int, optional): Maximum number of files to return. Defaults to 100.
+
+    Returns:
+        str: List of matching file paths, or error message
+
+    Examples:
+        - All Python files: Glob("*.py")
+        - Recursive Python files: Glob("**/*.py", path="src")
+        - TypeScript in src: Glob("*.ts", path="src")
+    """
+    try:
+        search_path = Path(path).expanduser().resolve()
+
+        if not search_path.exists():
+            return f"Error: Directory not found: {path}"
+
+        if not search_path.is_dir():
+            return f"Error: Not a directory: {path}"
+
+        results = []
+
+        if '**' in pattern:
+            pattern = pattern.replace('**', '*')
+            recursive = True
+
+        if recursive:
+            for root, dirs, files in os.walk(search_path):
+                root_path = Path(root)
+
+                for f in files:
+                    if fnmatch.fnmatch(f, pattern):
+                        results.append(str(root_path / f))
+                        if len(results) >= max_results:
+                            break
+
+                if include_dirs:
+                    for d in dirs:
+                        if fnmatch.fnmatch(d, pattern):
+                            results.append(str(root_path / d))
+                            if len(results) >= max_results:
+                                break
+
+                if len(results) >= max_results:
+                    break
+        else:
+            for f in search_path.glob(pattern):
+                if f.is_file():
+                    results.append(str(f))
+                elif include_dirs and f.is_dir():
+                    results.append(str(f))
+                if len(results) >= max_results:
+                    break
+
+        if not results:
+            return f"No files found matching: {pattern}"
+
+        output = [f"Found {len(results)} file(s):\n"]
+        for r in results:
+            output.append(r)
+
+        return '\n'.join(output)
+
+    except Exception as e:
+        return f"Error during glob: {str(e)}"
 
 
 @tool(category='system')
