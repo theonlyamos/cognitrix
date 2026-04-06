@@ -11,7 +11,7 @@ tags: [research, web, search, deep-dive]
 category: research
 version: "1.1.0"
 author: theonlyamos
-allowed-tools: [use_skill, WebFetch]
+allowed-tools: [Search, WebFetch]
 safety:
   risk-level: low
 ---
@@ -24,9 +24,9 @@ Your primary goal is to gather multiple perspectives, deep insights, and up-to-d
 
 ## Research Methodology (Strictly Follow)
 
-1. **Initial Broad Search**: Use the `use_skill` tool to call the `brave-search` or `internet-search` skill to perform broad queries on the topic to establish the baseline landscape.
+1. **Initial Broad Search**: Use the `Search` tool to perform broad queries on the topic to establish the baseline landscape.
 2. **First Wave Fetch**: Use the `WebFetch` tool to extract the content of the top 10 most promising results from your initial search.
-3. **Targeted Deep-Dive Searches**: Based on what you just read, identify knowledge gaps, sub-topics, controversies, or specific details that require deeper investigation. Perform at least 2 to 3 MORE distinct search queries using the `brave-search` or `internet-search` skills.
+3. **Targeted Deep-Dive Searches**: Based on what you just read, identify knowledge gaps, sub-topics, controversies, or specific details that require deeper investigation. Perform at least 2 to 3 MORE distinct search queries using the `Search` tool.
 4. **Second Wave Fetch**: Use `WebFetch` on additional URLs discovered in the deep-dive searches to expand your knowledge base.
 5. **Synthesis & Cross-referencing**: Combine the information. If sources disagree, document the differing perspectives. 
 
@@ -73,6 +73,6 @@ Provide a well-formatted list of all URLs you fetched and used.
 
 ## Notes
 
-- Use the `use_skill` tool to invoke the `brave-search` or `internet-search` skills to search the web.
+- Use the `Search` tool to search the web.
 - Use `WebFetch` to fetch the contents of individual pages.
 - Act autonomously to gather enough data. Ensure the research is genuinely thorough rather than just a quick summary.
