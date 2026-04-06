@@ -12,6 +12,7 @@ Requires: pymupdf (pip install pymupdf)
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -88,7 +89,8 @@ def format_output(result: dict) -> str:
     for page in result['pages']:
         lines.append(f"### Page {page['number']}")
         if page['text']:
-            lines.append(page['text'])
+            text = page['text'].encode('ascii', 'ignore').decode('ascii')
+            lines.append(text)
         else:
             lines.append("*(no text content — possibly a scanned/image page)*")
         lines.append("")
@@ -101,7 +103,7 @@ def main():
         print("Usage: python extract_pdf.py <pdf_path> [page_range]")
         sys.exit(1)
 
-    pdf_path = sys.argv[1]
+    pdf_path = os.path.normpath(sys.argv[1])
     page_range = sys.argv[2] if len(sys.argv) > 2 else None
 
     # Validate file

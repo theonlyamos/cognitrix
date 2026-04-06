@@ -215,7 +215,8 @@ async def _run_skill(manager, name: str, arguments: str):
             rprint(f"\n\n{'-' * 40}")
             rprint("[green]Skill completed[/green]")
         elif event.type == SkillEventType.SKILL_ERROR:
-            rprint(f"\n[red]Error: {event.data}[/red]")
+            error_msg = str(event.data).encode('ascii', 'replace').decode('ascii')
+            rprint(f"\n[red]Error: {error_msg}[/red]")
 
 
 async def _validate_skill(path: str):

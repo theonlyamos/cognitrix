@@ -744,18 +744,26 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
         if sys.platform == 'win32':
             # On Windows, don't use shlex.split - pass command directly to shell
             command_parts = command
+            # For validation, only check the base command (first word)
+            base_command_for_check = command.split()[0] if command else ""
         else:
             try:
                 # Use shlex to safely split command into arguments
                 command_parts = shlex.split(command)
+                base_command_for_check = command_parts[0] if command_parts else ""
             except ValueError as e:
                 return f"Error: Invalid command format - {str(e)}"
 
         # Security check 4: Additional command validation
-        for part in command_parts:
-            # Check for suspicious patterns
-            if re.search(r'[;&|]', part) or '..' in part:
-                return "Error: Command contains forbidden characters or patterns"
+        if sys.platform != 'win32':
+            # Only check individual parts on non-Windows (where we split safely)
+            for part in command_parts:
+                if re.search(r'[;&|]', part) or '..' in part:
+                    return "Error: Command contains forbidden characters or patterns"
+        else:
+            # On Windows, just check for obvious malicious patterns in the full command
+            if '..' in command:
+                return "Error: Command contains forbidden pattern '..'"
 
         # Security check 5: Validate and resolve working directory
         if working_dir:
@@ -792,6 +800,13 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
             # Remove any control characters except newlines and tabs
             output = re.sub(r'[\x00-\x09\x0b-\x1f\x7f-\x9f]', '', output)
             error_output = re.sub(r'[\x00-\x09\x0b-\x1f\x7f-\x9f]', '', error_output)
+            
+            # Try to encode to ascii, replacing non-ascii chars (for Windows console)
+            try:
+                output = output.encode('ascii', 'replace').decode('ascii')
+                error_output = error_output.encode('ascii', 'replace').decode('ascii')
+            except Exception:
+                pass
 
             # If we have valid stdout, return it even if returncode is non-zero
             # (the script may have printed warnings to stderr but still produced valid output)

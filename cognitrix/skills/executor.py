@@ -121,7 +121,13 @@ class SkillExecutor:
 
         try:
             # Parse arguments with shlex to preserve quoted strings
-            args_list = shlex.split(arguments) if arguments else []
+            # Note: On Windows, shlex.split mangles backslash paths, so we handle differently
+            import sys
+            if sys.platform == 'win32':
+                # On Windows, preserve the arguments as-is (they'll be quoted)
+                args_list = [arguments] if arguments else []
+            else:
+                args_list = shlex.split(arguments) if arguments else []
             
             # If structured args provided, merge them into args_list
             if skill_args and manifest.args:
@@ -159,6 +165,7 @@ class SkillExecutor:
             
             # Resolve $ARGUMENTS, $N, $ARGUMENTS[N] substitutions
             rendered = self._resolve_arguments(rendered, args_list)
+            
             # 2. Resolve environment substitutions (including ${COGNITRIX_SKILL_DIR})
             rendered = self._resolve_env_substitutions(rendered, session, manifest)
 
