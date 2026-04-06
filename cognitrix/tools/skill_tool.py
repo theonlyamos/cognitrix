@@ -11,7 +11,7 @@ logger = logging.getLogger('cognitrix.log')
 @tool(category='skills')
 async def use_skill(
     skill_name: str,
-    arguments: str = "",
+    arguments: str | list | dict = "",
     risk_level: str | None = None,
     context: str = "same",
     **kwargs: dict
@@ -24,16 +24,17 @@ async def use_skill(
 
     Args:
         skill_name: Name of the skill to execute (e.g. 'research', 'code-review')
-        arguments: Arguments to pass to the skill as a string. Multiple arguments
-                   can be passed space-separated (e.g. 'file.pdf 1-10'). The skill's
-                   args definition determines how arguments are mapped.
+        arguments: Arguments to pass to the skill. Supports multiple formats:
+                   - str: Space-separated string (e.g., 'file.pdf medium')
+                   - list: Positional arguments (e.g., ['file.pdf', 'medium'])
+                   - dict: Structured arguments (e.g., {'file_path': 'file.pdf', 'depth': 'medium'})
         risk_level: Optional risk level override (low, medium, high). If provided,
                     overrides the skill's default risk level for approval purposes.
         context: Execution mode for the skill. Options:
                  - "same" (default): Run in the current conversation, sharing history
                  - "fork": Run in a new sub-agent with its own system prompt, no conversation history
-        **kwargs: Skill-specific arguments from the skill's args definition.
-                  These map to the skill's defined parameters by name.
+        **kwargs: Alternative to arguments - pass skill arguments as keyword arguments.
+                  Example: use_skill(skill_name="summarize-document", file_path="doc.pdf", depth="medium")
     """
     # Validate context parameter
     if context not in ("same", "fork"):
@@ -55,14 +56,17 @@ async def use_skill(
 
     # Validate kwargs against skill's args definition
     if manifest.args:
+        # Check if we have arguments in any form
+        has_arguments = bool(arguments) or bool(kwargs)
+        
         for arg_def in manifest.args:
+            # Check kwargs
             if arg_def.name in kwargs:
-                # Type check: ensure value is string
                 if not isinstance(kwargs[arg_def.name], str):
                     return f"Invalid argument '{arg_def.name}': expected string, got {type(kwargs[arg_def.name]).__name__}"
+            # Check required args
             elif arg_def.required:
-                # Check if required arg is missing
-                if arg_def.name not in kwargs and not arguments:
+                if not has_arguments:
                     return f"Missing required argument '{arg_def.name}' for skill '{skill_name}'"
 
     # Create a copy of the manifest to avoid mutating the cached original
@@ -108,7 +112,14 @@ async def use_skill(
 
     # Execute and collect result
     result_parts: list[str] = []
-    skill_args = kwargs if kwargs else None
+    
+    # Use kwargs as skill_args (structured arguments), or convert arguments if provided
+    # Priority: kwargs > arguments (kwargs takes precedence if both provided)
+    if kwargs:
+        skill_args = kwargs
+    else:
+        skill_args = None
+    
     async for event in executor.execute(manifest, arguments, skill_args=skill_args):
         if event.type == SkillEventType.SKILL_PROGRESS:
             if event.data:

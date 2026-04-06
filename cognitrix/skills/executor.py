@@ -120,16 +120,30 @@ class SkillExecutor:
         )
 
         try:
-            # Parse arguments with shlex to preserve quoted strings
-            # Note: On Windows, shlex.split mangles backslash paths, so we handle differently
-            import sys
-            if sys.platform == 'win32':
-                # On Windows, preserve the arguments as-is (they'll be quoted)
-                args_list = [arguments] if arguments else []
-            else:
-                args_list = shlex.split(arguments) if arguments else []
+            # Handle arguments in multiple formats:
+            # - str: legacy string format (e.g., "file.pdf medium")
+            # - list: positional arguments (e.g., ["file.pdf", "medium"])
+            # - dict: structured arguments (e.g., {"file_path": "file.pdf", "depth": "medium"})
             
-            # If structured args provided, merge them into args_list
+            # If arguments is already a dict, use it directly as skill_args
+            if isinstance(arguments, dict):
+                skill_args = arguments
+                args_list = []
+            elif isinstance(arguments, list):
+                # List format: treat each item as positional arg
+                args_list = [str(arg) for arg in arguments]
+            else:
+                # String format - parse with shlex (with Windows fix)
+                import sys
+                if sys.platform == 'win32':
+                    import re
+                    args_list = re.findall(r'(?:[^\s"]|"[^"]*")+', arguments) if arguments else []
+                    args_list = [arg.strip().strip('"') for arg in args_list]
+                else:
+                    import shlex
+                    args_list = shlex.split(arguments) if arguments else []
+            
+            # If structured args provided via skill_args parameter, merge them into args_list
             if skill_args and manifest.args:
                 # Map skill args by name to position
                 arg_mapping = {arg.name: idx for idx, arg in enumerate(manifest.args) if arg.name in skill_args}

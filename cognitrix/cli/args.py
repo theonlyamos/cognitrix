@@ -43,7 +43,9 @@ def get_arguments():
     skills_parser.add_argument('--validate', type=str, help='Validate a SKILL.md')
     skills_parser.add_argument('--run', type=str, help='Run a skill by name')
     skills_parser.add_argument('--search', type=str, help='Search for skills')
-    skills_parser.add_argument('args', nargs='*', help='Arguments for --run')
+    skills_parser.add_argument('args', nargs='*', help='Arguments for --run (positional)')
+    skills_parser.add_argument('--arg', action='append', dest='skill_args', default=[],
+                             help='Skill arguments as key=value (can be repeated, e.g., --arg file_path=doc.pdf --arg depth=short)')
     skills_parser.set_defaults(func=manage_skills)
 
     # Main arguments

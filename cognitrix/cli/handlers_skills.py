@@ -41,8 +41,31 @@ async def _manage_skills_async(args):
     elif args.remove:
         await _remove_skill(manager, args.remove)
     elif args.run:
-        skill_args = ' '.join(args.args) if hasattr(args, 'args') and args.args else (args.name if args.name else '')
-        await _run_skill(manager, args.run, skill_args)
+        # Parse --arg key=value arguments into a dict
+        skill_args_dict = {}
+        if hasattr(args, 'skill_args') and args.skill_args:
+            for arg in args.skill_args:
+                if '=' in arg:
+                    key, value = arg.split('=', 1)
+                    skill_args_dict[key] = value
+        
+        # Build arguments list - combine name (if it looks like a file path) and positional args
+        positional_args = []
+        if args.name and args.name not in [args.run]:
+            # args.name is the first positional arg (could be a file path or skill arg)
+            positional_args.append(args.name)
+        if hasattr(args, 'args') and args.args:
+            positional_args.extend(args.args)
+        
+        # Determine arguments: dict takes priority, then positional args as list
+        if skill_args_dict:
+            arguments = skill_args_dict
+        elif positional_args:
+            arguments = positional_args
+        else:
+            arguments = ''
+        
+        await _run_skill(manager, args.run, arguments)
     elif args.search:
         await _search_skills(manager, args.search)
     elif args.list or not args.name:
@@ -171,7 +194,7 @@ async def _remove_skill(manager, name: str):
             rprint(f"[red]✗ Skill '{name}' not found[/red]")
 
 
-async def _run_skill(manager, name: str, arguments: str):
+async def _run_skill(manager, name: str, arguments: str | list | dict):
     """Run a skill directly from the CLI with streaming output."""
     from cognitrix.skills.executor import SkillExecutor
     from cognitrix.providers.base import LLM

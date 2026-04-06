@@ -15,7 +15,7 @@ tags: [summary, document, tldr]
 category: writing
 version: "1.0.0"
 author: theonlyamos
-allowed-tools: [bash, read-file]
+allowed-tools: [Read]
 safety:
   risk-level: low
 ---
@@ -24,7 +24,10 @@ safety:
 
 Summarize the document at "$(arg file_path)":
 
-1. **Read** the entire file
+1. **Use the Read tool** to read the file (use page_range if PDF):
+   ```
+   Read("file_path")
+   ```
 2. **Identify** the main topics, arguments, and conclusions
 3. **Produce** a summary at the requested depth level
 
