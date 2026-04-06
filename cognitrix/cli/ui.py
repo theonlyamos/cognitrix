@@ -12,15 +12,18 @@ async def start_web_ui(agent):
     from fastapi import WebSocket, Query
 
     from cognitrix.utils.ws import WebSocketManager
+    from cognitrix.utils.sse import SSEManager
 
     from ..api.main import app
     from ..common.security import verify_token
 
     ws_manager = WebSocketManager(agent)
+    sse_manager = SSEManager(agent)
 
     @app.middleware("http")
     async def add_middleware_data(request, call_next):
         request.state.agent = agent
+        request.state.sse_manager = sse_manager
         response = await call_next(request)
         return response
 

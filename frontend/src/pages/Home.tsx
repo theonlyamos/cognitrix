@@ -59,9 +59,13 @@ export default function Home() {
     setIsLoading(true);
 
     try {
+      const token = localStorage.getItem('token');
       const response = await fetch(`${API_BACKEND_URI}/agents/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ message: messageToSend }),
       });
       const data = await response.json();
