@@ -45,8 +45,10 @@ async def sse_endpoint(request: Request):
 async def chat_endpoint(request: Request):
     sse_manager = request.state.sse_manager
     data = await request.json()
+    message = data.get("message", "")
 
-    await sse_manager.action_queue.put(json.loads(data["message"]))
+    action = {"type": "chat_message", "content": message}
+    await sse_manager.action_queue.put(action)
     return {"status": "Message sent"}
 
 @agents_api.get('/{agent_id}')
