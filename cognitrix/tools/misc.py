@@ -411,11 +411,12 @@ def Search(query: str, max_results: int = 10):
         client = TavilyClient(api_key=api_key)
         results = client.search(query=query, max_results=max_results)
 
-        if not results:
+        if not results or "results" not in results:
             return f"No results found for: {query}"
 
+        search_results = results["results"]
         output = [f"Search results for '{query}':\n"]
-        for i, result in enumerate(results, 1):
+        for i, result in enumerate(search_results, 1):
             output.append(f"{i}. {result.get('title', 'No title')}")
             output.append(f"   {result.get('content', 'No description')[:200]}...")
             output.append(f"   URL: {result.get('url', 'No URL')}")
