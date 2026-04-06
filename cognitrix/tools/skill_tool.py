@@ -1,13 +1,13 @@
 """use_skill meta-tool — allows agents to invoke skills programmatically."""
 
-import inspect
-import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING
 
 from cognitrix.tools.tool import tool
-from cognitrix.tools.utils import ToolCallResult
 from cognitrix.skills.models import RiskLevel
+
+if TYPE_CHECKING:
+    from cognitrix.models import Agent
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -17,8 +17,8 @@ async def use_skill(
     skill_name: str,
     arguments: str = "",
     risk_level: str | None = None,
-    parent: Any = None,
-    **kwargs: Any
+    parent: "Agent | None" = None,
+    **kwargs: dict
 ) -> str:
     """Execute a registered skill by name.
 
@@ -28,10 +28,17 @@ async def use_skill(
 
     Args:
         skill_name: Name of the skill to execute (e.g. 'research', 'code-review')
-        arguments: Arguments to pass to the skill (e.g. 'src/auth/login.ts', 'AI agents 2025')
-        risk_level: Optional risk level override (low, medium, high). If provided, overrides
-                    the skill's default risk level for approval purposes.
-        **kwargs: Skill-specific arguments from args definition
+        arguments: Arguments to pass to the skill as a string. Multiple arguments
+                   can be passed space-separated (e.g. 'file.pdf 1-10'). The skill's
+                   args definition determines how arguments are mapped.
+        risk_level: Optional risk level override (low, medium, high). If provided,
+                    overrides the skill's default risk level for approval purposes.
+        parent: The parent agent invoking this skill. Automatically passed by the
+                system when called from an agent. Allows the skill to access the
+                calling agent's LLM and maintain conversation context. Not intended
+                to be set manually - leave as None unless specifically required.
+        **kwargs: Skill-specific arguments from the skill's args definition.
+                  These map to the skill's defined parameters by name.
     """
     from cognitrix.skills.manager import get_skill_manager
     from cognitrix.skills.executor import SkillExecutor
