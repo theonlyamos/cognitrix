@@ -171,12 +171,33 @@ def _resolve_allowed_tools(allowed_tools: list[str]) -> tuple[set[str], dict[str
 
 def _get_parent_last_message(parent) -> str:
     """Get the parent's last user message for sub-agent input."""
-    if not parent or not hasattr(parent, 'messages'):
+    if not parent:
         return ""
-
-    # Get last user message from parent's message history
-    for msg in reversed(parent.messages):
-        if msg.get('role') == 'user':
-            return msg.get('content', '')
-
+    
+    # Try to get messages from parent's inbox (incoming messages)
+    if hasattr(parent, 'inbox') and parent.inbox:
+        for msg in reversed(parent.inbox):
+            if msg.sender.lower() in ('user', 'you'):
+                return msg.content
+    
+    # Try parent's response_list (messages the agent responded to)
+    if hasattr(parent, 'response_list') and parent.response_list:
+        for msg, _ in reversed(parent.response_list):
+            if hasattr(msg, 'sender') and msg.sender.lower() in ('user', 'you'):
+                return msg.content
+            if hasattr(msg, 'content'):
+                return msg.content
+    
+    # Try to get from context manager if available
+    if hasattr(parent, 'get_context_manager'):
+        try:
+            ctx_mgr = parent.get_context_manager()
+            # Try to get recent messages from short-term memory
+            if hasattr(ctx_mgr, 'short_term') and hasattr(ctx_mgr.short_term, 'messages'):
+                for msg in reversed(ctx_mgr.short_term.messages):
+                    if msg.get('role') == 'user':
+                        return msg.get('content', '')
+        except Exception:
+            pass
+    
     return ""

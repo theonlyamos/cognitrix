@@ -104,7 +104,7 @@ class SkillExecutor:
             manifest:   Parsed skill manifest
             arguments:  Arguments string (e.g. "src/auth/login.ts")
             session:    Optional session for history tracking
-            skill_args: Optional dict of structured args from use_skill kwargs
+            skill_args: Optional dict of structured args from load_skill kwargs
 
         Yields:
             SkillEvent for each significant moment
@@ -155,7 +155,7 @@ class SkillExecutor:
             
             # Auto-build skill_args from positional arguments when not
             # explicitly provided.  This covers CLI slash-command invocations
-            # (e.g. /research AI agents 2025) and use_skill calls that
+            # (e.g. /research AI agents 2025) and load_skill calls that
             # only pass an `arguments` string.
             if not skill_args and manifest.args and args_list:
                 skill_args = {}
