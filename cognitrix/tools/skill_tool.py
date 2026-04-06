@@ -25,9 +25,9 @@ async def use_skill(
     Args:
         skill_name: Name of the skill to execute (e.g. 'research', 'code-review')
         arguments: Arguments to pass to the skill. Supports multiple formats:
-                   - str: Space-separated string (e.g., 'file.pdf medium')
-                   - list: Positional arguments (e.g., ['file.pdf', 'medium'])
-                   - dict: Structured arguments (e.g., {'file_path': 'file.pdf', 'depth': 'medium'})
+                   - dict (RECOMMENDED): Structured arguments like {"file_path": "file.pdf", "depth": "medium"}
+                   - list: Positional arguments like ["file.pdf", "medium"]
+                   - str: Space-separated string like "file.pdf medium"
         risk_level: Optional risk level override (low, medium, high). If provided,
                     overrides the skill's default risk level for approval purposes.
         context: Execution mode for the skill. Options:
@@ -35,6 +35,8 @@ async def use_skill(
                  - "fork": Run in a new sub-agent with its own system prompt, no conversation history
         **kwargs: Alternative to arguments - pass skill arguments as keyword arguments.
                   Example: use_skill(skill_name="summarize-document", file_path="doc.pdf", depth="medium")
+
+    IMPORTANT: Make ONE call and wait for the result. Do NOT make parallel calls.
     """
     # Validate context parameter
     if context not in ("same", "fork"):

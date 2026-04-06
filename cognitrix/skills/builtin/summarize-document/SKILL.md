@@ -31,6 +31,25 @@ Summarize the document at "$(arg file_path)":
 2. **Identify** the main topics, arguments, and conclusions
 3. **Produce** a summary at the requested depth level
 
+## Correct Argument Format
+
+When calling `use_skill`, pass arguments as a **dictionary** (Python dict format):
+
+```
+use_skill(
+  skill_name="summarize-document",
+  arguments={
+    "file_path": "path/to/file.pdf",
+    "depth": "medium"
+  }
+)
+```
+
+**IMPORTANT:** 
+- Use dictionary format `{"key": "value"}` NOT quoted strings like `'{"key": "value"}'`
+- The arguments parameter must be an actual dictionary, not a JSON string
+- Do NOT make multiple parallel calls - make ONE call and wait for the result
+
 ## Depth Levels
 
 Use depth "$(arg depth)" (defaults to "medium" if not specified):
