@@ -79,23 +79,113 @@ def open_file(path: str, filename: str | None = None):
         return str(e)
 
 
+def _read_pdf(path: Path, page_range: str | None = None) -> str:
+    """Extract text from a PDF file."""
+    try:
+        import fitz  # pymupdf
+    except ImportError:
+        return "Error: PyMuPDF is required to read PDF files.\nInstall with: pip install pymupdf"
+
+    try:
+        doc = fitz.open(str(path))
+        total_pages = len(doc)
+
+        # Parse page range
+        pages_to_extract = None
+        if page_range:
+            pages_to_extract = _parse_page_range(page_range, total_pages)
+        else:
+            pages_to_extract = list(range(total_pages))
+
+        result = {
+            'file': path.name,
+            'total_pages': total_pages,
+            'extracted_pages': len(pages_to_extract),
+            'pages': [],
+        }
+
+        for page_num in pages_to_extract:
+            if page_num >= total_pages:
+                continue
+            page = doc[page_num]
+            text = page.get_text('text')
+
+            result['pages'].append({
+                'number': page_num + 1,
+                'text': text.strip(),
+                'char_count': len(text.strip()),
+            })
+
+        doc.close()
+
+        # Format output
+        lines = []
+        lines.append(f"## Document: {result['file']}")
+        lines.append(f"**Pages:** {result['total_pages']} total, {result['extracted_pages']} extracted\n")
+
+        for page in result['pages']:
+            lines.append(f"### Page {page['number']}")
+            if page['text']:
+                text = page['text'].encode('ascii', 'ignore').decode('ascii')
+                lines.append(text)
+            else:
+                lines.append("*(no text content — possibly a scanned/image page)*")
+            lines.append("")
+
+        return '\n'.join(lines)
+
+    except Exception as e:
+        return f"Error reading PDF: {str(e)}"
+
+
+def _parse_page_range(range_str: str, total_pages: int) -> list[int]:
+    """Parse a page range string into a list of 0-indexed page numbers."""
+    pages = []
+
+    if not range_str:
+        return list(range(total_pages))
+
+    if '-' in range_str:
+        parts = range_str.split('-', 1)
+        start = max(0, int(parts[0]) - 1)
+        end = min(total_pages, int(parts[1]))
+        pages = list(range(start, end))
+    elif ',' in range_str:
+        for p in range_str.split(','):
+            p = p.strip()
+            if p.isdigit():
+                idx = int(p) - 1
+                if 0 <= idx < total_pages:
+                    pages.append(idx)
+    elif range_str.isdigit():
+        idx = int(range_str) - 1
+        if 0 <= idx < total_pages:
+            pages = [idx]
+    else:
+        pages = list(range(total_pages))
+
+    return pages
+
+
 @tool(category='filesystem')
-def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_line_numbers: bool = True):
-    """Read the contents of a file, optionally with line range selection.
+def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_line_numbers: bool = True, page_range: str | None = None):
+    """Read the contents of a file or PDF, optionally with range selection.
 
     Args:
         file_path (str): Path to the file to read. Supports absolute and relative paths.
-        start_line (int, optional): Starting line number (1-based). Defaults to 1.
-        end_line (int, optional): Ending line number (1-based). If None, reads to end of file.
-        show_line_numbers (bool, optional): Whether to show line numbers. Defaults to True.
+        start_line (int, optional): Starting line number for text files (1-based). Defaults to 1.
+        end_line (int, optional): Ending line number for text files (1-based). If None, reads to end.
+        show_line_numbers (bool, optional): Whether to show line numbers for text files. Defaults to True.
+        page_range (str, optional): For PDFs only. Page range like "1-5", "1,3,5", or "3". Defaults to all pages.
 
     Returns:
-        str: File contents with line numbers, or error message
+        str: File contents with line/page numbers, or error message
 
     Examples:
-        - Read entire file: Read("path/to/file.py")
+        - Read text file: Read("path/to/file.py")
         - Read first 100 lines: Read("file.py", end_line=100)
-        - Read lines 50-100: Read("file.py", start_line=50, end_line=100)
+        - Read PDF all pages: Read("document.pdf")
+        - Read PDF pages 1-5: Read("document.pdf", page_range="1-5")
     """
     try:
         path = Path(file_path).expanduser().resolve()
@@ -106,6 +196,11 @@ def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_
         if not path.is_file():
             return f"Error: Not a file: {file_path}"
 
+        # Check if file is PDF
+        if path.suffix.lower() == '.pdf':
+            return _read_pdf(path, page_range)
+
+        # Text file reading - existing logic
         with open(path, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
 
