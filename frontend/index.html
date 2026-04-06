@@ -10,10 +10,9 @@
 </head>
 
 <body>
-  <div id="app"></div>
-  <script type="module" src="/src/main.ts"></script>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
   <script>
-    // Check for dark mode preference
     if (localStorage.getItem('darkMode') === 'true' ||
       (!('darkMode' in localStorage) &&
         window.matchMedia('(prefers-color-scheme: dark)').matches)) {

@@ -2,7 +2,7 @@
 module.exports = {
   darkMode: 'class', // This enables dark mode
   content: [
-    './src/**/*.{html,js,svelte,ts}',
+    './src/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
     container: {
@@ -69,6 +69,6 @@ module.exports = {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [],
 }
 
