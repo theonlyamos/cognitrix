@@ -17,6 +17,8 @@ async def use_skill(
     skill_name: str,
     arguments: str = "",
     risk_level: str | None = None,
+    use_caller_context: bool = True,
+    context: str | None = None,
     parent: "Agent | None" = None,
     **kwargs: dict
 ) -> str:
@@ -33,6 +35,12 @@ async def use_skill(
                    args definition determines how arguments are mapped.
         risk_level: Optional risk level override (low, medium, high). If provided,
                     overrides the skill's default risk level for approval purposes.
+        use_caller_context: Whether to use the calling agent's LLM and conversation
+                            context. Defaults to True. Set to False to run the skill
+                            in a fresh context (forked execution).
+        context: Override the skill's context mode. Options: 'same' (run in current
+                 conversation), 'fork' (run in separate sub-agent). If not provided,
+                 uses the skill's defined context.
         parent: The parent agent invoking this skill. Automatically passed by the
                 system when called from an agent. Allows the skill to access the
                 calling agent's LLM and maintain conversation context. Not intended
@@ -79,12 +87,19 @@ async def use_skill(
     if manifest.disable_model_invocation:
         return f"Skill '{skill_name}' can only be invoked manually by the user (disable-model-invocation: true)"
 
+    # Handle context override
+    if context:
+        manifest.context = context
+
     # Get agent's LLM and manager
     from cognitrix.agents.base import AgentManager
     agent_manager = None
     llm = None
 
-    if parent and hasattr(parent, 'llm'):
+    # Determine if we should use caller's context
+    use_parent_context = use_caller_context and parent and hasattr(parent, 'llm')
+
+    if use_parent_context:
         llm = parent.llm
         agent_manager = AgentManager(parent)
     else:
