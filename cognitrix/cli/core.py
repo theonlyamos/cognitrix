@@ -36,6 +36,7 @@ async def run_configuration():
     from cognitrix.teams.base import Team
     from cognitrix.sessions.base import Session
     from cognitrix.models.tool import Tool
+    from cognitrix.models.user import User
     from odbms import DBMS
     
     if DBMS.Database is not None and DBMS.Database.dbms != 'mongodb':
@@ -44,6 +45,7 @@ async def run_configuration():
         await Team._create_table_async()
         await Session._create_table_async()
         await Tool._create_table_async()
+        await User._create_table_async()
 
     # Pre-warm skill cache at startup to avoid per-prompt I/O
     skill_mgr = get_skill_manager()

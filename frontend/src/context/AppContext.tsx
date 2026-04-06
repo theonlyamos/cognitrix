@@ -16,6 +16,7 @@ interface WebSocketState {
 
 interface UserContextType {
   user: User | null;
+  isLoading: boolean;
   login: (user: User, token: string) => void;
   logout: () => void;
   checkAuth: () => Promise<void>;
@@ -33,6 +34,7 @@ const WebSocketContext = createContext<WebSocketContextType | undefined>(undefin
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const login = useCallback((user: User, token: string) => {
     localStorage.setItem('token', token);
@@ -42,10 +44,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(() => {
     localStorage.removeItem('token');
     setUser(null);
-    window.location.href = '/';
   }, []);
 
   const checkAuth = useCallback(async () => {
+    setIsLoading(true);
     const token = localStorage.getItem('token');
     if (token) {
       try {
@@ -58,16 +60,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         } else {
           localStorage.removeItem('token');
           setUser(null);
-          window.location.href = '/';
         }
       } catch {
         localStorage.removeItem('token');
         setUser(null);
-        window.location.href = '/';
       }
-    } else {
-      window.location.href = '/';
     }
+    setIsLoading(false);
   }, []);
 
   useEffect(() => {
@@ -75,7 +74,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, [checkAuth]);
 
   return (
-    <UserContext.Provider value={{ user, login, logout, checkAuth }}>
+    <UserContext.Provider value={{ user, isLoading, login, logout, checkAuth }}>
       {children}
     </UserContext.Provider>
   );
@@ -89,26 +88,30 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   });
 
   const connect = useCallback(() => {
-    const websocketUrl = API_BACKEND_URI.replace('http', 'ws').split('/api')[0] + '/ws';
-    const socket = new WebSocket(websocketUrl);
+    try {
+      const websocketUrl = API_BACKEND_URI.replace('http', 'ws').split('/api')[0] + '/ws';
+      const socket = new WebSocket(websocketUrl);
 
-    socket.onopen = () => {
-      console.log('WebSocket connection established');
-      setWsState({ socket, type: 'open', data: null });
-    };
+      socket.onopen = () => {
+        console.log('WebSocket connection established');
+        setWsState({ socket, type: 'open', data: null });
+      };
 
-    socket.onmessage = (event: MessageEvent) => {
-      setWsState({ socket, type: 'message', data: event.data });
-    };
+      socket.onmessage = (event: MessageEvent) => {
+        setWsState({ socket, type: 'message', data: event.data });
+      };
 
-    socket.onclose = () => {
-      console.log('WebSocket connection closed');
-      setWsState({ socket: null, type: 'close', data: null });
-    };
+      socket.onclose = () => {
+        console.log('WebSocket connection closed');
+        setWsState({ socket: null, type: 'close', data: null });
+      };
 
-    socket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
+      socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+    } catch (err) {
+      console.error('Failed to connect WebSocket:', err);
+    }
   }, []);
 
   const sendMessage = useCallback((message: string) => {

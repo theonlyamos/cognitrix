@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from celery import Celery
 from celery.signals import task_failure, task_postrun, task_prerun, task_success
@@ -9,7 +10,18 @@ from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.teams.base import Team
 
-initialize_database()
+def _init_db():
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(initialize_database())
+        else:
+            loop.run_until_complete(initialize_database())
+    except Exception:
+        pass
+
+if not os.environ.get('CELERY_WORKER_MODE'):
+    _init_db()
 
 celery = Celery('tasks', broker='redis://localhost:6379/0', backend='redis://localhost:6379/0')
 
