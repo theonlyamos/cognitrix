@@ -75,3 +75,18 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
 def identity(payload):
     user_id = payload['identity']
     return User.get(user_id)
+
+
+async def verify_token(token: str) -> User | None:
+    """Verify a JWT token and return the user."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        email: str | None = payload.get("sub")
+        if email is None:
+            return None
+        user = await get_user(email=email)
+        if user is None:
+            return None
+        return user
+    except JWTError:
+        return None
