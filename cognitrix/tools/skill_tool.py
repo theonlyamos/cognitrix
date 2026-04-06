@@ -13,8 +13,7 @@ async def use_skill(
     skill_name: str,
     arguments: str = "",
     risk_level: str | None = None,
-    use_caller_context: bool = True,
-    context: str | None = None,
+    context: str = "same",
     **kwargs: dict
 ) -> str:
     """Execute a registered skill by name.
@@ -30,16 +29,17 @@ async def use_skill(
                    args definition determines how arguments are mapped.
         risk_level: Optional risk level override (low, medium, high). If provided,
                     overrides the skill's default risk level for approval purposes.
-        use_caller_context: Whether to use the calling agent's LLM and conversation
-                            context. Defaults to True. Set to False to run the skill
-                            in a fresh context (forked execution).
-        context: Override the skill's context mode. Options: 'same' (run in current
-                 conversation), 'fork' (run in separate sub-agent). If not provided,
-                 uses the skill's defined context.
+        context: Execution mode for the skill. Options:
+                 - "same" (default): Run in the current conversation, sharing history
+                 - "fork": Run in a new sub-agent with its own system prompt, no conversation history
         **kwargs: Skill-specific arguments from the skill's args definition.
                   These map to the skill's defined parameters by name.
     """
-    # Extract parent from kwargs (auto-injected by call_tools)
+    # Validate context parameter
+    if context not in ("same", "fork"):
+        return f"Invalid context: '{context}'. Must be 'same' or 'fork'."
+
+    # Extract parent from kwargs (auto-injected for sub-agent tools)
     parent = kwargs.pop('parent', None)
 
     from cognitrix.skills.manager import get_skill_manager
@@ -81,23 +81,17 @@ async def use_skill(
     if manifest.disable_model_invocation:
         return f"Skill '{skill_name}' can only be invoked manually by the user (disable-model-invocation: true)"
 
-    # Handle context override
-    if context:
-        manifest.context = context
+    # Set context mode
+    manifest.context = context
 
-    # Get agent's LLM and manager
+    # Get agent's LLM and manager - always prefer parent's if available
     from cognitrix.agents.base import AgentManager
-    agent_manager = None
-    llm = None
 
-    # Determine if we should use caller's context
-    use_parent_context = use_caller_context and parent and hasattr(parent, 'llm')
-
-    if use_parent_context:
+    if parent and hasattr(parent, 'llm'):
         llm = parent.llm
         agent_manager = AgentManager(parent)
     else:
-        # Fallback: create minimal context
+        # Fallback: create minimal context (for CLI usage without agent)
         from cognitrix.providers.base import LLM
         llm = LLM.load_llm('openrouter')
         if not llm:

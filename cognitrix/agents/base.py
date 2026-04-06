@@ -277,8 +277,8 @@ class AgentManager:
 
                     print(f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}")
                     
-                    # Add parent reference for sub-agent tools and use_skill
-                    if 'sub agent' in tool.name.lower() or tool.name.lower() == 'create sub agent' or tool.name.lower() == 'use_skill' or tool.category == 'mcp':
+                    # Add parent reference for sub-agent tools
+                    if 'sub agent' in tool.name.lower() or tool.name.lower() == 'create sub agent' or tool.category == 'mcp':
                         t['arguments']['parent'] = self.agent
 
                     # Execute with retry
