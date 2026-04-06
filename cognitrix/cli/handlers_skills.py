@@ -189,30 +189,30 @@ async def _run_skill(manager, name: str, arguments: str):
         rprint("[red]Failed to initialise LLM. Check your provider configuration.[/red]")
         return
 
-    agent = Agent(name="skill-runner", llm=llm)
+    agent = Agent(name="skill-runner", llm=llm, system_prompt="You are a skill execution agent.")
     agent_manager = AgentManager(agent)
     executor = SkillExecutor(agent_manager=agent_manager, llm=llm)
 
-    rprint(f"\n[bold cyan]🔧 Executing skill: {manifest.name}[/bold cyan]")
-    rprint("─" * 40)
+    rprint(f"\n[bold cyan]Executing skill: {manifest.name}[/bold cyan]")
+    rprint("-" * 40)
 
     async for event in executor.execute(manifest, arguments):
         if event.type == SkillEventType.SKILL_START:
             pass
         elif event.type == SkillEventType.SKILL_CONTEXT_INJECTED:
             if event.data and event.data.get('has_dynamic_context'):
-                rprint("[dim]📋 Dynamic context injected[/dim]")
+                rprint("[dim]Dynamic context injected[/dim]")
         elif event.type == SkillEventType.SKILL_PROMPT_SENT:
             ctx = event.data.get('context', 'same') if event.data else 'same'
-            rprint(f"[dim]📤 Prompt sent (context: {ctx})[/dim]\n")
+            rprint(f"[dim]Prompt sent (context: {ctx})[/dim]\n")
         elif event.type == SkillEventType.SKILL_PROGRESS:
             if event.data:
                 print(event.data, end="", flush=True)
         elif event.type == SkillEventType.SKILL_COMPLETE:
-            rprint(f"\n\n{'─' * 40}")
-            rprint("[green]✅ Skill completed[/green]")
+            rprint(f"\n\n{'-' * 40}")
+            rprint("[green]Skill completed[/green]")
         elif event.type == SkillEventType.SKILL_ERROR:
-            rprint(f"\n[red]✗ Error: {event.data}[/red]")
+            rprint(f"\n[red]Error: {event.data}[/red]")
 
 
 async def _validate_skill(path: str):
