@@ -1,7 +1,7 @@
 import { useUser } from '@/context/AppContext';
 import { useSession } from '@/context/SessionContext';
 import { useSSE } from '@/hooks/useSSE';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 
 const API_BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL}/api/v1`;
 
@@ -20,7 +20,8 @@ export default function Home() {
     scrollToBottom();
   }, [messages]);
 
-  const handleSSEEvent = (event: { type: string; content?: string; action?: string }) => {
+  // Stable callback for SSE events - no dependencies to prevent reconnects
+  const handleSSEEvent = useCallback((event: { type: string; content?: string; action?: string }) => {
     if (event.type === 'generate' && event.content) {
       appendToLastMessage(event.content);
     } else if (event.type === 'chat_history' && event.content) {
@@ -31,17 +32,23 @@ export default function Home() {
         // This is a response to add
       }
     }
-  };
+  }, [appendToLastMessage]);
 
-  const handleToolEvent = (toolName: string, status: string) => {
+  // Stable callback for tool events
+  const handleToolEvent = useCallback((toolName: string, status: string) => {
     console.log(`Tool: ${toolName} - ${status}`);
-    // Tool events are handled in UI via toolEvents from context
-  };
+  }, []);
 
+  // Stable callback for errors
+  const handleSSEError = useCallback((err: Error) => {
+    console.error('SSE error:', err);
+  }, []);
+
+  // SSE connection - handlers are stable so no reconnects on render
   const { isConnected, error, reconnect } = useSSE({
     onMessage: handleSSEEvent,
     onTool: handleToolEvent,
-    onError: (err) => console.error('SSE error:', err),
+    onError: handleSSEError,
   });
 
   const sendMessage = async () => {
@@ -78,12 +85,12 @@ export default function Home() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
-  };
+  }, [input, isLoading]);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-gray-900">

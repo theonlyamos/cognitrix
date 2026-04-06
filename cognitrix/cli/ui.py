@@ -10,12 +10,57 @@ async def start_web_ui(agent):
     """Initialize and start the web UI."""
     import uvicorn
     from fastapi import WebSocket, Query
+    from dotenv import load_dotenv
 
     from cognitrix.utils.ws import WebSocketManager
     from cognitrix.utils.sse import SSEManager
+    from cognitrix.agents import Agent
+    from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
+    from cognitrix.tools.base import ToolManager
+    from cognitrix.providers import LLM
 
     from ..api.main import app
     from ..common.security import verify_token
+
+    load_dotenv()
+
+    # If no agent is provided, create a default one
+    if agent is None:
+        from cognitrix.config import settings
+        
+        # Check if any agents exist
+        agents = await Agent.all()
+        if not agents:
+            logger.info("No agents found. Creating default 'Assistant' agent...")
+            
+            # Get default provider from settings
+            provider = settings.ai_provider
+            llm = LLM.load_llm(provider)
+            
+            if not llm:
+                # Fallback to groq if default fails
+                llm = LLM.load_llm('groq')
+            
+            if llm:
+                # Get all available tools
+                all_tools = ToolManager.list_all_tools()
+                
+                # Create default agent
+                agent = await Agent.create_agent(
+                    name="Assistant",
+                    provider=provider,
+                    system_prompt=ASSISTANT_SYSTEM_PROMPT,
+                    tools=['all']
+                )
+                
+                if agent:
+                    agent.tools = all_tools
+                    await agent.save()
+                    logger.info(f"Created default agent: {agent.name} with {len(all_tools)} tools")
+                else:
+                    logger.error("Failed to create default agent")
+            else:
+                logger.error("Failed to load LLM for default agent")
 
     ws_manager = WebSocketManager(agent)
     sse_manager = SSEManager(agent)
