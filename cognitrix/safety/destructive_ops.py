@@ -63,7 +63,7 @@ DESTRUCTIVE_CATEGORIES = {
         'description': 'System configuration modification'
     },
     'network_external': {
-        'tools': ['internet_search', 'web_scraper', 'open_website'],
+        'tools': ['Search', 'WebFetch', 'open_website'],
         'keywords': [
             'post', 'send', 'submit', 'upload', 'download',
             'curl', 'wget', 'fetch', 'request'

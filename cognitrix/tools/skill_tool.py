@@ -27,7 +27,7 @@ async def use_skill(
     specific patterns to produce high-quality output.
 
     Args:
-        skill_name: Name of the skill to execute (e.g. 'web-research', 'code-review')
+        skill_name: Name of the skill to execute (e.g. 'research', 'code-review')
         arguments: Arguments to pass to the skill (e.g. 'src/auth/login.ts', 'AI agents 2025')
         risk_level: Optional risk level override (low, medium, high). If provided, overrides
                     the skill's default risk level for approval purposes.

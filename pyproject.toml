@@ -25,7 +25,7 @@ classifiers = [
 "Bug Tracker" = "https://github.com/theonlyamos/cognitrix/issues"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">=3.11,<3.14"
 
 # Core
 aiohttp = "^3.9.3"
@@ -60,6 +60,7 @@ wikipedia = "^1.4.0"
 tavily-python = "^0.3.3"
 deepgram-sdk = "==3.*"
 xmltodict = "^0.13.0"
+pymupdf = "^1.27.2"
 
 # Database & Auth
 odbms = "0.4.5"
@@ -72,7 +73,6 @@ rich = ">=13.7.1"
 celery = {extras = ["redis"], version = "^5.4.0"}
 pyyaml = "^6.0"
 RestrictedPython = "^7.0"
-pymupdf = "^1.24.0"
 
 # MCP (Model Context Protocol)
 mcp = {extras = ["cli"], version = "^1.9.1"}

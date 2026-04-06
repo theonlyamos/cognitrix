@@ -135,7 +135,7 @@ class SkillExecutor:
             
             # Auto-build skill_args from positional arguments when not
             # explicitly provided.  This covers CLI slash-command invocations
-            # (e.g. /web-research AI agents 2025) and use_skill calls that
+            # (e.g. /research AI agents 2025) and use_skill calls that
             # only pass an `arguments` string.
             if not skill_args and manifest.args and args_list:
                 skill_args = {}
