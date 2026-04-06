@@ -1,19 +1,13 @@
-import { useUser, useWebSocket } from '@/context/AppContext';
+import { useUser } from '@/context/AppContext';
+import { useSession } from '@/context/SessionContext';
+import { useSSE } from '@/hooks/useSSE';
 import { useState, useRef, useEffect } from 'react';
 
 const API_BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL}/api/v1`;
 
-interface Message {
-  id: string;
-  role: string;
-  content: string;
-  timestamp?: string;
-}
-
 export default function Home() {
   const { user } = useUser();
-  const { wsState } = useWebSocket();
-  const [messages, setMessages] = useState<Message[]>([]);
+  const { messages, addMessage, appendToLastMessage, setIsStreaming, toolEvents } = useSession();
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -26,37 +20,38 @@ export default function Home() {
     scrollToBottom();
   }, [messages]);
 
-  useEffect(() => {
-    if (wsState.type === 'message' && wsState.data) {
-      try {
-        const data = JSON.parse(wsState.data);
-        if (data.type === 'chat' || data.type === 'message') {
-          setMessages(prev => [...prev, { 
-            id: Date.now().toString(), 
-            role: 'assistant', 
-            content: data.content,
-            timestamp: new Date().toISOString()
-          }]);
-        }
-      } catch {
-        // Ignore parse errors
+  const handleSSEEvent = (event: { type: string; content?: string; action?: string }) => {
+    if (event.type === 'generate' && event.content) {
+      appendToLastMessage(event.content);
+    } else if (event.type === 'chat_history' && event.content) {
+      // Handle historical messages - already loaded via loadSession
+    } else if (event.type === 'chat') {
+      // Direct chat responses
+      if (event.action === 'get' && event.content) {
+        // This is a response to add
       }
     }
-  }, [wsState]);
+  };
+
+  const handleToolEvent = (toolName: string, status: string) => {
+    console.log(`Tool: ${toolName} - ${status}`);
+    // Tool events are handled in UI via toolEvents from context
+  };
+
+  const { isConnected, error, reconnect } = useSSE({
+    onMessage: handleSSEEvent,
+    onTool: handleToolEvent,
+    onError: (err) => console.error('SSE error:', err),
+  });
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
     
-    const userMsg: Message = { 
-      id: Date.now().toString(), 
-      role: 'user', 
-      content: input,
-      timestamp: new Date().toISOString()
-    };
-    setMessages(prev => [...prev, userMsg]);
+    addMessage('user', input);
     const messageToSend = input;
     setInput('');
     setIsLoading(true);
+    setIsStreaming(true);
 
     try {
       const token = localStorage.getItem('token');
@@ -68,22 +63,18 @@ export default function Home() {
         },
         body: JSON.stringify({ message: messageToSend }),
       });
-      const data = await response.json();
-      setMessages(prev => [...prev, { 
-        id: Date.now().toString(), 
-        role: 'assistant', 
-        content: data.llm_response || data.content || 'I apologize, but I encountered an issue. Please try again.',
-        timestamp: new Date().toISOString()
-      }]);
+      
+      if (!response.ok) {
+        throw new Error('Failed to send message');
+      }
+      
+      // Response is sent via SSE, we just wait for streaming
+      // The SSE hook will append content to the last message
     } catch (err) {
-      setMessages(prev => [...prev, { 
-        id: Date.now().toString(), 
-        role: 'assistant', 
-        content: 'Unable to connect. Please check your internet connection and try again.',
-        timestamp: new Date().toISOString()
-      }]);
+      addMessage('assistant', 'Unable to connect. Please check your internet connection and try again.');
     } finally {
       setIsLoading(false);
+      setIsStreaming(false);
     }
   };
 
@@ -103,9 +94,27 @@ export default function Home() {
             <h1 className="text-2xl font-semibold text-white">Welcome back, {user?.name?.split(' ')[0] || 'User'}</h1>
             <p className="text-gray-400 text-sm mt-1">How can I help you today?</p>
           </div>
-          <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${wsState.type === 'open' ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
-            <span className="text-xs text-gray-500">{wsState.type === 'open' ? 'Connected' : 'Reconnecting...'}</span>
+          <div className="flex items-center gap-4">
+            {/* Tool Events Indicator */}
+            {toolEvents.length > 0 && (
+              <div className="flex items-center gap-2 text-sm text-gray-400">
+                <span className="animate-pulse">⚙️</span>
+                <span>{toolEvents[toolEvents.length - 1].toolName}</span>
+              </div>
+            )}
+            {/* Connection Status */}
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
+              <span className="text-xs text-gray-500">{isConnected ? 'Connected' : 'Disconnected'}</span>
+              {!isConnected && (
+                <button 
+                  onClick={reconnect}
+                  className="text-xs text-blue-400 hover:text-blue-300 ml-2"
+                >
+                  Reconnect
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -157,6 +166,13 @@ export default function Home() {
                 </svg>
                 <span className="text-sm">Thinking...</span>
               </div>
+            </div>
+          </div>
+        )}
+        {error && (
+          <div className="flex justify-center">
+            <div className="bg-red-500/20 border border-red-500/30 rounded-lg px-4 py-2">
+              <p className="text-sm text-red-400">Connection error. <button onClick={reconnect} className="underline">Retry</button></p>
             </div>
           </div>
         )}

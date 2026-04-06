@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { UserProvider, WebSocketProvider, useUser } from '@/context/AppContext';
+import { SessionProvider } from '@/context/SessionContext';
 import Sidebar from '@/components/Sidebar';
 import Home from '@/pages/Home';
 import Login from '@/pages/Login';
@@ -213,7 +214,9 @@ export default function App() {
     <BrowserRouter>
       <UserProvider>
         <WebSocketProvider>
-          <AppRoutes />
+          <SessionProvider>
+            <AppRoutes />
+          </SessionProvider>
         </WebSocketProvider>
       </UserProvider>
     </BrowserRouter>
