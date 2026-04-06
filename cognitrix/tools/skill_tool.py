@@ -1,4 +1,4 @@
-"""use_skill meta-tool — allows agents to invoke skills programmatically."""
+"""load_skill meta-tool — loads skill instructions into agent context."""
 
 import logging
 
@@ -19,8 +19,8 @@ TOOL_ALIASES = {
 }
 
 
-@tool(category='skills')
-async def use_skill(skill_name: str, context: str = "same") -> str:
+@tool(name='load_skill', category='skills')
+async def load_skill(skill_name: str, context: str = "same") -> str:
     """Load a skill's instructions into context.
 
     Use this tool to invoke a skill when you detect that the user's request
