@@ -401,7 +401,7 @@ def Search(query: str, max_results: int = 10):
     from tavily import TavilyClient
 
     try:
-        api_key = settings.Tavily_API_KEY if hasattr(settings, 'Tavily_API_KEY') else None
+        api_key = settings.tavily_api_key if settings.tavily_api_key else None
         if not api_key:
             api_key = os.getenv('TAVILY_API_KEY')
         
