@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { UserProvider, useUser } from '@/context/AppContext';
+import { UserProvider, WebSocketProvider, useUser } from '@/context/AppContext';
 import Sidebar from '@/components/Sidebar';
 import Home from '@/pages/Home';
 import Login from '@/pages/Login';
@@ -212,7 +212,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <UserProvider>
-        <AppRoutes />
+        <WebSocketProvider>
+          <AppRoutes />
+        </WebSocketProvider>
       </UserProvider>
     </BrowserRouter>
   );

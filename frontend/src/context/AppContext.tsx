@@ -89,7 +89,8 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
 
   const connect = useCallback(() => {
     try {
-      const websocketUrl = API_BACKEND_URI.replace('http', 'ws').split('/api')[0] + '/ws';
+      const token = localStorage.getItem('token');
+      const websocketUrl = `${API_BACKEND_URI.replace('http', 'ws').split('/api')[0]}/ws?token=${token}`;
       const socket = new WebSocket(websocketUrl);
 
       socket.onopen = () => {

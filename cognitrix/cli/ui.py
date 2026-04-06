@@ -9,11 +9,12 @@ logger = logging.getLogger('cognitrix.log')
 async def start_web_ui(agent):
     """Initialize and start the web UI."""
     import uvicorn
-    from fastapi import WebSocket
+    from fastapi import WebSocket, Query
 
     from cognitrix.utils.ws import WebSocketManager
 
     from ..api.main import app
+    from ..common.security import verify_token
 
     ws_manager = WebSocketManager(agent)
 
@@ -24,8 +25,13 @@ async def start_web_ui(agent):
         return response
 
     @app.websocket("/ws")
-    async def websocket_endpoint(websocket: 'WebSocket'):
-        await ws_manager.websocket_endpoint(websocket) # type: ignore
+    async def websocket_endpoint(websocket: 'WebSocket', token: str = Query(None)):
+        if token:
+            user = await verify_token(token)
+            if user:
+                await ws_manager.websocket_endpoint(websocket)  # type: ignore
+                return
+        await websocket.close(code=4003, reason="Unauthorized")
 
     # Start the web server
     config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
