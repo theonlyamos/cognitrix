@@ -33,6 +33,7 @@ Search the web using Brave Search API for current information.
 ## Notes
 
 - Requires Brave Search API key (free tier available)
-- Set API key via: `export BRAVE_API_KEY=your-api-key`
+- On Windows, set API key via: `set BRAVE_API_KEY=your-api-key` (or use system environment variables)
+- On Linux/Mac, set API key via: `export BRAVE_API_KEY=your-api-key`
 - Returns up to 10 results by default
 - Each result includes title, description, and URL

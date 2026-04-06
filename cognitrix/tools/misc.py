@@ -739,11 +739,17 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
         #     return f"Error: Command '{base_command}' is not allowed. Allowed commands: {', '.join(sorted(ALLOWED_COMMANDS))}"
 
         # Security check 3: Sanitize command
-        try:
-            # Use shlex to safely split command into arguments
-            command_parts = shlex.split(command)
-        except ValueError as e:
-            return f"Error: Invalid command format - {str(e)}"
+        # Note: On Windows, shlex.split mangles backslash paths, so we handle differently
+        import sys
+        if sys.platform == 'win32':
+            # On Windows, don't use shlex.split - pass command directly to shell
+            command_parts = command
+        else:
+            try:
+                # Use shlex to safely split command into arguments
+                command_parts = shlex.split(command)
+            except ValueError as e:
+                return f"Error: Invalid command format - {str(e)}"
 
         # Security check 4: Additional command validation
         for part in command_parts:
@@ -780,15 +786,28 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
                 process.kill()
                 return f"Error: Command timed out after {timeout} seconds"
 
-            # if process.returncode != 0:
-            #     return f"Command failed with error:\n{stderr}"
-
             # Security check 6: Sanitize output
             output = stdout.strip()
+            error_output = stderr.strip()
             # Remove any control characters except newlines and tabs
             output = re.sub(r'[\x00-\x09\x0b-\x1f\x7f-\x9f]', '', output)
+            error_output = re.sub(r'[\x00-\x09\x0b-\x1f\x7f-\x9f]', '', error_output)
 
-            return output if output else "Command executed successfully (no output)"
+            # If we have valid stdout, return it even if returncode is non-zero
+            # (the script may have printed warnings to stderr but still produced valid output)
+            if output:
+                if error_output and process.returncode != 0:
+                    # Include error info but prioritize the actual output
+                    return f"{output}\n\n[Warning: {error_output}]"
+                return output
+
+            # No stdout - return the error
+            if process.returncode != 0:
+                if error_output:
+                    return f"Command failed (exit code {process.returncode}):\n{error_output}"
+                return f"Command failed (exit code {process.returncode})"
+
+            return "Command executed successfully (no output)"
 
         except Exception as e:
             print(e)

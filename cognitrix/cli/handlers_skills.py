@@ -41,7 +41,7 @@ async def _manage_skills_async(args):
     elif args.remove:
         await _remove_skill(manager, args.remove)
     elif args.run:
-        skill_args = ' '.join(args.args) if hasattr(args, 'args') and args.args else ''
+        skill_args = ' '.join(args.args) if hasattr(args, 'args') and args.args else (args.name if args.name else '')
         await _run_skill(manager, args.run, skill_args)
     elif args.search:
         await _search_skills(manager, args.search)
@@ -177,6 +177,7 @@ async def _run_skill(manager, name: str, arguments: str):
     from cognitrix.providers.base import LLM
     from cognitrix.models import Agent
     from cognitrix.agents.base import AgentManager
+    from cognitrix.tools.base import ToolManager
 
     manifest = await manager.get_skill(name)
     if not manifest:
@@ -189,7 +190,9 @@ async def _run_skill(manager, name: str, arguments: str):
         rprint("[red]Failed to initialise LLM. Check your provider configuration.[/red]")
         return
 
-    agent = Agent(name="skill-runner", llm=llm, system_prompt="You are a skill execution agent.")
+    # Get tools - include all for skill execution
+    tools = ToolManager.list_all_tools()
+    agent = Agent(name="skill-runner", llm=llm, system_prompt="You are a skill execution agent.", tools=tools)
     agent_manager = AgentManager(agent)
     executor = SkillExecutor(agent_manager=agent_manager, llm=llm)
 
