@@ -1,13 +1,9 @@
 """use_skill meta-tool — allows agents to invoke skills programmatically."""
 
 import logging
-from typing import TYPE_CHECKING
 
 from cognitrix.tools.tool import tool
 from cognitrix.skills.models import RiskLevel
-
-if TYPE_CHECKING:
-    from cognitrix.models import Agent
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -19,7 +15,6 @@ async def use_skill(
     risk_level: str | None = None,
     use_caller_context: bool = True,
     context: str | None = None,
-    parent: "Agent | None" = None,
     **kwargs: dict
 ) -> str:
     """Execute a registered skill by name.
@@ -41,13 +36,12 @@ async def use_skill(
         context: Override the skill's context mode. Options: 'same' (run in current
                  conversation), 'fork' (run in separate sub-agent). If not provided,
                  uses the skill's defined context.
-        parent: The parent agent invoking this skill. Automatically passed by the
-                system when called from an agent. Allows the skill to access the
-                calling agent's LLM and maintain conversation context. Not intended
-                to be set manually - leave as None unless specifically required.
         **kwargs: Skill-specific arguments from the skill's args definition.
                   These map to the skill's defined parameters by name.
     """
+    # Extract parent from kwargs (auto-injected by call_tools)
+    parent = kwargs.pop('parent', None)
+
     from cognitrix.skills.manager import get_skill_manager
     from cognitrix.skills.executor import SkillExecutor
     from cognitrix.skills.models import SkillEventType
