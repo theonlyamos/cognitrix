@@ -19,6 +19,7 @@ from .handlers import list_agents, list_sessions, list_tasks, list_teams
 from .shell import initialize_shell
 from .ui import start_web_ui
 from .tui import CognitrixApp
+from cognitrix.tasks.handler import is_multi_step_task, handle_multi_step_task
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -154,8 +155,19 @@ async def start(args: Namespace):
 
         # Handle different execution modes
         if args.generate:
-            # Single generation mode
-            await session(args.generate, assistant, stream=args.stream)
+            # Single generation mode - check for multi-step tasks
+            if is_multi_step_task(args.generate):
+                logger.info("Multi-step task detected, creating execution plan...")
+                result = await handle_multi_step_task(
+                    args.generate,
+                    assistant,
+                    session,
+                    assistant.llm,
+                    args.stream
+                )
+                print(result)
+            else:
+                await session(args.generate, assistant, stream=args.stream)
         elif args.ui.lower() == 'web':
             # Web UI mode
             await start_web_ui(assistant)

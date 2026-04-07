@@ -24,6 +24,14 @@ export default function Home() {
   const handleSSEEvent = useCallback((event: { type: string; content?: string; action?: string }) => {
     if (event.type === 'generate' && event.content) {
       appendToLastMessage(event.content);
+    } else if (event.type === 'multistep_result' && event.content) {
+      // Multi-step task completed - replace the thinking message with result
+      appendToLastMessage(event.content);
+    } else if (event.type === 'status' && event.content) {
+      // Status updates (e.g., "Planning multi-step task...")
+      addMessage('assistant', event.content);
+    } else if (event.type === 'error' && event.content) {
+      addMessage('assistant', `Error: ${event.content}`);
     } else if (event.type === 'chat_history' && event.content) {
       // Handle historical messages - already loaded via loadSession
     } else if (event.type === 'chat') {
@@ -32,7 +40,7 @@ export default function Home() {
         // This is a response to add
       }
     }
-  }, [appendToLastMessage]);
+  }, [appendToLastMessage, addMessage]);
 
   // Stable callback for tool events
   const handleToolEvent = useCallback((toolName: string, status: string) => {

@@ -21,6 +21,7 @@ from cognitrix.skills.manager import get_skill_manager
 from cognitrix.skills.executor import SkillExecutor
 from cognitrix.agents.base import AgentManager
 from cognitrix.skills.models import SkillEventType
+from cognitrix.tasks.handler import is_multi_step_task, handle_multi_step_task
 
 console = Console()
 logger = logging.getLogger('cognitrix.log')
@@ -100,7 +101,7 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
         if cmd == 'tools':
             # List available tools for the current agent
             console.print(Panel("\n".join(f"[bold cyan][{i}][/bold cyan] [white]{tool.name}[/white]" for i, tool in enumerate(agent.tools)),
-                               title="[bold blue]🛠️  Available Tools[/bold blue]", border_style="blue"))
+                               title="[bold blue]Available Tools[/bold blue]", border_style="blue"))
         elif cmd == 'agents':
             await list_agents()
         elif cmd == 'tasks':
@@ -604,6 +605,37 @@ async def initialize_shell(session, agent, stream: bool = False):
             # Try to execute as shell command
             if run_shell_command(query):
                 continue
+
+            # Check if this is a multi-step task that needs planning
+            if is_multi_step_task(query):
+                console.print(Panel(
+                    "[bold cyan]📋 Multi-step task detected![/bold cyan]\n"
+                    "[dim]Breaking down into executable steps with verification...[/dim]",
+                    title="[blue]Task Analysis[/blue]",
+                    border_style="blue"
+                ))
+                
+                try:
+                    result = await handle_multi_step_task(
+                        query,
+                        agent,
+                        session,
+                        agent.llm,
+                        stream
+                    )
+                    console.print(Panel(
+                        result,
+                        title="[green]Final Result[/green]",
+                        border_style="green"
+                    ))
+                    continue
+                except Exception as e:
+                    console.print(Panel(
+                        f"[bold yellow]⚠ Multi-step handling failed: {str(e)}[/bold yellow]\n"
+                        "[dim]Falling back to standard processing...[/dim]",
+                        title="[yellow]Fallback[/yellow]",
+                        border_style="yellow"
+                    ))
 
             # Send to AI agent
             console.print(Panel("[bold blue]🤖 Sending to AI...[/bold blue]",

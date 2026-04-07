@@ -455,11 +455,12 @@ class LLMManager:
             content = msg.content or ""
             reasoning = LLMManager._get_reasoning_from_message(msg)
             native_tool_calls = LLMManager._parse_native_tool_calls(getattr(msg, 'tool_calls', None))
+            llm_resp = LLMResponse()
             if reasoning:
-                llm_resp = LLMResponse(llm_response=f'<think>{reasoning}</think>\n\n{content}')
-                llm_resp.reasoning = reasoning
+                llm_resp.add_reasoning_chunk(reasoning)
+                llm_resp.add_chunk(f'<think>{reasoning}</think>\n\n{content}')
             else:
-                llm_resp = LLMResponse(llm_response=content)
+                llm_resp.add_chunk(content)
             if native_tool_calls:
                 llm_resp.tool_calls = native_tool_calls
             return llm_resp

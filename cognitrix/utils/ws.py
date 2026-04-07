@@ -11,6 +11,7 @@ from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import Tool
+from cognitrix.tasks.handler import is_multi_step_task, handle_multi_step_task
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -120,6 +121,37 @@ class WebSocketManager:
 
                         session.chat = []
                         await session(prompt, agent, 'web', True, websocket.send_json, query, False)
+
+                    elif query_type == 'multistep':
+                        prompt = query.get('prompt', '')
+                        
+                        if is_multi_step_task(prompt):
+                            # Handle as multi-step task
+                            await websocket.send_json({
+                                'type': 'status',
+                                'content': 'Planning multi-step task...'
+                            })
+                            
+                            try:
+                                result = await handle_multi_step_task(
+                                    prompt,
+                                    web_agent,
+                                    session,
+                                    web_agent.llm,
+                                    stream=False
+                                )
+                                await websocket.send_json({
+                                    'type': 'multistep_result',
+                                    'content': result
+                                })
+                            except Exception as e:
+                                await websocket.send_json({
+                                    'type': 'error',
+                                    'content': f'Multi-step task failed: {str(e)}'
+                                })
+                        else:
+                            # Fall back to regular session
+                            await session(prompt, web_agent, 'web', True, websocket.send_json, query, False)
 
                     elif query_type == 'start_task':
                         task = query['task']

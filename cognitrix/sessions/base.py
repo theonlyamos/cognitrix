@@ -204,7 +204,7 @@ class Session(Model):
                         
                         # Display timing for CLI
                         if interface == 'cli':
-                            print(f"\n[dim]⏱️ Took {duration_str}[/dim]")
+                            print(f"\n[dim]Took {duration_str}[/dim]")
                         
                         break # Exit loop if no tools were called
 
@@ -227,7 +227,7 @@ class Session(Model):
             
             # Display timing for CLI (only if not already displayed)
             if interface == 'cli' and called_tools:
-                print(f"\n[dim]⏱️ Took {duration_str}[/dim]")
+                print(f"\n[dim]Took {duration_str}[/dim]")
 
             if save_history:
                 await self.save()

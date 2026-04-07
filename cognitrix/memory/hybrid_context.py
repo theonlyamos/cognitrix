@@ -99,11 +99,21 @@ class HybridContextManager(BaseContextManager):
         self.importance_threshold = importance_threshold
         self.max_long_term = max_long_term
 
+        # Check if vector store is disabled via environment variable
+        import os
+        self._vector_store_disabled = os.environ.get('DISABLE_VECTOR_STORE', '').lower() == 'true'
+        
+        if self._vector_store_disabled:
+            logger.info("Vector store disabled via DISABLE_VECTOR_STORE env var")
+
         logger.info(f"HybridContextManager initialized (lazy) for agent: {agent_id}")
 
     @property
-    def long_term(self) -> ChromaMemoryStore:
+    def long_term(self) -> ChromaMemoryStore | None:
         """Lazy-initialize ChromaDB-backed long-term memory store."""
+        if self._vector_store_disabled:
+            return None
+            
         if self._chroma_store is None:
             self._chroma_store = ChromaMemoryStore(
                 collection_name=self._chroma_config['collection_name']
@@ -128,17 +138,19 @@ class HybridContextManager(BaseContextManager):
 
         # 2. Retrieve relevant long-term memories
         long_term_memories = []
-        if session.chat:
+        if session.chat and not self._vector_store_disabled:
             # Use last user message as query
             last_message = session.chat[-1]
             query = last_message.get('content', '')
 
             if query:
                 try:
-                    memories = await self.long_term.retrieve(query, k=self.max_long_term)
-                    if memories:
-                        memory_context = self._format_memories(memories)
-                        system_content += f"\n\n## Relevant Past Context\n{memory_context}"
+                    lt = self.long_term
+                    if lt is not None:
+                        memories = await lt.retrieve(query, k=self.max_long_term)
+                        if memories:
+                            memory_context = self._format_memories(memories)
+                            system_content += f"\n\n## Relevant Past Context\n{memory_context}"
                 except Exception as e:
                     logger.error(f"Failed to retrieve memories: {e}")
 
@@ -174,8 +186,8 @@ class HybridContextManager(BaseContextManager):
         # Score importance
         importance = self.importance_scorer.score(message)
 
-        # Store in long-term if important enough
-        if importance >= self.importance_threshold:
+        # Store in long-term if important enough and vector store is enabled
+        if not self._vector_store_disabled and importance >= self.importance_threshold:
             try:
                 await self.long_term.store(
                     content=message.get('content', ''),
@@ -192,6 +204,8 @@ class HybridContextManager(BaseContextManager):
 
     async def search_memory(self, query: str, k: int = 5) -> list[str]:
         """Search long-term memory for relevant information."""
+        if self._vector_store_disabled:
+            return []
         try:
             memories = await self.long_term.retrieve(query, k=k)
             return [m.content for m in memories]

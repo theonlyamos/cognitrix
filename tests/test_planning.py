@@ -109,7 +109,9 @@ class TestPlanGeneration(TestStructuredPlanner):
         plan = await planner.create_plan(
             task="Create a web scraper",
             available_agents=mock_agents,
-            available_tools=mock_tools
+            available_tools=mock_tools,
+            budget=None,
+            constraints=None
         )
         
         assert isinstance(plan, TaskPlan)
@@ -126,7 +128,9 @@ class TestPlanGeneration(TestStructuredPlanner):
         plan = await planner.create_plan(
             task="Test task",
             available_agents=mock_agents,
-            available_tools=mock_tools
+            available_tools=mock_tools,
+            budget=None,
+            constraints=None
         )
         
         assert isinstance(plan, TaskPlan)
@@ -169,7 +173,9 @@ class TestPlanGeneration(TestStructuredPlanner):
             plan = await planner.create_plan(
                 task="Test task",
                 available_agents=mock_agents,
-                available_tools=mock_tools
+                available_tools=mock_tools,
+                budget=None,
+                constraints=None
             )
             # If successful, verify it worked
             assert isinstance(plan, TaskPlan)
@@ -188,7 +194,9 @@ class TestPlanGeneration(TestStructuredPlanner):
             await planner.create_plan(
                 task="Test task",
                 available_agents=mock_agents,
-                available_tools=mock_tools
+                available_tools=mock_tools,
+                budget=None,
+                constraints=None
             )
         
         # Check that PlanningError was raised
@@ -214,7 +222,9 @@ class TestPlanGeneration(TestStructuredPlanner):
         plan = await planner.create_plan(
             task="Test task",
             available_agents=mock_agents,
-            available_tools=mock_tools
+            available_tools=mock_tools,
+            budget=None,
+            constraints=None
         )
         
         assert isinstance(plan, TaskPlan)

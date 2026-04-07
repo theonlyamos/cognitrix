@@ -8,6 +8,7 @@ from sse_starlette.sse import EventSourceResponse
 from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.agents.generators import TaskInstructor
 from cognitrix.sessions.base import Session
+from cognitrix.tasks.handler import is_multi_step_task, handle_multi_step_task
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -101,7 +102,30 @@ class SSEManager:
 
                 elif action['type'] == 'chat_message':
                     user_prompt = action['content']
-                    async for response in self.agent.generate(user_prompt):
-                        yield {'event': 'message', 'data': json.dumps({'type': 'generate', 'content': response.current_chunk, 'action': 'chat_message'})}
+                    
+                    # Check for multi-step tasks
+                    if is_multi_step_task(user_prompt):
+                        # Send planning status
+                        yield {'event': 'message', 'data': json.dumps({'type': 'status', 'content': 'Planning multi-step task...'})}
+                        
+                        try:
+                            session = await Session.get_by_agent_id(self.agent.id)
+                            if session is None:
+                                yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': 'No active session found. Please refresh and try again.'})}
+                                return
+                            
+                            result = await handle_multi_step_task(
+                                user_prompt,
+                                self.agent,
+                                session,
+                                self.agent.llm,
+                                stream=False
+                            )
+                            yield {'event': 'message', 'data': json.dumps({'type': 'multistep_result', 'content': result})}
+                        except Exception as e:
+                            yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': f'Multi-step task failed: {str(e)}'})}
+                    else:
+                        async for response in self.agent.generate(user_prompt):
+                            yield {'event': 'message', 'data': json.dumps({'type': 'generate', 'content': response.current_chunk, 'action': 'chat_message'})}
 
         return EventSourceResponse(event_generator())

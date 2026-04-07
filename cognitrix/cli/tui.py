@@ -13,6 +13,7 @@ from textual.binding import Binding
 
 from cognitrix.agents.base import Agent
 from cognitrix.sessions.base import Session
+from cognitrix.tasks.handler import is_multi_step_task, handle_multi_step_task
 
 CSS = """
 CognitrixApp {
@@ -572,6 +573,11 @@ class CognitrixApp(App):
             self.exit()
             return
 
+        # Check for multi-step tasks
+        if is_multi_step_task(text):
+            await self._handle_multistep_task(text)
+            return
+
         # Hide welcome splash on first message
         splash = self.query_one("#welcome-splash")
         if not splash.has_class("hidden"):
@@ -625,4 +631,31 @@ class CognitrixApp(App):
 
     def _finish_streaming(self):
         self.streaming = False
+
+    async def _handle_multistep_task(self, text: str):
+        """Handle multi-step tasks in the TUI."""
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.console import ConsolePanel
+
+        chat_area = self.query_one("#chat-area", Vertical)
+        
+        # Show planning message
+        self.active_message = ChatBubble("📋 Planning multi-step task...", "agent")
+        await chat_area.mount(self.active_message)
+        
+        try:
+            result = await handle_multi_step_task(
+                text,
+                self.agent,
+                self.app_session,
+                self.agent.llm,
+                stream=False
+            )
+            # Replace the planning message with the result
+            self.active_message.update_content(result)
+        except Exception as e:
+            self.active_message.update_content(f"⚠️ Multi-step handling failed: {str(e)}\n\nFalling back to standard processing...")
+            # Fall back to normal session
+            await self.send_message(text)
 
