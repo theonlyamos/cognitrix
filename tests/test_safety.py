@@ -71,8 +71,8 @@ class TestDestructiveOpDetector:
     
     def test_analyze_network_external_risk(self, detector):
         """Test detection of network external communication risk."""
-        assessment = detector.analyze("internet_search", {"query": "test"})
-        
+        assessment = detector.analyze("WebFetch", {"query": "test"})
+
         # Network external is LOW risk
         assert assessment.risk_level == RiskLevel.LOW
         assert "network_external" in assessment.categories

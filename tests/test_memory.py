@@ -23,6 +23,7 @@ class TestChromaMemoryStore:
             mock_client.get_or_create_collection.return_value = mock_collection
             mock_client.create_collection.return_value = mock_collection
             mock_chromadb.Client.return_value = mock_client
+            mock_chromadb.PersistentClient.return_value = mock_client
             yield mock_client, mock_collection
     
     @pytest.fixture
@@ -304,9 +305,11 @@ class TestHybridContextManager:
                 agent_id="test_agent_123",
                 max_short_term=5,
                 max_long_term=3,
-                importance_threshold=0.7,
-                persist_directory="/tmp/test"
+                importance_threshold=0.7
             )
+            # Keep the test hermetic: a developer's local .env may set
+            # DISABLE_VECTOR_STORE=true, which would short-circuit long_term.
+            manager._vector_store_disabled = False
             yield manager, mock_store_instance
     
     def test_initialization(self, hybrid_manager):
@@ -479,7 +482,8 @@ class TestMemoryIntegration:
             mock_collection = MagicMock()
             mock_client.get_or_create_collection.return_value = mock_collection
             mock_chromadb.Client.return_value = mock_client
-            
+            mock_chromadb.PersistentClient.return_value = mock_client
+
             mock_model = MagicMock()
             mock_model.encode.return_value = np.array([0.1, 0.2, 0.3])
             mock_get_model.return_value = mock_model
