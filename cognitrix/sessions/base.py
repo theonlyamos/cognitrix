@@ -70,8 +70,17 @@ class Session(Model):
 
     @classmethod
     async def delete(cls, session_id: str):
-        """Delete session by id"""
-        return await cls.delete(session_id)
+        """Delete a session by id.
+
+        odbms exposes delete() as an instance method, so load the row and
+        delete the instance. The previous implementation called cls.delete()
+        which recursed infinitely.
+        """
+        session = await cls.get(session_id)
+        if not session:
+            return False
+        await Model.delete(session)
+        return True
 
 
     def update_history(self, message: dict[str, Any] | list[dict[str, Any]]):
@@ -112,7 +121,7 @@ class Session(Model):
 
         # Add timing for turn duration
         turn_start_time = time.monotonic()
-        
+
         # Add the new message to the history before building the prompt
         if wsquery is None:
             wsquery = {}
@@ -192,7 +201,7 @@ class Session(Model):
                         # Calculate turn duration
                         turn_duration = time.monotonic() - turn_start_time
                         duration_str = format_duration(turn_duration)
-                        
+
                         # Store timing in history
                         if save_history:
                             self.update_history({
@@ -201,11 +210,11 @@ class Session(Model):
                                 'content': f"Took {duration_str}",
                                 'duration': turn_duration
                             })
-                        
+
                         # Display timing for CLI
                         if interface == 'cli':
                             print(f"\n[dim]Took {duration_str}[/dim]")
-                        
+
                         break # Exit loop if no tools were called
 
                 except Exception as e:
@@ -215,7 +224,7 @@ class Session(Model):
             # Calculate turn duration for all exit paths
             turn_duration = time.monotonic() - turn_start_time
             duration_str = format_duration(turn_duration)
-            
+
             # Store timing in history (only if not already stored in 'not called_tools' block)
             if save_history and called_tools:
                 self.update_history({
@@ -224,7 +233,7 @@ class Session(Model):
                     'content': f"Took {duration_str}",
                     'duration': turn_duration
                 })
-            
+
             # Display timing for CLI (only if not already displayed)
             if interface == 'cli' and called_tools:
                 print(f"\n[dim]Took {duration_str}[/dim]")
@@ -367,15 +376,15 @@ class SessionManager:
 # ---------------------------------------------------------------------------
 # Attach SessionManager helpers to the Session model so that all management
 # logic lives in SessionManager while existing call-sites can still use
-# Session.load / list_sessions etc.                                           
+# Session.load / list_sessions etc.
 # ---------------------------------------------------------------------------
 
 def _session_manager(self: Session) -> 'SessionManager':  # type: ignore[name-defined]
     return SessionManager(self)
 
-setattr(Session, 'manager', property(_session_manager))  # type: ignore[attr-defined]
+Session.manager = property(_session_manager)  # type: ignore[attr-defined]
 
 # Delegate class-level helpers
-setattr(Session, 'load', staticmethod(Session.load))  # already exists, keep for compatibility
-setattr(Session, 'list_sessions', staticmethod(Session.list_sessions))  # type: ignore[attr-defined]
-setattr(Session, 'delete', staticmethod(Session.delete))  # type: ignore[attr-defined]
+Session.load = staticmethod(Session.load)  # already exists, keep for compatibility
+Session.list_sessions = staticmethod(Session.list_sessions)  # type: ignore[attr-defined]
+# Note: Session.delete stays a classmethod (delete-by-id); do not re-wrap it.
