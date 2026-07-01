@@ -14,10 +14,13 @@ from .security import (
     get_user as get_user,
 )
 from .security import (
+    hash_password as hash_password,
+)
+from .security import (
     identity as identity,
 )
 from .security import (
-    pwd_context as pwd_context,
+    verify_password as verify_password,
 )
 from .utils import Utils as Utils
 
@@ -28,6 +31,7 @@ __all__ = [
     "get_user",
     "get_current_user",
     "create_access_token",
-    "pwd_context",
+    "hash_password",
+    "verify_password",
     "Token",
 ]

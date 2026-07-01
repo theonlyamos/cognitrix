@@ -2,17 +2,16 @@ import asyncio
 import json
 import logging
 
-from fastapi import FastAPI, Request
+from fastapi import Request
 from sse_starlette.sse import EventSourceResponse
 
 from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.agents.generators import TaskInstructor
 from cognitrix.sessions.base import Session
-from cognitrix.tasks.handler import is_multi_step_task, handle_multi_step_task
+from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 
 logger = logging.getLogger('cognitrix.log')
 
-app = FastAPI()
 
 class SSEManager:
     def __init__(self, agent):
@@ -27,7 +26,6 @@ class SSEManager:
 
                 try:
                     action = await asyncio.wait_for(self.action_queue.get(), timeout=1.0)
-                    print('+++',action)
                 except TimeoutError:
                     yield {'event': 'ping', 'data': ''}
                     await asyncio.sleep(0.25)
@@ -41,7 +39,7 @@ class SSEManager:
 
                         if not session.agent_id:
                             session.agent_id = self.agent.id
-                            session.save()
+                            await session.save()
 
                         if session.agent_id == self.agent.id:
                             loaded_agent = self.agent
@@ -56,7 +54,7 @@ class SSEManager:
                     elif action['action'] == 'delete':
                         session = await Session.load(session_id)
                         session.chat = []
-                        session.save()
+                        await session.save()
                         yield {'event': 'message', 'data': json.dumps({'type': 'chat_history', 'content': session.chat, 'agent_name': self.agent.name, 'action': 'delete'})}
 
                 elif action['type'] == 'sessions':
@@ -78,8 +76,9 @@ class SSEManager:
                     prompt = ''
                     name = action.get('name', '')
                     agent = self.agent
+                    generate_kind = action.get('action')
 
-                    if action == 'system_prompt':
+                    if generate_kind == 'system_prompt':
                         agent = PromptGenerator(llm=agent.llm)
 
                         prompt = "Agent Description"
@@ -88,7 +87,7 @@ class SSEManager:
 
                         prompt += f"""\n\n{default_prompt}"""
 
-                    elif action == 'task_instructions':
+                    elif generate_kind == 'task_instructions':
                         agent = TaskInstructor(llm=agent.llm)
 
                         prompt = ""
@@ -102,18 +101,18 @@ class SSEManager:
 
                 elif action['type'] == 'chat_message':
                     user_prompt = action['content']
-                    
+
                     # Check for multi-step tasks
                     if is_multi_step_task(user_prompt):
                         # Send planning status
                         yield {'event': 'message', 'data': json.dumps({'type': 'status', 'content': 'Planning multi-step task...'})}
-                        
+
                         try:
                             session = await Session.get_by_agent_id(self.agent.id)
                             if session is None:
                                 yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': 'No active session found. Please refresh and try again.'})}
                                 return
-                            
+
                             result = await handle_multi_step_task(
                                 user_prompt,
                                 self.agent,

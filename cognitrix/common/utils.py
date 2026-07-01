@@ -1,6 +1,6 @@
 import re
 
-from .security import pwd_context
+from .security import hash_password, verify_password
 
 
 class Utils:
@@ -26,9 +26,9 @@ class Utils:
 
         :param password: The password from the login/register form
 
-        :return: A HS256 encrypted password
+        :return: A bcrypt-hashed password
         """
-        return pwd_context.hash(password)
+        return hash_password(password)
 
     @staticmethod
     def check_hashed_password(password: str, hashed_password: str)-> bool:
@@ -41,4 +41,4 @@ class Utils:
 
         :return: True if passwords match, False otherwise
         """
-        return pwd_context.verify(password, hashed_password)
+        return verify_password(password, hashed_password)

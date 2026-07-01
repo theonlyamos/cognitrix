@@ -16,6 +16,7 @@ import re
 import shlex
 from typing import Any, AsyncGenerator, TYPE_CHECKING
 
+from cognitrix.common.safe_exec import run_whitelisted_async
 from cognitrix.skills.models import (
     SkillEvent,
     SkillEventType,
@@ -63,15 +64,6 @@ TOOL_FIRST_ARG = {
     'Webfetch': 'url',
     'Search': 'query',
 }
-
-# Allowed shell commands for dynamic context (whitelist)
-ALLOWED_COMMANDS = frozenset({
-    'ls', 'dir', 'cat', 'type', 'head', 'tail', 'find', 'grep', 'rg',
-    'git', 'gitstatus', 'git log', 'git diff', 'git branch',
-    'npm', 'pip', 'python', 'python3', 'node', 'uv',
-    'pwd', 'cd', 'echo', 'which', 'where', 'file',
-    'wc', 'sort', 'uniq', 'awk', 'sed',
-})
 
 
 class SkillExecutionError(Exception):
@@ -338,35 +330,12 @@ class SkillExecutor:
         return result
 
     async def _run_shell_command(self, cmd: str) -> str:
-        """Execute a shell command and return stdout."""
-        import sys
+        """Execute a whitelisted shell command (shell=False) and return stdout.
 
-        cmd_clean = cmd.strip()
-        first_word = cmd_clean.split()[0].lower() if cmd_clean else ''
-
-        if first_word not in ALLOWED_COMMANDS:
-            raise PermissionError(f"Command '{first_word}' not allowed. Allowed: {', '.join(sorted(ALLOWED_COMMANDS))}")
-
-        if sys.platform == 'win32':
-            proc = await asyncio.create_subprocess_exec(
-                'powershell', '-NoProfile', '-Command', cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        else:
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except asyncio.TimeoutError:
-            proc.kill()
-            return "(command timed out after 30s)"
-
-        return stdout.decode('utf-8', errors='replace').strip()
+        Validation and argv splitting are centralised in cognitrix.common.safe_exec
+        so the bash tool and this dynamic-context feature share one audited boundary.
+        """
+        return await run_whitelisted_async(cmd)
 
     # ── Safety ──
 

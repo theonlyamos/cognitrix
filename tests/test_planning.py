@@ -184,23 +184,24 @@ class TestPlanGeneration(TestStructuredPlanner):
             pass
     
     @pytest.mark.asyncio
-    async def test_create_plan_max_retries_exceeded(self, planner, mock_llm, mock_agents, mock_tools):
-        """Test that planner raises error after max retries."""
+    async def test_create_plan_falls_back_after_max_retries(self, planner, mock_llm, mock_agents, mock_tools):
+        """After max retries on invalid JSON, the planner degrades gracefully to a
+        single-step fallback plan instead of raising (see _create_fallback_plan)."""
         mock_response = MagicMock()
         mock_response.llm_response = "Always invalid"
         mock_llm.return_value = mock_response
-        
-        with pytest.raises(PlanningError) as exc_info:
-            await planner.create_plan(
-                task="Test task",
-                available_agents=mock_agents,
-                available_tools=mock_tools,
-                budget=None,
-                constraints=None
-            )
-        
-        # Check that PlanningError was raised
-        assert "PlanningError" in str(type(exc_info.value)) or "JSON" in str(exc_info.value)
+
+        plan = await planner.create_plan(
+            task="Test task",
+            available_agents=mock_agents,
+            available_tools=mock_tools,
+            budget=None,
+            constraints=None
+        )
+
+        # Graceful degradation: a usable fallback plan, not an exception
+        assert len(plan.steps) == 1
+        assert plan.fallback_strategy
     
     @pytest.mark.asyncio
     async def test_create_plan_with_streaming_response(self, planner, mock_llm, mock_agents, mock_tools, sample_plan_dict):

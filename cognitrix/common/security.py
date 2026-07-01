@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta
 
+import bcrypt
+import jwt
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 
 from ..models import User
@@ -13,9 +13,20 @@ from .constants import JWT_ALGORITHM, JWT_SECRET_KEY
 load_dotenv()
 
 
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+
+def hash_password(password: str) -> str:
+    """Hash a password with bcrypt (used instead of the unmaintained passlib)."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plaintext password against a bcrypt hash."""
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 class Token(BaseModel):
     access_token: str
@@ -32,7 +43,7 @@ async def authenticate(email: str, password: str):
     user = await get_user(email)
     if not user:
         return False
-    if not pwd_context.verify(password, user.password):
+    if not verify_password(password, user.password):
         return False
     return user
 
@@ -58,7 +69,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         if username is None:
             raise credentials_exception
         TokenData(username=username)
-    except JWTError:
+    except jwt.PyJWTError:
         raise credentials_exception from None
 
     if not isinstance(username, str):
@@ -88,5 +99,5 @@ async def verify_token(token: str) -> User | None:
         if user is None:
             return None
         return user
-    except JWTError:
+    except jwt.PyJWTError:
         return None

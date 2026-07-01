@@ -30,8 +30,11 @@ class CognitrixSettings:
         self.db_user = os.getenv('DB_USER', '')
         self.db_password = os.getenv('DB_PASSWORD', '')
 
+        # Deployment environment marker (read early: gates JWT-secret behaviour).
+        self.env = os.getenv('COGNITRIX_ENV', 'development')
+
         # JWT settings
-        self.jwt_secret_key = os.getenv('JWT_SECRET_KEY', secrets.token_urlsafe(32))
+        self.jwt_secret_key = self._resolve_jwt_secret()
         self.jwt_algorithm = os.getenv('JWT_ALGORITHM', 'HS256')
         self.jwt_access_token_expire_minutes = int(os.getenv('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', '30'))
 
@@ -60,11 +63,58 @@ class CognitrixSettings:
         # LLM provider config (AI_PROVIDER, OPENROUTER_*, OPENAI_*, etc.)
         self.ai_provider = os.getenv('AI_PROVIDER', 'openrouter')
 
+        # Filesystem tool confinement: Read/Write/Edit may not escape this root.
+        # Defaults to the current working directory.
+        self.tools_root = Path(os.getenv('COGNITRIX_TOOLS_ROOT', Path.cwd())).expanduser().resolve()
+
+        # CORS: comma-separated list of allowed origins for the web API.
+        _cors = os.getenv('COGNITRIX_CORS_ORIGINS', 'http://localhost:8000,http://localhost:5173')
+        self.cors_origins = [o.strip() for o in _cors.split(',') if o.strip()]
+
         # MCP Configuration
         self.mcp_config_file = self.workdir / 'mcp.json'
 
         # Ensure directories exist
         self._ensure_directories()
+
+    def _resolve_jwt_secret(self) -> str:
+        """Resolve a stable JWT secret.
+
+        - If JWT_SECRET_KEY is set, use it.
+        - In production (COGNITRIX_ENV=production) it is required: fail fast.
+        - Otherwise persist a generated key under the workdir so tokens survive
+          restarts (the old behaviour generated a new key every start, silently
+          invalidating all sessions).
+        """
+        env_key = os.getenv('JWT_SECRET_KEY')
+        if env_key:
+            return env_key
+
+        if self.env == 'production':
+            raise RuntimeError(
+                "JWT_SECRET_KEY must be set when COGNITRIX_ENV=production."
+            )
+
+        key_file = self.workdir / 'jwt_secret'
+        try:
+            if key_file.exists():
+                return key_file.read_text(encoding='utf-8').strip()
+            self.workdir.mkdir(parents=True, exist_ok=True)
+            key = secrets.token_urlsafe(32)
+            key_file.write_text(key, encoding='utf-8')
+            try:
+                os.chmod(key_file, 0o600)
+            except OSError:
+                pass
+            logger.warning(
+                "JWT_SECRET_KEY not set; using a persisted development key at %s. "
+                "Set JWT_SECRET_KEY (and COGNITRIX_ENV=production) for deployment.",
+                key_file,
+            )
+            return key
+        except OSError:
+            # Filesystem unavailable — fall back to a process-local key.
+            return secrets.token_urlsafe(32)
 
     def _ensure_directories(self):
         """Ensure required directories exist"""
@@ -92,7 +142,7 @@ class CognitrixSettings:
             'helicone': self.helicone_api_key,
         }
         return key_mapping.get(provider.lower(), '')
-    
+
     def get_default_model(self, provider: str) -> str:
         """Get default model for a provider"""
         model_mapping = {

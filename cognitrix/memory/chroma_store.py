@@ -4,15 +4,14 @@ import asyncio
 import hashlib
 import logging
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import chromadb
 from chromadb.config import Settings
 
+from cognitrix.config import COGNITRIX_WORKDIR
 from cognitrix.memory.base import BaseMemory, MemoryEntry
 from cognitrix.utils.embedding_model import get_embedding_model
-from cognitrix.config import COGNITRIX_WORKDIR
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -23,7 +22,7 @@ class ChromaMemoryStore(BaseMemory):
     def __init__(
         self,
         collection_name: str = "agent_memory",
-        persist_directory: Optional[str] = str(COGNITRIX_WORKDIR / "chroma_db"),
+        persist_directory: str | None = str(COGNITRIX_WORKDIR / "chroma_db"),
         embedding_model: str = "all-MiniLM-L6-v2"
     ):
         """
@@ -68,6 +67,15 @@ class ChromaMemoryStore(BaseMemory):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._embed, text)
 
+    async def _run_sync(self, func, *args, **kwargs):
+        """Run a blocking ChromaDB call in the default executor.
+
+        ChromaDB's client/collection API is synchronous; calling it directly from
+        an async path blocks the event loop. Offload it to a thread instead.
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+
     async def store(
         self,
         content: str,
@@ -87,8 +95,9 @@ class ChromaMemoryStore(BaseMemory):
             **{k: str(v) for k, v in metadata.items()}  # Chroma requires string values
         }
 
-        # Add to collection
-        self.collection.add(
+        # Add to collection (offloaded: ChromaDB is synchronous)
+        await self._run_sync(
+            self.collection.add,
             ids=[memory_id],
             embeddings=[embedding],
             documents=[content],
@@ -102,7 +111,7 @@ class ChromaMemoryStore(BaseMemory):
         self,
         query: str,
         k: int = 5,
-        filter_metadata: Optional[dict] = None
+        filter_metadata: dict | None = None
     ) -> list[MemoryEntry]:
         """Retrieve relevant memories using semantic search."""
         query_embedding = await self._embed_async(query)
@@ -112,8 +121,9 @@ class ChromaMemoryStore(BaseMemory):
         if filter_metadata:
             where_clause = {k: str(v) for k, v in filter_metadata.items()}
 
-        # Query collection
-        results = self.collection.query(
+        # Query collection (offloaded: ChromaDB is synchronous)
+        results = await self._run_sync(
+            self.collection.query,
             query_embeddings=[query_embedding],
             n_results=k,
             where=where_clause
@@ -140,7 +150,7 @@ class ChromaMemoryStore(BaseMemory):
     async def get_recent(self, n: int = 10) -> list[MemoryEntry]:
         """Get most recent memories by timestamp."""
         # Get all entries (Chroma doesn't support sorting, so we filter client-side)
-        results = self.collection.get()
+        results = await self._run_sync(self.collection.get)
 
         entries = []
         for i, memory_id in enumerate(results['ids']):
@@ -162,7 +172,7 @@ class ChromaMemoryStore(BaseMemory):
     async def delete(self, memory_id: str) -> bool:
         """Delete a memory by ID."""
         try:
-            self.collection.delete(ids=[memory_id])
+            await self._run_sync(self.collection.delete, ids=[memory_id])
             return True
         except Exception as e:
             logger.error(f"Failed to delete memory {memory_id}: {e}")
@@ -170,8 +180,9 @@ class ChromaMemoryStore(BaseMemory):
 
     async def clear(self):
         """Clear all memories from collection."""
-        self.client.delete_collection(self.collection_name)
-        self.collection = self.client.create_collection(
+        await self._run_sync(self.client.delete_collection, self.collection_name)
+        self.collection = await self._run_sync(
+            self.client.create_collection,
             name=self.collection_name,
             metadata={"hnsw:space": "cosine"}
         )

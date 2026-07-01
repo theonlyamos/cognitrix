@@ -1,5 +1,6 @@
 """Multi-step task handler with planning and verification."""
 
+import logging
 import uuid
 import hashlib
 from typing import Optional
@@ -23,6 +24,7 @@ from cognitrix.prompts.planning import (
 
 
 console = Console()
+logger = logging.getLogger('cognitrix.log')
 
 
 def is_multi_step_task(query: str) -> bool:
