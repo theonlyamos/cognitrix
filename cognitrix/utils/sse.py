@@ -41,7 +41,7 @@ class SSEManager:
 
                         if not session.agent_id:
                             session.agent_id = self.agent.id
-                            session.save()
+                            await session.save()
 
                         if session.agent_id == self.agent.id:
                             loaded_agent = self.agent
@@ -56,7 +56,7 @@ class SSEManager:
                     elif action['action'] == 'delete':
                         session = await Session.load(session_id)
                         session.chat = []
-                        session.save()
+                        await session.save()
                         yield {'event': 'message', 'data': json.dumps({'type': 'chat_history', 'content': session.chat, 'agent_name': self.agent.name, 'action': 'delete'})}
 
                 elif action['type'] == 'sessions':

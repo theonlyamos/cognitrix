@@ -156,3 +156,7 @@ cython_debug/
 
 # ChromaDB
 chroma_db/
+
+# Local scratch / build artifacts
+src/
+*.tsbuildinfo

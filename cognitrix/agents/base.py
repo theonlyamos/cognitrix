@@ -160,6 +160,7 @@ class AgentManager:
                 lines.append(f"  - /{s['name']}{hint}: {s['description'][:100]}{invocable}")
             return '\n'.join(lines)
         except Exception:
+            logger.exception("Failed to build skills section for system prompt")
             return ''
 
     def process_prompt(self, query: str | dict, role: str = 'User') -> dict:

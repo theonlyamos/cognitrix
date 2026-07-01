@@ -25,6 +25,13 @@ More tools can be added by creating new classes that inherit from the `Tool` bas
 
 ## Installation
 
+**Prerequisites**
+
+- **Python 3.11–3.13** (the package will not build on 3.10 or lower).
+- **Node.js 18+** and a package manager (this repo uses **pnpm**) — only needed to build the web UI from source.
+- **Poetry** — only needed for building from source.
+- **Redis** — only needed if you use the background task API (Celery worker).
+
 **Install with pip**:
 
 ```bash
@@ -36,8 +43,8 @@ pip install cognitrix
 ```bash
 git clone https://github.com/theonlyamos/cognitrix.git
 cd cognitrix/frontend
-npm install
-npm run dev
+pnpm install
+pnpm run build
 cd ..
 pip install .
 ```
@@ -101,22 +108,23 @@ docker run -p 8000:8000 cognitrix
 
 This command maps port 8000 of the container to port 8000 on your host machine.
 
-To list supported LLM providers:
+To choose an LLM provider, pass `--provider` (config is read from the environment —
+`AI_PROVIDER`, `<PROVIDER>_BASE_URL`, `<PROVIDER>_API_KEY`, `<PROVIDER>_MODEL`):
 
 ```bash
-cognitrix --providers
+cognitrix --provider openrouter
 ```
 
 To list created agents:
 
 ```bash
-cognitrix agents
+cognitrix agents -l
 ```
 
 To list available tools:
 
 ```bash
-cognitrix --tools
+cognitrix tools -l
 ```
 
 To run Cognitrix with a specific provider:
@@ -157,24 +165,24 @@ cognitrix --help
 
 ## Web UI
 
-Cognitrix includes a web UI built with Svelte and TypeScript. This UI allows users to interact with the AI agents and manage their configurations easily.
+Cognitrix includes a web UI built with React, TypeScript, and Vite. This UI allows users to interact with the AI agents and manage their configurations easily.
 
 ### Development
 
-For development purposes, you can also run the web UI locally without Docker. Ensure you have Node.js and npm installed, then follow these steps:
+For development purposes, you can also run the web UI locally without Docker. Ensure you have Node.js 18+ and pnpm installed, then follow these steps:
 
 1. **Install Dependencies**:
    Navigate to the `frontend` directory and run:
 
    ```bash
-   npm install
+   pnpm install
    ```
 
 2. **Start the Development Server**:
    Run the following command to start the development server:
 
    ```bash
-   npm run dev
+   pnpm run dev
    ```
 
 3. **Access the Development Server**:
@@ -186,7 +194,7 @@ Cognitrix is open source and contributions are welcome! Please refer to [CONTRIB
 
 ## License
 
-This project is licensed under the MIT license. See [LICENSE.md](LICENSE.md) for more information.
+This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for more information.
 
 ## Acknowledgments
 

@@ -768,38 +768,9 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
 # - wikipedia -> wikipedia skill
 
 
-@tool(category='system')
-def create_tool(name: str, description: str, category: str, function_code: str):
-    """Use this tool to create new tools dynamically.
+# create_tool removed: it ran attacker-supplied source via exec() with no sandbox
+# (unauthenticated RCE). Follows the ede84af precedent that removed python_repl/calculator.
 
-    Args:
-        name (str): The name of the new tool.
-        description (str): A description of what the tool does and how to use it.
-        category (str): The category of the tool (e.g., 'system', 'web', 'general').
-        function_code (str): The Python code for the tool's function.
-
-    Returns:
-        str: A message indicating whether the tool was created successfully.
-    """
-    try:
-        # Create the function object from the provided code
-        exec(function_code)
-
-        # Get the function object
-        func = locals()[name.lower().replace(" ", "_")]
-
-        # Create the new tool using the @tool decorator
-        new_tool = tool(category=category)(func)
-
-        # Set the description
-        new_tool.__doc__ = description
-
-        # Add the new tool to the global namespace
-        globals()[name.lower().replace(" ", "_")] = new_tool
-
-        return f"Tool '{name}' created successfully."
-    except Exception as e:
-        return f"Error creating tool: {str(e)}"
 
 @tool(category='system')
 def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(Path.cwd())) -> str:

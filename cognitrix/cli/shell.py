@@ -74,12 +74,13 @@ def run_shell_command(command: str) -> bool:
                                    title="[bold green]Shell Output", border_style="green"))
             return True
         else:
-            # console.print(Panel(f"[bold red]Command failed with exit code {result.returncode}\n{result.stderr}",
-            #                    title="[bold red]Shell Error", border_style="red"))
+            console.print(Panel(f"[bold red]Command failed with exit code {result.returncode}\n{result.stderr}",
+                               title="[bold red]Shell Error", border_style="red"))
             return False
-    except Exception:
-        # console.print(Panel(f"[bold red]Error executing command: {e}",
-        #                    title="[bold red]Shell Error", border_style="red"))
+    except Exception as e:
+        logger.exception("Shell command failed")
+        console.print(Panel(f"[bold red]Error executing command: {e}",
+                           title="[bold red]Shell Error", border_style="red"))
         return False
 
 
