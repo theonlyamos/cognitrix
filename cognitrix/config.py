@@ -60,6 +60,17 @@ class CognitrixSettings:
         # LLM provider config (AI_PROVIDER, OPENROUTER_*, OPENAI_*, etc.)
         self.ai_provider = os.getenv('AI_PROVIDER', 'openrouter')
 
+        # Filesystem tool confinement: Read/Write/Edit may not escape this root.
+        # Defaults to the current working directory.
+        self.tools_root = Path(os.getenv('COGNITRIX_TOOLS_ROOT', Path.cwd())).expanduser().resolve()
+
+        # CORS: comma-separated list of allowed origins for the web API.
+        _cors = os.getenv('COGNITRIX_CORS_ORIGINS', 'http://localhost:8000,http://localhost:5173')
+        self.cors_origins = [o.strip() for o in _cors.split(',') if o.strip()]
+
+        # Deployment environment marker (e.g. 'production' hard-fails on missing JWT secret).
+        self.env = os.getenv('COGNITRIX_ENV', 'development')
+
         # MCP Configuration
         self.mcp_config_file = self.workdir / 'mcp.json'
 

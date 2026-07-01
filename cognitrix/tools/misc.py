@@ -5,9 +5,7 @@ import json
 import logging
 import os
 import re
-import shlex
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Literal, TYPE_CHECKING
 from webbrowser import open_new_tab
@@ -19,6 +17,13 @@ from bs4 import BeautifulSoup
 from rich import print
 from tavily import TavilyClient
 
+from cognitrix.common.safe_exec import (
+    DEFAULT_TIMEOUT,
+    CommandNotAllowed,
+    PathEscapesRoot,
+    resolve_within_root,
+    run_whitelisted,
+)
 from cognitrix.config import settings
 from cognitrix.tools.tool import tool
 
@@ -28,25 +33,6 @@ logging.basicConfig(
     level=logging.WARNING
 )
 logger = logging.getLogger('cognitrix.log')
-
-ALLOWED_COMMANDS: set[str] = {
-    # File system navigation
-    'ls', 'dir', 'pwd',
-    # File operations
-    'cat', 'head', 'tail', 'less', 'more',
-    # System info
-    'date', 'whoami', 'hostname', 'uname',
-    # Process info
-    'ps', 'top',
-    # Network
-    'ping', 'netstat',
-    # Package management
-    'pip', 'pip3',
-    # Git operations
-    'git',
-    # Directory operations
-    'cd', 'mkdir', 'rmdir'
-}
 
 def get_file_content(full_path: Path):
     with full_path.open('rt') as file:
@@ -188,7 +174,10 @@ def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_
         - Read PDF pages 1-5: Read("document.pdf", page_range="1-5")
     """
     try:
-        path = Path(file_path).expanduser().resolve()
+        try:
+            path = resolve_within_root(file_path, settings.tools_root)
+        except PathEscapesRoot as e:
+            return f"Error: {e}"
 
         if not path.exists():
             return f"Error: File not found: {file_path}"
@@ -248,7 +237,10 @@ def Write(file_path: str, content: str, append: bool = False):
         - Append to file: Write("log.txt", "new entry\n", append=True)
     """
     try:
-        path = Path(file_path).expanduser().resolve()
+        try:
+            path = resolve_within_root(file_path, settings.tools_root)
+        except PathEscapesRoot as e:
+            return f"Error: {e}"
 
         parent = path.parent
         if not parent.exists():
@@ -286,7 +278,10 @@ def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
         - Replace all occurrences: Edit("file.py", "old_text", "new_text", replace_all=True)
     """
     try:
-        path = Path(file_path).expanduser().resolve()
+        try:
+            path = resolve_within_root(file_path, settings.tools_root)
+        except PathEscapesRoot as e:
+            return f"Error: {e}"
 
         if not path.exists():
             if create_if_missing:
@@ -789,110 +784,28 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
         Commands are sanitized before execution.
         Use with caution as it interacts with the system directly.
     """
-    try:
-        # Convert timeout to int if passed as string (e.g., from LLM)
-        if timeout is not None:
-            try:
-                timeout = int(timeout)
-            except (ValueError, TypeError):
-                return f"Error: Invalid timeout value '{timeout}'. Must be an integer."
-
-        # Security check 1: Extract base command (for logging/validation)
-        base_command = command.split()[0].lower() if command else ""
-
-        # Security check 2: Verify command is whitelisted
-        # if base_command not in ALLOWED_COMMANDS:
-        #     return f"Error: Command '{base_command}' is not allowed. Allowed commands: {', '.join(sorted(ALLOWED_COMMANDS))}"
-
-        # Security check 3: Sanitize command
-        # Note: On Windows, shlex.split mangles backslash paths, so we handle differently
-        import sys
-        if sys.platform == 'win32':
-            # On Windows, don't use shlex.split - pass command directly to shell
-            command_parts = command
-            # For validation, only check the base command (first word)
-            base_command_for_check = command.split()[0] if command else ""
-        else:
-            try:
-                # Use shlex to safely split command into arguments
-                command_parts = shlex.split(command)
-                base_command_for_check = command_parts[0] if command_parts else ""
-            except ValueError as e:
-                return f"Error: Invalid command format - {str(e)}"
-
-        # Security check 4: Additional command validation
-        if sys.platform != 'win32':
-            # Only check individual parts on non-Windows (where we split safely)
-            for part in command_parts:
-                if re.search(r'[;&|]', part) or '..' in part:
-                    return "Error: Command contains forbidden characters or patterns"
-        else:
-            # On Windows, just check for obvious malicious patterns in the full command
-            if '..' in command:
-                return "Error: Command contains forbidden pattern '..'"
-
-        # Security check 5: Validate and resolve working directory
-        if working_dir:
-            try:
-                work_dir = Path(working_dir).resolve()
-                if not work_dir.exists() or not work_dir.is_dir():
-                    return f"Error: Invalid working directory - {working_dir}"
-            except Exception as e:
-                return f"Error: Working directory validation failed - {str(e)}"
-        else:
-            work_dir = Path.cwd()
-
-        # Execute command with timeout and capture output
+    # Validate and resolve the working directory
+    if working_dir:
         try:
-            process = subprocess.Popen(
-                command_parts,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=str(work_dir),
-                shell=True
-            )
-
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                # Clean up process if it times out
-                process.kill()
-                return f"Error: Command timed out after {timeout} seconds"
-
-            # Security check 6: Sanitize output
-            output = stdout.strip()
-            error_output = stderr.strip()
-            # Remove any control characters except newlines and tabs
-            output = re.sub(r'[\x00-\x09\x0b-\x1f\x7f-\x9f]', '', output)
-            error_output = re.sub(r'[\x00-\x09\x0b-\x1f\x7f-\x9f]', '', error_output)
-            
-            # Try to encode to ascii, replacing non-ascii chars (for Windows console)
-            try:
-                output = output.encode('ascii', 'replace').decode('ascii')
-                error_output = error_output.encode('ascii', 'replace').decode('ascii')
-            except Exception:
-                pass
-
-            # If we have valid stdout, return it even if returncode is non-zero
-            # (the script may have printed warnings to stderr but still produced valid output)
-            if output:
-                if error_output and process.returncode != 0:
-                    # Include error info but prioritize the actual output
-                    return f"{output}\n\n[Warning: {error_output}]"
-                return output
-
-            # No stdout - return the error
-            if process.returncode != 0:
-                if error_output:
-                    return f"Command failed (exit code {process.returncode}):\n{error_output}"
-                return f"Command failed (exit code {process.returncode})"
-
-            return "Command executed successfully (no output)"
-
+            work_dir = Path(working_dir).resolve()
+            if not work_dir.exists() or not work_dir.is_dir():
+                return f"Error: Invalid working directory - {working_dir}"
         except Exception as e:
-            print(e)
-            return f"Error executing command: {str(e)}"
+            return f"Error: Working directory validation failed - {str(e)}"
+    else:
+        work_dir = Path.cwd()
 
+    # Normalise timeout (the LLM may pass it as a string)
+    try:
+        timeout_s = int(timeout) if timeout is not None else DEFAULT_TIMEOUT
+    except (ValueError, TypeError):
+        return f"Error: Invalid timeout value '{timeout}'. Must be an integer."
+
+    # Execute through the shared safety boundary: whitelist + argv + shell=False.
+    try:
+        return run_whitelisted(command, cwd=str(work_dir), timeout=timeout_s)
+    except CommandNotAllowed as e:
+        return f"Error: {e}"
     except Exception as e:
-        return f"Unexpected error: {str(e)}"
+        logger.exception("bash tool failed")
+        return f"Error executing command: {e}"
