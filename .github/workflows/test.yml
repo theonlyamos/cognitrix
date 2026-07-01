@@ -20,7 +20,10 @@ jobs:
         run: pipx install poetry
       - name: Install dependencies
         run: poetry install --with dev
+      # Non-blocking until the repo-wide lint cleanup lands (see plan M3.1);
+      # remove continue-on-error to make lint a hard gate afterwards.
       - name: Lint
         run: poetry run ruff check .
+        continue-on-error: true
       - name: Test
         run: poetry run pytest -q

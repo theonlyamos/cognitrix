@@ -64,9 +64,8 @@ pymupdf = "^1.27.2"
 
 # Database & Auth
 odbms = "0.4.5"
-passlib = "^1.7.4"
-python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 bcrypt = "^4.3.0"
+pyjwt = "^2.8.0"
 
 # Utilities
 rich = ">=13.7.1"
