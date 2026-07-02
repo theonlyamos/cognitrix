@@ -11,13 +11,12 @@ from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 from cognitrix.mcp.client import get_dynamic_client
 from cognitrix.models import Agent, MCPTool, Message, Tool
 from cognitrix.providers.base import LLM
+from cognitrix.safety.approval_gate import ApprovalGate, ToolCall
+from cognitrix.safety.destructive_ops import DestructiveOpDetector
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
 from cognitrix.utils import extract_json
 from cognitrix.utils.llm_response import LLMResponse
-from cognitrix.utils.retry import with_retry, RETRY_CONFIGS
-from cognitrix.safety.destructive_ops import DestructiveOpDetector
-from cognitrix.safety.approval_gate import ApprovalGate, ToolCall
 
 if TYPE_CHECKING:
     from cognitrix.sessions.base import Session
@@ -137,9 +136,10 @@ class AgentManager:
         """Build skill awareness section for system prompt."""
         try:
             import asyncio
+
             from cognitrix.skills.manager import get_skill_manager
             manager = get_skill_manager()
-            
+
             # Use cached data if available (pre-warmed at startup)
             if not manager._cache:
                 try:
@@ -149,7 +149,7 @@ class AgentManager:
                     loop.run_until_complete(manager.discover_all())
                 except RuntimeError:
                     asyncio.run(manager.discover_all())
-            
+
             summaries = manager.get_skill_summaries()
             if not summaries:
                 return ''
@@ -235,17 +235,17 @@ class AgentManager:
         return next((tool for tool in self.agent.tools if tool.name.lower() == name.lower()), None)
 
     async def call_tools(
-        self, 
+        self,
         tool_calls: dict[str, Any] | list[dict[str, Any]]
     ) -> dict[str, Any] | str:
         """Execute tool calls with safety checks and retry logic."""
         try:
             if tool_calls:
                 agent_tool_calls = tool_calls if isinstance(tool_calls, list) else [tool_calls]
-                
+
                 # Create resilient tool manager
                 resilient_manager = ResilientToolManager(llm=self.agent.llm)
-                
+
                 tasks = []
                 for t in agent_tool_calls:
                     tool = ToolManager.get_by_name(t['name'])
@@ -256,28 +256,28 @@ class AgentManager:
                     # Safety check
                     tool_call = ToolCall(tool_name=tool.name, params=t['arguments'])
                     risk = self.detector.analyze(tool.name, t['arguments'])
-                    
+
                     if risk.risk_level.value in ['medium', 'high']:
                         print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
                         print(f"   Details: {risk.details}")
-                        
+
                         approval = await self.approval_gate.check_approval(
                             tool_call=tool_call,
                             risk=risk,
                             interface='cli'
                         )
-                        
+
                         if not approval.approved:
                             return {
                                 'type': 'tool_calls_result',
                                 'result': [f"Operation blocked: User denied approval for {tool.name}"]
                             }
-                        
+
                         if approval.cached:
                             print("   (Using cached approval)")
 
                     print(f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}")
-                    
+
                     # Add parent reference for sub-agent tools
                     if 'sub agent' in tool.name.lower() or tool.name.lower() == 'create sub agent' or tool.category == 'mcp':
                         t['arguments']['parent'] = self.agent
@@ -293,12 +293,13 @@ class AgentManager:
                     )
 
                 tool_results = await asyncio.gather(*tasks)
-                
-                # Convert ToolResults to expected format with tool_call_id mapping
+
+                # Convert ToolResults to expected format. Map each result back to its
+                # originating call by position (tool_results is 1:1 with agent_tool_calls),
+                # not via a filtered id list — filtering out None ids misaligns the mapping.
                 results = []
-                tool_call_ids = [t.get('tool_call_id') for t in agent_tool_calls if t.get('tool_call_id')]
                 for i, result in enumerate(tool_results):
-                    tool_call_id = tool_call_ids[i] if i < len(tool_call_ids) else None
+                    tool_call_id = agent_tool_calls[i].get('tool_call_id') if i < len(agent_tool_calls) else None
                     if result.success:
                         results.append({
                             'tool_call_id': tool_call_id,
@@ -314,11 +315,11 @@ class AgentManager:
                     'type': 'tool_calls_result',
                     'result': results
                 }
-                
+
         except Exception as e:
             print(f"Tool execution error: {e}")
             return str(e)
-        
+
         return ''
 
     def add_tool(self, tool: Tool):
@@ -441,9 +442,9 @@ class AgentManager:
         return await AgentManager.create_agent(*args, **kwargs)
 
 # ---------------------------------------------------------------------------
-# Attach the manager interface to the Agent model to centralise management   
-# logic while keeping backward-compatibility with existing call-sites that   
-# invoke `Agent.create_agent(...)`, etc.                                      
+# Attach the manager interface to the Agent model to centralise management
+# logic while keeping backward-compatibility with existing call-sites that
+# invoke `Agent.create_agent(...)`, etc.
 # ---------------------------------------------------------------------------
 
 # Instance-level manager
@@ -452,10 +453,10 @@ def _agent_manager(self: Agent) -> 'AgentManager':  # type: ignore[name-defined]
     return AgentManager(self)
 
 # Add property dynamically (avoids circular import at class definition time)
-setattr(Agent, 'manager', property(_agent_manager))
+Agent.manager = property(_agent_manager)
 
 # Add process_prompt method to Agent model (delegates to manager)
-setattr(Agent, 'process_prompt', lambda self, query, role='User': AgentManager(self).process_prompt(query, role))  # type: ignore[attr-defined]
+Agent.process_prompt = lambda self, query, role='User': AgentManager(self).process_prompt(query, role)  # type: ignore[attr-defined]
 
 
 async def _agent_call_tools(self, tool_calls):
@@ -463,16 +464,16 @@ async def _agent_call_tools(self, tool_calls):
     return await AgentManager(self).call_tools(tool_calls)
 
 
-setattr(Agent, 'call_tools', _agent_call_tools)  # type: ignore[attr-defined]
+Agent.call_tools = _agent_call_tools  # type: ignore[attr-defined]
 
 # Class-level convenience methods that delegate to AgentManager
-setattr(Agent, 'create_agent', staticmethod(AgentManager.create_agent))  # type: ignore[attr-defined]
-setattr(Agent, 'list_agents', staticmethod(AgentManager.list_agents))  # type: ignore[attr-defined]
-setattr(Agent, 'load_agent', staticmethod(AgentManager.load_agent))  # type: ignore[attr-defined]
+Agent.create_agent = staticmethod(AgentManager.create_agent)  # type: ignore[attr-defined]
+Agent.list_agents = staticmethod(AgentManager.list_agents)  # type: ignore[attr-defined]
+Agent.load_agent = staticmethod(AgentManager.load_agent)  # type: ignore[attr-defined]
 
 # Add formatted_system_prompt to Agent model (delegates to manager)
 # This is a regular method that calls the manager's method
 def _formatted_system_prompt(self):
     return AgentManager(self).formatted_system_prompt()
 
-setattr(Agent, 'formatted_system_prompt', _formatted_system_prompt)
+Agent.formatted_system_prompt = _formatted_system_prompt

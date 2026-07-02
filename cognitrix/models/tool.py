@@ -59,33 +59,31 @@ class Tool(Model):
             }
             return type_mapping.get(py_type, 'string')
 
-        tool_json = {}
-        if hasattr(self, 'parameters') and self.parameters:
-            parameters = self.parameters
-            required = list(parameters.keys())
+        parameters = self.parameters if (hasattr(self, 'parameters') and self.parameters) else {}
+        required = list(parameters.keys())
 
-            properties = {}
-            for name, param_type in parameters.items():
-                vtype = python_type_to_json_type(param_type)
-                prop = {"type": vtype, "description": ""}
-                if vtype == 'array':
-                    prop['items'] = {"type": "string"} # type: ignore
-                properties[name] = prop
+        properties = {}
+        for name, param_type in parameters.items():
+            vtype = python_type_to_json_type(param_type)
+            prop = {"type": vtype, "description": ""}
+            if vtype == 'array':
+                prop['items'] = {"type": "string"} # type: ignore
+            properties[name] = prop
 
-            tool_json = {
-                "type": "function",
-                "function": {
-                    "name": self.name.replace(' ', '_'),
-                    "description": self.description[:1024],
-                    "parameters": {
-                        "type": "object",
-                        "properties": properties,
-                        "required": required,
-                    }
+        # Always return a valid function schema, even for zero-argument tools,
+        # so parameterless tools are still advertised to the model.
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name.replace(' ', '_'),
+                "description": self.description[:1024],
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
                 }
             }
-
-        return tool_json
+        }
 
 class MCPTool(Tool):
     """A dynamic tool created from an MCP server definition."""

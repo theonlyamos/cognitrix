@@ -4,7 +4,6 @@ Provider-agnostic OpenAI-compatible LLM layer.
 Runtime config (provider, base_url, api_key, model) from env or CLI.
 Groq and Ollama: direct. Others: route through Helicone.
 """
-import functools
 import hashlib
 import json
 import logging
@@ -226,21 +225,29 @@ class LLMManager:
                         {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{base64_image}'}},
                     ],
                 })
+            elif msg_type == 'image':
+                # Non-multimodal model: don't silently drop the image — leave a text
+                # placeholder so the turn keeps context, and warn.
+                logger.warning("Dropping image content for non-multimodal model '%s'", llm.model)
+                formatted_messages.append({
+                    'role': role,
+                    'content': '[An image/screenshot was provided but this model cannot view images.]',
+                })
         return formatted_messages
 
     @staticmethod
     def load_llm(provider: str | dict[str, Any]) -> LLM | None:
         """Load LLM with caching to avoid repeated instantiation."""
         cache_key = json.dumps(provider, sort_keys=True) if isinstance(provider, dict) else provider
-        
+
         if not hasattr(LLMManager, '_llm_cache'):
             LLMManager._llm_cache = {}
-        
+
         if cache_key in LLMManager._llm_cache:
             cached = LLMManager._llm_cache[cache_key]
             if isinstance(cached, LLM):
                 return cached
-        
+
         try:
             if isinstance(provider, dict):
                 llm = LLM(**provider)
@@ -275,10 +282,10 @@ class LLMManager:
                 and (settings.helicone_base_url or 'https://gateway.helicone.ai/v1')
             )
             helicone_base = settings.helicone_base_url or 'https://gateway.helicone.ai/v1'
-            
+
             if llm.provider == 'openrouter':
                 helicone_base = helicone_base.replace('v1', 'api/v1')
-            
+
             if llm.provider in ('google', 'gemini'):
                 helicone_base = helicone_base + 'beta/openai/v1'
 

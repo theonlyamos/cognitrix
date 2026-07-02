@@ -131,16 +131,26 @@ class Session(Model):
         # Build the context-aware prompt using the manager
         prompt = await agent.get_context_manager().build_prompt(agent, self)
 
-        formatted_tools = [tool.to_dict_format() for tool in agent.tools if len(tool.to_dict_format().keys())]
+        formatted_tools = [tool.to_dict_format() for tool in agent.tools]
+        # Only advertise tools to models with native tool-use; otherwise the tool
+        # list is embedded in the system prompt (AgentManager.formatted_system_prompt).
+        active_tools = formatted_tools if agent.llm.supports_tool_use else None
 
+        MAX_TOOL_ROUNDS = 10
+        tool_rounds = 0
         try:
             while True:  # The loop now primarily handles tool calls, not initial message processing
+                if tool_rounds >= MAX_TOOL_ROUNDS:
+                    logger.warning("Exceeded max tool rounds (%s); stopping turn", MAX_TOOL_ROUNDS)
+                    if interface == 'cli':
+                        output(f"\n[Stopped after {MAX_TOOL_ROUNDS} tool rounds]")
+                    break
                 try:
                     response: LLMResponse = LLMResponse()
                     called_tools: bool = False
 
                     # The prompt is now a complete history, not a single message
-                    llm_result = await agent.llm(prompt, stream=stream, tools=formatted_tools)
+                    llm_result = await agent.llm(prompt, stream=stream, tools=active_tools)
 
                     if stream:
                         async_iter = llm_result  # type: ignore[arg-type]
@@ -171,6 +181,7 @@ class Session(Model):
                         if response.tool_calls and not called_tools:
                             result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls)
                             called_tools = True
+                            tool_rounds += 1
 
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                                 # If a tool call has a result, add it to history and rebuild the prompt
