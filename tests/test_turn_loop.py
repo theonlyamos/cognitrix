@@ -188,3 +188,48 @@ async def test_provider_error_not_persisted_as_answer(monkeypatch):
     await session("hi", agent, "cli", False, lambda *a, **k: None, None, True)
     assert len(session.chat) == 1
     assert session.chat[0]["role"] == "User"
+
+
+@pytest.mark.asyncio
+async def test_risky_tool_denied_over_web(monkeypatch):
+    # A risky tool over the web interface must be denied (not executed, and not
+    # blocked on server-side input()).
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    ran = {"called": False}
+
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda name: Tool(name=name, description="d", parameters={})),
+    )
+
+    async def fake_run_tool(self, tool, params, **kw):
+        ran["called"] = True
+        return ToolResult(success=True, data="ran")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+
+    res = await agent.call_tools(
+        [{"name": "bash", "arguments": {"command": "ls"}, "tool_call_id": "1"}],
+        interface="web",
+    )
+    assert "denied" in res["result"][0]["data"].lower()
+    assert ran["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_approval_cache_is_scoped():
+    from cognitrix.safety.approval_gate import ApprovalGate, ToolCall
+    from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
+
+    gate = ApprovalGate()
+    tc = ToolCall(tool_name="bash", params={"command": "ls"})
+    risk = RiskAssessment(risk_level=RiskLevel.HIGH, categories=["code_execution"], details="x")
+
+    # A remembered approval for user A must not approve the same op for user B.
+    gate.session_cache.add(f"userA:{gate._hash_operation(tc)}")
+    ra = await gate.check_approval(tc, risk, interface="cli", scope="userA")
+    assert ra.approved and ra.cached
+    rb = await gate.check_approval(tc, risk, interface="web", scope="userB")
+    assert not rb.approved

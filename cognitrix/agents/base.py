@@ -236,7 +236,8 @@ class AgentManager:
 
     async def call_tools(
         self,
-        tool_calls: dict[str, Any] | list[dict[str, Any]]
+        tool_calls: dict[str, Any] | list[dict[str, Any]],
+        interface: str = 'cli'
     ) -> dict[str, Any] | str:
         """Execute tool calls with safety checks and retry logic."""
         try:
@@ -272,7 +273,8 @@ class AgentManager:
                     approval = await self.approval_gate.check_approval(
                         tool_call=tool_call,
                         risk=risk,
-                        interface='cli'
+                        interface=interface,
+                        scope=str(self.agent.id),
                     )
 
                     if not approval.approved:
@@ -457,9 +459,9 @@ Agent.manager = property(_agent_manager)
 Agent.process_prompt = lambda self, query, role='User': AgentManager(self).process_prompt(query, role)  # type: ignore[attr-defined]
 
 
-async def _agent_call_tools(self, tool_calls):
+async def _agent_call_tools(self, tool_calls, interface='cli'):
     """Delegate call_tools to AgentManager."""
-    return await AgentManager(self).call_tools(tool_calls)
+    return await AgentManager(self).call_tools(tool_calls, interface=interface)
 
 
 Agent.call_tools = _agent_call_tools  # type: ignore[attr-defined]

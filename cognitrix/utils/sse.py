@@ -124,7 +124,35 @@ class SSEManager:
                         except Exception as e:
                             yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': f'Multi-step task failed: {str(e)}'})}
                     else:
-                        async for response in self.agent.generate(user_prompt):
-                            yield {'event': 'message', 'data': json.dumps({'type': 'generate', 'content': response.current_chunk, 'action': 'chat_message'})}
+                        # Route through the full session loop so the web path gets
+                        # tools + safety gating + history + persistence (previously it
+                        # called agent.generate() directly, bypassing all of that).
+                        # Bridge the session's callback-based output to this SSE
+                        # generator through a queue.
+                        session = await Session.get_by_agent_id(self.agent.id)
+                        out_queue: asyncio.Queue = asyncio.Queue()
+
+                        async def _emit(payload, _q=out_queue):
+                            await _q.put(payload)
+
+                        async def _run(_prompt=user_prompt, _sess=session, _q=out_queue):
+                            try:
+                                await _sess(
+                                    _prompt, self.agent, 'web', True, _emit,
+                                    {'type': 'generate', 'action': 'chat_message'},
+                                )
+                            except Exception as e:
+                                logger.exception("SSE session turn failed")
+                                await _q.put({'type': 'error', 'content': str(e)})
+                            finally:
+                                await _q.put(None)
+
+                        run_task = asyncio.create_task(_run())
+                        while True:
+                            item = await out_queue.get()
+                            if item is None:
+                                break
+                            yield {'event': 'message', 'data': json.dumps(item)}
+                        await run_task
 
         return EventSourceResponse(event_generator())

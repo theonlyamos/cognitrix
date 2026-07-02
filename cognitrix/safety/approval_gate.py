@@ -4,11 +4,9 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Callable
 
 from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
 
@@ -28,7 +26,7 @@ class ToolCall:
     """Represents a tool call request."""
     tool_name: str
     params: dict
-    
+
     def dict(self):
         return {'tool_name': self.tool_name, 'params': self.params}
 
@@ -41,7 +39,7 @@ class ApprovalResult:
     permanent: bool = False  # Remember permanently
     cached: bool = False  # Result was from cache
     auto: bool = False  # Auto-approved (low risk)
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -61,21 +59,21 @@ class ApprovalGate:
     Supports multiple interfaces (CLI, WebSocket) and
     caches approvals to avoid repeated prompts.
     """
-    
+
     def __init__(self, cache_dir: str = None):
         self.session_cache: set[str] = set()
         self.permanent_cache: set[str] = set()
         self.pending_requests: dict[str, ApprovalRequest] = {}
         self.request_counter = 0
-        
+
         self.cache_dir = Path(cache_dir) if cache_dir else Path.home() / '.cognitrix'
         self._load_permanent_cache()
-        
+
         logger.info("ApprovalGate initialized")
-    
+
     def _cache_file(self) -> Path:
         return self.cache_dir / 'approval_cache.json'
-    
+
     def _load_permanent_cache(self):
         cache_file = self._cache_file()
         if cache_file.exists():
@@ -86,7 +84,7 @@ class ApprovalGate:
                     logger.info(f"Loaded {len(self.permanent_cache)} permanent approvals")
             except Exception as e:
                 logger.warning(f"Failed to load approval cache: {e}")
-    
+
     def _save_permanent_cache(self):
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -94,86 +92,99 @@ class ApprovalGate:
                 json.dump({'approved': list(self.permanent_cache)}, f)
         except Exception as e:
             logger.error(f"Failed to save approval cache: {e}")
-    
+
     def _hash_operation(self, tool_call: ToolCall) -> str:
         """Generate hash for operation caching."""
         content = f"{tool_call.tool_name}:{json.dumps(tool_call.params, sort_keys=True)}"
         return hashlib.sha256(content.encode()).hexdigest()
-    
+
     async def check_approval(
         self,
         tool_call: ToolCall,
         risk: RiskAssessment,
         interface: str = 'cli',
-        timeout: float = 300.0
+        timeout: float = 300.0,
+        scope: str | None = None,
     ) -> ApprovalResult:
         """
         Check if operation requires and receives approval.
-        
+
         Args:
             tool_call: The tool call to approve
             risk: Risk assessment
-            interface: Interface type ('cli', 'websocket', 'auto')
+            interface: Interface type ('cli', 'web', 'ws', 'auto')
             timeout: Timeout in seconds for approval
-            
+            scope: Isolation scope for the approval cache (e.g. agent/user id) so
+                   one caller's approval never auto-approves another's operation.
+
         Returns:
             ApprovalResult
         """
         # Auto-approve low risk
         if risk.risk_level == RiskLevel.LOW:
             return ApprovalResult(approved=True, auto=True)
-        
-        # Check caches
-        op_hash = self._hash_operation(tool_call)
-        
-        if op_hash in self.permanent_cache:
+
+        # Cache keys are scoped so approvals don't leak across agents/users.
+        scoped = f"{scope or 'global'}:{self._hash_operation(tool_call)}"
+
+        if scoped in self.permanent_cache:
             return ApprovalResult(approved=True, cached=True)
-        
-        if op_hash in self.session_cache:
+
+        if scoped in self.session_cache:
             return ApprovalResult(approved=True, cached=True, remember=True)
-        
+
         # Need explicit approval
         if interface == 'auto':
             return ApprovalResult(
                 approved=False,
                 error="Explicit approval required but auto mode enabled"
             )
-        
+
         # Request approval through interface
         if interface == 'cli':
             result = await self._cli_approval(tool_call, risk)
-        elif interface == 'websocket':
-            result = await self._websocket_approval(tool_call, risk, timeout)
+        elif interface in ('web', 'ws', 'websocket'):
+            # Interim: there is no interactive approval channel wired to the web
+            # frontend yet, so deny risky operations with a clear message rather
+            # than blocking on server-side input(). (Enabling live approval is a
+            # frontend feature; see plan H3.3.)
+            return ApprovalResult(
+                approved=False,
+                error=(
+                    f"'{tool_call.tool_name}' requires approval ({risk.risk_level.value} risk); "
+                    "interactive approval is not yet available over the web interface."
+                ),
+            )
         else:
             return ApprovalResult(approved=False, error=f"Unknown interface: {interface}")
-        
-        # Cache if approved
+
+        # Cache if approved (scoped)
         if result.approved:
             if result.permanent:
-                self.permanent_cache.add(op_hash)
+                self.permanent_cache.add(scoped)
                 self._save_permanent_cache()
             elif result.remember:
-                self.session_cache.add(op_hash)
-        
+                self.session_cache.add(scoped)
+
         return result
-    
+
     async def _cli_approval(self, tool_call: ToolCall, risk: RiskAssessment) -> ApprovalResult:
         """Command-line approval prompt."""
         print(f"\n{'='*60}")
         print(f"⚠️  APPROVAL REQUIRED - {risk.risk_level.value.upper()} RISK")
         print(f"{'='*60}")
         print(f"\nOperation: {tool_call.tool_name}")
-        print(f"Parameters:")
+        print("Parameters:")
         print(json.dumps(tool_call.params, indent=2))
         print(f"\nRisk Categories: {', '.join(risk.categories)}")
         print(f"Details: {risk.details}")
         print(f"\n{'='*60}")
-        
+
         try:
             response = input(
                 "\nApprove? [y=yes/n=no/s=session/p=permanent]: "
             ).lower().strip()
-            
+
             if response in ['y', 'yes']:
                 return ApprovalResult(approved=True)
             elif response in ['s', 'session']:
@@ -182,10 +193,10 @@ class ApprovalGate:
                 return ApprovalResult(approved=True, permanent=True)
             else:
                 return ApprovalResult(approved=False)
-                
+
         except (EOFError, KeyboardInterrupt):
             return ApprovalResult(approved=False, error="User interrupted")
-    
+
     async def _websocket_approval(
         self,
         tool_call: ToolCall,
@@ -196,10 +207,10 @@ class ApprovalGate:
         # Generate request ID
         self.request_counter += 1
         request_id = f"approval_{self.request_counter}"
-        
+
         # Create future for response
         future = asyncio.get_event_loop().create_future()
-        
+
         # Store request
         request = ApprovalRequest(
             id=request_id,
@@ -209,25 +220,25 @@ class ApprovalGate:
             response_future=future
         )
         self.pending_requests[request_id] = request
-        
+
         # TODO: Send request to WebSocket client
         # This would be implemented where WebSocket is available
         logger.info(f"WebSocket approval requested: {request_id}")
-        
+
         try:
             # Wait for response
             result = await asyncio.wait_for(future, timeout=timeout)
             del self.pending_requests[request_id]
             return result
-            
-        except asyncio.TimeoutError:
+
+        except TimeoutError:
             request.status = ApprovalStatus.TIMEOUT
             del self.pending_requests[request_id]
             return ApprovalResult(
                 approved=False,
                 error=f"Approval timeout after {timeout}s"
             )
-    
+
     def resolve_pending(self, request_id: str, approved: bool, remember: bool = False, permanent: bool = False):
         """Resolve a pending approval request (called from WebSocket handler)."""
         request = self.pending_requests.get(request_id)
@@ -238,18 +249,18 @@ class ApprovalGate:
                 permanent=permanent
             )
             request.response_future.set_result(result)
-    
+
     def clear_session_cache(self):
         """Clear session-level approvals."""
         self.session_cache.clear()
         logger.info("Session approval cache cleared")
-    
+
     def clear_permanent_cache(self):
         """Clear permanent approvals."""
         self.permanent_cache.clear()
         self._save_permanent_cache()
         logger.info("Permanent approval cache cleared")
-    
+
     def get_cache_stats(self) -> dict:
         """Get cache statistics."""
         return {

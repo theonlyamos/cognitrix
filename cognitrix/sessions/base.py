@@ -189,6 +189,8 @@ class Session(Model):
                                     await output({'type': wsquery['type'], 'content': response.llm_response, 'action': wsquery['action'], 'complete': False})
 
                         if response.tool_calls and not called_tools:
+                            # (interface is threaded into call_tools so approval uses
+                            # the right channel — CLI prompts, web/ws deny for now.)
                             # Record the assistant message that ISSUED the tool calls
                             # BEFORE the tool results, so the re-prompt is a valid
                             # OpenAI sequence (assistant.tool_calls -> tool results).
@@ -200,7 +202,7 @@ class Session(Model):
                                 'content': response.llm_response or '',
                                 'tool_calls': response.tool_calls,
                             })
-                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls)
+                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls, interface=interface)
                             called_tools = True
                             tool_rounds += 1
 
