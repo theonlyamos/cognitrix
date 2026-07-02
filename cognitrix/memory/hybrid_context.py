@@ -3,7 +3,6 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from cognitrix.memory.base import BaseMemory
 from cognitrix.memory.chroma_store import ChromaMemoryStore
 from cognitrix.sessions.context import SlidingWindowContextManager
 
@@ -102,7 +101,7 @@ class HybridContextManager(BaseContextManager):
         # Check if vector store is disabled via environment variable
         import os
         self._vector_store_disabled = os.environ.get('DISABLE_VECTOR_STORE', '').lower() == 'true'
-        
+
         if self._vector_store_disabled:
             logger.info("Vector store disabled via DISABLE_VECTOR_STORE env var")
 
@@ -113,7 +112,7 @@ class HybridContextManager(BaseContextManager):
         """Lazy-initialize ChromaDB-backed long-term memory store."""
         if self._vector_store_disabled:
             return None
-            
+
         if self._chroma_store is None:
             self._chroma_store = ChromaMemoryStore(
                 collection_name=self._chroma_config['collection_name']
@@ -139,9 +138,14 @@ class HybridContextManager(BaseContextManager):
         # 2. Retrieve relevant long-term memories
         long_term_memories = []
         if session.chat and not self._vector_store_disabled:
-            # Use last user message as query
-            last_message = session.chat[-1]
-            query = last_message.get('content', '')
+            # Query long-term memory by the last *user* message. chat[-1] is
+            # unreliable: after a turn it may be a tool result or a turn_timing
+            # ("Took 2.5s") entry, which would make retrieval search on noise.
+            query = ''
+            for m in reversed(session.chat):
+                if str(m.get('role', '')).lower() == 'user' and m.get('type', 'text') == 'text':
+                    query = m.get('content', '') or ''
+                    break
 
             if query:
                 try:
