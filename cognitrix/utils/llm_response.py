@@ -25,6 +25,8 @@ class LLMResponse(Model):
     """Current chunk (content or wrapped reasoning for display)"""
 
     result: str | None = None
+    error: str | None = None
+    """Set when the response represents a provider/transport error, not a real answer."""
     tool_calls: list[dict[str, Any]] = []
     artifacts: dict[str, Any] | list[dict[str, Any]] | None = None
     observation: str | None = None

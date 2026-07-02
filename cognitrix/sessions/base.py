@@ -30,6 +30,12 @@ def format_duration(seconds: float) -> str:
         secs = seconds % 60
         return f"{mins}m {secs:.1f}s"
 
+# Hard ceiling on retained chat messages per session. The LLM prompt only uses
+# the sliding window (last ~10), so this just bounds memory/serialization growth
+# over very long sessions. ponytail: fixed cap; make configurable if needed.
+MAX_CHAT_HISTORY = 1000
+
+
 class Session(Model):
     chat: list[dict[str, Any]] = []
     """The chat history of the session"""
@@ -88,6 +94,10 @@ class Session(Model):
             self.chat.extend(message)
         else:
             self.chat.append(message)
+        # Bound growth: drop the oldest messages past the ceiling. The prompt
+        # builder trims any orphan tool message left at the new start.
+        if len(self.chat) > MAX_CHAT_HISTORY:
+            del self.chat[:len(self.chat) - MAX_CHAT_HISTORY]
 
     @property
     async def agent(self):
@@ -210,6 +220,11 @@ class Session(Model):
                                 await output({'type': wsquery['type'], 'content': '', 'action': wsquery['action'], 'artifacts': response.artifacts, 'complete': False})
 
                         await asyncio.sleep(0.01)
+
+                    # Provider/transport error: already surfaced to the user above;
+                    # don't persist it as a normal answer or re-prompt the tool loop.
+                    if response and getattr(response, 'error', None):
+                        break
 
                     # Persist the final assistant text only when this response did
                     # NOT issue tool calls (that assistant message was already saved

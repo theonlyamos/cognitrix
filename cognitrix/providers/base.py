@@ -4,6 +4,7 @@ Provider-agnostic OpenAI-compatible LLM layer.
 Runtime config (provider, base_url, api_key, model) from env or CLI.
 Groq and Ollama: direct. Others: route through Helicone.
 """
+import asyncio
 import hashlib
 import json
 import logging
@@ -345,13 +346,16 @@ class LLMManager:
 
         except openai.OpenAIError as e:
             logger.error(f"OpenAI API error: {str(e)}")
-            return LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")
+            msg = f"Error: OpenAI API encountered an issue - {str(e)}"
+            return LLMResponse(llm_response=msg, error=msg)
         except TimeoutError:
             logger.error("Request to OpenAI API timed out")
-            return LLMResponse(llm_response="Error: Request timed out. Please try again later.")
+            msg = "Error: Request timed out. Please try again later."
+            return LLMResponse(llm_response=msg, error=msg)
         except Exception as e:
             logger.exception(f"Unexpected error in LLM generate_response: {str(e)}")
-            return LLMResponse(llm_response=f"An unexpected error occurred: {str(e)}")
+            msg = f"An unexpected error occurred: {str(e)}"
+            return LLMResponse(llm_response=msg, error=msg)
 
     @staticmethod
     def _get_reasoning_from_delta(delta) -> str | None:
@@ -461,7 +465,8 @@ class LLMManager:
             yield response
         except Exception as e:
             logger.exception(f"Error in streaming response: {str(e)}")
-            yield LLMResponse(llm_response=f"Streaming error: {str(e)}")
+            msg = f"Streaming error: {str(e)}"
+            yield LLMResponse(llm_response=msg, error=msg)
 
     @staticmethod
     def _get_reasoning_from_message(msg) -> str | None:
@@ -477,7 +482,22 @@ class LLMManager:
     @staticmethod
     async def _handle_non_streaming_response(client: OpenAI, params: dict[str, Any]):
         try:
-            response = client.chat.completions.create(**params)
+            # Retry transient errors (rate limit / timeout / connection / 5xx) with
+            # backoff; other errors (e.g. 400 invalid request) fail fast.
+            transient = (
+                openai.RateLimitError, openai.APITimeoutError,
+                openai.APIConnectionError, openai.InternalServerError,
+            )
+            response = None
+            for attempt in range(1, 4):
+                try:
+                    response = client.chat.completions.create(**params)
+                    break
+                except transient as e:
+                    if attempt == 3:
+                        raise
+                    logger.warning("Transient LLM error (attempt %s): %s", attempt, e)
+                    await asyncio.sleep(2 ** (attempt - 1))
             msg = response.choices[0].message
             content = msg.content or ""
             reasoning = LLMManager._get_reasoning_from_message(msg)
@@ -493,7 +513,8 @@ class LLMManager:
             return llm_resp
         except Exception as e:
             logger.exception(f"Error in non-streaming response: {str(e)}")
-            return LLMResponse(llm_response=f"Response error: {str(e)}")
+            msg = f"Response error: {str(e)}"
+            return LLMResponse(llm_response=msg, error=msg)
 
 
 def _openrouter_list_models(api_key: str) -> list[str]:

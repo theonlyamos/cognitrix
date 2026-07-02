@@ -134,3 +134,57 @@ async def test_tool_turn_persists_valid_sequence(monkeypatch):
 
     # The full message list sent to the provider is spec-valid.
     _assert_spec_valid(LLMManager.format_query(_llm(), [{"role": "system", "content": "s"}] + session.chat))
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_does_not_abort_batch(monkeypatch):
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+
+    def get_by_name(name):
+        return None if name == "missing" else Tool(name=name, description="d", parameters={})
+
+    monkeypatch.setattr("cognitrix.agents.base.ToolManager.get_by_name", staticmethod(get_by_name))
+
+    async def fake_run_tool(self, tool, params, **kw):
+        return ToolResult(success=True, data=f"ok:{tool.name}")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+
+    calls = [
+        {"name": "good1", "arguments": {}, "tool_call_id": "1"},
+        {"name": "missing", "arguments": {}, "tool_call_id": "2"},
+        {"name": "good2", "arguments": {}, "tool_call_id": "3"},
+    ]
+    res = await agent.call_tools(calls)
+    data = [r["data"] for r in res["result"]]
+    assert data[0] == "ok:good1"
+    assert "not found" in data[1]
+    assert data[2] == "ok:good2"
+    assert [r["tool_call_id"] for r in res["result"]] == ["1", "2", "3"]
+
+
+@pytest.mark.asyncio
+async def test_provider_error_not_persisted_as_answer(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    session = Session(agent_id="s2")
+
+    async def err_generate(llm, prompt, stream=False, tools=None, **kw):
+        return LLMResponse(llm_response="Error: boom", error="Error: boom")
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(err_generate)
+    )
+
+    async def fake_save(self):
+        return None
+
+    monkeypatch.setattr(Session, "save", fake_save)
+
+    # Must terminate (no infinite loop) and not persist the error as an answer.
+    await session("hi", agent, "cli", False, lambda *a, **k: None, None, True)
+    assert len(session.chat) == 1
+    assert session.chat[0]["role"] == "User"
