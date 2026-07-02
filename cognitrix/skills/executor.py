@@ -31,6 +31,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger('cognitrix.log')
 
+# Shared approval gate for skills so the session-approval cache persists across
+# invocations (a fresh gate per call would re-prompt every time).
+_SKILL_APPROVAL_GATE = None
+
+
+def _get_skill_approval_gate():
+    global _SKILL_APPROVAL_GATE
+    if _SKILL_APPROVAL_GATE is None:
+        from cognitrix.safety.approval_gate import ApprovalGate
+        _SKILL_APPROVAL_GATE = ApprovalGate()
+    return _SKILL_APPROVAL_GATE
+
+
 # Max size for dynamic context command output
 MAX_DYNAMIC_CONTEXT_SIZE = 100_000  # 100KB
 
@@ -89,6 +102,7 @@ class SkillExecutor:
         arguments: str = "",
         session: 'Session | None' = None,
         skill_args: dict[str, Any] | None = None,
+        interface: str = 'cli',
     ) -> AsyncGenerator[SkillEvent, None]:
         """Execute a skill, streaming events.
 
@@ -175,22 +189,20 @@ class SkillExecutor:
             # 2. Resolve environment substitutions (including ${COGNITRIX_SKILL_DIR})
             rendered = self._resolve_env_substitutions(rendered, session, manifest)
 
-            # 3. Execute dynamic context commands (!`cmd`)
+            # 3. Safety gate FIRST — a skill that runs shell commands (!`cmd`) or
+            # installs packages is at least MEDIUM risk regardless of its declared
+            # level. Approve BEFORE executing anything, so an untrusted skill can't
+            # run commands / pip-install with no user interaction.
             has_dynamic = '!`' in manifest.body
-            rendered = await self._resolve_dynamic_context(rendered)
-            yield SkillEvent(
-                type=SkillEventType.SKILL_CONTEXT_INJECTED,
-                skill_name=manifest.name,
-                data={"has_dynamic_context": has_dynamic},
-            )
+            has_deps = bool(manifest.dependencies.pip or manifest.dependencies.system)
+            effective_risk = manifest.safety.risk_level
+            if (has_dynamic or has_deps) and effective_risk == RiskLevel.LOW:
+                effective_risk = RiskLevel.MEDIUM
 
-            # 4. Ensure dependencies are installed
-            if manifest.dependencies.pip or manifest.dependencies.system:
-                await self._ensure_dependencies(manifest)
-
-            # 5. Safety check - require approval for MEDIUM or HIGH risk
-            if manifest.safety.risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH):
-                approved = await self._request_approval(manifest)
+            if effective_risk in (RiskLevel.MEDIUM, RiskLevel.HIGH):
+                approved = await self._request_approval(
+                    manifest, effective_risk, has_dynamic, has_deps, interface
+                )
                 if not approved:
                     yield SkillEvent(
                         type=SkillEventType.SKILL_ERROR,
@@ -198,6 +210,18 @@ class SkillExecutor:
                         data="Execution denied by user",
                     )
                     return
+
+            # 4. Execute dynamic context commands (!`cmd`) — gated by the approval above
+            rendered = await self._resolve_dynamic_context(rendered)
+            yield SkillEvent(
+                type=SkillEventType.SKILL_CONTEXT_INJECTED,
+                skill_name=manifest.name,
+                data={"has_dynamic_context": has_dynamic},
+            )
+
+            # 5. Ensure dependencies are installed — gated by the approval above
+            if has_deps:
+                await self._ensure_dependencies(manifest)
 
             # 6. Execute
             yield SkillEvent(
@@ -339,16 +363,46 @@ class SkillExecutor:
 
     # ── Safety ──
 
-    async def _request_approval(self, manifest: SkillManifest) -> bool:
-        """Request user approval for high-risk skill execution."""
-        from cognitrix.safety.approval_gate import ApprovalGate, ToolCall
+    async def _request_approval(
+        self,
+        manifest: SkillManifest,
+        risk_level: RiskLevel = RiskLevel.MEDIUM,
+        has_dynamic: bool = False,
+        has_deps: bool = False,
+        interface: str = 'cli',
+    ) -> bool:
+        """Request user approval for a risky skill via the shared ApprovalGate."""
+        from cognitrix.safety.approval_gate import ToolCall
+        from cognitrix.safety.destructive_ops import RiskAssessment
+        from cognitrix.safety.destructive_ops import RiskLevel as SafetyRiskLevel
 
-        gate = ApprovalGate()
+        categories = []
+        if has_dynamic:
+            categories.append('shell_execution')
+        if has_deps:
+            categories.append('dependency_install')
+        if not categories:
+            categories.append('skill_execution')
+
+        gate = _get_skill_approval_gate()
         tool_call = ToolCall(
             tool_name=f"skill:{manifest.name}",
-            arguments={"description": manifest.description},
+            params={"description": manifest.description},
         )
-        return await gate.check(tool_call)
+        risk = RiskAssessment(
+            risk_level=SafetyRiskLevel[risk_level.name],
+            categories=categories,
+            details=f"Skill '{manifest.name}': {manifest.description}",
+        )
+        # Scope the approval cache per agent (a per-user proxy here), not just by
+        # skill name — otherwise a remembered approval on the shared gate would
+        # carry across callers if skills ever run in a multi-user context.
+        agent = getattr(self.agent_manager, 'agent', None)
+        scope = f"{getattr(agent, 'id', 'cli')}:skill:{manifest.name}"
+        result = await gate.check_approval(
+            tool_call, risk, interface=interface, scope=scope
+        )
+        return result.approved
 
     async def _ensure_dependencies(self, manifest: SkillManifest):
         """Check and install missing pip dependencies before execution."""

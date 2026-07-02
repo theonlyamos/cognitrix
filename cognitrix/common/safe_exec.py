@@ -35,6 +35,19 @@ DEFAULT_ALLOWED_COMMANDS: frozenset[str] = frozenset({
 # and path traversal in command arguments.
 _FORBIDDEN = re.compile(r"""[;&|`$><\n\r]|\.\.""")
 
+# Flags that turn an otherwise-safe base command into arbitrary code execution
+# (or in-place mutation). Rejected even when the base command is allowed, so
+# `python script.py` works but `python -c '...'` does not. Base command -> set
+# of flag tokens; a token that *starts with* one of these is rejected (covers
+# `sed -i.bak`). Matched case-sensitively on the split argv.
+_DANGEROUS_ARG_TOKENS: dict[str, frozenset[str]] = {
+    'python': frozenset({'-c'}),
+    'python3': frozenset({'-c'}),
+    'node': frozenset({'-e', '--eval', '-p', '--print'}),
+    'find': frozenset({'-exec', '-execdir', '-delete', '-fprintf', '-fprint'}),
+    'sed': frozenset({'-i', '--in-place'}),
+}
+
 DEFAULT_TIMEOUT = 30
 
 
@@ -70,6 +83,18 @@ def build_argv(command: str, allowed: frozenset[str] | None = None) -> list[str]
         raise CommandNotAllowed(
             f"Command '{base}' is not allowed. Allowed: {', '.join(sorted(allowed))}"
         )
+
+    dangerous = _DANGEROUS_ARG_TOKENS.get(base)
+    if dangerous:
+        for tok in argv[1:]:
+            if any(tok == d or tok.startswith(d) for d in dangerous):
+                raise CommandNotAllowed(
+                    f"Flag '{tok}' is not allowed for '{base}' (arbitrary code execution)"
+                )
+    # awk's system()/getline-pipe give arbitrary execution via the program text.
+    if base in ('awk', 'gawk', 'mawk') and any('system(' in tok for tok in argv[1:]):
+        raise CommandNotAllowed("awk 'system(...)' is not allowed (arbitrary code execution)")
+
     return argv
 
 
@@ -150,8 +175,12 @@ if __name__ == "__main__":
 
     # Whitelist + metacharacter rejection
     assert build_argv("git status")[0] == "git"
+    assert build_argv("python script.py")[:2] == ["python", "script.py"]  # legit use allowed
     for bad in ("git status; rm -rf .", "git $(id)", "cat a | sh", "echo x > f",
-                "cat ../secret", "rm -rf /", "curl http://x"):
+                "cat ../secret", "rm -rf /", "curl http://x",
+                # Inline-exec / mutation flags rejected even for allowed base cmds:
+                "python -c import os", "node -e process.exit()",
+                "find . -delete", "sed -i s/a/b/ f", "awk 'BEGIN{system(\"id\")}'"):
         try:
             build_argv(bad)
             raise SystemExit(f"FAIL: should have rejected: {bad!r}")
