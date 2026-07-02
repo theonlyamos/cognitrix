@@ -176,17 +176,28 @@ async def handle_multi_step_task(
             border_style="green"
         ))
         
-        # Execute steps sequentially with verification
+        # Execute steps in DEPENDENCY order (topological batches), not raw plan
+        # order — otherwise a step can run before the steps it depends on.
+        try:
+            batches = planner.get_execution_order(plan)
+            ordered_numbers = [s.step_number for batch in batches for s in batch]
+        except Exception as e:
+            logger.warning(f"Could not compute execution order ({e}); using plan order")
+            ordered_numbers = [s["step_number"] for s in workflow_steps]
+        steps_by_num = {s["step_number"]: s for s in workflow_steps}
+        ordered_steps = [steps_by_num[n] for n in ordered_numbers if n in steps_by_num]
+
+        # Execute steps sequentially (in dependency order) with verification
         results = []
         start_time = __import__('time').time()
-        
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             console=console
         ) as progress:
-            
-            for step in workflow_steps:
+
+            for step in ordered_steps:
                 task_desc = f"Step {step['step_number']}: {step['title']}"
                 progress_task_id = progress.add_task(task_desc, total=None)
                 
