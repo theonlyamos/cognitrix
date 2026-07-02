@@ -12,41 +12,37 @@ from cognitrix.models.tool import Tool
 from cognitrix.providers import LLM
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task
+from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import ToolManager
 
 from .handlers import list_agents, list_sessions, list_tasks, list_teams
 from .shell import initialize_shell
-from .ui import start_web_ui
 from .tui import CognitrixApp
-from cognitrix.tasks.handler import is_multi_step_task, handle_multi_step_task
+from .ui import start_web_ui
 
 logger = logging.getLogger('cognitrix.log')
 
 async def run_configuration():
     """Run the configuration for the CLI"""
-    import asyncio
     from cognitrix.config import initialize_database
     from cognitrix.skills.manager import get_skill_manager
 
     await initialize_database()
 
     # Create tables if they don't exist and not using mongodb
-    from cognitrix.agents import Agent
-    from cognitrix.tasks.base import Task
-    from cognitrix.teams.base import Team
-    from cognitrix.sessions.base import Session
-    from cognitrix.models.tool import Tool
-    from cognitrix.models.user import User
     from odbms import DBMS
-    
+
+    from cognitrix.agents import Agent
+    from cognitrix.models.user import User
+    from cognitrix.sessions.base import Session
+
     if DBMS.Database is not None and DBMS.Database.dbms != 'mongodb':
-        await Agent._create_table_async()
-        await Task._create_table_async()
-        await Team._create_table_async()
-        await Session._create_table_async()
-        await Tool._create_table_async()
-        await User._create_table_async()
+        for model in (Agent, Task, Team, Session, Tool, User):
+            # Older odbms releases only ship async create_table(); newer ones
+            # rename it to _create_table_async.
+            create = getattr(model, '_create_table_async', None) or model.create_table
+            await create()
 
     # Pre-warm skill cache at startup to avoid per-prompt I/O
     skill_mgr = get_skill_manager()
@@ -154,12 +150,12 @@ async def start(args: Namespace):
         await assistant.save()
 
         # Handle different execution modes
-        if args.generate:
+        if args.prompt:
             # Single generation mode - check for multi-step tasks
-            if is_multi_step_task(args.generate):
+            if is_multi_step_task(args.prompt):
                 logger.info("Multi-step task detected, creating execution plan...")
                 result = await handle_multi_step_task(
-                    args.generate,
+                    args.prompt,
                     assistant,
                     session,
                     assistant.llm,
@@ -167,7 +163,7 @@ async def start(args: Namespace):
                 )
                 print(result)
             else:
-                await session(args.generate, assistant, stream=args.stream)
+                await session(args.prompt, assistant, stream=args.stream)
         elif args.ui.lower() == 'web':
             # Web UI mode
             await start_web_ui(assistant)

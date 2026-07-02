@@ -68,7 +68,7 @@ def get_arguments():
                        help='Set system prompt of model. Can be a string or a text file path')
     parser.add_argument('--prompt-template', type=str_or_file, default='',
                        help='Set prompt template of model. Can be a string or a text file path')
-    parser.add_argument('--generate', type=str, default='',
+    parser.add_argument('--prompt', '-p', type=str, default='',
                        help='Prompt the agent to generate text and then exit after printing out the response.')
     parser.add_argument('--audio', action='store_true', help='Get input from microphone')
     parser.add_argument('--stream', type=bool, default=True, help='Enable response stream')

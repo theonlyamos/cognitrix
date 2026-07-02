@@ -227,6 +227,11 @@ class LLMManager:
                                 'name': str(tc.get('name', '')).replace(' ', '_'),
                                 'arguments': json.dumps(tc.get('arguments', {})),
                             },
+                            # Echo provider extras (Gemini's thought_signature) on
+                            # the re-prompt — but only to Gemini; other providers
+                            # can reject unknown fields in tool_calls.
+                            **({'extra_content': tc['extra_content']}
+                               if tc.get('extra_content') and llm.provider in ('google', 'gemini') else {}),
                         }
                         for i, tc in enumerate(tool_calls)
                     ],
@@ -395,7 +400,13 @@ class LLMManager:
                     args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
                 except json.JSONDecodeError:
                     args = {}
-            result.append({'name': name, 'arguments': args, 'tool_call_id': tool_call_id})
+            parsed = {'name': name, 'arguments': args, 'tool_call_id': tool_call_id}
+            # Gemini's OpenAI-compat layer attaches a thought_signature under
+            # extra_content that MUST be echoed back on the re-prompt.
+            extra = getattr(tc, 'extra_content', None) or (tc.get('extra_content') if isinstance(tc, dict) else None)
+            if extra:
+                parsed['extra_content'] = extra
+            result.append(parsed)
         return result
 
     @staticmethod
@@ -418,10 +429,17 @@ class LLMManager:
                     idx = getattr(dtc, 'index', None)
                     if idx is None and isinstance(dtc, dict):
                         idx = dtc.get('index')
+                    tc_id = getattr(dtc, 'id', None) or (dtc.get('id') if isinstance(dtc, dict) else None)
                     if idx is None:
-                        continue
+                        # Some OpenAI-compat endpoints (e.g. Gemini) stream tool
+                        # calls without an index: a delta carrying an id starts a
+                        # new call; one without continues the last.
+                        idx = len(tool_call_accum) if (tc_id or not tool_call_accum) else max(tool_call_accum)
                     if idx not in tool_call_accum:
                         tool_call_accum[idx] = {'name': '', 'arguments': '', 'tool_call_id': None}
+                    extra = getattr(dtc, 'extra_content', None) or (dtc.get('extra_content') if isinstance(dtc, dict) else None)
+                    if extra:
+                        tool_call_accum[idx]['extra_content'] = extra
                     fn = getattr(dtc, 'function', None) or (dtc.get('function') if isinstance(dtc, dict) else None)
                     if fn:
                         n = getattr(fn, 'name', None) or (fn.get('name') if isinstance(fn, dict) else None)
@@ -430,7 +448,6 @@ class LLMManager:
                             tool_call_accum[idx]['name'] = (tool_call_accum[idx]['name'] or '') + (n or '')
                         if a:
                             tool_call_accum[idx]['arguments'] = (tool_call_accum[idx]['arguments'] or '') + (a or '')
-                    tc_id = getattr(dtc, 'id', None) or (dtc.get('id') if isinstance(dtc, dict) else None)
                     if tc_id:
                         tool_call_accum[idx]['tool_call_id'] = tc_id
                 if reasoning:
@@ -461,15 +478,23 @@ class LLMManager:
                     except json.JSONDecodeError:
                         args = {}
                     if name:
-                        parsed.append({'name': name, 'arguments': args, 'tool_call_id': acc.get('tool_call_id')})
+                        item = {'name': name, 'arguments': args, 'tool_call_id': acc.get('tool_call_id')}
+                        if acc.get('extra_content'):
+                            item['extra_content'] = acc['extra_content']
+                        parsed.append(item)
                 response.tool_calls = parsed
-            if in_reasoning:
-                response.current_chunk = '\n</think>\n'
+            # Final yield delivers tool_calls/finalization only — clear
+            # current_chunk so consumers don't print the last chunk twice.
+            response.current_chunk = '\n</think>\n' if in_reasoning else ''
             yield response
         except Exception as e:
             logger.exception(f"Error in streaming response: {str(e)}")
             msg = f"Streaming error: {str(e)}"
-            yield LLMResponse(llm_response=msg, error=msg)
+            err = LLMResponse(llm_response=msg, error=msg)
+            # Streaming consumers print current_chunk — without it the error
+            # is invisible to the user.
+            err.current_chunk = msg
+            yield err
 
     @staticmethod
     def _get_reasoning_from_message(msg) -> str | None:

@@ -63,7 +63,7 @@ xmltodict = "^0.13.0"
 pymupdf = "^1.27.2"
 
 # Database & Auth
-odbms = "0.4.5"
+odbms = "0.5.2"
 bcrypt = "^4.3.0"
 pyjwt = "^2.8.0"
 

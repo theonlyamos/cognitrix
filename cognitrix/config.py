@@ -252,14 +252,100 @@ async def initialize_database():
     """Initialize database with current settings"""
     config = settings.get_database_config()
     from odbms import DBMS
-    await DBMS.initialize_async(
-        config['type'],
+    kwargs = dict(
         host=config['host'],
         port=config['port'],
         username=config['user'],
         password=config['password'],
-        database=config['name']
-    ) # type: ignore
+        database=config['name'],
+    )
+    # Older odbms releases only ship the sync initialize().
+    if hasattr(DBMS, 'initialize_async'):
+        await DBMS.initialize_async(config['type'], **kwargs)  # type: ignore
+    else:
+        DBMS.initialize(config['type'], **kwargs)
+    _patch_odbms_sqlite()
+
+
+def _patch_odbms_sqlite():
+    """Compat shims for odbms<=0.5.2 on sqlite. ponytail: remove once odbms
+    fixes both upstream.
+
+    1. insert_one drops string ids, leaving the id column NULL, so a later
+       update_one({'id': ...}) matches nothing and every re-save of the record
+       is silently lost (agents/sessions never persist across runs).
+       Shim: after a fresh insert, stamp a uuid into the row via its rowid.
+    2. normalise serializes lists as '::'.join(str(v)) — irreversible for any
+       list of dicts/models (Agent.tools, Session.chat).
+       Shim: store lists as JSON; decode JSON list columns on read.
+    """
+    import json
+    import types
+    import uuid
+    from typing import Union, get_args, get_origin
+
+    from odbms import DBMS, Model
+
+    if getattr(Model, '_cognitrix_sqlite_patch', False):
+        return
+    Model._cognitrix_sqlite_patch = True
+
+    def _is_sqlite():
+        return getattr(DBMS.Database, 'dbms', '') == 'sqlite'
+
+    def _is_list_field(cls, key):
+        field = getattr(cls, 'model_fields', {}).get(key)
+        if field is None:
+            return False
+        ftype = field.annotation
+        origin = get_origin(ftype)
+        if origin in (Union, types.UnionType):
+            args = [a for a in get_args(ftype) if a is not type(None)]
+            if not args:
+                return False
+            ftype = args[0]
+            origin = get_origin(ftype)
+        return origin is list or ftype is list
+
+    _orig_save = Model.save
+
+    async def _save(self):
+        is_new = not getattr(self, 'id', None)
+        await _orig_save(self)
+        if is_new and isinstance(self.id, int) and _is_sqlite():
+            new_id = str(uuid.uuid4())
+            await DBMS.Database.update_one(self.table_name(), {'rowid': self.id}, {'id': new_id})
+            self.id = new_id
+        return self
+
+    Model.save = _save
+
+    _orig_normalise = Model.normalise.__func__
+
+    def _normalise(cls, content=None, optype='dbresult'):
+        if content is None or not _is_sqlite():
+            return _orig_normalise(cls, content, optype)
+        if optype == 'params':
+            out = _orig_normalise(cls, content, optype)
+            for key, value in content.items():
+                if isinstance(value, list):
+                    out[key] = json.dumps(value, default=str)
+            return out
+        # dbresult: decode JSON list columns before the original '::'-split
+        # logic can mangle them. Only fields the model declares as lists — a
+        # text column whose value happens to look like JSON stays a string.
+        content = dict(content)
+        for key, value in content.items():
+            if isinstance(value, str) and value[:1] == '[' and _is_list_field(cls, key):
+                try:
+                    decoded = json.loads(value)
+                    if isinstance(decoded, list):
+                        content[key] = decoded
+                except json.JSONDecodeError:
+                    pass
+        return _orig_normalise(cls, content, optype)
+
+    Model.normalise = classmethod(_normalise)
 
 def get_settings() -> CognitrixSettings:
     """Get the global settings instance"""

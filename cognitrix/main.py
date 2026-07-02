@@ -19,7 +19,7 @@ app.add_middleware(
 # Initialize the database
 @app.on_event("startup")
 async def startup_event():
-    initialize_database()
+    await initialize_database()
 
 # Include the authentication routes
 app.include_router(auth_router, prefix="/auth", tags=["auth"])

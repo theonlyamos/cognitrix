@@ -10,6 +10,12 @@ from .args import get_arguments
 
 def main():
     """Main entry point for the Cognitrix CLI."""
+    # Windows consoles often default to cp1252; model output and status
+    # messages contain non-latin characters, which would otherwise raise
+    # UnicodeEncodeError mid-turn and abort tool execution.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     try:
         args = get_arguments()
 

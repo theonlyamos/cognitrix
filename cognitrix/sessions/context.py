@@ -23,16 +23,21 @@ class BaseContextManager(ABC):
         pass
 
 def _trim_to_valid_start(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop leading orphan tool-result messages.
+    """Trim the window so it never starts mid tool-exchange.
 
     A `role:'tool'` message is only valid immediately after the assistant
-    message that issued the matching tool_calls. If a window slice (or a legacy
-    history without persisted tool_calls) begins on a tool message, that message
-    has no preceding assistant call, which providers reject — so drop the leading
-    tool messages until the window starts on a normal message.
+    message that issued the matching tool_calls, and stricter providers
+    (Gemini) also reject an assistant tool_calls turn that doesn't directly
+    follow a user/tool turn. Start the window at the first user message;
+    if there is none, fall back to dropping leading tool/tool_calls messages.
     """
+    for i, m in enumerate(messages):
+        if str(m.get('role', '')).lower() == 'user':
+            return messages[i:]
     i = 0
-    while i < len(messages) and str(messages[i].get('role', '')).lower() == 'tool':
+    while i < len(messages) and (
+        str(messages[i].get('role', '')).lower() == 'tool' or messages[i].get('tool_calls')
+    ):
         i += 1
     return messages[i:]
 
