@@ -30,6 +30,12 @@ def format_duration(seconds: float) -> str:
         secs = seconds % 60
         return f"{mins}m {secs:.1f}s"
 
+# Hard ceiling on retained chat messages per session. The LLM prompt only uses
+# the sliding window (last ~10), so this just bounds memory/serialization growth
+# over very long sessions. ponytail: fixed cap; make configurable if needed.
+MAX_CHAT_HISTORY = 1000
+
+
 class Session(Model):
     chat: list[dict[str, Any]] = []
     """The chat history of the session"""
@@ -88,6 +94,10 @@ class Session(Model):
             self.chat.extend(message)
         else:
             self.chat.append(message)
+        # Bound growth: drop the oldest messages past the ceiling. The prompt
+        # builder trims any orphan tool message left at the new start.
+        if len(self.chat) > MAX_CHAT_HISTORY:
+            del self.chat[:len(self.chat) - MAX_CHAT_HISTORY]
 
     @property
     async def agent(self):
@@ -131,16 +141,26 @@ class Session(Model):
         # Build the context-aware prompt using the manager
         prompt = await agent.get_context_manager().build_prompt(agent, self)
 
-        formatted_tools = [tool.to_dict_format() for tool in agent.tools if len(tool.to_dict_format().keys())]
+        formatted_tools = [tool.to_dict_format() for tool in agent.tools]
+        # Only advertise tools to models with native tool-use; otherwise the tool
+        # list is embedded in the system prompt (AgentManager.formatted_system_prompt).
+        active_tools = formatted_tools if agent.llm.supports_tool_use else None
 
+        MAX_TOOL_ROUNDS = 10
+        tool_rounds = 0
         try:
             while True:  # The loop now primarily handles tool calls, not initial message processing
+                if tool_rounds >= MAX_TOOL_ROUNDS:
+                    logger.warning("Exceeded max tool rounds (%s); stopping turn", MAX_TOOL_ROUNDS)
+                    if interface == 'cli':
+                        output(f"\n[Stopped after {MAX_TOOL_ROUNDS} tool rounds]")
+                    break
                 try:
                     response: LLMResponse = LLMResponse()
                     called_tools: bool = False
 
                     # The prompt is now a complete history, not a single message
-                    llm_result = await agent.llm(prompt, stream=stream, tools=formatted_tools)
+                    llm_result = await agent.llm(prompt, stream=stream, tools=active_tools)
 
                     if stream:
                         async_iter = llm_result  # type: ignore[arg-type]
@@ -155,22 +175,36 @@ class Session(Model):
                             if interface == 'cli':
                                 output(f"{response.current_chunk}", end="")
                             else:
-                                await output({'type': wsquery['type'], 'content': response.current_chunk, 'action': wsquery['action'], 'complete': False})
+                                await output({'type': wsquery.get('type'), 'content': response.current_chunk, 'action': wsquery.get('action'), 'complete': False})
                         else:
                             if response.result:
                                 if interface == 'cli':
                                     output(f"\n{agent.name}:", response.result)
                                 else:
-                                    await output({'type': wsquery['type'], 'content': response.result, 'action': wsquery['action'], 'complete': False})
+                                    await output({'type': wsquery.get('type'), 'content': response.result, 'action': wsquery.get('action'), 'complete': False})
                             else:
                                 if interface == 'cli':
                                     output(f"\n{agent.name}:", response.llm_response)
                                 else:
-                                    await output({'type': wsquery['type'], 'content': response.llm_response, 'action': wsquery['action'], 'complete': False})
+                                    await output({'type': wsquery.get('type'), 'content': response.llm_response, 'action': wsquery.get('action'), 'complete': False})
 
                         if response.tool_calls and not called_tools:
-                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls)
+                            # (interface is threaded into call_tools so approval uses
+                            # the right channel — CLI prompts, web/ws deny for now.)
+                            # Record the assistant message that ISSUED the tool calls
+                            # BEFORE the tool results, so the re-prompt is a valid
+                            # OpenAI sequence (assistant.tool_calls -> tool results).
+                            # Unconditional (like the tool-results append below): the
+                            # loop needs both in history to rebuild the next prompt.
+                            self.update_history({
+                                'role': 'assistant',
+                                'type': 'tool_calls',
+                                'content': response.llm_response or '',
+                                'tool_calls': response.tool_calls,
+                            })
+                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls, interface=interface)
                             called_tools = True
+                            tool_rounds += 1
 
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                                 # If a tool call has a result, add it to history and rebuild the prompt
@@ -181,15 +215,23 @@ class Session(Model):
                                 if interface == 'cli':
                                     output(result)
                                 else:
-                                    await output({'type': wsquery['type'], 'content': result, 'action': wsquery['action'], 'complete': False})
+                                    await output({'type': wsquery.get('type'), 'content': result, 'action': wsquery.get('action'), 'complete': False})
 
                         if response.artifacts:
                             if interface == 'ws':
-                                await output({'type': wsquery['type'], 'content': '', 'action': wsquery['action'], 'artifacts': response.artifacts, 'complete': False})
+                                await output({'type': wsquery.get('type'), 'content': '', 'action': wsquery.get('action'), 'artifacts': response.artifacts, 'complete': False})
 
                         await asyncio.sleep(0.01)
 
-                    if response and save_history:
+                    # Provider/transport error: already surfaced to the user above;
+                    # don't persist it as a normal answer or re-prompt the tool loop.
+                    if response and getattr(response, 'error', None):
+                        break
+
+                    # Persist the final assistant text only when this response did
+                    # NOT issue tool calls (that assistant message was already saved
+                    # with its tool_calls above).
+                    if response and save_history and not response.tool_calls:
                         response_dict = {
                             'role': 'assistant',
                             'type': 'text',
@@ -274,104 +316,9 @@ class SessionManager:
         await session.save()
         return session
 
-    async def __call__(self, message: str | dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None = None, save_history: bool = True):
-        # This is a temporary fix for the agent's process_prompt method which is not yet refactored.
-        if wsquery is None:
-            wsquery = {}
-        agent_manager = agent.manager # type: ignore
-
-        if save_history:
-            self.session.update_history(agent_manager.process_prompt(message))
-
-        prompt = await agent.get_context_manager().build_prompt(agent, self.session)
-
-        formatted_tools = [tool.to_dict_format() for tool in agent.tools if len(tool.to_dict_format().keys())]
-
-        try:
-            while True:
-                response: LLMResponse = LLMResponse()
-                called_tools: bool = False
-
-                llm_result = await agent.llm(prompt, stream=stream, tools=formatted_tools)
-
-                if stream:
-                    async_iter = llm_result  # type: ignore[arg-type]
-                else:
-                    async def _single_resp(result=llm_result):
-                        yield result  # type: ignore[misc]
-
-                    async_iter = _single_resp()
-
-                async for response in async_iter:  # type: ignore[misc]
-                    if stream:
-                        if interface == 'cli':
-                            output(f"{response.current_chunk}", end="")
-                        else:
-                            await output({'type': wsquery.get('type'), 'content': response.current_chunk, 'action': wsquery.get('action'), 'complete': False})
-                    else:
-                        if response.result:
-                            if interface == 'cli':
-                                output(f"\n{agent.name}:", response.result)
-                            else:
-                                await output({'type': wsquery.get('type'), 'content': response.result, 'action': wsquery.get('action'), 'complete': False})
-                        else:
-                            if interface == 'cli':
-                                output(f"\n{agent.name}:", response.llm_response)
-                            else:
-                                await output({'type': wsquery.get('type'), 'content': response.llm_response, 'action': wsquery.get('action'), 'complete': False})
-
-                    if response.tool_calls and not called_tools:
-                        result = await agent_manager.call_tools(response.tool_calls)
-                        called_tools = True
-
-                        if isinstance(result, dict) and result.get('type') == 'tool_calls_result':
-                            self.session.update_history(agent_manager.process_prompt(result))
-                            prompt = await agent.get_context_manager().build_prompt(agent, self.session)
-                            continue
-                        else:
-                            if interface == 'cli':
-                                output(result)
-                            else:
-                                await output({'type': wsquery.get('type'), 'content': result, 'action': wsquery.get('action'), 'complete': False})
-
-                    if response.artifacts:
-                        if interface == 'ws':
-                            await output({'type': wsquery.get('type'), 'content': '', 'action': wsquery.get('action'), 'artifacts': response.artifacts, 'complete': False})
-
-                    await asyncio.sleep(0.01)
-
-                if response and save_history:
-                    self.session.update_history({
-                        'role': 'assistant',
-                        'type': 'text',
-                        'content': response.llm_response
-                    })
-
-                if not called_tools:
-                    break
-
-            if save_history:
-                await self.session.save()
-
-            # Add to agent's memory
-            if save_history and hasattr(agent, 'context_manager'):
-                try:
-                    await agent.context_manager.add_to_memory({
-                        'role': 'user',
-                        'type': 'text',
-                        'content': message if isinstance(message, str) else str(message)
-                    })
-                    if response:
-                        await agent.context_manager.add_to_memory({
-                            'role': 'assistant',
-                            'type': 'text',
-                            'content': response.llm_response
-                        })
-                except Exception as e:
-                    logger.error(f"Failed to add to memory: {e}")
-
-        except Exception as e:
-            logger.exception(e)
+# Note: the previous SessionManager.__call__ was a near-duplicate of
+# Session.__call__ and had no callers; the single turn loop now lives in
+# Session.__call__. SessionManager keeps only create() + the manager property.
 
 # ---------------------------------------------------------------------------
 # Attach SessionManager helpers to the Session model so that all management

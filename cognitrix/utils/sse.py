@@ -124,7 +124,72 @@ class SSEManager:
                         except Exception as e:
                             yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': f'Multi-step task failed: {str(e)}'})}
                     else:
-                        async for response in self.agent.generate(user_prompt):
-                            yield {'event': 'message', 'data': json.dumps({'type': 'generate', 'content': response.current_chunk, 'action': 'chat_message'})}
+                        # Route through the full session loop so the web path gets
+                        # tools + safety gating + history + persistence (previously it
+                        # called agent.generate() directly, bypassing all of that).
+                        # Bridge the session's callback-based output to this SSE
+                        # generator through a queue.
+                        session = await Session.get_by_agent_id(self.agent.id)
+                        out_queue: asyncio.Queue = asyncio.Queue()
+
+                        async def _emit(payload, _q=out_queue):
+                            await _q.put(payload)
+
+                        async def _run(_prompt=user_prompt, _sess=session, _q=out_queue):
+                            try:
+                                await _sess(
+                                    _prompt, self.agent, 'web', True, _emit,
+                                    {'type': 'generate', 'action': 'chat_message'},
+                                )
+                            except Exception as e:
+                                logger.exception("SSE session turn failed")
+                                await _q.put({'type': 'error', 'content': str(e)})
+                            finally:
+                                await _q.put(None)
+
+                        run_task = asyncio.create_task(_run())
+                        try:
+                            while True:
+                                item = await out_queue.get()
+                                if item is None:
+                                    break
+                                yield {'event': 'message', 'data': json.dumps(item)}
+                            await run_task
+                        finally:
+                            # If the client disconnected mid-turn the generator is
+                            # closed here; cancel the session task so it doesn't keep
+                            # running (and executing tools) with no consumer.
+                            if not run_task.done():
+                                run_task.cancel()
 
         return EventSourceResponse(event_generator())
+
+
+# Per-(user, agent) SSE managers. A single shared manager caused concurrent
+# clients to share one action queue and one `self.agent`, so one user's messages
+# and agent swaps leaked into another's stream. Keying by (user_id, agent_id)
+# isolates them. ponytail: unbounded map; add an LRU cap if a long-lived process
+# serves many distinct (user, agent) pairs.
+_SSE_MANAGERS: dict[tuple[str, str], SSEManager] = {}
+_MAX_SSE_MANAGERS = 512
+
+
+def get_sse_manager(user_id: str, agent_id: str, agent) -> SSEManager:
+    """Return the SSE manager for this (user, agent), creating it on first use.
+
+    Both the SSE stream (GET) and the chat POST resolve the same key, so they
+    rendezvous on one queue while remaining isolated from other users/agents.
+    """
+    key = (str(user_id), str(agent_id))
+    mgr = _SSE_MANAGERS.get(key)
+    if mgr is None:
+        # Bound memory: evict the oldest entry past the cap. A returning client
+        # simply re-creates its manager on the next request.
+        if len(_SSE_MANAGERS) >= _MAX_SSE_MANAGERS:
+            _SSE_MANAGERS.pop(next(iter(_SSE_MANAGERS)), None)
+        mgr = SSEManager(agent)
+        _SSE_MANAGERS[key] = mgr
+    else:
+        # Refresh the bound agent (it may have been edited/reloaded).
+        mgr.agent = agent
+    return mgr

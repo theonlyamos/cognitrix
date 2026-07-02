@@ -4,7 +4,7 @@ Provider-agnostic OpenAI-compatible LLM layer.
 Runtime config (provider, base_url, api_key, model) from env or CLI.
 Groq and Ollama: direct. Others: route through Helicone.
 """
-import functools
+import asyncio
 import hashlib
 import json
 import logging
@@ -211,7 +211,27 @@ class LLMManager:
             content = fm.get('content', '')
             msg_type = fm.get('type', 'text')
             tool_call_id = fm.get('tool_call_id')
-            if msg_type == 'text':
+            tool_calls = fm.get('tool_calls')
+            if tool_calls:
+                # Assistant message that issued native tool calls. Reconstruct the
+                # OpenAI-spec shape from the parsed form so the tool-result messages
+                # that follow have a valid preceding assistant.tool_calls.
+                formatted_messages.append({
+                    'role': 'assistant',
+                    'content': content or None,
+                    'tool_calls': [
+                        {
+                            'id': tc.get('tool_call_id') or f'call_{i}',
+                            'type': 'function',
+                            'function': {
+                                'name': str(tc.get('name', '')).replace(' ', '_'),
+                                'arguments': json.dumps(tc.get('arguments', {})),
+                            },
+                        }
+                        for i, tc in enumerate(tool_calls)
+                    ],
+                })
+            elif msg_type == 'text':
                 msg = {'role': role, 'content': content}
                 # Add tool_call_id for tool role messages (OpenAI format)
                 if role == 'tool' and tool_call_id:
@@ -226,28 +246,39 @@ class LLMManager:
                         {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{base64_image}'}},
                     ],
                 })
+            elif msg_type == 'image':
+                # Non-multimodal model: don't silently drop the image — leave a text
+                # placeholder so the turn keeps context, and warn.
+                logger.warning("Dropping image content for non-multimodal model '%s'", llm.model)
+                formatted_messages.append({
+                    'role': role,
+                    'content': '[An image/screenshot was provided but this model cannot view images.]',
+                })
         return formatted_messages
 
     @staticmethod
     def load_llm(provider: str | dict[str, Any]) -> LLM | None:
         """Load LLM with caching to avoid repeated instantiation."""
         cache_key = json.dumps(provider, sort_keys=True) if isinstance(provider, dict) else provider
-        
+
         if not hasattr(LLMManager, '_llm_cache'):
             LLMManager._llm_cache = {}
-        
+
         if cache_key in LLMManager._llm_cache:
             cached = LLMManager._llm_cache[cache_key]
             if isinstance(cached, LLM):
-                return cached
-        
+                # Deep copy: callers mutate the returned instance (temperature/model,
+                # and potentially the extra_headers/extra_body dicts). A shallow copy
+                # would share those nested dicts with the cached instance.
+                return cached.model_copy(deep=True)
+
         try:
             if isinstance(provider, dict):
                 llm = LLM(**provider)
             else:
                 llm = LLM(provider=str(provider))
             LLMManager._llm_cache[cache_key] = llm
-            return llm
+            return llm.model_copy(deep=True)
         except Exception as e:
             logging.exception(e)
             return None
@@ -275,10 +306,10 @@ class LLMManager:
                 and (settings.helicone_base_url or 'https://gateway.helicone.ai/v1')
             )
             helicone_base = settings.helicone_base_url or 'https://gateway.helicone.ai/v1'
-            
+
             if llm.provider == 'openrouter':
                 helicone_base = helicone_base.replace('v1', 'api/v1')
-            
+
             if llm.provider in ('google', 'gemini'):
                 helicone_base = helicone_base + 'beta/openai/v1'
 
@@ -318,13 +349,16 @@ class LLMManager:
 
         except openai.OpenAIError as e:
             logger.error(f"OpenAI API error: {str(e)}")
-            return LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")
+            msg = f"Error: OpenAI API encountered an issue - {str(e)}"
+            return LLMResponse(llm_response=msg, error=msg)
         except TimeoutError:
             logger.error("Request to OpenAI API timed out")
-            return LLMResponse(llm_response="Error: Request timed out. Please try again later.")
+            msg = "Error: Request timed out. Please try again later."
+            return LLMResponse(llm_response=msg, error=msg)
         except Exception as e:
             logger.exception(f"Unexpected error in LLM generate_response: {str(e)}")
-            return LLMResponse(llm_response=f"An unexpected error occurred: {str(e)}")
+            msg = f"An unexpected error occurred: {str(e)}"
+            return LLMResponse(llm_response=msg, error=msg)
 
     @staticmethod
     def _get_reasoning_from_delta(delta) -> str | None:
@@ -434,7 +468,8 @@ class LLMManager:
             yield response
         except Exception as e:
             logger.exception(f"Error in streaming response: {str(e)}")
-            yield LLMResponse(llm_response=f"Streaming error: {str(e)}")
+            msg = f"Streaming error: {str(e)}"
+            yield LLMResponse(llm_response=msg, error=msg)
 
     @staticmethod
     def _get_reasoning_from_message(msg) -> str | None:
@@ -450,7 +485,22 @@ class LLMManager:
     @staticmethod
     async def _handle_non_streaming_response(client: OpenAI, params: dict[str, Any]):
         try:
-            response = client.chat.completions.create(**params)
+            # Retry transient errors (rate limit / timeout / connection / 5xx) with
+            # backoff; other errors (e.g. 400 invalid request) fail fast.
+            transient = (
+                openai.RateLimitError, openai.APITimeoutError,
+                openai.APIConnectionError, openai.InternalServerError,
+            )
+            response = None
+            for attempt in range(1, 4):
+                try:
+                    response = client.chat.completions.create(**params)
+                    break
+                except transient as e:
+                    if attempt == 3:
+                        raise
+                    logger.warning("Transient LLM error (attempt %s): %s", attempt, e)
+                    await asyncio.sleep(2 ** (attempt - 1))
             msg = response.choices[0].message
             content = msg.content or ""
             reasoning = LLMManager._get_reasoning_from_message(msg)
@@ -466,7 +516,8 @@ class LLMManager:
             return llm_resp
         except Exception as e:
             logger.exception(f"Error in non-streaming response: {str(e)}")
-            return LLMResponse(llm_response=f"Response error: {str(e)}")
+            msg = f"Response error: {str(e)}"
+            return LLMResponse(llm_response=msg, error=msg)
 
 
 def _openrouter_list_models(api_key: str) -> list[str]:
