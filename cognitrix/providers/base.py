@@ -210,7 +210,27 @@ class LLMManager:
             content = fm.get('content', '')
             msg_type = fm.get('type', 'text')
             tool_call_id = fm.get('tool_call_id')
-            if msg_type == 'text':
+            tool_calls = fm.get('tool_calls')
+            if tool_calls:
+                # Assistant message that issued native tool calls. Reconstruct the
+                # OpenAI-spec shape from the parsed form so the tool-result messages
+                # that follow have a valid preceding assistant.tool_calls.
+                formatted_messages.append({
+                    'role': 'assistant',
+                    'content': content or None,
+                    'tool_calls': [
+                        {
+                            'id': tc.get('tool_call_id') or f'call_{i}',
+                            'type': 'function',
+                            'function': {
+                                'name': str(tc.get('name', '')).replace(' ', '_'),
+                                'arguments': json.dumps(tc.get('arguments', {})),
+                            },
+                        }
+                        for i, tc in enumerate(tool_calls)
+                    ],
+                })
+            elif msg_type == 'text':
                 msg = {'role': role, 'content': content}
                 # Add tool_call_id for tool role messages (OpenAI format)
                 if role == 'tool' and tool_call_id:
