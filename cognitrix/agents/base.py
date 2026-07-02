@@ -256,15 +256,21 @@ class AgentManager:
 
             for i, t in enumerate(agent_tool_calls):
                 tc_id = t.get('tool_call_id')
-                tool = ToolManager.get_by_name(t['name'])
+                name = t.get('name')
+                args = t.get('arguments', {}) or {}
 
+                if not name:
+                    results_by_index[i] = {'tool_call_id': tc_id, 'data': "Error: malformed tool call (no name)"}
+                    continue
+
+                tool = ToolManager.get_by_name(name)
                 if not tool:
-                    results_by_index[i] = {'tool_call_id': tc_id, 'data': f"Error: Tool '{t['name']}' not found"}
+                    results_by_index[i] = {'tool_call_id': tc_id, 'data': f"Error: Tool '{name}' not found"}
                     continue
 
                 # Safety check
-                tool_call = ToolCall(tool_name=tool.name, params=t['arguments'])
-                risk = self.detector.analyze(tool.name, t['arguments'])
+                tool_call = ToolCall(tool_name=tool.name, params=args)
+                risk = self.detector.analyze(tool.name, args)
 
                 if risk.risk_level.value in ['medium', 'high']:
                     print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
@@ -284,16 +290,16 @@ class AgentManager:
                     if approval.cached:
                         print("   (Using cached approval)")
 
-                print(f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}")
+                print(f"\nRunning tool '{tool.name.title()}' with parameters: {args}")
 
                 # Add parent reference for sub-agent tools
                 if 'sub agent' in tool.name.lower() or tool.name.lower() == 'create sub agent' or tool.category == 'mcp':
-                    t['arguments']['parent'] = self.agent
+                    args['parent'] = self.agent
 
                 tasks.append(
                     resilient_manager.run_tool(
                         tool=tool,
-                        params=t['arguments'],
+                        params=args,
                         max_retries=3,
                         attempt_recovery=True
                     )

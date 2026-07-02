@@ -164,14 +164,9 @@ Capabilities: Can perform tasks related to {', '.join(specialties)}
         Returns:
             Mapping of subtask index to agent
         """
-        assignments = {}
-
-        for i, subtask in enumerate(subtasks):
-            agent, score = await self.find_best_agent(subtask)
-            if agent:
-                assignments[i] = agent
-
-        return assignments
+        # Resolve subtasks concurrently (each does a CPU-bound encode in an executor).
+        results = await asyncio.gather(*(self.find_best_agent(s) for s in subtasks))
+        return {i: agent for i, (agent, _score) in enumerate(results) if agent}
 
     def get_agent_capabilities(self, agent_id: str) -> AgentCapability | None:
         """Get capabilities for a specific agent."""

@@ -1,5 +1,6 @@
 """Detection and classification of potentially destructive operations."""
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 
@@ -114,8 +115,9 @@ class DestructiveOpDetector:
         for category_name, config in self.categories.items():
             detected = False
 
-            # Check tool name match
-            if any(t in tool_name_lower for t in config['tools']):
+            # Check tool name match on whole words, so e.g. 'write'/'edit' don't
+            # match substrings of unrelated tool names ('rewrite', 'editor').
+            if any(re.search(rf'\b{re.escape(t)}\b', tool_name_lower) for t in config['tools']):
                 detected = True
 
             # Check keyword match in params

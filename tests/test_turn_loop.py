@@ -219,6 +219,29 @@ async def test_risky_tool_denied_over_web(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_malformed_tool_call_does_not_abort_batch(monkeypatch):
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda name: Tool(name=name, description="d", parameters={})),
+    )
+
+    async def fake_run_tool(self, tool, params, **kw):
+        return ToolResult(success=True, data="ok")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+
+    res = await agent.call_tools([
+        {"arguments": {}, "tool_call_id": "1"},          # missing 'name'
+        {"name": "good", "arguments": {}, "tool_call_id": "2"},
+    ])
+    assert "malformed" in res["result"][0]["data"].lower()
+    assert res["result"][1]["data"] == "ok"
+
+
+@pytest.mark.asyncio
 async def test_approval_cache_is_scoped():
     from cognitrix.safety.approval_gate import ApprovalGate, ToolCall
     from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel

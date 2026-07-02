@@ -267,9 +267,10 @@ class LLMManager:
         if cache_key in LLMManager._llm_cache:
             cached = LLMManager._llm_cache[cache_key]
             if isinstance(cached, LLM):
-                # Return a copy: callers mutate temperature/model on the returned
-                # instance, and the cache is shared across agents/requests.
-                return cached.model_copy()
+                # Deep copy: callers mutate the returned instance (temperature/model,
+                # and potentially the extra_headers/extra_body dicts). A shallow copy
+                # would share those nested dicts with the cached instance.
+                return cached.model_copy(deep=True)
 
         try:
             if isinstance(provider, dict):
@@ -277,7 +278,7 @@ class LLMManager:
             else:
                 llm = LLM(provider=str(provider))
             LLMManager._llm_cache[cache_key] = llm
-            return llm.model_copy()
+            return llm.model_copy(deep=True)
         except Exception as e:
             logging.exception(e)
             return None
