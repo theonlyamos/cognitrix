@@ -40,11 +40,16 @@ def tool(*args: Any, **kwargs: Any):
             if hasattr(annotation, '__name__'):
                 return annotation.__name__
             return str(annotation).replace('typing.', '')
-        
+
         new_tool.parameters = {
             key: get_type_name(value.annotation)
             for key, value in func_parameters.items()
         }
+        # Params without a default are required; optional ones must not be forced.
+        new_tool.required_params = [
+            key for key, value in func_parameters.items()
+            if value.default is inspect.Parameter.empty
+        ]
 
         return new_tool
 

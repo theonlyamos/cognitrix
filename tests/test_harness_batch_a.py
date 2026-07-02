@@ -35,3 +35,22 @@ class TestZeroArgToolSchema:
         assert schema["function"]["parameters"] == {
             "type": "object", "properties": {}, "required": [],
         }
+
+
+class TestToolSchemaQuality:
+    def test_optional_params_not_required_and_descriptions(self):
+        from cognitrix.tools.tool import tool
+
+        @tool(category="general")
+        def sample(required_arg: str, optional_arg: int = 5):
+            """Do a thing.
+
+            :param required_arg: the required one
+            :param optional_arg: the optional one
+            """
+            return "ok"
+
+        fn = sample.to_dict_format()["function"]
+        assert fn["parameters"]["required"] == ["required_arg"]
+        assert set(fn["parameters"]["properties"]) == {"required_arg", "optional_arg"}
+        assert fn["parameters"]["properties"]["required_arg"]["description"] == "the required one"

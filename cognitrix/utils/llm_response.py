@@ -75,15 +75,26 @@ class LLMResponse(Model):
         self.llm_response = ''.join(self.chunks)
         if not self.llm_response:
             return
+        stripped = self.llm_response.strip()
+        # Only attempt a JSON parse when the buffer looks like a complete JSON
+        # object/array. This avoids an O(n^2) json.loads over the growing buffer
+        # on every streamed chunk — the common case is prose, and mid-stream JSON
+        # is incomplete anyway.
+        if not (stripped[:1] in ('{', '[') and stripped[-1:] in ('}', ']')):
+            self.result = self.llm_response
+            return
         try:
-            data = json.loads(self.llm_response)
-            # Map JSON fields to class attributes (tool_calls come from native provider, not content)
-            for key, value in data.items():
-                if key in ('tool_call', 'tool_calls'):
-                    continue  # Native tool calls only; do not overwrite from content
-                setattr(self, key, value)
-            # For result, try to set from 'result', 'response', or fallback to 'llm_response'
-            self.result = data.get('result') or data.get('response') or self.result
+            data = json.loads(stripped)
+            if isinstance(data, dict):
+                # Map JSON fields to attributes (tool_calls come from the native
+                # provider path, not content).
+                for key, value in data.items():
+                    if key in ('tool_call', 'tool_calls'):
+                        continue
+                    setattr(self, key, value)
+                self.result = data.get('result') or data.get('response') or self.result
+            else:
+                self.result = self.llm_response
         except json.JSONDecodeError:
             self.result = self.llm_response
         except Exception as e:

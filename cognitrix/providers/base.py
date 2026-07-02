@@ -267,7 +267,9 @@ class LLMManager:
         if cache_key in LLMManager._llm_cache:
             cached = LLMManager._llm_cache[cache_key]
             if isinstance(cached, LLM):
-                return cached
+                # Return a copy: callers mutate temperature/model on the returned
+                # instance, and the cache is shared across agents/requests.
+                return cached.model_copy()
 
         try:
             if isinstance(provider, dict):
@@ -275,7 +277,7 @@ class LLMManager:
             else:
                 llm = LLM(provider=str(provider))
             LLMManager._llm_cache[cache_key] = llm
-            return llm
+            return llm.model_copy()
         except Exception as e:
             logging.exception(e)
             return None

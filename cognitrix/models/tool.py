@@ -1,3 +1,4 @@
+import re
 import uuid
 from typing import Any
 
@@ -24,6 +25,9 @@ class Tool(Model):
 
     parameters: Any = {}
     """Used for type hinting for function tools"""
+
+    required_params: list[str] | None = None
+    """Names of parameters without defaults. If None, all parameters are required."""
 
     user_id: str | None = Field(default=None)
     """User ID of the user the tool belongs to"""
@@ -60,15 +64,24 @@ class Tool(Model):
             return type_mapping.get(py_type, 'string')
 
         parameters = self.parameters if (hasattr(self, 'parameters') and self.parameters) else {}
-        required = list(parameters.keys())
+
+        # Per-parameter descriptions from ':param name: ...' docstring lines.
+        param_descs: dict[str, str] = {}
+        for m in re.finditer(r':param\s+(\w+)\s*:\s*(.+)', self.description or ''):
+            param_descs[m.group(1)] = m.group(2).strip()
 
         properties = {}
         for name, param_type in parameters.items():
             vtype = python_type_to_json_type(param_type)
-            prop = {"type": vtype, "description": ""}
+            prop = {"type": vtype, "description": param_descs.get(name, "")}
             if vtype == 'array':
                 prop['items'] = {"type": "string"} # type: ignore
             properties[name] = prop
+
+        # Only params without defaults are required (if we know them); otherwise
+        # fall back to marking all required.
+        source = self.required_params if self.required_params is not None else list(parameters.keys())
+        required = [p for p in source if p in properties]
 
         # Always return a valid function schema, even for zero-argument tools,
         # so parameterless tools are still advertised to the model.
