@@ -843,7 +843,14 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
     except (ValueError, TypeError):
         return f"Error: Invalid timeout value '{timeout}'. Must be an integer."
 
-    # Execute through the shared safety boundary: whitelist + argv + shell=False.
+    # Sandbox mode: run through a real shell (pipes, &&, arbitrary commands),
+    # bypassing the whitelist. ONLY for throwaway sandboxes (benchmark/CI
+    # containers) where the environment itself is the isolation boundary — never
+    # enable on a host you care about. Off by default.
+    if os.getenv('COGNITRIX_SANDBOX_SHELL', '').strip().lower() in ('1', 'true', 'yes'):
+        return _run_sandbox_shell(command, cwd=str(work_dir), timeout=timeout_s)
+
+    # Default: the shared safety boundary — whitelist + argv + shell=False.
     try:
         return run_whitelisted(command, cwd=str(work_dir), timeout=timeout_s)
     except CommandNotAllowed as e:
@@ -851,3 +858,22 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
     except Exception as e:
         logger.exception("bash tool failed")
         return f"Error executing command: {e}"
+
+
+def _run_sandbox_shell(command: str, cwd: str, timeout: int) -> str:
+    """Run a command through a real shell (no whitelist). Sandbox-only; gated by
+    COGNITRIX_SANDBOX_SHELL."""
+    import subprocess
+    try:
+        proc = subprocess.run(
+            command, shell=True, cwd=cwd, timeout=timeout,
+            capture_output=True, text=True,
+        )
+    except subprocess.TimeoutExpired:
+        return f"Command timed out after {timeout}s"
+    out = (proc.stdout or '').strip()
+    err = (proc.stderr or '').strip()
+    if proc.returncode != 0:
+        detail = err or out or f"exit code {proc.returncode}"
+        return f"Command failed (exit {proc.returncode}): {detail}"
+    return out or (f"[stderr: {err}]" if err else "Command executed successfully (no output)")

@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -11,6 +12,10 @@ from pathlib import Path
 from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
 
 logger = logging.getLogger('cognitrix.log')
+
+
+def _auto_approve_enabled() -> bool:
+    return os.getenv('COGNITRIX_AUTO_APPROVE', '').strip().lower() in ('1', 'true', 'yes')
 
 # Prefix of the tool-result message for a denied operation. The session loop's
 # deny-loop breaker matches on it — keep producer and matcher in sync.
@@ -124,6 +129,11 @@ class ApprovalGate:
         Returns:
             ApprovalResult
         """
+        # Non-interactive auto-approve (benchmarks / CI / unattended runs inside
+        # a sandbox). Off by default; only enable in a throwaway environment.
+        if _auto_approve_enabled():
+            return ApprovalResult(approved=True, auto=True)
+
         # Auto-approve low risk
         if risk.risk_level == RiskLevel.LOW:
             return ApprovalResult(approved=True, auto=True)

@@ -80,6 +80,11 @@ def get_arguments():
     parser.add_argument('--clear-history', action='store_true', default="", help='Clear agent history')
     parser.add_argument('--sessions', action='store_true', help='Get a list of all saved sessions')
     parser.add_argument('--verbose', action='store_true', help='Set verbose mode')
+    parser.add_argument('--dangerously-skip-permissions', action='store_true',
+                       help='Run fully unattended: auto-approve every tool call AND let the '
+                            'bash tool run any command through a real shell (no whitelist). '
+                            'ONLY use inside a throwaway sandbox/container — it removes the '
+                            'safety gate and command restrictions entirely.')
     parser.add_argument('-v','--version', action='version', version=f'%(prog)s {VERSION}')
 
     # Import start function for default action

@@ -32,3 +32,10 @@ def test_prompt_flags_are_unambiguous():
 
 def test_prompt_file_default_empty():
     assert _parse(["-p", "x"]).prompt_file == ""
+
+
+def test_dangerously_skip_permissions_flag():
+    # Off by default; the flag turns it on (main() wires it to the auto-approve
+    # + sandbox-shell env vars the gate and bash tool read).
+    assert _parse(["-p", "x"]).dangerously_skip_permissions is False
+    assert _parse(["--dangerously-skip-permissions", "-p", "x"]).dangerously_skip_permissions is True
