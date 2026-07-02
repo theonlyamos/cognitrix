@@ -25,6 +25,21 @@ logger = logging.getLogger('cognitrix.log')
 
 AgentList: TypeAlias = list['Agent']
 
+# Cap on a single tool result entering chat history (~2k tokens). Oversized
+# results bloat every subsequent prompt; the model can re-run the tool with a
+# narrower range if it needs more.
+MAX_TOOL_RESULT_CHARS = 8000
+
+
+def _truncate_tool_result(content: str) -> str:
+    if len(content) <= MAX_TOOL_RESULT_CHARS:
+        return content
+    dropped = len(content) - MAX_TOOL_RESULT_CHARS
+    return (
+        content[:MAX_TOOL_RESULT_CHARS]
+        + f"\n[truncated {dropped} chars — re-run the tool with a narrower range if you need more]"
+    )
+
 class MessagePriority(Enum):
     LOW = 1
     NORMAL = 2
@@ -187,7 +202,7 @@ class AgentManager:
                         tool_messages.append({
                             'role': 'tool',
                             'tool_call_id': tool_call_id,
-                            'content': content
+                            'content': _truncate_tool_result(content)
                         })
                     # Return list of tool messages instead of single prompt
                     return tool_messages
@@ -195,7 +210,7 @@ class AgentManager:
                     return [{
                         'role': 'tool',
                         'tool_call_id': None,
-                        'content': str(results)
+                        'content': _truncate_tool_result(str(results))
                     }]
             elif 'result' in processed_query.keys():
                 result = processed_query['result']

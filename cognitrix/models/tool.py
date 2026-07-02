@@ -65,10 +65,22 @@ class Tool(Model):
 
         parameters = self.parameters if (hasattr(self, 'parameters') and self.parameters) else {}
 
-        # Per-parameter descriptions from ':param name: ...' docstring lines.
+        desc = self.description or ''
+
+        # Function-level description: first paragraph only. The Args/Returns/
+        # Examples docstring sections duplicate what the parameters schema
+        # conveys and roughly double the token floor of every prompt.
+        summary = re.split(
+            r'\n\s*\n|\n\s*(?:Args|Arguments|Returns|Raises|Examples?)\s*:', desc, maxsplit=1
+        )[0].strip() or desc[:200]
+
+        # Per-parameter descriptions from ':param name: ...' lines or
+        # Google-style '    name (type): ...' Args lines.
         param_descs: dict[str, str] = {}
-        for m in re.finditer(r':param\s+(\w+)\s*:\s*(.+)', self.description or ''):
+        for m in re.finditer(r':param\s+(\w+)\s*:\s*(.+)', desc):
             param_descs[m.group(1)] = m.group(2).strip()
+        for m in re.finditer(r'^\s+(\w+)\s*\([^)]*\)\s*:\s*(.+)$', desc, re.MULTILINE):
+            param_descs.setdefault(m.group(1), m.group(2).strip())
 
         properties = {}
         for name, param_type in parameters.items():
@@ -89,7 +101,7 @@ class Tool(Model):
             "type": "function",
             "function": {
                 "name": self.name.replace(' ', '_'),
-                "description": self.description[:1024],
+                "description": summary[:1024],
                 "parameters": {
                     "type": "object",
                     "properties": properties,

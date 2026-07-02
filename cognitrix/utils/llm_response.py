@@ -27,6 +27,8 @@ class LLMResponse(Model):
     result: str | None = None
     error: str | None = None
     """Set when the response represents a provider/transport error, not a real answer."""
+    usage: dict[str, int] | None = None
+    """Real token usage from the provider: {'prompt_tokens': N, 'completion_tokens': N}."""
     tool_calls: list[dict[str, Any]] = []
     artifacts: dict[str, Any] | list[dict[str, Any]] | None = None
     observation: str | None = None
@@ -64,7 +66,10 @@ class LLMResponse(Model):
     def add_chunk(self, chunk: str):
         self.current_chunk = chunk
         self.chunks.append(chunk)
-        self.parse_llm_response()
+        # Append incrementally instead of re-joining the whole chunk list on
+        # every streamed chunk (that was O(n^2) over a stream).
+        self.llm_response = (self.llm_response or '') + chunk
+        self._parse_structure()
 
     def add_reasoning_chunk(self, chunk: str):
         """Accumulate reasoning; caller sets current_chunk to incremental display."""
@@ -72,7 +77,11 @@ class LLMResponse(Model):
         self.reasoning = (self.reasoning or '') + chunk
 
     def parse_llm_response(self):
+        # Full rebuild from chunks (used at construction time).
         self.llm_response = ''.join(self.chunks)
+        self._parse_structure()
+
+    def _parse_structure(self):
         if not self.llm_response:
             return
         stripped = self.llm_response.strip()

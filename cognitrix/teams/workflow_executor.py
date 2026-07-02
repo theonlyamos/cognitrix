@@ -92,11 +92,18 @@ class WorkflowExecutor:
 
             # Process results
             for step, result in zip(ready_steps, step_results, strict=False):
-                if isinstance(result, Exception):
+                # A raised exception OR a returned StepResult with success=False
+                # both mean the step failed — the latter was previously recorded
+                # as COMPLETED, propagating a None/error output as if it worked.
+                failure = result if isinstance(result, Exception) else (
+                    None if getattr(result, 'success', False) else result
+                )
+                if failure is not None:
                     step.status = StepStatus.FAILED
-                    step.result = StepResult(success=False, error=str(result))
-                    if not await self._handle_step_failure(step, result, team, session):
-                        raise WorkflowError(f"Step {step.step_number} failed: {result}")
+                    err = str(failure) if isinstance(failure, Exception) else (failure.error or "step reported failure")
+                    step.result = failure if not isinstance(failure, Exception) else StepResult(success=False, error=err)
+                    if not await self._handle_step_failure(step, failure, team, session):
+                        raise WorkflowError(f"Step {step.step_number} failed: {err}")
                 else:
                     step.status = StepStatus.COMPLETED
                     step.result = result

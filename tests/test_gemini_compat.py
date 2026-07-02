@@ -29,9 +29,28 @@ def _chunk(tool_calls=None, content=None):
     return types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta)])
 
 
+class _AsyncChunks:
+    """Async iterator over pre-baked chunks (mirrors AsyncOpenAI's stream)."""
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+
+    def __aiter__(self):
+        self._i = 0
+        return self
+
+    async def __anext__(self):
+        if self._i >= len(self._chunks):
+            raise StopAsyncIteration
+        c = self._chunks[self._i]
+        self._i += 1
+        return c
+
+
 class _FakeClient:
     def __init__(self, chunks):
-        completions = types.SimpleNamespace(create=lambda **params: iter(chunks))
+        async def create(**params):
+            return _AsyncChunks(chunks)
+        completions = types.SimpleNamespace(create=create)
         self.chat = types.SimpleNamespace(completions=completions)
 
 

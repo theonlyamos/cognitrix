@@ -1,3 +1,4 @@
+import os
 from datetime import timedelta
 from typing import Annotated
 
@@ -45,6 +46,13 @@ async def login(form_data: LoginForm):
 
 @auth_api.post("/signup")
 async def signup(new_user: User):
+    # Operators can close open registration in shared/production deployments.
+    # Defaults to enabled so single-user local setups are unaffected.
+    if os.getenv('COGNITRIX_ALLOW_SIGNUP', 'true').strip().lower() not in ('1', 'true', 'yes'):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Open registration is disabled"
+        )
     if not Utils.email_is_valid(new_user.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

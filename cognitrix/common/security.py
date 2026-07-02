@@ -83,6 +83,28 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     return user
 
 
+# Matched case-insensitively; includes common secret-bearing HTTP header names
+# so keys inside extra_headers (Authorization, x-api-key, ...) are also blanked.
+_SECRET_KEYS = {
+    'api_key', 'apikey', 'api-key', 'password', 'token', 'access_token', 'secret',
+    'authorization', 'x-api-key', 'helicone-auth', 'bearer',
+}
+
+
+def redact_secrets(data):
+    """Recursively blank out secret-bearing keys (api_key, Authorization, etc.)
+    in a dict/list before returning it to a client. Provider API keys must never
+    leave the server in an API response."""
+    if isinstance(data, dict):
+        return {
+            k: ('***' if (isinstance(k, str) and k.lower() in _SECRET_KEYS and v) else redact_secrets(v))
+            for k, v in data.items()
+        }
+    if isinstance(data, list):
+        return [redact_secrets(v) for v in data]
+    return data
+
+
 def identity(payload):
     user_id = payload['identity']
     return User.get(user_id)

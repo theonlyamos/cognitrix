@@ -20,7 +20,7 @@ async def get_all_sessions():
 @sessions_api.post("")
 async def new_session(request: Request, session: Session):
     session.agent_id = request.state.agent.id
-    session.save()
+    await session.save()
     return session.json()
 
 @sessions_api.get("/{session_id}")
@@ -56,7 +56,7 @@ async def chat_endpoint(request: Request):
 
 @sessions_api.get("/{session_id}/chat")
 async def get_chat(session_id: str):
-    session = Session.get(session_id)
+    session = await Session.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 

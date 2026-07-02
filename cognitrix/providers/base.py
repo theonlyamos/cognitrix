@@ -14,14 +14,16 @@ from typing import Any, TypeAlias
 
 import openai
 from odbms import Model
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from pydantic import Field
 
 from cognitrix.utils import image_to_base64
 from cognitrix.utils.llm_response import LLMResponse
 
-# Cache OpenAI clients by effective config to avoid per-request overhead
-_client_cache: dict[str, OpenAI] = {}
+# Cache async OpenAI clients by effective config to avoid per-request overhead.
+# Async clients keep the server event loop free during the (long) provider call
+# instead of blocking it for every socket read.
+_client_cache: dict[str, AsyncOpenAI] = {}
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -42,6 +44,18 @@ _DEFAULT_BASE_URLS: dict[str, str] = {
     'openai': 'https://api.openai.com/v1',
     'cerebras': 'https://api.cerebras.com/v1',
     'google': 'https://generativelanguage.googleapis.com/v1beta/openai/v1',
+}
+
+# Conservative per-provider context windows (tokens) used for prompt budgeting
+# when LLM.context_window is not set explicitly.
+_PROVIDER_CONTEXT_WINDOWS: dict[str, int] = {
+    'google': 1_000_000,
+    'gemini': 1_000_000,
+    'anthropic': 200_000,
+    'openai': 128_000,
+    'groq': 128_000,
+    'openrouter': 128_000,
+    'ollama': 32_000,
 }
 
 
@@ -128,14 +142,14 @@ def _client_cache_key(base_url: str, api_key: str, headers: dict[str, str] | Non
 
 def _get_or_create_client(
     base_url: str, api_key: str, default_headers: dict[str, str] | None = None
-) -> OpenAI:
-    """Reuse OpenAI client per effective config."""
+) -> AsyncOpenAI:
+    """Reuse an async OpenAI client per effective config."""
     key = _client_cache_key(base_url, api_key, default_headers)
     if key not in _client_cache:
         kwargs: dict[str, Any] = {'api_key': api_key, 'base_url': base_url}
         if default_headers:
             kwargs['default_headers'] = default_headers
-        _client_cache[key] = OpenAI(**kwargs)
+        _client_cache[key] = AsyncOpenAI(**kwargs)
     return _client_cache[key]
 
 
@@ -152,6 +166,8 @@ class LLM(Model):
     api_key: str = Field(default='')
     base_url: str = ''
     max_tokens: int = Field(default=DEFAULT_MAX_TOKENS)
+    context_window: int = Field(default=0)
+    """Model context window in tokens; 0 = use the provider default."""
     is_multimodal: bool = Field(default=True)
     supports_tool_use: bool = Field(default=True)
     client: Any = None
@@ -167,6 +183,11 @@ class LLM(Model):
         super().__init__(**data)
         if provider and 'provider' not in data:
             self.provider = provider.lower()
+
+    def get_context_window(self) -> int:
+        if self.context_window > 0:
+            return self.context_window
+        return _PROVIDER_CONTEXT_WINDOWS.get(self.provider, 128_000)
 
     def format_query(self, messages: list[dict[str, Any]]) -> list:
         return LLMManager.format_query(self, messages)
@@ -236,7 +257,8 @@ class LLMManager:
                         for i, tc in enumerate(tool_calls)
                     ],
                 })
-            elif msg_type == 'text':
+            elif msg_type in ('text', 'summary'):
+                # 'summary' is a compaction summary stored as a user message.
                 msg = {'role': role, 'content': content}
                 # Add tool_call_id for tool role messages (OpenAI format)
                 if role == 'tool' and tool_call_id:
@@ -341,6 +363,9 @@ class LLMManager:
                 'temperature': llm.temperature,
                 'stream': stream,
             }
+            if stream:
+                # Ask for real token usage on the final stream chunk.
+                completion_params['stream_options'] = {'include_usage': True}
             if formatted_tools:
                 completion_params['tools'] = formatted_tools
             if llm.response_format:
@@ -410,14 +435,20 @@ class LLMManager:
         return result
 
     @staticmethod
-    async def _handle_streaming_response(client: OpenAI, params: dict[str, Any]):
+    async def _handle_streaming_response(client: AsyncOpenAI, params: dict[str, Any]):
         try:
-            stream = client.chat.completions.create(**params)
+            stream = await client.chat.completions.create(**params)
             response = LLMResponse()
             in_reasoning = False
             # Accumulate partial tool calls by index for streaming
             tool_call_accum: dict[int, dict[str, Any]] = {}
-            for chunk in stream:
+            async for chunk in stream:
+                chunk_usage = getattr(chunk, 'usage', None)
+                if chunk_usage:
+                    response.usage = {
+                        'prompt_tokens': chunk_usage.prompt_tokens or 0,
+                        'completion_tokens': chunk_usage.completion_tokens or 0,
+                    }
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -508,7 +539,7 @@ class LLMManager:
         return None
 
     @staticmethod
-    async def _handle_non_streaming_response(client: OpenAI, params: dict[str, Any]):
+    async def _handle_non_streaming_response(client: AsyncOpenAI, params: dict[str, Any]):
         try:
             # Retry transient errors (rate limit / timeout / connection / 5xx) with
             # backoff; other errors (e.g. 400 invalid request) fail fast.
@@ -519,7 +550,7 @@ class LLMManager:
             response = None
             for attempt in range(1, 4):
                 try:
-                    response = client.chat.completions.create(**params)
+                    response = await client.chat.completions.create(**params)
                     break
                 except transient as e:
                     if attempt == 3:
@@ -538,6 +569,12 @@ class LLMManager:
                 llm_resp.add_chunk(content)
             if native_tool_calls:
                 llm_resp.tool_calls = native_tool_calls
+            resp_usage = getattr(response, 'usage', None)
+            if resp_usage:
+                llm_resp.usage = {
+                    'prompt_tokens': resp_usage.prompt_tokens or 0,
+                    'completion_tokens': resp_usage.completion_tokens or 0,
+                }
             return llm_resp
         except Exception as e:
             logger.exception(f"Error in non-streaming response: {str(e)}")

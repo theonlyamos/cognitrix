@@ -33,9 +33,15 @@ def format_duration(seconds: float) -> str:
         return f"{mins}m {secs:.1f}s"
 
 # Hard ceiling on retained chat messages per session. The LLM prompt only uses
-# the sliding window (last ~10), so this just bounds memory/serialization growth
+# the shaped window, so this just bounds memory/serialization growth
 # over very long sessions. ponytail: fixed cap; make configurable if needed.
 MAX_CHAT_HISTORY = 1000
+
+# Compaction: when the stored history estimate crosses this fraction of the
+# model's usable window, fold the oldest turns into a summary message.
+COMPACT_THRESHOLD = 0.7
+# Never fold the most recent turns — they are the working context.
+COMPACT_KEEP_TURNS = 4
 
 
 class Session(Model):
@@ -128,6 +134,66 @@ class Session(Model):
     async def get_by_task_id(cls, task_id: str) -> list[Self]:
         """Retrieve a session by task_id"""
         return await cls.find({'task_id': task_id}) # type: ignore
+
+    async def _maybe_compact(self, agent: 'Agent'):
+        """Fold the oldest turns into a summary once history nears the budget.
+
+        Runs at turn end only. Destroys nothing without a produced summary:
+        if the summarizer errors or returns nothing, history is left as-is.
+        The summary is stored as a user message (type 'summary') so every
+        provider accepts it and the window shaper anchors on it.
+        """
+        from cognitrix.sessions.context import partition_turns
+        from cognitrix.utils.tokens import estimate_tokens
+
+        llm = agent.llm
+        budget = max(2000, llm.get_context_window() - llm.max_tokens - 2000)
+        if estimate_tokens(self.chat) <= budget * COMPACT_THRESHOLD:
+            return
+
+        turns = partition_turns(self.chat)
+        if len(turns) <= COMPACT_KEEP_TURNS:
+            return
+        fold_turns = turns[:-COMPACT_KEEP_TURNS]
+
+        lines = []
+        for turn in fold_turns:
+            for m in turn:
+                if m.get('type') == 'turn_timing':
+                    continue
+                content = str(m.get('content') or '')[:1000]
+                if m.get('tool_calls'):
+                    content += ' ' + ', '.join(
+                        f"[called {tc.get('name')}]" for tc in m['tool_calls']
+                    )
+                if content.strip():
+                    lines.append(f"{m.get('role', '')}: {content}")
+        convo = '\n'.join(lines)[:60000]
+
+        prompt = [
+            {'role': 'system', 'content': (
+                'You compress conversation history. Write a concise summary that '
+                'preserves facts, decisions, names, file paths, numbers, and '
+                'unresolved tasks. Output only the summary.'
+            )},
+            {'role': 'user', 'content': f"Summarize this conversation history:\n\n{convo}"},
+        ]
+        resp = await llm(prompt, stream=False)
+        summary = ''
+        if resp and not getattr(resp, 'error', None):
+            summary = (resp.llm_response or '').strip()
+        if not summary:
+            logger.warning("Compaction skipped: summarizer returned no summary")
+            return
+
+        head = {
+            'role': 'user',
+            'type': 'summary',
+            'content': f"[Summary of the earlier conversation]\n{summary}",
+        }
+        self.chat = [head] + [m for turn in turns[-COMPACT_KEEP_TURNS:] for m in turn]
+        await self.save()
+        logger.info("Compacted session history: folded %s turns into a summary", len(fold_turns))
 
     async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True):
 
@@ -248,7 +314,9 @@ class Session(Model):
                             if interface == 'ws':
                                 await output({'type': wsquery.get('type'), 'content': '', 'action': wsquery.get('action'), 'artifacts': response.artifacts, 'complete': False})
 
-                        await asyncio.sleep(0.01)
+                        # Cooperative yield point (no artificial delay): a fixed
+                        # 10ms sleep here added ~seconds per streamed answer.
+                        await asyncio.sleep(0)
 
                     # Deny-loop breaker fired inside the stream loop: end the turn.
                     if stop_turn:
@@ -275,13 +343,16 @@ class Session(Model):
                         turn_duration = time.monotonic() - turn_start_time
                         duration_str = format_duration(turn_duration)
 
-                        # Store timing in history
+                        # Store timing + token usage in history
                         if save_history:
+                            usage = (getattr(response, 'usage', None) or {}) if response else {}
                             self.update_history({
                                 'role': 'system',
                                 'type': 'turn_timing',
                                 'content': f"Took {duration_str}",
-                                'duration': turn_duration
+                                'duration': turn_duration,
+                                'prompt_tokens': usage.get('prompt_tokens'),
+                                'completion_tokens': usage.get('completion_tokens'),
                             })
 
                         # Display timing for CLI
@@ -300,11 +371,14 @@ class Session(Model):
 
             # Store timing in history (only if not already stored in 'not called_tools' block)
             if save_history and called_tools:
+                usage = (getattr(response, 'usage', None) or {}) if response else {}
                 self.update_history({
                     'role': 'system',
                     'type': 'turn_timing',
                     'content': f"Took {duration_str}",
-                    'duration': turn_duration
+                    'duration': turn_duration,
+                    'prompt_tokens': usage.get('prompt_tokens'),
+                    'completion_tokens': usage.get('completion_tokens'),
                 })
 
             # Display timing for CLI (only if not already displayed)
@@ -313,6 +387,10 @@ class Session(Model):
 
             if save_history:
                 await self.save()
+                try:
+                    await self._maybe_compact(agent)
+                except Exception:
+                    logger.exception("History compaction failed; keeping history as-is")
 
             # Add to agent's memory
             if save_history and hasattr(agent, 'context_manager'):

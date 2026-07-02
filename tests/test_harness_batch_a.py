@@ -54,3 +54,32 @@ class TestToolSchemaQuality:
         assert fn["parameters"]["required"] == ["required_arg"]
         assert set(fn["parameters"]["properties"]) == {"required_arg", "optional_arg"}
         assert fn["parameters"]["properties"]["required_arg"]["description"] == "the required one"
+
+
+class TestToolSchemaTrimming:
+    def test_description_trimmed_to_first_paragraph(self):
+        from cognitrix.tools.tool import tool
+
+        @tool(category='general')
+        def verbose(path: str, limit: int = 5):
+            """Do the thing to a path.
+
+            Args:
+                path (str): Which path to do the thing to.
+                limit (int, optional): How many things. Defaults to 5.
+
+            Returns:
+                str: The result.
+
+            Examples:
+                - verbose("a/b")
+            """
+            return "ok"
+
+        fn = verbose.to_dict_format()["function"]
+        # Function description is the summary only — Args/Returns/Examples live
+        # in the parameters schema, not duplicated in prose.
+        assert fn["description"] == "Do the thing to a path."
+        # Google-style Args lines feed per-parameter descriptions.
+        assert fn["parameters"]["properties"]["path"]["description"] == "Which path to do the thing to."
+        assert fn["parameters"]["required"] == ["path"]

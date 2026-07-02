@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import re
+import weakref
 import xml.etree.ElementTree as ET
 
 from bs4 import BeautifulSoup, Tag
@@ -45,14 +46,34 @@ xml_return_format: str = """
 ```
 """
 
+# Cache of encoded screenshots. The same PIL image lives in chat history across
+# turns, so re-encoding it on every prompt build was pure waste. Keyed by id()
+# (PIL images aren't hashable, so a WeakKeyDictionary won't work), but a
+# weakref.finalize callback removes the entry the instant the image is GC'd —
+# so a reused id() can never return a stale image.
+# ponytail: assumes images are not mutated in place after capture.
+_IMAGE_B64_CACHE: dict[int, str] = {}
+
+
 def image_to_base64(image: Image.Image) -> str:
-    """Converts a PIL Image to base64"""
+    """Converts a PIL Image to base64 (JPEG), cached for the image's lifetime."""
+    key = id(image)
+    cached = _IMAGE_B64_CACHE.get(key)
+    if cached is not None:
+        return cached
 
     screenshot_bytes = io.BytesIO()
     image.save(screenshot_bytes, format='JPEG')
+    encoded = base64.b64encode(screenshot_bytes.getvalue()).decode('utf-8')
 
-    # Convert the BytesIO object to base64
-    return base64.b64encode(screenshot_bytes.getvalue()).decode('utf-8')
+    _IMAGE_B64_CACHE[key] = encoded
+    try:
+        # Evict on GC so the id() key can't be reused under a stale entry.
+        weakref.finalize(image, _IMAGE_B64_CACHE.pop, key, None)
+    except TypeError:
+        # Non-weakref-able image: don't risk a stale entry, drop it now.
+        _IMAGE_B64_CACHE.pop(key, None)
+    return encoded
 
 def tool_to_functions(tool: Tool) -> dict:
     """

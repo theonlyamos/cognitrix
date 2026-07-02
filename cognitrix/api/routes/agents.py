@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from cognitrix.agents import Agent
-from cognitrix.common.security import get_current_user
+from cognitrix.common.security import get_current_user, redact_secrets
 from cognitrix.sessions.base import Session
 from cognitrix.utils.sse import get_sse_manager
 
@@ -31,7 +31,7 @@ def _user_key(user) -> str:
 async def list_agents():
     agents = await Agent.all()
 
-    return [agent.json() for agent in agents]
+    return [redact_secrets(agent.json()) for agent in agents]
 
 @agents_api.post('')
 async def save_agent(request: Request, agent: Agent):
@@ -46,7 +46,7 @@ async def save_agent(request: Request, agent: Agent):
     if request.state.agent.id == agent.id:
         request.state.agent = agent
 
-    return agent
+    return JSONResponse(redact_secrets(agent.json()))
 
 @agents_api.get("/sse")
 async def sse_endpoint(request: Request, agent_id: str | None = None, user=Depends(get_current_user)):
@@ -75,7 +75,7 @@ async def load_agent(agent_id: str):
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    return agent
+    return JSONResponse(redact_secrets(agent.json()))
 
 @agents_api.get('/{agent_id}/session')
 async def load_session(agent_id: str):

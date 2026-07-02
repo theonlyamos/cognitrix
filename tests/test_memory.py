@@ -285,6 +285,9 @@ class TestHybridContextManager:
         agent = MagicMock()
         agent.name = "TestAgent"
         agent.formatted_system_prompt.return_value = "System prompt for testing"
+        # The window shaper budgets in real integers off the agent's llm.
+        agent.llm.get_context_window.return_value = 128_000
+        agent.llm.max_tokens = 4096
         return agent
 
     @pytest.fixture

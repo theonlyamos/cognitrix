@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 from collections.abc import Callable
 from functools import wraps
@@ -14,7 +15,12 @@ def tool(*args: Any, **kwargs: Any):
             try:
                 if inspect.iscoroutinefunction(func):
                     return await func(*args, **kwargs)
-                return func(*args, **kwargs)
+                # Sync tools (bash/WebFetch/Search/pyautogui/os.walk) do blocking
+                # I/O; run them off the event loop so a tool call doesn't freeze
+                # the whole server for every other user.
+                # Note: pyautogui GUI calls run in a worker thread here — fine on
+                # Windows/Linux; some macOS UI calls require the main thread.
+                return await asyncio.to_thread(func, *args, **kwargs)
             except Exception as e:
                 return str(e)
 
