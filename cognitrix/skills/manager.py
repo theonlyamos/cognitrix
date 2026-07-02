@@ -6,14 +6,14 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from cognitrix.skills.models import Skill, SkillManifest
-from cognitrix.skills.parser import SkillParser, SkillParseError
 from cognitrix.skills.loaders import (
-    SkillLoader,
     LocalDirectoryLoader,
     # DatabaseLoader,  # Disabled - requires async Model.find() await fix
     RemoteRegistryLoader,
+    SkillLoader,
 )
+from cognitrix.skills.models import Skill, SkillManifest
+from cognitrix.skills.parser import SkillParseError, SkillParser
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -275,7 +275,7 @@ class SkillManager:
                 f"Name '{manifest.name}' must be lowercase alphanumeric with hyphens"
             )
         if len(manifest.name) > 64:
-            errors.append(f"Name exceeds 64 characters")
+            errors.append("Name exceeds 64 characters")
         if not manifest.description:
             errors.append("Description is required")
         if len(manifest.description) > 1024:

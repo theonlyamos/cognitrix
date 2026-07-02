@@ -74,7 +74,7 @@ class Agent(Model):
             from cognitrix.memory.hybrid_context import HybridContextManager
             self.__dict__['_ctx_mgr'] = HybridContextManager(**config)
         return self.__dict__['_ctx_mgr']
-    
+
     # Backward compatibility
     def get_memory(self) -> 'BaseContextManager':
         """Alias for get_context_manager."""

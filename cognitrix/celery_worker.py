@@ -10,6 +10,7 @@ from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.teams.base import Team
 
+
 def _init_db():
     try:
         loop = asyncio.get_event_loop()

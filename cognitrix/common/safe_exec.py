@@ -118,7 +118,7 @@ async def run_whitelisted_async(
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except (asyncio.TimeoutError, TimeoutError):
+    except TimeoutError:
         proc.kill()
         return f"Command timed out after {timeout}s"
     return _format_output(

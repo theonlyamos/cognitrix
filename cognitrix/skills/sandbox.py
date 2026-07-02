@@ -87,7 +87,11 @@ class CodeSandbox:
         restricted_globals['__builtins__'] = dict(safe_builtins)
 
         # Add whitelisted modules
-        import json, re as re_mod, math, datetime, collections
+        import collections
+        import datetime
+        import json
+        import math
+        import re as re_mod
         restricted_globals['__builtins__']['json'] = json
         restricted_globals['__builtins__']['re'] = re_mod
         restricted_globals['__builtins__']['math'] = math
@@ -108,8 +112,6 @@ class CodeSandbox:
         }
 
         # Execute with timeout
-        import signal
-        import sys
         import threading
 
         effective_timeout = timeout or self.MAX_EXECUTION_TIME

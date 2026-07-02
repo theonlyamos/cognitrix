@@ -118,7 +118,8 @@ class SSEManager:
                                 self.agent,
                                 session,
                                 self.agent.llm,
-                                stream=False
+                                stream=False,
+                                interface='web',
                             )
                             yield {'event': 'message', 'data': json.dumps({'type': 'multistep_result', 'content': result})}
                         except Exception as e:

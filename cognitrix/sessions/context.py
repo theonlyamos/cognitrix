@@ -62,5 +62,15 @@ class SlidingWindowContextManager(BaseContextManager):
         # orphan tool-result message (would violate the tool-call protocol).
         recent_history = _trim_to_valid_start(session.chat[-self.max_messages:])
 
+        # A long tool loop can push the current turn's user message out of the
+        # window, leaving nothing valid (an empty prompt is a provider error).
+        # Anchor the window at the last user message instead — the whole
+        # current turn stays in context (bounded by MAX_TOOL_ROUNDS).
+        if not any(str(m.get('role', '')).lower() == 'user' for m in recent_history):
+            for j in range(len(session.chat) - 1, -1, -1):
+                if str(session.chat[j].get('role', '')).lower() == 'user':
+                    recent_history = session.chat[j:]
+                    break
+
         prompt = [system_prompt] + recent_history
         return prompt

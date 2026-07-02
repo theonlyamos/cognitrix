@@ -39,8 +39,6 @@ async def load_skill(skill_name: str, context: str = "same") -> str:
         For "fork": The sub-agent's execution result.
     """
     from cognitrix.skills.manager import get_skill_manager
-    from cognitrix.agents.base import AgentManager
-    from cognitrix.tools.base import ToolManager
 
     if context not in ("same", "fork"):
         return f"Invalid context: '{context}'. Must be 'same' or 'fork'."
@@ -88,7 +86,6 @@ async def _execute_forked(manifest, skill_content: str, parent) -> str:
     from cognitrix.agents.base import AgentManager
     from cognitrix.models import Agent
     from cognitrix.providers.base import LLM
-    from cognitrix.utils.llm_response import LLMResponse
 
     # Get the parent's LLM
     if parent and hasattr(parent, 'llm'):
@@ -100,10 +97,10 @@ async def _execute_forked(manifest, skill_content: str, parent) -> str:
 
     # Get allowed tools from manifest
     allowed_tools = manifest.allowed_tools or []
-    
+
     # Resolve allowed tools
     allowed_set, restriction_map = _resolve_allowed_tools(allowed_tools)
-    
+
     # Get all tools and filter to allowed only
     all_tools = ToolManager.list_all_tools()
     if allowed_set:
@@ -131,7 +128,7 @@ async def _execute_forked(manifest, skill_content: str, parent) -> str:
                 result_parts.append(response.result)
             elif hasattr(response, 'content'):
                 result_parts.append(response.content)
-        
+
         result = ''.join(result_parts)
         return result if result else "Skill completed with no output"
     except Exception as e:
@@ -173,13 +170,13 @@ def _get_parent_last_message(parent) -> str:
     """Get the parent's last user message for sub-agent input."""
     if not parent:
         return ""
-    
+
     # Try to get messages from parent's inbox (incoming messages)
     if hasattr(parent, 'inbox') and parent.inbox:
         for msg in reversed(parent.inbox):
             if msg.sender.lower() in ('user', 'you'):
                 return msg.content
-    
+
     # Try parent's response_list (messages the agent responded to)
     if hasattr(parent, 'response_list') and parent.response_list:
         for msg, _ in reversed(parent.response_list):
@@ -187,7 +184,7 @@ def _get_parent_last_message(parent) -> str:
                 return msg.content
             if hasattr(msg, 'content'):
                 return msg.content
-    
+
     # Try to get from context manager if available
     if hasattr(parent, 'get_context_manager'):
         try:
@@ -199,5 +196,5 @@ def _get_parent_last_message(parent) -> str:
                         return msg.get('content', '')
         except Exception:
             pass
-    
+
     return ""

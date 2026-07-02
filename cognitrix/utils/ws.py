@@ -9,9 +9,9 @@ from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.prompts.generator import agent_generator, task_details_generator, team_details_generator
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task
+from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import Tool
-from cognitrix.tasks.handler import is_multi_step_task, handle_multi_step_task
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -124,21 +124,22 @@ class WebSocketManager:
 
                     elif query_type == 'multistep':
                         prompt = query.get('prompt', '')
-                        
+
                         if is_multi_step_task(prompt):
                             # Handle as multi-step task
                             await websocket.send_json({
                                 'type': 'status',
                                 'content': 'Planning multi-step task...'
                             })
-                            
+
                             try:
                                 result = await handle_multi_step_task(
                                     prompt,
                                     web_agent,
                                     session,
                                     web_agent.llm,
-                                    stream=False
+                                    stream=False,
+                                    interface='ws',
                                 )
                                 await websocket.send_json({
                                     'type': 'multistep_result',

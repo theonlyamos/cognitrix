@@ -11,7 +11,6 @@ Requires: requests (pip install requests)
 """
 
 import sys
-from pathlib import Path
 
 
 def search_youtube(topic: str) -> str:

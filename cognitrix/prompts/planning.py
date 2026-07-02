@@ -1,6 +1,5 @@
 """Planning prompts and Pydantic models for structured plan generation."""
 
-from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -23,7 +22,7 @@ class TaskPlan(BaseModel):
     estimated_complexity: str = Field(..., description="simple/moderate/complex")
     steps: list[Step] = Field(..., description="Ordered list of steps to execute")
     parallel_groups: list[list[int]] = Field(
-        default_factory=list, 
+        default_factory=list,
         description="Groups of step numbers that can run in parallel"
     )
     fallback_strategy: str = Field(..., description="What to do if the main approach fails")

@@ -14,8 +14,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
-from cognitrix.skills.models import SkillManifest, Skill
-from cognitrix.skills.parser import SkillParser, SkillParseError
+from cognitrix.skills.models import Skill, SkillManifest
+from cognitrix.skills.parser import SkillParseError, SkillParser
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -299,7 +299,6 @@ class RemoteRegistryLoader(SkillLoader):
                 return self._index
 
             try:
-                import aiohttp
                 raw_url = self._to_raw_url('index.json')
                 session = await self._get_session()
                 async with session.get(raw_url) as resp:
@@ -321,7 +320,6 @@ class RemoteRegistryLoader(SkillLoader):
     async def _fetch_skill_content(self, name: str) -> str | None:
         """Fetch SKILL.md content for a specific skill."""
         try:
-            import aiohttp
             raw_url = self._to_raw_url(f'skills/{name}/SKILL.md')
             session = await self._get_session()
             async with session.get(raw_url) as resp:

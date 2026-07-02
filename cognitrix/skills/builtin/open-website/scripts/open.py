@@ -13,10 +13,10 @@ Platform-specific:
     - Windows: start, cmd /c start
 """
 
-import sys
-import subprocess
-import shutil
 import platform
+import shutil
+import subprocess
+import sys
 
 
 def get_open_command(url: str) -> list[str]:

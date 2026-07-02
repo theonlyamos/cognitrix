@@ -1,11 +1,12 @@
 """Retry utilities with exponential backoff and jitter."""
 
 import asyncio
-import random
 import logging
+import random
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional, TypeVar, Any
 from functools import wraps
+from typing import Any, TypeVar
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -21,11 +22,11 @@ class RetryConfig:
     exponential_base: float = 2.0
     jitter_factor: float = 0.1
     retryable_exceptions: tuple = (Exception,)
-    
+
     def should_retry(self, exception: Exception) -> bool:
         """Check if exception should trigger retry."""
         return isinstance(exception, self.retryable_exceptions)
-    
+
     def calculate_delay(self, attempt: int) -> float:
         """Calculate delay with exponential backoff and jitter."""
         # Exponential backoff
@@ -33,10 +34,10 @@ class RetryConfig:
             self.base_delay * (self.exponential_base ** (attempt - 1)),
             self.max_delay
         )
-        
+
         # Add jitter (randomness to prevent thundering herd)
         jitter = random.uniform(0, delay * self.jitter_factor)
-        
+
         return delay + jitter
 
 
@@ -45,14 +46,14 @@ class RetryResult:
     """Result of a retry operation."""
     success: bool
     result: Any = None
-    error: Optional[Exception] = None
+    error: Exception | None = None
     attempts: int = 0
 
 
 async def with_retry(
     func: Callable[..., T],
-    config: Optional[RetryConfig] = None,
-    on_retry: Optional[Callable[[Exception, int], None]] = None,
+    config: RetryConfig | None = None,
+    on_retry: Callable[[Exception, int], None] | None = None,
     *args,
     **kwargs
 ) -> RetryResult:
@@ -70,33 +71,33 @@ async def with_retry(
     """
     config = config or RetryConfig()
     last_exception = None
-    
+
     for attempt in range(1, config.max_attempts + 1):
         try:
             result = await func(*args, **kwargs)
             return RetryResult(success=True, result=result, attempts=attempt)
-        
+
         except Exception as e:
             last_exception = e
-            
+
             if not config.should_retry(e) or attempt == config.max_attempts:
                 logger.error(f"Function failed after {attempt} attempts: {e}")
                 break
-            
+
             delay = config.calculate_delay(attempt)
-            
+
             logger.warning(
                 f"Attempt {attempt} failed: {e}. Retrying in {delay:.2f}s..."
             )
-            
+
             if on_retry:
                 try:
                     on_retry(e, attempt)
                 except Exception as callback_error:
                     logger.error(f"Retry callback failed: {callback_error}")
-            
+
             await asyncio.sleep(delay)
-    
+
     return RetryResult(
         success=False,
         error=last_exception,
@@ -104,7 +105,7 @@ async def with_retry(
     )
 
 
-def retryable(config: Optional[RetryConfig] = None):
+def retryable(config: RetryConfig | None = None):
     """Decorator for adding retry logic to async functions."""
     def decorator(func: Callable):
         @wraps(func)

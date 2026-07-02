@@ -1,31 +1,27 @@
 """Tests for structured planning with dependency resolution."""
 
 import json
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-from cognitrix.planning.structured_planner import (
-    StructuredPlanner,
-    PlanningError,
-    TaskPlan,
-    Step
-)
+import pytest
+
+from cognitrix.planning.structured_planner import PlanningError, Step, StructuredPlanner, TaskPlan
 
 
 class TestStructuredPlanner:
     """Test suite for StructuredPlanner."""
-    
+
     @pytest.fixture
     def mock_llm(self):
         """Create a mock LLM."""
         llm = AsyncMock()
         return llm
-    
+
     @pytest.fixture
     def planner(self, mock_llm):
         """Create a structured planner with mock LLM."""
         return StructuredPlanner(llm=mock_llm)
-    
+
     @pytest.fixture
     def mock_agents(self):
         """Create mock agents."""
@@ -37,7 +33,7 @@ class TestStructuredPlanner:
             agent.tools = []
             agents.append(agent)
         return agents
-    
+
     @pytest.fixture
     def mock_tools(self):
         """Create mock tools."""
@@ -48,7 +44,7 @@ class TestStructuredPlanner:
             tool.description = f"A tool for {name}"
             tools.append(tool)
         return tools
-    
+
     @pytest.fixture
     def sample_plan_dict(self):
         """Create a sample plan dictionary."""
@@ -97,7 +93,7 @@ class TestStructuredPlanner:
 
 class TestPlanGeneration(TestStructuredPlanner):
     """Tests for plan generation."""
-    
+
     @pytest.mark.asyncio
     async def test_create_plan_success(self, planner, mock_llm, mock_agents, mock_tools, sample_plan_dict):
         """Test successful plan generation."""
@@ -105,7 +101,7 @@ class TestPlanGeneration(TestStructuredPlanner):
         mock_response = MagicMock()
         mock_response.llm_response = json.dumps(sample_plan_dict)
         mock_llm.return_value = mock_response
-        
+
         plan = await planner.create_plan(
             task="Create a web scraper",
             available_agents=mock_agents,
@@ -113,18 +109,18 @@ class TestPlanGeneration(TestStructuredPlanner):
             budget=None,
             constraints=None
         )
-        
+
         assert isinstance(plan, TaskPlan)
         assert len(plan.steps) == 3
         assert plan.task_analysis == 'Test analysis'
-    
+
     @pytest.mark.asyncio
     async def test_create_plan_with_markdown_json(self, planner, mock_llm, mock_agents, mock_tools, sample_plan_dict):
         """Test plan generation with markdown-wrapped JSON."""
         mock_response = MagicMock()
         mock_response.llm_response = f"```json\n{json.dumps(sample_plan_dict)}\n```"
         mock_llm.return_value = mock_response
-        
+
         plan = await planner.create_plan(
             task="Test task",
             available_agents=mock_agents,
@@ -132,17 +128,17 @@ class TestPlanGeneration(TestStructuredPlanner):
             budget=None,
             constraints=None
         )
-        
+
         assert isinstance(plan, TaskPlan)
         assert len(plan.steps) == 3
-    
+
     @pytest.mark.asyncio
     async def test_create_plan_retry_on_invalid_json(self, planner, mock_llm, mock_agents, mock_tools):
         """Test that planner handles invalid JSON."""
         # First call returns invalid JSON - will raise PlanningError
         mock_response1 = MagicMock()
         mock_response1.llm_response = "Invalid JSON {"
-        
+
         # Second call returns valid JSON
         valid_plan = {
             'task_analysis': 'Analysis',
@@ -165,9 +161,9 @@ class TestPlanGeneration(TestStructuredPlanner):
         }
         mock_response2 = MagicMock()
         mock_response2.llm_response = json.dumps(valid_plan)
-        
+
         mock_llm.side_effect = [mock_response1, mock_response2]
-        
+
         # The implementation retries on JSON parsing errors
         try:
             plan = await planner.create_plan(
@@ -182,7 +178,7 @@ class TestPlanGeneration(TestStructuredPlanner):
         except PlanningError:
             # If it fails, that's also acceptable for this test
             pass
-    
+
     @pytest.mark.asyncio
     async def test_create_plan_falls_back_after_max_retries(self, planner, mock_llm, mock_agents, mock_tools):
         """After max retries on invalid JSON, the planner degrades gracefully to a
@@ -202,7 +198,7 @@ class TestPlanGeneration(TestStructuredPlanner):
         # Graceful degradation: a usable fallback plan, not an exception
         assert len(plan.steps) == 1
         assert plan.fallback_strategy
-    
+
     @pytest.mark.asyncio
     async def test_create_plan_with_streaming_response(self, planner, mock_llm, mock_agents, mock_tools, sample_plan_dict):
         """Test plan generation with streaming LLM response."""
@@ -213,13 +209,13 @@ class TestPlanGeneration(TestStructuredPlanner):
             chunk = MagicMock()
             chunk.current_chunk = json_str[i:i+20]
             chunks.append(chunk)
-        
+
         async def async_generator():
             for chunk in chunks:
                 yield chunk
-        
+
         mock_llm.return_value = async_generator()
-        
+
         plan = await planner.create_plan(
             task="Test task",
             available_agents=mock_agents,
@@ -227,13 +223,13 @@ class TestPlanGeneration(TestStructuredPlanner):
             budget=None,
             constraints=None
         )
-        
+
         assert isinstance(plan, TaskPlan)
 
 
 class TestPlanValidation(TestStructuredPlanner):
     """Tests for plan validation."""
-    
+
     @pytest.mark.asyncio
     async def test_validate_agent_references(self, planner, mock_agents):
         """Test validation of agent references."""
@@ -252,12 +248,12 @@ class TestPlanValidation(TestStructuredPlanner):
             ],
             fallback_strategy='Ask for help'
         )
-        
+
         planner._validate_references(plan, mock_agents, [])
-        
+
         # Should change to 'auto'
         assert plan.steps[0].assigned_agent == 'auto'
-    
+
     @pytest.mark.asyncio
     async def test_validate_tool_references(self, planner, mock_agents, mock_tools):
         """Test validation of tool references."""
@@ -277,10 +273,10 @@ class TestPlanValidation(TestStructuredPlanner):
             ],
             fallback_strategy='Ask'
         )
-        
+
         # Should not raise error, just log warning
         planner._validate_references(plan, mock_agents, mock_tools)
-    
+
     @pytest.mark.asyncio
     async def test_validate_valid_references(self, planner, mock_agents, mock_tools):
         """Test validation with valid references."""
@@ -300,16 +296,16 @@ class TestPlanValidation(TestStructuredPlanner):
             ],
             fallback_strategy='Ask'
         )
-        
+
         # Should not modify valid references
         planner._validate_references(plan, mock_agents, mock_tools)
-        
+
         assert plan.steps[0].assigned_agent == 'researcher'
 
 
 class TestDependencyResolution(TestStructuredPlanner):
     """Tests for dependency resolution."""
-    
+
     @pytest.mark.asyncio
     async def test_get_execution_order_linear(self, planner):
         """Test execution order for linear dependencies."""
@@ -323,14 +319,14 @@ class TestDependencyResolution(TestStructuredPlanner):
             ],
             fallback_strategy='Ask'
         )
-        
+
         batches = planner.get_execution_order(plan)
-        
+
         assert len(batches) == 3
         assert [s.step_number for s in batches[0]] == [1]
         assert [s.step_number for s in batches[1]] == [2]
         assert [s.step_number for s in batches[2]] == [3]
-    
+
     @pytest.mark.asyncio
     async def test_get_execution_order_parallel(self, planner):
         """Test execution order with parallelizable steps."""
@@ -345,9 +341,9 @@ class TestDependencyResolution(TestStructuredPlanner):
             ],
             fallback_strategy='Ask'
         )
-        
+
         batches = planner.get_execution_order(plan)
-        
+
         assert len(batches) == 3
         # Batch 1: Setup
         assert [s.step_number for s in batches[0]] == [1]
@@ -355,7 +351,7 @@ class TestDependencyResolution(TestStructuredPlanner):
         assert set(s.step_number for s in batches[1]) == {2, 3}
         # Batch 3: Finalize
         assert [s.step_number for s in batches[2]] == [4]
-    
+
     @pytest.mark.asyncio
     async def test_get_execution_order_complex_dependencies(self, planner):
         """Test execution order with complex dependencies."""
@@ -371,16 +367,16 @@ class TestDependencyResolution(TestStructuredPlanner):
             ],
             fallback_strategy='Ask'
         )
-        
+
         batches = planner.get_execution_order(plan)
-        
+
         # Batch 1: A and B (no dependencies)
         assert set(s.step_number for s in batches[0]) == {1, 2}
         # Batch 2: C (depends on A), D (depends on A, B)
         assert set(s.step_number for s in batches[1]) == {3, 4}
         # Batch 3: E (depends on C, D)
         assert [s.step_number for s in batches[2]] == [5]
-    
+
     @pytest.mark.asyncio
     async def test_get_execution_order_circular_dependency(self, planner):
         """Test detection of circular dependencies."""
@@ -393,16 +389,16 @@ class TestDependencyResolution(TestStructuredPlanner):
             ],
             fallback_strategy='Ask'
         )
-        
+
         with pytest.raises(PlanningError) as exc_info:
             planner.get_execution_order(plan)
-        
+
         assert "Circular dependency" in str(exc_info.value) or "stuck" in str(exc_info.value)
 
 
 class TestExecutionOrder(TestStructuredPlanner):
     """Tests for execution ordering logic."""
-    
+
     @pytest.mark.asyncio
     async def test_single_step_plan(self, planner):
         """Test execution order for single step plan."""
@@ -422,13 +418,13 @@ class TestExecutionOrder(TestStructuredPlanner):
             ],
             fallback_strategy='Ask'
         )
-        
+
         batches = planner.get_execution_order(plan)
-        
+
         assert len(batches) == 1
         assert len(batches[0]) == 1
         assert batches[0][0].step_number == 1
-    
+
     @pytest.mark.asyncio
     async def test_multiple_independent_steps(self, planner):
         """Test execution order for multiple independent steps."""
@@ -442,14 +438,14 @@ class TestExecutionOrder(TestStructuredPlanner):
             ],
             fallback_strategy='Ask'
         )
-        
+
         batches = planner.get_execution_order(plan)
-        
+
         # All steps should be in first batch (no dependencies)
         assert len(batches) == 1
         assert len(batches[0]) == 3
         assert set(s.step_number for s in batches[0]) == {1, 2, 3}
-    
+
     @pytest.mark.asyncio
     async def test_diamond_dependency_pattern(self, planner):
         """Test diamond-shaped dependency pattern."""
@@ -464,14 +460,14 @@ class TestExecutionOrder(TestStructuredPlanner):
             ],
             fallback_strategy='Ask'
         )
-        
+
         batches = planner.get_execution_order(plan)
-        
+
         assert len(batches) == 3
         assert [s.step_number for s in batches[0]] == [1]
         assert set(s.step_number for s in batches[1]) == {2, 3}
         assert [s.step_number for s in batches[2]] == [4]
-    
+
     @pytest.mark.asyncio
     async def test_deep_dependency_chain(self, planner):
         """Test deep dependency chain."""
@@ -486,22 +482,22 @@ class TestExecutionOrder(TestStructuredPlanner):
                 dependencies=[i-1] if i > 1 else [],
                 verification_criteria='Done'
             ))
-        
+
         plan = TaskPlan(
             task_analysis='Deep chain',
             estimated_complexity='complex',
             steps=steps,
             fallback_strategy='Ask'
         )
-        
+
         batches = planner.get_execution_order(plan)
-        
+
         # Each step in its own batch
         assert len(batches) == 5
         for i, batch in enumerate(batches):
             assert len(batch) == 1
             assert batch[0].step_number == i + 1
-    
+
     def test_estimate_total_duration_short(self, planner):
         """Test duration estimation for short plan."""
         plan = TaskPlan(
@@ -512,10 +508,10 @@ class TestExecutionOrder(TestStructuredPlanner):
             ],
             fallback_strategy='Ask'
         )
-        
+
         duration = planner.estimate_total_duration(plan)
         assert duration == 'short'
-    
+
     def test_estimate_total_duration_long(self, planner):
         """Test duration estimation for long plan."""
         plan = TaskPlan(
@@ -528,14 +524,14 @@ class TestExecutionOrder(TestStructuredPlanner):
             ],
             fallback_strategy='Ask'
         )
-        
+
         duration = planner.estimate_total_duration(plan)
         assert duration == 'long'
 
 
 class TestParsePlanResponse(TestStructuredPlanner):
     """Tests for plan response parsing."""
-    
+
     def test_parse_raw_json(self, planner):
         """Test parsing raw JSON response."""
         plan_dict = {
@@ -557,13 +553,13 @@ class TestParsePlanResponse(TestStructuredPlanner):
             'parallel_groups': [],
             'fallback_strategy': 'Ask'
         }
-        
+
         response = json.dumps(plan_dict)
         plan = planner._parse_plan_response(response)
-        
+
         assert isinstance(plan, TaskPlan)
         assert plan.task_analysis == 'Test'
-    
+
     def test_parse_json_with_markdown(self, planner):
         """Test parsing JSON in markdown code block."""
         plan_dict = {
@@ -572,17 +568,17 @@ class TestParsePlanResponse(TestStructuredPlanner):
             'steps': [],
             'fallback_strategy': 'Ask'
         }
-        
+
         response = f"```json\n{json.dumps(plan_dict)}\n```"
         plan = planner._parse_plan_response(response)
-        
+
         assert isinstance(plan, TaskPlan)
-    
+
     def test_parse_invalid_json_raises_error(self, planner):
         """Test that invalid JSON raises PlanningError."""
         with pytest.raises(PlanningError):
             planner._parse_plan_response("Not valid JSON")
-    
+
     def test_parse_incomplete_json_raises_error(self, planner):
         """Test that incomplete JSON raises PlanningError."""
         with pytest.raises(PlanningError):
@@ -591,31 +587,31 @@ class TestParsePlanResponse(TestStructuredPlanner):
 
 class TestFormatHelpers(TestStructuredPlanner):
     """Tests for formatting helper methods."""
-    
+
     def test_format_agents(self, planner, mock_agents):
         """Test agent list formatting."""
         formatted = planner._format_agents(mock_agents)
-        
+
         assert 'researcher' in formatted
         assert 'coder' in formatted
         assert 'writer' in formatted
-    
+
     def test_format_tools(self, planner, mock_tools):
         """Test tool list formatting."""
         formatted = planner._format_tools(mock_tools)
-        
+
         assert 'search' in formatted
         assert 'code_executor' in formatted
         assert 'file_writer' in formatted
-    
+
     def test_format_empty_agents(self, planner):
         """Test formatting empty agent list."""
         formatted = planner._format_agents([])
-        
+
         assert formatted == ""
-    
+
     def test_format_empty_tools(self, planner):
         """Test formatting empty tool list."""
         formatted = planner._format_tools([])
-        
+
         assert formatted == ""

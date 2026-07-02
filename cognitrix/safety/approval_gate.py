@@ -12,6 +12,10 @@ from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
 
 logger = logging.getLogger('cognitrix.log')
 
+# Prefix of the tool-result message for a denied operation. The session loop's
+# deny-loop breaker matches on it — keep producer and matcher in sync.
+OPERATION_BLOCKED_PREFIX = "Operation blocked"
+
 
 class ApprovalStatus(Enum):
     """Approval request status."""
@@ -140,9 +144,10 @@ class ApprovalGate:
                 error="Explicit approval required but auto mode enabled"
             )
 
-        # Request approval through interface
-        if interface == 'cli':
-            result = await self._cli_approval(tool_call, risk)
+        # Request approval through interface. 'task' (planner steps) runs in
+        # the same console as the CLI, so it shares the CLI prompt.
+        if interface in ('cli', 'task'):
+            result = await self._cli_approval(tool_call, risk, timeout)
         elif interface in ('web', 'ws', 'websocket'):
             # Interim: there is no interactive approval channel wired to the web
             # frontend yet, so deny risky operations with a clear message rather
@@ -168,7 +173,7 @@ class ApprovalGate:
 
         return result
 
-    async def _cli_approval(self, tool_call: ToolCall, risk: RiskAssessment) -> ApprovalResult:
+    async def _cli_approval(self, tool_call: ToolCall, risk: RiskAssessment, timeout: float = 300.0) -> ApprovalResult:
         """Command-line approval prompt."""
         print(f"\n{'='*60}")
         print(f"⚠️  APPROVAL REQUIRED - {risk.risk_level.value.upper()} RISK")
@@ -181,9 +186,17 @@ class ApprovalGate:
         print(f"\n{'='*60}")
 
         try:
-            response = input(
-                "\nApprove? [y=yes/n=no/s=session/p=permanent]: "
-            ).lower().strip()
+            # input() in an executor so the event loop keeps running, with the
+            # gate's timeout honored (deny on expiry). ponytail: a timed-out
+            # thread stays parked on stdin until process exit.
+            loop = asyncio.get_running_loop()
+            raw = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, input, "\nApprove? [y=yes/n=no/s=session/p=permanent]: "
+                ),
+                timeout=timeout,
+            )
+            response = raw.lower().strip()
 
             if response in ['y', 'yes']:
                 return ApprovalResult(approved=True)
@@ -194,6 +207,8 @@ class ApprovalGate:
             else:
                 return ApprovalResult(approved=False)
 
+        except TimeoutError:
+            return ApprovalResult(approved=False, error=f"Approval timed out after {timeout}s")
         except (EOFError, KeyboardInterrupt):
             return ApprovalResult(approved=False, error="User interrupted")
 

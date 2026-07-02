@@ -11,7 +11,7 @@ from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 from cognitrix.mcp.client import get_dynamic_client
 from cognitrix.models import Agent, MCPTool, Message, Tool
 from cognitrix.providers.base import LLM
-from cognitrix.safety.approval_gate import ApprovalGate, ToolCall
+from cognitrix.safety.approval_gate import OPERATION_BLOCKED_PREFIX, ApprovalGate, ToolCall
 from cognitrix.safety.destructive_ops import DestructiveOpDetector
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
@@ -284,7 +284,7 @@ class AgentManager:
                     )
 
                     if not approval.approved:
-                        results_by_index[i] = {'tool_call_id': tc_id, 'data': f"Operation blocked: user denied approval for {tool.name}"}
+                        results_by_index[i] = {'tool_call_id': tc_id, 'data': f"{OPERATION_BLOCKED_PREFIX}: user denied approval for {tool.name}"}
                         continue
 
                     if approval.cached:
@@ -295,6 +295,12 @@ class AgentManager:
                 # Add parent reference for sub-agent tools
                 if 'sub agent' in tool.name.lower() or tool.name.lower() == 'create sub agent' or tool.category == 'mcp':
                     args['parent'] = self.agent
+
+                # Delegation inherits the caller's interface so a sub-agent's
+                # risky tools are gated by the same channel (never a model-
+                # supplied value).
+                if tool.name.lower() == 'call agent':
+                    args['interface'] = interface
 
                 tasks.append(
                     resilient_manager.run_tool(

@@ -96,9 +96,15 @@ async def handle_multi_step_task(
     agent: Agent,
     session: Session,
     llm: LLM,
-    stream: bool = False
+    stream: bool = False,
+    interface: str = 'cli',
 ) -> str:
-    """Handle a multi-step task with planning and verification."""
+    """Handle a multi-step task with planning and verification.
+
+    `interface` is threaded into tool approval: CLI callers prompt on the
+    console; web/ws callers must pass their own interface so risky tools are
+    denied by policy instead of blocking the server on input().
+    """
 
     tracker = get_task_tracker()
     task_id = generate_task_id(query)
@@ -204,7 +210,7 @@ async def handle_multi_step_task(
 
                 # Execute step
                 step_output = await execute_step(
-                    step_context, agent, session, step, stream
+                    step_context, agent, session, step, stream, interface
                 )
 
                 # Record result. Success = produced non-empty output that isn't an
@@ -268,7 +274,8 @@ async def execute_step(
     agent: Agent,
     session: Session,
     step: dict,
-    stream: bool
+    stream: bool,
+    interface: str = 'task',
 ) -> str:
     """Execute a single step and return output."""
 
@@ -287,10 +294,15 @@ async def execute_step(
         if content:
             response += content
 
+    # The session's console-printing branches key off interface == 'cli' and
+    # would call the async capture without awaiting it — so CLI callers run
+    # steps as 'task' (approval still prompts on the console); web/ws callers
+    # keep their own interface so risky tools are denied by policy.
+    session_interface = 'task' if interface in ('cli', 'task') else interface
     await session(
         context,
         agent,
-        'task',  # Use task interface for multi-step execution
+        session_interface,
         stream,
         capture_response,
         {}

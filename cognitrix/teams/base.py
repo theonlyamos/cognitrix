@@ -7,8 +7,8 @@ from rich import print
 
 from cognitrix.agents.base import Agent, Message, MessagePriority
 from cognitrix.agents.router import AgentRouter
-from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.planning.structured_planner import StructuredPlanner
+from cognitrix.tasks.base import Task, TaskStatus
 
 if TYPE_CHECKING:
     from cognitrix.sessions.base import Session
@@ -153,7 +153,7 @@ class Team(Model):
 
 # ---------------------------------------------------------------------------
 # Attach TeamManager helpers to the Team model for centralised management and
-# backward-compatibility with any legacy call-sites.                         
+# backward-compatibility with any legacy call-sites.
 # ---------------------------------------------------------------------------
 
 # Instance-level manager
@@ -343,9 +343,9 @@ class TeamManager:
 def _team_manager(self: 'Team') -> 'TeamManager':
     return TeamManager()
 
-setattr(Team, 'manager', property(_team_manager))  # type: ignore[attr-defined]
+Team.manager = property(_team_manager)  # type: ignore[attr-defined]
 
 # Class-level helpers
-setattr(Team, 'create_team', staticmethod(TeamManager.create_team))  # type: ignore[attr-defined]
-setattr(Team, 'get_team', staticmethod(TeamManager.get_team))  # type: ignore[attr-defined]
-setattr(Team, 'delete_team', staticmethod(TeamManager.delete_team))  # type: ignore[attr-defined]
+Team.create_team = staticmethod(TeamManager.create_team)  # type: ignore[attr-defined]
+Team.get_team = staticmethod(TeamManager.get_team)  # type: ignore[attr-defined]
+Team.delete_team = staticmethod(TeamManager.delete_team)  # type: ignore[attr-defined]

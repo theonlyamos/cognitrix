@@ -256,3 +256,67 @@ async def test_approval_cache_is_scoped():
     assert ra.approved and ra.cached
     rb = await gate.check_approval(tc, risk, interface="web", scope="userB")
     assert not rb.approved
+
+
+@pytest.mark.asyncio
+async def test_denied_tool_retry_loop_is_broken(monkeypatch):
+    # If every call in a batch is denied and the model re-issues the exact
+    # same batch, the turn must stop instead of re-prompting round after round.
+    from cognitrix.sessions.base import Session
+
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    session = Session(agent_id="s3")
+    calls = {"n": 0}
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        calls["n"] += 1
+        r = LLMResponse()
+        r.tool_calls = [{"name": "bash", "arguments": {"command": "rm x"}, "tool_call_id": str(calls["n"])}]
+        return r
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda name: Tool(name=name, description="d", parameters={})),
+    )
+
+    async def fake_save(self):
+        return None
+
+    monkeypatch.setattr(Session, "save", fake_save)
+
+    outputs = []
+
+    async def sink(payload=None, *a, **k):
+        outputs.append(payload)
+
+    # bash over web is auto-denied; identical retry must break the loop.
+    await session("do it", agent, "web", False, sink, None, True)
+    assert calls["n"] == 2, f"expected 2 rounds (deny, identical retry), got {calls['n']}"
+
+
+@pytest.mark.asyncio
+async def test_window_anchors_to_last_user_message():
+    # A long tool loop can push the user message out of the sliding window;
+    # the window must then anchor at the last user message instead of going
+    # empty (an empty prompt is a provider error).
+    from cognitrix.sessions.base import Session
+    from cognitrix.sessions.context import SlidingWindowContextManager
+
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    session = Session(agent_id="s4")
+    session.chat = [{"role": "User", "type": "text", "content": "do the thing"}]
+    for i in range(12):
+        session.chat.append({
+            "role": "assistant", "type": "tool_calls", "content": "",
+            "tool_calls": [{"name": "t", "arguments": {}, "tool_call_id": str(i)}],
+        })
+        session.chat.append({"role": "tool", "tool_call_id": str(i), "content": "blocked"})
+
+    mgr = SlidingWindowContextManager(max_messages=10)
+    prompt = await mgr.build_prompt(agent, session)
+    non_system = [m for m in prompt if m.get("role") != "system"]
+    assert non_system, "window must never be empty"
+    assert str(non_system[0]["role"]).lower() == "user"

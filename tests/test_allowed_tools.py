@@ -1,10 +1,11 @@
 """Tests for allowed-tools parser and executor functionality."""
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock
 
+import pytest
+
+from cognitrix.skills.executor import TOOL_ALIASES, SkillExecutor
 from cognitrix.skills.parser import SkillParser
-from cognitrix.skills.executor import SkillExecutor, TOOL_ALIASES
 
 
 class TestAllowedToolsParser:

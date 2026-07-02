@@ -12,7 +12,6 @@ Requires: wikipedia (pip install wikipedia)
 """
 
 import sys
-from pathlib import Path
 
 
 def main():

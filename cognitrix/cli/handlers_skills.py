@@ -1,19 +1,17 @@
 """CLI handlers for the `cognitrix skills` subcommand."""
 
 import asyncio
-import json
-import sys
 from pathlib import Path
 
 from rich import print as rprint
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Confirm, Prompt
+from rich.table import Table
 
 from cognitrix.skills.manager import get_skill_manager
-from cognitrix.skills.parser import SkillParser, SkillParseError
 from cognitrix.skills.models import SkillEventType
+from cognitrix.skills.parser import SkillParseError, SkillParser
 
 console = Console()
 
@@ -48,7 +46,7 @@ async def _manage_skills_async(args):
                 if '=' in arg:
                     key, value = arg.split('=', 1)
                     skill_args_dict[key] = value
-        
+
         # Build arguments list - combine name (if it looks like a file path) and positional args
         positional_args = []
         if args.name and args.name not in [args.run]:
@@ -56,7 +54,7 @@ async def _manage_skills_async(args):
             positional_args.append(args.name)
         if hasattr(args, 'args') and args.args:
             positional_args.extend(args.args)
-        
+
         # Determine arguments: dict takes priority, then positional args as list
         if skill_args_dict:
             arguments = skill_args_dict
@@ -64,7 +62,7 @@ async def _manage_skills_async(args):
             arguments = positional_args
         else:
             arguments = ''
-        
+
         await _run_skill(manager, args.run, arguments)
     elif args.search:
         await _search_skills(manager, args.search)
@@ -196,10 +194,10 @@ async def _remove_skill(manager, name: str):
 
 async def _run_skill(manager, name: str, arguments: str | list | dict):
     """Run a skill directly from the CLI with streaming output."""
-    from cognitrix.skills.executor import SkillExecutor
-    from cognitrix.providers.base import LLM
-    from cognitrix.models import Agent
     from cognitrix.agents.base import AgentManager
+    from cognitrix.models import Agent
+    from cognitrix.providers.base import LLM
+    from cognitrix.skills.executor import SkillExecutor
     from cognitrix.tools.base import ToolManager
 
     manifest = await manager.get_skill(name)

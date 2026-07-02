@@ -9,15 +9,15 @@ logger = logging.getLogger('cognitrix.log')
 async def start_web_ui(agent):
     """Initialize and start the web UI."""
     import uvicorn
-    from fastapi import WebSocket, Query
     from dotenv import load_dotenv
+    from fastapi import Query, WebSocket
 
-    from cognitrix.utils.ws import WebSocketManager
-    from cognitrix.utils.sse import SSEManager
     from cognitrix.agents import Agent
     from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
-    from cognitrix.tools.base import ToolManager
     from cognitrix.providers import LLM
+    from cognitrix.tools.base import ToolManager
+    from cognitrix.utils.sse import SSEManager
+    from cognitrix.utils.ws import WebSocketManager
 
     from ..api.main import app
     from ..common.security import verify_token
@@ -27,24 +27,24 @@ async def start_web_ui(agent):
     # If no agent is provided, create a default one
     if agent is None:
         from cognitrix.config import settings
-        
+
         # Check if any agents exist
         agents = await Agent.all()
         if not agents:
             logger.info("No agents found. Creating default 'Assistant' agent...")
-            
+
             # Get default provider from settings
             provider = settings.ai_provider
             llm = LLM.load_llm(provider)
-            
+
             if not llm:
                 # Fallback to groq if default fails
                 llm = LLM.load_llm('groq')
-            
+
             if llm:
                 # Get all available tools
                 all_tools = ToolManager.list_all_tools()
-                
+
                 # Create default agent
                 agent = await Agent.create_agent(
                     name="Assistant",
@@ -52,7 +52,7 @@ async def start_web_ui(agent):
                     system_prompt=ASSISTANT_SYSTEM_PROMPT,
                     tools=['all']
                 )
-                
+
                 if agent:
                     agent.tools = all_tools
                     await agent.save()

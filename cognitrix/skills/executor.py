@@ -13,15 +13,15 @@ import asyncio
 import fnmatch
 import logging
 import re
-import shlex
-from typing import Any, AsyncGenerator, TYPE_CHECKING
+from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, Any
 
 from cognitrix.common.safe_exec import run_whitelisted_async
 from cognitrix.skills.models import (
+    RiskLevel,
     SkillEvent,
     SkillEventType,
     SkillManifest,
-    RiskLevel,
 )
 
 if TYPE_CHECKING:
@@ -116,7 +116,7 @@ class SkillExecutor:
             # - str: legacy string format (e.g., "file.pdf medium")
             # - list: positional arguments (e.g., ["file.pdf", "medium"])
             # - dict: structured arguments (e.g., {"file_path": "file.pdf", "depth": "medium"})
-            
+
             # If arguments is already a dict, use it directly as skill_args
             if isinstance(arguments, dict):
                 skill_args = arguments
@@ -134,7 +134,7 @@ class SkillExecutor:
                 else:
                     import shlex
                     args_list = shlex.split(arguments) if arguments else []
-            
+
             # If structured args provided via skill_args parameter, merge them into args_list
             if skill_args and manifest.args:
                 # Map skill args by name to position
@@ -144,7 +144,7 @@ class SkillExecutor:
                         args_list[idx] = str(skill_args[name])
                     else:
                         args_list.append(str(skill_args[name]))
-            
+
             # Auto-build skill_args from positional arguments when not
             # explicitly provided.  This covers CLI slash-command invocations
             # (e.g. /research AI agents 2025) and load_skill calls that
@@ -162,16 +162,16 @@ class SkillExecutor:
                             skill_args[arg_def.name] = args_list[idx]
                     elif arg_def.default is not None:
                         skill_args[arg_def.name] = arg_def.default
-            
+
             # Resolve $(arg name) syntax whenever we have skill_args + definitions
             if skill_args and manifest.args:
                 rendered = self._resolve_arg_syntax(manifest.body, skill_args, manifest.args)
             else:
                 rendered = manifest.body
-            
+
             # Resolve $ARGUMENTS, $N, $ARGUMENTS[N] substitutions
             rendered = self._resolve_arguments(rendered, args_list)
-            
+
             # 2. Resolve environment substitutions (including ${COGNITRIX_SKILL_DIR})
             rendered = self._resolve_env_substitutions(rendered, session, manifest)
 
@@ -269,7 +269,7 @@ class SkillExecutor:
         """
         if not args_list:
             args_list = []
-        
+
         arguments = " ".join(args_list)
         result = body.replace("$ARGUMENTS", arguments)
 

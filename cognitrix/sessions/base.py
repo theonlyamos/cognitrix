@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -9,6 +10,7 @@ from odbms import Model
 from rich import print
 
 from cognitrix.providers.base import LLMResponse
+from cognitrix.safety.approval_gate import OPERATION_BLOCKED_PREFIX
 
 # from cognitrix.teams.base import Team
 
@@ -148,6 +150,8 @@ class Session(Model):
 
         MAX_TOOL_ROUNDS = 10
         tool_rounds = 0
+        last_denied_sig = None
+        stop_turn = False
         try:
             while True:  # The loop now primarily handles tool calls, not initial message processing
                 if tool_rounds >= MAX_TOOL_ROUNDS:
@@ -209,6 +213,29 @@ class Session(Model):
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                                 # If a tool call has a result, add it to history and rebuild the prompt
                                 self.update_history(agent.process_prompt(result))
+
+                                # Deny-loop breaker: if every call in the batch was
+                                # blocked and the model re-issues the exact same
+                                # batch, stop instead of re-prompting for approval
+                                # round after round.
+                                all_blocked = all(
+                                    str(r.get('data', '')).startswith(OPERATION_BLOCKED_PREFIX)
+                                    for r in result['result']
+                                )
+                                sig = json.dumps(
+                                    [(t.get('name'), t.get('arguments')) for t in response.tool_calls],
+                                    sort_keys=True, default=str,
+                                )
+                                if all_blocked and sig == last_denied_sig:
+                                    msg = "Stopped: the requested operation was denied and will not be retried."
+                                    if interface == 'cli':
+                                        output(f"\n{msg}")
+                                    else:
+                                        await output({'type': wsquery.get('type'), 'content': msg, 'action': wsquery.get('action'), 'complete': False})
+                                    stop_turn = True
+                                    break
+                                last_denied_sig = sig if all_blocked else None
+
                                 prompt = await agent.get_context_manager().build_prompt(agent, self)
                                 continue  # Continue the loop to re-prompt the LLM with the tool result
                             else:
@@ -222,6 +249,10 @@ class Session(Model):
                                 await output({'type': wsquery.get('type'), 'content': '', 'action': wsquery.get('action'), 'artifacts': response.artifacts, 'complete': False})
 
                         await asyncio.sleep(0.01)
+
+                    # Deny-loop breaker fired inside the stream loop: end the turn.
+                    if stop_turn:
+                        break
 
                     # Provider/transport error: already surfaced to the user above;
                     # don't persist it as a normal answer or re-prompt the tool loop.

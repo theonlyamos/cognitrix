@@ -1,18 +1,14 @@
 from __future__ import annotations
 
+import contextvars
 import fnmatch
-import json
 import logging
 import os
 import re
-import shutil
 from pathlib import Path
-from typing import Literal, TYPE_CHECKING
-from webbrowser import open_new_tab
 
 import pyautogui
 import requests
-import wikipedia as wk
 from bs4 import BeautifulSoup
 from rich import print
 from tavily import TavilyClient
@@ -190,7 +186,7 @@ def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_
             return _read_pdf(path, page_range)
 
         # Text file reading - existing logic
-        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(path, encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
 
         total_lines = len(lines)
@@ -293,7 +289,7 @@ def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
         if not old_string:
             return "Error: old_string cannot be empty"
 
-        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(path, encoding='utf-8', errors='replace') as f:
             content = f.read()
 
         if old_string not in content:
@@ -371,7 +367,7 @@ def Grep(pattern: str, path: str = ".", include: str | None = None, exclude: str
 
         for file_path in files_to_search:
             try:
-                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                with open(file_path, encoding='utf-8', errors='replace') as f:
                     for line_num, line in enumerate(f, 1):
                         if re.search(pattern, line, flags):
                             results.append({
@@ -488,13 +484,12 @@ def Search(query: str, max_results: int = 10):
     Returns:
         str: Search results with titles, content, and URLs, or error message
     """
-    from tavily import TavilyClient
 
     try:
         api_key = settings.tavily_api_key if settings.tavily_api_key else None
         if not api_key:
             api_key = os.getenv('TAVILY_API_KEY')
-        
+
         if not api_key:
             return "Error: Tavily API key not configured. Set TAVILY_API_KEY environment variable."
 
@@ -689,13 +684,20 @@ async def create_agent(name: str, provider: str, description: str, tools: list[s
 
     return {'status': 'error', 'message': f'Error creating agent "{name}"'}
 
+# Delegation depth for call_agent: bounds agent->agent recursion (A calls B
+# calls A ...). Context-local so concurrent turns don't share a counter.
+_CALL_AGENT_DEPTH = contextvars.ContextVar('call_agent_depth', default=0)
+MAX_AGENT_CALL_DEPTH = 3
+
+
 @tool(category='system')
-async def call_agent(name: str, task: str):
+async def call_agent(name: str, task: str, interface: str = 'task'):
     """Run a task with a sub agent
 
     Args:
         name (str): Name of the agent to call
         task (str): The task|query to perform|answer
+        interface (str): Filled in by the runtime; leave at its default.
 
     Returns:
         str: The result of the task
@@ -703,16 +705,37 @@ async def call_agent(name: str, task: str):
     Raises:
         Exception: If the agent is not found or the task fails
     """
+    depth = _CALL_AGENT_DEPTH.get()
+    if depth >= MAX_AGENT_CALL_DEPTH:
+        return f"Error calling agent: delegation depth limit ({MAX_AGENT_CALL_DEPTH}) reached"
+    token = _CALL_AGENT_DEPTH.set(depth + 1)
     try:
         from cognitrix.agents import Agent  # noqa: WPS433
-        agent = await Agent.load_agent(name)  # type: ignore[attr-defined]
-        if agent:
-            result = agent.call_sub_agent(agent_name=name, task_description=task)
-            return result
-        else:
+        from cognitrix.sessions.base import Session  # noqa: WPS433
+
+        agent = await Agent.find_one({'name': name})
+        if not agent:
             return f"Error calling agent: {name} not found"
+
+        chunks: list[str] = []
+
+        async def capture(payload=None, *args, **kwargs):
+            content = payload.get('content', '') if isinstance(payload, dict) else (str(payload) if payload else '')
+            if content:
+                chunks.append(content)
+
+        # Run the task through the sub-agent's own session loop so it gets
+        # tools, safety checks, and history like any other turn. 'cli' maps to
+        # 'task' because the cli branch prints instead of awaiting the capture
+        # callback; web/ws pass through so risky tools are denied by policy.
+        session_interface = 'task' if interface in ('cli', 'task') else interface
+        session = await Session.get_by_agent_id(str(agent.id))
+        await session(task, agent, session_interface, True, capture, {})
+        return ''.join(chunks).strip() or f"Agent '{name}' returned no output."
     except Exception as e:
         return f"Error calling agent: {str(e)}"
+    finally:
+        _CALL_AGENT_DEPTH.reset(token)
 
 @tool(category='system')
 async def create_new_team(name: str, description: str, agent_names: list[str], leader_name: str | None = None):
@@ -729,8 +752,9 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
     """
 
     try:
+        from cognitrix.teams.base import TeamManager  # noqa: WPS433
+
         team_manager = TeamManager()
-        from cognitrix.teams.base import TeamManager
         new_team = team_manager.create_team(name, description)
         new_team.description = description
 
@@ -758,7 +782,7 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
 
 # REMOVED - Replaced by skills:
 # - internet_search -> internet-search skill
-# - web_scraper -> web-scraper skill  
+# - web_scraper -> web-scraper skill
 # - brave_search -> brave-search skill
 # - wikipedia -> wikipedia skill
 

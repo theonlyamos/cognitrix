@@ -16,12 +16,13 @@ from prompt_toolkit.history import InMemoryHistory
 from rich.console import Console
 from rich.panel import Panel
 
-from .handlers import list_agents, list_tasks, list_teams
-from cognitrix.skills.manager import get_skill_manager
-from cognitrix.skills.executor import SkillExecutor
 from cognitrix.agents.base import AgentManager
+from cognitrix.skills.executor import SkillExecutor
+from cognitrix.skills.manager import get_skill_manager
 from cognitrix.skills.models import SkillEventType
-from cognitrix.tasks.handler import is_multi_step_task, handle_multi_step_task
+from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
+
+from .handlers import list_agents, list_tasks, list_teams
 
 console = Console()
 logger = logging.getLogger('cognitrix.log')
@@ -250,14 +251,14 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
     # Check if the command matches a skill (using cached lookup)
     global _skill_command_cache
     skill_manifest = _skill_command_cache.get(cmd)
-    
+
     if not skill_manifest:
         # Cache miss - try to get from manager
         manager = get_skill_manager()
         skill_manifest = await manager.get_skill(cmd)
         if skill_manifest:
             _skill_command_cache[cmd] = skill_manifest
-    
+
     if skill_manifest:
         agent_manager = AgentManager(agent)
         executor = SkillExecutor(agent_manager=agent_manager, llm=agent.llm)
@@ -532,7 +533,7 @@ async def initialize_shell(session, agent, stream: bool = False):
         # Use cached data if available, otherwise discover
         if not manager._cache:
             await manager.discover_all()
-        
+
         # Build skill command cache for fast lookups
         global _skill_command_cache
         for skill in manager.list_skills_sync():
@@ -615,7 +616,7 @@ async def initialize_shell(session, agent, stream: bool = False):
                     title="[blue]Task Analysis[/blue]",
                     border_style="blue"
                 ))
-                
+
                 try:
                     result = await handle_multi_step_task(
                         query,

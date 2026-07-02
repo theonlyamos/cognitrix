@@ -2,18 +2,16 @@
 Textual-based Terminal User Interface (TUI) for Cognitrix.
 Minimal/Modern design with Catppuccin-inspired theme.
 """
-import asyncio
-from typing import Any
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll, Vertical
-from textual.widgets import Button, Footer, Header, Input, Markdown, Static
-from textual.reactive import reactive
 from textual.binding import Binding
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.reactive import reactive
+from textual.widgets import Footer, Header, Input, Markdown, Static
 
 from cognitrix.agents.base import Agent
 from cognitrix.sessions.base import Session
-from cognitrix.tasks.handler import is_multi_step_task, handle_multi_step_task
+from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 
 CSS = """
 CognitrixApp {
@@ -284,7 +282,7 @@ class ChatBubble(Static):
 
     def compose(self) -> ComposeResult:
         role_label = "You" if self.role == "user" else ("Assistant" if self.role == "agent" else "System")
-        
+
         if self.role == "agent":
             yield Static(role_label, classes="chat-role")
             yield Markdown(self.raw_content, classes="chat-content")
@@ -340,7 +338,7 @@ class CommandPalette(Container):
     def update_results(self):
         results = self.query_one("#palette-results", Vertical)
         results.remove_children()
-        
+
         for i, cmd in enumerate(self.filtered_commands):
             is_selected = i == self.selected_index
             item = Static(
@@ -384,7 +382,7 @@ class CognitrixApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        
+
         with Horizontal(id="app-container"):
             with Container(id="sidebar"):
                 yield Container(
@@ -392,7 +390,7 @@ class CognitrixApp(App):
                     Static(getattr(self.agent, 'description', 'AI Assistant') or "AI Assistant", classes="agent-description"),
                     classes="sidebar-header"
                 )
-                
+
                 with VerticalScroll(id="sidebar-sessions"):
                     yield Static("Sessions", classes="sidebar-section-title")
                     yield Vertical(id="session-list")
@@ -423,7 +421,7 @@ class CognitrixApp(App):
 
     async def on_mount(self) -> None:
         self.query_one("#message-input").focus()
-        
+
         # If there's existing chat history, hide the welcome splash
         if self.app_session.chat:
             self.query_one("#welcome-splash").add_class("hidden")
@@ -459,7 +457,7 @@ class CognitrixApp(App):
 
     async def handle_command_select(self, cmd: dict):
         self.hide_command_palette()
-        
+
         if cmd["id"] == "help":
             self.show_help()
         elif cmd["id"] == "clear":
@@ -493,12 +491,12 @@ class CognitrixApp(App):
         """Load all sessions and populate the sidebar."""
         session_list = self.query_one("#session-list", Vertical)
         session_list.remove_children()
-        
+
         try:
             sessions = await Session.all()
             # Filter to sessions for this agent and sort by datetime
             agent_sessions = [s for s in sessions if s.agent_id == str(self.agent.id)]
-            
+
             for s in agent_sessions:
                 # Build a label from the session datetime or first message
                 label = s.datetime if s.datetime else "Untitled"
@@ -510,7 +508,7 @@ class CognitrixApp(App):
                             if len(msg["content"]) > 24:
                                 label += "..."
                             break
-                
+
                 item = Static(f"→ {label}", classes="session-item")
                 item.session_id = str(s.id)  # type: ignore[attr-defined]
                 if str(s.id) == str(self.app_session.id):
@@ -528,7 +526,7 @@ class CognitrixApp(App):
                 if content and role != "system":
                     speaker = "You" if role == "user" else self.agent.name
                     history_lines.append(f"**{speaker}:** {content[:100]}{'...' if len(content) > 100 else ''}")
-            
+
             if history_lines:
                 self.add_system_message("**Chat History:**\n" + "\n".join(history_lines))
             else:
@@ -563,7 +561,7 @@ class CognitrixApp(App):
         text = event.value.strip()
         if not text:
             return
-        
+
         event.input.value = ""
         await self.send_message(text)
 
@@ -584,15 +582,15 @@ class CognitrixApp(App):
             splash.add_class("hidden")
 
         chat_area = self.query_one("#chat-area", Vertical)
-        
+
         user_bubble = ChatBubble(text, "user")
         await chat_area.mount(user_bubble)
         user_bubble.scroll_visible(animate=False)
-        
+
         self.active_message = ChatBubble("", "agent")
         await chat_area.mount(self.active_message)
         self.active_message.scroll_visible(animate=False)
-        
+
         self.streaming = True
 
         def tui_stream_output(text_chunk: str, *args, **kwargs):
@@ -634,16 +632,13 @@ class CognitrixApp(App):
 
     async def _handle_multistep_task(self, text: str):
         """Handle multi-step tasks in the TUI."""
-        from rich.console import Console
-        from rich.panel import Panel
-        from rich.console import ConsolePanel
 
         chat_area = self.query_one("#chat-area", Vertical)
-        
+
         # Show planning message
         self.active_message = ChatBubble("📋 Planning multi-step task...", "agent")
         await chat_area.mount(self.active_message)
-        
+
         try:
             result = await handle_multi_step_task(
                 text,

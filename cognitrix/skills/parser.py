@@ -18,7 +18,7 @@ from typing import Any
 
 import yaml
 
-from cognitrix.skills.models import SkillManifest, SkillSafety, RiskLevel, SkillArg
+from cognitrix.skills.models import RiskLevel, SkillArg, SkillManifest, SkillSafety
 
 logger = logging.getLogger('cognitrix.log')
 
