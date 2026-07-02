@@ -148,11 +148,48 @@ class SSEManager:
                                 await _q.put(None)
 
                         run_task = asyncio.create_task(_run())
-                        while True:
-                            item = await out_queue.get()
-                            if item is None:
-                                break
-                            yield {'event': 'message', 'data': json.dumps(item)}
-                        await run_task
+                        try:
+                            while True:
+                                item = await out_queue.get()
+                                if item is None:
+                                    break
+                                yield {'event': 'message', 'data': json.dumps(item)}
+                            await run_task
+                        finally:
+                            # If the client disconnected mid-turn the generator is
+                            # closed here; cancel the session task so it doesn't keep
+                            # running (and executing tools) with no consumer.
+                            if not run_task.done():
+                                run_task.cancel()
 
         return EventSourceResponse(event_generator())
+
+
+# Per-(user, agent) SSE managers. A single shared manager caused concurrent
+# clients to share one action queue and one `self.agent`, so one user's messages
+# and agent swaps leaked into another's stream. Keying by (user_id, agent_id)
+# isolates them. ponytail: unbounded map; add an LRU cap if a long-lived process
+# serves many distinct (user, agent) pairs.
+_SSE_MANAGERS: dict[tuple[str, str], SSEManager] = {}
+_MAX_SSE_MANAGERS = 512
+
+
+def get_sse_manager(user_id: str, agent_id: str, agent) -> SSEManager:
+    """Return the SSE manager for this (user, agent), creating it on first use.
+
+    Both the SSE stream (GET) and the chat POST resolve the same key, so they
+    rendezvous on one queue while remaining isolated from other users/agents.
+    """
+    key = (str(user_id), str(agent_id))
+    mgr = _SSE_MANAGERS.get(key)
+    if mgr is None:
+        # Bound memory: evict the oldest entry past the cap. A returning client
+        # simply re-creates its manager on the next request.
+        if len(_SSE_MANAGERS) >= _MAX_SSE_MANAGERS:
+            _SSE_MANAGERS.pop(next(iter(_SSE_MANAGERS)), None)
+        mgr = SSEManager(agent)
+        _SSE_MANAGERS[key] = mgr
+    else:
+        # Refresh the bound agent (it may have been edited/reloaded).
+        mgr.agent = agent
+    return mgr

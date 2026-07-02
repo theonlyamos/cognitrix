@@ -175,18 +175,18 @@ class Session(Model):
                             if interface == 'cli':
                                 output(f"{response.current_chunk}", end="")
                             else:
-                                await output({'type': wsquery['type'], 'content': response.current_chunk, 'action': wsquery['action'], 'complete': False})
+                                await output({'type': wsquery.get('type'), 'content': response.current_chunk, 'action': wsquery.get('action'), 'complete': False})
                         else:
                             if response.result:
                                 if interface == 'cli':
                                     output(f"\n{agent.name}:", response.result)
                                 else:
-                                    await output({'type': wsquery['type'], 'content': response.result, 'action': wsquery['action'], 'complete': False})
+                                    await output({'type': wsquery.get('type'), 'content': response.result, 'action': wsquery.get('action'), 'complete': False})
                             else:
                                 if interface == 'cli':
                                     output(f"\n{agent.name}:", response.llm_response)
                                 else:
-                                    await output({'type': wsquery['type'], 'content': response.llm_response, 'action': wsquery['action'], 'complete': False})
+                                    await output({'type': wsquery.get('type'), 'content': response.llm_response, 'action': wsquery.get('action'), 'complete': False})
 
                         if response.tool_calls and not called_tools:
                             # (interface is threaded into call_tools so approval uses
@@ -215,11 +215,11 @@ class Session(Model):
                                 if interface == 'cli':
                                     output(result)
                                 else:
-                                    await output({'type': wsquery['type'], 'content': result, 'action': wsquery['action'], 'complete': False})
+                                    await output({'type': wsquery.get('type'), 'content': result, 'action': wsquery.get('action'), 'complete': False})
 
                         if response.artifacts:
                             if interface == 'ws':
-                                await output({'type': wsquery['type'], 'content': '', 'action': wsquery['action'], 'artifacts': response.artifacts, 'complete': False})
+                                await output({'type': wsquery.get('type'), 'content': '', 'action': wsquery.get('action'), 'artifacts': response.artifacts, 'complete': False})
 
                         await asyncio.sleep(0.01)
 
