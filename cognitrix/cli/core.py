@@ -149,13 +149,24 @@ async def start(args: Namespace):
         assistant.verbose = args.verbose
         await assistant.save()
 
+        # Resolve the effective prompt: --prompt-file (safe for long/multi-line/
+        # special-character prompts the shell would mangle) wins over --prompt/-p.
+        prompt = args.prompt
+        if getattr(args, 'prompt_file', ''):
+            try:
+                with open(args.prompt_file, encoding='utf-8') as f:
+                    prompt = f.read()
+            except OSError as e:
+                logger.error("Could not read --prompt-file '%s': %s", args.prompt_file, e)
+                sys.exit(1)
+
         # Handle different execution modes
-        if args.prompt:
+        if prompt:
             # Single generation mode - check for multi-step tasks
-            if is_multi_step_task(args.prompt):
+            if is_multi_step_task(prompt):
                 logger.info("Multi-step task detected, creating execution plan...")
                 result = await handle_multi_step_task(
-                    args.prompt,
+                    prompt,
                     assistant,
                     session,
                     assistant.llm,
@@ -163,7 +174,7 @@ async def start(args: Namespace):
                 )
                 print(result)
             else:
-                await session(args.prompt, assistant, stream=args.stream)
+                await session(prompt, assistant, stream=args.stream)
         elif args.ui.lower() == 'web':
             # Web UI mode
             await start_web_ui(assistant)

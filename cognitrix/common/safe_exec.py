@@ -21,13 +21,19 @@ import shlex
 import subprocess
 from pathlib import Path
 
-# Base commands permitted for tool/skill-driven execution. Read-mostly and
-# developer-workflow commands only; nothing that mutates the system broadly.
+# Base commands permitted for tool/skill-driven execution. Read-mostly,
+# developer-workflow, and benign filesystem-scaffolding commands only; nothing
+# that mutates the system broadly. Notably absent: rm/del (destructive) — path
+# deletion goes through the gated delete tools, not the shell. Path arguments
+# are still confined by the forbidden-metacharacter check (no `..`, no
+# redirection, no chaining), so mkdir/mv/cp operate within the working tree.
 DEFAULT_ALLOWED_COMMANDS: frozenset[str] = frozenset({
     'ls', 'dir', 'pwd', 'cat', 'type', 'head', 'tail', 'find', 'grep', 'rg',
     'wc', 'sort', 'uniq', 'awk', 'sed', 'file', 'which', 'where', 'echo',
     'git', 'npm', 'pnpm', 'pip', 'pip3', 'python', 'python3', 'node', 'uv',
     'date', 'whoami', 'hostname', 'uname',
+    # Benign filesystem scaffolding for real build/coding workflows.
+    'mkdir', 'rmdir', 'mv', 'cp', 'touch',
 })
 
 # Shell metacharacters / patterns that must never reach execution. Rejected even
@@ -176,6 +182,7 @@ if __name__ == "__main__":
     # Whitelist + metacharacter rejection
     assert build_argv("git status")[0] == "git"
     assert build_argv("python script.py")[:2] == ["python", "script.py"]  # legit use allowed
+    assert build_argv("mkdir -p src/pkg")[0] == "mkdir"  # benign fs scaffolding allowed
     for bad in ("git status; rm -rf .", "git $(id)", "cat a | sh", "echo x > f",
                 "cat ../secret", "rm -rf /", "curl http://x",
                 # Inline-exec / mutation flags rejected even for allowed base cmds:

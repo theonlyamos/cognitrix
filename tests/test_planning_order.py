@@ -5,6 +5,8 @@ run order. This locks the contract it relies on: a step never runs before the
 steps it depends on (diamond: 1 -> {2,3} -> 4).
 """
 
+import pytest
+
 from cognitrix.planning.structured_planner import Step, StructuredPlanner, TaskPlan
 from cognitrix.tasks.handler import is_multi_step_task
 
@@ -74,3 +76,64 @@ def test_topological_fallback_tolerates_cycle():
     order = _topological_fallback(steps)
     assert sorted(order) == [1, 2, 3]
     assert order[0] == 3  # the resolvable step comes first
+
+
+def test_step_summary_fallback_for_tool_heavy_step():
+    import types
+
+    from cognitrix.tasks.handler import _summarize_recent_activity
+    # No final assistant text -> summarize the tools it invoked.
+    s = types.SimpleNamespace(chat=[
+        {"role": "assistant", "type": "tool_calls", "tool_calls": [{"name": "Write"}, {"name": "Write"}]},
+        {"role": "tool", "content": "ok"},
+        {"role": "assistant", "type": "tool_calls", "tool_calls": [{"name": "Bash"}]},
+        {"role": "system", "type": "turn_timing", "content": "Took 3s"},
+    ])
+    out = _summarize_recent_activity(s)
+    assert "3 tool call" in out and "Write (x2)" in out and "Bash" in out
+
+
+def test_step_summary_prefers_final_text():
+    import types
+
+    from cognitrix.tasks.handler import _summarize_recent_activity
+    s = types.SimpleNamespace(chat=[
+        {"role": "assistant", "type": "tool_calls", "tool_calls": [{"name": "Read"}]},
+        {"role": "assistant", "type": "text", "content": "Done: created 4 files."},
+        {"role": "system", "type": "turn_timing", "content": "x"},
+    ])
+    assert _summarize_recent_activity(s) == "Done: created 4 files."
+
+
+def test_referenced_paths_ignores_version_numbers():
+    from cognitrix.tasks.handler import _referenced_paths
+    assert _referenced_paths("version 1.0.0 and build 2.3") == []
+    assert set(_referenced_paths("create REPORT.md and src/main.py")) == {"REPORT.md", "src/main.py"}
+
+
+@pytest.mark.asyncio
+async def test_verify_step_checks_real_file(tmp_path, monkeypatch):
+    from cognitrix.config import settings
+    from cognitrix.tasks.handler import verify_step
+    monkeypatch.setattr(settings, "tools_root", str(tmp_path), raising=False)
+
+    step = {"verification_criteria": "A file REPORT.md exists with the summary",
+            "expected_output": "", "description": ""}
+    # File not created yet -> the previous text-only verifier said NO too, but
+    # now it's a real filesystem fact.
+    assert await verify_step(step, "I wrote the report") is False
+    # Create it in a subdir -> found via basename search -> True.
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "REPORT.md").write_text("done")
+    assert await verify_step(step, "I wrote the report") is True
+
+
+@pytest.mark.asyncio
+async def test_verify_step_nonfile_uses_output(tmp_path, monkeypatch):
+    from cognitrix.config import settings
+    from cognitrix.tasks.handler import verify_step
+    monkeypatch.setattr(settings, "tools_root", str(tmp_path), raising=False)
+    step = {"verification_criteria": "The tests pass", "expected_output": "", "description": ""}
+    assert await verify_step(step, "All 3 tests passed") is True
+    assert await verify_step(step, "Error: something broke") is False
+    assert await verify_step(step, "") is False

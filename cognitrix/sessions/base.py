@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -36,6 +37,12 @@ def format_duration(seconds: float) -> str:
 # the shaped window, so this just bounds memory/serialization growth
 # over very long sessions. ponytail: fixed cap; make configurable if needed.
 MAX_CHAT_HISTORY = 1000
+
+# Max tool-call rounds in a single turn before the loop stops (guards against a
+# model that never stops calling tools). 10 was too low for build-style steps
+# (creating several files is >10 tool calls), which cut steps off mid-work;
+# 25 fits real multi-file steps while still bounding runaway loops. Configurable.
+MAX_TOOL_ROUNDS = int(os.getenv('COGNITRIX_MAX_TOOL_ROUNDS', '25'))
 
 # Compaction: when the stored history estimate crosses this fraction of the
 # model's usable window, fold the oldest turns into a summary message.
@@ -214,7 +221,6 @@ class Session(Model):
         # list is embedded in the system prompt (AgentManager.formatted_system_prompt).
         active_tools = formatted_tools if agent.llm.supports_tool_use else None
 
-        MAX_TOOL_ROUNDS = 10
         tool_rounds = 0
         last_denied_sig = None
         stop_turn = False
@@ -222,8 +228,13 @@ class Session(Model):
             while True:  # The loop now primarily handles tool calls, not initial message processing
                 if tool_rounds >= MAX_TOOL_ROUNDS:
                     logger.warning("Exceeded max tool rounds (%s); stopping turn", MAX_TOOL_ROUNDS)
+                    stop_msg = f"[Stopped after {MAX_TOOL_ROUNDS} tool rounds]"
                     if interface == 'cli':
-                        output(f"\n[Stopped after {MAX_TOOL_ROUNDS} tool rounds]")
+                        output(f"\n{stop_msg}")
+                    else:
+                        # Surface to non-cli consumers (e.g. the multi-step step
+                        # capture) so the step output isn't silently empty.
+                        await output({'type': wsquery.get('type'), 'content': stop_msg, 'action': wsquery.get('action'), 'complete': False})
                     break
                 try:
                     response: LLMResponse = LLMResponse()

@@ -806,20 +806,25 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
 
 @tool(category='system')
 def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(Path.cwd())) -> str:
-    """Execute a bash/terminal command safely with restrictions.
+    """Execute a single whitelisted terminal command.
+
+    Only one command runs per call — command chaining and shell operators
+    (`;`, `&&`, `|`, `>`, `$()`, backticks, `..`) are rejected, and only
+    whitelisted base commands are allowed (ls, cat, grep, find, git, python,
+    pip, node, npm, mkdir, mv, cp, touch, ...). To run a command inside a
+    subdirectory (e.g. run tests for a package that lives in a subfolder), pass
+    that folder as working_dir rather than using `cd` — e.g. bash("python -m
+    pytest tests", working_dir="myproject"). `python -c`/`node -e` inline code is
+    not allowed; put code in a file and run the file instead.
 
     Args:
-        command (str): The command to execute. Only whitelisted commands are allowed.
-        timeout (int, optional): Maximum execution time in seconds. Defaults to 30.
-        working_dir (str, optional): Working directory for command execution. Defaults to current directory.
+        command (str): The single command to execute (no chaining).
+        timeout (int, optional): Maximum execution time in seconds.
+        working_dir (str, optional): Directory to run the command in. Use this
+            instead of `cd` to operate in a subfolder. Defaults to current dir.
 
     Returns:
         str: Command output or error message.
-
-    Warning:
-        This tool only allows specific whitelisted commands for security.
-        Commands are sanitized before execution.
-        Use with caution as it interacts with the system directly.
     """
     # Validate and resolve the working directory
     if working_dir:

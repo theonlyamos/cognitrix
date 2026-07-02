@@ -2,6 +2,9 @@
 
 import hashlib
 import logging
+import os
+import re
+from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
@@ -252,7 +255,7 @@ async def handle_multi_step_task(
                 results.append(result)
 
                 # Verify step completion
-                if not await verify_step(step, step_output, llm):
+                if not await verify_step(step, step_output):
                     console.print(Panel(
                         f"[bold yellow]Step {step['step_number']} may be incomplete[/bold yellow]\n"
                         f"Output: {step_output[:200]}...",
@@ -332,51 +335,104 @@ async def execute_step(
         {}
     )
 
-    return response
+    # A tool-heavy step (or one that hit the tool-round cap) can stream no final
+    # text — fall back to a summary of what it actually did so the synthesized
+    # report and verification aren't blank.
+    result = response.strip()
+    if not result:
+        result = _summarize_recent_activity(session)
+    return result or "(step completed with no textual output)"
 
 
-async def verify_step(step: dict, output: str, llm: LLM) -> bool:
-    """Verify if a step completed successfully."""
+def _summarize_recent_activity(session, window: int = 24) -> str:
+    """Best-effort summary of a step's turn from the session tail: the last
+    assistant text, else a tally of the tools it invoked."""
+    from collections import Counter
 
-    verification_criteria = step.get("verification_criteria", "")
+    msgs = session.chat[-window:] if session and session.chat else []
+    for m in reversed(msgs):
+        if str(m.get('role', '')).lower() == 'assistant' and m.get('type') == 'text':
+            content = str(m.get('content') or '').strip()
+            if content:
+                return content
+    tools = [tc.get('name') for m in msgs for tc in (m.get('tool_calls') or []) if tc.get('name')]
+    if tools:
+        tally = ', '.join(f"{n} (x{c})" if c > 1 else n for n, c in Counter(tools).items())
+        return f"Completed {len(tools)} tool call(s): {tally}."
+    return ""
 
-    if not verification_criteria:
-        return len(output) > 10
 
-    prompt = f"""You are a verifier. Check if the step output meets the verification criteria.
+# Path-like tokens with a known code/doc extension (avoids matching version
+# numbers like "1.0.0"). Used to verify file-producing steps by their actual
+# side effects rather than an LLM's opinion of the narration.
+_KNOWN_EXT = (
+    'py|md|txt|json|toml|yaml|yml|cfg|ini|js|ts|tsx|jsx|html|css|csv|rst|sh|'
+    'log|xml|sql|go|rs|java|c|cpp|h|env|lock'
+)
+_PATH_TOKEN_RE = re.compile(rf'[A-Za-z0-9_./\\-]+\.(?:{_KNOWN_EXT})\b')
+_SKIP_DIRS = {
+    '.git', '__pycache__', 'node_modules', '.venv', 'venv', '.mypy_cache',
+    '.pytest_cache', '.ruff_cache', 'dist', 'build', '.tox',
+}
 
-Step: {step['title']}
-Description: {step['description']}
-Verification Criteria: {verification_criteria}
 
-Output:
-{output[:1000]}
+def _referenced_paths(text: str) -> list[str]:
+    """File paths a step's spec says it should produce."""
+    return list(dict.fromkeys(_PATH_TOKEN_RE.findall(text or '')))
 
-Does this output meet the verification criteria? Answer YES or NO with a brief explanation.
-If NO, specify what's missing."""
 
-    messages = [
-        {'role': 'system', 'content': 'You are a verification assistant. Answer YES or NO.'},
-        {'role': 'user', 'content': prompt}
-    ]
-
+def _nonempty_file(p: Path) -> bool:
     try:
-        response = await llm(messages, stream=False)
+        return p.is_file() and p.stat().st_size > 0
+    except OSError:
+        return False
 
-        if hasattr(response, 'llm_response'):
-            response_text = response.llm_response
-        else:
-            response_text = ""
-            async for chunk in response:
-                if hasattr(chunk, 'current_chunk'):
-                    response_text += chunk.current_chunk
-                elif isinstance(chunk, str):
-                    response_text += chunk
 
-        return response_text.strip().lower().startswith('yes')
+def _file_present(candidate: str, root: Path) -> bool:
+    """Does the referenced file now exist (non-empty)? Tries the path as given
+    (relative to root or absolute), then a bounded search for its basename so a
+    bare 'REPORT.md' still matches 'live_build/REPORT.md'."""
+    p = Path(candidate)
+    if _nonempty_file(p if p.is_absolute() else root / p):
+        return True
+    name = p.name
+    if not name:
+        return False
+    checked = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        if name in filenames and _nonempty_file(Path(dirpath) / name):
+            return True
+        checked += len(filenames)
+        if checked > 4000:
+            break
+    return False
 
-    except Exception:
-        return len(output) > 50
+
+def _looks_like_error(text: str) -> bool:
+    t = (text or '').strip().lower()
+    return (not t) or t.startswith('error') or 'traceback (most recent call last)' in t
+
+
+async def verify_step(step: dict, output: str, llm: LLM | None = None) -> bool:
+    """Verify a step by its actual side effects, not a text-only LLM opinion.
+
+    - If the step's spec references concrete file paths, it's verified when at
+      least one of them now exists on disk (the previous LLM verifier could not
+      see the filesystem, so it returned false 'incomplete' on successful file-
+      producing steps).
+    - Otherwise fall back to the output heuristic (non-empty, not an error)
+      rather than a second, unreliable LLM call.
+    """
+    spec = ' '.join(str(step.get(k, '') or '') for k in
+                    ('verification_criteria', 'expected_output', 'description'))
+    referenced = _referenced_paths(spec)
+    if referenced:
+        from cognitrix.config import settings
+        root = Path(getattr(settings, 'tools_root', None) or Path.cwd())
+        return any(_file_present(c, root) for c in referenced)
+
+    return not _looks_like_error(output)
 
 
 def synthesize_results(tracker, task_id: str, original_query: str) -> str:
