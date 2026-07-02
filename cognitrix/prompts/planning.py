@@ -63,15 +63,13 @@ PLANNING_SYSTEM_PROMPT = """You are an expert task planner. Break down complex t
 - Each step must have clear verification criteria
 - Mark dependencies explicitly (steps that must complete before this one)
 - Identify steps that can run in parallel
-- Assign steps to appropriate agent types based on their capabilities
 - Consider tool requirements for each step
 
-## Agent Types Reference
-- "researcher": Web search, data gathering, analysis
-- "coder": Code writing, debugging, technical implementation
-- "writer": Content creation, documentation, summaries
-- "reviewer": Code review, fact-checking, quality assurance
-- "auto": Let the system decide based on step content
+## Assigning agents
+- Set "assigned_agent" to one of the names listed under "## Available Agents"
+  in the task message, choosing the best fit for the step.
+- If no listed agent fits (or you are unsure), use "auto" and the system will
+  route the step automatically. Never invent agent names.
 
 ## Critical Requirements
 - ALWAYS verify completion before moving to next step

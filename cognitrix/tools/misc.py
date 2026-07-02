@@ -6,12 +6,9 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import Any
 
-import pyautogui
-import requests
-from bs4 import BeautifulSoup
 from rich import print
-from tavily import TavilyClient
 
 from cognitrix.common.safe_exec import (
     DEFAULT_TIMEOUT,
@@ -29,6 +26,15 @@ logging.basicConfig(
     level=logging.WARNING
 )
 logger = logging.getLogger('cognitrix.log')
+
+
+def _pyautogui():
+    """Import pyautogui lazily. It (and its tkinter/cv2 deps) added ~0.15s+ to
+    every startup and can crash on import in a headless server/worker, yet is
+    only used by the screen-automation tools. Cached by sys.modules after first
+    import."""
+    import pyautogui
+    return pyautogui
 
 def get_file_content(full_path: Path):
     with full_path.open('rt') as file:
@@ -486,6 +492,10 @@ def Search(query: str, max_results: int = 10):
     """
 
     try:
+        # Lazy import: tavily (and its transitive cohere dep) added ~0.7s+ to
+        # every startup but is only needed when the Search tool actually runs.
+        from tavily import TavilyClient
+
         api_key = settings.tavily_api_key if settings.tavily_api_key else None
         if not api_key:
             api_key = os.getenv('TAVILY_API_KEY')
@@ -530,6 +540,9 @@ def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
         - Longer content: WebFetch("https://example.com", max_length=10000)
     """
     try:
+        import requests
+        from bs4 import BeautifulSoup
+
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
@@ -566,7 +579,7 @@ def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
 @tool(category='system')
 def take_screenshot():
     """Use this tool to take a screenshot of the screen."""
-    screenshot = pyautogui.screenshot()
+    screenshot = _pyautogui().screenshot()
 
     return ['image', screenshot]
 
@@ -579,7 +592,7 @@ def text_input(text: str):
     Returns:
         str: Text input completed.
     """
-    pyautogui.write(text, 0.15)
+    _pyautogui().write(text, 0.15)
 
     return 'Text input completed'
 
@@ -592,7 +605,7 @@ def key_press(key: str):
     Returns:
         str: Keypress completed.
     """
-    pyautogui.press(key.lower())
+    _pyautogui().press(key.lower())
 
     return 'Keypress completed'
 
@@ -605,7 +618,7 @@ def hot_key(hotkeys: list):
     Returns:
         str: Keypress completed.
     """
-    pyautogui.hotkey(*hotkeys)
+    _pyautogui().hotkey(*hotkeys)
 
     return 'Keypress completed'
 
@@ -619,7 +632,7 @@ def mouse_click(x: int, y: int):
     Returns:
         str: Mouse click completed.
     """
-    pyautogui.click(x, y)
+    _pyautogui().click(x, y)
 
     return 'Mouse Click completed'
 
@@ -633,7 +646,7 @@ def mouse_double_click(x: int, y: int):
     Returns:
         str: Mouse double-click completed.
     """
-    pyautogui.doubleClick(x, y)
+    _pyautogui().doubleClick(x, y)
 
     return 'Mouse double-click completed.'
 
@@ -647,7 +660,7 @@ def mouse_right_click(x: int, y: int):
     Returns:
         str: Mouse right-click completed.
     """
-    pyautogui.rightClick(x, y)
+    _pyautogui().rightClick(x, y)
 
     return 'Mouse double-click completed.'
 

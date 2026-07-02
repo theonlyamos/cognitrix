@@ -59,6 +59,14 @@ Available Tools: {[t.name for t in agent.tools]}
 Capabilities: Can perform tasks related to {', '.join(specialties)}
         """.strip()
 
+        # Skip re-encoding an unchanged agent — route_task registers every agent
+        # on every call, so this avoided N*M redundant CPU-blocking embeddings
+        # per plan.
+        existing = self.agents.get(agent.id)
+        if existing is not None and existing.description == capability_text:
+            existing.agent = agent
+            return
+
         # Generate embedding off the event loop (encode() is CPU-blocking)
         loop = asyncio.get_event_loop()
         embedding = await loop.run_in_executor(None, self.embedding_model.encode, capability_text)

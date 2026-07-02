@@ -46,7 +46,6 @@ numpy = "^2.0.0"
 # Web Framework
 fastapi = "^0.112.0"
 uvicorn = "^0.30.1"
-flask = "^3.0.3"
 sse-starlette = "^2.1.2"
 python-multipart = "^0.0.9"
 
@@ -54,11 +53,8 @@ python-multipart = "^0.0.9"
 pillow = "^10.2.0"
 pyautogui = "^0.9.54"
 beautifulsoup4 = "^4.12.3"
-pyaudio = "^0.2.14"
-pydub = "^0.25.1"
 wikipedia = "^1.4.0"
 tavily-python = "^0.3.3"
-deepgram-sdk = "==3.*"
 xmltodict = "^0.13.0"
 pymupdf = "^1.27.2"
 
@@ -71,7 +67,6 @@ pyjwt = "^2.8.0"
 rich = ">=13.7.1"
 celery = {extras = ["redis"], version = "^5.4.0"}
 pyyaml = "^6.0"
-RestrictedPython = "^7.0"
 
 # MCP (Model Context Protocol)
 mcp = {extras = ["cli"], version = "^1.9.1"}

@@ -3,6 +3,7 @@ Dynamic MCP client for connecting to multiple server types.
 Handles STDIO, SSE, and HTTP MCP server connections.
 """
 
+import asyncio
 import logging
 import platform
 import shutil
@@ -20,6 +21,10 @@ from cognitrix.mcp.server_manager import MCPServerConfig, MCPTransportType
 from cognitrix.mcp.status import update_connection_status
 
 logger = logging.getLogger('cognitrix.log')
+
+# A hung/slow MCP server must not wedge the agent turn (and the shared event
+# loop) forever. Cap every server call.
+DEFAULT_MCP_TIMEOUT = 30
 
 class DynamicMCPClient:
     """Dynamic MCP client that can connect to multiple server types"""
@@ -272,7 +277,7 @@ class DynamicMCPClient:
 
         try:
             session = self.sessions[server_name]
-            response = await session.list_tools()
+            response = await asyncio.wait_for(session.list_tools(), timeout=DEFAULT_MCP_TIMEOUT)
             return [
                 {
                     'name': tool.name,
@@ -281,6 +286,9 @@ class DynamicMCPClient:
                 }
                 for tool in response.tools
             ]
+        except TimeoutError:
+            logger.error(f"Timeout listing tools for server {server_name} after {DEFAULT_MCP_TIMEOUT}s")
+            return None
         except Exception as e:
             logger.error(f"Error listing tools for server {server_name}: {e}")
             return None
@@ -293,8 +301,13 @@ class DynamicMCPClient:
 
         try:
             session = self.sessions[server_name]
-            result = await session.call_tool(tool_name, arguments)
+            result = await asyncio.wait_for(
+                session.call_tool(tool_name, arguments), timeout=DEFAULT_MCP_TIMEOUT
+            )
             return result.content
+        except TimeoutError:
+            logger.error(f"Timeout calling tool {tool_name} on {server_name} after {DEFAULT_MCP_TIMEOUT}s")
+            return f"Error: MCP tool '{tool_name}' timed out after {DEFAULT_MCP_TIMEOUT}s"
         except Exception as e:
             logger.error(f"Error calling tool {tool_name} on server {server_name}: {e}")
             return None
@@ -352,10 +365,34 @@ class DynamicMCPClient:
 
 # Global dynamic client instance
 _dynamic_client = None
+_cleanup_registered = False
 
 async def get_dynamic_client():
     """Get or create the global dynamic client"""
-    global _dynamic_client
+    global _dynamic_client, _cleanup_registered
     if _dynamic_client is None:
         _dynamic_client = DynamicMCPClient()
+        if not _cleanup_registered:
+            import atexit
+            atexit.register(_shutdown_dynamic_client_atexit)
+            _cleanup_registered = True
     return _dynamic_client
+
+
+def _shutdown_dynamic_client_atexit():
+    """Best-effort teardown of MCP stdio subprocesses at interpreter exit so
+    they aren't orphaned. ponytail: sessions were opened on the app loop; if
+    it's already closed, aclose() may fail — swallow and rely on OS child
+    reaping as the backstop. Timeout-bounded so a hung server can't wedge exit."""
+    client = _dynamic_client
+    if client is None or not getattr(client, 'exit_stacks', None):
+        return
+    try:
+        asyncio.get_running_loop()
+        return  # a loop is still running; skip (avoid nested-run errors)
+    except RuntimeError:
+        pass
+    try:
+        asyncio.run(asyncio.wait_for(client.disconnect_all(), timeout=5))
+    except Exception as e:
+        logger.debug(f"MCP atexit cleanup incomplete: {e}")

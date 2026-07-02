@@ -45,3 +45,32 @@ class TestMultiStepRouting:
         assert is_multi_step_task("find hotels and book catering")
         assert is_multi_step_task("plan a trip then research restaurants")
         assert is_multi_step_task("1. gather data\n2. write the report")
+
+
+def test_topological_fallback_respects_deps():
+    from cognitrix.tasks.handler import _topological_fallback
+    # Diamond: 1 -> {2,3} -> 4, deliberately out of order in the plan list.
+    steps = [
+        {"step_number": 4, "dependencies": [2, 3]},
+        {"step_number": 2, "dependencies": [1]},
+        {"step_number": 3, "dependencies": [1]},
+        {"step_number": 1, "dependencies": []},
+    ]
+    order = _topological_fallback(steps)
+    assert order.index(1) < order.index(2)
+    assert order.index(1) < order.index(3)
+    assert order.index(2) < order.index(4)
+    assert order.index(3) < order.index(4)
+
+
+def test_topological_fallback_tolerates_cycle():
+    from cognitrix.tasks.handler import _topological_fallback
+    # 1<->2 cycle plus an independent 3; must return all steps, not hang.
+    steps = [
+        {"step_number": 1, "dependencies": [2]},
+        {"step_number": 2, "dependencies": [1]},
+        {"step_number": 3, "dependencies": []},
+    ]
+    order = _topological_fallback(steps)
+    assert sorted(order) == [1, 2, 3]
+    assert order[0] == 3  # the resolvable step comes first

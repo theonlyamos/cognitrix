@@ -41,6 +41,11 @@ class TaskContext:
 class TaskTracker:
     """Tracks progress of multi-step tasks and accumulates results."""
 
+    # Bound retained tasks: this is a process-global singleton and start_task is
+    # not reliably paired with cancel_task (a crash mid-task skips cleanup), so
+    # cap it to avoid unbounded growth over a long-running process.
+    MAX_TRACKED_TASKS = 100
+
     def __init__(self):
         self.tasks: dict[str, TaskContext] = {}
         self.step_results: dict[str, list[StepResult]] = {}
@@ -56,6 +61,11 @@ class TaskTracker:
         constraints: list[str] = None
     ):
         """Initialize tracking for a new task."""
+        # Evict the oldest tracked task(s) once over the cap.
+        while len(self.tasks) >= self.MAX_TRACKED_TASKS:
+            oldest = next(iter(self.tasks))
+            self.cancel_task(oldest)
+
         self.tasks[task_id] = TaskContext(
             original_goal=goal,
             budget=budget,

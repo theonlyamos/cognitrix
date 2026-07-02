@@ -293,12 +293,27 @@ class ChatBubble(Static):
     def update_content(self, new_chunk: str):
         self.raw_content += new_chunk
         if self.role == "agent":
-            for md in self.query(Markdown):
-                md.update(self.raw_content)
+            self.render_markdown()
         else:
             for content in self.query(Static):
                 if "chat-content" in content.classes:
                     content.update(self.raw_content)
+
+    def set_content(self, content: str):
+        """Replace (not append) the bubble's content and re-render."""
+        self.raw_content = content
+        if self.role == "agent":
+            self.render_markdown()
+        else:
+            for c in self.query(Static):
+                if "chat-content" in c.classes:
+                    c.update(self.raw_content)
+
+    def render_markdown(self):
+        """Re-parse and render the accumulated Markdown. Called on a throttle
+        during streaming (not per token) to avoid O(n^2) re-parsing."""
+        for md in self.query(Markdown):
+            md.update(self.raw_content)
 
 
 class CommandPalette(Container):
@@ -379,6 +394,8 @@ class CognitrixApp(App):
         self.app_session = session
         self.active_message = None
         self.streaming = False
+        self._md_timer = None
+        self._md_dirty = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -571,6 +588,13 @@ class CognitrixApp(App):
             self.exit()
             return
 
+        # Ignore a new prompt while one is still streaming: send_message shares
+        # active_message / the render timer, so a concurrent turn would cross
+        # streams into the wrong bubble and orphan the timer.
+        if self.streaming:
+            self.add_system_message("_Still responding — please wait for the current reply to finish._")
+            return
+
         # Check for multi-step tasks
         if is_multi_step_task(text):
             await self._handle_multistep_task(text)
@@ -587,37 +611,49 @@ class CognitrixApp(App):
         await chat_area.mount(user_bubble)
         user_bubble.scroll_visible(animate=False)
 
+        await self._stream_response(text)
+
+    async def _stream_response(self, text: str):
+        """Stream one agent turn into a fresh bubble.
+
+        Runs on the app's own event loop (a throwaway per-message loop broke the
+        cached async LLM client on the second message), and coalesces Markdown
+        re-renders on a timer instead of re-parsing per token.
+        """
+        chat_area = self.query_one("#chat-area", Vertical)
         self.active_message = ChatBubble("", "agent")
         await chat_area.mount(self.active_message)
         self.active_message.scroll_visible(animate=False)
 
         self.streaming = True
+        self._md_dirty = False
+        self._md_timer = self.set_interval(1 / 15, self._flush_active_markdown)
 
         def tui_stream_output(text_chunk: str, *args, **kwargs):
-            if isinstance(text_chunk, str):
-                self.call_from_thread(self._update_active_message, text_chunk)
+            # Called synchronously by the session on the app loop; just buffer
+            # the text and let the timer flush the render.
+            if isinstance(text_chunk, str) and self.active_message:
+                self.active_message.raw_content += text_chunk
+                self._md_dirty = True
 
-        def run_session_sync():
-            """Run session in a worker thread so call_from_thread works."""
-            import asyncio as _asyncio
-            loop = _asyncio.new_event_loop()
+        async def run_session():
             try:
-                loop.run_until_complete(
-                    self.app_session(
-                        text,
-                        self.agent,
-                        interface="cli",
-                        stream=True,
-                        output=tui_stream_output
-                    )
+                await self.app_session(
+                    text, self.agent, interface="cli", stream=True,
+                    output=tui_stream_output,
                 )
             except Exception as e:
-                self.call_from_thread(self._add_error, str(e))
+                self._add_error(str(e))
             finally:
-                loop.close()
-                self.call_from_thread(self._finish_streaming)
+                self._finish_streaming()
 
-        self.run_worker(run_session_sync, thread=True)
+        self.run_worker(run_session(), exclusive=False)
+
+    def _flush_active_markdown(self):
+        if self._md_dirty and self.active_message:
+            self.active_message.render_markdown()
+            self.active_message.scroll_visible(animate=False)
+            self._md_dirty = False
 
     def _update_active_message(self, chunk: str):
         if self.active_message:
@@ -629,6 +665,13 @@ class CognitrixApp(App):
 
     def _finish_streaming(self):
         self.streaming = False
+        if self._md_timer is not None:
+            self._md_timer.stop()
+            self._md_timer = None
+        # Final flush so the complete response is rendered.
+        if self.active_message:
+            self.active_message.render_markdown()
+            self.active_message.scroll_visible(animate=False)
 
     async def _handle_multistep_task(self, text: str):
         """Handle multi-step tasks in the TUI."""
@@ -640,17 +683,32 @@ class CognitrixApp(App):
         await chat_area.mount(self.active_message)
 
         try:
-            result = await handle_multi_step_task(
-                text,
-                self.agent,
-                self.app_session,
-                self.agent.llm,
-                stream=False
-            )
+            # The task handler prints Rich Panels to a module-level console; in
+            # the TUI that would corrupt the display. Redirect just that console
+            # to a buffer for the duration (Textual keeps rendering to stdout).
+            import io
+
+            from rich.console import Console as _Console
+
+            from cognitrix.tasks import handler as _handler
+            _old_console = _handler.console
+            _handler.console = _Console(file=io.StringIO())
+            try:
+                result = await handle_multi_step_task(
+                    text,
+                    self.agent,
+                    self.app_session,
+                    self.agent.llm,
+                    stream=False
+                )
+            finally:
+                _handler.console = _old_console
             # Replace the planning message with the result
-            self.active_message.update_content(result)
+            self.active_message.set_content(result)
         except Exception as e:
-            self.active_message.update_content(f"⚠️ Multi-step handling failed: {str(e)}\n\nFalling back to standard processing...")
-            # Fall back to normal session
-            await self.send_message(text)
+            self.active_message.set_content(f"⚠️ Multi-step handling failed: {str(e)}\n\nFalling back to standard processing...")
+            # Fall back to the normal streaming path directly. Calling
+            # send_message() would re-detect a multi-step task and recurse here
+            # forever.
+            await self._stream_response(text)
 

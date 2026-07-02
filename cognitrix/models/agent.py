@@ -3,7 +3,6 @@ from collections.abc import Callable
 from enum import Enum
 from typing import Any, Self
 
-from fastapi import WebSocket
 from odbms import Model
 from pydantic import Field
 
@@ -101,8 +100,10 @@ class Agent(Model):
     autostart: bool = False
     """Whether the agent should start running as soon as it's created"""
 
-    websocket: WebSocket | None = None
-    """Websocket connection for web ui"""
+    websocket: Any = None
+    """Websocket connection for web ui (typed Any to avoid importing fastapi at
+    module scope just for this annotation — it added ~1s to every startup and is
+    only assigned/duck-typed by the web path)."""
 
     inbox: list[Message] = Field(default=[])
     """List of messages for the agent"""

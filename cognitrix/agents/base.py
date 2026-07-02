@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING, Any, Optional, TypeAlias
 from rich import print
 
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
-from cognitrix.mcp.client import get_dynamic_client
-from cognitrix.models import Agent, MCPTool, Message, Tool
+from cognitrix.models import Agent, Message, Tool
 from cognitrix.providers.base import LLM
 from cognitrix.safety.approval_gate import OPERATION_BLOCKED_PREFIX, ApprovalGate, ToolCall
 from cognitrix.safety.destructive_ops import DestructiveOpDetector
@@ -378,29 +377,25 @@ class AgentManager:
             await self.import_mcp_tools(server)
 
     async def import_mcp_tools(self, server: str):
-        mcp_client = get_dynamic_client(server)
-        if mcp_client:
-            try:
-                available_tools = await mcp_client.list_tools()
-                for tool_def in available_tools:
-                    def create_mcp_tool_runner(server_name, tool_name_to_call):
-                        async def mcp_tool_runner(**kwargs):
-                            client = get_dynamic_client(server_name)
-                            if not client:
-                                return f"MCP client for server '{server_name}' not found."
-                            return await client.run_tool(tool_name_to_call, kwargs)
-                        return mcp_tool_runner
+        """Import tools from a single connected MCP server.
 
-                    mcp_tool = MCPTool(
-                        name=tool_def['name'],
-                        description=tool_def['description'],
-                        category='mcp',
-                        mcp_schema=tool_def.get('parameters', {}),
-                        run=create_mcp_tool_runner(server, tool_def['name'])
-                    )
-                    self.add_tool(mcp_tool)
-            except Exception as e:
-                logger.error(f"Failed to import tools from MCP server '{server}': {e}")
+        Uses the shared, working client API + wrapper factory (the previous
+        bespoke implementation called a no-arg async factory with an argument,
+        never awaited it, and used a nonexistent client.run_tool method).
+        """
+        try:
+            from cognitrix.mcp.client import get_dynamic_client
+            from cognitrix.mcp.tools import create_mcp_tool_wrapper
+
+            client = await get_dynamic_client()
+            if not client.is_connected(server):
+                logger.warning("MCP server '%s' is not connected; skipping tool import", server)
+                return
+            tools_list = await client.list_tools(server)
+            for tool_def in (tools_list or []):
+                self.add_tool(create_mcp_tool_wrapper(server, tool_def))
+        except Exception as e:
+            logger.error(f"Failed to import tools from MCP server '{server}': {e}")
 
     @staticmethod
     async def create_agent(name: str, system_prompt: str, provider: str | dict[str, Any] = 'groq',

@@ -17,6 +17,30 @@ console = Console()
 logger = logging.getLogger('cognitrix.log')
 
 
+def _topological_fallback(workflow_steps: list[dict]) -> list[int]:
+    """Order steps respecting their dependencies (Kahn's algorithm) when the
+    planner's own ordering fails. Falls back to raw plan order only for the
+    steps left in a dependency cycle, instead of silently ignoring deps."""
+    nums = [s["step_number"] for s in workflow_steps]
+    deps = {s["step_number"]: [d for d in (s.get("dependencies") or []) if d in nums] for s in workflow_steps}
+    ordered: list[int] = []
+    resolved: set[int] = set()
+    # Repeatedly emit steps whose deps are all resolved (stable by plan order).
+    progressed = True
+    while progressed and len(ordered) < len(nums):
+        progressed = False
+        for n in nums:
+            if n not in resolved and all(d in resolved for d in deps[n]):
+                ordered.append(n)
+                resolved.add(n)
+                progressed = True
+    # Any steps left are in a cycle — append in plan order (best effort).
+    for n in nums:
+        if n not in resolved:
+            ordered.append(n)
+    return ordered
+
+
 def is_multi_step_task(query: str) -> bool:
     """Detect if a query genuinely requires multi-step planning.
 
@@ -186,8 +210,8 @@ async def handle_multi_step_task(
             batches = planner.get_execution_order(plan)
             ordered_numbers = [s.step_number for batch in batches for s in batch]
         except Exception as e:
-            logger.warning(f"Could not compute execution order ({e}); using plan order")
-            ordered_numbers = [s["step_number"] for s in workflow_steps]
+            logger.warning(f"Could not compute execution order ({e}); falling back to a dependency sort")
+            ordered_numbers = _topological_fallback(workflow_steps)
         steps_by_num = {s["step_number"]: s for s in workflow_steps}
         ordered_steps = [steps_by_num[n] for n in ordered_numbers if n in steps_by_num]
 
