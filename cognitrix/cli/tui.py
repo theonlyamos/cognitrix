@@ -10,6 +10,7 @@ from textual.reactive import reactive
 from textual.widgets import Footer, Header, Input, Markdown, Static
 
 from cognitrix.agents.base import Agent
+from cognitrix.config import VERSION
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 
@@ -416,7 +417,7 @@ class CognitrixApp(App):
             with Container(id="main-area"):
                 with Container(id="welcome-splash"):
                     yield Static(WELCOME_ART, classes="welcome-logo")
-                    yield Static("v0.2.5", classes="welcome-version")
+                    yield Static(f"v{VERSION}", classes="welcome-version")
                     yield Static("AI Agent Framework", classes="welcome-desc")
                     yield Static(
                         "Ctrl+K  Command Palette  │  Ctrl+B  Toggle Sidebar  │  Ctrl+L  Clear",
