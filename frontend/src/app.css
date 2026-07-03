@@ -2,64 +2,103 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  * {
-    @apply border-border;
-  }
-  
-  body {
-    @apply bg-gray-900 text-gray-100 font-sans antialiased;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  }
-  
-  html {
-    scroll-behavior: smooth;
-  }
-  
-  /* Custom scrollbar */
-  ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-  
-  ::-webkit-scrollbar-track {
-    @apply bg-gray-900;
-  }
-  
-  ::-webkit-scrollbar-thumb {
-    @apply bg-gray-700 rounded-full;
-  }
-  
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-600;
-  }
+/* ---------- Self-hosted fonts (latin subset, swap) ---------- */
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:400;font-display:swap;src:url('/fonts/space-grotesk-latin-400-normal.woff2') format('woff2')}
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:500;font-display:swap;src:url('/fonts/space-grotesk-latin-500-normal.woff2') format('woff2')}
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:700;font-display:swap;src:url('/fonts/space-grotesk-latin-700-normal.woff2') format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url('/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:500;font-display:swap;src:url('/fonts/jetbrains-mono-latin-500-normal.woff2') format('woff2')}
+
+/* ---------- Design tokens: "Technical / Signal" ---------- */
+/* Light is the default (:root); .dark on <html> switches to dark. */
+:root {
+  color-scheme: light;
+  --bg:#f7f7f4;
+  --panel:#ffffff;
+  --panel-2:#eeeee9;
+  --line:rgba(0,0,0,.11);
+  --fg:#16181a;
+  --fg-dim:#5a5f5c;
+  --accent:#c6f24e;
+  --on-accent:#0b0c0e;
+  --accent-ink:#4e6b00;   /* accent-as-text (lime fails contrast on light) */
+  --danger:#c23528;
+  --danger-ink:#c23528;
+  --ok:#3f7d20;
+  --r1:4px;
+  --r2:8px;
+  --ring:0 0 0 3px color-mix(in oklab, var(--accent) 30%, transparent);
+  /* legacy aliases still referenced by un-migrated pages */
+  --fg-1:var(--fg); --fg-2:var(--fg-dim); --fg-3:var(--fg-dim);
+  --bg-1:var(--bg); --bg-2:var(--panel); --bg-3:var(--panel-2);
+  --accent-color:var(--accent);
 }
 
-/* CSS Variables for backward compatibility */
-:root {
-  --bg-1: #111827;
-  --bg-2: #1f2937;
-  --bg-3: #374151;
-  --fg-1: #f9fafb;
-  --fg-2: #d1d5db;
-  --fg-3: #9ca3af;
-  --accent-color: #3b82f6;
-  --accent-color-dark: #2563eb;
-  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.3);
+html.dark {
+  color-scheme: dark;
+  --bg:#0b0c0e;
+  --panel:#141619;
+  --panel-2:#1c1f23;
+  --line:rgba(255,255,255,.09);
+  --fg:#f4f4f2;
+  --fg-dim:#8b8f8b;
+  --accent:#c6f24e;
+  --on-accent:#0b0c0e;
+  --accent-ink:#c6f24e;
+  --danger:#ff6b5e;
+  --danger-ink:#ff6b5e;
+  --ok:#9fe870;
+}
+
+@layer base {
+  *, ::before, ::after { border-color: var(--line); }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection { background: var(--accent); color: var(--on-accent); }
+
+  /* Focus ring (lime) */
+  :focus-visible { outline: none; box-shadow: var(--ring); border-radius: var(--r1); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--panel-2); border: 2px solid var(--bg); border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover { background: color-mix(in oklab, var(--fg-dim) 40%, var(--panel-2)); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  }
 }
 
 @layer utilities {
-  .line-clamp-1 {
-    display: -webkit-box;
-    -webkit-line-clamp: 1;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  
-  .line-clamp-2 {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
+  .font-mono { font-feature-settings: 'tnum' 1, 'cv01' 1; letter-spacing: -.02em; }
+  .tnum { font-variant-numeric: tabular-nums; }
+  .line-clamp-1 { display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; }
+  .line-clamp-2 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  /* one orchestrated entrance; honored-reduced-motion via base rule above */
+  .animate-rise { animation: rise .4s cubic-bezier(.16,.84,.3,1) both; }
+  @keyframes rise { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+
+  /* streaming caret */
+  .caret { display:inline-block; width:.5ch; height:1.05em; background:var(--accent); vertical-align:-2px; margin-left:1px; animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+
+  /* "thinking / planning" pulse bars */
+  .think-bars { display:inline-flex; gap:3px; }
+  .think-bars i { width:3px; height:11px; background:var(--accent); opacity:.3; animation:tpulse 1s infinite; }
+  .think-bars i:nth-child(2){ animation-delay:.15s; }
+  .think-bars i:nth-child(3){ animation-delay:.30s; }
+  .think-bars i:nth-child(4){ animation-delay:.45s; }
+  @keyframes tpulse { 0%,100% { opacity:.25; } 50% { opacity:1; } }
 }

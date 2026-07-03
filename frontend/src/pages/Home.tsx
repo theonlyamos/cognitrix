@@ -1,231 +1,242 @@
-import { useUser } from '@/context/AppContext';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSession } from '@/context/SessionContext';
 import { useSSE } from '@/hooks/useSSE';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { api } from '@/lib/api';
+import { cn } from '@/lib/utils';
 
-const API_BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL}/api/v1`;
+const SUGGESTIONS = [
+  'Summarize the benefits of unit testing.',
+  'First research X, then write a short brief.',
+  'What can you help me with?',
+];
+
+const fmtTime = (t?: string | number) =>
+  t ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '';
 
 export default function Home() {
-  const { user } = useUser();
-  const { messages, addMessage, appendToLastMessage, setIsStreaming, toolEvents } = useSession();
+  const { messages, addMessage, appendToLastMessage, setIsStreaming, toolEvents, clearMessages } = useSession();
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  const [waiting, setWaiting] = useState(false); // sent, before first token
+  const [streaming, setStreaming] = useState(false); // actively streaming a reply
+  const [planning, setPlanning] = useState<string | null>(null); // transient status (e.g. multi-step)
+  const endRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, waiting, planning]);
 
-  // Stable callback for SSE events - no dependencies to prevent reconnects
-  const handleSSEEvent = useCallback((event: { type: string; content?: string; action?: string }) => {
-    if (event.type === 'generate' && event.content) {
-      appendToLastMessage(event.content);
-    } else if (event.type === 'multistep_result' && event.content) {
-      // Multi-step task completed - replace the thinking message with result
-      appendToLastMessage(event.content);
-    } else if (event.type === 'status' && event.content) {
-      // Status updates (e.g., "Planning multi-step task...")
-      addMessage('assistant', event.content);
-    } else if (event.type === 'error' && event.content) {
-      addMessage('assistant', `Error: ${event.content}`);
-    } else if (event.type === 'chat_history' && event.content) {
-      // Handle historical messages - already loaded via loadSession
-    } else if (event.type === 'chat') {
-      // Direct chat responses
-      if (event.action === 'get' && event.content) {
-        // This is a response to add
+  const handleSSEEvent = useCallback(
+    (event: { type: string; content?: string; action?: string }) => {
+      switch (event.type) {
+        case 'generate':
+          if (event.content) {
+            appendToLastMessage(event.content);
+            setWaiting(false);
+            setStreaming(true);
+            setPlanning(null);
+          } else {
+            // final empty chunk = stream complete
+            setStreaming(false);
+            setWaiting(false);
+          }
+          break;
+        case 'multistep_result':
+          if (event.content) appendToLastMessage(event.content);
+          setWaiting(false);
+          setStreaming(false);
+          setPlanning(null);
+          break;
+        case 'status':
+          // transient indicator (e.g. "Planning multi-step task…") — NOT a message
+          if (event.content) setPlanning(event.content);
+          break;
+        case 'error':
+          if (event.content) addMessage('assistant', `Error: ${event.content}`);
+          setWaiting(false);
+          setStreaming(false);
+          setPlanning(null);
+          break;
+        default:
+          break;
       }
-    }
-  }, [appendToLastMessage, addMessage]);
+    },
+    [appendToLastMessage, addMessage],
+  );
 
-  // Stable callback for tool events
-  const handleToolEvent = useCallback((toolName: string, status: string) => {
-    console.log(`Tool: ${toolName} - ${status}`);
-  }, []);
-
-  // Stable callback for errors
-  const handleSSEError = useCallback((err: Error) => {
-    console.error('SSE error:', err);
-  }, []);
-
-  // SSE connection - handlers are stable so no reconnects on render
   const { isConnected, error, reconnect } = useSSE({
     onMessage: handleSSEEvent,
-    onTool: handleToolEvent,
-    onError: handleSSEError,
+    onError: useCallback((e: Error) => console.error('SSE error:', e), []),
   });
 
-  const sendMessage = async () => {
-    if (!input.trim() || isLoading) return;
-    
-    addMessage('user', input);
-    const messageToSend = input;
-    setInput('');
-    setIsLoading(true);
-    setIsStreaming(true);
-
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BACKEND_URI}/agents/chat`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ message: messageToSend }),
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to send message');
+  const send = useCallback(
+    async (text: string) => {
+      const msg = text.trim();
+      if (!msg || waiting) return;
+      addMessage('user', msg);
+      setInput('');
+      setWaiting(true);
+      setStreaming(false);
+      setPlanning(null);
+      setIsStreaming(true);
+      try {
+        await api.post('/agents/chat', { message: msg });
+      } catch {
+        addMessage('assistant', 'Unable to reach the agent. Check the connection and try again.');
+        setWaiting(false);
+      } finally {
+        setIsStreaming(false);
       }
-      
-      // Response is sent via SSE, we just wait for streaming
-      // The SSE hook will append content to the last message
-    } catch (err) {
-      addMessage('assistant', 'Unable to connect. Please check your internet connection and try again.');
-    } finally {
-      setIsLoading(false);
-      setIsStreaming(false);
-    }
+    },
+    [waiting, addMessage, setIsStreaming],
+  );
+
+  const newSession = () => {
+    clearMessages();
+    setInput('');
+    setWaiting(false);
+    setStreaming(false);
+    setPlanning(null);
+    inputRef.current?.focus();
   };
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  }, [input, isLoading]);
+  const empty = messages.length === 0;
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-gray-900">
-      {/* Header */}
-      <div className="border-b border-gray-800 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold text-white">Welcome back, {user?.name?.split(' ')[0] || 'User'}</h1>
-            <p className="text-gray-400 text-sm mt-1">How can I help you today?</p>
-          </div>
-          <div className="flex items-center gap-4">
-            {/* Tool Events Indicator */}
-            {toolEvents.length > 0 && (
-              <div className="flex items-center gap-2 text-sm text-gray-400">
-                <span className="animate-pulse">⚙️</span>
-                <span>{toolEvents[toolEvents.length - 1].toolName}</span>
-              </div>
+    <div className="flex-1 flex flex-col h-screen min-w-0 bg-bg text-fg">
+      {/* Top bar */}
+      <header className="flex h-14 flex-none items-center gap-4 border-b border-line px-6">
+        <h1 className="text-[15px] font-semibold">Chat</h1>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="flex items-center gap-2 font-mono text-[11px] text-fg-dim">
+            <span className={cn('h-1.5 w-1.5 rounded-full', isConnected ? 'bg-accent' : 'bg-danger')} />
+            {isConnected ? 'connected' : (
+              <button onClick={reconnect} className="underline underline-offset-2 hover:text-fg">reconnect</button>
             )}
-            {/* Connection Status */}
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
-              <span className="text-xs text-gray-500">{isConnected ? 'Connected' : 'Disconnected'}</span>
-              {!isConnected && (
-                <button 
-                  onClick={reconnect}
-                  className="text-xs text-blue-400 hover:text-blue-300 ml-2"
-                >
-                  Reconnect
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Chat Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="w-16 h-16 bg-blue-600/20 rounded-full flex items-center justify-center mb-4">
-              <svg className="w-8 h-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-              </svg>
-            </div>
-            <h3 className="text-lg font-medium text-white mb-2">Start a conversation</h3>
-            <p className="text-gray-400 max-w-md">
-              Send a message to start chatting with your AI assistant. You can ask questions, get help with tasks, or just chat.
-            </p>
-          </div>
-        ) : (
-          messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-[70%] rounded-2xl px-4 py-3 ${
-                  msg.role === 'user'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-800 text-gray-100'
-                }`}
-              >
-                <p className="whitespace-pre-wrap">{msg.content}</p>
-                {msg.timestamp && (
-                  <p className={`text-xs mt-2 ${msg.role === 'user' ? 'text-blue-200' : 'text-gray-500'}`}>
-                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </p>
-                )}
-              </div>
-            </div>
-          ))
-        )}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-800 rounded-2xl px-4 py-3">
-              <div className="flex items-center gap-2 text-gray-400">
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                <span className="text-sm">Thinking...</span>
-              </div>
-            </div>
-          </div>
-        )}
-        {error && (
-          <div className="flex justify-center">
-            <div className="bg-red-500/20 border border-red-500/30 rounded-lg px-4 py-2">
-              <p className="text-sm text-red-400">Connection error. <button onClick={reconnect} className="underline">Retry</button></p>
-            </div>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input Area */}
-      <div className="border-t border-gray-800 px-6 py-4">
-        <div className="flex gap-3 max-w-4xl mx-auto">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type your message..."
-            disabled={isLoading}
-            className="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50"
-          />
+          </span>
           <button
-            onClick={sendMessage}
-            disabled={!input.trim() || isLoading}
-            className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            onClick={newSession}
+            disabled={empty}
+            className="flex items-center gap-1.5 rounded border border-line px-3 py-1.5 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg disabled:pointer-events-none disabled:opacity-40"
           >
-            {isLoading ? (
-              <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            ) : (
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-              </svg>
-            )}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+            New session
           </button>
         </div>
-        <p className="text-center text-xs text-gray-500 mt-2">
-          Press <kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-gray-400">Enter</kbd> to send, <kbd className="px-1.5 py-0.5 bg-gray-800 rounded text-gray-400">Shift + Enter</kbd> for new line
-        </p>
+      </header>
+
+      {/* Stream */}
+      <div className="flex-1 overflow-y-auto">
+        {empty ? (
+          <div className="mx-auto flex h-full max-w-2xl flex-col justify-center px-6">
+            <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ start a conversation</p>
+            <h2 className="mt-3 text-2xl font-bold tracking-tight">What should we run?</h2>
+            <p className="mt-2 max-w-md text-fg-dim">
+              Ask a question, chat, or kick off a multi-step task — the agent plans and executes with its tools.
+            </p>
+            <div className="mt-6 flex flex-col gap-2">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => send(s)}
+                  className="group flex items-center gap-3 rounded border border-line px-3.5 py-2.5 text-left text-sm text-fg-dim transition-colors hover:border-fg-dim hover:text-fg"
+                >
+                  <span className="font-mono text-[11px] text-fg-dim group-hover:text-accent-ink">→</span>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div>
+            {messages.map((m, i) => {
+              const isUser = m.role === 'user';
+              const isLast = i === messages.length - 1;
+              return (
+                <div key={m.id} className="grid grid-cols-[68px_1fr] gap-4 border-b border-line px-6 py-4">
+                  <div className={cn('pt-0.5 font-mono text-[11px] tracking-[0.06em]', isUser ? 'text-accent-ink' : 'text-fg-dim')}>
+                    {isUser ? 'YOU' : 'AGENT'}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="whitespace-pre-wrap break-words leading-relaxed">
+                      {m.content}
+                      {!isUser && isLast && streaming && <span className="caret" />}
+                    </div>
+                    {m.timestamp && (
+                      <div className="mt-2 font-mono text-[10.5px] text-fg-dim">
+                        <span className="opacity-70">at</span> {fmtTime(m.timestamp)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {waiting && (
+              <div className="grid grid-cols-[68px_1fr] gap-4 px-6 py-4">
+                <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">AGENT</div>
+                <div className="flex items-center gap-2.5 font-mono text-[12px] text-fg-dim">
+                  <span className="think-bars"><i /><i /><i /><i /></span>
+                  {planning || 'Thinking…'}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {error && (
+          <div className="mx-6 my-4 flex items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
+            <span>connection error — the stream stopped after several retries.</span>
+            <button onClick={reconnect} className="flex-none rounded border border-line px-2 py-0.5 transition-colors hover:border-fg-dim hover:text-fg">
+              ↻ retry
+            </button>
+          </div>
+        )}
+        <div ref={endRef} />
+      </div>
+
+      {/* Composer */}
+      <div className="flex-none border-t border-line px-6 py-4">
+        <div className="mx-auto max-w-3xl">
+          <div className="flex items-end gap-2 rounded-md border border-line bg-panel px-3 py-2.5 focus-within:border-accent focus-within:shadow-ring transition-colors">
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  send(input);
+                }
+              }}
+              placeholder="Message the agent…"
+              className="max-h-40 flex-1 resize-none bg-transparent text-sm text-fg outline-none placeholder:text-fg-dim"
+            />
+            <button
+              onClick={() => send(input)}
+              disabled={!input.trim() || waiting}
+              aria-label="Send"
+              className="grid h-8 w-8 flex-none place-items-center rounded bg-accent text-accent-foreground transition disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-105"
+            >
+              {waiting ? (
+                <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12l16-8-6 16-3-6-7-2z" /></svg>
+              )}
+            </button>
+          </div>
+          <div className="mt-2 flex items-center gap-4 font-mono text-[10.5px] text-fg-dim">
+            <span><kbd className="rounded border border-line px-1">⏎</kbd> send</span>
+            <span><kbd className="rounded border border-line px-1">⇧⏎</kbd> newline</span>
+            {toolEvents.length > 0 && (
+              <span className="ml-auto flex items-center gap-1.5 text-accent-ink">
+                <span className="think-bars"><i /><i /><i /></span>
+                {toolEvents[toolEvents.length - 1].toolName}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

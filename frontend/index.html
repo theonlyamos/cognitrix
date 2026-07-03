@@ -4,23 +4,23 @@
 <head>
   <meta charset="UTF-8" />
   <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-  <link rel="stylesheet" href="/css/all.min.css" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cognitrix</title>
+  <!-- Apply theme before first paint to avoid a flash. -->
+  <script>
+    (function () {
+      var d = localStorage.getItem('darkMode');
+      var dark = d === 'true' || (d === null && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.classList.toggle('dark', dark);
+    })();
+  </script>
+  <link rel="preload" href="/fonts/space-grotesk-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/space-grotesk-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin />
 </head>
 
 <body>
   <div id="root"></div>
   <script type="module" src="/src/main.tsx"></script>
-  <script>
-    if (localStorage.getItem('darkMode') === 'true' ||
-      (!('darkMode' in localStorage) &&
-        window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  </script>
 </body>
 
 </html>
