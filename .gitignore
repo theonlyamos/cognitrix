@@ -160,3 +160,6 @@ chroma_db/
 # Local scratch / build artifacts
 /src/
 *.tsbuildinfo
+
+# Claude Code local config
+.claude/
