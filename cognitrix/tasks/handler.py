@@ -329,10 +329,10 @@ async def execute_step(
     await session(
         context,
         agent,
-        session_interface,
-        stream,
-        capture_response,
-        {}
+        interface=session_interface,
+        stream=stream,
+        output=capture_response,
+        wsquery={},
     )
 
     # A tool-heavy step (or one that hit the tool-round cap) can stream no final

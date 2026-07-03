@@ -147,7 +147,8 @@ class WebSocketManager:
                             prompt = f"""{default_prompt}"""
 
                         session.chat = []
-                        await session(prompt, agent, 'web', True, websocket.send_json, query, False)
+                        await session(prompt, agent, interface='web', stream=True,
+                                      output=websocket.send_json, wsquery=query, save_history=False)
 
                     elif query_type == 'multistep':
                         prompt = query.get('prompt', '')
@@ -179,7 +180,8 @@ class WebSocketManager:
                                 })
                         else:
                             # Fall back to regular session
-                            await session(prompt, web_agent, 'web', True, websocket.send_json, query, False)
+                            await session(prompt, web_agent, interface='web', stream=True,
+                                          output=websocket.send_json, wsquery=query, save_history=False)
 
                     elif query_type == 'start_task':
                         task = query['task']
@@ -234,7 +236,8 @@ class WebSocketManager:
                     #             await self.process_audio()
                     else:
                         user_prompt = query['content']
-                        await session(user_prompt, web_agent, 'web', True, websocket.send_json, query)
+                        await session(user_prompt, web_agent, interface='web', stream=True,
+                                      output=websocket.send_json, wsquery=query)
                         # await websocket.send_json({'type': 'chat_reply', 'content': response})
                 except Exception as e:
                     logger.exception(e)

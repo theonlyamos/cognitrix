@@ -12,11 +12,17 @@ from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 
 logger = logging.getLogger('cognitrix.log')
 
+# Bound the SSE queues so a slow/stalled EventSource client backpressures the
+# producer (via `await queue.put(...)`) instead of buffering chunks unboundedly
+# in memory. Both the inbound action queue (POST /agents/chat uses `await put`)
+# and the per-turn output queue (_emit uses `await put`) block when full.
+_SSE_QUEUE_MAXSIZE = 512
+
 
 class SSEManager:
     def __init__(self, agent):
         self.agent = agent
-        self.action_queue = asyncio.Queue()
+        self.action_queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAXSIZE)
 
     async def sse_endpoint(self, request: Request):
         async def event_generator():
@@ -131,7 +137,7 @@ class SSEManager:
                         # Bridge the session's callback-based output to this SSE
                         # generator through a queue.
                         session = await Session.get_by_agent_id(self.agent.id)
-                        out_queue: asyncio.Queue = asyncio.Queue()
+                        out_queue: asyncio.Queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAXSIZE)
 
                         async def _emit(payload, _q=out_queue):
                             await _q.put(payload)
@@ -139,8 +145,9 @@ class SSEManager:
                         async def _run(_prompt=user_prompt, _sess=session, _q=out_queue):
                             try:
                                 await _sess(
-                                    _prompt, self.agent, 'web', True, _emit,
-                                    {'type': 'generate', 'action': 'chat_message'},
+                                    _prompt, self.agent,
+                                    interface='web', stream=True, output=_emit,
+                                    wsquery={'type': 'generate', 'action': 'chat_message'},
                                 )
                             except Exception as e:
                                 logger.exception("SSE session turn failed")

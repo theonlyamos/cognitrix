@@ -75,7 +75,8 @@ def get_arguments():
                             'multi-line, or special-character prompts that the shell would mangle. Takes '
                             'precedence over --prompt/-p.')
     parser.add_argument('--audio', action='store_true', help='Get input from microphone')
-    parser.add_argument('--stream', type=bool, default=True, help='Enable response stream')
+    parser.add_argument('--stream', action=argparse.BooleanOptionalAction, default=True,
+                       help='Stream responses token-by-token (default: on; use --no-stream to disable)')
     parser.add_argument('--session', type=str, default="", help='Load saved session')
     parser.add_argument('--clear-history', action='store_true', default="", help='Clear agent history')
     parser.add_argument('--sessions', action='store_true', help='Get a list of all saved sessions')

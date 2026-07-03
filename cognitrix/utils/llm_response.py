@@ -82,18 +82,29 @@ class LLMResponse(Model):
         self._parse_structure()
 
     def _parse_structure(self):
-        if not self.llm_response:
+        buf = self.llm_response
+        if not buf:
             return
-        stripped = self.llm_response.strip()
-        # Only attempt a JSON parse when the buffer looks like a complete JSON
-        # object/array. This avoids an O(n^2) json.loads over the growing buffer
-        # on every streamed chunk — the common case is prose, and mid-stream JSON
-        # is incomplete anyway.
-        if not (stripped[:1] in ('{', '[') and stripped[-1:] in ('}', ']')):
-            self.result = self.llm_response
+        # This runs on EVERY streamed chunk, so it must be O(1) in the common
+        # case. Check the first/last chars directly instead of .strip()-ing the
+        # whole growing buffer each time (that alone was O(n^2) over a stream).
+        # Only a value that starts with {/[ AND ends with }/] can be complete
+        # JSON; streamed prose fails the first test and streaming-in-progress
+        # JSON fails the second, both without an expensive strip/json.loads.
+        lead = buf[0]
+        if lead.isspace():
+            lead = buf.lstrip()[:1]  # rare: only pay lstrip if it actually leads with whitespace
+        if lead not in ('{', '['):
+            self.result = buf
+            return
+        tail = buf[-1]
+        if tail.isspace():
+            tail = buf.rstrip()[-1:]
+        if tail not in ('}', ']'):
+            self.result = buf
             return
         try:
-            data = json.loads(stripped)
+            data = json.loads(buf.strip())
             if isinstance(data, dict):
                 # Map JSON fields to attributes (tool_calls come from the native
                 # provider path, not content).

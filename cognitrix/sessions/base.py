@@ -322,7 +322,10 @@ class Session(Model):
                                     await output({'type': wsquery.get('type'), 'content': result, 'action': wsquery.get('action'), 'complete': False})
 
                         if response.artifacts:
-                            if interface == 'ws':
+                            # Both the WS and SSE transports call the session with
+                            # interface='web', so gating on 'ws' alone dropped all
+                            # artifacts. Emit to any browser transport (async output).
+                            if interface in ('ws', 'web'):
                                 await output({'type': wsquery.get('type'), 'content': '', 'action': wsquery.get('action'), 'artifacts': response.artifacts, 'complete': False})
 
                         # Cooperative yield point (no artificial delay): a fixed

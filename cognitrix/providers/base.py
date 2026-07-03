@@ -424,6 +424,7 @@ class LLMManager:
                 try:
                     args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
                 except json.JSONDecodeError:
+                    logger.warning("Tool call '%s' had malformed JSON arguments; running with empty args. Raw: %r", name, args_raw)
                     args = {}
             parsed = {'name': name, 'arguments': args, 'tool_call_id': tool_call_id}
             # Gemini's OpenAI-compat layer attaches a thought_signature under
@@ -507,6 +508,8 @@ class LLMManager:
                     try:
                         args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
                     except json.JSONDecodeError:
+                        if name:
+                            logger.warning("Streamed tool call '%s' had malformed JSON arguments; running with empty args. Raw: %r", name, args_raw)
                         args = {}
                     if name:
                         item = {'name': name, 'arguments': args, 'tool_call_id': acc.get('tool_call_id')}

@@ -34,6 +34,14 @@ def test_prompt_file_default_empty():
     assert _parse(["-p", "x"]).prompt_file == ""
 
 
+def test_stream_flag_is_toggleable():
+    # `--stream` used type=bool, so `--stream false` was truthy and streaming
+    # could never be disabled. BooleanOptionalAction gives a real off-switch.
+    assert _parse(["-p", "x"]).stream is True          # default on
+    assert _parse(["--stream", "-p", "x"]).stream is True
+    assert _parse(["--no-stream", "-p", "x"]).stream is False
+
+
 def test_dangerously_skip_permissions_flag():
     # Off by default; the flag turns it on (main() wires it to the auto-approve
     # + sandbox-shell env vars the gate and bash tool read).

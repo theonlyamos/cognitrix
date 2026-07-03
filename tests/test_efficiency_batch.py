@@ -100,6 +100,29 @@ def test_llm_response_still_parses_json_object():
     assert r.scratchpad == "notes"
 
 
+def test_llm_response_incomplete_json_is_not_parsed_mid_stream():
+    # The O(1) ends-guard (llm_response.py:_parse_structure) must treat a buffer
+    # that opens '{' but hasn't closed as raw text, without crashing.
+    r = LLMResponse()
+    r.add_chunk('{"result": "do')  # opening brace, no closing brace yet
+    assert r.result == '{"result": "do'
+
+
+def test_llm_response_parses_streamed_json_across_chunks():
+    # Stream a JSON object token by token; only the final chunk completes it.
+    r = LLMResponse()
+    for chunk in ('{"resu', 'lt": "', 'done"', '}'):
+        r.add_chunk(chunk)  # must not raise on any intermediate (incomplete) state
+    assert r.result == "done"
+
+
+def test_llm_response_parses_json_with_surrounding_whitespace():
+    # Leading/trailing whitespace must still be recognized as complete JSON.
+    r = LLMResponse()
+    r.add_chunk('\n  {"result": "ok"}  \n')
+    assert r.result == "ok"
+
+
 # --- async: sync tools run off the event loop ---
 
 @pytest.mark.asyncio
