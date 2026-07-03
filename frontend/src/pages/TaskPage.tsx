@@ -5,18 +5,21 @@ import { useResource } from '@/hooks/useResource';
 import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { Textarea } from '@/lib/components/ui/textarea';
+import { Select } from '@/lib/components/ui/select';
 import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm, CheckList } from '@/components/form';
 import { cn } from '@/lib/utils';
 
 interface Step { step: string; done: boolean }
 interface Agent { id: string; name: string; llm?: { provider?: string; model?: string } }
+interface Team { id: string; name: string; assigned_agents?: string[] }
 interface TaskData {
   id?: string;
   title?: string;
   description?: string;
   step_instructions?: Record<string, { step: string; done: boolean }>;
   assigned_agents?: string[];
+  team_id?: string | null;
   autostart?: boolean;
   status?: string;
   results?: string[];
@@ -29,11 +32,13 @@ export default function TaskPage() {
 
   const { data: existing, loading: loadingTask, refetch } = useResource<TaskData>(taskId ? `/tasks/${taskId}` : null);
   const { data: agentList } = useResource<Agent[]>('/agents');
+  const { data: teamList } = useResource<Team[]>('/teams');
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [steps, setSteps] = useState<Step[]>([]);
   const [assigned, setAssigned] = useState<Set<string>>(new Set());
+  const [teamId, setTeamId] = useState('');
   const [autostart, setAutostart] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -50,6 +55,7 @@ export default function TaskPage() {
         .map((k) => ({ step: si[k].step, done: !!si[k].done })),
     );
     setAssigned(new Set(existing.assigned_agents || []));
+    setTeamId(existing.team_id || '');
     setAutostart(!!existing.autostart);
   }, [existing]);
 
@@ -61,13 +67,22 @@ export default function TaskPage() {
       return n;
     });
 
+  // Assigning a team scopes the task to it and pre-fills its members as the
+  // task's agents (still editable). Clearing the team leaves agents as-is.
+  const changeTeam = (id: string) => {
+    setTeamId(id);
+    if (!id) return;
+    const team = (teamList || []).find((t) => t.id === id);
+    if (team) setAssigned(new Set(team.assigned_agents || []));
+  };
+
   const save = async () => {
     if (!title.trim()) return setError('Give the task a title.');
     if (!description.trim()) return setError('Describe the task.');
     setError('');
     setSaving(true);
     try {
-      const step_instructions: Record<number, Step> = {};
+      const step_instructions: Record<string, Step> = {};
       steps.filter((s) => s.step.trim()).forEach((s, i) => (step_instructions[i] = { step: s.step.trim(), done: s.done }));
       await api.post('/tasks', {
         ...(taskId ? { id: taskId } : {}),
@@ -75,6 +90,7 @@ export default function TaskPage() {
         description: description.trim(),
         step_instructions,
         assigned_agents: [...assigned],
+        team_id: teamId || null,
         autostart,
         ...(existing?.status ? { status: existing.status } : {}),
       });
@@ -137,7 +153,7 @@ export default function TaskPage() {
         <div className="rounded border border-line bg-panel-2 px-3 py-2.5">
           <div className="flex items-center gap-2 font-mono text-[11px] text-fg-dim">
             <span>status</span>
-            <span className={cn('rounded border px-2 py-0.5', status === 'completed' ? 'border-ok/40 text-ok' : status === 'in_progress' ? 'border-accent/40 text-accent-ink' : 'border-line')}>{status || 'pending'}</span>
+            <span className={cn('rounded border px-2 py-0.5', status === 'completed' ? 'border-ok/40 text-ok' : status === 'in_progress' ? 'border-accent/40 text-accent-ink' : status === 'failed' ? 'border-danger/40 text-danger-ink' : 'border-line')}>{status || 'pending'}</span>
           </div>
           {results.length > 0 && (
             <div className="mt-2 space-y-1">
@@ -168,7 +184,16 @@ export default function TaskPage() {
         </div>
       </Field>
 
-      <Field label={`ASSIGNED AGENTS · ${assigned.size}`}>
+      <Field label="TEAM" hint="optional — assign the task to a team">
+        <Select value={teamId} onChange={(e) => changeTeam(e.target.value)} disabled={(teamList || []).length === 0}>
+          <option value="">— no team —</option>
+          {(teamList || []).filter((t) => t.id).map((t) => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </Select>
+      </Field>
+
+      <Field label={`ASSIGNED AGENTS · ${assigned.size}`} hint={teamId ? 'from the selected team — editable' : undefined}>
         <CheckList
           options={(agentList || []).filter((a) => a.id).map((a) => ({ value: a.id, label: a.name, sub: `${a.llm?.provider || '—'} · ${a.llm?.model || '—'}` }))}
           selected={assigned}

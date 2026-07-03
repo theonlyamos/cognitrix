@@ -18,6 +18,7 @@ class TaskStatus(str, Enum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+    FAILED = "failed"
 
 class Task(Model):
     """
@@ -65,7 +66,7 @@ class Task(Model):
     async def team(self):
         agents: list[Agent] = []
         for agent_id in self.assigned_agents:
-            agent = Agent.get(agent_id)
+            agent = await Agent.get(agent_id)
             if agent:
                 agents.append(agent)
         return agents
@@ -87,37 +88,53 @@ class Task(Model):
                 agent.sub_agents.append(evaluator)
 
                 self.status = TaskStatus.IN_PROGRESS
-                self.save()
+                await self.save()
 
-                session = Session(task_id=self.id, agent_id=agent.id)
-                session.started_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
-                session.save()
+                try:
+                    session = Session(task_id=self.id, agent_id=agent.id)
+                    session.started_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
+                    await session.save()
 
-                session.update_history({'role': 'system', 'type': 'text', 'message': self.description + '\n\nComplete the task step below:\n'})
+                    session.update_history({'role': 'system', 'type': 'text', 'content': self.description + '\n\nComplete the task step below:\n'})
 
-                print('[!]Starting task...\n')
+                    print('[!]Starting task...\n')
 
-                steps = self.step_instructions.copy()
+                    steps = self.step_instructions.copy()
 
-                for key, value in steps.items():
-                    if self.status == 'in-progress':
-                        prompt = f'Step #{key + 1}: '+ value['step']
+                    for key, value in steps.items():
+                        if self.status == TaskStatus.IN_PROGRESS:
+                            prompt = f'Step #{int(key) + 1}: '+ value['step']
 
-                        await session(prompt, agent, stream=True)
+                            await session(prompt, agent, stream=True)
 
-                        eval_prompt = "Task: "+value['step']
-                        eval_prompt += "\n\nAgent Response:\n"+session.chat[-1]['message']
+                            # The agent's answer is the last assistant message with
+                            # content; chat[-1] is a trailing turn-timing record.
+                            answer = next(
+                                (m.get('content', '') for m in reversed(session.chat)
+                                 if m.get('role') == 'assistant' and m.get('content')),
+                                '',
+                            )
+                            eval_prompt = "Task: "+value['step']
+                            eval_prompt += "\n\nAgent Response:\n"+answer
 
-                        await session(eval_prompt, evaluator, stream=True)
-                        self.step_instructions[key]['done'] = True
+                            await session(eval_prompt, evaluator, stream=True)
+                            self.step_instructions[key]['done'] = True
 
-                        self.save()
+                            await self.save()
 
-                session.completed_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
-                session.save()
+                    session.completed_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
+                    await session.save()
 
-                self.status = TaskStatus.COMPLETED
-                self.save()
+                    self.status = TaskStatus.COMPLETED
+                    await self.save()
+                except Exception:
+                    # Both dispatch paths land here: the in-process autostart path
+                    # (no Celery postrun) and, redundantly, the Celery path. Mark
+                    # FAILED so a crashed run doesn't linger as in_progress.
+                    logger.exception("Task %s failed during execution", self.id)
+                    self.status = TaskStatus.FAILED
+                    await self.save()
+                    raise
 
     @classmethod
     async def list_tasks(cls) -> TaskList:
