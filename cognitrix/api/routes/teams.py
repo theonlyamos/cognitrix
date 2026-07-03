@@ -47,7 +47,7 @@ async def delete_team(team_id: str):
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    await Team.remove_one({'id': team_id})
+    await Team.delete_many({'id': team_id})
     return {"message": "Team deleted successfully"}
 
 @teams_api.get("/{team_id}/sessions")
@@ -56,13 +56,13 @@ async def sessions(team_id: str):
     return [session.json() for session in sessions]
 
 
-@teams_api.get("/teams/{team_id}/tasks")
+@teams_api.get("/{team_id}/tasks")
 async def get_tasks_by_team(team_id: str):
     team = await Team.get(team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    tasks = team.get_assigned_tasks()
-    return tasks
+    tasks = await team.get_assigned_tasks()
+    return [task.json() for task in tasks]
 
 @teams_api.get(path="/generate")
 async def sse_endpoint(request: Request):

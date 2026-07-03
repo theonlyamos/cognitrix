@@ -165,6 +165,16 @@ class Task(Model):
             return value
         return TaskStatus(value)
 
+    # A DB row may store these collections as NULL; coerce back to the empty
+    # default so loading the model doesn't fail validation.
+    @validator("step_instructions", pre=True)
+    def _coerce_null_steps(cls, value):
+        return {} if value is None else value
+
+    @validator("assigned_agents", "results", pre=True)
+    def _coerce_null_lists(cls, value):
+        return [] if value is None else value
+
     class Config:
         json_encoders = {
             TaskStatus: lambda v: v.value

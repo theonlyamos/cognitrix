@@ -1,24 +1,19 @@
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
 
-from ...tools import Tool
+from ...tools.base import ToolManager
 
 tools_api = APIRouter(
     prefix='/tools'
 )
 
+
 @tools_api.get('')
 async def list_tools():
-    tools = Tool.list_all_tools()
-    response = [tool.dict() for tool in tools]
+    # Return plain dicts so FastAPI's encoder handles datetime/UUID fields.
+    return [tool.dict() for tool in ToolManager.list_all_tools()]
 
-    return response
 
 @tools_api.get('/{tool_name}')
-async def load_agent(tool_name: str):
-    tool = Tool.get_by_name(tool_name)
-    response = {}
-    if tool:
-        response = tool.dict()
-
-    return JSONResponse(response)
+async def load_tool(tool_name: str):
+    tool = ToolManager.get_by_name(tool_name)
+    return tool.dict() if tool else {}

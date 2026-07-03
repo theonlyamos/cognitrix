@@ -43,10 +43,13 @@ async def save_agent(request: Request, agent: Agent):
     agent.llm = llm
     await agent.save()
 
-    if request.state.agent.id == agent.id:
+    default_agent = getattr(request.state, 'agent', None)
+    if default_agent is not None and default_agent.id == agent.id:
         request.state.agent = agent
 
-    return JSONResponse(redact_secrets(agent.json()))
+    # Return the dict directly so FastAPI's encoder handles datetime/UUID;
+    # wrapping in JSONResponse uses stdlib json and raises on datetime.
+    return redact_secrets(agent.json())
 
 @agents_api.get("/sse")
 async def sse_endpoint(request: Request, agent_id: str | None = None, user=Depends(get_current_user)):
@@ -75,7 +78,18 @@ async def load_agent(agent_id: str):
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    return JSONResponse(redact_secrets(agent.json()))
+    return redact_secrets(agent.json())
+
+@agents_api.delete('/{agent_id}')
+async def delete_agent(agent_id: str):
+    agent = await Agent.find_one({'id': agent_id})
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    # delete_many avoids the odbms sqlite `delete_one` bug (emits DELETE … LIMIT,
+    # which SQLite rejects); an id filter still deletes exactly one row.
+    await Agent.delete_many({'id': agent_id})
+    return {"message": "Agent deleted successfully"}
 
 @agents_api.get('/{agent_id}/session')
 async def load_session(agent_id: str):

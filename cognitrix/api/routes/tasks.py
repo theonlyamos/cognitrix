@@ -1,5 +1,5 @@
 from celery.result import AsyncResult
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
 from cognitrix.common.security import get_current_user
 from cognitrix.tasks import Task
@@ -59,5 +59,8 @@ async def load_task(task_id: str):
 
 @tasks_api.delete('/{task_id}')
 async def delete_task(task_id: str):
-    await Task.remove(query={'id': task_id})
+    task = await Task.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    await Task.delete_many({'id': task_id})
     return {'message': 'Task deleted successfully'}
