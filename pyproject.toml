@@ -66,6 +66,9 @@ pyjwt = "^2.8.0"
 # Utilities
 rich = ">=13.7.1"
 celery = {extras = ["redis"], version = "^5.4.0"}
+# kombu's filesystem transport (local no-Redis fallback) hard-imports win32
+# APIs on Windows; declared explicitly rather than relying on mcp pulling it.
+pywin32 = {version = ">=310", markers = "sys_platform == 'win32'"}
 pyyaml = "^6.0"
 
 # MCP (Model Context Protocol)

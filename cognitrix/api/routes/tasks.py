@@ -1,14 +1,13 @@
 import asyncio
 import logging
 
-from celery.result import AsyncResult
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
 from cognitrix.common.security import get_current_user
 from cognitrix.tasks import Task
 from cognitrix.tasks.base import TaskStatus
 
-from ...celery_worker import broker_available, run_task
+from ...celery_worker import broker_available, ensure_local_worker, run_task
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -37,10 +36,17 @@ async def update_task_status(request: Request, task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # Enqueue on the Celery broker. If the broker (Redis) is unreachable, surface
-    # a clear 503 instead of a 500, and do NOT mark the task in-progress. Probe
+    # Enqueue on the Celery broker. If the broker is unreachable, surface a
+    # clear 503 instead of a 500, and do NOT mark the task in-progress. Probe
     # first so a down broker returns promptly rather than blocking on retries.
+    # On the filesystem fallback broker, ensure_local_worker spawns a consumer
+    # if none is running; on Redis it is a no-op (workers are external).
     broker_down_detail = "Task queue unavailable. Is the Celery broker (Redis) running and a worker started?"
+    if not await asyncio.to_thread(ensure_local_worker):
+        raise HTTPException(
+            status_code=503,
+            detail="Task queue unavailable — the local fallback worker failed to start. Check celery-queue/worker.log in the cognitrix workdir.",
+        )
     if not await asyncio.to_thread(broker_available):
         raise HTTPException(status_code=503, detail=broker_down_detail)
     try:
@@ -59,15 +65,7 @@ async def update_task_status(request: Request, task_id: str):
 @tasks_api.get('/{task_id}')
 async def load_task(task_id: str):
     task = await Task.get(task_id)
-    response = {}
-    if task:
-        if task.pid:
-            task_result = AsyncResult(task.pid)
-            print(task_result.result, task_result.state, task_result.info, task_result.traceback)
-            print('[+] Task Result',task_result)
-        response = task.json()
-
-    return response
+    return task.json() if task else {}
 
 @tasks_api.delete('/{task_id}')
 async def delete_task(task_id: str):
