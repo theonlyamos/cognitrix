@@ -108,19 +108,23 @@ class DynamicMCPClient:
             exit_stack = AsyncExitStack()
             self.exit_stacks[server_config.name] = exit_stack
 
-            # Start the server and get streams
-            stdio_transport = await exit_stack.enter_async_context(
-                stdio_client(server_params)
-            )
-            read_stream, write_stream = stdio_transport
-
-            # Create session
-            session = await exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-
-            # Initialize the session
-            await session.initialize()
+            # Start the server, open the session and run the handshake under a
+            # timeout — a broken/hung server must not block the event loop.
+            # Use asyncio.timeout (NOT wait_for): wait_for runs its coroutine in a
+            # separate child task, but these anyio context managers bind their
+            # cancel scopes to the entering task, so exit_stack.aclose() (on
+            # disconnect or the error path below) would then run in a different
+            # task and raise "cancel scope in a different task". asyncio.timeout
+            # cancels the current task, keeping enter and exit on the same task.
+            async with asyncio.timeout(DEFAULT_MCP_TIMEOUT):
+                stdio_transport = await exit_stack.enter_async_context(
+                    stdio_client(server_params)
+                )
+                read_stream, write_stream = stdio_transport
+                session = await exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
+                await session.initialize()
 
             # Store session and connection info
             self.sessions[server_config.name] = session
@@ -152,19 +156,20 @@ class DynamicMCPClient:
             exit_stack = AsyncExitStack()
             self.exit_stacks[server_config.name] = exit_stack
 
-            # Connect to SSE server
-            sse_transport = await exit_stack.enter_async_context(
-                sse_client(url=server_config.url)
-            )
-            read_stream, write_stream = sse_transport
-
-            # Create session
-            session = await exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-
-            # Initialize the session
-            await session.initialize()
+            # Connect, open the session and run the handshake under a timeout —
+            # a slow/unreachable endpoint must not block the event loop.
+            # asyncio.timeout (not wait_for) keeps this on the current task so the
+            # anyio context managers are closed on the same task they're entered
+            # (see the STDIO path for the full rationale).
+            async with asyncio.timeout(DEFAULT_MCP_TIMEOUT):
+                sse_transport = await exit_stack.enter_async_context(
+                    sse_client(url=server_config.url)
+                )
+                read_stream, write_stream = sse_transport
+                session = await exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
+                await session.initialize()
 
             # Store session and connection info
             self.sessions[server_config.name] = session
@@ -199,19 +204,20 @@ class DynamicMCPClient:
             # Prepare headers
             headers = server_config.headers or {}
 
-            # Connect to HTTP server
-            http_transport = await exit_stack.enter_async_context(
-                streamablehttp_client(server_config.url, headers=headers)
-            )
-            read_stream, write_stream, _ = http_transport
-
-            # Create session
-            session = await exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-
-            # Initialize the session
-            await session.initialize()
+            # Connect, open the session and run the handshake under a timeout —
+            # a slow/unreachable endpoint must not block the event loop.
+            # asyncio.timeout (not wait_for) keeps this on the current task so the
+            # anyio context managers are closed on the same task they're entered
+            # (see the STDIO path for the full rationale).
+            async with asyncio.timeout(DEFAULT_MCP_TIMEOUT):
+                http_transport = await exit_stack.enter_async_context(
+                    streamablehttp_client(server_config.url, headers=headers)
+                )
+                read_stream, write_stream, _ = http_transport
+                session = await exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
+                await session.initialize()
 
             # Store session and connection info
             self.sessions[server_config.name] = session

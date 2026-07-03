@@ -60,10 +60,10 @@ async def start(args: Namespace):
             await list_agents()
             sys.exit()
         elif args.tasks:
-            list_tasks()
+            await list_tasks()
             sys.exit()
         elif args.teams:
-            list_teams()
+            await list_teams()
             sys.exit()
         elif args.sessions:
             await list_sessions()
