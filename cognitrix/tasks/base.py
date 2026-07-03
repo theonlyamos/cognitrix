@@ -38,8 +38,8 @@ class Task(Model):
     description: str
     """The task|query to perform|answer"""
 
-    step_instructions: dict[int, dict[str, Any]] = {}
-    """Line by line instructions for completing the task"""
+    step_instructions: dict[str, dict[str, Any]] = {}
+    """Line by line instructions for completing the task, keyed by step index ("0", "1", ...)"""
 
     done: bool = False
     """Checks/Sets whether the task has been completed"""
@@ -137,27 +137,6 @@ class Task(Model):
             task.save()
             return task
         return None
-
-    @staticmethod
-    def extract_steps(text):
-        # Find the start and end of the task_steps section
-        if '<steps>' not in text:
-            return {}
-
-        steps: dict[int, dict[str, Any]] = {}
-        start = text.find('<steps>') + len('<steps>')
-        end = text.find('</steps>')
-
-        # Extract the content between the tags
-        task_steps_content = text[start:end].strip()
-
-        # Split the content into a list of steps
-        steps_list = [step.strip() for step in task_steps_content.split('\n') if step.strip()]
-
-        for index, step in enumerate(steps_list):
-            steps[index] = {'step': step, 'done': False}
-
-        return steps
 
     @validator("status", pre=True)
     def parse_status(cls, value):
