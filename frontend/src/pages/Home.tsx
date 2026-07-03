@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from '@/context/SessionContext';
 import { useSSE } from '@/hooks/useSSE';
+import { useResource } from '@/hooks/useResource';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -21,6 +22,22 @@ export default function Home() {
   const [planning, setPlanning] = useState<string | null>(null); // transient status (e.g. multi-step)
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Agent selection — chat + SSE must share one agent_id (they rendezvous on a
+  // per-(user, agent) manager on the backend).
+  const { data: agentsData, loading: agentsLoading } = useResource<{ id: string; name: string }[]>('/agents');
+  const agents = useMemo(() => (agentsData || []).filter((a) => a.id), [agentsData]);
+  const [agentId, setAgentId] = useState<string>(() => localStorage.getItem('selectedAgentId') || '');
+
+  // Default to the first agent once the list loads (or if the saved one is gone).
+  useEffect(() => {
+    if (agents.length === 0) return;
+    if (!agentId || !agents.some((a) => a.id === agentId)) {
+      const first = agents[0].id;
+      setAgentId(first);
+      localStorage.setItem('selectedAgentId', first);
+    }
+  }, [agents, agentId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -64,9 +81,14 @@ export default function Home() {
     [appendToLastMessage, addMessage],
   );
 
+  // Open the stream once we know which agent to use (or that there are none),
+  // so a fresh visitor doesn't connect to the default agent then reconnect.
+  const sseReady = !!agentId || (!agentsLoading && agents.length === 0);
   const { isConnected, error, reconnect } = useSSE({
     onMessage: handleSSEEvent,
     onError: useCallback((e: Error) => console.error('SSE error:', e), []),
+    agentId: agentId || undefined,
+    enabled: sseReady,
   });
 
   const send = useCallback(
@@ -80,7 +102,7 @@ export default function Home() {
       setPlanning(null);
       setIsStreaming(true);
       try {
-        await api.post('/agents/chat', { message: msg });
+        await api.post('/agents/chat', { message: msg, ...(agentId ? { agent_id: agentId } : {}) });
       } catch {
         addMessage('assistant', 'Unable to reach the agent. Check the connection and try again.');
         setWaiting(false);
@@ -88,8 +110,19 @@ export default function Home() {
         setIsStreaming(false);
       }
     },
-    [waiting, addMessage, setIsStreaming],
+    [waiting, addMessage, setIsStreaming, agentId],
   );
+
+  const switchAgent = (id: string) => {
+    if (id === agentId) return;
+    if (messages.length && !confirm('Switch agent and clear this conversation?')) return;
+    setAgentId(id);
+    localStorage.setItem('selectedAgentId', id);
+    clearMessages();
+    setWaiting(false);
+    setStreaming(false);
+    setPlanning(null);
+  };
 
   const newSession = () => {
     clearMessages();
@@ -107,6 +140,22 @@ export default function Home() {
       {/* Top bar */}
       <header className="flex h-14 flex-none items-center gap-4 border-b border-line px-6">
         <h1 className="text-[15px] font-semibold">Chat</h1>
+        {agents.length > 0 && (
+          <div className="relative">
+            <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-[10px] text-fg-dim">/</span>
+            <select
+              value={agentId || agents[0]?.id || ''}
+              onChange={(e) => switchAgent(e.target.value)}
+              aria-label="Active agent"
+              className="h-8 appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent focus:outline-none"
+            >
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+          </div>
+        )}
         <div className="ml-auto flex items-center gap-3">
           <span className="flex items-center gap-2 font-mono text-[11px] text-fg-dim">
             <span className={cn('h-1.5 w-1.5 rounded-full', isConnected ? 'bg-accent' : 'bg-danger')} />

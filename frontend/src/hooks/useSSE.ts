@@ -20,6 +20,12 @@ interface UseSSEOptions {
   onError?: (error: Error) => void;
   autoReconnect?: boolean;
   maxRetries?: number;
+  /** Subscribe to a specific agent's stream. Must match the agent_id used when
+   *  posting to /agents/chat (they rendezvous on a per-(user, agent) manager). */
+  agentId?: string;
+  /** Gate the connection until the caller is ready (e.g. the agent is resolved).
+   *  Default true. Avoids a connect-then-reconnect when agentId arrives async. */
+  enabled?: boolean;
 }
 
 export function useSSE(options: UseSSEOptions = {}) {
@@ -31,6 +37,8 @@ export function useSSE(options: UseSSEOptions = {}) {
     onError,
     autoReconnect = true,
     maxRetries = 5,
+    agentId,
+    enabled = true,
   } = options;
 
   const [isConnected, setIsConnected] = useState(false);
@@ -77,7 +85,7 @@ export function useSSE(options: UseSSEOptions = {}) {
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    const url = `${API_BACKEND_URI}/agents/sse`;
+    const url = `${API_BACKEND_URI}/agents/sse${agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ''}`;
 
     fetch(url, {
       headers: {
@@ -172,7 +180,7 @@ export function useSSE(options: UseSSEOptions = {}) {
         onErrorRef.current?.(err);
       }
     });
-  }, [autoReconnect, maxRetries]);
+  }, [autoReconnect, maxRetries, agentId]);
 
   const disconnect = useCallback(() => {
     if (retryTimeoutRef.current) {
@@ -199,12 +207,13 @@ export function useSSE(options: UseSSEOptions = {}) {
     setError(null);
   }, []);
 
-  // Only run connect/disconnect on mount/unmount, not on every render
+  // Connect once enabled, and reconnect whenever the selected agent changes.
   useEffect(() => {
+    if (!enabled) return;
     connect();
     return () => disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [agentId, enabled]);
 
   return {
     isConnected,
