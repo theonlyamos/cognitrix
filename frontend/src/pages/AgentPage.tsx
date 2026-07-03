@@ -18,6 +18,16 @@ const MODELS: Record<string, string[]> = {
   cerebras: ['llama-3.3-70b', 'llama3.1-8b'],
   ollama: ['llama3.2', 'qwen2.5', 'mistral'],
 };
+// Default OpenAI-compatible endpoint per provider — mirrors the backend's
+// _DEFAULT_BASE_URLS in cognitrix/providers/base.py.
+const BASE_URLS: Record<string, string> = {
+  openrouter: 'https://openrouter.ai/api/v1',
+  openai: 'https://api.openai.com/v1',
+  google: 'https://generativelanguage.googleapis.com/v1beta/openai/v1',
+  groq: 'https://api.groq.com/openai/v1',
+  cerebras: 'https://api.cerebras.com/v1',
+  ollama: 'http://localhost:11434/v1',
+};
 
 interface Tool { name: string; description?: string; category?: string }
 interface AgentData {
@@ -65,6 +75,14 @@ export default function AgentPage() {
     for (const t of toolList || []) (groups[t.category || 'general'] ||= []).push(t);
     return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
   }, [toolList]);
+
+  // Switching provider resets the model and base URL to that provider's
+  // defaults — an old model/endpoint won't work against a different provider.
+  const changeProvider = (next: string) => {
+    setProvider(next);
+    setModel(MODELS[next]?.[0] || '');
+    setBaseUrl(BASE_URLS[next] || '');
+  };
 
   const toggleTool = (n: string) =>
     setSelected((s) => {
@@ -138,7 +156,7 @@ export default function AgentPage() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="PROVIDER">
-          <Select value={provider} onChange={(e) => { setProvider(e.target.value); }}>
+          <Select value={provider} onChange={(e) => changeProvider(e.target.value)}>
             {PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}
           </Select>
         </Field>
