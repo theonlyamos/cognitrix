@@ -4,6 +4,7 @@ CLI argument parsing and configuration.
 import argparse
 
 from .handlers import manage_agents, manage_tools
+from .handlers_skills import manage_skills
 from .utils import str_or_file
 
 
@@ -31,6 +32,22 @@ def get_arguments():
                             help='List tools by category')
     tools_parser.set_defaults(func=manage_tools)
 
+    # Skills subcommand
+    skills_parser = subparsers.add_parser('skills', help="Manage skills")
+    skills_parser.add_argument('name', type=str, nargs='?', help='Skill name')
+    skills_parser.add_argument('-l', '--list', action='store_true', help='List installed skills')
+    skills_parser.add_argument('--show', type=str, help='Show skill details')
+    skills_parser.add_argument('--create', action='store_true', help='Create a new skill')
+    skills_parser.add_argument('--install', type=str, help='Install from path/URL/registry')
+    skills_parser.add_argument('--remove', type=str, help='Remove a skill')
+    skills_parser.add_argument('--validate', type=str, help='Validate a SKILL.md')
+    skills_parser.add_argument('--run', type=str, help='Run a skill by name')
+    skills_parser.add_argument('--search', type=str, help='Search for skills')
+    skills_parser.add_argument('args', nargs='*', help='Arguments for --run (positional)')
+    skills_parser.add_argument('--arg', action='append', dest='skill_args', default=[],
+                             help='Skill arguments as key=value (can be repeated, e.g., --arg file_path=doc.pdf --arg depth=short)')
+    skills_parser.set_defaults(func=manage_skills)
+
     # Main arguments
     parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
     parser.add_argument('--provider', default='openrouter', help='LLM provider. Config from env: AI_PROVIDER, *_BASE_URL, *_API_KEY, *_MODEL')
@@ -41,7 +58,7 @@ def get_arguments():
     parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
     parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')],
                        default='all', help='Add tools by categories to agent')
-    parser.add_argument('--model', type=str, default='z-ai/glm-4.5-air:free', help='Specify model or model_url to use')
+    parser.add_argument('--model', type=str, default='google/gemini-3.1-flash-lite-preview', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
     parser.add_argument('--api-base', type=str, default='',
                        help='Override provider base_url (e.g. for local Ollama).')
@@ -51,14 +68,24 @@ def get_arguments():
                        help='Set system prompt of model. Can be a string or a text file path')
     parser.add_argument('--prompt-template', type=str_or_file, default='',
                        help='Set prompt template of model. Can be a string or a text file path')
-    parser.add_argument('--generate', type=str, default='',
+    parser.add_argument('--prompt', '-p', type=str, default='',
                        help='Prompt the agent to generate text and then exit after printing out the response.')
+    parser.add_argument('--prompt-file', type=str, default='',
+                       help='Read the prompt from a file instead of the command line. Use this for long, '
+                            'multi-line, or special-character prompts that the shell would mangle. Takes '
+                            'precedence over --prompt/-p.')
     parser.add_argument('--audio', action='store_true', help='Get input from microphone')
-    parser.add_argument('--stream', type=bool, default=True, help='Enable response stream')
+    parser.add_argument('--stream', action=argparse.BooleanOptionalAction, default=True,
+                       help='Stream responses token-by-token (default: on; use --no-stream to disable)')
     parser.add_argument('--session', type=str, default="", help='Load saved session')
     parser.add_argument('--clear-history', action='store_true', default="", help='Clear agent history')
     parser.add_argument('--sessions', action='store_true', help='Get a list of all saved sessions')
     parser.add_argument('--verbose', action='store_true', help='Set verbose mode')
+    parser.add_argument('--dangerously-skip-permissions', action='store_true',
+                       help='Run fully unattended: auto-approve every tool call AND let the '
+                            'bash tool run any command through a real shell (no whitelist). '
+                            'ONLY use inside a throwaway sandbox/container — it removes the '
+                            'safety gate and command restrictions entirely.')
     parser.add_argument('-v','--version', action='version', version=f'%(prog)s {VERSION}')
 
     # Import start function for default action

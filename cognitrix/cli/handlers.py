@@ -96,10 +96,10 @@ async def manage_agents(args: Namespace):
 # =====================
 # Task Management
 # =====================
-def list_tasks():
+async def list_tasks():
     """List all available tasks."""
     from cognitrix.tasks.base import Task
-    tasks = Task.all()
+    tasks = await Task.all()
     rows = [[i+1, t.title] for i, t in enumerate(tasks)]
     print_table(rows, ["#", "Task Title"])
 
@@ -107,10 +107,10 @@ def list_tasks():
 # =====================
 # Team Management
 # =====================
-def list_teams():
+async def list_teams():
     """List all available teams."""
     from cognitrix.teams.base import Team
-    teams = Team.all()
+    teams = await Team.all()
     rows = [[i+1, t.name] for i, t in enumerate(teams)]
     print_table(rows, ["#", "Team Name"])
 

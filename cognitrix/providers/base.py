@@ -4,6 +4,7 @@ Provider-agnostic OpenAI-compatible LLM layer.
 Runtime config (provider, base_url, api_key, model) from env or CLI.
 Groq and Ollama: direct. Others: route through Helicone.
 """
+import asyncio
 import hashlib
 import json
 import logging
@@ -13,14 +14,16 @@ from typing import Any, TypeAlias
 
 import openai
 from odbms import Model
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from pydantic import Field
 
 from cognitrix.utils import image_to_base64
 from cognitrix.utils.llm_response import LLMResponse
 
-# Cache OpenAI clients by effective config to avoid per-request overhead
-_client_cache: dict[str, OpenAI] = {}
+# Cache async OpenAI clients by effective config to avoid per-request overhead.
+# Async clients keep the server event loop free during the (long) provider call
+# instead of blocking it for every socket read.
+_client_cache: dict[str, AsyncOpenAI] = {}
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -40,7 +43,19 @@ _DEFAULT_BASE_URLS: dict[str, str] = {
     'openrouter': 'https://openrouter.ai/api/v1',
     'openai': 'https://api.openai.com/v1',
     'cerebras': 'https://api.cerebras.com/v1',
-    'google': 'https://generativelanguage.googleapis.com/v1beta/',
+    'google': 'https://generativelanguage.googleapis.com/v1beta/openai/v1',
+}
+
+# Conservative per-provider context windows (tokens) used for prompt budgeting
+# when LLM.context_window is not set explicitly.
+_PROVIDER_CONTEXT_WINDOWS: dict[str, int] = {
+    'google': 1_000_000,
+    'gemini': 1_000_000,
+    'anthropic': 200_000,
+    'openai': 128_000,
+    'groq': 128_000,
+    'openrouter': 128_000,
+    'ollama': 32_000,
 }
 
 
@@ -77,7 +92,7 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
     model = (
         overrides.get('model')
         or os.getenv(_env_key(effective_provider, 'MODEL'))
-        or ''
+        or settings.get_default_model(effective_provider)
     )
     temperature = overrides.get('temperature')
     if temperature is None:
@@ -127,14 +142,14 @@ def _client_cache_key(base_url: str, api_key: str, headers: dict[str, str] | Non
 
 def _get_or_create_client(
     base_url: str, api_key: str, default_headers: dict[str, str] | None = None
-) -> OpenAI:
-    """Reuse OpenAI client per effective config."""
+) -> AsyncOpenAI:
+    """Reuse an async OpenAI client per effective config."""
     key = _client_cache_key(base_url, api_key, default_headers)
     if key not in _client_cache:
         kwargs: dict[str, Any] = {'api_key': api_key, 'base_url': base_url}
         if default_headers:
             kwargs['default_headers'] = default_headers
-        _client_cache[key] = OpenAI(**kwargs)
+        _client_cache[key] = AsyncOpenAI(**kwargs)
     return _client_cache[key]
 
 
@@ -151,6 +166,8 @@ class LLM(Model):
     api_key: str = Field(default='')
     base_url: str = ''
     max_tokens: int = Field(default=DEFAULT_MAX_TOKENS)
+    context_window: int = Field(default=0)
+    """Model context window in tokens; 0 = use the provider default."""
     is_multimodal: bool = Field(default=True)
     supports_tool_use: bool = Field(default=True)
     client: Any = None
@@ -167,11 +184,13 @@ class LLM(Model):
         if provider and 'provider' not in data:
             self.provider = provider.lower()
 
+    def get_context_window(self) -> int:
+        if self.context_window > 0:
+            return self.context_window
+        return _PROVIDER_CONTEXT_WINDOWS.get(self.provider, 128_000)
+
     def format_query(self, messages: list[dict[str, Any]]) -> list:
         return LLMManager.format_query(self, messages)
-
-    def format_tools(self, tools: list[dict[str, Any]]):
-        return LLMManager.format_tools(tools)
 
     @staticmethod
     def load_llm(provider: str | dict[str, Any]) -> 'LLM | None':
@@ -194,12 +213,14 @@ class LLMManager:
 
     @staticmethod
     def _normalize_role(role: str) -> str:
-        """Map role variants to canonical system/user/assistant for API compatibility."""
+        """Map role variants to canonical system/user/assistant/tool for API compatibility."""
         r = (role or '').strip().lower()
         if r in ('system',):
             return 'system'
         if r in ('user',):
             return 'user'
+        if r in ('tool',):
+            return 'tool'
         # Assistant, agent names, and any other non-user role -> assistant
         return 'assistant'
 
@@ -210,8 +231,39 @@ class LLMManager:
             role = LLMManager._normalize_role(fm.get('role', 'user'))
             content = fm.get('content', '')
             msg_type = fm.get('type', 'text')
-            if msg_type == 'text':
-                formatted_messages.append({'role': role, 'content': content})
+            tool_call_id = fm.get('tool_call_id')
+            tool_calls = fm.get('tool_calls')
+            if tool_calls:
+                # Assistant message that issued native tool calls. Reconstruct the
+                # OpenAI-spec shape from the parsed form so the tool-result messages
+                # that follow have a valid preceding assistant.tool_calls.
+                formatted_messages.append({
+                    'role': 'assistant',
+                    'content': content or None,
+                    'tool_calls': [
+                        {
+                            'id': tc.get('tool_call_id') or f'call_{i}',
+                            'type': 'function',
+                            'function': {
+                                'name': str(tc.get('name', '')).replace(' ', '_'),
+                                'arguments': json.dumps(tc.get('arguments', {})),
+                            },
+                            # Echo provider extras (Gemini's thought_signature) on
+                            # the re-prompt — but only to Gemini; other providers
+                            # can reject unknown fields in tool_calls.
+                            **({'extra_content': tc['extra_content']}
+                               if tc.get('extra_content') and llm.provider in ('google', 'gemini') else {}),
+                        }
+                        for i, tc in enumerate(tool_calls)
+                    ],
+                })
+            elif msg_type in ('text', 'summary'):
+                # 'summary' is a compaction summary stored as a user message.
+                msg = {'role': role, 'content': content}
+                # Add tool_call_id for tool role messages (OpenAI format)
+                if role == 'tool' and tool_call_id:
+                    msg['tool_call_id'] = tool_call_id
+                formatted_messages.append(msg)
             elif msg_type == 'image' and llm.is_multimodal:
                 base64_image = image_to_base64(content)  # type: ignore
                 formatted_messages.append({
@@ -221,35 +273,39 @@ class LLMManager:
                         {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{base64_image}'}},
                     ],
                 })
+            elif msg_type == 'image':
+                # Non-multimodal model: don't silently drop the image — leave a text
+                # placeholder so the turn keeps context, and warn.
+                logger.warning("Dropping image content for non-multimodal model '%s'", llm.model)
+                formatted_messages.append({
+                    'role': role,
+                    'content': '[An image/screenshot was provided but this model cannot view images.]',
+                })
         return formatted_messages
 
     @staticmethod
-    def format_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        formatted_tools = []
-        for tool in tools:
-            f_tool = {
-                'type': 'function',
-                'function': {
-                    'name': tool['function']['name'].replace(' ', '_'),
-                    'description': tool['function']['description'][:1024],
-                    'parameters': {
-                        'type': 'object',
-                        'properties': {},
-                        'required': tool['function']['parameters']['required'],
-                    },
-                },
-            }
-            for key, value in tool['function']['parameters']['properties'].items():
-                f_tool['function']['parameters']['properties'][key] = {'type': value}
-            formatted_tools.append(f_tool)
-        return formatted_tools
-
-    @staticmethod
     def load_llm(provider: str | dict[str, Any]) -> LLM | None:
+        """Load LLM with caching to avoid repeated instantiation."""
+        cache_key = json.dumps(provider, sort_keys=True) if isinstance(provider, dict) else provider
+
+        if not hasattr(LLMManager, '_llm_cache'):
+            LLMManager._llm_cache = {}
+
+        if cache_key in LLMManager._llm_cache:
+            cached = LLMManager._llm_cache[cache_key]
+            if isinstance(cached, LLM):
+                # Deep copy: callers mutate the returned instance (temperature/model,
+                # and potentially the extra_headers/extra_body dicts). A shallow copy
+                # would share those nested dicts with the cached instance.
+                return cached.model_copy(deep=True)
+
         try:
             if isinstance(provider, dict):
-                return LLM(**provider)
-            return LLM(provider=str(provider))
+                llm = LLM(**provider)
+            else:
+                llm = LLM(provider=str(provider))
+            LLMManager._llm_cache[cache_key] = llm
+            return llm.model_copy(deep=True)
         except Exception as e:
             logging.exception(e)
             return None
@@ -277,12 +333,12 @@ class LLMManager:
                 and (settings.helicone_base_url or 'https://gateway.helicone.ai/v1')
             )
             helicone_base = settings.helicone_base_url or 'https://gateway.helicone.ai/v1'
-            
+
             if llm.provider == 'openrouter':
                 helicone_base = helicone_base.replace('v1', 'api/v1')
-            
+
             if llm.provider in ('google', 'gemini'):
-                helicone_base = helicone_base + 'beta'
+                helicone_base = helicone_base + 'beta/openai/v1'
 
             if use_helicone:
                 headers: dict[str, str] = {
@@ -298,7 +354,7 @@ class LLMManager:
                 default_headers = dict(llm.extra_headers) if llm.extra_headers else None
                 client = _get_or_create_client(llm.base_url, llm.api_key, default_headers)
             formatted_messages = LLMManager.format_query(llm, prompt)
-            formatted_tools = LLMManager.format_tools(tools) if tools else None
+            formatted_tools = tools if tools else None
 
             completion_params: dict[str, Any] = {
                 'model': llm.model,
@@ -307,6 +363,9 @@ class LLMManager:
                 'temperature': llm.temperature,
                 'stream': stream,
             }
+            if stream:
+                # Ask for real token usage on the final stream chunk.
+                completion_params['stream_options'] = {'include_usage': True}
             if formatted_tools:
                 completion_params['tools'] = formatted_tools
             if llm.response_format:
@@ -320,13 +379,16 @@ class LLMManager:
 
         except openai.OpenAIError as e:
             logger.error(f"OpenAI API error: {str(e)}")
-            return LLMResponse(llm_response=f"Error: OpenAI API encountered an issue - {str(e)}")
+            msg = f"Error: OpenAI API encountered an issue - {str(e)}"
+            return LLMResponse(llm_response=msg, error=msg)
         except TimeoutError:
             logger.error("Request to OpenAI API timed out")
-            return LLMResponse(llm_response="Error: Request timed out. Please try again later.")
+            msg = "Error: Request timed out. Please try again later."
+            return LLMResponse(llm_response=msg, error=msg)
         except Exception as e:
             logger.exception(f"Unexpected error in LLM generate_response: {str(e)}")
-            return LLMResponse(llm_response=f"An unexpected error occurred: {str(e)}")
+            msg = f"An unexpected error occurred: {str(e)}"
+            return LLMResponse(llm_response=msg, error=msg)
 
     @staticmethod
     def _get_reasoning_from_delta(delta) -> str | None:
@@ -342,7 +404,7 @@ class LLMManager:
     @staticmethod
     def _parse_native_tool_calls(tool_calls: list[Any] | None) -> list[dict[str, Any]]:
         """
-        Map OpenAI-style message.tool_calls to [{name, arguments}] for agent.call_tools.
+        Map OpenAI-style message.tool_calls to [{name, arguments, tool_call_id}] for agent.call_tools.
         arguments is parsed from JSON string to dict.
         """
         if not tool_calls:
@@ -354,6 +416,7 @@ class LLMManager:
                 continue
             name = getattr(fn, 'name', None) or (fn.get('name') if isinstance(fn, dict) else None)
             args_raw = getattr(fn, 'arguments', None) or (fn.get('arguments') if isinstance(fn, dict) else None)
+            tool_call_id = getattr(tc, 'id', None) or (tc.get('id') if isinstance(tc, dict) else None)
             if not name:
                 continue
             args: dict[str, Any] = {}
@@ -361,19 +424,32 @@ class LLMManager:
                 try:
                     args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
                 except json.JSONDecodeError:
+                    logger.warning("Tool call '%s' had malformed JSON arguments; running with empty args. Raw: %r", name, args_raw)
                     args = {}
-            result.append({'name': name, 'arguments': args})
+            parsed = {'name': name, 'arguments': args, 'tool_call_id': tool_call_id}
+            # Gemini's OpenAI-compat layer attaches a thought_signature under
+            # extra_content that MUST be echoed back on the re-prompt.
+            extra = getattr(tc, 'extra_content', None) or (tc.get('extra_content') if isinstance(tc, dict) else None)
+            if extra:
+                parsed['extra_content'] = extra
+            result.append(parsed)
         return result
 
     @staticmethod
-    async def _handle_streaming_response(client: OpenAI, params: dict[str, Any]):
+    async def _handle_streaming_response(client: AsyncOpenAI, params: dict[str, Any]):
         try:
-            stream = client.chat.completions.create(**params)
+            stream = await client.chat.completions.create(**params)
             response = LLMResponse()
             in_reasoning = False
             # Accumulate partial tool calls by index for streaming
             tool_call_accum: dict[int, dict[str, Any]] = {}
-            for chunk in stream:
+            async for chunk in stream:
+                chunk_usage = getattr(chunk, 'usage', None)
+                if chunk_usage:
+                    response.usage = {
+                        'prompt_tokens': chunk_usage.prompt_tokens or 0,
+                        'completion_tokens': chunk_usage.completion_tokens or 0,
+                    }
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -385,10 +461,17 @@ class LLMManager:
                     idx = getattr(dtc, 'index', None)
                     if idx is None and isinstance(dtc, dict):
                         idx = dtc.get('index')
+                    tc_id = getattr(dtc, 'id', None) or (dtc.get('id') if isinstance(dtc, dict) else None)
                     if idx is None:
-                        continue
+                        # Some OpenAI-compat endpoints (e.g. Gemini) stream tool
+                        # calls without an index: a delta carrying an id starts a
+                        # new call; one without continues the last.
+                        idx = len(tool_call_accum) if (tc_id or not tool_call_accum) else max(tool_call_accum)
                     if idx not in tool_call_accum:
-                        tool_call_accum[idx] = {'name': '', 'arguments': ''}
+                        tool_call_accum[idx] = {'name': '', 'arguments': '', 'tool_call_id': None}
+                    extra = getattr(dtc, 'extra_content', None) or (dtc.get('extra_content') if isinstance(dtc, dict) else None)
+                    if extra:
+                        tool_call_accum[idx]['extra_content'] = extra
                     fn = getattr(dtc, 'function', None) or (dtc.get('function') if isinstance(dtc, dict) else None)
                     if fn:
                         n = getattr(fn, 'name', None) or (fn.get('name') if isinstance(fn, dict) else None)
@@ -397,6 +480,8 @@ class LLMManager:
                             tool_call_accum[idx]['name'] = (tool_call_accum[idx]['name'] or '') + (n or '')
                         if a:
                             tool_call_accum[idx]['arguments'] = (tool_call_accum[idx]['arguments'] or '') + (a or '')
+                    if tc_id:
+                        tool_call_accum[idx]['tool_call_id'] = tc_id
                 if reasoning:
                     response.add_reasoning_chunk(reasoning)
                     if not in_reasoning:
@@ -423,16 +508,27 @@ class LLMManager:
                     try:
                         args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
                     except json.JSONDecodeError:
+                        if name:
+                            logger.warning("Streamed tool call '%s' had malformed JSON arguments; running with empty args. Raw: %r", name, args_raw)
                         args = {}
                     if name:
-                        parsed.append({'name': name, 'arguments': args})
+                        item = {'name': name, 'arguments': args, 'tool_call_id': acc.get('tool_call_id')}
+                        if acc.get('extra_content'):
+                            item['extra_content'] = acc['extra_content']
+                        parsed.append(item)
                 response.tool_calls = parsed
-            if in_reasoning:
-                response.current_chunk = '\n</think>\n'
+            # Final yield delivers tool_calls/finalization only — clear
+            # current_chunk so consumers don't print the last chunk twice.
+            response.current_chunk = '\n</think>\n' if in_reasoning else ''
             yield response
         except Exception as e:
             logger.exception(f"Error in streaming response: {str(e)}")
-            yield LLMResponse(llm_response=f"Streaming error: {str(e)}")
+            msg = f"Streaming error: {str(e)}"
+            err = LLMResponse(llm_response=msg, error=msg)
+            # Streaming consumers print current_chunk — without it the error
+            # is invisible to the user.
+            err.current_chunk = msg
+            yield err
 
     @staticmethod
     def _get_reasoning_from_message(msg) -> str | None:
@@ -446,24 +542,47 @@ class LLMManager:
         return None
 
     @staticmethod
-    async def _handle_non_streaming_response(client: OpenAI, params: dict[str, Any]):
+    async def _handle_non_streaming_response(client: AsyncOpenAI, params: dict[str, Any]):
         try:
-            response = client.chat.completions.create(**params)
+            # Retry transient errors (rate limit / timeout / connection / 5xx) with
+            # backoff; other errors (e.g. 400 invalid request) fail fast.
+            transient = (
+                openai.RateLimitError, openai.APITimeoutError,
+                openai.APIConnectionError, openai.InternalServerError,
+            )
+            response = None
+            for attempt in range(1, 4):
+                try:
+                    response = await client.chat.completions.create(**params)
+                    break
+                except transient as e:
+                    if attempt == 3:
+                        raise
+                    logger.warning("Transient LLM error (attempt %s): %s", attempt, e)
+                    await asyncio.sleep(2 ** (attempt - 1))
             msg = response.choices[0].message
             content = msg.content or ""
             reasoning = LLMManager._get_reasoning_from_message(msg)
             native_tool_calls = LLMManager._parse_native_tool_calls(getattr(msg, 'tool_calls', None))
+            llm_resp = LLMResponse()
             if reasoning:
-                llm_resp = LLMResponse(llm_response=f'<think>{reasoning}</think>\n\n{content}')
-                llm_resp.reasoning = reasoning
+                llm_resp.add_reasoning_chunk(reasoning)
+                llm_resp.add_chunk(f'<think>{reasoning}</think>\n\n{content}')
             else:
-                llm_resp = LLMResponse(llm_response=content)
+                llm_resp.add_chunk(content)
             if native_tool_calls:
                 llm_resp.tool_calls = native_tool_calls
+            resp_usage = getattr(response, 'usage', None)
+            if resp_usage:
+                llm_resp.usage = {
+                    'prompt_tokens': resp_usage.prompt_tokens or 0,
+                    'completion_tokens': resp_usage.completion_tokens or 0,
+                }
             return llm_resp
         except Exception as e:
             logger.exception(f"Error in non-streaming response: {str(e)}")
-            return LLMResponse(llm_response=f"Response error: {str(e)}")
+            msg = f"Response error: {str(e)}"
+            return LLMResponse(llm_response=msg, error=msg)
 
 
 def _openrouter_list_models(api_key: str) -> list[str]:

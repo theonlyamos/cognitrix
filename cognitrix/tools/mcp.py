@@ -1,11 +1,14 @@
 import json
 from typing import TYPE_CHECKING, Any
 
-from cognitrix.mcp.client import get_dynamic_client
 from cognitrix.tools.tool import tool
 
 if TYPE_CHECKING:
     from cognitrix.agents.base import Agent
+
+# get_dynamic_client is imported lazily inside the tool functions: this module
+# is loaded by the tools-package reflection at startup, and eagerly importing
+# the MCP SDK here added ~0.2s+ to every launch.
 
 @tool(category="mcp")
 async def list_mcp_tools(*, parent: "Agent") -> str:
@@ -19,6 +22,7 @@ async def list_mcp_tools(*, parent: "Agent") -> str:
         A JSON string representing a dictionary where keys are server names
         and values are lists of tool definitions for that server.
     """
+    from cognitrix.mcp.client import get_dynamic_client
     client = await get_dynamic_client()
 
     permitted_servers = parent.mcp_servers
@@ -61,6 +65,7 @@ async def run_mcp_tool(server: str, tool_name: str, arguments: dict[str, Any], *
     if server not in permitted_servers:
         return f"Error: Agent '{parent.name}' does not have permission to access MCP server '{server}'."
 
+    from cognitrix.mcp.client import get_dynamic_client
     client = await get_dynamic_client()
     result = await client.call_tool(server, tool_name, arguments)
     return result

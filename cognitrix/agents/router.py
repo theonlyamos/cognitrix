@@ -3,7 +3,6 @@
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 from cognitrix.agents.base import Agent
 from cognitrix.agents.capability_registry import CapabilityRegistry
@@ -31,7 +30,7 @@ class TaskAssignment:
     """Assignment of a task to an agent."""
     agent: Agent
     task: str
-    subtask_id: Optional[int] = None
+    subtask_id: int | None = None
     dependencies: list[int] = None
 
 
@@ -45,7 +44,7 @@ class RoutePlan:
 
 class TaskDecomposer:
     """Breaks complex tasks into subtasks."""
-    
+
     async def decompose(self, task: str, llm) -> list[str]:
         """
         Decompose task into subtasks using LLM.
@@ -64,49 +63,49 @@ Example:
 2. Analyze competitor pricing
 3. Generate pricing recommendations
 """
-        
+
         response = await llm([{'role': 'user', 'content': prompt}])
-        
+
         # Parse response
         if hasattr(response, 'llm_response'):
             response_text = response.llm_response
         else:
             response_text = str(response)
-        
+
         # Extract numbered items
         import re
         subtasks = re.findall(r'^\d+\.\s*(.+)$', response_text, re.MULTILINE)
-        
+
         if not subtasks:
             # If no numbered list, treat as single task
             return [task]
-        
+
         return subtasks
 
 
 class ComplexityAssessor:
     """Assesses task complexity."""
-    
+
     COMPLEXITY_INDICATORS = {
         'simple': ['simple', 'basic', 'quick', 'easy', 'one', 'single'],
         'complex': ['complex', 'comprehensive', 'detailed', 'analysis', 'research', 'multiple', 'steps']
     }
-    
+
     def assess(self, task: str) -> Complexity:
         """Assess task complexity based on keywords and length."""
         task_lower = task.lower()
         word_count = len(task.split())
-        
+
         # Check for complexity indicators
         simple_score = sum(1 for ind in self.COMPLEXITY_INDICATORS['simple'] if ind in task_lower)
         complex_score = sum(1 for ind in self.COMPLEXITY_INDICATORS['complex'] if ind in task_lower)
-        
+
         # Factor in length
         if word_count < 10:
             simple_score += 1
         elif word_count > 30:
             complex_score += 1
-        
+
         # Determine complexity
         if complex_score > simple_score:
             return Complexity.COMPLEX
@@ -123,12 +122,12 @@ class AgentRouter:
     Uses embeddings to match tasks to agents and can decompose
     complex tasks for parallel or sequential execution.
     """
-    
+
     def __init__(self):
         self.registry = CapabilityRegistry()
         self.decomposer = TaskDecomposer()
         self.assessor = ComplexityAssessor()
-    
+
     async def route_task(
         self,
         task: str,
@@ -149,11 +148,11 @@ class AgentRouter:
         # Register all available agents
         for agent in available_agents:
             await self.registry.register_agent(agent)
-        
+
         # Assess complexity
         complexity = self.assessor.assess(task)
         logger.info(f"Task complexity: {complexity.value}")
-        
+
         # Route based on complexity
         if complexity == Complexity.SIMPLE:
             return await self._route_simple(task)
@@ -161,33 +160,33 @@ class AgentRouter:
             return await self._route_moderate(task, llm)
         else:  # COMPLEX
             return await self._route_complex(task, llm)
-    
+
     async def _route_simple(self, task: str) -> RoutePlan:
         """Route simple task to single best agent."""
         agent, score = await self.registry.find_best_agent(task)
-        
+
         if not agent:
             raise RoutingError("No suitable agent found for task")
-        
+
         return RoutePlan(
             strategy=RoutingStrategy.SINGLE,
             assignments=[TaskAssignment(agent=agent, task=task)],
             estimated_complexity=Complexity.SIMPLE
         )
-    
+
     async def _route_moderate(self, task: str, llm) -> RoutePlan:
         """Route moderate task, possibly with decomposition."""
         if not llm:
             # Can't decompose without LLM, treat as simple
             return await self._route_simple(task)
-        
+
         # Try decomposition
         subtasks = await self.decomposer.decompose(task, llm)
-        
+
         if len(subtasks) == 1:
             # Not decomposable, treat as simple
             return await self._route_simple(task)
-        
+
         # Find agents for each subtask
         assignments = []
         for i, subtask in enumerate(subtasks):
@@ -199,21 +198,21 @@ class AgentRouter:
                     subtask_id=i,
                     dependencies=[] if i == 0 else [i-1]  # Sequential by default
                 ))
-        
+
         return RoutePlan(
             strategy=RoutingStrategy.SEQUENTIAL,
             assignments=assignments,
             estimated_complexity=Complexity.MODERATE
         )
-    
+
     async def _route_complex(self, task: str, llm) -> RoutePlan:
         """Route complex task with parallel execution where possible."""
         if not llm:
             return await self._route_moderate(task, llm)
-        
+
         # Decompose into subtasks
         subtasks = await self.decomposer.decompose(task, llm)
-        
+
         # Find agents for each subtask
         assignments = []
         for i, subtask in enumerate(subtasks):
@@ -224,24 +223,24 @@ class AgentRouter:
                 dependencies = []
                 if i > 0 and not self._can_parallelize(subtask, subtasks[i-1]):
                     dependencies = [i-1]
-                
+
                 assignments.append(TaskAssignment(
                     agent=agent,
                     task=subtask,
                     subtask_id=i,
                     dependencies=dependencies
                 ))
-        
+
         # Determine if any can run in parallel
         has_parallel = any(not a.dependencies for a in assignments)
         strategy = RoutingStrategy.PARALLEL if has_parallel else RoutingStrategy.SEQUENTIAL
-        
+
         return RoutePlan(
             strategy=strategy,
             assignments=assignments,
             estimated_complexity=Complexity.COMPLEX
         )
-    
+
     def _can_parallelize(self, task_a: str, task_b: str) -> bool:
         """
         Determine if two tasks can run in parallel.
@@ -251,12 +250,12 @@ class AgentRouter:
         """
         # Check for dependency keywords
         dependent_keywords = ['after', 'then', 'once', 'following', 'based on']
-        
+
         # If task_b mentions dependency on previous, it's sequential
         task_b_lower = task_b.lower()
         if any(kw in task_b_lower for kw in dependent_keywords):
             return False
-        
+
         return True
 
 

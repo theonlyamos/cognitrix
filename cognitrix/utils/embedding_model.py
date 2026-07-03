@@ -1,7 +1,6 @@
 """Shared embedding model utilities."""
 
 import logging
-from functools import lru_cache
 from typing import Optional
 
 logger = logging.getLogger('cognitrix.log')
@@ -23,7 +22,7 @@ def get_embedding_model(model_name: str = "all-MiniLM-L6-v2"):
         SentenceTransformer instance
     """
     global _embedding_model_cache
-    
+
     if _embedding_model_cache is None:
         logger.info(f"Loading embedding model: {model_name}")
         try:
@@ -33,7 +32,7 @@ def get_embedding_model(model_name: str = "all-MiniLM-L6-v2"):
         except Exception as e:
             logger.error(f"Failed to load embedding model: {e}")
             raise
-    
+
     return _embedding_model_cache
 
 

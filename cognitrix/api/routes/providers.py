@@ -1,10 +1,13 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+
+from cognitrix.common.security import get_current_user, redact_secrets
 
 from ...providers import LLM
 
 providers_api = APIRouter(
-    prefix='/providers'
+    prefix='/providers',
+    dependencies=[Depends(get_current_user)],
 )
 
 def _llm_to_dict(llm) -> dict:
@@ -16,4 +19,5 @@ def _llm_to_dict(llm) -> dict:
 async def load_provider(provider_name: str):
     provider = LLM.load_llm(provider_name)
     response: dict = _llm_to_dict(provider) if provider else {}
-    return JSONResponse(response)
+    # Never return the provider api_key to the client.
+    return JSONResponse(redact_secrets(response))

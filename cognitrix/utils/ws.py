@@ -9,6 +9,7 @@ from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.prompts.generator import agent_generator, task_details_generator, team_details_generator
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task
+from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import Tool
 
@@ -17,8 +18,35 @@ logger = logging.getLogger('cognitrix.log')
 class WebSocketManager:
     def __init__(self, agent):
         self.agent = agent
+        # Strong refs to fire-and-forget background tasks so the event loop
+        # can't GC them mid-run; done-callback surfaces failures.
+        self._bg_tasks: set[asyncio.Task] = set()
         from cognitrix.utils.core import register_websocket_manager
         register_websocket_manager(agent.id, self)
+
+    def _spawn_bg(self, coro, websocket: 'WebSocket | None' = None):
+        """Launch a background task, retaining a strong reference and logging
+        (and optionally notifying the client of) any exception it raises."""
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+
+        def _done(t: asyncio.Task):
+            self._bg_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                logger.exception("Background task failed", exc_info=exc)
+                if websocket is not None:
+                    # Track the notify task too, so it isn't GC'd before it sends.
+                    notify = asyncio.create_task(
+                        websocket.send_json({'type': 'error', 'content': f'Task failed: {exc}'})
+                    )
+                    self._bg_tasks.add(notify)
+                    notify.add_done_callback(self._bg_tasks.discard)
+
+        task.add_done_callback(_done)
+        return task
 
     async def websocket_endpoint(self, websocket: WebSocket):
         web_agent = self.agent
@@ -41,12 +69,12 @@ class WebSocketManager:
 
                             if not session.agent_id:
                                 session.agent_id = web_agent.id
-                                session.save()
+                                await session.save()
 
                             if session.agent_id == web_agent.id:
                                 loaded_agent = web_agent
                             else:
-                                loaded_agent: Agent | None = Agent.get(session.agent_id)
+                                loaded_agent: Agent | None = await Agent.get(session.agent_id)
 
                             if loaded_agent:
                                 web_agent = loaded_agent
@@ -58,7 +86,7 @@ class WebSocketManager:
                         elif action == 'delete':
                             session = await Session.load(session_id)
                             session.chat = []
-                            session.save()
+                            await session.save()
                             await websocket.send_json({'type': query_type, 'content': session.chat, 'agent_name': web_agent.name, 'action': action})
 
                     elif query_type == 'sessions':
@@ -119,7 +147,41 @@ class WebSocketManager:
                             prompt = f"""{default_prompt}"""
 
                         session.chat = []
-                        await session(prompt, agent, 'web', True, websocket.send_json, query, False)
+                        await session(prompt, agent, interface='web', stream=True,
+                                      output=websocket.send_json, wsquery=query, save_history=False)
+
+                    elif query_type == 'multistep':
+                        prompt = query.get('prompt', '')
+
+                        if is_multi_step_task(prompt):
+                            # Handle as multi-step task
+                            await websocket.send_json({
+                                'type': 'status',
+                                'content': 'Planning multi-step task...'
+                            })
+
+                            try:
+                                result = await handle_multi_step_task(
+                                    prompt,
+                                    web_agent,
+                                    session,
+                                    web_agent.llm,
+                                    stream=False,
+                                    interface='ws',
+                                )
+                                await websocket.send_json({
+                                    'type': 'multistep_result',
+                                    'content': result
+                                })
+                            except Exception as e:
+                                await websocket.send_json({
+                                    'type': 'error',
+                                    'content': f'Multi-step task failed: {str(e)}'
+                                })
+                        else:
+                            # Fall back to regular session
+                            await session(prompt, web_agent, interface='web', stream=True,
+                                          output=websocket.send_json, wsquery=query, save_history=False)
 
                     elif query_type == 'start_task':
                         task = query['task']
@@ -141,7 +203,10 @@ class WebSocketManager:
                                 await team.assign_task(task_id=task.id)
                                 task_session = Session(team_id=team.id, task_id=task.id)
                                 await task_session.save()
-                                asyncio.create_task(team.work_on_task(task.id, task_session, self))
+                                # work_on_task is a staticmethod taking `team`
+                                # first — call it explicitly, not as team.work_on_task
+                                # (which would misbind team to the task id).
+                                self._spawn_bg(Team.work_on_task(team, task.id, task_session, self), websocket)
                             else:
                                 await websocket.send_json({'type': 'error', 'content': 'Task not found'})
                         else:
@@ -171,7 +236,8 @@ class WebSocketManager:
                     #             await self.process_audio()
                     else:
                         user_prompt = query['content']
-                        await session(user_prompt, web_agent, 'web', True, websocket.send_json, query)
+                        await session(user_prompt, web_agent, interface='web', stream=True,
+                                      output=websocket.send_json, wsquery=query)
                         # await websocket.send_json({'type': 'chat_reply', 'content': response})
                 except Exception as e:
                     logger.exception(e)

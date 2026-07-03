@@ -1,9 +1,9 @@
 """Hybrid context manager combining short-term and long-term memory."""
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from cognitrix.memory.base import BaseMemory
 from cognitrix.memory.chroma_store import ChromaMemoryStore
 from cognitrix.sessions.context import SlidingWindowContextManager
 
@@ -77,8 +77,7 @@ class HybridContextManager(BaseContextManager):
         agent_id: str,
         max_short_term: int = 10,
         max_long_term: int = 5,
-        importance_threshold: float = 0.7,
-        persist_directory: str = None
+        importance_threshold: float = 0.7
     ):
         """
         Initialize hybrid context manager.
@@ -88,30 +87,61 @@ class HybridContextManager(BaseContextManager):
             max_short_term: Number of recent messages to keep in context
             max_long_term: Number of relevant memories to retrieve
             importance_threshold: Minimum importance to store in long-term
-            persist_directory: Where to persist ChromaDB
         """
         self.agent_id = agent_id
         self.short_term = SlidingWindowContextManager(max_short_term)
-        # Lazy load ChromaDB
+        # Lazy load ChromaDB - uses default persist directory from ChromaMemoryStore
         self._chroma_config = {
-            'collection_name': f"agent_{agent_id}",
-            'persist_directory': persist_directory
+            'collection_name': f"agent_{agent_id}"
         }
         self._chroma_store = None
+        self._long_term_lock = asyncio.Lock()
+        # 1-entry cache of the last retrieval (query -> formatted memory context)
+        # so repeated tool rounds in a turn don't re-embed the same query.
+        self._retrieval_cache: tuple[str, str] | None = None
         self.importance_scorer = ImportanceScorer()
         self.importance_threshold = importance_threshold
         self.max_long_term = max_long_term
 
+        # Check if vector store is disabled via environment variable
+        import os
+        self._vector_store_disabled = os.environ.get('DISABLE_VECTOR_STORE', '').lower() == 'true'
+
+        if self._vector_store_disabled:
+            logger.info("Vector store disabled via DISABLE_VECTOR_STORE env var")
+
         logger.info(f"HybridContextManager initialized (lazy) for agent: {agent_id}")
 
     @property
-    def long_term(self) -> ChromaMemoryStore:
-        """Lazy-initialize ChromaDB-backed long-term memory store."""
+    def long_term(self) -> ChromaMemoryStore | None:
+        """Lazy-initialize ChromaDB-backed long-term memory store (sync)."""
+        if self._vector_store_disabled:
+            return None
+
         if self._chroma_store is None:
             self._chroma_store = ChromaMemoryStore(
-                collection_name=self._chroma_config['collection_name'],
-                persist_directory=self._chroma_config.get('persist_directory')
+                collection_name=self._chroma_config['collection_name']
             )
+        return self._chroma_store
+
+    async def _ensure_long_term(self) -> ChromaMemoryStore | None:
+        """Async-safe long-term store accessor.
+
+        First use constructs ChromaMemoryStore, which loads sentence-transformers
+        + PyTorch (multiple seconds, or a model download on cold cache). Doing
+        that on the event loop froze the whole server on the first turn; build it
+        in a thread under a lock so concurrent first turns don't construct twice.
+        """
+        if self._vector_store_disabled:
+            return None
+        if self._chroma_store is not None:
+            return self._chroma_store
+        async with self._long_term_lock:
+            if self._chroma_store is None:
+                self._chroma_store = await asyncio.to_thread(
+                    ChromaMemoryStore,
+                    collection_name=self._chroma_config['collection_name'],
+                )
         return self._chroma_store
 
     async def build_prompt(
@@ -131,20 +161,34 @@ class HybridContextManager(BaseContextManager):
         system_content = agent.formatted_system_prompt()
 
         # 2. Retrieve relevant long-term memories
-        long_term_memories = []
-        if session.chat:
-            # Use last user message as query
-            last_message = session.chat[-1]
-            query = last_message.get('content', '')
+        if session.chat and not self._vector_store_disabled:
+            # Query long-term memory by the last *user* message. chat[-1] is
+            # unreliable: after a turn it may be a tool result or a turn_timing
+            # ("Took 2.5s") entry, which would make retrieval search on noise.
+            query = ''
+            for m in reversed(session.chat):
+                if str(m.get('role', '')).lower() == 'user' and m.get('type', 'text') == 'text':
+                    query = m.get('content', '') or ''
+                    break
 
             if query:
-                try:
-                    memories = await self.long_term.retrieve(query, k=self.max_long_term)
-                    if memories:
-                        memory_context = self._format_memories(memories)
+                if self._retrieval_cache and self._retrieval_cache[0] == query:
+                    # Same query as last build (e.g. another tool round in this
+                    # turn) — reuse instead of re-embedding + re-querying Chroma.
+                    memory_context = self._retrieval_cache[1]
+                    if memory_context:
                         system_content += f"\n\n## Relevant Past Context\n{memory_context}"
-                except Exception as e:
-                    logger.error(f"Failed to retrieve memories: {e}")
+                else:
+                    try:
+                        lt = await self._ensure_long_term()
+                        if lt is not None:
+                            memories = await lt.retrieve(query, k=self.max_long_term)
+                            memory_context = self._format_memories(memories) if memories else ''
+                            self._retrieval_cache = (query, memory_context)
+                            if memory_context:
+                                system_content += f"\n\n## Relevant Past Context\n{memory_context}"
+                    except Exception as e:
+                        logger.error(f"Failed to retrieve memories: {e}")
 
         prompt_parts.append({
             'role': 'system',
@@ -178,10 +222,13 @@ class HybridContextManager(BaseContextManager):
         # Score importance
         importance = self.importance_scorer.score(message)
 
-        # Store in long-term if important enough
-        if importance >= self.importance_threshold:
+        # Store in long-term if important enough and vector store is enabled
+        if not self._vector_store_disabled and importance >= self.importance_threshold:
             try:
-                await self.long_term.store(
+                lt = await self._ensure_long_term()
+                if lt is None:
+                    return
+                await lt.store(
                     content=message.get('content', ''),
                     metadata={
                         'role': message.get('role', 'unknown'),
@@ -196,8 +243,13 @@ class HybridContextManager(BaseContextManager):
 
     async def search_memory(self, query: str, k: int = 5) -> list[str]:
         """Search long-term memory for relevant information."""
+        if self._vector_store_disabled:
+            return []
         try:
-            memories = await self.long_term.retrieve(query, k=k)
+            lt = await self._ensure_long_term()
+            if lt is None:
+                return []
+            memories = await lt.retrieve(query, k=k)
             return [m.content for m in memories]
         except Exception as e:
             logger.error(f"Memory search failed: {e}")
@@ -206,7 +258,10 @@ class HybridContextManager(BaseContextManager):
     async def summarize_memory(self) -> str:
         """Get a summary of what the agent remembers."""
         try:
-            recent = await self.long_term.get_recent(n=20)
+            lt = await self._ensure_long_term()
+            if lt is None:
+                return "No memories stored yet."
+            recent = await lt.get_recent(n=20)
             if not recent:
                 return "No memories stored yet."
 

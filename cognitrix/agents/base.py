@@ -8,16 +8,14 @@ from typing import TYPE_CHECKING, Any, Optional, TypeAlias
 from rich import print
 
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
-from cognitrix.mcp.client import get_dynamic_client
-from cognitrix.models import Agent, MCPTool, Message, Tool
+from cognitrix.models import Agent, Message, Tool
 from cognitrix.providers.base import LLM
+from cognitrix.safety.approval_gate import OPERATION_BLOCKED_PREFIX, ApprovalGate, ToolCall
+from cognitrix.safety.destructive_ops import DestructiveOpDetector
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
 from cognitrix.utils import extract_json
 from cognitrix.utils.llm_response import LLMResponse
-from cognitrix.utils.retry import with_retry, RETRY_CONFIGS
-from cognitrix.safety.destructive_ops import DestructiveOpDetector
-from cognitrix.safety.approval_gate import ApprovalGate, ToolCall
 
 if TYPE_CHECKING:
     from cognitrix.sessions.base import Session
@@ -25,6 +23,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger('cognitrix.log')
 
 AgentList: TypeAlias = list['Agent']
+
+# Cap on a single tool result entering chat history (~2k tokens). Oversized
+# results bloat every subsequent prompt; the model can re-run the tool with a
+# narrower range if it needs more.
+MAX_TOOL_RESULT_CHARS = 8000
+
+
+def _truncate_tool_result(content: str) -> str:
+    if len(content) <= MAX_TOOL_RESULT_CHARS:
+        return content
+    dropped = len(content) - MAX_TOOL_RESULT_CHARS
+    return (
+        content[:MAX_TOOL_RESULT_CHARS]
+        + f"\n[truncated {dropped} chars — re-run the tool with a narrower range if you need more]"
+    )
 
 class MessagePriority(Enum):
     LOW = 1
@@ -97,6 +110,7 @@ class AgentManager:
         tools_str = self._format_tools_string()
         subagents_str = self._format_subagents_string()
         llms_str = self._format_llms_string()
+        skills_str = self._format_skills_string()
 
         today = (datetime.now()).strftime("%a %b %d %Y")
         prompt = f"Today is {today}.\n\n"
@@ -108,6 +122,9 @@ class AgentManager:
 
         prompt = prompt.replace("{subagents}", subagents_str)
         prompt = prompt.replace("{llms}", llms_str)
+
+        if skills_str:
+            prompt += "\n\n" + skills_str
 
         return prompt
 
@@ -129,6 +146,37 @@ class AgentManager:
             "or CLI (--provider, --api-base, --api-key, --model). Choose provider for each subagent."
         )
 
+    def _format_skills_string(self) -> str:
+        """Build skill awareness section for system prompt."""
+        try:
+            import asyncio
+
+            from cognitrix.skills.manager import get_skill_manager
+            manager = get_skill_manager()
+
+            # Use cached data if available (pre-warmed at startup)
+            if not manager._cache:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        return ''
+                    loop.run_until_complete(manager.discover_all())
+                except RuntimeError:
+                    asyncio.run(manager.discover_all())
+
+            summaries = manager.get_skill_summaries()
+            if not summaries:
+                return ''
+            lines = ["Available Skills (invoke with the 'Use Skill' tool):"]
+            for s in summaries:
+                hint = f" {s['argument_hint']}" if s.get('argument_hint') else ""
+                invocable = "" if s.get('user_invocable') == 'True' else " [auto-only]"
+                lines.append(f"  - /{s['name']}{hint}: {s['description'][:100]}{invocable}")
+            return '\n'.join(lines)
+        except Exception:
+            logger.exception("Failed to build skills section for system prompt")
+            return ''
+
     def process_prompt(self, query: str | dict, role: str = 'User') -> dict:
         processed_query = self._process_query(query)
         prompt: dict[str, Any] = {'role': role, 'type': 'text'}
@@ -141,10 +189,28 @@ class AgentManager:
             if processed_query.get('type') == 'tool_calls_result':
                 results = processed_query.get('result', [])
                 if isinstance(results, list):
-                    parts = [str(r) for r in results]
-                    prompt['content'] = '\n\n'.join(parts) if parts else ''
+                    # Build tool result messages with role: tool
+                    tool_messages = []
+                    for r in results:
+                        if isinstance(r, dict):
+                            tool_call_id = r.get('tool_call_id')
+                            content = str(r.get('data', ''))
+                        else:
+                            tool_call_id = None
+                            content = str(r)
+                        tool_messages.append({
+                            'role': 'tool',
+                            'tool_call_id': tool_call_id,
+                            'content': _truncate_tool_result(content)
+                        })
+                    # Return list of tool messages instead of single prompt
+                    return tool_messages
                 else:
-                    prompt['content'] = str(results)
+                    return [{
+                        'role': 'tool',
+                        'tool_call_id': None,
+                        'content': _truncate_tool_result(str(results))
+                    }]
             elif 'result' in processed_query.keys():
                 result = processed_query['result']
                 if isinstance(result, list):
@@ -183,83 +249,104 @@ class AgentManager:
         return next((tool for tool in self.agent.tools if tool.name.lower() == name.lower()), None)
 
     async def call_tools(
-        self, 
-        tool_calls: dict[str, Any] | list[dict[str, Any]]
+        self,
+        tool_calls: dict[str, Any] | list[dict[str, Any]],
+        interface: str = 'cli'
     ) -> dict[str, Any] | str:
         """Execute tool calls with safety checks and retry logic."""
         try:
-            if tool_calls:
-                agent_tool_calls = tool_calls if isinstance(tool_calls, list) else [tool_calls]
-                
-                # Create resilient tool manager
-                resilient_manager = ResilientToolManager(llm=self.agent.llm)
-                
-                tasks = []
-                for t in agent_tool_calls:
-                    tool = ToolManager.get_by_name(t['name'])
+            if not tool_calls:
+                return ''
+            agent_tool_calls = tool_calls if isinstance(tool_calls, list) else [tool_calls]
 
-                    if not tool:
-                        raise Exception(f"Tool '{t['name']}' not found")
+            resilient_manager = ResilientToolManager(llm=self.agent.llm)
 
-                    # Safety check
-                    tool_call = ToolCall(tool_name=tool.name, params=t['arguments'])
-                    risk = self.detector.analyze(tool.name, t['arguments'])
-                    
-                    if risk.risk_level.value in ['medium', 'high']:
-                        print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
-                        print(f"   Details: {risk.details}")
-                        
-                        approval = await self.approval_gate.check_approval(
-                            tool_call=tool_call,
-                            risk=risk,
-                            interface='cli'
-                        )
-                        
-                        if not approval.approved:
-                            return {
-                                'type': 'tool_calls_result',
-                                'result': [f"Operation blocked: User denied approval for {tool.name}"]
-                            }
-                        
-                        if approval.cached:
-                            print("   (Using cached approval)")
+            # Results keyed by original position so every call gets exactly one
+            # answer (required by the tool-call protocol) and a missing tool or a
+            # denied approval does NOT abort the other calls in the batch.
+            results_by_index: dict[int, dict[str, Any]] = {}
+            tasks = []
+            task_indices = []
 
-                    print(f"\nRunning tool '{tool.name.title()}' with parameters: {t['arguments']}")
-                    
-                    # Add parent reference for sub-agent tools
-                    if 'sub agent' in tool.name.lower() or tool.name.lower() == 'create sub agent' or tool.category == 'mcp':
-                        t['arguments']['parent'] = self.agent
+            for i, t in enumerate(agent_tool_calls):
+                tc_id = t.get('tool_call_id')
+                name = t.get('name')
+                args = t.get('arguments', {}) or {}
 
-                    # Execute with retry
-                    tasks.append(
-                        resilient_manager.run_tool(
-                            tool=tool,
-                            params=t['arguments'],
-                            max_retries=3,
-                            attempt_recovery=True
-                        )
+                if not name:
+                    results_by_index[i] = {'tool_call_id': tc_id, 'data': "Error: malformed tool call (no name)"}
+                    continue
+
+                tool = ToolManager.get_by_name(name)
+                if not tool:
+                    results_by_index[i] = {'tool_call_id': tc_id, 'data': f"Error: Tool '{name}' not found"}
+                    continue
+
+                # Safety check
+                tool_call = ToolCall(tool_name=tool.name, params=args)
+                risk = self.detector.analyze(tool.name, args)
+
+                if risk.risk_level.value in ['medium', 'high']:
+                    print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
+                    print(f"   Details: {risk.details}")
+
+                    approval = await self.approval_gate.check_approval(
+                        tool_call=tool_call,
+                        risk=risk,
+                        interface=interface,
+                        scope=str(self.agent.id),
                     )
 
-                tool_results = await asyncio.gather(*tasks)
-                
-                # Convert ToolResults to expected format
-                results = []
-                for result in tool_results:
-                    if result.success:
-                        results.append(result.data)
-                    else:
-                        results.append(f"Error: {result.error} (attempted {result.attempts} times)")
+                    if not approval.approved:
+                        results_by_index[i] = {'tool_call_id': tc_id, 'data': f"{OPERATION_BLOCKED_PREFIX}: user denied approval for {tool.name}"}
+                        continue
 
-                return {
-                    'type': 'tool_calls_result',
-                    'result': results
-                }
-                
+                    if approval.cached:
+                        print("   (Using cached approval)")
+
+                print(f"\nRunning tool '{tool.name.title()}' with parameters: {args}")
+
+                # Add parent reference for sub-agent tools
+                if 'sub agent' in tool.name.lower() or tool.name.lower() == 'create sub agent' or tool.category == 'mcp':
+                    args['parent'] = self.agent
+
+                # Delegation inherits the caller's interface so a sub-agent's
+                # risky tools are gated by the same channel (never a model-
+                # supplied value).
+                if tool.name.lower() == 'call agent':
+                    args['interface'] = interface
+
+                tasks.append(
+                    resilient_manager.run_tool(
+                        tool=tool,
+                        params=args,
+                        max_retries=3,
+                        attempt_recovery=True
+                    )
+                )
+                task_indices.append(i)
+
+            tool_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for j, result in enumerate(tool_results):
+                i = task_indices[j]
+                tc_id = agent_tool_calls[i].get('tool_call_id')
+                if isinstance(result, Exception):
+                    results_by_index[i] = {'tool_call_id': tc_id, 'data': f"Error: {result}"}
+                elif result.success:
+                    results_by_index[i] = {'tool_call_id': tc_id, 'data': result.data}
+                else:
+                    results_by_index[i] = {'tool_call_id': tc_id, 'data': f"Error: {result.error} (attempted {result.attempts} times)"}
+
+            results = [results_by_index[i] for i in range(len(agent_tool_calls))]
+            return {
+                'type': 'tool_calls_result',
+                'result': results
+            }
+
         except Exception as e:
-            print(f"Tool execution error: {e}")
+            logger.exception("Tool execution error")
             return str(e)
-        
-        return ''
 
     def add_tool(self, tool: Tool):
         if tool not in self.agent.tools:
@@ -277,7 +364,9 @@ class AgentManager:
         # This assumes the context manager will be used by the session/caller
         # to construct the full prompt before calling the LLM.
         processed_prompt = self.process_prompt(prompt)
-        async for response in self.agent.llm([processed_prompt]):
+        # Handle both single dict and list of dicts (for tool results)
+        messages = processed_prompt if isinstance(processed_prompt, list) else [processed_prompt]
+        async for response in self.agent.llm(messages):
             yield response
 
     def call_sub_agent(self, agent_name: str, task_description: str):
@@ -288,29 +377,25 @@ class AgentManager:
             await self.import_mcp_tools(server)
 
     async def import_mcp_tools(self, server: str):
-        mcp_client = get_dynamic_client(server)
-        if mcp_client:
-            try:
-                available_tools = await mcp_client.list_tools()
-                for tool_def in available_tools:
-                    def create_mcp_tool_runner(server_name, tool_name_to_call):
-                        async def mcp_tool_runner(**kwargs):
-                            client = get_dynamic_client(server_name)
-                            if not client:
-                                return f"MCP client for server '{server_name}' not found."
-                            return await client.run_tool(tool_name_to_call, kwargs)
-                        return mcp_tool_runner
+        """Import tools from a single connected MCP server.
 
-                    mcp_tool = MCPTool(
-                        name=tool_def['name'],
-                        description=tool_def['description'],
-                        category='mcp',
-                        mcp_schema=tool_def.get('parameters', {}),
-                        run=create_mcp_tool_runner(server, tool_def['name'])
-                    )
-                    self.add_tool(mcp_tool)
-            except Exception as e:
-                logger.error(f"Failed to import tools from MCP server '{server}': {e}")
+        Uses the shared, working client API + wrapper factory (the previous
+        bespoke implementation called a no-arg async factory with an argument,
+        never awaited it, and used a nonexistent client.run_tool method).
+        """
+        try:
+            from cognitrix.mcp.client import get_dynamic_client
+            from cognitrix.mcp.tools import create_mcp_tool_wrapper
+
+            client = await get_dynamic_client()
+            if not client.is_connected(server):
+                logger.warning("MCP server '%s' is not connected; skipping tool import", server)
+                return
+            tools_list = await client.list_tools(server)
+            for tool_def in (tools_list or []):
+                self.add_tool(create_mcp_tool_wrapper(server, tool_def))
+        except Exception as e:
+            logger.error(f"Failed to import tools from MCP server '{server}': {e}")
 
     @staticmethod
     async def create_agent(name: str, system_prompt: str, provider: str | dict[str, Any] = 'groq',
@@ -379,9 +464,9 @@ class AgentManager:
         return await AgentManager.create_agent(*args, **kwargs)
 
 # ---------------------------------------------------------------------------
-# Attach the manager interface to the Agent model to centralise management   
-# logic while keeping backward-compatibility with existing call-sites that   
-# invoke `Agent.create_agent(...)`, etc.                                      
+# Attach the manager interface to the Agent model to centralise management
+# logic while keeping backward-compatibility with existing call-sites that
+# invoke `Agent.create_agent(...)`, etc.
 # ---------------------------------------------------------------------------
 
 # Instance-level manager
@@ -390,27 +475,27 @@ def _agent_manager(self: Agent) -> 'AgentManager':  # type: ignore[name-defined]
     return AgentManager(self)
 
 # Add property dynamically (avoids circular import at class definition time)
-setattr(Agent, 'manager', property(_agent_manager))
+Agent.manager = property(_agent_manager)
 
 # Add process_prompt method to Agent model (delegates to manager)
-setattr(Agent, 'process_prompt', lambda self, query, role='User': AgentManager(self).process_prompt(query, role))  # type: ignore[attr-defined]
+Agent.process_prompt = lambda self, query, role='User': AgentManager(self).process_prompt(query, role)  # type: ignore[attr-defined]
 
 
-async def _agent_call_tools(self, tool_calls):
+async def _agent_call_tools(self, tool_calls, interface='cli'):
     """Delegate call_tools to AgentManager."""
-    return await AgentManager(self).call_tools(tool_calls)
+    return await AgentManager(self).call_tools(tool_calls, interface=interface)
 
 
-setattr(Agent, 'call_tools', _agent_call_tools)  # type: ignore[attr-defined]
+Agent.call_tools = _agent_call_tools  # type: ignore[attr-defined]
 
 # Class-level convenience methods that delegate to AgentManager
-setattr(Agent, 'create_agent', staticmethod(AgentManager.create_agent))  # type: ignore[attr-defined]
-setattr(Agent, 'list_agents', staticmethod(AgentManager.list_agents))  # type: ignore[attr-defined]
-setattr(Agent, 'load_agent', staticmethod(AgentManager.load_agent))  # type: ignore[attr-defined]
+Agent.create_agent = staticmethod(AgentManager.create_agent)  # type: ignore[attr-defined]
+Agent.list_agents = staticmethod(AgentManager.list_agents)  # type: ignore[attr-defined]
+Agent.load_agent = staticmethod(AgentManager.load_agent)  # type: ignore[attr-defined]
 
 # Add formatted_system_prompt to Agent model (delegates to manager)
 # This is a regular method that calls the manager's method
 def _formatted_system_prompt(self):
     return AgentManager(self).formatted_system_prompt()
 
-setattr(Agent, 'formatted_system_prompt', _formatted_system_prompt)
+Agent.formatted_system_prompt = _formatted_system_prompt

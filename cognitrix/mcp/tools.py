@@ -4,6 +4,7 @@ Handles creation of Tool wrappers for MCP server tools and agent integration.
 """
 
 import logging
+import re
 from typing import Any
 
 from cognitrix.tools.base import Tool
@@ -14,45 +15,39 @@ logger = logging.getLogger('cognitrix.log')
 # Store dynamically created MCP tools
 _dynamic_mcp_tools: dict[str, Tool] = {}
 
+# JSON-schema type -> the Python type-name string Tool.to_dict_format expects.
+_JSON_TO_PYNAME = {
+    'string': 'str', 'integer': 'int', 'number': 'float',
+    'boolean': 'bool', 'array': 'list', 'object': 'dict',
+}
+
+# Provider tool names must be [A-Za-z0-9_-]; sanitize server/tool names that
+# come from an external MCP server before using them in a tool name.
+_NAME_SANITIZE = re.compile(r'[^A-Za-z0-9_-]')
+
+
 def create_mcp_tool_wrapper(server_name: str, tool_info: dict[str, Any]) -> Tool:
-    """Create a Tool wrapper for an MCP server tool"""
-    tool_name = tool_info.get('name', 'unknown')
-    description = tool_info.get('description', 'No description available')
-    input_schema = tool_info.get('input_schema', {})
+    """Create a Tool wrapper for an MCP server tool.
 
-    # Create a unique tool name to avoid conflicts
-    unique_name = f"{server_name}_{tool_name}"
+    The wrapper's advertised schema is taken from the server's input_schema so
+    the model sees the real parameter names (the old version advertised a single
+    catch-all `kwargs` param, making argument-taking MCP tools uncallable).
+    """
+    tool_name = str(tool_info.get('name', 'unknown'))
+    description = str(tool_info.get('description', 'No description available'))
+    input_schema = tool_info.get('input_schema')
+    if not isinstance(input_schema, dict):
+        input_schema = {}
 
-    # Extract parameters from schema
-    properties = input_schema.get('properties', {})
-    required = input_schema.get('required', [])
+    unique_name = _NAME_SANITIZE.sub('_', f"{server_name}_{tool_name}")
 
-    # Build parameter signature for the wrapper function
-    params = []
-    for param_name, param_info in properties.items():
-        param_type = param_info.get('type', 'string')
-        param_info.get('description', '')
-        is_required = param_name in required
+    properties = input_schema.get('properties')
+    if not isinstance(properties, dict):
+        properties = {}
+    required = input_schema.get('required')
+    if not isinstance(required, list):
+        required = []
 
-        # Convert JSON schema types to Python types
-        python_type = str  # default
-        if param_type == 'integer':
-            python_type = int
-        elif param_type == 'number':
-            python_type = float
-        elif param_type == 'boolean':
-            python_type = bool
-        elif param_type == 'array':
-            python_type = list
-        elif param_type == 'object':
-            python_type = dict
-
-        if is_required:
-            params.append(f"{param_name}: {python_type.__name__}")
-        else:
-            params.append(f"{param_name}: Optional[{python_type.__name__}] = None")
-
-    # Create the wrapper function dynamically
     async def mcp_tool_wrapper(**kwargs):
         """Dynamically generated wrapper for MCP tool"""
         try:
@@ -70,19 +65,24 @@ def create_mcp_tool_wrapper(server_name: str, tool_info: dict[str, Any]) -> Tool
         except Exception as e:
             return f"Error calling MCP tool '{tool_name}': {e}"
 
-    # Update wrapper function metadata
+    # Docstring carries per-param descriptions (:param) so to_dict_format picks
+    # them up; the flat parameters/required below fix the advertised schema.
+    doc_lines = [description, ""]
+    for pname, pinfo in properties.items():
+        pdesc = pinfo.get('description', '') if isinstance(pinfo, dict) else ''
+        if pdesc:
+            doc_lines.append(f":param {pname}: {pdesc}")
     mcp_tool_wrapper.__name__ = unique_name
-    mcp_tool_wrapper.__doc__ = f"""{description}
+    mcp_tool_wrapper.__doc__ = "\n".join(doc_lines)
 
-Server: {server_name}
-Original tool: {tool_name}
-
-Parameters:
-{chr(10).join(f"  {param}" for param in params) if params else "  None"}
-"""
-
-    # Create and register the tool
     wrapped_tool = tool(category="mcp_dynamic", name=unique_name)(mcp_tool_wrapper)
+    # Override the (kwargs-only) introspected schema with the server's real one.
+    wrapped_tool.parameters = {
+        pname: _JSON_TO_PYNAME.get((pinfo or {}).get('type', 'string'), 'str')
+        if isinstance(pinfo, dict) else 'str'
+        for pname, pinfo in properties.items()
+    }
+    wrapped_tool.required_params = [r for r in required if r in properties]
 
     return wrapped_tool
 

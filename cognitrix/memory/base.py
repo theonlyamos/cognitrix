@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -14,7 +14,7 @@ class MemoryEntry:
     metadata: dict[str, Any]
     timestamp: datetime
     importance: float
-    embedding: Optional[list[float]] = None
+    embedding: list[float] | None = None
 
 
 class BaseMemory(ABC):
@@ -35,7 +35,7 @@ class BaseMemory(ABC):
         self,
         query: str,
         k: int = 5,
-        filter_metadata: Optional[dict] = None
+        filter_metadata: dict | None = None
     ) -> list[MemoryEntry]:
         """Retrieve relevant memories."""
         pass

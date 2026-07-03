@@ -1,3 +1,4 @@
+import os
 from datetime import timedelta
 from typing import Annotated
 
@@ -37,13 +38,32 @@ async def login(form_data: LoginForm):
     )
 
     user_data = user.json()
-    # user_data['created_at'] = user_data['created_at'].isoformat()
-    # user_data['updated_at'] = user_data['updated_at'].isoformat()
+    # Never return the password hash to the client.
+    if isinstance(user_data, dict):
+        user_data.pop('password', None)
 
     return JSONResponse({"user": user_data, "access_token": access_token, "token_type": "bearer"})
 
 @auth_api.post("/signup")
 async def signup(new_user: User):
+    # Operators can close open registration in shared/production deployments.
+    # Defaults to enabled so single-user local setups are unaffected.
+    if os.getenv('COGNITRIX_ALLOW_SIGNUP', 'true').strip().lower() not in ('1', 'true', 'yes'):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Open registration is disabled"
+        )
+    if not Utils.email_is_valid(new_user.email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid email address"
+        )
+    if not new_user.password or len(new_user.password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters"
+        )
+
     existing_user = await User.find_one({'email': new_user.email})
 
     if existing_user:

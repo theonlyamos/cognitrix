@@ -3,6 +3,7 @@ Dynamic MCP client for connecting to multiple server types.
 Handles STDIO, SSE, and HTTP MCP server connections.
 """
 
+import asyncio
 import logging
 import platform
 import shutil
@@ -20,6 +21,10 @@ from cognitrix.mcp.server_manager import MCPServerConfig, MCPTransportType
 from cognitrix.mcp.status import update_connection_status
 
 logger = logging.getLogger('cognitrix.log')
+
+# A hung/slow MCP server must not wedge the agent turn (and the shared event
+# loop) forever. Cap every server call.
+DEFAULT_MCP_TIMEOUT = 30
 
 class DynamicMCPClient:
     """Dynamic MCP client that can connect to multiple server types"""
@@ -103,19 +108,23 @@ class DynamicMCPClient:
             exit_stack = AsyncExitStack()
             self.exit_stacks[server_config.name] = exit_stack
 
-            # Start the server and get streams
-            stdio_transport = await exit_stack.enter_async_context(
-                stdio_client(server_params)
-            )
-            read_stream, write_stream = stdio_transport
-
-            # Create session
-            session = await exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-
-            # Initialize the session
-            await session.initialize()
+            # Start the server, open the session and run the handshake under a
+            # timeout — a broken/hung server must not block the event loop.
+            # Use asyncio.timeout (NOT wait_for): wait_for runs its coroutine in a
+            # separate child task, but these anyio context managers bind their
+            # cancel scopes to the entering task, so exit_stack.aclose() (on
+            # disconnect or the error path below) would then run in a different
+            # task and raise "cancel scope in a different task". asyncio.timeout
+            # cancels the current task, keeping enter and exit on the same task.
+            async with asyncio.timeout(DEFAULT_MCP_TIMEOUT):
+                stdio_transport = await exit_stack.enter_async_context(
+                    stdio_client(server_params)
+                )
+                read_stream, write_stream = stdio_transport
+                session = await exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
+                await session.initialize()
 
             # Store session and connection info
             self.sessions[server_config.name] = session
@@ -147,19 +156,20 @@ class DynamicMCPClient:
             exit_stack = AsyncExitStack()
             self.exit_stacks[server_config.name] = exit_stack
 
-            # Connect to SSE server
-            sse_transport = await exit_stack.enter_async_context(
-                sse_client(url=server_config.url)
-            )
-            read_stream, write_stream = sse_transport
-
-            # Create session
-            session = await exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-
-            # Initialize the session
-            await session.initialize()
+            # Connect, open the session and run the handshake under a timeout —
+            # a slow/unreachable endpoint must not block the event loop.
+            # asyncio.timeout (not wait_for) keeps this on the current task so the
+            # anyio context managers are closed on the same task they're entered
+            # (see the STDIO path for the full rationale).
+            async with asyncio.timeout(DEFAULT_MCP_TIMEOUT):
+                sse_transport = await exit_stack.enter_async_context(
+                    sse_client(url=server_config.url)
+                )
+                read_stream, write_stream = sse_transport
+                session = await exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
+                await session.initialize()
 
             # Store session and connection info
             self.sessions[server_config.name] = session
@@ -194,19 +204,20 @@ class DynamicMCPClient:
             # Prepare headers
             headers = server_config.headers or {}
 
-            # Connect to HTTP server
-            http_transport = await exit_stack.enter_async_context(
-                streamablehttp_client(server_config.url, headers=headers)
-            )
-            read_stream, write_stream, _ = http_transport
-
-            # Create session
-            session = await exit_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-
-            # Initialize the session
-            await session.initialize()
+            # Connect, open the session and run the handshake under a timeout —
+            # a slow/unreachable endpoint must not block the event loop.
+            # asyncio.timeout (not wait_for) keeps this on the current task so the
+            # anyio context managers are closed on the same task they're entered
+            # (see the STDIO path for the full rationale).
+            async with asyncio.timeout(DEFAULT_MCP_TIMEOUT):
+                http_transport = await exit_stack.enter_async_context(
+                    streamablehttp_client(server_config.url, headers=headers)
+                )
+                read_stream, write_stream, _ = http_transport
+                session = await exit_stack.enter_async_context(
+                    ClientSession(read_stream, write_stream)
+                )
+                await session.initialize()
 
             # Store session and connection info
             self.sessions[server_config.name] = session
@@ -272,7 +283,7 @@ class DynamicMCPClient:
 
         try:
             session = self.sessions[server_name]
-            response = await session.list_tools()
+            response = await asyncio.wait_for(session.list_tools(), timeout=DEFAULT_MCP_TIMEOUT)
             return [
                 {
                     'name': tool.name,
@@ -281,6 +292,9 @@ class DynamicMCPClient:
                 }
                 for tool in response.tools
             ]
+        except TimeoutError:
+            logger.error(f"Timeout listing tools for server {server_name} after {DEFAULT_MCP_TIMEOUT}s")
+            return None
         except Exception as e:
             logger.error(f"Error listing tools for server {server_name}: {e}")
             return None
@@ -293,8 +307,13 @@ class DynamicMCPClient:
 
         try:
             session = self.sessions[server_name]
-            result = await session.call_tool(tool_name, arguments)
+            result = await asyncio.wait_for(
+                session.call_tool(tool_name, arguments), timeout=DEFAULT_MCP_TIMEOUT
+            )
             return result.content
+        except TimeoutError:
+            logger.error(f"Timeout calling tool {tool_name} on {server_name} after {DEFAULT_MCP_TIMEOUT}s")
+            return f"Error: MCP tool '{tool_name}' timed out after {DEFAULT_MCP_TIMEOUT}s"
         except Exception as e:
             logger.error(f"Error calling tool {tool_name} on server {server_name}: {e}")
             return None
@@ -352,10 +371,34 @@ class DynamicMCPClient:
 
 # Global dynamic client instance
 _dynamic_client = None
+_cleanup_registered = False
 
 async def get_dynamic_client():
     """Get or create the global dynamic client"""
-    global _dynamic_client
+    global _dynamic_client, _cleanup_registered
     if _dynamic_client is None:
         _dynamic_client = DynamicMCPClient()
+        if not _cleanup_registered:
+            import atexit
+            atexit.register(_shutdown_dynamic_client_atexit)
+            _cleanup_registered = True
     return _dynamic_client
+
+
+def _shutdown_dynamic_client_atexit():
+    """Best-effort teardown of MCP stdio subprocesses at interpreter exit so
+    they aren't orphaned. ponytail: sessions were opened on the app loop; if
+    it's already closed, aclose() may fail — swallow and rely on OS child
+    reaping as the backstop. Timeout-bounded so a hung server can't wedge exit."""
+    client = _dynamic_client
+    if client is None or not getattr(client, 'exit_stacks', None):
+        return
+    try:
+        asyncio.get_running_loop()
+        return  # a loop is still running; skip (avoid nested-run errors)
+    except RuntimeError:
+        pass
+    try:
+        asyncio.run(asyncio.wait_for(client.disconnect_all(), timeout=5))
+    except Exception as e:
+        logger.debug(f"MCP atexit cleanup incomplete: {e}")

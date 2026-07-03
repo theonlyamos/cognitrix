@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cognitrix"
-version = "0.2.5"
+version = "0.2.6"
 description = "Package for creating AI Agents using llms"
 authors = ["theonlyamos <theonlyamos@gmail.com>"]
 license = "Apache2"
@@ -25,7 +25,7 @@ classifiers = [
 "Bug Tracker" = "https://github.com/theonlyamos/cognitrix/issues"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">=3.11,<3.14"
 
 # Core
 aiohttp = "^3.9.3"
@@ -46,7 +46,6 @@ numpy = "^2.0.0"
 # Web Framework
 fastapi = "^0.112.0"
 uvicorn = "^0.30.1"
-flask = "^3.0.3"
 sse-starlette = "^2.1.2"
 python-multipart = "^0.0.9"
 
@@ -54,25 +53,24 @@ python-multipart = "^0.0.9"
 pillow = "^10.2.0"
 pyautogui = "^0.9.54"
 beautifulsoup4 = "^4.12.3"
-pyaudio = "^0.2.14"
-pydub = "^0.25.1"
 wikipedia = "^1.4.0"
 tavily-python = "^0.3.3"
-deepgram-sdk = "==3.*"
 xmltodict = "^0.13.0"
+pymupdf = "^1.27.2"
 
 # Database & Auth
-odbms = "0.4.5"
-passlib = "^1.7.4"
-python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+odbms = "0.5.2"
 bcrypt = "^4.3.0"
+pyjwt = "^2.8.0"
 
 # Utilities
-rich = "^13.7.1"
+rich = ">=13.7.1"
 celery = {extras = ["redis"], version = "^5.4.0"}
+pyyaml = "^6.0"
 
 # MCP (Model Context Protocol)
 mcp = {extras = ["cli"], version = "^1.9.1"}
+textual = "^8.0.1"
 
 [build-system]
 requires = ["poetry-core"]
@@ -82,16 +80,16 @@ build-backend = "poetry.core.masonry.api"
 cognitrix = "cognitrix.cli.main:main"
 
 [tool.pytest.ini_options]
-filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore::UserWarning"
-]
+asyncio_mode = "auto"
 
 [tool.poetry.group.dev]
 optional = true
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.4.4"
+pytest = ">=8.2"
+pytest-asyncio = ">=0.23"
+pytest-cov = ">=5.0"
 
 [tool.ruff]
 line-length = 120

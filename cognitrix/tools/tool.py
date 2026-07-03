@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 from collections.abc import Callable
 from functools import wraps
@@ -14,7 +15,12 @@ def tool(*args: Any, **kwargs: Any):
             try:
                 if inspect.iscoroutinefunction(func):
                     return await func(*args, **kwargs)
-                return func(*args, **kwargs)
+                # Sync tools (bash/WebFetch/Search/pyautogui/os.walk) do blocking
+                # I/O; run them off the event loop so a tool call doesn't freeze
+                # the whole server for every other user.
+                # Note: pyautogui GUI calls run in a worker thread here — fine on
+                # Windows/Linux; some macOS UI calls require the main thread.
+                return await asyncio.to_thread(func, *args, **kwargs)
             except Exception as e:
                 return str(e)
 
@@ -33,17 +39,23 @@ def tool(*args: Any, **kwargs: Any):
         func_parameters = func_signatures.parameters
 
         def get_type_name(annotation):
+            if annotation is inspect.Parameter.empty:
+                return "string"
             if isinstance(annotation, str):
                 return annotation
             if hasattr(annotation, '__name__'):
                 return annotation.__name__
-            # Handle Union types (e.g., str | None)
             return str(annotation).replace('typing.', '')
-        
+
         new_tool.parameters = {
             key: get_type_name(value.annotation)
             for key, value in func_parameters.items()
         }
+        # Params without a default are required; optional ones must not be forced.
+        new_tool.required_params = [
+            key for key, value in func_parameters.items()
+            if value.default is inspect.Parameter.empty
+        ]
 
         return new_tool
 

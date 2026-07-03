@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -7,12 +8,14 @@ from rich import print
 
 from cognitrix.agents.base import Agent, Message, MessagePriority
 from cognitrix.agents.router import AgentRouter
-from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.planning.structured_planner import StructuredPlanner
+from cognitrix.tasks.base import Task, TaskStatus
 
 if TYPE_CHECKING:
     from cognitrix.sessions.base import Session
     from cognitrix.utils.ws import WebSocketManager
+
+logger = logging.getLogger('cognitrix.log')
 
 class Team(Model):
     name: str
@@ -153,7 +156,7 @@ class Team(Model):
 
 # ---------------------------------------------------------------------------
 # Attach TeamManager helpers to the Team model for centralised management and
-# backward-compatibility with any legacy call-sites.                         
+# backward-compatibility with any legacy call-sites.
 # ---------------------------------------------------------------------------
 
 # Instance-level manager
@@ -166,6 +169,8 @@ class TeamManager:
 
     def __init__(self):
         self.teams: dict[str, Team] = {}
+        # Strong refs so fire-and-forget team tasks aren't GC'd mid-run.
+        self._bg_tasks: set[asyncio.Task] = set()
 
     def create_team(self, name: str, description: str) -> Team:
         """Create a new team"""
@@ -186,7 +191,9 @@ class TeamManager:
     async def start_all_teams(self):
         """Start communication for all teams"""
         for team in self.teams.values():
-            asyncio.create_task(team.start_communication())
+            task = asyncio.create_task(team.start_communication())
+            self._bg_tasks.add(task)
+            task.add_done_callback(self._bg_tasks.discard)
 
     async def send_cross_team_message(self, sender_team: Team, sender_agent: Agent,
                                   receiver_team: Team, receiver_agent: Agent,
@@ -244,10 +251,20 @@ class TeamManager:
                 task.results = [final_result]
                 task.status = TaskStatus.COMPLETED
                 await task.save()
-            except ValueError as e:
-                print(f"Error while working on task: {e}")
+            except Exception as e:
+                # Any failure (not just ValueError) must reset the task off
+                # IN_PROGRESS — otherwise it stays stuck forever — and be
+                # surfaced to the client instead of vanishing.
+                logger.exception("Error while working on task %s", task_id)
                 task.status = TaskStatus.PENDING
                 await task.save()
+                if websocket_manager is not None and getattr(websocket_manager, 'websocket', None):
+                    try:
+                        await websocket_manager.websocket.send_json(
+                            {'type': 'error', 'content': f'Task failed: {e}'}
+                        )
+                    except Exception:
+                        logger.exception("Failed to notify client of task failure")
 
     @staticmethod
     async def leader_create_workflow(team: Team, task: Task, session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> list[dict[str, Any]]:
@@ -306,6 +323,10 @@ class TeamManager:
     @staticmethod
     async def leader_coordinate_workflow(team: Team, task: Task, workflow: list[dict[str, Any]], session: 'Session', websocket_manager: Optional['WebSocketManager'] = None) -> str:
         """Execute workflow using WorkflowExecutor."""
+        # Local import: WorkflowExecutor was referenced here but never imported
+        # (a latent NameError on the team-coordination path). Imported lazily to
+        # avoid a teams<->workflow_executor import cycle.
+        from cognitrix.teams.workflow_executor import WorkflowExecutor
         executor = WorkflowExecutor(max_parallel=3)
         return await executor.execute(team, workflow, session)
 
@@ -343,9 +364,9 @@ class TeamManager:
 def _team_manager(self: 'Team') -> 'TeamManager':
     return TeamManager()
 
-setattr(Team, 'manager', property(_team_manager))  # type: ignore[attr-defined]
+Team.manager = property(_team_manager)  # type: ignore[attr-defined]
 
 # Class-level helpers
-setattr(Team, 'create_team', staticmethod(TeamManager.create_team))  # type: ignore[attr-defined]
-setattr(Team, 'get_team', staticmethod(TeamManager.get_team))  # type: ignore[attr-defined]
-setattr(Team, 'delete_team', staticmethod(TeamManager.delete_team))  # type: ignore[attr-defined]
+Team.create_team = staticmethod(TeamManager.create_team)  # type: ignore[attr-defined]
+Team.get_team = staticmethod(TeamManager.get_team)  # type: ignore[attr-defined]
+Team.delete_team = staticmethod(TeamManager.delete_team)  # type: ignore[attr-defined]

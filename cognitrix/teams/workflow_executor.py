@@ -2,7 +2,6 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Optional
 from enum import Enum
 
 from cognitrix.agents.base import Agent
@@ -20,8 +19,8 @@ class StepStatus(Enum):
 @dataclass
 class StepResult:
     success: bool
-    output: Optional[str] = None
-    error: Optional[str] = None
+    output: str | None = None
+    error: str | None = None
     execution_time: float = 0.0
 
 
@@ -33,20 +32,20 @@ class WorkflowStep:
     assigned_agent: str
     dependencies: list[int]
     status: StepStatus = StepStatus.PENDING
-    result: Optional[StepResult] = None
+    result: StepResult | None = None
 
 
 class WorkflowExecutor:
     """Executes workflow steps with parallelization and error handling."""
-    
+
     def __init__(self, max_parallel: int = 3):
         self.max_parallel = max_parallel
         self.semaphore = asyncio.Semaphore(max_parallel)
-    
+
     async def execute(
-        self, 
-        team: Team, 
-        workflow: list[dict], 
+        self,
+        team: Team,
+        workflow: list[dict],
         session: Session
     ) -> str:
         """
@@ -61,95 +60,102 @@ class WorkflowExecutor:
             Combined result of all steps
         """
         steps = [WorkflowStep(**step) for step in workflow]
-        
+
         self._build_dependency_graph(steps)
-        
+
         completed = set()
         completed_results = {}  # step_number -> result output
         results = []
-        
+
         while len(completed) < len(steps):
             # Find ready steps (all dependencies satisfied)
             ready_steps = [
-                s for s in steps 
+                s for s in steps
                 if s.step_number not in completed
                 and all(d in completed for d in s.dependencies)
                 and s.status == StepStatus.PENDING
             ]
-            
+
             if not ready_steps:
                 # Check for circular dependency or stuck workflow
                 pending = [s for s in steps if s.step_number not in completed]
                 if pending:
                     raise WorkflowError(f"Workflow stuck: {len(pending)} steps pending but none ready")
                 break
-            
+
             # Execute ready steps in parallel
             tasks = [
                 self._execute_step_with_semaphore(step, team, session, completed_results)
                 for step in ready_steps
             ]
             step_results = await asyncio.gather(*tasks, return_exceptions=True)
-            
+
             # Process results
-            for step, result in zip(ready_steps, step_results):
-                if isinstance(result, Exception):
+            for step, result in zip(ready_steps, step_results, strict=False):
+                # A raised exception OR a returned StepResult with success=False
+                # both mean the step failed — the latter was previously recorded
+                # as COMPLETED, propagating a None/error output as if it worked.
+                failure = result if isinstance(result, Exception) else (
+                    None if getattr(result, 'success', False) else result
+                )
+                if failure is not None:
                     step.status = StepStatus.FAILED
-                    step.result = StepResult(success=False, error=str(result))
-                    if not await self._handle_step_failure(step, result, team, session):
-                        raise WorkflowError(f"Step {step.step_number} failed: {result}")
+                    err = str(failure) if isinstance(failure, Exception) else (failure.error or "step reported failure")
+                    step.result = failure if not isinstance(failure, Exception) else StepResult(success=False, error=err)
+                    if not await self._handle_step_failure(step, failure, team, session):
+                        raise WorkflowError(f"Step {step.step_number} failed: {err}")
                 else:
                     step.status = StepStatus.COMPLETED
                     step.result = result
                     completed.add(step.step_number)
                     completed_results[step.step_number] = result.output
                     results.append(result.output)
-        
+
         # Synthesize final result
         return await self._synthesize_results(steps, team, session, completed_results)
-    
+
     async def _execute_step_with_semaphore(
-        self, 
-        step: WorkflowStep, 
-        team: Team, 
+        self,
+        step: WorkflowStep,
+        team: Team,
         session: Session,
         completed_results: dict
     ) -> StepResult:
         """Execute step with concurrency control."""
         async with self.semaphore:
             return await self._execute_step(step, team, session, completed_results)
-    
+
     async def _execute_step(
-        self, 
-        step: WorkflowStep, 
-        team: Team, 
+        self,
+        step: WorkflowStep,
+        team: Team,
         session: Session,
         completed_results: dict
     ) -> StepResult:
         """Execute a single workflow step."""
         import time
         start_time = time.time()
-        
+
         step.status = StepStatus.IN_PROGRESS
-        
+
         agent = await self._get_agent_for_step(step, team)
         if not agent:
             return StepResult(
-                success=False, 
+                success=False,
                 error=f"Agent '{step.assigned_agent}' not found"
             )
-        
+
         try:
             prompt = await self._build_step_prompt(step, completed_results)
-            
+
             response = ""
             async def capture_response(data: dict):
                 nonlocal response
                 response += data.get('content', '')
-            
-            await session(prompt, agent, 'task', True, capture_response, 
+
+            await session(prompt, agent, 'task', True, capture_response,
                          {'type': 'workflow_step', 'action': f'step_{step.step_number}'})
-            
+
             if await self._verify_step_result(step, response, agent):
                 return StepResult(
                     success=True,
@@ -163,22 +169,22 @@ class WorkflowExecutor:
                     error="Step verification failed",
                     execution_time=time.time() - start_time
                 )
-                
+
         except Exception as e:
             return StepResult(
                 success=False,
                 error=str(e),
                 execution_time=time.time() - start_time
             )
-    
-    async def _get_agent_for_step(self, step: WorkflowStep, team: Team) -> Optional[Agent]:
+
+    async def _get_agent_for_step(self, step: WorkflowStep, team: Team) -> Agent | None:
         """Find agent by name in team."""
         agents = await team.agents
         return next(
             (a for a in agents if a.name.lower() == step.assigned_agent.lower()),
             None
         )
-    
+
     async def _build_step_prompt(self, step: WorkflowStep, completed_results: dict) -> str:
         """Build prompt with context from completed dependency steps."""
         prompt_parts = [
@@ -186,50 +192,50 @@ class WorkflowExecutor:
             f"Description: {step.description}",
             ""
         ]
-        
+
         if step.dependencies:
             prompt_parts.append("Context from previous steps:")
             for dep_num in step.dependencies:
                 if dep_num in completed_results:
                     prompt_parts.append(f"Step {dep_num} result: {completed_results[dep_num][:500]}")
             prompt_parts.append("")
-        
+
         prompt_parts.append("Execute this step and provide your output.")
-        
+
         return "\n".join(prompt_parts)
-    
+
     async def _verify_step_result(
-        self, 
-        step: WorkflowStep, 
-        result: str, 
+        self,
+        step: WorkflowStep,
+        result: str,
         agent: Agent
     ) -> bool:
         """Verify step output meets expectations."""
         # Basic verification - non-empty and reasonable length
         if not result or len(result) < 10:
             return False
-        
+
         # TODO: Add LLM-based verification for complex steps
         return True
-    
+
     async def _handle_step_failure(
-        self, 
-        step: WorkflowStep, 
-        error: Exception, 
-        team: Team, 
+        self,
+        step: WorkflowStep,
+        error: Exception,
+        team: Team,
         session: Session
     ) -> bool:
         """Attempt to recover from step failure."""
         # Log failure
         print(f"Step {step.step_number} failed: {error}")
-        
+
         # TODO: Implement retry with different agent or strategy
         return False
-    
+
     async def _synthesize_results(
-        self, 
-        steps: list[WorkflowStep], 
-        team: Team, 
+        self,
+        steps: list[WorkflowStep],
+        team: Team,
         session: Session,
         completed_results: dict
     ) -> str:
@@ -238,9 +244,9 @@ class WorkflowExecutor:
         for step in steps:
             if step.result and step.result.success:
                 results.append(f"## {step.title}\n{step.result.output}")
-        
+
         return "\n\n".join(results)
-    
+
     def _build_dependency_graph(self, steps: list[WorkflowStep]) -> dict[int, list[int]]:
         """Build dependency adjacency list."""
         return {s.step_number: s.dependencies for s in steps}

@@ -12,11 +12,13 @@ from cognitrix.models.tool import Tool
 from cognitrix.providers import LLM
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task
+from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import ToolManager
 
 from .handlers import list_agents, list_sessions, list_tasks, list_teams
 from .shell import initialize_shell
+from .tui import CognitrixApp
 from .ui import start_web_ui
 
 logger = logging.getLogger('cognitrix.log')
@@ -24,15 +26,27 @@ logger = logging.getLogger('cognitrix.log')
 async def run_configuration():
     """Run the configuration for the CLI"""
     from cognitrix.config import initialize_database
+    from cognitrix.skills.manager import get_skill_manager
 
-    initialize_database()
+    await initialize_database()
 
     # Create tables if they don't exist and not using mongodb
-    await Agent.create_table()
-    await Task.create_table()
-    await Team.create_table()
-    await Session.create_table()
-    await Tool.create_table()
+    from odbms import DBMS
+
+    from cognitrix.agents import Agent
+    from cognitrix.models.user import User
+    from cognitrix.sessions.base import Session
+
+    if DBMS.Database is not None and DBMS.Database.dbms != 'mongodb':
+        for model in (Agent, Task, Team, Session, Tool, User):
+            # Older odbms releases only ship async create_table(); newer ones
+            # rename it to _create_table_async.
+            create = getattr(model, '_create_table_async', None) or model.create_table
+            await create()
+
+    # Pre-warm skill cache at startup to avoid per-prompt I/O
+    skill_mgr = get_skill_manager()
+    await skill_mgr.discover_all()
 
 
 async def start(args: Namespace):
@@ -46,10 +60,10 @@ async def start(args: Namespace):
             await list_agents()
             sys.exit()
         elif args.tasks:
-            list_tasks()
+            await list_tasks()
             sys.exit()
         elif args.teams:
-            list_teams()
+            await list_teams()
             sys.exit()
         elif args.sessions:
             await list_sessions()
@@ -135,15 +149,41 @@ async def start(args: Namespace):
         assistant.verbose = args.verbose
         await assistant.save()
 
+        # Resolve the effective prompt: --prompt-file (safe for long/multi-line/
+        # special-character prompts the shell would mangle) wins over --prompt/-p.
+        prompt = args.prompt
+        if getattr(args, 'prompt_file', ''):
+            try:
+                with open(args.prompt_file, encoding='utf-8') as f:
+                    prompt = f.read()
+            except OSError as e:
+                logger.error("Could not read --prompt-file '%s': %s", args.prompt_file, e)
+                sys.exit(1)
+
         # Handle different execution modes
-        if args.generate:
-            # Single generation mode
-            await session(args.generate, assistant, stream=args.stream)
+        if prompt:
+            # Single generation mode - check for multi-step tasks
+            if is_multi_step_task(prompt):
+                logger.info("Multi-step task detected, creating execution plan...")
+                result = await handle_multi_step_task(
+                    prompt,
+                    assistant,
+                    session,
+                    assistant.llm,
+                    args.stream
+                )
+                print(result)
+            else:
+                await session(prompt, assistant, stream=args.stream)
         elif args.ui.lower() == 'web':
             # Web UI mode
             await start_web_ui(assistant)
+        elif args.ui.lower() == 'tui':
+            # CLI mode has been replaced with the new beautiful Textual TUI
+            app = CognitrixApp(agent=assistant, session=session)
+            await app.run_async()
         else:
-            # Interactive CLI mode
+            # Fallback legacy interactive CLI mode
             await initialize_shell(session, assistant, stream=args.stream)
 
     except KeyboardInterrupt:

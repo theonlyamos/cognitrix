@@ -1,24 +1,22 @@
 from __future__ import annotations
 
-import json
+import contextvars
+import fnmatch
 import logging
-import multiprocessing
 import os
 import re
-import shlex
-import shutil
-import subprocess
 from pathlib import Path
-from typing import Any, Literal, TYPE_CHECKING
-from webbrowser import open_new_tab
+from typing import Any
 
-import pyautogui
-import requests
-import wikipedia as wk
-from bs4 import BeautifulSoup
 from rich import print
-from tavily import TavilyClient
 
+from cognitrix.common.safe_exec import (
+    DEFAULT_TIMEOUT,
+    CommandNotAllowed,
+    PathEscapesRoot,
+    resolve_within_root,
+    run_whitelisted,
+)
 from cognitrix.config import settings
 from cognitrix.tools.tool import tool
 
@@ -29,108 +27,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger('cognitrix.log')
 
-ALLOWED_COMMANDS: set[str] = {
-    # File system navigation
-    'ls', 'dir', 'pwd',
-    # File operations
-    'cat', 'head', 'tail', 'less', 'more',
-    # System info
-    'date', 'whoami', 'hostname', 'uname',
-    # Process info
-    'ps', 'top',
-    # Network
-    'ping', 'netstat',
-    # Package management
-    'pip', 'pip3',
-    # Git operations
-    'git',
-    # Directory operations
-    'cd', 'mkdir', 'rmdir'
-}
+
+def _pyautogui():
+    """Import pyautogui lazily. It (and its tkinter/cv2 deps) added ~0.15s+ to
+    every startup and can crash on import in a headless server/worker, yet is
+    only used by the screen-automation tools. Cached by sys.modules after first
+    import."""
+    import pyautogui
+    return pyautogui
 
 def get_file_content(full_path: Path):
     with full_path.open('rt') as file:
         lines = file.readlines()
-        # Create a list of tuples with line number and content
         line_data = [(i + 1, line.rstrip()) for i, line in enumerate(lines)]
-        # Format the output with line numbers
         return '\n'.join(f"{num}: {content}" for num, content in line_data)
 
-@tool(category='general')
-def calculator(math_expression: str) -> Any:
-    """
-    Useful for getting the result of a math expression.
-    The input to this tool should be a valid mathematical expression that could be executed by a simple calculator.
-    The code will be executed in a python environment so the input should be in a format it can be executed.
-    Always present the answer from this tool to the user in a sentence.
-
-    Args:
-        math_expression (str): The math expression to evaluate
-
-    Returns:
-        Any: The result of the math expression
-    """
-
-    return eval(math_expression)
-
-@tool(category='web')
-def play_youtube(topic: str):
-    """Use this tool when you need to play a youtube video.
-
-    Args:
-        topic (str): The topic to search for on YouTube
-
-    Returns:
-        str: The URL of the played video
-    """
-    url = f"https://www.youtube.com/results?q={topic}"
-    count = 0
-    cont = requests.get(url)
-    data = cont.content
-    data = str(data)
-    lst = data.split('"')
-    for i in lst:
-        count += 1
-        if i == "WEB_PAGE_TYPE_WATCH":
-            break
-    if lst[count - 5] == "/results":
-        raise Exception("No Video Found for this Topic!")
-
-    video_url = f"https://www.youtube.com{lst[count - 5]}"
-    open_new_tab(video_url)
-    return video_url
-
-@tool(category='web')
-def open_website(url: str):
-    """Use this tool when you need to visit a website.
-
-    Args:
-        url (str): The URL to visit
-
-    Returns:
-        str: A confirmation message
-    """
-    print(f"Opening {url} in the internet browser")
-    open_new_tab(url)
-    return f"Opened {url} in the internet browser"
-
-@tool(category='system')
-def list_directory(path: str):
-    """List contents of a directory.
-
-    Args:
-        path (str|Path): The directory path to list. Use '~' or '~/' to reference your home directory.
-
-    Returns:
-        str: JSON string containing directory contents
-    """
-    try:
-        npath = Path(path).expanduser().resolve()
-        if npath.is_dir():
-            return 'The content of the directory are: \n' + json.dumps(os.listdir(npath))
-        return "The path you provided isn't a directory"
-    except Exception as e:
-        return str(e)
 
 @tool(category='system')
 def open_file(path: str, filename: str | None = None):
@@ -155,264 +66,520 @@ def open_file(path: str, filename: str | None = None):
     except Exception as e:
         return str(e)
 
-@tool(category='system')
-def create_file(path: str, filename: str, content: str | None = None):
-    """Create a new file with optional content.
 
-    Args:
-        path (str|Path): The directory path where to create the file. Use '~' or '~/' to reference your home directory.
-        filename (str): The name of the file to create
-        content (str, optional): The content to write to the file
-
-    Returns:
-        str: Success message
-    """
+def _read_pdf(path: Path, page_range: str | None = None) -> str:
+    """Extract text from a PDF file."""
     try:
-        npath = Path(path).expanduser().resolve()
-        full_path = npath.joinpath(filename)
+        import fitz  # pymupdf
+    except ImportError:
+        return "Error: PyMuPDF is required to read PDF files.\nInstall with: pip install pymupdf"
 
-        if not full_path.exists():
-            with full_path.open('wt') as file:
-                if content:
-                    file.write(content)
-
-        file_content = get_file_content(full_path)
-        return f'Operation done. The content of the file is: \n{file_content}'
-    except Exception as e:
-        return str(e)
-
-@tool(category='system')
-def create_directory(path: str, dirname: str):
-    """Create a new directory.
-
-    Args:
-        path (str|Path): The parent directory path. Use '~' or '~/' to reference your home directory.
-        dirname (str): The name of the directory to create
-
-    Returns:
-        str: Success message
-    """
     try:
-        npath = Path(path).expanduser().resolve()
-        full_path = npath.joinpath(dirname)
-        if not full_path.exists() and not full_path.is_dir():
-            full_path.mkdir()
+        doc = fitz.open(str(path))
+        total_pages = len(doc)
 
-        return 'Operation done'
-    except Exception as e:
-        return str(e)
-
-@tool(category='system')
-def read_file(path: str, filename: str | None = None):
-    """Read contents of a file.
-
-    Args:
-        path (str|Path): The path to the file. Use '~' or '~/' to reference your home directory.
-        filename (str, optional): The name of the file to read
-
-    Returns:
-        str: The file contents with line numbers or directory listing
-    """
-    try:
-        npath = Path(path).expanduser().resolve()
-        full_path = npath.joinpath(filename) if filename else Path(path)
-        if full_path.is_file():
-            with full_path.open('rt') as file:
-                lines = file.readlines()
-                # Create a list of tuples with line number and content
-                line_data = [(i + 1, line.rstrip()) for i, line in enumerate(lines)]
-                # Format the output with line numbers
-                return '\n'.join(f"{num}: {content}" for num, content in line_data)
+        # Parse page range
+        pages_to_extract = None
+        if page_range:
+            pages_to_extract = _parse_page_range(page_range, total_pages)
         else:
-            return "The path you provided isn't a file"
-    except Exception as e:
-        return str(e)
+            pages_to_extract = list(range(total_pages))
 
-@tool(category='system')
-def write_file(path: str, filename: str, overwrite: bool = False, content: str = ""):
-    """Write content to a new file.
+        result = {
+            'file': path.name,
+            'total_pages': total_pages,
+            'extracted_pages': len(pages_to_extract),
+            'pages': [],
+        }
 
-    Args:
-        path (str|Path): The directory path where the file is located. Use '~' or '~/' to reference your home directory.
-        filename (str): The name of the file to write to
-        overwrite (bool): Whether to overwrite the file if it already exists. Defaults to False.
-        content (str): The content to write to the file
+        for page_num in pages_to_extract:
+            if page_num >= total_pages:
+                continue
+            page = doc[page_num]
+            text = page.get_text('text')
 
-    Returns:
-        str: Success message
+            result['pages'].append({
+                'number': page_num + 1,
+                'text': text.strip(),
+                'char_count': len(text.strip()),
+            })
 
-    Warning:
-        This tool will fail if the file already exists. Use update_file() to modify existing files.
-    """
-    try:
-        npath = Path(path).expanduser().resolve()
-        file_path = npath.joinpath(filename)
+        doc.close()
 
-        if file_path.exists() and not overwrite:
-            return "Error: File already exists. Use update_file() to modify existing files."
+        # Format output
+        lines = []
+        lines.append(f"## Document: {result['file']}")
+        lines.append(f"**Pages:** {result['total_pages']} total, {result['extracted_pages']} extracted\n")
 
-        with file_path.open('wt') as file:  # 'wt' for write text mode
-            file.write(content)
-
-        file_content = get_file_content(file_path)
-        return f'Write operation successful. The current content of the file is: \n{file_content}'
-    except Exception as e:
-        return str(e)
-
-@tool(category='system')
-def update_file(path: str, filename: str, operation: Literal['replace','insert','append', 'replace_range'], start_line: int, end_line: int = 0, new_content: str = ""):
-    """Update the contents of a file using various operations.
-
-    Args:
-        path (str): Path to the file to update
-        filename (str): The name of the file to update
-        operation (Literal['replace','insert','append', 'replace_range']): The type of update operation:
-            - 'replace': Replace content at start_line
-            - 'insert': Insert content before start_line
-            - 'append': Add content after start_line
-            - 'replace_range': Replace content from start_line to end_line
-        start_line (int): The line number to start the operation (1-based indexing)
-        end_line (int): The ending line number for replace_range operation. Set as 0 if not used.
-        new_content (str): The new content to add or replace in the file
-
-    Returns:
-        str: Error message if operation fails else Success message
-
-    Raises:
-        FileNotFoundError: If the specified file doesn't exist
-        ValueError: If line numbers are invalid or operation type is unknown
-    """
-    start_line = int(start_line)
-    end_line = int(end_line)
-    try:
-        npath = Path(path).expanduser().resolve()
-        file_path = npath.joinpath(filename)
-        if not file_path.exists():
-            raise FileNotFoundError(f"The file {file_path} does not exist.")
-
-        # Validate line numbers
-        if start_line < 1:
-            raise ValueError("start_line must be a positive integer.")
-        if end_line is not None and end_line < start_line:
-            raise ValueError("end_line must be greater than or equal to start_line.")
-
-        # Read all lines from the file
-        with open(file_path) as file:
-            lines = file.readlines()
-
-        # Determine the operation
-        if operation == 'replace':
-            # Replace the content of start_line
-            if 1 <= start_line <= len(lines):
-                lines[start_line - 1] = new_content + '\n'
+        for page in result['pages']:
+            lines.append(f"### Page {page['number']}")
+            if page['text']:
+                text = page['text'].encode('ascii', 'ignore').decode('ascii')
+                lines.append(text)
             else:
-                # Append the new content
-                lines.append(new_content + '\n')
-        elif operation == 'insert':
-            # Insert the new content before start_line
-            insert_position = start_line - 1
-            if insert_position < 0:
-                insert_position = 0
-            lines.insert(insert_position, new_content + '\n')
-        elif operation == 'append':
-            # Append the new content after start_line
-            append_position = start_line
-            if append_position < 0:
-                append_position = 0
-            elif append_position >= len(lines):
-                lines.append(new_content + '\n')
-            else:
-                lines.insert(append_position + 1, new_content + '\n')
-        elif operation == 'replace_range':
-            # Replace lines from start_line to end_line with new_content
-            if end_line is None:
-                raise ValueError("end_line must be provided for 'replace_range' operation.")
-            start_idx = start_line - 1
-            end_idx = end_line
-            # Ensure indices are within bounds
-            if start_idx < 0:
-                start_idx = 0
-            if end_idx > len(lines):
-                end_idx = len(lines)
-            # Split new_content into lines
-            new_lines = new_content.splitlines()
-            # Insert the new lines and remove the old range
-            lines[start_idx:end_idx] = [line + '\n' for line in new_lines]
-        else:
-            raise ValueError(f"Invalid operation type: {operation}")
+                lines.append("*(no text content — possibly a scanned/image page)*")
+            lines.append("")
 
-        # Write the updated lines back to the file
-        with open(file_path, 'w') as file:
-            file.writelines(lines)
+        return '\n'.join(lines)
 
-        file_content = get_file_content(file_path)
-        return f'Write operation successful. The current content of the file is: \n{file_content}'
     except Exception as e:
-        return str(e)
+        return f"Error reading PDF: {str(e)}"
 
-@tool(category='system')
-def delete_path(path: str):
-    """Delete a file or directory.
 
-    Args:
-        path (str|Path): The path to delete. Use '~' or '~/' to reference your home directory.
+def _parse_page_range(range_str: str, total_pages: int) -> list[int]:
+    """Parse a page range string into a list of 0-indexed page numbers."""
+    pages = []
 
-    Returns:
-        str: Success message
-    """
-    try:
-        npath = Path(path).expanduser().resolve()
-        if npath.is_file():
-            npath.unlink()
-        elif npath.is_dir():
-            shutil.rmtree(npath)
+    if not range_str:
+        return list(range(total_pages))
 
-        return 'Delete operation successful'
-    except Exception as e:
-        return str(e)
-
-@tool(category='system')
-def python_repl(code: str, timeout: int | None = None):
-    """Execute Python code in a REPL environment.
-
-    Args:
-        code (str): The Python code to execute
-        timeout (int, optional): Timeout in seconds
-
-    Returns:
-        str: The output of the code execution
-
-    Warning:
-        This tool can execute arbitrary code. Use with caution.
-    """
-    from cognitrix.tools.python import PythonREPL, warn_once
-
-    warn_once()
-
-    queue = multiprocessing.Queue()
-    globals_dict = {}
-    locals_dict = {}
-
-    if timeout is not None:
-        p = multiprocessing.Process(
-            target=PythonREPL.worker,
-            args=(code, globals_dict, locals_dict, queue)
-        )
-        p.start()
-        p.join(timeout)
-
-        if p.is_alive():
-            p.terminate()
-            return "Execution timed out"
+    if '-' in range_str:
+        parts = range_str.split('-', 1)
+        start = max(0, int(parts[0]) - 1)
+        end = min(total_pages, int(parts[1]))
+        pages = list(range(start, end))
+    elif ',' in range_str:
+        for p in range_str.split(','):
+            p = p.strip()
+            if p.isdigit():
+                idx = int(p) - 1
+                if 0 <= idx < total_pages:
+                    pages.append(idx)
+    elif range_str.isdigit():
+        idx = int(range_str) - 1
+        if 0 <= idx < total_pages:
+            pages = [idx]
     else:
-        PythonREPL.worker(code, globals_dict, locals_dict, queue)
+        pages = list(range(total_pages))
 
-    return queue.get()
+    return pages
+
+
+@tool(category='filesystem')
+def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_line_numbers: bool = True, page_range: str | None = None):
+    """Read the contents of a file or PDF, optionally with range selection.
+
+    Args:
+        file_path (str): Path to the file to read. Supports absolute and relative paths.
+        start_line (int, optional): Starting line number for text files (1-based). Defaults to 1.
+        end_line (int, optional): Ending line number for text files (1-based). If None, reads to end.
+        show_line_numbers (bool, optional): Whether to show line numbers for text files. Defaults to True.
+        page_range (str, optional): For PDFs only. Page range like "1-5", "1,3,5", or "3". Defaults to all pages.
+
+    Returns:
+        str: File contents with line/page numbers, or error message
+
+    Examples:
+        - Read text file: Read("path/to/file.py")
+        - Read first 100 lines: Read("file.py", end_line=100)
+        - Read PDF all pages: Read("document.pdf")
+        - Read PDF pages 1-5: Read("document.pdf", page_range="1-5")
+    """
+    try:
+        try:
+            path = resolve_within_root(file_path, settings.tools_root)
+        except PathEscapesRoot as e:
+            return f"Error: {e}"
+
+        if not path.exists():
+            return f"Error: File not found: {file_path}"
+
+        if not path.is_file():
+            return f"Error: Not a file: {file_path}"
+
+        # Check if file is PDF
+        if path.suffix.lower() == '.pdf':
+            return _read_pdf(path, page_range)
+
+        # Text file reading - existing logic
+        with open(path, encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+
+        total_lines = len(lines)
+
+        if start_line < 1:
+            start_line = 1
+        if end_line is None or end_line > total_lines:
+            end_line = total_lines
+        if start_line > end_line:
+            return f"Error: start_line ({start_line}) > end_line ({end_line})"
+
+        selected_lines = lines[start_line - 1:end_line]
+
+        if show_line_numbers:
+            result = []
+            for i, line in enumerate(selected_lines, start=start_line):
+                result.append(f"{i:6d}: {line.rstrip()}")
+            output = '\n'.join(result)
+        else:
+            output = ''.join(selected_lines)
+
+        return f"File: {path}\nLines: {start_line}-{end_line} of {total_lines}\n\n{output}"
+
+    except PermissionError:
+        return f"Error: Permission denied reading: {file_path}"
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
+
+
+@tool(category='filesystem')
+def Write(file_path: str, content: str, append: bool = False):
+    """Write content to a file, creating it if it doesn't exist.
+
+    Args:
+        file_path (str): Path to the file to write. Supports absolute and relative paths.
+        content (str): Content to write to the file.
+        append (bool, optional): If True, append to file instead of overwriting. Defaults to False.
+
+    Returns:
+        str: Success message with file info, or error message
+
+    Examples:
+        - Write new file: Write("path/to/file.txt", "Hello world")
+        - Append to file: Write("log.txt", "new entry\n", append=True)
+    """
+    try:
+        try:
+            path = resolve_within_root(file_path, settings.tools_root)
+        except PathEscapesRoot as e:
+            return f"Error: {e}"
+
+        parent = path.parent
+        if not parent.exists():
+            parent.mkdir(parents=True, exist_ok=True)
+
+        mode = 'a' if append else 'w'
+        with open(path, mode, encoding='utf-8') as f:
+            f.write(content)
+
+        action = "Appended to" if append else "Written to"
+        return f"{action} file: {path}\nSize: {path.stat().st_size} bytes"
+
+    except PermissionError:
+        return f"Error: Permission denied writing to: {file_path}"
+    except Exception as e:
+        return f"Error writing file: {str(e)}"
+
+
+@tool(category='filesystem')
+def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = False, create_if_missing: bool = False):
+    """Edit a file by replacing text. Supports single or all occurrences.
+
+    Args:
+        file_path (str): Path to the file to edit.
+        old_string (str): The text to find and replace.
+        new_string (str): The replacement text.
+        replace_all (bool, optional): If True, replace all occurrences. Defaults to False (first only).
+        create_if_missing (bool, optional): If True, create file with content if it doesn't exist. Defaults to False.
+
+    Returns:
+        str: Success message with changes made, or error message
+
+    Examples:
+        - Replace first occurrence: Edit("file.py", "old_text", "new_text")
+        - Replace all occurrences: Edit("file.py", "old_text", "new_text", replace_all=True)
+    """
+    try:
+        try:
+            path = resolve_within_root(file_path, settings.tools_root)
+        except PathEscapesRoot as e:
+            return f"Error: {e}"
+
+        if not path.exists():
+            if create_if_missing:
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(new_string)
+                return f"Created file with content: {path}"
+            return f"Error: File not found: {file_path}"
+
+        if not old_string:
+            return "Error: old_string cannot be empty"
+
+        with open(path, encoding='utf-8', errors='replace') as f:
+            content = f.read()
+
+        if old_string not in content:
+            return f"Error: String not found in file: {old_string[:50]}..."
+
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+            count = content.count(old_string)
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+            count = 1
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+
+        return f"Replaced {count} occurrence(s) in: {path}"
+
+    except PermissionError:
+        return f"Error: Permission denied editing: {file_path}"
+    except Exception as e:
+        return f"Error editing file: {str(e)}"
+
+
+@tool(category='filesystem')
+def Grep(pattern: str, path: str = ".", include: str | None = None, exclude: str | None = None, context: int = 0, ignore_case: bool = True, max_results: int = 100):
+    """Search for text patterns in files, similar to grep.
+
+    Args:
+        pattern (str): The text pattern to search for. Supports regex if valid.
+        path (str, optional): Directory or file to search in. Defaults to current directory.
+        include (str, optional): Glob pattern for files to include (e.g., "*.py", "*.txt").
+        exclude (str, optional): Glob pattern for files to exclude (e.g., "*.log", "node_modules").
+        context (int, optional): Number of lines to show before/after match. Defaults to 0.
+        ignore_case (bool, optional): Case-insensitive search. Defaults to True.
+        max_results (int, optional): Maximum number of matching lines to return. Defaults to 100.
+
+    Returns:
+        str: Matching lines with file:line:content format, or error message
+
+    Examples:
+        - Search all files: Grep("function_name")
+        - Search Python files only: Grep("TODO", include="*.py")
+        - Search with 3 lines context: Grep("error", context=3)
+    """
+
+    try:
+        search_path = Path(path).expanduser().resolve()
+
+        if not search_path.exists():
+            return f"Error: Path not found: {path}"
+
+        results = []
+        flags = re.IGNORECASE if ignore_case else 0
+
+        try:
+            re.compile(pattern)
+        except re.error:
+            pattern = re.escape(pattern)
+
+        files_to_search = []
+
+        if search_path.is_file():
+            files_to_search = [search_path]
+        else:
+            for root, dirs, files in os.walk(search_path):
+                if exclude:
+                    dirs[:] = [d for d in dirs if not fnmatch.fnmatch(d, exclude)]
+
+                for f in files:
+                    if include and not fnmatch.fnmatch(f, include):
+                        continue
+                    if exclude and fnmatch.fnmatch(f, exclude):
+                        continue
+                    files_to_search.append(Path(root) / f)
+
+        for file_path in files_to_search:
+            try:
+                with open(file_path, encoding='utf-8', errors='replace') as f:
+                    for line_num, line in enumerate(f, 1):
+                        if re.search(pattern, line, flags):
+                            results.append({
+                                'file': str(file_path),
+                                'line': line_num,
+                                'content': line.rstrip()
+                            })
+                            if len(results) >= max_results:
+                                break
+            except (PermissionError, UnicodeDecodeError):
+                continue
+
+            if len(results) >= max_results:
+                break
+
+        if not results:
+            return f"No matches found for: {pattern}"
+
+        output = [f"Found {len(results)} match(es) for '{pattern}':\n"]
+        for r in results:
+            if context > 0:
+                output.append(f"\n--- {r['file']} (line {r['line']}) ---")
+            output.append(f"{r['file']}:{r['line']}: {r['content']}")
+
+        return '\n'.join(output)
+
+    except Exception as e:
+        return f"Error during search: {str(e)}"
+
+
+@tool(category='filesystem')
+def Glob(pattern: str, path: str = ".", recursive: bool = True, include_dirs: bool = False, max_results: int = 100):
+    """Find files matching a glob pattern, similar to glob.
+
+    Args:
+        pattern (str): Glob pattern to match (e.g., "*.py", "**/*.js", "src/**/*.ts").
+        path (str, optional): Directory to search in. Defaults to current directory.
+        recursive (bool, optional): Search recursively. Defaults to True.
+        include_dirs (bool, optional): Include directories in results. Defaults to False.
+        max_results (int, optional): Maximum number of files to return. Defaults to 100.
+
+    Returns:
+        str: List of matching file paths, or error message
+
+    Examples:
+        - All Python files: Glob("*.py")
+        - Recursive Python files: Glob("**/*.py", path="src")
+        - TypeScript in src: Glob("*.ts", path="src")
+    """
+    try:
+        search_path = Path(path).expanduser().resolve()
+
+        if not search_path.exists():
+            return f"Error: Directory not found: {path}"
+
+        if not search_path.is_dir():
+            return f"Error: Not a directory: {path}"
+
+        results = []
+
+        if '**' in pattern:
+            pattern = pattern.replace('**', '*')
+            recursive = True
+
+        if recursive:
+            for root, dirs, files in os.walk(search_path):
+                root_path = Path(root)
+
+                for f in files:
+                    if fnmatch.fnmatch(f, pattern):
+                        results.append(str(root_path / f))
+                        if len(results) >= max_results:
+                            break
+
+                if include_dirs:
+                    for d in dirs:
+                        if fnmatch.fnmatch(d, pattern):
+                            results.append(str(root_path / d))
+                            if len(results) >= max_results:
+                                break
+
+                if len(results) >= max_results:
+                    break
+        else:
+            for f in search_path.glob(pattern):
+                if f.is_file():
+                    results.append(str(f))
+                elif include_dirs and f.is_dir():
+                    results.append(str(f))
+                if len(results) >= max_results:
+                    break
+
+        if not results:
+            return f"No files found matching: {pattern}"
+
+        output = [f"Found {len(results)} file(s):\n"]
+        for r in results:
+            output.append(r)
+
+        return '\n'.join(output)
+
+    except Exception as e:
+        return f"Error during glob: {str(e)}"
+
+
+@tool(category='web')
+def Search(query: str, max_results: int = 10):
+    """Search the web for information using Tavily API.
+
+    Args:
+        query (str): The search query.
+        max_results (int, optional): Maximum number of results. Defaults to 10.
+
+    Returns:
+        str: Search results with titles, content, and URLs, or error message
+    """
+
+    try:
+        # Lazy import: tavily (and its transitive cohere dep) added ~0.7s+ to
+        # every startup but is only needed when the Search tool actually runs.
+        from tavily import TavilyClient
+
+        api_key = settings.tavily_api_key if settings.tavily_api_key else None
+        if not api_key:
+            api_key = os.getenv('TAVILY_API_KEY')
+
+        if not api_key:
+            return "Error: Tavily API key not configured. Set TAVILY_API_KEY environment variable."
+
+        client = TavilyClient(api_key=api_key)
+        results = client.search(query=query, max_results=max_results)
+
+        if not results or "results" not in results:
+            return f"No results found for: {query}"
+
+        search_results = results["results"]
+        output = [f"Search results for '{query}':\n"]
+        for i, result in enumerate(search_results, 1):
+            output.append(f"{i}. {result.get('title', 'No title')}")
+            output.append(f"   {result.get('content', 'No description')[:200]}...")
+            output.append(f"   URL: {result.get('url', 'No URL')}")
+            output.append("")
+
+        return '\n'.join(output)
+
+    except Exception as e:
+        return f"Error during search: {str(e)}"
+
+
+@tool(category='web')
+def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
+    """Fetch and extract content from web pages.
+
+    Args:
+        url (str): The URL to fetch content from.
+        max_length (int, optional): Maximum characters to return. Defaults to 5000.
+        include_images (bool, optional): Include image URLs in the output. Defaults to False.
+
+    Returns:
+        str: Extracted text content from the web page, or error message
+
+    Examples:
+        - Fetch a page: WebFetch("https://example.com")
+        - Longer content: WebFetch("https://example.com", max_length=10000)
+    """
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.get(url, timeout=15, headers=headers)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        for script in soup(['script', 'style', 'nav', 'footer', 'header']):
+            script.decompose()
+
+        text = soup.get_text(separator='\n', strip=True)
+
+        lines = [line.strip() for line in text.split('\n')]
+        text = '\n'.join(line for line in lines if line)
+
+        if len(text) > max_length:
+            text = text[:max_length] + '\n... (truncated)'
+
+        if include_images:
+            images = [img.get('src') or img.get('data-src') for img in soup.find_all('img')]
+            images = [img for img in images if img]
+            if images:
+                text += f'\n\nImages found: {", ".join(images[:10])}'
+
+        return f"URL: {url}\n\n{text}"
+
+    except requests.exceptions.RequestException as e:
+        return f"Error fetching URL: {str(e)}"
+    except Exception as e:
+        return f"Error processing page: {str(e)}"
+
 
 @tool(category='system')
 def take_screenshot():
     """Use this tool to take a screenshot of the screen."""
-    screenshot = pyautogui.screenshot()
+    screenshot = _pyautogui().screenshot()
 
     return ['image', screenshot]
 
@@ -425,7 +592,7 @@ def text_input(text: str):
     Returns:
         str: Text input completed.
     """
-    pyautogui.write(text, 0.15)
+    _pyautogui().write(text, 0.15)
 
     return 'Text input completed'
 
@@ -438,7 +605,7 @@ def key_press(key: str):
     Returns:
         str: Keypress completed.
     """
-    pyautogui.press(key.lower())
+    _pyautogui().press(key.lower())
 
     return 'Keypress completed'
 
@@ -451,7 +618,7 @@ def hot_key(hotkeys: list):
     Returns:
         str: Keypress completed.
     """
-    pyautogui.hotkey(*hotkeys)
+    _pyautogui().hotkey(*hotkeys)
 
     return 'Keypress completed'
 
@@ -465,7 +632,7 @@ def mouse_click(x: int, y: int):
     Returns:
         str: Mouse click completed.
     """
-    pyautogui.click(x, y)
+    _pyautogui().click(x, y)
 
     return 'Mouse Click completed'
 
@@ -479,7 +646,7 @@ def mouse_double_click(x: int, y: int):
     Returns:
         str: Mouse double-click completed.
     """
-    pyautogui.doubleClick(x, y)
+    _pyautogui().doubleClick(x, y)
 
     return 'Mouse double-click completed.'
 
@@ -493,7 +660,7 @@ def mouse_right_click(x: int, y: int):
     Returns:
         str: Mouse right-click completed.
     """
-    pyautogui.rightClick(x, y)
+    _pyautogui().rightClick(x, y)
 
     return 'Mouse double-click completed.'
 
@@ -530,13 +697,20 @@ async def create_agent(name: str, provider: str, description: str, tools: list[s
 
     return {'status': 'error', 'message': f'Error creating agent "{name}"'}
 
+# Delegation depth for call_agent: bounds agent->agent recursion (A calls B
+# calls A ...). Context-local so concurrent turns don't share a counter.
+_CALL_AGENT_DEPTH = contextvars.ContextVar('call_agent_depth', default=0)
+MAX_AGENT_CALL_DEPTH = 3
+
+
 @tool(category='system')
-async def call_agent(name: str, task: str):
+async def call_agent(name: str, task: str, interface: str = 'task'):
     """Run a task with a sub agent
 
     Args:
         name (str): Name of the agent to call
         task (str): The task|query to perform|answer
+        interface (str): Filled in by the runtime; leave at its default.
 
     Returns:
         str: The result of the task
@@ -544,16 +718,37 @@ async def call_agent(name: str, task: str):
     Raises:
         Exception: If the agent is not found or the task fails
     """
+    depth = _CALL_AGENT_DEPTH.get()
+    if depth >= MAX_AGENT_CALL_DEPTH:
+        return f"Error calling agent: delegation depth limit ({MAX_AGENT_CALL_DEPTH}) reached"
+    token = _CALL_AGENT_DEPTH.set(depth + 1)
     try:
         from cognitrix.agents import Agent  # noqa: WPS433
-        agent = await Agent.load_agent(name)  # type: ignore[attr-defined]
-        if agent:
-            result = agent.call_sub_agent(agent_name=name, task_description=task)
-            return result
-        else:
+        from cognitrix.sessions.base import Session  # noqa: WPS433
+
+        agent = await Agent.find_one({'name': name})
+        if not agent:
             return f"Error calling agent: {name} not found"
+
+        chunks: list[str] = []
+
+        async def capture(payload=None, *args, **kwargs):
+            content = payload.get('content', '') if isinstance(payload, dict) else (str(payload) if payload else '')
+            if content:
+                chunks.append(content)
+
+        # Run the task through the sub-agent's own session loop so it gets
+        # tools, safety checks, and history like any other turn. 'cli' maps to
+        # 'task' because the cli branch prints instead of awaiting the capture
+        # callback; web/ws pass through so risky tools are denied by policy.
+        session_interface = 'task' if interface in ('cli', 'task') else interface
+        session = await Session.get_by_agent_id(str(agent.id))
+        await session(task, agent, session_interface, True, capture, {})
+        return ''.join(chunks).strip() or f"Agent '{name}' returned no output."
     except Exception as e:
         return f"Error calling agent: {str(e)}"
+    finally:
+        _CALL_AGENT_DEPTH.reset(token)
 
 @tool(category='system')
 async def create_new_team(name: str, description: str, agent_names: list[str], leader_name: str | None = None):
@@ -570,8 +765,9 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
     """
 
     try:
+        from cognitrix.teams.base import TeamManager  # noqa: WPS433
+
         team_manager = TeamManager()
-        from cognitrix.teams.base import TeamManager
         new_team = team_manager.create_team(name, description)
         new_team.description = description
 
@@ -597,243 +793,87 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
     except Exception as e:
         return f"Error creating team: {str(e)}"
 
-@tool(category='web')
-def internet_search(query: str, search_depth: Literal['basic', 'advanced'] = "basic"):
-    """Use this to retrieve up-to-date information from the internet
-    and generate more accurate and informative responses.
+# REMOVED - Replaced by skills:
+# - internet_search -> internet-search skill
+# - web_scraper -> web-scraper skill
+# - brave_search -> brave-search skill
+# - wikipedia -> wikipedia skill
 
-    When you need to answer a question or provide information, you can call this tool
-    to fetch the latest details from the web.
-    This tool takes one argument: the query or question you want to search for.
 
-    Args:
-        query (str): The query to search for.
-        search_depth (str, optional): The search depth. Accepts "basic" or "advanced". Defaults to "basic".
-    """
+# create_tool removed: it ran attacker-supplied source via exec() with no sandbox
+# (unauthenticated RCE). Follows the ede84af precedent that removed python_repl/calculator.
 
-    tavily = TavilyClient(api_key=settings.get_api_key('tavily'))
-
-    # max_tokens = 500 if search_depth == "basic" else 1000
-
-    response = tavily.search(query, search_depth)
-
-    return response['results'] if response else None
-
-@tool(category='web')
-def web_scraper(url: str|list[str]):
-    """Use this tool to scrape websites when given a link url.
-
-    Args:
-        url (str|List[str]): The URL(s) of the website(s) to scrape.
-
-    Returns:
-        str: The text content of the scraped website(s).
-    """
-
-    results: list[str] = []
-    if isinstance(url, str):
-        url = [url]
-
-    for link in url:
-        try:
-            response = requests.get(link)
-            response.raise_for_status()  # Raise an exception for non-2xx status codes
-            html_content = response.text
-
-            soup = BeautifulSoup(html_content, 'html.parser')
-            text_content = soup.get_text()
-            text_content = ' '.join(text_content.split())  # Remove empty spaces
-            text_content = f"{link} Scraped Content:\n{text_content}"
-            results.append(text_content)
-        except Exception as e:
-            text_content =  f"{link} Scraped Content:\nError: {e}"
-            results.append(text_content)
-
-    return '\n'.join(results)
-
-@tool(category='web')
-def brave_search(query: str):
-    """Use this to retrieve up-to-date information from the internet
-    and generate more accurate and informative responses.
-
-    When you need to answer a question or provide information, you can call this tool
-    to fetch the latest details from the web.
-    This tool takes one argument: the query or question you want to search for.
-
-    Args:
-        query (str): The query to search for.
-    """
-    url = "https://api.search.brave.com/res/v1/web/search"
-
-    params = {
-        "q": query,
-        "summary": 1
-    }
-
-    headers = {
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip",
-        "X-Subscription-Token": settings.get_api_key('brave')
-    }
-
-    response = requests.get(url, params=params, headers=headers)
-
-    if response.status_code == 200:
-        results = ""
-        for news in response.json()['web']['results']:
-            results += f"Title: {news['title']}\nDescripion: {news['description']}\nLink: {news['url']}\n\n"
-
-        return results
-    else:
-        return f"Error: {response.status_code}, {response.text}"
-
-@tool(category='web')
-def wikipedia(query: str, search_depth: str = 'basic') -> str:
-    """Use this to retrieve information from wikipaedia.
-
-    When you need to answer a question or provide information, you can call this tool
-    to fetch the information from the web.
-    This tool takes one argument: the query or question you want to search for.
-
-    Args:
-        query (str): The term to search for.
-        search_depth (str, optional): The search depth. Accepts "basic" or "advanced". Defaults to "basic".
-
-    Returns:
-        str: The search results.
-    """
-    results = ''
-    try:
-        if search_depth == 'basic':
-            results = wk.summary(query)
-        else:
-            page = wk.page(query)
-            results = page.content
-    except wk.exceptions.DisambiguationError as e:
-        print(f"DisambiguationError: {e}")
-        results = ''
-    except wk.exceptions.PageError as e:
-        print(f"PageError: {e}")
-        results = ''
-    except Exception as e:
-        print(f"Error: {e}")
-        results = ''
-
-    return results
 
 @tool(category='system')
-def create_tool(name: str, description: str, category: str, function_code: str):
-    """Use this tool to create new tools dynamically.
+def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(Path.cwd())) -> str:
+    """Execute a single whitelisted terminal command.
+
+    Only one command runs per call — command chaining and shell operators
+    (`;`, `&&`, `|`, `>`, `$()`, backticks, `..`) are rejected, and only
+    whitelisted base commands are allowed (ls, cat, grep, find, git, python,
+    pip, node, npm, mkdir, mv, cp, touch, ...). To run a command inside a
+    subdirectory (e.g. run tests for a package that lives in a subfolder), pass
+    that folder as working_dir rather than using `cd` — e.g. bash("python -m
+    pytest tests", working_dir="myproject"). `python -c`/`node -e` inline code is
+    not allowed; put code in a file and run the file instead.
 
     Args:
-        name (str): The name of the new tool.
-        description (str): A description of what the tool does and how to use it.
-        category (str): The category of the tool (e.g., 'system', 'web', 'general').
-        function_code (str): The Python code for the tool's function.
-
-    Returns:
-        str: A message indicating whether the tool was created successfully.
-    """
-    try:
-        # Create the function object from the provided code
-        exec(function_code)
-
-        # Get the function object
-        func = locals()[name.lower().replace(" ", "_")]
-
-        # Create the new tool using the @tool decorator
-        new_tool = tool(category=category)(func)
-
-        # Set the description
-        new_tool.__doc__ = description
-
-        # Add the new tool to the global namespace
-        globals()[name.lower().replace(" ", "_")] = new_tool
-
-        return f"Tool '{name}' created successfully."
-    except Exception as e:
-        return f"Error creating tool: {str(e)}"
-
-@tool(category='system')
-def terminal_command(command: str, timeout: int | None = 180, working_dir: str | None = str(Path.cwd())) -> str:
-    """Execute a terminal command safely with restrictions.
-
-    Args:
-        command (str): The command to execute. Only whitelisted commands are allowed.
-        timeout (int, optional): Maximum execution time in seconds. Defaults to 30.
-        working_dir (str, optional): Working directory for command execution. Defaults to current directory.
+        command (str): The single command to execute (no chaining).
+        timeout (int, optional): Maximum execution time in seconds.
+        working_dir (str, optional): Directory to run the command in. Use this
+            instead of `cd` to operate in a subfolder. Defaults to current dir.
 
     Returns:
         str: Command output or error message.
-
-    Warning:
-        This tool only allows specific whitelisted commands for security.
-        Commands are sanitized before execution.
-        Use with caution as it interacts with the system directly.
     """
-    try:
-        # Security check 1: Extract base command
-        command.split()[0].lower()
-
-        # Security check 2: Verify command is whitelisted
-        # if base_command not in ALLOWED_COMMANDS:
-        #     return f"Error: Command '{base_command}' is not allowed. Allowed commands: {', '.join(sorted(ALLOWED_COMMANDS))}"
-
-        # Security check 3: Sanitize command
+    # Validate and resolve the working directory
+    if working_dir:
         try:
-            # Use shlex to safely split command into arguments
-            command_parts = shlex.split(command)
-        except ValueError as e:
-            return f"Error: Invalid command format - {str(e)}"
-
-        # Security check 4: Additional command validation
-        for part in command_parts:
-            # Check for suspicious patterns
-            if re.search(r'[;&|]', part) or '..' in part:
-                return "Error: Command contains forbidden characters or patterns"
-
-        # Security check 5: Validate and resolve working directory
-        if working_dir:
-            try:
-                work_dir = Path(working_dir).resolve()
-                if not work_dir.exists() or not work_dir.is_dir():
-                    return f"Error: Invalid working directory - {working_dir}"
-            except Exception as e:
-                return f"Error: Working directory validation failed - {str(e)}"
-        else:
-            work_dir = Path.cwd()
-
-        # Execute command with timeout and capture output
-        try:
-            process = subprocess.Popen(
-                command_parts,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=str(work_dir),
-                shell=True
-            )
-
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                # Clean up process if it times out
-                process.kill()
-                return f"Error: Command timed out after {timeout} seconds"
-
-            # if process.returncode != 0:
-            #     return f"Command failed with error:\n{stderr}"
-
-            # Security check 6: Sanitize output
-            output = stdout.strip()
-            # Remove any control characters except newlines and tabs
-            output = re.sub(r'[\x00-\x09\x0b-\x1f\x7f-\x9f]', '', output)
-
-            return output if output else "Command executed successfully (no output)"
-
+            work_dir = Path(working_dir).resolve()
+            if not work_dir.exists() or not work_dir.is_dir():
+                return f"Error: Invalid working directory - {working_dir}"
         except Exception as e:
-            print(e)
-            return f"Error executing command: {str(e)}"
+            return f"Error: Working directory validation failed - {str(e)}"
+    else:
+        work_dir = Path.cwd()
 
+    # Normalise timeout (the LLM may pass it as a string)
+    try:
+        timeout_s = int(timeout) if timeout is not None else DEFAULT_TIMEOUT
+    except (ValueError, TypeError):
+        return f"Error: Invalid timeout value '{timeout}'. Must be an integer."
+
+    # Sandbox mode: run through a real shell (pipes, &&, arbitrary commands),
+    # bypassing the whitelist. ONLY for throwaway sandboxes (benchmark/CI
+    # containers) where the environment itself is the isolation boundary — never
+    # enable on a host you care about. Off by default.
+    if os.getenv('COGNITRIX_SANDBOX_SHELL', '').strip().lower() in ('1', 'true', 'yes'):
+        return _run_sandbox_shell(command, cwd=str(work_dir), timeout=timeout_s)
+
+    # Default: the shared safety boundary — whitelist + argv + shell=False.
+    try:
+        return run_whitelisted(command, cwd=str(work_dir), timeout=timeout_s)
+    except CommandNotAllowed as e:
+        return f"Error: {e}"
     except Exception as e:
-        return f"Unexpected error: {str(e)}"
+        logger.exception("bash tool failed")
+        return f"Error executing command: {e}"
+
+
+def _run_sandbox_shell(command: str, cwd: str, timeout: int) -> str:
+    """Run a command through a real shell (no whitelist). Sandbox-only; gated by
+    COGNITRIX_SANDBOX_SHELL."""
+    import subprocess
+    try:
+        proc = subprocess.run(
+            command, shell=True, cwd=cwd, timeout=timeout,
+            capture_output=True, text=True,
+        )
+    except subprocess.TimeoutExpired:
+        return f"Command timed out after {timeout}s"
+    out = (proc.stdout or '').strip()
+    err = (proc.stderr or '').strip()
+    if proc.returncode != 0:
+        detail = err or out or f"exit code {proc.returncode}"
+        return f"Command failed (exit {proc.returncode}): {detail}"
+    return out or (f"[stderr: {err}]" if err else "Command executed successfully (no output)")
