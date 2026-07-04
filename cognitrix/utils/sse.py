@@ -152,18 +152,52 @@ class SSEManager:
                         # Send planning status
                         yield {'event': 'message', 'data': json.dumps({'type': 'status', 'content': 'Planning multi-step task...', 'session_id': session.id})}
 
+                        # Bridge through a queue so the run link reaches the
+                        # client immediately — the run itself blocks for its
+                        # whole duration, and the user can watch it live on
+                        # the task page meanwhile.
+                        ms_queue: asyncio.Queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAXSIZE)
+
+                        async def _notify_task(task_id, _q=ms_queue, _sid=session.id):
+                            await _q.put({
+                                'type': 'status',
+                                'content': f'Task created — watch it run live on the task page (/tasks/{task_id}).',
+                                'task_id': task_id,
+                                'session_id': _sid,
+                            })
+
+                        async def _run_multistep(_prompt=user_prompt, _sess=session, _q=ms_queue):
+                            try:
+                                result = await handle_multi_step_task(
+                                    _prompt,
+                                    self.agent,
+                                    _sess,
+                                    self.agent.llm,
+                                    stream=False,
+                                    interface='web',
+                                    on_task_created=_notify_task,
+                                )
+                                await _q.put({'type': 'multistep_result', 'content': result, 'session_id': _sess.id})
+                            except Exception as e:
+                                logger.exception("Multi-step chat task failed")
+                                await _q.put({'type': 'error', 'content': f'Multi-step task failed: {str(e)}', 'session_id': _sess.id})
+                            finally:
+                                await _q.put(None)
+
+                        ms_task = asyncio.create_task(_run_multistep())
                         try:
-                            result = await handle_multi_step_task(
-                                user_prompt,
-                                self.agent,
-                                session,
-                                self.agent.llm,
-                                stream=False,
-                                interface='web',
-                            )
-                            yield {'event': 'message', 'data': json.dumps({'type': 'multistep_result', 'content': result, 'session_id': session.id})}
-                        except Exception as e:
-                            yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': f'Multi-step task failed: {str(e)}', 'session_id': session.id})}
+                            while True:
+                                item = await ms_queue.get()
+                                if item is None:
+                                    break
+                                yield {'event': 'message', 'data': json.dumps(item)}
+                            await ms_task
+                        finally:
+                            # Client gone mid-run: let the task itself finish
+                            # (it persists everything server-side), but stop
+                            # consuming.
+                            if not ms_task.done():
+                                ms_task.add_done_callback(lambda t: t.exception())
                     else:
                         # Route through the full session loop so the web path gets
                         # tools + safety gating + history + persistence (previously it

@@ -132,6 +132,13 @@ class WebSocketManager:
                             })
 
                             try:
+                                async def _notify_task(task_id):
+                                    await websocket.send_json({
+                                        'type': 'status',
+                                        'content': f'Task created — watch it run live on the task page (/tasks/{task_id}).',
+                                        'task_id': task_id,
+                                    })
+
                                 result = await handle_multi_step_task(
                                     prompt,
                                     web_agent,
@@ -139,6 +146,7 @@ class WebSocketManager:
                                     web_agent.llm,
                                     stream=False,
                                     interface='ws',
+                                    on_task_created=_notify_task,
                                 )
                                 await websocket.send_json({
                                     'type': 'multistep_result',

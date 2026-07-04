@@ -406,10 +406,13 @@ async def _set_run_status(run: TaskRun, status: TaskRunStatus, *,
     updates: dict[str, Any] = {'status': status.value}
     if error is not None:
         updates['error'] = error
+        run.error = error
     if result is not None:
         updates['result'] = result
+        run.result = result
     if completed:
         updates['completed_at'] = _now()
+        run.completed_at = updates['completed_at']
     await TaskRun.update_one({'id': run.id}, updates)
     run.status = status
 
