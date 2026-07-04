@@ -109,12 +109,16 @@ async def cancel_task(task_id: str):
         if run.status == TaskRunStatus.CANCELLING:
             # Second cancel = force-finalize: a dead worker never honors the
             # flag, and a stuck 'cancelling' run would 409-block ▶ Run forever.
-            await TaskRun.update_one({'id': run.id}, {
-                'status': TaskRunStatus.CANCELLED.value,
-                'error': 'force-cancelled (worker did not respond)',
-            })
-            task.status = TaskStatus.CANCELLED
-            await task.save()
+            # Compare-and-set: a worker finishing in this window writes a
+            # terminal status that must not be relabeled 'cancelled'.
+            fresh = await TaskRun.get(run.id)
+            if fresh and fresh.status == TaskRunStatus.CANCELLING:
+                await TaskRun.update_one({'id': run.id}, {
+                    'status': TaskRunStatus.CANCELLED.value,
+                    'error': 'force-cancelled (worker did not respond)',
+                })
+                task.status = TaskStatus.CANCELLED
+                await task.save()
             fresh = await TaskRun.get(run.id)
             return fresh.json() if fresh else run.json()
         # Partial update only — a full-row save here would clobber plan/step

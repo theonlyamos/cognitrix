@@ -77,7 +77,12 @@ def _new_step(index: int, title: str, description: str, dependencies: list[int],
 def _template_plan(task: 'Task') -> list[dict[str, Any]]:
     """Snapshot authored step_instructions as a sequential chain."""
     si = task.step_instructions or {}
-    keys = sorted(si, key=lambda k: int(k))
+    try:
+        keys = sorted(si, key=lambda k: int(k))
+    except (TypeError, ValueError):
+        # Hand-edited data with non-numeric keys — degrade to string order
+        # instead of failing the whole run.
+        keys = sorted(si, key=str)
     return [
         _new_step(i, str(si[k].get('step', '')), str(si[k].get('step', '')),
                   [i - 1] if i > 0 else [])
@@ -428,6 +433,23 @@ async def _set_run_status(run: TaskRun, status: TaskRunStatus, *,
     return True
 
 
+async def _set_task_status(task: 'Task', status, *, append_result: str | None = None) -> None:
+    """Partial task write. The orchestrator holds its Task copy for the whole
+    run (minutes) — a full-row save at the end would clobber any edits the
+    user made on the edit page mid-run. Results are re-read fresh before
+    appending for the same reason."""
+    task_cls = type(task)
+    updates: dict[str, Any] = {'status': status.value}
+    if append_result is not None:
+        fresh = await task_cls.get(task.id)
+        results = list((fresh.results if fresh else task.results) or [])
+        results.append(append_result)
+        updates['results'] = results
+        task.results = results
+    await task_cls.update_one({'id': task.id}, updates)
+    task.status = status
+
+
 def _cancel_pending(plan: list[dict]) -> None:
     for s in plan:
         if s['status'] == 'pending':
@@ -519,15 +541,19 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
         logger.info("Task %s cancelled before pickup — skipping run", task.id)
         return None
 
+    # Entry guard against duplicate concurrent runs. The start route 409s too,
+    # but the autostart/upsert path (POST /tasks with an existing id and
+    # autostart) reaches here without passing that guard.
+    existing = await TaskRun.find({'task_id': task.id})
+    if any(r.status in (TaskRunStatus.RUNNING, TaskRunStatus.CANCELLING) for r in existing):
+        raise ValueError(f"Task {task.id} already has an active run")
+
     # Resume: copy the newest failed/cancelled run's plan; done steps keep
     # their status + stored result (feeding downstream dependency prompts),
     # everything else resets. Template drift on the task is deliberately
     # ignored — the snapshot wins.
     prev_plan: list[dict[str, Any]] | None = None
     if resume:
-        existing = await TaskRun.find({'task_id': task.id})
-        if any(r.status in (TaskRunStatus.RUNNING, TaskRunStatus.CANCELLING) for r in existing):
-            raise ValueError(f"Task {task.id} already has an active run")
         resumable = [r for r in existing if r.status in (TaskRunStatus.FAILED, TaskRunStatus.CANCELLED)]
         resumable.sort(key=lambda r: r.json().get('created_at') or '', reverse=True)
         if resumable and resumable[0].plan:
@@ -540,16 +566,14 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
         failed = TaskRun(task_id=task.id, status=TaskRunStatus.FAILED, started_at=_now(),
                          completed_at=_now(), error='no agents assigned to this task')
         await failed.save()
-        task.status = TaskStatus.FAILED
-        await task.save()
+        await _set_task_status(task, TaskStatus.FAILED)
         raise RuntimeError(f"Task {task.id} has no agents assigned")
 
     leader = await _resolve_leader(task, roster)
     agents_by_name = {a.name.lower(): a for a in roster}
     agents_by_name.setdefault(leader.name.lower(), leader)
 
-    task.status = TaskStatus.IN_PROGRESS
-    await task.save()
+    await _set_task_status(task, TaskStatus.IN_PROGRESS)
 
     run_rec = TaskRun(task_id=task.id, status=TaskRunStatus.RUNNING, started_at=_now())
     await run_rec.save()  # the ONE instance save — partial updates after this
@@ -628,17 +652,14 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
             await _save_plan(run_rec)
             if await _set_run_status(run_rec, TaskRunStatus.CANCELLED,
                                      error='cancelled by user', completed=True):
-                task.status = TaskStatus.CANCELLED
-                await task.save()
+                await _set_task_status(task, TaskStatus.CANCELLED)
             logger.info("Task %s run %s cancelled", task.id, run_rec.id)
             return run_rec
 
         # Synthesize
         synthesis = await _synthesize(task, run_rec, leader, interface)
         if await _set_run_status(run_rec, TaskRunStatus.COMPLETED, result=synthesis, completed=True):
-            task.results.append(synthesis)
-            task.status = TaskStatus.COMPLETED
-            await task.save()
+            await _set_task_status(task, TaskStatus.COMPLETED, append_result=synthesis)
         else:
             # The run was finalized externally (force-cancel) mid-flight — that
             # write is authoritative; leave the task alone.
@@ -653,6 +674,5 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
         except Exception:
             logger.exception("Could not persist failed plan for run %s", run_rec.id)
         if await _set_run_status(run_rec, TaskRunStatus.FAILED, error=str(exc), completed=True):
-            task.status = TaskStatus.FAILED
-            await task.save()
+            await _set_task_status(task, TaskStatus.FAILED)
         raise
