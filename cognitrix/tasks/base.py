@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime
 from enum import Enum
@@ -105,15 +106,37 @@ class Task(Model):
                         if self.status == TaskStatus.IN_PROGRESS:
                             prompt = f'Step #{int(key) + 1}: '+ value['step']
 
-                            await session(prompt, agent, stream=True)
+                            # Provider-level LLM failures (rate limits etc.) surface as
+                            # EMPTY turns, not exceptions — streaming errors are
+                            # swallowed by design for the chat UX. Detect them here by
+                            # scanning only THIS turn's new messages (scanning the whole
+                            # chat would pick up a previous step's answer), retry once
+                            # after a backoff, and fail the task instead of marking
+                            # hollow work done.
+                            answer = ''
+                            for attempt in range(2):
+                                turn_start = len(session.chat)
+                                await session(prompt, agent, stream=True)
+                                answer = next(
+                                    (m.get('content', '') for m in session.chat[turn_start:]
+                                     if m.get('role') == 'assistant' and m.get('content')),
+                                    '',
+                                )
+                                if answer.strip():
+                                    break
+                                logger.warning(
+                                    "Task %s step %s: agent returned no answer (attempt %s)",
+                                    self.id, key, attempt + 1,
+                                )
+                                if attempt == 0:
+                                    await asyncio.sleep(10)
+                            if not answer.strip():
+                                # Raise (don't just set FAILED and return): the except
+                                # below persists FAILED, and the propagated exception
+                                # makes the Celery task fail so the worker's postrun
+                                # handler doesn't overwrite FAILED with COMPLETED.
+                                raise RuntimeError(f"Step #{int(key) + 1} produced no answer after retry")
 
-                            # The agent's answer is the last assistant message with
-                            # content; chat[-1] is a trailing turn-timing record.
-                            answer = next(
-                                (m.get('content', '') for m in reversed(session.chat)
-                                 if m.get('role') == 'assistant' and m.get('content')),
-                                '',
-                            )
                             eval_prompt = "Task: "+value['step']
                             eval_prompt += "\n\nAgent Response:\n"+answer
 
