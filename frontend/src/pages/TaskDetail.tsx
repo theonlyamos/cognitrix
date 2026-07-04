@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
@@ -19,130 +19,218 @@ interface TaskData {
   id?: string;
   title?: string;
   description?: string;
-  step_instructions?: Record<string, { step: string; done: boolean }>;
   status?: string;
 }
 
-interface RunSummary {
+interface PlanStep {
+  index: number;
+  title: string;
+  description?: string;
+  agent_name?: string;
+  dependencies?: number[];
+  status: string;
+  attempts?: number;
+  gate?: string | null;
+}
+
+interface TaskRunRecord {
   id: string;
-  datetime?: string;
-  updated_at?: string;
+  status: string;
+  plan: PlanStep[];
+  result?: string | null;
+  error?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at?: string;
+}
+
+interface RunSession {
+  id: string;
+  step_index: number | null;
+  step_title?: string | null;
+}
+
+interface LegacySession {
+  id: string;
+  run_id?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
   message_count?: number;
 }
 
-const runTime = (r: RunSummary) =>
-  parseSessionDate(r.started_at)?.getTime() ?? parseSessionDate(r.datetime)?.getTime() ?? 0;
-
 const STATUS: Record<string, string> = {
   completed: 'border-ok/40 text-ok',
   in_progress: 'border-accent/40 text-accent-ink',
   failed: 'border-danger/40 text-danger-ink',
+  cancelled: 'border-danger/30 text-fg-dim',
   pending: 'border-line text-fg-dim',
 };
 
-/** Task details: run history in a sidebar (latest first), the selected run's
- *  transcript on the right. The running run is polled live — the worker
- *  persists chat turn-by-turn, so growth arrives in step-sized chunks. */
+const RUN_BADGE: Record<string, string> = {
+  running: 'text-accent-ink',
+  cancelling: 'text-accent-ink',
+  completed: 'text-ok',
+  failed: 'text-danger-ink',
+  cancelled: 'text-fg-dim',
+};
+
+const STEP_ICON: Record<string, string> = {
+  pending: '·',
+  running: '⋯',
+  done: '✓',
+  failed: '✕',
+  skipped: '↷',
+  cancelled: '⊘',
+};
+
+const ACTIVE_RUN = new Set(['running', 'cancelling']);
+
+/** Task details: TaskRun history in the sidebar, the selected run's steps
+ *  panel + per-step transcript on the right. The active run is polled live
+ *  (task status, plan step statuses, the watched step's transcript). */
 export default function TaskDetail() {
   const { taskId } = useParams();
   const { data: task, loading: taskLoading, refetch } = useResource<TaskData>(taskId ? `/tasks/${taskId}` : null);
-  const { data: runs, loading: runsLoading, error: runsError, refetch: refetchRuns } = useResource<RunSummary[]>(
-    taskId ? `/sessions/tasks/${taskId}` : null,
+  const { data: runs, loading: runsLoading, error: runsError, refetch: refetchRuns } = useResource<TaskRunRecord[]>(
+    taskId ? `/tasks/${taskId}/runs` : null,
   );
+  // Legacy fallback: pre-redesign runs are bare sessions without a run_id.
+  const { data: taskSessions } = useResource<LegacySession[]>(taskId ? `/sessions/tasks/${taskId}` : null);
+  const legacy = useMemo(() => (taskSessions || []).filter((s) => !s.run_id), [taskSessions]);
 
-  const sorted = useMemo(() => [...(runs || [])].sort((a, b) => runTime(b) - runTime(a)), [runs]);
-  const isRunning = task?.status === 'in_progress';
-  const runningId = isRunning ? (sorted.find((r) => r.started_at && !r.completed_at)?.id ?? null) : null;
-
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // Selected transcript: a plan step index, the synthesis session, or a legacy session id.
+  const [selected, setSelected] = useState<number | 'synthesis' | { legacy: string } | null>(null);
+  const manualPickRef = useRef(false);
+  const [stepSessions, setStepSessions] = useState<Record<string, Record<string, string>>>({});
   const [chats, setChats] = useState<Record<string, BackendChatEntry[]>>({});
   const [starting, setStarting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const loadChat = async (id: string) => {
+  const selectedRun = useMemo(
+    () => (runs || []).find((r) => r.id === selectedRunId) || null,
+    [runs, selectedRunId],
+  );
+  const newestRun = (runs || [])[0] || null;
+  const activeRun = useMemo(() => (runs || []).find((r) => ACTIVE_RUN.has(r.status)) || null, [runs]);
+  const isTaskRunning = task?.status === 'in_progress';
+  const isLive = !!activeRun || isTaskRunning;
+
+  const loadChat = useCallback(async (sessionId: string) => {
     try {
-      const res = await api.get<BackendChatEntry[]>(`/sessions/${id}/chat`);
-      setChats((p) => ({ ...p, [id]: res.data }));
+      const res = await api.get<BackendChatEntry[]>(`/sessions/${sessionId}/chat`);
+      setChats((p) => ({ ...p, [sessionId]: res.data }));
     } catch {
-      // pane shows its loading row; retried on next poll/select
+      // shown as "loading transcript…"; retried on next poll/click
     }
-  };
+  }, []);
 
-  // Default to the latest run; jump to the live run when one starts.
+  const loadRunSessions = useCallback(async (runId: string) => {
+    try {
+      const res = await api.get<RunSession[]>(`/sessions/runs/${runId}`);
+      const map: Record<string, string> = {};
+      for (const s of res.data) map[s.step_index === null ? 'synthesis' : String(s.step_index)] = s.id;
+      setStepSessions((p) => ({ ...p, [runId]: map }));
+      return map;
+    } catch {
+      return {};
+    }
+  }, []);
+
+  // Default run selection: the active run while live, else the newest.
   useEffect(() => {
-    if (runningId) setSelectedId(runningId);
-  }, [runningId]);
+    if (activeRun && selectedRunId !== activeRun.id) {
+      setSelectedRunId(activeRun.id);
+      manualPickRef.current = false;
+      return;
+    }
+    if (!selectedRunId && newestRun) setSelectedRunId(newestRun.id);
+  }, [activeRun, newestRun, selectedRunId]);
+
+  // Load the step→session map when the selected run changes; pick a default step.
   useEffect(() => {
-    if (!selectedId && sorted.length > 0) setSelectedId(sorted[0].id);
-  }, [sorted, selectedId]);
-  useEffect(() => {
-    if (selectedId && !chats[selectedId]) void loadChat(selectedId);
+    if (!selectedRunId || !selectedRun) return;
+    void loadRunSessions(selectedRunId);
+    if (manualPickRef.current) return;
+    const running = selectedRun.plan.find((s) => s.status === 'running');
+    if (running) setSelected(running.index);
+    else if (selectedRun.status === 'completed') setSelected('synthesis');
+    else setSelected(selectedRun.plan.length ? selectedRun.plan[0].index : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+  }, [selectedRunId, selectedRun?.status]);
 
-  // Live polling: task (status + step ticks) every tick; the running run's
-  // transcript once discovered, the runs list until then. Back off after five
-  // minutes — a dead worker leaves tasks in_progress forever.
+  // While live and un-piloted, follow the currently running step.
+  useEffect(() => {
+    if (!selectedRun || manualPickRef.current || !ACTIVE_RUN.has(selectedRun.status)) return;
+    const running = selectedRun.plan.find((s) => s.status === 'running');
+    if (running && selected !== running.index) setSelected(running.index);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRun]);
+
+  // Resolve the selected transcript's session id and keep its chat loaded.
+  const selectedSessionId = useMemo(() => {
+    if (selected && typeof selected === 'object') return selected.legacy;
+    if (!selectedRunId || selected === null) return null;
+    const map = stepSessions[selectedRunId] || {};
+    return map[selected === 'synthesis' ? 'synthesis' : String(selected)] || null;
+  }, [selected, selectedRunId, stepSessions]);
+
+  useEffect(() => {
+    if (selectedSessionId && !chats[selectedSessionId]) void loadChat(selectedSessionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSessionId]);
+
+  // Live polling: task + runs (slim plans) + the map + the watched transcript.
+  // Backs off after 5 minutes (a dead worker leaves runs active forever).
   const pollStartRef = useRef<number | null>(null);
   const tickRef = useRef(0);
   useEffect(() => {
-    pollStartRef.current = isRunning ? Date.now() : null;
+    pollStartRef.current = isLive ? Date.now() : null;
     tickRef.current = 0;
-  }, [isRunning]);
+  }, [isLive]);
   usePolling(
     () => {
       tickRef.current += 1;
       const slow = pollStartRef.current !== null && Date.now() - pollStartRef.current > 300_000;
       if (slow && tickRef.current % 3 !== 0) return;
       void refetch({ silent: true });
-      // Always refetch the runs list while running: with session-per-step
-      // execution, new step sessions appear mid-run and runningId must
-      // re-derive to the newest open one (else the live view freezes on
-      // step 1's transcript).
       void refetchRuns({ silent: true });
-      if (runningId) void loadChat(runningId);
+      if (selectedRunId) void loadRunSessions(selectedRunId);
+      if (selectedSessionId) void loadChat(selectedSessionId);
     },
     5000,
-    !!isRunning,
+    isLive,
   );
 
-  // Final refresh when the run finishes: the last poll can predate the final
-  // turns and the completed_at stamp.
-  const prevStatusRef = useRef<string | undefined>(undefined);
-  const lastRunningRef = useRef<string | null>(null);
-  if (runningId) lastRunningRef.current = runningId;
+  // Final refresh when the run leaves the live state.
+  const prevLiveRef = useRef(false);
   useEffect(() => {
-    if (prevStatusRef.current === 'in_progress' && task?.status !== 'in_progress') {
+    if (prevLiveRef.current && !isLive) {
       void refetchRuns({ silent: true });
-      if (lastRunningRef.current) void loadChat(lastRunningRef.current);
+      if (selectedRunId) void loadRunSessions(selectedRunId);
+      if (selectedSessionId) void loadChat(selectedSessionId);
     }
-    prevStatusRef.current = task?.status;
+    prevLiveRef.current = isLive;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task?.status]);
+  }, [isLive]);
 
-  // Keep the live transcript pinned to the bottom as it grows.
-  const liveLen = selectedId && selectedId === runningId ? chats[selectedId]?.length ?? 0 : -1;
+  // Pin the live transcript to the bottom as it grows.
+  const liveLen = selectedSessionId && activeRun ? chats[selectedSessionId]?.length ?? 0 : -1;
   useEffect(() => {
     if (liveLen < 0) return;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [liveLen]);
 
-  // Placeholder while the worker hasn't picked the run up yet.
-  const waitingSinceRef = useRef<number | null>(null);
-  if (isRunning && !runningId) waitingSinceRef.current ??= Date.now();
-  else waitingSinceRef.current = null;
-  const waitingLong = waitingSinceRef.current !== null && Date.now() - waitingSinceRef.current > 30_000;
-
-  const start = async () => {
+  const start = async (resume = false) => {
     if (!taskId) return;
     setStarting(true);
     setError('');
     try {
-      await api.get(`/tasks/start/${taskId}`);
+      await api.get(`/tasks/start/${taskId}${resume ? '?resume=true' : ''}`);
+      manualPickRef.current = false;
       await refetch();
       await refetchRuns({ silent: true });
     } catch (e) {
@@ -152,9 +240,36 @@ export default function TaskDetail() {
     }
   };
 
-  const steps = Object.values(task?.step_instructions || {});
-  const stepsDone = steps.filter((s) => s.done).length;
+  const cancel = async () => {
+    if (!taskId) return;
+    setCancelling(true);
+    setError('');
+    try {
+      await api.post(`/tasks/${taskId}/cancel`);
+      await refetch();
+      await refetchRuns({ silent: true });
+    } catch (e) {
+      setError(errorMessage(e, 'Could not cancel the task.'));
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const pickStep = (step: PlanStep) => {
+    if (step.status === 'pending') return;
+    manualPickRef.current = true;
+    setSelected(step.index);
+    // Click-miss on a just-started step: the map may predate its session.
+    if (selectedRunId && !(stepSessions[selectedRunId] || {})[String(step.index)]) {
+      void loadRunSessions(selectedRunId);
+    }
+  };
+
   const status = task?.status || 'pending';
+  const plan = selectedRun?.plan || [];
+  const stepsDone = plan.filter((s) => s.status === 'done').length;
+  const canResume = !isLive && newestRun != null && (newestRun.status === 'failed' || newestRun.status === 'cancelled');
+  const hasSynthesis = !!(selectedRunId && (stepSessions[selectedRunId] || {})['synthesis']);
 
   if (taskLoading && !task) {
     return <div className="flex-1 flex flex-col h-screen min-w-0 bg-bg"><LoadingState label="loading task…" /></div>;
@@ -165,7 +280,7 @@ export default function TaskDetail() {
       {/* Runs sidebar */}
       <aside className="hidden md:flex w-60 flex-none flex-col border-r border-line bg-panel">
         <div className="flex h-14 flex-none items-center justify-between border-b border-line px-4">
-          <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">RUNS · {sorted.length}</span>
+          <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">RUNS · {(runs || []).length}</span>
           {runsError && (
             <button onClick={() => void refetchRuns()} className="font-mono text-[10.5px] text-danger-ink underline underline-offset-2">
               ↻ retry
@@ -173,50 +288,69 @@ export default function TaskDetail() {
           )}
         </div>
         <div className="flex-1 overflow-y-auto">
-          {runsLoading && sorted.length === 0 ? (
+          {runsLoading && !runs ? (
             <div className="flex items-center gap-2 px-4 py-6 font-mono text-[11px] text-fg-dim"><Spinner className="h-3.5 w-3.5" /> loading…</div>
-          ) : sorted.length === 0 ? (
+          ) : (runs || []).length === 0 && legacy.length === 0 ? (
             <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no runs yet — hit ▶ Run</p>
           ) : (
-            sorted.map((r, idx) => {
-              const live = r.id === runningId;
-              const runStatus = live ? 'running' : r.completed_at ? 'completed' : 'interrupted';
-              const started = parseSessionDate(r.started_at);
-              return (
+            <>
+              {(runs || []).map((r, idx) => (
                 <div
                   key={r.id}
-                  onClick={() => setSelectedId(r.id)}
+                  onClick={() => {
+                    manualPickRef.current = false;
+                    setSelectedRunId(r.id);
+                  }}
                   className={cn(
                     'cursor-pointer border-b border-line px-4 py-2.5 transition-colors',
-                    r.id === selectedId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
+                    r.id === selectedRunId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-[12px] tnum">#{sorted.length - idx}</span>
-                    {live ? (
+                    <span className="font-mono text-[12px] tnum">#{(runs || []).length - idx}</span>
+                    {ACTIVE_RUN.has(r.status) ? (
                       <span className="flex items-center gap-1.5 font-mono text-[10.5px] text-accent-ink">
                         <span className="think-bars"><i /><i /><i /></span>
-                        running
+                        {r.status}
                       </span>
                     ) : (
-                      <span className={cn('font-mono text-[10.5px]', runStatus === 'completed' ? 'text-ok' : 'text-fg-dim')}>
-                        {runStatus}
-                      </span>
+                      <span className={cn('font-mono text-[10.5px]', RUN_BADGE[r.status] || 'text-fg-dim')}>{r.status}</span>
                     )}
                   </div>
                   <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">
-                    {started ? fmtRelative(r.started_at) : 'unknown start'}
-                    {!live && (fmtDuration(r.started_at, r.completed_at) ? ` · ${fmtDuration(r.started_at, r.completed_at)}` : '')}
-                    {` · ${r.message_count ?? 0} msg`}
+                    {r.started_at ? fmtRelative(r.started_at) : '—'}
+                    {!ACTIVE_RUN.has(r.status) && fmtDuration(r.started_at, r.completed_at) ? ` · ${fmtDuration(r.started_at, r.completed_at)}` : ''}
+                    {` · ${r.plan.filter((s) => s.status === 'done').length}/${r.plan.length || '?'} steps`}
                   </div>
                 </div>
-              );
-            })
+              ))}
+              {legacy.length > 0 && (
+                <div className="border-t border-line">
+                  <div className="px-4 pb-1 pt-3 font-mono text-[10px] tracking-[0.14em] text-fg-dim">LEGACY RUNS</div>
+                  {legacy.map((s) => (
+                    <div
+                      key={s.id}
+                      onClick={() => {
+                        manualPickRef.current = true;
+                        setSelectedRunId(null);
+                        setSelected({ legacy: s.id });
+                      }}
+                      className={cn(
+                        'cursor-pointer border-b border-line px-4 py-2 font-mono text-[10.5px] text-fg-dim transition-colors',
+                        typeof selected === 'object' && selected?.legacy === s.id ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
+                      )}
+                    >
+                      {parseSessionDate(s.started_at)?.toLocaleString() || 'legacy run'} · {s.message_count ?? 0} msg
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </aside>
 
-      {/* Transcript pane */}
+      {/* Main pane */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 flex-none items-center gap-3 border-b border-line px-6">
           <Link
@@ -230,16 +364,29 @@ export default function TaskDetail() {
             <h1 className="truncate text-[15px] font-semibold tracking-tight">{task?.title || 'Task'}</h1>
           </div>
           <span className={cn('rounded border px-2 py-0.5 font-mono text-[10.5px]', STATUS[status] || STATUS.pending)}>{status}</span>
-          {steps.length > 0 && (
-            <span className="font-mono text-[10.5px] text-fg-dim tnum">steps {stepsDone}/{steps.length}</span>
+          {plan.length > 0 && (
+            <span className="font-mono text-[10.5px] text-fg-dim tnum">steps {stepsDone}/{plan.length}</span>
           )}
           <div className="ml-auto flex items-center gap-2">
             <Button asChild variant="outline" size="sm">
               <Link to={`/tasks/${taskId}/edit`}>Edit</Link>
             </Button>
-            <Button size="sm" onClick={start} disabled={starting || isRunning}>
-              {starting ? 'Starting…' : isRunning ? 'Running…' : '▶ Run'}
-            </Button>
+            {isLive ? (
+              <Button variant="ghost" size="sm" onClick={cancel} disabled={cancelling} className="hover:text-danger-ink">
+                {activeRun?.status === 'cancelling' || cancelling ? 'Cancelling… (click to force)' : 'Cancel'}
+              </Button>
+            ) : canResume ? (
+              <>
+                <Button variant="outline" size="sm" onClick={() => start(true)} disabled={starting}>
+                  {starting ? 'Starting…' : '↻ Resume'}
+                </Button>
+                <Button size="sm" onClick={() => start(false)} disabled={starting}>▶ Run</Button>
+              </>
+            ) : (
+              <Button size="sm" onClick={() => start(false)} disabled={starting}>
+                {starting ? 'Starting…' : '▶ Run'}
+              </Button>
+            )}
           </div>
         </header>
 
@@ -247,29 +394,84 @@ export default function TaskDetail() {
           <p className="mx-6 mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
         )}
 
+        {/* Steps panel for the selected run */}
+        {selectedRun && plan.length > 0 && (
+          <div className="flex flex-none flex-wrap gap-1.5 border-b border-line px-6 py-2.5">
+            {plan.map((s) => (
+              <button
+                key={s.index}
+                type="button"
+                onClick={() => pickStep(s)}
+                title={`${s.title}${s.agent_name ? ` — ${s.agent_name}` : ''}${(s.attempts ?? 0) > 1 ? ` · ${s.attempts} attempts` : ''}${s.gate === 'unverified' ? ' · unverified' : ''}`}
+                className={cn(
+                  'flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors',
+                  selected === s.index ? 'border-accent bg-panel-2 text-fg' : 'border-line text-fg-dim hover:border-fg-dim',
+                  s.status === 'pending' && 'opacity-50 cursor-default',
+                )}
+              >
+                <span className={cn(
+                  s.status === 'done' && 'text-ok',
+                  s.status === 'failed' && 'text-danger-ink',
+                  s.status === 'running' && 'text-accent-ink',
+                )}>{STEP_ICON[s.status] || '·'}</span>
+                <span className="tnum">{s.index + 1}</span>
+                {s.agent_name && <span className="max-w-32 truncate">{s.agent_name}</span>}
+                {(s.attempts ?? 0) > 1 && <span className="text-fg-dim">×{s.attempts}</span>}
+              </button>
+            ))}
+            {hasSynthesis && (
+              <button
+                type="button"
+                onClick={() => {
+                  manualPickRef.current = true;
+                  setSelected('synthesis');
+                }}
+                className={cn(
+                  'flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors',
+                  selected === 'synthesis' ? 'border-accent bg-panel-2 text-fg' : 'border-line text-fg-dim hover:border-fg-dim',
+                )}
+              >
+                Σ synthesis
+              </button>
+            )}
+          </div>
+        )}
+
+        {selectedRun?.error && (
+          <p className="mx-6 mt-3 whitespace-pre-wrap border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
+            {selectedRun.error}
+          </p>
+        )}
+
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
-          {isRunning && !runningId && (
+          {isTaskRunning && !activeRun && (
             <div className="mx-6 my-4 flex items-center gap-2.5 rounded border border-line bg-panel-2 px-3 py-2.5 font-mono text-[12px] text-fg-dim">
               <span className="think-bars"><i /><i /><i /><i /></span>
               waiting for a worker to pick up the run…
-              {waitingLong && <span className="opacity-70">still waiting — check the Celery worker</span>}
             </div>
           )}
-          {selectedId ? (
-            chats[selectedId] ? (
-              <TranscriptView entries={parseChatEntries(chats[selectedId])} live={selectedId === runningId} />
+          {selectedSessionId ? (
+            chats[selectedSessionId] ? (
+              <TranscriptView
+                entries={parseChatEntries(chats[selectedSessionId])}
+                live={!!activeRun && typeof selected === 'number' && plan[selected]?.status === 'running'}
+              />
             ) : (
               <div className="flex items-center gap-2 px-6 py-4 font-mono text-[11px] text-fg-dim">
                 <Spinner className="h-3.5 w-3.5" /> loading transcript…
               </div>
             )
+          ) : selectedRun ? (
+            <div className="px-6 py-4 font-mono text-[11px] text-fg-dim">
+              {plan.length === 0 ? 'this run failed before a plan was made' : 'select a step to view its transcript'}
+            </div>
           ) : (
-            !isRunning && (
+            !isTaskRunning && (runs || []).length === 0 && (
               <div className="mx-auto flex h-full max-w-2xl flex-col justify-center px-6">
                 <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ no runs yet</p>
                 <h2 className="mt-3 text-2xl font-bold tracking-tight">Run this task</h2>
                 <p className="mt-2 max-w-md text-fg-dim">
-                  Hit ▶ Run to execute it — each run's transcript lands here, newest in the sidebar.
+                  Hit ▶ Run — the plan's steps land in the panel above, each with its own transcript, live while it executes.
                 </p>
               </div>
             )

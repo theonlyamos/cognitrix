@@ -16,6 +16,7 @@ const STATUS: Record<string, string> = {
   completed: 'text-ok border-ok/40',
   in_progress: 'text-accent-ink border-accent/40',
   failed: 'text-danger-ink border-danger/40',
+  cancelled: 'text-fg-dim border-danger/30',
   pending: 'text-fg-dim border-line',
 };
 

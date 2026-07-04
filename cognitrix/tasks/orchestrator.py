@@ -393,16 +393,26 @@ async def _cancel_requested(run: TaskRun) -> bool:
     return bool(fresh and fresh.status == TaskRunStatus.CANCELLING)
 
 
+_TERMINAL_RUN_STATUSES = {TaskRunStatus.COMPLETED, TaskRunStatus.FAILED, TaskRunStatus.CANCELLED}
+
+
 async def _set_run_status(run: TaskRun, status: TaskRunStatus, *,
                           error: str | None = None, result: str | None = None,
-                          completed: bool = False) -> None:
-    """Compare-and-set style status write: never downgrade a concurrently
-    written 'cancelling' back to 'running', and always use partial updates."""
+                          completed: bool = False) -> bool:
+    """Compare-and-set status write. Returns False (and applies nothing) when
+    the stored status is already terminal — e.g. the cancel endpoint
+    force-finalized the run while the worker was still executing; that write
+    is authoritative and must not be overwritten. Also never downgrades a
+    concurrently written 'cancelling' back to 'running'. Always partial
+    updates (a full-row save would clobber concurrent plan writes)."""
     fresh = await TaskRun.get(run.id)
     current = fresh.status if fresh else run.status
+    if current in _TERMINAL_RUN_STATUSES and current != status:
+        run.status = current
+        return False
     if current == TaskRunStatus.CANCELLING and status == TaskRunStatus.RUNNING:
         run.status = TaskRunStatus.CANCELLING
-        return
+        return False
     updates: dict[str, Any] = {'status': status.value}
     if error is not None:
         updates['error'] = error
@@ -415,6 +425,7 @@ async def _set_run_status(run: TaskRun, status: TaskRunStatus, *,
         run.completed_at = updates['completed_at']
     await TaskRun.update_one({'id': run.id}, updates)
     run.status = status
+    return True
 
 
 def _cancel_pending(plan: list[dict]) -> None:
@@ -437,10 +448,17 @@ def _copy_plan_for_resume(plan: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------- synthesis
 
 async def _synthesize(task: 'Task', run: TaskRun, leader: Agent, interface: str) -> str:
+    """Final deliverable from the step results — a PLAIN LLM call, not a
+    session turn: a tool-enabled synthesis turn invites the model to wander
+    off exploring with tools for minutes (observed live). The result is still
+    written into a run-linked 'Synthesis' session so the transcript shows it,
+    and the whole thing is bounded by the step timeout with a mechanical
+    join-the-results fallback."""
     session = Session(task_id=task.id, run_id=run.id, step_index=None,
                       step_title='Synthesis', agent_id=leader.id)
     session.started_at = _now()
     await session.save()
+
     parts = [
         f"All steps of the task '{task.title}' are complete.",
         f"Task description: {task.description}",
@@ -450,16 +468,25 @@ async def _synthesize(task: 'Task', run: TaskRun, leader: Agent, interface: str)
         if s.get('result'):
             parts.append(f"--- {s['title']} ---\n{s['result'][:4000]}")
     parts.append("\nWrite the final deliverable/answer for the task, synthesizing the step results. Reply with the deliverable only.")
+    prompt = '\n'.join(parts)
+
+    text = ''
     try:
-        text = await _run_agent_turn(session, leader, '\n'.join(parts), interface)
-    finally:
-        session.completed_at = _now()
-        try:
-            await session.save()
-        except Exception:
-            logger.exception("Could not stamp synthesis session %s", session.id)
+        text = (await asyncio.wait_for(_collect_generation(leader, prompt), STEP_TIMEOUT)).strip()
+    except asyncio.TimeoutError:
+        logger.warning("Task %s: synthesis timed out — falling back to joined step results", task.id)
+    except Exception:
+        logger.exception("Task %s: synthesis call failed — falling back", task.id)
     if not text:
         text = '\n\n'.join(f"## {s['title']}\n{s['result']}" for s in run.plan if s.get('result'))
+
+    session.update_history({'role': 'User', 'type': 'text', 'content': prompt[:2000]})
+    session.update_history({'role': 'assistant', 'name': leader.name, 'type': 'text', 'content': text})
+    session.completed_at = _now()
+    try:
+        await session.save()
+    except Exception:
+        logger.exception("Could not persist synthesis session %s", session.id)
     return text
 
 
@@ -522,14 +549,6 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
     agents_by_name.setdefault(leader.name.lower(), leader)
 
     task.status = TaskStatus.IN_PROGRESS
-    # Transitional 'steps X/Y' compat — the per-run truth lives in
-    # TaskRun.plan. Fresh runs clear all ticks; resumed runs tick the steps
-    # the copied plan already has done.
-    template_keys = sorted((task.step_instructions or {}), key=lambda k: int(k))
-    for i, k in enumerate(template_keys):
-        task.step_instructions[k]['done'] = bool(
-            prev_plan and i < len(prev_plan) and prev_plan[i]['status'] == 'done'
-        )
     await task.save()
 
     run_rec = TaskRun(task_id=task.id, status=TaskRunStatus.RUNNING, started_at=_now())
@@ -586,16 +605,12 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
                     step['status'] = 'done'
                     step['result'] = payload[:RESULT_TRUNCATE]
                     dep_results[step['index']] = step['result']
-                    if step['index'] < len(template_keys):
-                        task.step_instructions[template_keys[step['index']]]['done'] = True
                 elif outcome == 'cancelled':
                     step['status'] = 'cancelled'
                     cancelled = True
                 else:
                     step['status'] = 'failed'
                     failure_msg = failure_msg or payload
-            if template_keys:
-                await task.save()
             await _save_plan(run_rec)
             if failure_msg or cancelled:
                 break
@@ -611,19 +626,24 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
             # IN_PROGRESS-only) leaves CANCELLED alone.
             _cancel_pending(plan)
             await _save_plan(run_rec)
-            await _set_run_status(run_rec, TaskRunStatus.CANCELLED,
-                                  error='cancelled by user', completed=True)
-            task.status = TaskStatus.CANCELLED
-            await task.save()
+            if await _set_run_status(run_rec, TaskRunStatus.CANCELLED,
+                                     error='cancelled by user', completed=True):
+                task.status = TaskStatus.CANCELLED
+                await task.save()
             logger.info("Task %s run %s cancelled", task.id, run_rec.id)
             return run_rec
 
         # Synthesize
         synthesis = await _synthesize(task, run_rec, leader, interface)
-        await _set_run_status(run_rec, TaskRunStatus.COMPLETED, result=synthesis, completed=True)
-        task.results.append(synthesis)
-        task.status = TaskStatus.COMPLETED
-        await task.save()
+        if await _set_run_status(run_rec, TaskRunStatus.COMPLETED, result=synthesis, completed=True):
+            task.results.append(synthesis)
+            task.status = TaskStatus.COMPLETED
+            await task.save()
+        else:
+            # The run was finalized externally (force-cancel) mid-flight — that
+            # write is authoritative; leave the task alone.
+            logger.info("Task %s run %s was finalized externally (%s); not overwriting",
+                        task.id, run_rec.id, run_rec.status.value)
         return run_rec
     except Exception as exc:
         logger.exception("Task %s run %s failed", task.id, run_rec.id)
@@ -632,7 +652,7 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
             await _save_plan(run_rec)
         except Exception:
             logger.exception("Could not persist failed plan for run %s", run_rec.id)
-        await _set_run_status(run_rec, TaskRunStatus.FAILED, error=str(exc), completed=True)
-        task.status = TaskStatus.FAILED
-        await task.save()
+        if await _set_run_status(run_rec, TaskRunStatus.FAILED, error=str(exc), completed=True):
+            task.status = TaskStatus.FAILED
+            await task.save()
         raise

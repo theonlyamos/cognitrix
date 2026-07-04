@@ -104,7 +104,7 @@ export default function TeamInteraction() {
                   <li key={t.id}>
                     <Link to={`/tasks/${t.id}`} className="group flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 hover:bg-panel-2">
                       <div className="min-w-0 flex-1 truncate text-[14px] font-medium group-hover:text-accent-ink">{t.title}</div>
-                      <span className={cn('rounded border px-2 py-0.5 font-mono text-[10.5px]', t.status === 'completed' ? 'border-ok/40 text-ok' : t.status === 'in_progress' ? 'border-accent/40 text-accent-ink' : 'border-line text-fg-dim')}>{t.status || 'pending'}</span>
+                      <span className={cn('rounded border px-2 py-0.5 font-mono text-[10.5px]', t.status === 'completed' ? 'border-ok/40 text-ok' : t.status === 'in_progress' ? 'border-accent/40 text-accent-ink' : t.status === 'failed' ? 'border-danger/40 text-danger-ink' : t.status === 'cancelled' ? 'border-danger/30 text-fg-dim' : 'border-line text-fg-dim')}>{t.status || 'pending'}</span>
                       <Chevron />
                     </Link>
                   </li>

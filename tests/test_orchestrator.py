@@ -167,6 +167,29 @@ async def test_run_agent_turn_treats_provider_error_chunks_as_dead_turn(monkeypa
 
 # ---------------------------------------------------------------- step exec
 
+@pytest.mark.asyncio
+async def test_set_run_status_respects_external_finalization(monkeypatch):
+    """A force-cancelled (terminal) run must never be overwritten by the
+    worker's own COMPLETED/FAILED write."""
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
+
+    stored = TaskRun(task_id='t', status=TaskRunStatus.CANCELLED)
+
+    async def fake_get(_id):
+        return stored
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(fake_get))
+
+    async def fail_update(*a, **kw):
+        raise AssertionError('must not write over a terminal status')
+    monkeypatch.setattr(TaskRun, 'update_one', staticmethod(fail_update))
+
+    live = TaskRun(task_id='t', status=TaskRunStatus.RUNNING)
+    live.id = stored.id
+    applied = await orch._set_run_status(live, orch.TaskRunStatus.COMPLETED, result='x', completed=True)
+    assert applied is False
+    assert live.status == TaskRunStatus.CANCELLED  # mirrored the authoritative state
+
+
 # ---------------------------------------------------------------- P3: resume/cancel/timeout
 
 def test_copy_plan_for_resume_keeps_done_resets_rest():

@@ -15,6 +15,26 @@ const SUGGESTIONS = [
 const fmtTime = (t?: string | number) =>
   t ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '';
 
+// Render markdown-style links ([label](/path)) as real links — multi-step
+// replies carry a "View task run" link to the run page.
+const MD_LINK = /\[([^\]]+)\]\((\/[^\s)]+)\)/g;
+function renderWithLinks(content: string) {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of content.matchAll(MD_LINK)) {
+    if (m.index! > last) parts.push(content.slice(last, m.index));
+    parts.push(
+      <a key={m.index} href={m[2]} className="text-accent-ink underline underline-offset-2 hover:brightness-110">
+        {m[1]}
+      </a>,
+    );
+    last = m.index! + m[0].length;
+  }
+  if (parts.length === 0) return content;
+  if (last < content.length) parts.push(content.slice(last));
+  return parts;
+}
+
 interface ConvoSummary {
   id: string;
   title: string;
@@ -394,7 +414,7 @@ export default function Home() {
                     </div>
                     <div className="min-w-0">
                       <div className="whitespace-pre-wrap break-words leading-relaxed">
-                        {m.content}
+                        {isUser ? m.content : renderWithLinks(m.content)}
                         {!isUser && isLast && streaming && <span className="caret" />}
                       </div>
                       {m.timestamp && (
