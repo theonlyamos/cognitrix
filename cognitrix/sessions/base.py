@@ -287,6 +287,7 @@ class Session(Model):
                             # loop needs both in history to rebuild the next prompt.
                             self.update_history({
                                 'role': 'assistant',
+                                'name': agent.name,
                                 'type': 'tool_calls',
                                 'content': response.llm_response or '',
                                 'tool_calls': response.tool_calls,
@@ -355,6 +356,7 @@ class Session(Model):
                     if response and save_history and not response.tool_calls:
                         response_dict = {
                             'role': 'assistant',
+                            'name': agent.name,
                             'type': 'text',
                             'content': response.llm_response
                         }

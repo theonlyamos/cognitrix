@@ -2,13 +2,11 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
-import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { Textarea } from '@/lib/components/ui/textarea';
 import { Select } from '@/lib/components/ui/select';
 import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm, CheckList } from '@/components/form';
-import { cn } from '@/lib/utils';
 
 interface Step { step: string; done: boolean }
 interface Agent { id: string; name: string; llm?: { provider?: string; model?: string } }
@@ -22,15 +20,18 @@ interface TaskData {
   team_id?: string | null;
   autostart?: boolean;
   status?: string;
-  results?: string[];
 }
 
+/** Task edit form. Runs, status and live monitoring live on TaskDetail
+ *  (/tasks/:taskId); this page only creates and edits the task itself. */
 export default function TaskPage() {
   const { taskId } = useParams();
   const navigate = useNavigate();
   const editing = Boolean(taskId);
+  // Where "done" leads: back to the details page when editing, the list when creating.
+  const backTo = editing ? `/tasks/${taskId}` : '/tasks';
 
-  const { data: existing, loading: loadingTask, refetch } = useResource<TaskData>(taskId ? `/tasks/${taskId}` : null);
+  const { data: existing, loading: loadingTask } = useResource<TaskData>(taskId ? `/tasks/${taskId}` : null);
   const { data: agentList } = useResource<Agent[]>('/agents');
   const { data: teamList } = useResource<Team[]>('/teams');
 
@@ -42,7 +43,6 @@ export default function TaskPage() {
   const [autostart, setAutostart] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
     if (!existing) return;
@@ -84,7 +84,7 @@ export default function TaskPage() {
     try {
       const step_instructions: Record<string, Step> = {};
       steps.filter((s) => s.step.trim()).forEach((s, i) => (step_instructions[i] = { step: s.step.trim(), done: s.done }));
-      await api.post('/tasks', {
+      const res = await api.post('/tasks', {
         ...(taskId ? { id: taskId } : {}),
         title: title.trim(),
         description: description.trim(),
@@ -94,24 +94,13 @@ export default function TaskPage() {
         autostart,
         ...(existing?.status ? { status: existing.status } : {}),
       });
-      navigate('/tasks');
+      // Land on the task's details page (new tasks included — the POST returns the id).
+      const id = taskId || res.data?.id;
+      navigate(id ? `/tasks/${id}` : '/tasks');
     } catch (e) {
       setError(errorMessage(e, 'Could not save the task.'));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const start = async () => {
-    if (!taskId) return;
-    setStarting(true);
-    try {
-      await api.get(`/tasks/start/${taskId}`);
-      await refetch();
-    } catch (e) {
-      setError(errorMessage(e, 'Could not start the task.'));
-    } finally {
-      setStarting(false);
     }
   };
 
@@ -129,40 +118,16 @@ export default function TaskPage() {
     return <div className="flex-1 flex flex-col h-screen min-w-0 bg-bg"><LoadingState label="loading task…" /></div>;
   }
 
-  const status = existing?.status;
-  const results = existing?.results || [];
-
   return (
     <PageForm
       eyebrow={editing ? 'EDIT TASK' : 'NEW TASK'}
       title={editing ? title || 'Edit task' : 'New task'}
-      backTo="/tasks"
+      backTo={backTo}
       error={error}
       onSave={save}
       saving={saving}
       onDelete={editing ? remove : undefined}
-      extraActions={
-        editing ? (
-          <Button variant="outline" size="sm" onClick={start} disabled={starting}>
-            {starting ? 'Starting…' : '▶ Run'}
-          </Button>
-        ) : undefined
-      }
     >
-      {editing && (status || results.length > 0) && (
-        <div className="rounded border border-line bg-panel-2 px-3 py-2.5">
-          <div className="flex items-center gap-2 font-mono text-[11px] text-fg-dim">
-            <span>status</span>
-            <span className={cn('rounded border px-2 py-0.5', status === 'completed' ? 'border-ok/40 text-ok' : status === 'in_progress' ? 'border-accent/40 text-accent-ink' : status === 'failed' ? 'border-danger/40 text-danger-ink' : 'border-line')}>{status || 'pending'}</span>
-          </div>
-          {results.length > 0 && (
-            <div className="mt-2 space-y-1">
-              {results.map((r, i) => <div key={i} className="whitespace-pre-wrap text-[13px] text-fg-dim">{r}</div>)}
-            </div>
-          )}
-        </div>
-      )}
-
       <Field label="TITLE" required>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Research competitor pricing" autoFocus />
       </Field>
@@ -175,7 +140,11 @@ export default function TaskPage() {
         <div className="space-y-2">
           {steps.map((s, i) => (
             <div key={i} className="flex items-center gap-2">
-              <span className="w-6 flex-none text-right font-mono text-[11px] text-fg-dim tnum">{i + 1}</span>
+              {s.done ? (
+                <span className="w-6 flex-none text-right font-mono text-[11px] text-ok">✓</span>
+              ) : (
+                <span className="w-6 flex-none text-right font-mono text-[11px] text-fg-dim tnum">{i + 1}</span>
+              )}
               <Input value={s.step} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, step: e.target.value } : x)))} placeholder={`step ${i + 1}`} />
               <button type="button" onClick={() => setSteps((arr) => arr.filter((_, j) => j !== i))} className="grid h-8 w-8 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink" aria-label="Remove step">✕</button>
             </div>

@@ -59,6 +59,9 @@ async def update_task_status(request: Request, task_id: str):
 
     task.status = TaskStatus.IN_PROGRESS
     task.pid = result.id
+    # Fresh run: clear step ticks from any previous run, or live progress lies.
+    for step in (task.step_instructions or {}).values():
+        step['done'] = False
     await task.save()
     return task.json()
 

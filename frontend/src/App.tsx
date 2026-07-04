@@ -14,6 +14,7 @@ const Agents = lazy(() => import('@/pages/Agents'));
 const AgentPage = lazy(() => import('@/pages/AgentPage'));
 const Tasks = lazy(() => import('@/pages/Tasks'));
 const TaskPage = lazy(() => import('@/pages/TaskPage'));
+const TaskDetail = lazy(() => import('@/pages/TaskDetail'));
 const Teams = lazy(() => import('@/pages/Teams'));
 const TeamPage = lazy(() => import('@/pages/TeamPage'));
 const TeamInteraction = lazy(() => import('@/pages/TeamInteraction'));
@@ -61,7 +62,8 @@ function AppRoutes() {
           <Route path="/agents/:agentId" element={<AgentPage />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/tasks/new" element={<TaskPage />} />
-          <Route path="/tasks/:taskId" element={<TaskPage />} />
+          <Route path="/tasks/:taskId" element={<TaskDetail />} />
+          <Route path="/tasks/:taskId/edit" element={<TaskPage />} />
           <Route path="/teams" element={<Teams />} />
           <Route path="/teams/new" element={<TeamPage />} />
           <Route path="/teams/:teamId" element={<TeamPage />} />
