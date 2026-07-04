@@ -124,3 +124,9 @@ async def sessions_by_team(team_id: str):
 async def sessions_by_task(task_id: str):
     sessions = await Session.find({'task_id': task_id})
     return [_session_summary(s) for s in sessions]
+
+@sessions_api.get("/runs/{run_id}")
+async def sessions_by_run(run_id: str):
+    """Step sessions of one task run (summaries; transcripts via /{id}/chat)."""
+    sessions = await Session.find({'run_id': run_id})
+    return [_session_summary(s) for s in sessions]

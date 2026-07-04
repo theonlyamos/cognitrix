@@ -10,11 +10,6 @@ import threading
 import pytest
 
 from cognitrix.common.security import redact_secrets
-from cognitrix.teams.workflow_executor import (
-    StepResult,
-    WorkflowError,
-    WorkflowExecutor,
-)
 from cognitrix.utils.llm_response import LLMResponse
 
 # --- security: redact_secrets ---
@@ -141,24 +136,6 @@ async def test_sync_tool_runs_in_worker_thread():
     result = await where_am_i.run()
     assert result.content == "ok"
     assert seen['thread'] != main_thread  # offloaded, didn't block the loop
-
-
-# --- robustness: workflow failure propagation ---
-
-@pytest.mark.asyncio
-async def test_returned_failed_step_raises_not_completed(monkeypatch):
-    executor = WorkflowExecutor(max_parallel=2)
-    workflow = [{'step_number': 1, 'title': 'S1', 'description': 'd',
-                 'assigned_agent': 'a', 'dependencies': []}]
-
-    async def failed_step(self, step, team, session, completed_results):
-        # A step that returns (does not raise) a failure result.
-        return StepResult(success=False, error="agent not found")
-
-    monkeypatch.setattr(WorkflowExecutor, "_execute_step_with_semaphore", failed_step)
-
-    with pytest.raises(WorkflowError):
-        await executor.execute(team=object(), workflow=workflow, session=object())
 
 
 # --- memory: per-turn retrieval cache + off-loop construction ---

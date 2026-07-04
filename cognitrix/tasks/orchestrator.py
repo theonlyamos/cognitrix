@@ -113,16 +113,17 @@ async def _planner_plan(task: 'Task', roster: list[Agent], leader: Agent) -> lis
 # ---------------------------------------------------------------- assignment
 
 async def _collect_generation(agent: Agent, prompt: str) -> str:
-    """One plain LLM turn (no tools/session) via Agent.generate."""
-    chunks: list[str] = []
-    last = None
-    async for response in agent.generate(prompt):
-        last = response
-        chunk = getattr(response, 'current_chunk', None)
-        if chunk:
-            chunks.append(chunk)
-    full = getattr(last, 'llm_response', '') or ''
-    return full if len(full) >= len(''.join(chunks)) else ''.join(chunks)
+    """One plain, non-streaming LLM turn (no tools, no session) straight
+    through the agent's LLM. Returns '' on provider error."""
+    messages = [
+        {'role': 'system', 'type': 'text',
+         'content': 'You are a precise planning assistant. Reply exactly as instructed.'},
+        {'role': 'User', 'type': 'text', 'content': prompt},
+    ]
+    response = await agent.llm(messages, stream=False)
+    if response is None or getattr(response, 'error', None):
+        return ''
+    return getattr(response, 'llm_response', '') or ''
 
 
 def _extract_json(text: str) -> dict | None:

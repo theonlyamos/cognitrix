@@ -18,9 +18,7 @@ from celery.signals import (
 )
 
 from cognitrix.config import COGNITRIX_WORKDIR, initialize_database
-from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task, TaskStatus
-from cognitrix.teams.base import Team
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -299,27 +297,6 @@ def run_task(task_id, resume=False):
         # raise EncodeError AFTER a successful run (flipping it to FAILED).
         return getattr(run, 'id', None)
     return None
-
-
-@celery.task(name="team_task")
-def run_team_task(team_id: str, task_id: str):
-    team = _run(Team.get(team_id))
-    task = _run(Task.get(task_id))
-    if task and team:
-        from cognitrix.utils.core import get_websocket_manager
-
-        websocket_manager = get_websocket_manager(task_id)
-        if websocket_manager:
-            try:
-                _run(team.assign_task(task.id))
-                task_session = Session(team_id=team.id, task_id=task.id)
-                _run(task_session.save())
-            finally:
-                from cognitrix.utils.core import unregister_websocket_manager
-
-                unregister_websocket_manager(task_id)
-
-            return _run(team.work_on_task(task.id, task_session, websocket_manager))
 
 
 if __name__ == '__main__':
