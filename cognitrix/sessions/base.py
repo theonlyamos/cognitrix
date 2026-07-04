@@ -79,6 +79,15 @@ class Session(Model):
     pid: str | None = None
     """Worker Id of task"""
 
+    run_id: str | None = None
+    """The TaskRun this session belongs to (task-run step sessions only)"""
+
+    step_index: int | None = None
+    """0-based plan step index within the run (None = synthesis/legacy)"""
+
+    step_title: str | None = None
+    """Plan step title, denormalized for display"""
+
     @classmethod
     async def load(cls, session_id: str) -> Self:
         """Load an existing session or create a new one if it doesn't exist"""

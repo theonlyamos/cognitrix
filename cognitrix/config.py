@@ -265,6 +265,61 @@ async def initialize_database():
     else:
         DBMS.initialize(config['type'], **kwargs)
     _patch_odbms_sqlite()
+    await _ensure_schema()
+
+
+async def _ensure_schema():
+    """Additive schema upkeep odbms can't do itself on sqlite.
+
+    - Creates the taskruns table (new model; odbms only creates tables via an
+      explicit create_table call).
+    - Adds new nullable Session columns to an EXISTING sessions table — odbms
+      alter-table is a no-op stub on sqlite, so raw ALTER is the only way. A
+      fresh database (no sessions table yet) is skipped: the regular
+      create_table pass builds the full schema from model_fields.
+    - Switches sqlite to WAL + a generous busy timeout: parallel task steps,
+      API polling and the cancel endpoint are genuinely concurrent writers,
+      each on its own connection (odbms opens one per operation).
+
+    Idempotent — safe on every init (API, celery worker, CLI).
+    """
+    import logging as _logging
+
+    from odbms import DBMS
+
+    log = _logging.getLogger('cognitrix.log')
+
+    if getattr(DBMS.Database, 'dbms', '') != 'sqlite':
+        return
+
+    from cognitrix.tasks.run import TaskRun
+
+    try:
+        create = getattr(TaskRun, '_create_table_async', None) or getattr(TaskRun, 'create_table', None)
+        if create is not None:
+            result = create()
+            if hasattr(result, '__await__'):
+                await result
+    except Exception:
+        log.exception("Could not create taskruns table")
+
+    try:
+        await DBMS.Database.query('PRAGMA journal_mode=WAL')
+        await DBMS.Database.query('PRAGMA busy_timeout=15000')
+    except Exception:
+        log.exception("Could not set sqlite pragmas")
+
+    try:
+        cursor = await DBMS.Database.query('PRAGMA table_info(sessions)')
+        rows = cursor.fetchall() if hasattr(cursor, 'fetchall') else (cursor or [])
+        existing = {r[1] for r in rows}
+        if not existing:
+            return  # fresh DB — create_table builds the full schema later
+        for column, ctype in (('run_id', 'TEXT'), ('step_index', 'INTEGER'), ('step_title', 'TEXT')):
+            if column not in existing:
+                await DBMS.Database.query(f'ALTER TABLE sessions ADD COLUMN {column} {ctype}')
+    except Exception:
+        log.exception("Could not migrate sessions schema")
 
 
 def _patch_odbms_sqlite():

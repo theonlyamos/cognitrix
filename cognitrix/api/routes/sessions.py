@@ -33,6 +33,9 @@ def _session_summary(session: Session) -> dict:
         'started_at': session.started_at,
         'completed_at': session.completed_at,
         'task_id': session.task_id,
+        'run_id': session.run_id,
+        'step_index': session.step_index,
+        'step_title': session.step_title,
         'message_count': len(session.chat or []),
     }
 
