@@ -286,7 +286,11 @@ def task_failure_handler(sender=None, task_id=None, exception=None, **kwargs):
 def run_task(task_id):
     task = _run(Task.get(task_id))
     if task:
-        return _run(task.start())
+        run = _run(task.start())
+        # Return a plain id, never the TaskRun model: on Redis deployments the
+        # result backend JSON-serializes the retval, and a pydantic model would
+        # raise EncodeError AFTER a successful run (flipping it to FAILED).
+        return getattr(run, 'id', None)
     return None
 
 

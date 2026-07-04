@@ -98,8 +98,12 @@ export default function TaskDetail() {
       const slow = pollStartRef.current !== null && Date.now() - pollStartRef.current > 300_000;
       if (slow && tickRef.current % 3 !== 0) return;
       void refetch({ silent: true });
+      // Always refetch the runs list while running: with session-per-step
+      // execution, new step sessions appear mid-run and runningId must
+      // re-derive to the newest open one (else the live view freezes on
+      // step 1's transcript).
+      void refetchRuns({ silent: true });
       if (runningId) void loadChat(runningId);
-      else void refetchRuns({ silent: true });
     },
     5000,
     !!isRunning,

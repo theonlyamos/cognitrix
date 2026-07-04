@@ -1,6 +1,4 @@
-import asyncio
 import logging
-from datetime import datetime
 from enum import Enum
 from typing import Any, TypeAlias
 
@@ -8,7 +6,6 @@ from odbms import Model
 from pydantic import Field, validator
 
 from cognitrix.agents.base import Agent
-from cognitrix.agents.evaluator import Evaluator
 from cognitrix.sessions.base import Session
 
 logger = logging.getLogger('cognitrix.log')
@@ -76,89 +73,12 @@ class Task(Model):
     async def sessions(self):
         return await Session.get_by_task_id(self.id)
 
-    async def start(self):
-        if len(self.assigned_agents):
-            team = await self.team()
-
-            if len(team):
-                agent = team[0]
-
-                if len(team) > 1:
-                    agent.sub_agents = team[1:]
-
-                evaluator = Evaluator(llm=agent.llm)
-                agent.sub_agents.append(evaluator)
-
-                self.status = TaskStatus.IN_PROGRESS
-                await self.save()
-
-                try:
-                    session = Session(task_id=self.id, agent_id=agent.id)
-                    session.started_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
-                    await session.save()
-
-                    session.update_history({'role': 'system', 'type': 'text', 'content': self.description + '\n\nComplete the task step below:\n'})
-
-                    print('[!]Starting task...\n')
-
-                    steps = self.step_instructions.copy()
-
-                    for key, value in steps.items():
-                        if self.status == TaskStatus.IN_PROGRESS:
-                            prompt = f'Step #{int(key) + 1}: '+ value['step']
-
-                            # Provider-level LLM failures (rate limits etc.) surface as
-                            # EMPTY turns, not exceptions — streaming errors are
-                            # swallowed by design for the chat UX. Detect them here by
-                            # scanning only THIS turn's new messages (scanning the whole
-                            # chat would pick up a previous step's answer), retry once
-                            # after a backoff, and fail the task instead of marking
-                            # hollow work done.
-                            answer = ''
-                            for attempt in range(2):
-                                turn_start = len(session.chat)
-                                await session(prompt, agent, stream=True)
-                                answer = next(
-                                    (m.get('content', '') for m in session.chat[turn_start:]
-                                     if m.get('role') == 'assistant' and m.get('content')),
-                                    '',
-                                )
-                                if answer.strip():
-                                    break
-                                logger.warning(
-                                    "Task %s step %s: agent returned no answer (attempt %s)",
-                                    self.id, key, attempt + 1,
-                                )
-                                if attempt == 0:
-                                    await asyncio.sleep(10)
-                            if not answer.strip():
-                                # Raise (don't just set FAILED and return): the except
-                                # below persists FAILED, and the propagated exception
-                                # makes the Celery task fail so the worker's postrun
-                                # handler doesn't overwrite FAILED with COMPLETED.
-                                raise RuntimeError(f"Step #{int(key) + 1} produced no answer after retry")
-
-                            eval_prompt = "Task: "+value['step']
-                            eval_prompt += "\n\nAgent Response:\n"+answer
-
-                            await session(eval_prompt, evaluator, stream=True)
-                            self.step_instructions[key]['done'] = True
-
-                            await self.save()
-
-                    session.completed_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
-                    await session.save()
-
-                    self.status = TaskStatus.COMPLETED
-                    await self.save()
-                except Exception:
-                    # Both dispatch paths land here: the in-process autostart path
-                    # (no Celery postrun) and, redundantly, the Celery path. Mark
-                    # FAILED so a crashed run doesn't linger as in_progress.
-                    logger.exception("Task %s failed during execution", self.id)
-                    self.status = TaskStatus.FAILED
-                    await self.save()
-                    raise
+    async def start(self, resume: bool = False):
+        """Execute this task via the orchestrator (plan → assign → execute →
+        gate → synthesize). Returns the TaskRun, or None if the task was
+        cancelled before pickup."""
+        from cognitrix.tasks.orchestrator import run as run_orchestration
+        return await run_orchestration(self, resume=resume, interface='web')
 
     @classmethod
     async def list_tasks(cls) -> TaskList:
