@@ -10,9 +10,11 @@ export function useResource<T = unknown>(path: string | null) {
   const [loading, setLoading] = useState<boolean>(path !== null);
   const [error, setError] = useState<string | null>(null);
 
-  const refetch = useCallback(async () => {
+  const refetch = useCallback(async (opts?: { silent?: boolean }) => {
     if (path === null) return;
-    setLoading(true);
+    // silent: refresh data without flipping `loading` (for background polls).
+    // Explicit === true guard: onClick={refetch} passes a MouseEvent as opts.
+    if (!(opts && opts.silent === true)) setLoading(true);
     setError(null);
     try {
       const res = await api.get<T>(path);

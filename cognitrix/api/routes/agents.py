@@ -69,7 +69,11 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     manager = get_sse_manager(_user_key(user), agent.id, agent)
-    await manager.action_queue.put({"type": "chat_message", "content": data.get("message", "")})
+    await manager.action_queue.put({
+        "type": "chat_message",
+        "content": data.get("message", ""),
+        "session_id": data.get("session_id"),
+    })
     return {"status": "Message sent"}
 
 @agents_api.get('/{agent_id}')

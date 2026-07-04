@@ -24,6 +24,27 @@ class SSEManager:
         self.agent = agent
         self.action_queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAXSIZE)
 
+    async def _resolve_session(self, session_id: str | None) -> Session | None:
+        """Resolve the conversation for a chat action.
+
+        - id given and found: that conversation (agent_id backfilled if empty).
+        - id given but gone (deleted/stale): None — the caller must emit an
+          error tagged with the requested id and skip the action. Falling back
+          to another session would silently persist the turn into the wrong
+          conversation.
+        - no id: a fresh conversation; the client adopts its id from the
+          tagged reply events.
+        """
+        if session_id:
+            session = await Session.get(session_id)
+            if session is not None and not session.agent_id:
+                session.agent_id = self.agent.id
+                await session.save()
+            return session
+        session = Session(agent_id=self.agent.id)
+        await session.save()
+        return session
+
     async def sse_endpoint(self, request: Request):
         async def event_generator():
             while True:
@@ -107,18 +128,31 @@ class SSEManager:
 
                 elif action['type'] == 'chat_message':
                     user_prompt = action['content']
+                    requested_sid = action.get('session_id')
+
+                    # Resolve the conversation up front (own try so a DB error
+                    # can't propagate out of this generator and kill the SSE
+                    # stream). Every reply event is tagged with session_id so
+                    # the client can route/drop it against its active thread.
+                    try:
+                        session = await self._resolve_session(requested_sid)
+                    except Exception:
+                        logger.exception("Failed to resolve chat session")
+                        yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': 'Could not load the conversation. Please try again.', 'session_id': requested_sid})}
+                        continue
+                    if session is None:
+                        # Stale id (deleted elsewhere). Tag with the REQUESTED id
+                        # so the client's filter lets it through; never `return`
+                        # here — that would end the stream for this user+agent.
+                        yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': 'This conversation no longer exists — start a new one.', 'session_id': requested_sid})}
+                        continue
 
                     # Check for multi-step tasks
                     if is_multi_step_task(user_prompt):
                         # Send planning status
-                        yield {'event': 'message', 'data': json.dumps({'type': 'status', 'content': 'Planning multi-step task...'})}
+                        yield {'event': 'message', 'data': json.dumps({'type': 'status', 'content': 'Planning multi-step task...', 'session_id': session.id})}
 
                         try:
-                            session = await Session.get_by_agent_id(self.agent.id)
-                            if session is None:
-                                yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': 'No active session found. Please refresh and try again.'})}
-                                return
-
                             result = await handle_multi_step_task(
                                 user_prompt,
                                 self.agent,
@@ -127,19 +161,20 @@ class SSEManager:
                                 stream=False,
                                 interface='web',
                             )
-                            yield {'event': 'message', 'data': json.dumps({'type': 'multistep_result', 'content': result})}
+                            yield {'event': 'message', 'data': json.dumps({'type': 'multistep_result', 'content': result, 'session_id': session.id})}
                         except Exception as e:
-                            yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': f'Multi-step task failed: {str(e)}'})}
+                            yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': f'Multi-step task failed: {str(e)}', 'session_id': session.id})}
                     else:
                         # Route through the full session loop so the web path gets
                         # tools + safety gating + history + persistence (previously it
                         # called agent.generate() directly, bypassing all of that).
                         # Bridge the session's callback-based output to this SSE
                         # generator through a queue.
-                        session = await Session.get_by_agent_id(self.agent.id)
                         out_queue: asyncio.Queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAXSIZE)
 
-                        async def _emit(payload, _q=out_queue):
+                        async def _emit(payload, _q=out_queue, _sid=session.id):
+                            if isinstance(payload, dict):
+                                payload = {**payload, 'session_id': _sid}
                             await _q.put(payload)
 
                         async def _run(_prompt=user_prompt, _sess=session, _q=out_queue):
