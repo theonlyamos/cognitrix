@@ -258,7 +258,10 @@ def init_worker_process(**kwargs):
 def task_prerun_handler(task_id, task, *args, **kwargs):
     logger.info(f"Task started: {task_id}")
     task_obj = _run(Task.find_one({'pid': task_id}))
-    if task_obj:
+    # Never resurrect a terminal task: a job whose task was cancelled while
+    # still queued must stay CANCELLED so the orchestrator's entry guard can
+    # skip the run. The orchestrator sets IN_PROGRESS itself at entry anyway.
+    if task_obj and task_obj.status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS):
         task_obj.status = TaskStatus.IN_PROGRESS
         _run(task_obj.save())
 
@@ -267,7 +270,11 @@ def task_prerun_handler(task_id, task, *args, **kwargs):
 def task_postrun_handler(task_id, task, *args, retval=None, state=None, **kwargs):
     logger.info(f"Task completed: {task_id}, State: {state}")
     task_obj = _run(Task.find_one({'pid': task_id}))
-    if task_obj:
+    # Backstop only — the orchestrator writes terminal statuses itself. Touch
+    # the task ONLY when still IN_PROGRESS (a pre-terminal crash): anything
+    # else would clobber CANCELLED (cancel returns SUCCESS) or an
+    # orchestrator-written FAILED/COMPLETED.
+    if task_obj and task_obj.status == TaskStatus.IN_PROGRESS:
         task_obj.status = TaskStatus.COMPLETED if state == 'SUCCESS' else TaskStatus.FAILED
         _run(task_obj.save())
 
@@ -283,10 +290,10 @@ def task_failure_handler(sender=None, task_id=None, exception=None, **kwargs):
 
 
 @celery.task(name="generic_task")
-def run_task(task_id):
+def run_task(task_id, resume=False):
     task = _run(Task.get(task_id))
     if task:
-        run = _run(task.start())
+        run = _run(task.start(resume=resume))
         # Return a plain id, never the TaskRun model: on Redis deployments the
         # result backend JSON-serializes the retval, and a pydantic model would
         # raise EncodeError AFTER a successful run (flipping it to FAILED).

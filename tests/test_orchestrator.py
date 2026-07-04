@@ -167,6 +167,53 @@ async def test_run_agent_turn_treats_provider_error_chunks_as_dead_turn(monkeypa
 
 # ---------------------------------------------------------------- step exec
 
+# ---------------------------------------------------------------- P3: resume/cancel/timeout
+
+def test_copy_plan_for_resume_keeps_done_resets_rest():
+    plan = [
+        {**orch._new_step(0, 'a', 'a', []), 'status': 'done', 'result': 'kept', 'attempts': 2, 'gate': 'passed'},
+        {**orch._new_step(1, 'b', 'b', [0]), 'status': 'failed', 'result': 'junk', 'attempts': 2, 'gate': None},
+        {**orch._new_step(2, 'c', 'c', [1]), 'status': 'cancelled'},
+    ]
+    new = orch._copy_plan_for_resume(plan)
+    assert new[0]['status'] == 'done' and new[0]['result'] == 'kept'
+    assert new[1]['status'] == 'pending' and new[1]['result'] is None and new[1]['attempts'] == 0
+    assert new[2]['status'] == 'pending'
+    assert plan[1]['status'] == 'failed'  # original untouched (deep copy)
+
+
+@pytest.mark.asyncio
+async def test_run_step_guarded_cancel_before_launch(monkeypatch):
+    async def cancelling(run):
+        return True
+    monkeypatch.setattr(orch, '_cancel_requested', cancelling)
+    step = orch._new_step(0, 's', 's', [])
+    out = await orch._run_step_guarded(
+        SimpleNamespace(id='t'), SimpleNamespace(id='r'), step,
+        SimpleNamespace(id='a', name='A', llm=_llm()), {}, 'web', __import__('asyncio').Semaphore(1))
+    assert out == (step, 'cancelled', '')
+
+
+@pytest.mark.asyncio
+async def test_run_step_guarded_timeout_is_terminal(monkeypatch):
+    import asyncio as _asyncio
+
+    async def not_cancelling(run):
+        return False
+    monkeypatch.setattr(orch, '_cancel_requested', not_cancelling)
+
+    async def slow_step(*a, **kw):
+        await _asyncio.sleep(5)
+    monkeypatch.setattr(orch, '_execute_step', slow_step)
+    monkeypatch.setattr(orch, 'STEP_TIMEOUT', 0.05)
+
+    step = orch._new_step(0, 's', 's', [])
+    _, outcome, payload = await orch._run_step_guarded(
+        SimpleNamespace(id='t'), SimpleNamespace(id='r'), step,
+        SimpleNamespace(id='a', name='A', llm=_llm()), {}, 'web', _asyncio.Semaphore(1))
+    assert outcome == 'failed' and 'timed out' in payload
+
+
 class _StubSession:
     def __init__(self, **kw):
         self.chat = []
@@ -194,9 +241,14 @@ async def test_execute_step_empty_turns_fail(monkeypatch):
     assert step['attempts'] == 2
 
 
+async def _never_cancelling(run):
+    return False
+
+
 @pytest.mark.asyncio
 async def test_execute_step_gate_retry_succeeds(monkeypatch):
     monkeypatch.setattr(orch, 'Session', _StubSession)
+    monkeypatch.setattr(orch, '_cancel_requested', _never_cancelling)
     replies = iter([
         'first draft',                                        # agent turn
         '{"finalscore": "4/10", "suggestions": ["expand"]}',  # gate 1: low
@@ -220,6 +272,7 @@ async def test_execute_step_gate_retry_succeeds(monkeypatch):
 @pytest.mark.asyncio
 async def test_execute_step_gate_fail_after_retry(monkeypatch):
     monkeypatch.setattr(orch, 'Session', _StubSession)
+    monkeypatch.setattr(orch, '_cancel_requested', _never_cancelling)
     replies = iter([
         'draft',
         '{"finalscore": "3/10", "suggestions": ["x"]}',

@@ -36,6 +36,7 @@ logger = logging.getLogger('cognitrix.log')
 
 STEP_TIMEOUT = int(os.getenv('COGNITRIX_STEP_TIMEOUT', '600'))
 GATE_THRESHOLD = float(os.getenv('COGNITRIX_GATE_THRESHOLD', '7'))
+MAX_PARALLEL_STEPS = int(os.getenv('COGNITRIX_MAX_PARALLEL_STEPS', '3'))
 MAX_PLAN_STEPS = 10
 RESULT_TRUNCATE = 8000
 EMPTY_TURN_BACKOFF = 10  # seconds before retrying an empty agent turn
@@ -47,6 +48,10 @@ def _now() -> str:
 
 class StepFailure(Exception):
     """A plan step failed terminally (empty turns, gate rejection)."""
+
+
+class RunCancelled(Exception):
+    """The run was cancelled (observed 'cancelling' at a checkpoint)."""
 
 
 # ---------------------------------------------------------------- plan build
@@ -316,6 +321,8 @@ async def _execute_step(task: 'Task', run: TaskRun, step: dict, agent: Agent,
 
         passed, suggestions = await _gate(session, agent, step, answer, interface)
         if not passed:
+            if await _cancel_requested(run):
+                raise RunCancelled()
             retry_prompt = (
                 f"{prompt}\n\nA reviewer scored your previous attempt below the quality bar."
                 + ("\nAddress these suggestions:\n- " + "\n- ".join(suggestions[:6]) if suggestions else "")
@@ -338,10 +345,51 @@ async def _execute_step(task: 'Task', run: TaskRun, step: dict, agent: Agent,
             logger.exception("Could not stamp step session %s", session.id)
 
 
+async def _run_step_guarded(task: 'Task', run: TaskRun, step: dict, agent: Agent,
+                            dep_results: dict[int, str], interface: str,
+                            semaphore: asyncio.Semaphore) -> tuple[dict, str, str]:
+    """Run one step under the concurrency slot with a hard timeout.
+
+    Returns (step, outcome, payload) where outcome is 'done' | 'failed' |
+    'cancelled'. The timeout wraps only the step BODY — a step queued behind
+    the semaphore must not burn its budget waiting for a slot. wait_for
+    cancellation still runs _execute_step's finally, so the partial transcript
+    is stamped and saved.
+    """
+    async with semaphore:
+        if await _cancel_requested(run):
+            return step, 'cancelled', ''
+        try:
+            result = await asyncio.wait_for(
+                _execute_step(task, run, step, agent, dep_results, interface),
+                STEP_TIMEOUT,
+            )
+            return step, 'done', result
+        except RunCancelled:
+            return step, 'cancelled', ''
+        except asyncio.TimeoutError:
+            return step, 'failed', (
+                f"Step #{step['index'] + 1} timed out after {STEP_TIMEOUT}s. "
+                "In-flight tool side effects (threads/subprocesses) cannot be "
+                "killed and may still land."
+            )
+        except StepFailure as exc:
+            return step, 'failed', str(exc)
+        except Exception as exc:  # tool/session crash — terminal for the step
+            logger.exception("Task %s step %s crashed", task.id, step['index'])
+            return step, 'failed', f"Step #{step['index'] + 1} crashed: {exc}"
+
+
 # ---------------------------------------------------------------- run status
 
 async def _save_plan(run: TaskRun) -> None:
     await TaskRun.update_one({'id': run.id}, {'plan': run.plan})
+
+
+async def _cancel_requested(run: TaskRun) -> bool:
+    """Fresh DB read — the cancel endpoint may live in another process."""
+    fresh = await TaskRun.get(run.id)
+    return bool(fresh and fresh.status == TaskRunStatus.CANCELLING)
 
 
 async def _set_run_status(run: TaskRun, status: TaskRunStatus, *,
@@ -369,6 +417,17 @@ def _cancel_pending(plan: list[dict]) -> None:
     for s in plan:
         if s['status'] == 'pending':
             s['status'] = 'cancelled'
+
+
+def _copy_plan_for_resume(plan: list[dict]) -> list[dict]:
+    """Deep-copy a terminal run's plan: done steps keep status + result (they
+    feed downstream dependency prompts), everything else resets to pending."""
+    import copy
+    new = copy.deepcopy(plan)
+    for s in new:
+        if s['status'] != 'done':
+            s.update(status='pending', attempts=0, result=None, gate=None)
+    return new
 
 
 # ---------------------------------------------------------------- synthesis
@@ -422,17 +481,28 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
     the postrun handler cannot overwrite FAILED with COMPLETED)."""
     from cognitrix.tasks.base import TaskStatus
 
-    if resume:
-        # Full resume semantics land with parallelism; accepted now so the
-        # dispatch signature is stable.
-        logger.info("Task %s: resume requested (treated as fresh run for now)", task.id)
-
     fresh = await type(task).get(task.id)
     if fresh is not None:
         task = fresh
     if task.status == TaskStatus.CANCELLED:
         logger.info("Task %s cancelled before pickup — skipping run", task.id)
         return None
+
+    # Resume: copy the newest failed/cancelled run's plan; done steps keep
+    # their status + stored result (feeding downstream dependency prompts),
+    # everything else resets. Template drift on the task is deliberately
+    # ignored — the snapshot wins.
+    prev_plan: list[dict[str, Any]] | None = None
+    if resume:
+        existing = await TaskRun.find({'task_id': task.id})
+        if any(r.status in (TaskRunStatus.RUNNING, TaskRunStatus.CANCELLING) for r in existing):
+            raise ValueError(f"Task {task.id} already has an active run")
+        resumable = [r for r in existing if r.status in (TaskRunStatus.FAILED, TaskRunStatus.CANCELLED)]
+        resumable.sort(key=lambda r: r.json().get('created_at') or '', reverse=True)
+        if resumable and resumable[0].plan:
+            prev_plan = _copy_plan_for_resume(resumable[0].plan)
+        else:
+            logger.info("Task %s: nothing to resume — running fresh", task.id)
 
     roster = await task.team()
     if not roster:
@@ -448,53 +518,101 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
     agents_by_name.setdefault(leader.name.lower(), leader)
 
     task.status = TaskStatus.IN_PROGRESS
-    # Fresh run: clear template ticks (transitional 'steps X/Y' compat — the
-    # per-run truth lives in TaskRun.plan).
-    for v in (task.step_instructions or {}).values():
-        v['done'] = False
+    # Transitional 'steps X/Y' compat — the per-run truth lives in
+    # TaskRun.plan. Fresh runs clear all ticks; resumed runs tick the steps
+    # the copied plan already has done.
+    template_keys = sorted((task.step_instructions or {}), key=lambda k: int(k))
+    for i, k in enumerate(template_keys):
+        task.step_instructions[k]['done'] = bool(
+            prev_plan and i < len(prev_plan) and prev_plan[i]['status'] == 'done'
+        )
     await task.save()
 
     run_rec = TaskRun(task_id=task.id, status=TaskRunStatus.RUNNING, started_at=_now())
     await run_rec.save()  # the ONE instance save — partial updates after this
 
-    template_keys = sorted((task.step_instructions or {}), key=lambda k: int(k))
-
     try:
-        # Plan
-        if task.step_instructions:
+        # Plan (resume reuses the copied snapshot, assignments included)
+        if prev_plan is not None:
+            plan = prev_plan
+        elif task.step_instructions:
             plan = _template_plan(task)
+            await _assign_agents(plan, roster, leader)
         else:
             plan = await _planner_plan(task, roster, leader)
-        await _assign_agents(plan, roster, leader)
+            await _assign_agents(plan, roster, leader)
         run_rec.plan = plan
         await _save_plan(run_rec)
 
-        # Execute (sequential within dependency order; parallel batches land
-        # in the next phase)
+        # Execute: dependency-ready batches, parallel within a batch. Cancel
+        # is observed from the DB at every boundary; in-flight steps are
+        # awaited (never killed mid-LLM-call — their results help resume).
+        semaphore = asyncio.Semaphore(MAX_PARALLEL_STEPS)
         dep_results: dict[int, str] = {}
+        cancelled = False
+        failure_msg: str | None = None
         for batch in _dependency_batches(plan):
+            if await _cancel_requested(run_rec):
+                cancelled = True
+                break
+            runnable: list[dict] = []
             for idx in batch:
                 step = plan[idx]
                 if step['status'] == 'done':
                     dep_results[idx] = step.get('result') or ''
-                    continue
-                step['status'] = 'running'
-                await _save_plan(run_rec)
-                agent = agents_by_name.get((step['agent_name'] or '').lower(), leader)
-                try:
-                    result = await _execute_step(task, run_rec, step, agent, dep_results, interface)
-                except StepFailure as exc:
+                else:
+                    runnable.append(step)
+            if not runnable:
+                continue
+            for s in runnable:
+                s['status'] = 'running'
+            await _save_plan(run_rec)
+
+            outcomes = await asyncio.gather(*[
+                _run_step_guarded(
+                    task, run_rec, s,
+                    agents_by_name.get((s['agent_name'] or '').lower(), leader),
+                    dep_results, interface, semaphore,
+                )
+                for s in runnable
+            ])
+
+            for step, outcome, payload in outcomes:
+                if outcome == 'done':
+                    step['status'] = 'done'
+                    step['result'] = payload[:RESULT_TRUNCATE]
+                    dep_results[step['index']] = step['result']
+                    if step['index'] < len(template_keys):
+                        task.step_instructions[template_keys[step['index']]]['done'] = True
+                elif outcome == 'cancelled':
+                    step['status'] = 'cancelled'
+                    cancelled = True
+                else:
                     step['status'] = 'failed'
-                    _cancel_pending(plan)
-                    await _save_plan(run_rec)
-                    raise RuntimeError(str(exc)) from exc
-                step['status'] = 'done'
-                step['result'] = result[:RESULT_TRUNCATE]
-                dep_results[idx] = step['result']
-                if idx < len(template_keys):
-                    task.step_instructions[template_keys[idx]]['done'] = True
-                    await task.save()
-                await _save_plan(run_rec)
+                    failure_msg = failure_msg or payload
+            if template_keys:
+                await task.save()
+            await _save_plan(run_rec)
+            if failure_msg or cancelled:
+                break
+
+        if failure_msg:
+            _cancel_pending(plan)
+            await _save_plan(run_rec)
+            raise RuntimeError(failure_msg)
+
+        if cancelled or await _cancel_requested(run_rec):
+            # Cancellation is a normal outcome, not a failure — return without
+            # raising so the Celery job succeeds and postrun (guarded to
+            # IN_PROGRESS-only) leaves CANCELLED alone.
+            _cancel_pending(plan)
+            await _save_plan(run_rec)
+            await _set_run_status(run_rec, TaskRunStatus.CANCELLED,
+                                  error='cancelled by user', completed=True)
+            task.status = TaskStatus.CANCELLED
+            await task.save()
+            logger.info("Task %s run %s cancelled", task.id, run_rec.id)
+            return run_rec
 
         # Synthesize
         synthesis = await _synthesize(task, run_rec, leader, interface)
