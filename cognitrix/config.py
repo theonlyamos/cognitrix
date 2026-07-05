@@ -10,7 +10,7 @@ load_dotenv()
 
 logger = logging.getLogger('cognitrix.log')
 
-VERSION = '0.2.6'
+VERSION = '0.3.0'
 API_VERSION = 'v1'
 
 class CognitrixSettings:
