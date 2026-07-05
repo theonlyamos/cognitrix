@@ -43,6 +43,13 @@ const SCOPE_BADGE: Record<string, string> = {
   write: 'text-danger-ink border-danger/40',
 };
 
+// "now" as a datetime-local string (local wall-clock, matching the input) so
+// the expiry picker can't select a past instant — an already-expired key.
+function localNowMin(): string {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
 function CopyRow({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -205,7 +212,7 @@ export default function ApiKeys() {
               </Field>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="EXPIRES" hint="optional">
-                  <Input type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
+                  <Input type="datetime-local" min={localNowMin()} value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
                 </Field>
                 <Field label="RATE LIMIT" hint="req/min, optional">
                   <Input type="number" min={1} value={rateLimit} onChange={(e) => setRateLimit(e.target.value)} placeholder="default" />
