@@ -40,7 +40,7 @@ services:
   web:
     <<: *app
     build: .
-    command: ["xvfb-run", "-a", "cognitrix", "--ui", "web"]
+    command: ["cognitrix", "--ui", "web"]
     ports:
       - "8000:8000"
     healthcheck:
@@ -52,7 +52,7 @@ services:
 
   worker:
     <<: *app
-    command: ["xvfb-run", "-a", "celery", "-A", "cognitrix.celery_worker", "worker", "--pool=solo", "--loglevel=info"]
+    command: ["celery", "-A", "cognitrix.celery_worker", "worker", "--pool=solo", "--loglevel=info"]
 
 volumes:
   redis-data:
