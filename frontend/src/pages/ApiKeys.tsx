@@ -117,8 +117,10 @@ export default function ApiKeys() {
         allowed_agents: [...agents],
         allowed_teams: [...teams],
       };
-      // datetime-local yields "YYYY-MM-DDTHH:mm" — the API normalizes it.
-      if (expiresAt) payload.expires_at = expiresAt;
+      // datetime-local is naive local wall-clock; send it as a UTC ISO string
+      // with offset so the server stores the instant the user actually meant
+      // (a bare "YYYY-MM-DDTHH:mm" would be read back as UTC — off by the tz).
+      if (expiresAt) payload.expires_at = new Date(expiresAt).toISOString();
       if (rateLimit) payload.rate_limit = Number(rateLimit);
       const res = await api.post<CreatedKey>('/api-keys', payload);
       setCreated(res.data);

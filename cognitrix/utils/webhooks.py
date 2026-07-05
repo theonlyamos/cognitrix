@@ -29,6 +29,9 @@ ATTEMPT_TIMEOUT = 10.0
 TOTAL_BUDGET = float(os.getenv('COGNITRIX_WEBHOOK_BUDGET', '15'))
 BACKOFFS = (1.0, 2.0, 4.0)
 
+# Carrier-grade NAT (RFC 6598) — not covered by ipaddress.is_private.
+_CGNAT = ipaddress.ip_network('100.64.0.0/10')
+
 
 def _allow_private() -> bool:
     return os.getenv('COGNITRIX_WEBHOOK_ALLOW_PRIVATE', '').strip().lower() in ('1', 'true', 'yes')
@@ -59,7 +62,10 @@ def check_callback_url(url: str) -> str | None:
             ip = ipaddress.ip_address(info[4][0])
         except ValueError:
             continue
-        if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_unspecified:
+        # is_private covers RFC1918/ULA but NOT carrier-grade NAT (100.64.0.0/10)
+        # or multicast, both of which can reach internal fabrics — block them too.
+        if (ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved
+                or ip.is_unspecified or ip.is_multicast or ip in _CGNAT):
             return ('callback_url resolves to a private/loopback address '
                     '(set COGNITRIX_WEBHOOK_ALLOW_PRIVATE=1 to allow)')
     return None
@@ -113,10 +119,19 @@ async def notify_completion(task, run) -> bool:
         }
 
         started = time.monotonic()
-        async with httpx.AsyncClient(timeout=ATTEMPT_TIMEOUT, follow_redirects=False) as client:
+        async with httpx.AsyncClient(follow_redirects=False) as client:
             for attempt in range(ATTEMPTS):
+                # Cap each attempt to the budget actually left so the total wall
+                # time honors TOTAL_BUDGET — a single attempt is still bounded by
+                # ATTEMPT_TIMEOUT. Stop if nothing is left to spend.
+                remaining = TOTAL_BUDGET - (time.monotonic() - started)
+                if remaining <= 0:
+                    break
                 try:
-                    response = await client.post(url, content=body, headers=headers)
+                    response = await client.post(
+                        url, content=body, headers=headers,
+                        timeout=min(ATTEMPT_TIMEOUT, remaining),
+                    )
                     if 200 <= response.status_code < 300:
                         return True
                     logger.warning("Webhook for task %s got HTTP %s (attempt %d/%d)",
@@ -124,9 +139,10 @@ async def notify_completion(task, run) -> bool:
                 except httpx.HTTPError as exc:
                     logger.warning("Webhook for task %s failed: %s (attempt %d/%d)",
                                    task.id, type(exc).__name__, attempt + 1, ATTEMPTS)
-                if attempt + 1 >= ATTEMPTS or time.monotonic() - started > TOTAL_BUDGET:
+                backoff = BACKOFFS[min(attempt, len(BACKOFFS) - 1)]
+                if attempt + 1 >= ATTEMPTS or time.monotonic() - started + backoff > TOTAL_BUDGET:
                     break
-                await asyncio.sleep(BACKOFFS[min(attempt, len(BACKOFFS) - 1)])
+                await asyncio.sleep(backoff)
         logger.error("Webhook for task %s not delivered after %d attempts", task.id, ATTEMPTS)
         return False
     except Exception:

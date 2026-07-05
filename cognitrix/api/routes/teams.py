@@ -29,7 +29,7 @@ async def run_team(team_id: str, body: TeamRunRequest,
                    ctx: AuthContext = Depends(get_auth_context)):
     """Create a task for this team and enqueue it. Async by design — poll
     GET /tasks/{id} + /tasks/{id}/runs, or register a callback_url webhook."""
-    from cognitrix.api.routes.tasks import _enqueue_task_start, _set_callback
+    from cognitrix.api.routes.tasks import _check_task_allowlists, _enqueue_task_start, _set_callback
     from cognitrix.tasks import Task
 
     team = await Team.get(team_id)
@@ -49,6 +49,9 @@ async def run_team(team_id: str, body: TeamRunRequest,
         team_id=team.id,
         assigned_agents=list(team.assigned_agents),
     )
+    # An agent-restricted key must not invoke agents outside its allowlist by
+    # laundering the call through a team — same guard every other run path uses.
+    _check_task_allowlists(ctx, task)
     await _set_callback(task, body.callback_url, ctx)
     await task.save()
     task = await _enqueue_task_start(task)

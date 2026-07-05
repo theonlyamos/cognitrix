@@ -62,6 +62,9 @@ def test_check_callback_url(monkeypatch):
     assert webhooks.check_callback_url('http://localhost:9/hook') is not None
     assert webhooks.check_callback_url('http://169.254.169.254/latest') is not None
     assert webhooks.check_callback_url('http://192.168.1.10/hook') is not None
+    # CGNAT (RFC 6598) and multicast reach internal fabrics but aren't is_private.
+    assert webhooks.check_callback_url('http://100.64.0.5/hook') is not None
+    assert webhooks.check_callback_url('http://224.0.0.1/hook') is not None
 
     monkeypatch.setenv('COGNITRIX_WEBHOOK_ALLOW_PRIVATE', '1')
     assert webhooks.check_callback_url('http://127.0.0.1:9/hook') is None
@@ -91,8 +94,8 @@ class _FakeClient:
     async def __aexit__(self, *a):
         return False
 
-    async def post(self, url, content=None, headers=None):
-        _FakeClient.calls.append({'url': url, 'body': content, 'headers': headers})
+    async def post(self, url, content=None, headers=None, **kwargs):
+        _FakeClient.calls.append({'url': url, 'body': content, 'headers': headers, 'kwargs': kwargs})
         item = _FakeClient.script.pop(0)
         if isinstance(item, Exception):
             raise item
