@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cognitrix"
-version = "0.2.6"
+version = "0.3.0"
 description = "Package for creating AI Agents using llms"
 authors = ["theonlyamos <theonlyamos@gmail.com>"]
 license = "Apache2"
@@ -66,11 +66,15 @@ pyjwt = "^2.8.0"
 # Utilities
 rich = ">=13.7.1"
 celery = {extras = ["redis"], version = "^5.4.0"}
+# kombu's filesystem transport (local no-Redis fallback) hard-imports win32
+# APIs on Windows; declared explicitly rather than relying on mcp pulling it.
+pywin32 = {version = ">=310", markers = "sys_platform == 'win32'"}
 pyyaml = "^6.0"
 
 # MCP (Model Context Protocol)
 mcp = {extras = ["cli"], version = "^1.9.1"}
 textual = "^8.0.1"
+croniter = "^6.2.3"
 
 [build-system]
 requires = ["poetry-core"]

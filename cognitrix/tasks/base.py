@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 from enum import Enum
 from typing import Any, TypeAlias
 
@@ -7,7 +6,6 @@ from odbms import Model
 from pydantic import Field, validator
 
 from cognitrix.agents.base import Agent
-from cognitrix.agents.evaluator import Evaluator
 from cognitrix.sessions.base import Session
 
 logger = logging.getLogger('cognitrix.log')
@@ -18,6 +16,8 @@ class TaskStatus(str, Enum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 class Task(Model):
     """
@@ -38,8 +38,8 @@ class Task(Model):
     description: str
     """The task|query to perform|answer"""
 
-    step_instructions: dict[int, dict[str, Any]] = {}
-    """Line by line instructions for completing the task"""
+    step_instructions: dict[str, dict[str, Any]] = {}
+    """Line by line instructions for completing the task, keyed by step index ("0", "1", ...)"""
 
     done: bool = False
     """Checks/Sets whether the task has been completed"""
@@ -62,10 +62,35 @@ class Task(Model):
     team_id: str | None = None
     """ID of the team assigned to this task"""
 
+    callback_url: str | None = None
+    """Webhook POSTed on run completion (API-started tasks only). Stripped
+    from API projections — callback URLs routinely embed capability tokens."""
+
+    callback_key_id: str | None = None
+    """APIKey that registered the callback; its webhook_secret signs the
+    payload. Revoked/expired keys stop deliveries."""
+
+    schedule_at: str | None = None
+    """One-shot schedule: naive-UTC 'YYYY-MM-DD HH:MM:SS'. At most one of
+    schedule_at/schedule_interval/schedule_cron may be set."""
+
+    schedule_interval: int | None = None
+    """Recurring schedule: run every N seconds (minimum 60)."""
+
+    schedule_cron: str | None = None
+    """Recurring schedule: 5-field cron expression, evaluated in server-local time."""
+
+    next_run_at: str | None = None
+    """When the scheduler fires next (naive UTC). Single dispatch column for
+    all schedule types; the scheduler claims a fire by compare-and-set on it."""
+
+    schedule_enabled: bool = False
+    """Pause/resume toggle for the schedule."""
+
     async def team(self):
         agents: list[Agent] = []
         for agent_id in self.assigned_agents:
-            agent = Agent.get(agent_id)
+            agent = await Agent.get(agent_id)
             if agent:
                 agents.append(agent)
         return agents
@@ -73,51 +98,12 @@ class Task(Model):
     async def sessions(self):
         return await Session.get_by_task_id(self.id)
 
-    async def start(self):
-        if len(self.assigned_agents):
-            team = await self.team()
-
-            if len(team):
-                agent = team[0]
-
-                if len(team) > 1:
-                    agent.sub_agents = team[1:]
-
-                evaluator = Evaluator(llm=agent.llm)
-                agent.sub_agents.append(evaluator)
-
-                self.status = TaskStatus.IN_PROGRESS
-                self.save()
-
-                session = Session(task_id=self.id, agent_id=agent.id)
-                session.started_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
-                session.save()
-
-                session.update_history({'role': 'system', 'type': 'text', 'message': self.description + '\n\nComplete the task step below:\n'})
-
-                print('[!]Starting task...\n')
-
-                steps = self.step_instructions.copy()
-
-                for key, value in steps.items():
-                    if self.status == 'in-progress':
-                        prompt = f'Step #{key + 1}: '+ value['step']
-
-                        await session(prompt, agent, stream=True)
-
-                        eval_prompt = "Task: "+value['step']
-                        eval_prompt += "\n\nAgent Response:\n"+session.chat[-1]['message']
-
-                        await session(eval_prompt, evaluator, stream=True)
-                        self.step_instructions[key]['done'] = True
-
-                        self.save()
-
-                session.completed_at = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
-                session.save()
-
-                self.status = TaskStatus.COMPLETED
-                self.save()
+    async def start(self, resume: bool = False):
+        """Execute this task via the orchestrator (plan → assign → execute →
+        gate → synthesize). Returns the TaskRun, or None if the task was
+        cancelled before pickup."""
+        from cognitrix.tasks.orchestrator import run as run_orchestration
+        return await run_orchestration(self, resume=resume, interface='web')
 
     @classmethod
     async def list_tasks(cls) -> TaskList:
@@ -138,32 +124,25 @@ class Task(Model):
             return task
         return None
 
-    @staticmethod
-    def extract_steps(text):
-        # Find the start and end of the task_steps section
-        if '<steps>' not in text:
-            return {}
-
-        steps: dict[int, dict[str, Any]] = {}
-        start = text.find('<steps>') + len('<steps>')
-        end = text.find('</steps>')
-
-        # Extract the content between the tags
-        task_steps_content = text[start:end].strip()
-
-        # Split the content into a list of steps
-        steps_list = [step.strip() for step in task_steps_content.split('\n') if step.strip()]
-
-        for index, step in enumerate(steps_list):
-            steps[index] = {'step': step, 'done': False}
-
-        return steps
-
     @validator("status", pre=True)
     def parse_status(cls, value):
         if isinstance(value, TaskStatus):
             return value
         return TaskStatus(value)
+
+    # A DB row may store these collections as NULL; coerce back to the empty
+    # default so loading the model doesn't fail validation.
+    @validator("step_instructions", pre=True)
+    def _coerce_null_steps(cls, value):
+        return {} if value is None else value
+
+    @validator("assigned_agents", "results", pre=True)
+    def _coerce_null_lists(cls, value):
+        return [] if value is None else value
+
+    @validator("schedule_enabled", pre=True)
+    def _coerce_null_bool(cls, value):
+        return False if value is None else value
 
     class Config:
         json_encoders = {

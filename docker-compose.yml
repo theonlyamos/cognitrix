@@ -1,0 +1,59 @@
+# Cognitrix: web (FastAPI + in-process scheduler) + dedicated Celery worker,
+# with Redis as the broker. Web and worker share the SQLite app DB over a named
+# volume mounted at /root/.cognitrix.
+#
+#   cp .env.example .env      # fill in provider keys + JWT_SECRET_KEY
+#   docker compose up --build
+#
+# Scale execution with `docker compose up --scale worker=3`. Keep web at a
+# SINGLE replica: the schedule tick loop is per-process, so two web containers
+# would fire due schedules twice.
+
+x-app: &app
+  image: cognitrix:latest
+  env_file: .env
+  environment:
+    # Presence of CELERY_BROKER_URL flips both processes to the Redis broker
+    # (the web container then treats its local-worker spawn as a no-op).
+    CELERY_BROKER_URL: redis://redis:6379/0
+    COGNITRIX_ENV: production          # requires JWT_SECRET_KEY (fail-fast)
+  volumes:
+    - cognitrix-data:/root/.cognitrix  # shared SQLite DB, jwt_secret, mcp.json
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  web:
+    <<: *app
+    build: .
+    command: ["xvfb-run", "-a", "cognitrix", "--ui", "web"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+  worker:
+    <<: *app
+    command: ["xvfb-run", "-a", "celery", "-A", "cognitrix.celery_worker", "worker", "--pool=solo", "--loglevel=info"]
+
+volumes:
+  redis-data:
+  cognitrix-data:

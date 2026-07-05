@@ -1,46 +1,42 @@
-FROM ubuntu:22.04
+# syntax=docker/dockerfile:1
 
-LABEL maintainer="Amos Amissah"
+# --- Frontend build (Node) ---------------------------------------------------
+FROM node:20-slim AS frontend
+RUN corepack enable
+WORKDIR /frontend
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY frontend/ ./
+RUN pnpm run build          # outputs /frontend/dist
 
-ENV TZ=UTC
+# --- Runtime (Python) --------------------------------------------------------
+FROM python:3.12-slim AS runtime
 
-WORKDIR /app/
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TZ=UTC
 
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-
+# xvfb: the pyautogui-backed tools import Xlib against $DISPLAY at load time and
+# crash headless without a virtual display (xvfb-run wraps the commands below).
+# libgl1/libglib2.0-0 satisfy shared-lib loads from the pillow/opencv-family
+# deps; curl is used by the compose health check.
 RUN apt-get update \
-    && apt-get install -y gnupg gosu curl ca-certificates zip unzip git supervisor \
-    sqlite3 libcap2-bin libpng-dev python3.11 python3.11-dev python3.11-venv \
-    && curl https://bootstrap.pypa.io/get-pip.py | python3.11 \
-    && apt-get -y autoremove \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    && apt-get install -y --no-install-recommends \
+        xvfb libgl1 libglib2.0-0 curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+WORKDIR /app
+COPY . /app
+# The API serves the SPA from <repo>/frontend/dist (FRONTEND_BUILD_DIR); drop
+# the freshly built assets there.
+COPY --from=frontend /frontend/dist /app/frontend/dist
 
-RUN curl https://bun.sh/install | bash 
-
-RUN echo 'export BUN_PATH="$HOME/.bun"' >> $HOME/.bashrc \
-    && echo 'export PATH="$PATH:$BUN_PATH"' >> $HOME/.bashrc \
-    && . $HOME/.bashrc \
-    && bun add -g dotenv
-
-RUN python3.11 -m pip install python-dotenv
-
-RUN ln -s /usr/bin/python
-
-RUN ln -s /usr/bin/python3.11 /usr/bin/python  
-
-COPY . /app/
-
-RUN mv .env.example .env
-
-RUN cd /app/frontend && bun run build
-
+# Editable install keeps the package at /app/cognitrix, so its relative path to
+# ../frontend/dist resolves at runtime (a site-packages install would not).
 RUN pip install -e .
 
-EXPOSE 9000
+EXPOSE 8000
 
-# RUN ln -sf /bin/bash /bin/sh
-
-ENTRYPOINT ["runit-server"]
+# Web server by default; the worker service overrides this command in compose.
+# xvfb-run -a provides the virtual display the tool stack needs.
+CMD ["xvfb-run", "-a", "cognitrix", "--ui", "web"]

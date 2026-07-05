@@ -1,123 +1,128 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
+import { api, errorMessage } from '@/lib/api';
+import { Button } from '@/lib/components/ui/button';
+import { Input } from '@/lib/components/ui/input';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
-const API_BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL}/api/v1`;
+const GRID = {
+  backgroundImage:
+    'linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px)',
+  backgroundSize: '32px 32px',
+};
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const { login } = useUser();
   const navigate = useNavigate();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setIsLoading(true);
-
+    setLoading(true);
     try {
-      const response = await fetch(`${API_BACKEND_URI}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: email, password }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        login(data.user, data.access_token);
-        navigate('/home');
-      } else {
-        const data = await response.json();
-        setError(data.detail || 'Incorrect email or password. Please try again.');
-      }
-    } catch {
-      setError('Unable to connect. Please check your internet connection and try again.');
+      const { data } = await api.post('/auth/login', { username: email, password });
+      login(data.user, data.access_token);
+      navigate('/home');
+    } catch (err) {
+      setError(errorMessage(err, 'Incorrect email or password.'));
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-white mb-2">Welcome back</h1>
-          <p className="text-gray-400">Sign in to continue to your workspace</p>
+    <div className="min-h-screen flex bg-bg text-fg">
+      {/* Brand panel */}
+      <aside className="relative hidden lg:flex lg:w-[45%] flex-col justify-between overflow-hidden border-r border-line bg-panel p-12">
+        <div className="absolute inset-0 opacity-60" style={GRID} aria-hidden />
+        <div className="relative flex items-center gap-3">
+          <span className="grid h-7 w-7 place-items-center rounded-sm bg-accent text-accent-foreground">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
+          </span>
+          <span className="font-mono text-[13px] font-bold tracking-[0.14em]">
+            COGNITRIX<span className="text-fg-dim font-medium"> /v0.3.0</span>
+          </span>
         </div>
-        
-        <div className="bg-gray-800/50 backdrop-blur-sm rounded-2xl p-8 border border-gray-700/50 shadow-xl">
-          <form onSubmit={handleLogin} className="space-y-5">
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
-                Email address
-              </label>
-              <input
-                type="email"
-                id="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 bg-gray-900/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                placeholder="you@example.com"
-                required
-                autoComplete="email"
-              />
-            </div>
-            
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
-                Password
-              </label>
-              <input
-                type="password"
-                id="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 bg-gray-900/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                placeholder="Enter your password"
-                required
-                autoComplete="current-password"
-              />
-            </div>
 
-            {error && (
-              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-                <p className="text-sm text-red-400">{error}</p>
-              </div>
-            )}
-            
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {isLoading ? (
-                <>
-                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Signing in...
-                </>
-              ) : (
-                'Sign in'
-              )}
-            </button>
-          </form>
-          
-          <p className="mt-6 text-center text-gray-400">
-            Don't have an account?{' '}
-            <Link to="/signup" className="text-blue-400 hover:text-blue-300 font-medium transition-colors">
-              Create one
-            </Link>
+        <div className="relative max-w-md">
+          <h2 className="text-4xl font-bold leading-[1.05] tracking-tight">
+            Run agents<br />like you mean it.
+          </h2>
+          <p className="mt-4 text-fg-dim max-w-sm">
+            Build, run and orchestrate LLM agents — chat, multi-step tasks and teams — from one keyboard-first console.
           </p>
         </div>
-        
-        <p className="mt-6 text-center text-gray-500 text-sm">
-          By signing in, you agree to our terms and privacy policy
-        </p>
-      </div>
+
+        <div className="relative font-mono text-[11px] text-fg-dim space-y-1.5">
+          <div className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-accent" /> providers · openrouter · openai · google · groq · ollama</div>
+          <div className="text-fg-dim/70">status &nbsp;ready · api/v1 · ws + sse</div>
+        </div>
+      </aside>
+
+      {/* Form column */}
+      <main className="flex flex-1 flex-col">
+        <header className="flex items-center justify-between p-6">
+          <span className="font-mono text-[11px] tracking-[0.16em] text-fg-dim lg:hidden">COGNITRIX</span>
+          <span className="lg:hidden" />
+          <ThemeToggle className="ml-auto" />
+        </header>
+
+        <div className="flex flex-1 items-center px-6 pb-16">
+          <div className="w-full max-w-sm mx-auto lg:mx-0 lg:ml-16 animate-rise">
+            <p className="font-mono text-[11px] tracking-[0.18em] text-accent-ink">SIGN IN</p>
+            <h1 className="mt-2 text-3xl font-bold tracking-tight">Welcome back</h1>
+            <p className="mt-2 text-fg-dim">Sign in to continue to your workspace.</p>
+
+            <form onSubmit={handleLogin} className="mt-8 space-y-5">
+              <div className="space-y-1.5">
+                <label htmlFor="email" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">EMAIL</label>
+                <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com" required autoComplete="email" autoFocus />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="password" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">PASSWORD</label>
+                <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••" required autoComplete="current-password" />
+              </div>
+
+              {error && (
+                <p className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
+              )}
+
+              <Button type="submit" disabled={loading} className="w-full">
+                {loading ? (
+                  <><Spinner /> Signing in…</>
+                ) : (
+                  <>Sign in <span aria-hidden>→</span></>
+                )}
+              </Button>
+            </form>
+
+            <p className="mt-6 text-sm text-fg-dim">
+              Don't have an account?{' '}
+              <Link to="/signup" className="text-accent-ink font-medium hover:underline underline-offset-4">Create one</Link>
+            </p>
+          </div>
+        </div>
+
+        <footer className="px-6 pb-6 font-mono text-[10.5px] text-fg-dim lg:ml-16">
+          by signing in you agree to the terms & privacy policy
+        </footer>
+      </main>
     </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden>
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" />
+      <path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" />
+    </svg>
   );
 }

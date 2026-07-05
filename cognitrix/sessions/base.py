@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Optional, Self
 
 from odbms import Model
+from pydantic import Field
 from rich import print
 
 from cognitrix.providers.base import LLMResponse
@@ -55,7 +56,9 @@ class Session(Model):
     chat: list[dict[str, Any]] = []
     """The chat history of the session"""
 
-    datetime: str = (datetime.now()).strftime("%a %b %d %Y %H:%M:%S")
+    # default_factory, not a plain default: a plain default is evaluated once at
+    # import, giving every session created in a process the same timestamp.
+    datetime: str = Field(default_factory=lambda: datetime.now().strftime("%a %b %d %Y %H:%M:%S"))
     """When the session was started"""
 
     agent_id: str | None = None
@@ -75,6 +78,15 @@ class Session(Model):
 
     pid: str | None = None
     """Worker Id of task"""
+
+    run_id: str | None = None
+    """The TaskRun this session belongs to (task-run step sessions only)"""
+
+    step_index: int | None = None
+    """0-based plan step index within the run (None = synthesis/legacy)"""
+
+    step_title: str | None = None
+    """Plan step title, denormalized for display"""
 
     @classmethod
     async def load(cls, session_id: str) -> Self:
@@ -141,6 +153,11 @@ class Session(Model):
     async def get_by_task_id(cls, task_id: str) -> list[Self]:
         """Retrieve a session by task_id"""
         return await cls.find({'task_id': task_id}) # type: ignore
+
+    @classmethod
+    async def get_by_team_id(cls, team_id: str) -> Self | None:
+        """Retrieve a session by team_id"""
+        return await cls.find_one({'team_id': str(team_id)})
 
     async def _maybe_compact(self, agent: 'Agent'):
         """Fold the oldest turns into a summary once history nears the budget.
@@ -279,6 +296,7 @@ class Session(Model):
                             # loop needs both in history to rebuild the next prompt.
                             self.update_history({
                                 'role': 'assistant',
+                                'name': agent.name,
                                 'type': 'tool_calls',
                                 'content': response.llm_response or '',
                                 'tool_calls': response.tool_calls,
@@ -347,6 +365,7 @@ class Session(Model):
                     if response and save_history and not response.tool_calls:
                         response_dict = {
                             'role': 'assistant',
+                            'name': agent.name,
                             'type': 'text',
                             'content': response.llm_response
                         }

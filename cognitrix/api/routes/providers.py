@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from cognitrix.common.security import get_current_user, redact_secrets
+from cognitrix.common.security import crud_scope, redact_secrets
 
 from ...providers import LLM
 
 providers_api = APIRouter(
     prefix='/providers',
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(crud_scope)],
 )
 
 def _llm_to_dict(llm) -> dict:

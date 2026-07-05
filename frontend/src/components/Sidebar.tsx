@@ -1,105 +1,170 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { cn } from '@/lib/utils';
+
+type IconProps = { className?: string };
+
+const NAV = [
+  {
+    path: '/home',
+    label: 'Chat',
+    icon: (p: IconProps) => (
+      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12l9-8 9 8" /><path d="M5 10v10h14V10" /></svg>
+    ),
+  },
+  {
+    path: '/agents',
+    label: 'Agents',
+    icon: (p: IconProps) => (
+      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="13" rx="1.5" /><path d="M8 20h8M12 17v3" /></svg>
+    ),
+  },
+  {
+    path: '/tasks',
+    label: 'Tasks',
+    icon: (p: IconProps) => (
+      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5h11M9 12h11M9 19h11" /><path d="M4 5l1.4 1.4L8 4M4 12l1.4 1.4L8 11M4 19l1.4 1.4L8 18" /></svg>
+    ),
+  },
+  {
+    path: '/teams',
+    label: 'Teams',
+    icon: (p: IconProps) => (
+      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3" /><path d="M3 20c0-3 2.5-5 6-5s6 2 6 5" /><path d="M16 6a3 3 0 0 1 0 6M21 20c0-2.5-1.5-4-3.5-4.5" /></svg>
+    ),
+  },
+  {
+    path: '/api-keys',
+    label: 'API Keys',
+    icon: (p: IconProps) => (
+      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="15" r="4" /><path d="M10.85 12.15 19 4M18 5l2 2M15 8l2 2" /></svg>
+    ),
+  },
+];
 
 export default function Sidebar() {
   const location = useLocation();
-  const { logout } = useUser();
-  const [isOpen, setIsOpen] = useState(true);
+  const { user, logout } = useUser();
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
 
-  const navItems = [
-    { path: '/home', label: 'Home', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
-    { path: '/agents', label: 'Agents', icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z' },
-    { path: '/tasks', label: 'Tasks', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4' },
-    { path: '/teams', label: 'Teams', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z' },
-  ];
+  const toggle = () =>
+    setCollapsed((c) => {
+      const next = !c;
+      localStorage.setItem('sidebarCollapsed', next ? '1' : '0');
+      return next;
+    });
 
-  const isActive = (path: string) => {
-    if (path === '/home') return location.pathname === '/home';
-    return location.pathname.startsWith(path);
-  };
+  const isActive = (path: string) =>
+    path === '/home' ? location.pathname === '/home' : location.pathname.startsWith(path);
 
   return (
-    <>
-      <aside 
-        className={`h-screen bg-gray-900 border-r border-gray-800 flex flex-col justify-between transition-all duration-300 ${
-          isOpen ? 'w-20' : 'w-16'
-        }`}
-      >
-        {/* Top Section - Logo/Nav */}
-        <div className="flex flex-col items-center py-4">
-          {/* Logo */}
-          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center mb-6">
-            <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </div>
-
-          {/* Navigation */}
-          <nav className="flex flex-col gap-2">
-            {navItems.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all group relative ${
-                  isActive(item.path)
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-400 hover:bg-gray-800 hover:text-white'
-                }`}
-                title={item.label}
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
-                </svg>
-                {/* Tooltip */}
-                <span className="absolute left-full ml-2 px-2 py-1 bg-gray-800 text-white text-sm rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  {item.label}
-                </span>
-              </Link>
-            ))}
-          </nav>
-        </div>
-
-        {/* Bottom Section - Actions */}
-        <div className="flex flex-col items-center gap-2 pb-4">
-          {/* Toggle Button */}
-          <button
-            onClick={() => setIsOpen(!isOpen)}
-            className="w-12 h-12 rounded-xl flex items-center justify-center text-gray-400 hover:bg-gray-800 hover:text-white transition-all"
-            title={isOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-          >
-            <svg className={`w-5 h-5 transition-transform ${isOpen ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-            </svg>
-          </button>
-
-          {/* Theme Toggle (removed - using system dark theme) */}
-
-          {/* Logout */}
-          <button
-            onClick={logout}
-            className="w-12 h-12 rounded-xl flex items-center justify-center text-gray-400 hover:bg-red-600/20 hover:text-red-400 transition-all group"
-            title="Sign out"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
-          </button>
-        </div>
-      </aside>
-
-      {/* Floating toggle when collapsed */}
-      {!isOpen && (
-        <button
-          onClick={() => setIsOpen(true)}
-          className="fixed left-4 top-1/2 -translate-y-1/2 z-40 w-10 h-10 bg-gray-800 border border-gray-700 rounded-lg flex items-center justify-center text-gray-400 hover:bg-gray-700 hover:text-white transition-all shadow-lg"
-          title="Open sidebar"
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-          </svg>
-        </button>
+    <aside
+      className={cn(
+        'flex h-screen flex-none flex-col border-r border-line bg-panel transition-[width] duration-200',
+        collapsed ? 'w-[58px]' : 'w-[232px]',
       )}
-    </>
+    >
+      {/* Brand */}
+      <div className={cn('flex items-center border-b border-line py-4', collapsed ? 'justify-center px-0' : 'gap-2.5 px-4')}>
+        <span className="grid h-6 w-6 flex-none place-items-center rounded-sm bg-accent text-accent-foreground">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
+        </span>
+        {!collapsed && (
+          <span className="font-mono text-[12px] font-bold tracking-[0.13em]">
+            COGNITRIX<span className="font-medium text-fg-dim"> /v0.3.0</span>
+          </span>
+        )}
+      </div>
+
+      {/* Nav */}
+      <nav className={cn('flex flex-col gap-0.5 py-3', collapsed ? 'px-2' : 'px-2.5')}>
+        {!collapsed && <div className="px-2 pb-1.5 pt-2 font-mono text-[10px] tracking-[0.16em] text-fg-dim">WORKSPACE</div>}
+        {NAV.map((item) => {
+          const active = isActive(item.path);
+          return (
+            <Link
+              key={item.path}
+              to={item.path}
+              title={collapsed ? item.label : undefined}
+              className={cn(
+                'group relative flex items-center rounded py-2 text-[14px] font-medium transition-colors',
+                collapsed ? 'justify-center px-0' : 'gap-3 px-2.5',
+                active ? 'bg-panel-2 text-fg' : 'text-fg-dim hover:bg-panel-2 hover:text-fg',
+              )}
+            >
+              {active && <span className={cn('absolute top-1.5 bottom-1.5 w-[3px] rounded-r bg-accent', collapsed ? 'left-0' : '-left-2.5')} />}
+              <item.icon className="h-[17px] w-[17px] flex-none" />
+              {!collapsed && item.label}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {/* Command palette hint (wired in Phase 3) */}
+      <button
+        type="button"
+        title={collapsed ? 'Search & run (⌘K)' : undefined}
+        className={cn(
+          'mx-2.5 flex items-center rounded border border-line py-2 text-[12.5px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg',
+          collapsed ? 'justify-center px-0' : 'gap-2 px-2.5',
+        )}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></svg>
+        {!collapsed && (
+          <>
+            Search &amp; run
+            <kbd className="ml-auto rounded border border-line px-1.5 py-px font-mono text-[10px] text-fg-dim">⌘K</kbd>
+          </>
+        )}
+      </button>
+
+      {/* Footer */}
+      <div className="mt-auto border-t border-line p-2.5">
+        {!collapsed && (
+          <div className="mb-1.5 flex items-center gap-2.5 rounded px-2 py-1.5">
+            <span className="grid h-7 w-7 flex-none place-items-center rounded-sm border border-line bg-panel-2 text-[12px] font-bold text-accent-ink">
+              {(user?.name?.[0] || 'U').toUpperCase()}
+            </span>
+            <div className="min-w-0 leading-tight">
+              <div className="truncate text-[13px] font-semibold">{user?.name || 'User'}</div>
+              <div className="truncate font-mono text-[10.5px] text-fg-dim">{user?.email}</div>
+            </div>
+          </div>
+        )}
+
+        <div className={cn('flex items-center gap-1.5', collapsed && 'flex-col')}>
+          <ThemeToggle className="flex-none" />
+          <button
+            type="button"
+            onClick={logout}
+            title={collapsed ? 'Sign out' : undefined}
+            className={cn(
+              'flex h-9 items-center justify-center gap-2 rounded border border-line font-mono text-[11px] tracking-[0.04em] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink',
+              collapsed ? 'w-9 flex-none' : 'flex-1',
+            )}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
+            {!collapsed && 'SIGN OUT'}
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={toggle}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className={cn(
+            'mt-1.5 flex h-8 w-full items-center justify-center gap-2 rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg',
+            !collapsed && 'font-mono text-[10.5px] tracking-[0.08em]',
+          )}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cn('transition-transform', collapsed && 'rotate-180')}>
+            <path d="M15 6l-6 6 6 6" />
+          </svg>
+          {!collapsed && 'COLLAPSE'}
+        </button>
+      </div>
+    </aside>
   );
 }

@@ -1,13 +1,61 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
-from cognitrix.common.security import get_current_user
+from cognitrix.common.security import AuthContext, crud_scope, get_auth_context, require
 from cognitrix.sessions.base import Session
 from cognitrix.teams.base import Team
 
 teams_api = APIRouter(
     prefix='/teams',
-    dependencies=[Depends(get_current_user)]
+    dependencies=[Depends(crud_scope)]
 )
+
+# Execute route on its own router: running a team is the 'run' scope, not the
+# 'write' crud_scope would infer from POST. Registered before teams_api.
+teams_run_api = APIRouter(
+    prefix='/teams',
+    dependencies=[Depends(require('run'))]
+)
+
+
+class TeamRunRequest(BaseModel):
+    description: str
+    title: str | None = None
+    callback_url: str | None = None
+
+
+@teams_run_api.post('/{team_id}/run', status_code=202)
+async def run_team(team_id: str, body: TeamRunRequest,
+                   ctx: AuthContext = Depends(get_auth_context)):
+    """Create a task for this team and enqueue it. Async by design — poll
+    GET /tasks/{id} + /tasks/{id}/runs, or register a callback_url webhook."""
+    from cognitrix.api.routes.tasks import _check_task_allowlists, _enqueue_task_start, _set_callback
+    from cognitrix.tasks import Task
+
+    team = await Team.get(team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if not ctx.team_allowed(team.id):
+        raise HTTPException(status_code=403, detail="API key not allowed for this team")
+    if not team.assigned_agents:
+        raise HTTPException(status_code=400, detail="Team has no agents")
+    if not body.description.strip():
+        raise HTTPException(status_code=400, detail="description is required")
+
+    title = (body.title or body.description).strip().splitlines()[0][:60]
+    task = Task(
+        title=title or 'Team task',
+        description=body.description,
+        team_id=team.id,
+        assigned_agents=list(team.assigned_agents),
+    )
+    # An agent-restricted key must not invoke agents outside its allowlist by
+    # laundering the call through a team — same guard every other run path uses.
+    _check_task_allowlists(ctx, task)
+    await _set_callback(task, body.callback_url, ctx)
+    await task.save()
+    task = await _enqueue_task_start(task)
+    return {'task_id': task.id, 'status': task.status}
 
 @teams_api.get("")
 async def get_all_teams():
@@ -47,7 +95,7 @@ async def delete_team(team_id: str):
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    await Team.remove_one({'id': team_id})
+    await Team.delete_many({'id': team_id})
     return {"message": "Team deleted successfully"}
 
 @teams_api.get("/{team_id}/sessions")
@@ -56,15 +104,13 @@ async def sessions(team_id: str):
     return [session.json() for session in sessions]
 
 
-@teams_api.get("/teams/{team_id}/tasks")
+@teams_api.get("/{team_id}/tasks")
 async def get_tasks_by_team(team_id: str):
+    from cognitrix.api.routes.tasks import _task_json
+
     team = await Team.get(team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    tasks = team.get_assigned_tasks()
-    return tasks
+    tasks = await team.get_assigned_tasks()
+    return [_task_json(task) for task in tasks]
 
-@teams_api.get(path="/generate")
-async def sse_endpoint(request: Request):
-    sse_manager = request.state.sse_manager
-    return await sse_manager.sse_endpoint(request)

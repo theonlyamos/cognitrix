@@ -158,5 +158,8 @@ cython_debug/
 chroma_db/
 
 # Local scratch / build artifacts
-src/
+/src/
 *.tsbuildinfo
+
+# Claude Code local config
+.claude/

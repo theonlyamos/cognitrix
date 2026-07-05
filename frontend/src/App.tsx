@@ -1,28 +1,34 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { UserProvider, WebSocketProvider, useUser } from '@/context/AppContext';
+import { UserProvider, useUser } from '@/context/AppContext';
 import { SessionProvider } from '@/context/SessionContext';
-import Sidebar from '@/components/Sidebar';
-import Home from '@/pages/Home';
+import { ThemeProvider } from '@/context/ThemeContext';
+import AppLayout from '@/components/AppLayout';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
-import Agents from '@/pages/Agents';
-import AgentPage from '@/pages/AgentPage';
-import Tasks from '@/pages/Tasks';
-import TaskPage from '@/pages/TaskPage';
-import Teams from '@/pages/Teams';
-import TeamPage from '@/pages/TeamPage';
-import TeamInteraction from '@/pages/TeamInteraction';
 import '@/app.css';
+
+// Code-split the authenticated app; auth pages + shell stay eager for first paint.
+const Home = lazy(() => import('@/pages/Home'));
+const Agents = lazy(() => import('@/pages/Agents'));
+const AgentPage = lazy(() => import('@/pages/AgentPage'));
+const Tasks = lazy(() => import('@/pages/Tasks'));
+const TaskPage = lazy(() => import('@/pages/TaskPage'));
+const TaskDetail = lazy(() => import('@/pages/TaskDetail'));
+const Teams = lazy(() => import('@/pages/Teams'));
+const TeamPage = lazy(() => import('@/pages/TeamPage'));
+const TeamInteraction = lazy(() => import('@/pages/TeamInteraction'));
+const ApiKeys = lazy(() => import('@/pages/ApiKeys'));
 
 function LoadingScreen() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900">
-      <div className="flex items-center gap-3">
-        <svg className="animate-spin h-6 w-6 text-blue-500" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    <div className="flex h-full min-h-[40vh] flex-1 items-center justify-center bg-bg text-fg-dim">
+      <div className="flex items-center gap-3 font-mono text-sm">
+        <svg className="h-5 w-5 animate-spin text-accent" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" />
+          <path className="opacity-90" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" d="M4 12a8 8 0 0 1 8-8" />
         </svg>
-        <span className="text-gray-400">Loading...</span>
+        loading…
       </div>
     </div>
   );
@@ -30,195 +36,60 @@ function LoadingScreen() {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useUser();
-  
-  if (isLoading) {
-    return <LoadingScreen />;
-  }
-  
-  if (!user) {
-    return <Navigate to="/" replace />;
-  }
-  
+  if (isLoading) return <LoadingScreen />;
+  if (!user) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useUser();
-  
-  if (isLoading) {
-    return <LoadingScreen />;
-  }
-  
-  if (user) {
-    return <Navigate to="/home" replace />;
-  }
-  
+  if (isLoading) return <LoadingScreen />;
+  if (user) return <Navigate to="/home" replace />;
   return <>{children}</>;
 }
 
 function AppRoutes() {
   return (
-    <Routes>
-      <Route path="/" element={<PublicRoute><Login /></PublicRoute>} />
-      <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
-      <Route 
-        path="/home" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <Home />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/agents" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <Agents />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/agents/new" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <AgentPage />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/agents/:agentId" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <AgentPage />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/tasks" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <Tasks />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/tasks/new" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <TaskPage />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/tasks/:taskId" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <TaskPage />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/teams" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <Teams />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/teams/new" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <TeamPage />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/teams/:teamId" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <TeamPage />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/teams/:teamId/interact" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <TeamInteraction />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/teams/:teamId/tasks/:taskId/interact" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <TeamInteraction />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route 
-        path="/teams/:teamId/tasks/:taskId/sessions/:sessionId/interact" 
-        element={
-          <ProtectedRoute>
-            <div className="flex h-screen">
-              <Sidebar />
-              <TeamInteraction />
-            </div>
-          </ProtectedRoute>
-        } 
-      />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <Suspense fallback={<LoadingScreen />}>
+      <Routes>
+        <Route path="/" element={<PublicRoute><Login /></PublicRoute>} />
+        <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
+
+        {/* Persistent shell: Sidebar mounts once, pages render in the Outlet. */}
+        <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
+          <Route path="/home" element={<Home />} />
+          <Route path="/agents" element={<Agents />} />
+          <Route path="/agents/new" element={<AgentPage />} />
+          <Route path="/agents/:agentId" element={<AgentPage />} />
+          <Route path="/tasks" element={<Tasks />} />
+          <Route path="/tasks/new" element={<TaskPage />} />
+          <Route path="/tasks/:taskId" element={<TaskDetail />} />
+          <Route path="/tasks/:taskId/edit" element={<TaskPage />} />
+          <Route path="/teams" element={<Teams />} />
+          <Route path="/teams/new" element={<TeamPage />} />
+          <Route path="/teams/:teamId" element={<TeamPage />} />
+          <Route path="/api-keys" element={<ApiKeys />} />
+          <Route path="/teams/:teamId/interact" element={<TeamInteraction />} />
+          <Route path="/teams/:teamId/tasks/:taskId/interact" element={<TeamInteraction />} />
+          <Route path="/teams/:teamId/tasks/:taskId/sessions/:sessionId/interact" element={<TeamInteraction />} />
+        </Route>
+
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Suspense>
   );
 }
 
 export default function App() {
   return (
     <BrowserRouter>
-      <UserProvider>
-        <WebSocketProvider>
+      <ThemeProvider>
+        <UserProvider>
           <SessionProvider>
             <AppRoutes />
           </SessionProvider>
-        </WebSocketProvider>
-      </UserProvider>
+        </UserProvider>
+      </ThemeProvider>
     </BrowserRouter>
   );
 }
