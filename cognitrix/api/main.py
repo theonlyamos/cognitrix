@@ -1,14 +1,31 @@
+import asyncio
+from contextlib import asynccontextmanager, suppress
+
 import aiofiles
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..config import FRONTEND_BUILD_DIR, settings
+from ..config import FRONTEND_BUILD_DIR, initialize_database, settings
+from ..tasks.scheduler import scheduler_loop
 from .routes import api_router
 from .routes.openai_compat import openai_api
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Idempotent — the CLI already ran it, but a bare
+    # `uvicorn cognitrix.api.main:app` must work too.
+    await initialize_database()
+    scheduler = asyncio.create_task(scheduler_loop())
+    yield
+    scheduler.cancel()
+    with suppress(asyncio.CancelledError):
+        await scheduler
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

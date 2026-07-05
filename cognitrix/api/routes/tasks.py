@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -8,6 +9,8 @@ from cognitrix.common.security import AuthContext, crud_scope, get_auth_context,
 from cognitrix.tasks import Task
 from cognitrix.tasks.base import TaskStatus
 from cognitrix.tasks.run import TaskRun, TaskRunStatus
+from cognitrix.tasks.scheduler import (SCHEDULE_FIELDS, compute_next_run,
+                                       normalize_schedule_at, validate_schedule)
 
 from ...celery_worker import broker_available, ensure_local_worker, run_task
 
@@ -106,6 +109,48 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
             raise HTTPException(status_code=403, detail="API key missing required scope: run (autostart)")
         _check_task_allowlists(ctx, task)
 
+    stored = await Task.get(task.id) if task.id else None
+    respecified = bool(set(SCHEDULE_FIELDS) & task.model_fields_set)
+    if stored:
+        # save() below is a full-row write: anything the client didn't send
+        # resets to default. Callback fields never round-trip (stripped from
+        # projections) and schedule fields may be omitted by API clients —
+        # carry them over instead of silently wiping them.
+        for field in ('callback_url', 'callback_key_id'):
+            if field not in task.model_fields_set:
+                setattr(task, field, getattr(stored, field))
+        if not respecified:
+            # No recompute either: pushing an enabled interval schedule back
+            # on a title-only edit would delay its next fire.
+            for field in SCHEDULE_FIELDS:
+                setattr(task, field, getattr(stored, field))
+
+    # Scheduling executes the orchestrator later — same rule as autostart:
+    # 'run' scope + allowlists for API keys. Also applies when a key edits a
+    # task whose stored schedule is enabled (repointing what will fire).
+    if ctx.api_key is not None and (respecified or (stored is not None and stored.schedule_enabled)):
+        if not ctx.has_scope('run'):
+            raise HTTPException(status_code=403, detail="API key missing required scope: run (schedule)")
+        _check_task_allowlists(ctx, task)
+
+    if respecified:
+        if task.schedule_at:
+            try:
+                task.schedule_at = normalize_schedule_at(task.schedule_at)
+            except ValueError:
+                raise HTTPException(status_code=422, detail="schedule_at is not a valid datetime")
+        has_type = bool(task.schedule_at or task.schedule_interval or task.schedule_cron)
+        if has_type and 'schedule_enabled' not in task.model_fields_set:
+            task.schedule_enabled = True  # an API-set schedule must not be silently inert
+        reason = validate_schedule(task, respecified=True)
+        if reason:
+            raise HTTPException(status_code=422, detail=reason)
+        if has_type and task.schedule_enabled:
+            task.next_run_at = compute_next_run(task)
+        else:
+            task.next_run_at = None
+            task.schedule_enabled = False
+
     await task.save()
 
     if task.autostart:
@@ -146,7 +191,10 @@ async def _enqueue_task_start(task: Task, resume: bool = False) -> Task:
 
     task.status = TaskStatus.IN_PROGRESS
     task.pid = result.id
-    await task.save()
+    # Partial write — a full-row save here would clobber concurrent edits and,
+    # worse, revert the scheduler's just-advanced next_run_at claim.
+    await Task.update_one({'id': task.id}, {'status': TaskStatus.IN_PROGRESS.value,
+                                            'pid': result.id})
     return task
 
 
@@ -223,6 +271,40 @@ async def cancel_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)
         return _task_json(task)
 
     raise HTTPException(status_code=409, detail="Nothing to cancel — no active run.")
+
+
+class ScheduleToggle(BaseModel):
+    enabled: bool
+
+
+@tasks_api.post('/{task_id}/schedule')
+async def toggle_schedule(task_id: str, body: ScheduleToggle,
+                          ctx: AuthContext = Depends(get_auth_context)):
+    """Pause/resume a task's schedule. Resume recomputes next_run_at so a
+    long-paused schedule doesn't fire from a stale instant."""
+    task = await Task.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if not body.enabled:
+        updates = {'schedule_enabled': False, 'next_run_at': None}
+    else:
+        if not (task.schedule_at or task.schedule_interval or task.schedule_cron):
+            raise HTTPException(status_code=422, detail="Task has no schedule to enable")
+        # Enabling arms orchestrator execution — same rule as autostart.
+        if ctx.api_key is not None:
+            if not ctx.has_scope('run'):
+                raise HTTPException(status_code=403, detail="API key missing required scope: run (schedule)")
+            _check_task_allowlists(ctx, task)
+        if task.schedule_at and datetime.fromisoformat(task.schedule_at) <= \
+                datetime.now(timezone.utc).replace(tzinfo=None):
+            raise HTTPException(status_code=422, detail="schedule_at is in the past; set a new time")
+        updates = {'schedule_enabled': True, 'next_run_at': compute_next_run(task)}
+
+    await Task.update_one({'id': task_id}, updates)
+    for key, value in updates.items():
+        setattr(task, key, value)
+    return _task_json(task)
 
 
 @tasks_api.get('/{task_id}/runs')

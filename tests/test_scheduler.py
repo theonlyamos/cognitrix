@@ -1,11 +1,14 @@
 """Task schedule fields, next-run math, and scheduler tick behavior."""
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
-from cognitrix.tasks.base import Task
+from cognitrix.api.routes.tasks import ScheduleToggle, save_task, toggle_schedule
+from cognitrix.common.security import AuthContext
+from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.tasks.scheduler import compute_next_run, tick, validate_schedule
 
 NOW = datetime(2030, 6, 1, 12, 0, 0)
@@ -143,8 +146,10 @@ async def sched_db(tmp_path):
     else:
         DBMS.initialize('sqlite', database=db_file)
     _patch_odbms_sqlite()
-    create = getattr(Task, '_create_table_async', None) or Task.create_table
-    await create()
+    from cognitrix.tasks.run import TaskRun
+    for model in (Task, TaskRun):
+        create = getattr(model, '_create_table_async', None) or model.create_table
+        await create()
 
 
 @pytest.fixture
@@ -249,3 +254,167 @@ async def test_tick_unexpected_error_reverts_and_continues(sched_db, enqueue):
     assert await tick(NOW) == 0
     fresh = await Task.get(t.id)
     assert fresh.next_run_at == '2030-06-01 11:59:00'  # reverted, will retry
+
+
+# --- save_task / toggle routes -------------------------------------------------
+
+def _jwt_ctx():
+    return AuthContext(user=SimpleNamespace(id='u1'), api_key=None)
+
+
+def _key_ctx(scopes, allowed_agents=()):
+    from cognitrix.models.api_key import APIKey
+    key = APIKey(name='k', user_id='u1', key_hash='h', prefix='p',
+                 scopes=list(scopes), allowed_agents=list(allowed_agents),
+                 webhook_secret='s')
+    key.id = 'key1'
+    return AuthContext(user=SimpleNamespace(id='u1'), api_key=key)
+
+
+async def _save(task, ctx):
+    return await save_task(None, task, BackgroundTasks(), ctx)
+
+
+async def test_save_new_schedule_defaults_enabled(sched_db):
+    t = Task(title='t', description='d', schedule_interval=300)
+    data = await _save(t, _jwt_ctx())
+    assert data['schedule_enabled'] is True
+    assert data['next_run_at'] is not None
+
+
+async def test_save_title_edit_preserves_schedule_and_callbacks(sched_db):
+    stored = Task(title='t', description='d', schedule_interval=300,
+                  next_run_at='2030-06-01 12:05:00', schedule_enabled=True,
+                  callback_url='https://hooks.example.com/x', callback_key_id='key1')
+    await stored.save()
+
+    edit = Task(id=stored.id, title='renamed', description='d')
+    await _save(edit, _jwt_ctx())
+    fresh = await Task.get(stored.id)
+    assert fresh.title == 'renamed'
+    assert fresh.schedule_interval == 300
+    assert fresh.next_run_at == '2030-06-01 12:05:00'  # NOT recomputed
+    assert fresh.schedule_enabled is True
+    assert fresh.callback_url == 'https://hooks.example.com/x'
+    assert fresh.callback_key_id == 'key1'
+
+
+async def test_save_respec_switches_type(sched_db):
+    stored = Task(title='t', description='d', schedule_interval=300,
+                  next_run_at='2030-06-01 12:05:00', schedule_enabled=True)
+    await stored.save()
+
+    edit = Task(id=stored.id, title='t', description='d', schedule_cron='*/10 * * * *')
+    await _save(edit, _jwt_ctx())
+    fresh = await Task.get(stored.id)
+    assert fresh.schedule_interval is None
+    assert fresh.schedule_cron == '*/10 * * * *'
+    assert fresh.next_run_at != '2030-06-01 12:05:00'
+
+
+async def test_save_normalizes_offset_iso(sched_db):
+    t = Task(title='t', description='d', schedule_at='2031-06-01T12:00:00+02:00')
+    data = await _save(t, _jwt_ctx())
+    assert data['schedule_at'] == '2031-06-01 10:00:00'
+    assert data['next_run_at'] == '2031-06-01 10:00:00'
+
+
+async def test_save_past_oneshot_422(sched_db):
+    t = Task(title='t', description='d', schedule_at='2020-01-01 00:00:00')
+    with pytest.raises(HTTPException) as exc:
+        await _save(t, _jwt_ctx())
+    assert exc.value.status_code == 422
+
+
+async def test_save_clearing_schedule_disables(sched_db):
+    stored = Task(title='t', description='d', schedule_interval=300,
+                  next_run_at='2030-06-01 12:05:00', schedule_enabled=True)
+    await stored.save()
+    edit = Task(id=stored.id, title='t', description='d', schedule_interval=None)
+    await _save(edit, _jwt_ctx())
+    fresh = await Task.get(stored.id)
+    assert fresh.schedule_enabled is False and fresh.next_run_at is None
+
+
+async def test_save_write_key_403_on_respec(sched_db):
+    t = Task(title='t', description='d', schedule_interval=300)
+    with pytest.raises(HTTPException) as exc:
+        await _save(t, _key_ctx(['write']))
+    assert exc.value.status_code == 403
+
+
+async def test_save_write_key_403_editing_enabled_task(sched_db):
+    stored = Task(title='t', description='d', schedule_interval=300,
+                  next_run_at='2030-06-01 12:05:00', schedule_enabled=True)
+    await stored.save()
+    edit = Task(id=stored.id, title='renamed', description='d')
+    with pytest.raises(HTTPException) as exc:
+        await _save(edit, _key_ctx(['write']))
+    assert exc.value.status_code == 403
+
+
+async def test_save_run_key_allowed(sched_db):
+    t = Task(title='t', description='d', schedule_interval=300)
+    data = await _save(t, _key_ctx(['write', 'run']))
+    assert data['schedule_enabled'] is True
+
+
+async def test_toggle_pause_and_resume(sched_db):
+    stored = Task(title='t', description='d', schedule_interval=300,
+                  next_run_at='2030-06-01 12:05:00', schedule_enabled=True)
+    await stored.save()
+
+    data = await toggle_schedule(stored.id, ScheduleToggle(enabled=False), _jwt_ctx())
+    assert data['schedule_enabled'] is False and data['next_run_at'] is None
+
+    data = await toggle_schedule(stored.id, ScheduleToggle(enabled=True), _jwt_ctx())
+    assert data['schedule_enabled'] is True
+    assert data['next_run_at'] is not None and data['next_run_at'] != '2030-06-01 12:05:00'
+
+
+async def test_toggle_resume_past_oneshot_422(sched_db):
+    stored = Task(title='t', description='d', schedule_at='2020-01-01 00:00:00',
+                  schedule_enabled=False)
+    await stored.save()
+    with pytest.raises(HTTPException) as exc:
+        await toggle_schedule(stored.id, ScheduleToggle(enabled=True), _jwt_ctx())
+    assert exc.value.status_code == 422
+
+
+async def test_toggle_enable_without_schedule_422(sched_db):
+    stored = Task(title='t', description='d')
+    await stored.save()
+    with pytest.raises(HTTPException) as exc:
+        await toggle_schedule(stored.id, ScheduleToggle(enabled=True), _jwt_ctx())
+    assert exc.value.status_code == 422
+
+
+async def test_toggle_enable_write_key_403(sched_db):
+    stored = Task(title='t', description='d', schedule_interval=300)
+    await stored.save()
+    with pytest.raises(HTTPException) as exc:
+        await toggle_schedule(stored.id, ScheduleToggle(enabled=True), _key_ctx(['write']))
+    assert exc.value.status_code == 403
+
+
+async def test_enqueue_partial_write_preserves_concurrent_claim(sched_db, monkeypatch):
+    """_enqueue_task_start must not full-row-save: a concurrent scheduler
+    claim (next_run_at advance) written between fetch and start survives."""
+    import cognitrix.api.routes.tasks as task_routes
+
+    stored = Task(title='t', description='d', schedule_interval=300,
+                  next_run_at='2030-06-01 12:00:00', schedule_enabled=True)
+    await stored.save()
+
+    monkeypatch.setattr(task_routes, 'ensure_local_worker', lambda: True)
+    monkeypatch.setattr(task_routes, 'broker_available', lambda: True)
+    monkeypatch.setattr(task_routes.run_task, 'apply_async',
+                        lambda *a, **kw: SimpleNamespace(id='celery-1'))
+
+    # Another writer advances the schedule after our instance was fetched.
+    await Task.update_one({'id': stored.id}, {'next_run_at': '2030-06-01 12:05:00'})
+
+    await task_routes._enqueue_task_start(stored)
+    fresh = await Task.get(stored.id)
+    assert fresh.status == TaskStatus.IN_PROGRESS and fresh.pid == 'celery-1'
+    assert fresh.next_run_at == '2030-06-01 12:05:00'  # claim survived
