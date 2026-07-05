@@ -10,7 +10,12 @@ interface Task {
   description?: string;
   status?: string;
   done?: boolean;
+  next_run_at?: string | null;
+  schedule_enabled?: boolean;
 }
+
+// next_run_at is naive UTC — parse with an explicit Z, never as local time.
+const nextRunLocal = (s: string) => new Date(s.replace(' ', 'T') + 'Z').toLocaleString();
 
 const STATUS: Record<string, string> = {
   completed: 'text-ok border-ok/40',
@@ -71,6 +76,11 @@ export default function Tasks() {
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
+                    {t.schedule_enabled && t.next_run_at && (
+                      <span className="hidden font-mono text-[10.5px] text-fg-dim sm:inline" title="next scheduled run">
+                        ⏱ {nextRunLocal(t.next_run_at)}
+                      </span>
+                    )}
                     <span className={cn('rounded border px-2 py-0.5 font-mono text-[10.5px]', STATUS[t.status || 'pending'] || STATUS.pending)}>
                       {t.status || 'pending'}
                     </span>

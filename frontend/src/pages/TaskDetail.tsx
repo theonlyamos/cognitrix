@@ -20,7 +20,15 @@ interface TaskData {
   title?: string;
   description?: string;
   status?: string;
+  schedule_at?: string | null;
+  schedule_interval?: number | null;
+  schedule_cron?: string | null;
+  next_run_at?: string | null;
+  schedule_enabled?: boolean;
 }
+
+// next_run_at is naive UTC — parse with an explicit Z, never as local time.
+const nextRunLocal = (s: string) => new Date(s.replace(' ', 'T') + 'Z').toLocaleString();
 
 interface PlanStep {
   index: number;
@@ -106,6 +114,7 @@ export default function TaskDetail() {
   const [chats, setChats] = useState<Record<string, BackendChatEntry[]>>({});
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [togglingSchedule, setTogglingSchedule] = useState(false);
   const [error, setError] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -255,6 +264,23 @@ export default function TaskDetail() {
     }
   };
 
+  const hasSchedule = !!(task?.schedule_at || task?.schedule_interval || task?.schedule_cron);
+
+  const toggleSchedule = async () => {
+    if (!taskId) return;
+    setTogglingSchedule(true);
+    setError('');
+    try {
+      await api.post(`/tasks/${taskId}/schedule`, { enabled: !task?.schedule_enabled });
+      // Idle-state polling is gated on isLive — refetch or the button goes stale.
+      await refetch();
+    } catch (e) {
+      setError(errorMessage(e, 'Could not update the schedule.'));
+    } finally {
+      setTogglingSchedule(false);
+    }
+  };
+
   const pickStep = (step: PlanStep) => {
     if (step.status === 'pending') return;
     manualPickRef.current = true;
@@ -367,7 +393,17 @@ export default function TaskDetail() {
           {plan.length > 0 && (
             <span className="font-mono text-[10.5px] text-fg-dim tnum">steps {stepsDone}/{plan.length}</span>
           )}
+          {hasSchedule && (
+            <span className="font-mono text-[10.5px] text-fg-dim" title="schedule">
+              {task?.schedule_enabled && task?.next_run_at ? `⏱ next ${nextRunLocal(task.next_run_at)}` : '⏸ schedule paused'}
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-2">
+            {hasSchedule && (
+              <Button variant="outline" size="sm" onClick={toggleSchedule} disabled={togglingSchedule}>
+                {task?.schedule_enabled ? 'Pause schedule' : 'Resume schedule'}
+              </Button>
+            )}
             <Button asChild variant="outline" size="sm">
               <Link to={`/tasks/${taskId}/edit`}>Edit</Link>
             </Button>

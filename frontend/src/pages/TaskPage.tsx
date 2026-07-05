@@ -20,6 +20,27 @@ interface TaskData {
   team_id?: string | null;
   autostart?: boolean;
   status?: string;
+  schedule_at?: string | null;
+  schedule_interval?: number | null;
+  schedule_cron?: string | null;
+  schedule_enabled?: boolean;
+}
+
+type ScheduleMode = 'none' | 'once' | 'interval' | 'cron';
+
+const UNIT_SECONDS: Record<string, number> = { minutes: 60, hours: 3600, days: 86400 };
+
+// "now" as a datetime-local string (local wall-clock) so the one-shot picker
+// can't select a past instant.
+function localNowMin(): string {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+// Stored naive-UTC 'YYYY-MM-DD HH:MM:SS' → local datetime-local value.
+function utcToLocalInput(s: string): string {
+  const d = new Date(s.replace(' ', 'T') + 'Z');
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
 /** Task edit form. Runs, status and live monitoring live on TaskDetail
@@ -41,6 +62,12 @@ export default function TaskPage() {
   const [assigned, setAssigned] = useState<Set<string>>(new Set());
   const [teamId, setTeamId] = useState('');
   const [autostart, setAutostart] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('none');
+  const [scheduleAt, setScheduleAt] = useState('');
+  const [intervalN, setIntervalN] = useState('30');
+  const [intervalUnit, setIntervalUnit] = useState('minutes');
+  const [cronExpr, setCronExpr] = useState('');
+  const [scheduleEnabled, setScheduleEnabled] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -57,7 +84,31 @@ export default function TaskPage() {
     setAssigned(new Set(existing.assigned_agents || []));
     setTeamId(existing.team_id || '');
     setAutostart(!!existing.autostart);
+    if (existing.schedule_at) {
+      setScheduleMode('once');
+      setScheduleAt(utcToLocalInput(existing.schedule_at));
+    } else if (existing.schedule_interval) {
+      setScheduleMode('interval');
+      const secs = existing.schedule_interval;
+      const unit = secs % 86400 === 0 ? 'days' : secs % 3600 === 0 ? 'hours' : 'minutes';
+      setIntervalUnit(unit);
+      setIntervalN(String(Math.max(1, Math.round(secs / UNIT_SECONDS[unit]))));
+    } else if (existing.schedule_cron) {
+      setScheduleMode('cron');
+      setCronExpr(existing.schedule_cron);
+    } else {
+      setScheduleMode('none');
+    }
+    if (existing.schedule_at || existing.schedule_interval || existing.schedule_cron) {
+      setScheduleEnabled(!!existing.schedule_enabled);
+    }
   }, [existing]);
+
+  const changeScheduleMode = (mode: ScheduleMode) => {
+    // Picking a schedule on an unscheduled task should arm it by default.
+    if (mode !== 'none' && scheduleMode === 'none') setScheduleEnabled(true);
+    setScheduleMode(mode);
+  };
 
   const toggleAgent = (id: string) =>
     setAssigned((s) => {
@@ -79,6 +130,9 @@ export default function TaskPage() {
   const save = async () => {
     if (!title.trim()) return setError('Give the task a title.');
     if (!description.trim()) return setError('Describe the task.');
+    if (scheduleMode === 'once' && !scheduleAt) return setError('Pick a time for the one-shot schedule.');
+    if (scheduleMode === 'interval' && (!intervalN || Number(intervalN) < 1)) return setError('Interval must be at least 1.');
+    if (scheduleMode === 'cron' && !cronExpr.trim()) return setError('Enter a cron expression.');
     setError('');
     setSaving(true);
     try {
@@ -92,6 +146,12 @@ export default function TaskPage() {
         assigned_agents: [...assigned],
         team_id: teamId || null,
         autostart,
+        // Always sent: the form is authoritative for schedule state (the
+        // server treats their presence as a full respecification).
+        schedule_at: scheduleMode === 'once' && scheduleAt ? new Date(scheduleAt).toISOString() : null,
+        schedule_interval: scheduleMode === 'interval' ? Number(intervalN) * UNIT_SECONDS[intervalUnit] : null,
+        schedule_cron: scheduleMode === 'cron' ? cronExpr.trim() : null,
+        schedule_enabled: scheduleMode !== 'none' && scheduleEnabled,
         ...(existing?.status ? { status: existing.status } : {}),
       });
       // Land on the task's details page (new tasks included — the POST returns the id).
@@ -169,6 +229,42 @@ export default function TaskPage() {
           onToggle={toggleAgent}
           empty="no agents — create one first"
         />
+      </Field>
+
+      <Field label="SCHEDULE" hint="run this task automatically">
+        <div className="space-y-3">
+          <Select value={scheduleMode} onChange={(e) => changeScheduleMode(e.target.value as ScheduleMode)}>
+            <option value="none">— not scheduled —</option>
+            <option value="once">once, at a time</option>
+            <option value="interval">repeat every…</option>
+            <option value="cron">cron expression</option>
+          </Select>
+          {scheduleMode === 'once' && (
+            <Input type="datetime-local" min={localNowMin()} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
+          )}
+          {scheduleMode === 'interval' && (
+            <div className="flex gap-2">
+              <Input type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(e.target.value)} className="w-28" />
+              <Select value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
+                <option value="minutes">minutes</option>
+                <option value="hours">hours</option>
+                <option value="days">days</option>
+              </Select>
+            </div>
+          )}
+          {scheduleMode === 'cron' && (
+            <div>
+              <Input value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 9 * * 1-5" className="font-mono" />
+              <p className="mt-1 font-mono text-[11px] text-fg-dim">5-field cron, evaluated in the server's local time</p>
+            </div>
+          )}
+          {scheduleMode !== 'none' && (
+            <label className="flex cursor-pointer items-center gap-2.5">
+              <input type="checkbox" checked={scheduleEnabled} onChange={(e) => setScheduleEnabled(e.target.checked)} className="accent-[var(--accent)]" />
+              <span className="text-sm">Schedule enabled</span>
+            </label>
+          )}
+        </div>
       </Field>
 
       <label className="flex cursor-pointer items-center gap-2.5">
