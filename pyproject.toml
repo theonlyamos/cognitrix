@@ -74,6 +74,7 @@ pyyaml = "^6.0"
 # MCP (Model Context Protocol)
 mcp = {extras = ["cli"], version = "^1.9.1"}
 textual = "^8.0.1"
+croniter = "^6.2.3"
 
 [build-system]
 requires = ["poetry-core"]

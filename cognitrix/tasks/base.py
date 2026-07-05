@@ -70,6 +70,23 @@ class Task(Model):
     """APIKey that registered the callback; its webhook_secret signs the
     payload. Revoked/expired keys stop deliveries."""
 
+    schedule_at: str | None = None
+    """One-shot schedule: naive-UTC 'YYYY-MM-DD HH:MM:SS'. At most one of
+    schedule_at/schedule_interval/schedule_cron may be set."""
+
+    schedule_interval: int | None = None
+    """Recurring schedule: run every N seconds (minimum 60)."""
+
+    schedule_cron: str | None = None
+    """Recurring schedule: 5-field cron expression, evaluated in server-local time."""
+
+    next_run_at: str | None = None
+    """When the scheduler fires next (naive UTC). Single dispatch column for
+    all schedule types; the scheduler claims a fire by compare-and-set on it."""
+
+    schedule_enabled: bool = False
+    """Pause/resume toggle for the schedule."""
+
     async def team(self):
         agents: list[Agent] = []
         for agent_id in self.assigned_agents:
@@ -122,6 +139,10 @@ class Task(Model):
     @validator("assigned_agents", "results", pre=True)
     def _coerce_null_lists(cls, value):
         return [] if value is None else value
+
+    @validator("schedule_enabled", pre=True)
+    def _coerce_null_bool(cls, value):
+        return False if value is None else value
 
     class Config:
         json_encoders = {

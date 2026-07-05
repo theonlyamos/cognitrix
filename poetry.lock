@@ -842,6 +842,20 @@ files = [
 toml = ["tomli"]
 
 [[package]]
+name = "croniter"
+version = "6.2.3"
+description = "croniter provides iteration for datetime object with cron like format"
+optional = false
+python-versions = ">=3.9"
+files = [
+    {file = "croniter-6.2.3-py3-none-any.whl", hash = "sha256:137a97001b4d52fb71c10b750e303db79e6e42d40fff8ff77126102176c9f786"},
+    {file = "croniter-6.2.3.tar.gz", hash = "sha256:fb129986ef7e2c44e3f4c9f503da83ad914d2afa48f40a43ee3dca4b5c41d476"},
+]
+
+[package.dependencies]
+python-dateutil = "*"
+
+[[package]]
 name = "cuda-bindings"
 version = "13.3.1"
 description = "Python bindings for CUDA"
@@ -5903,4 +5917,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<3.14"
-content-hash = "76286bb6f95b263db2bbd37c841690c85e8d46cc0ca0c9655f5d3dd62460e7c3"
+content-hash = "03f2ace22407ca338e570eecf06eab4989a29e2b8150544a3871cb8f45cab245"

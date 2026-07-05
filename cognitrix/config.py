@@ -313,7 +313,10 @@ async def _ensure_schema():
 
     for table, columns in (
         ('sessions', (('run_id', 'TEXT'), ('step_index', 'INTEGER'), ('step_title', 'TEXT'))),
-        ('tasks', (('callback_url', 'TEXT'), ('callback_key_id', 'TEXT'))),
+        ('tasks', (('callback_url', 'TEXT'), ('callback_key_id', 'TEXT'),
+                   ('schedule_at', 'TEXT'), ('schedule_interval', 'INTEGER'),
+                   ('schedule_cron', 'TEXT'), ('next_run_at', 'TEXT'),
+                   ('schedule_enabled', 'BOOLEAN'))),
     ):
         try:
             cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')
