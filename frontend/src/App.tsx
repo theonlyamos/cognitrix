@@ -18,6 +18,7 @@ const TaskDetail = lazy(() => import('@/pages/TaskDetail'));
 const Teams = lazy(() => import('@/pages/Teams'));
 const TeamPage = lazy(() => import('@/pages/TeamPage'));
 const TeamInteraction = lazy(() => import('@/pages/TeamInteraction'));
+const ApiKeys = lazy(() => import('@/pages/ApiKeys'));
 
 function LoadingScreen() {
   return (
@@ -67,6 +68,7 @@ function AppRoutes() {
           <Route path="/teams" element={<Teams />} />
           <Route path="/teams/new" element={<TeamPage />} />
           <Route path="/teams/:teamId" element={<TeamPage />} />
+          <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/teams/:teamId/interact" element={<TeamInteraction />} />
           <Route path="/teams/:teamId/tasks/:taskId/interact" element={<TeamInteraction />} />
           <Route path="/teams/:teamId/tasks/:taskId/sessions/:sessionId/interact" element={<TeamInteraction />} />
