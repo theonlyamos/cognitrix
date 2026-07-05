@@ -168,7 +168,7 @@ class CognitrixSettings:
             'openai': 'gpt-4o',
             'openrouter': 'google/gemini-3.1-flash-lite-preview',
             'anthropic': 'claude-4-5-sonnet',
-            'google': 'gemini-3.1-flash-lite-preview',
+            'google': 'gemini-3.1-flash-lite',
             'groq': 'llama-3.3-70b-versatile',
             'cohere': 'command-r-plus',
             'together': 'meta-llama/llama-3.3-70b-instruct',

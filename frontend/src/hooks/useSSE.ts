@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-const API_BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL}/api/v1`;
+const API_BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL ?? ''}/api/v1`;
 
 export interface SSEEvent {
   type: string;
