@@ -204,6 +204,10 @@ The UI is then at `http://localhost:8000`.
 - **State** lives in the `cognitrix-data` volume (SQLite DB, JWT secret, MCP config) and `redis-data` (broker). For heavier concurrency, point `DB_*` at Postgres/MySQL/Mongo (via odbms) instead of the shared SQLite file.
 - Without `CELERY_BROKER_URL`, a single container falls back to an in-process filesystem broker + auto-spawned worker — handy for a one-container deploy, but the dedicated-worker compose stack is the recommended setup.
 
+### Fly.io
+
+`fly.toml` deploys the single-container shape to [Fly.io](https://fly.io): one always-warm machine (web + scheduler + auto-spawned worker) with SQLite on a volume, built by Fly's own remote builder. The setup steps (`fly volumes create`, `fly secrets set`, `fly deploy`) are in the file's header comment. Keep it to one machine — the schedule loop is per-process.
+
 ## API Access
 
 Cognitrix exposes an HTTP API for programmatic use by external apps, scripts, and automation platforms. Create an **API key** from the **API Keys** page in the web UI (or via `POST /api/v1/api-keys` with a session token). A key is shown **once** at creation — copy the key and its webhook signing secret then.
