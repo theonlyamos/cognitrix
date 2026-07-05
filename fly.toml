@@ -8,13 +8,13 @@
 #
 # First-time setup:
 #   fly apps create cognitrix
-#   fly volumes create cognitrix_data --region iad --size 3
+#   fly volumes create cognitrix_data --region lhr --size 3 -a cognitrix
 #   fly secrets set JWT_SECRET_KEY=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
 #   fly secrets set AI_PROVIDER=openrouter OPENROUTER_API_KEY=...   # + any provider keys
 #   fly deploy
 #
 app = "cognitrix"
-primary_region = "iad"          # change to your closest region
+primary_region = "lhr"          # the volume (below) must live in this region
 
 [build]
   dockerfile = "Dockerfile"     # built by Fly's remote builder → registry.fly.io
