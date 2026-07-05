@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from cognitrix.agents import Agent
-from cognitrix.common.security import get_current_user, redact_secrets
+from cognitrix.common.security import crud_scope, get_current_user, jwt_only, redact_secrets
 from cognitrix.sessions.base import Session
 from cognitrix.utils.sse import get_sse_manager
 
@@ -11,7 +11,7 @@ from ...providers import LLM
 
 agents_api = APIRouter(
     prefix='/agents',
-    dependencies=[Depends(get_current_user)]
+    dependencies=[Depends(crud_scope)]
 )
 
 
@@ -51,7 +51,10 @@ async def save_agent(request: Request, agent: Agent):
     # wrapping in JSONResponse uses stdlib json and raises on datetime.
     return redact_secrets(agent.json())
 
-@agents_api.get("/sse")
+# Browser-session plumbing: these two run full tool-enabled agent turns via
+# the SSE action queue, so API keys (which must pass 'chat' scope + agent
+# allowlists on the invoke endpoints) are rejected here.
+@agents_api.get("/sse", dependencies=[Depends(jwt_only)])
 async def sse_endpoint(request: Request, agent_id: str | None = None, user=Depends(get_current_user)):
     # Per-(user, agent) manager: isolates concurrent users so one client's
     # stream never carries another's messages/agent.
@@ -62,7 +65,7 @@ async def sse_endpoint(request: Request, agent_id: str | None = None, user=Depen
     return await manager.sse_endpoint(request)
 
 # Add other endpoints to handle user input and trigger SSE events
-@agents_api.post("/chat")
+@agents_api.post("/chat", dependencies=[Depends(jwt_only)])
 async def chat_endpoint(request: Request, user=Depends(get_current_user)):
     data = await request.json()
     agent = await _resolve_agent(data.get("agent_id"), request)

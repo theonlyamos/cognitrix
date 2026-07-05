@@ -1,9 +1,14 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from cognitrix.common.security import crud_scope
 
 from ...tools.base import ToolManager
 
+# Previously unauthenticated — bringing tools under the same auth as every
+# other resource router (the web UI already sends the JWT).
 tools_api = APIRouter(
-    prefix='/tools'
+    prefix='/tools',
+    dependencies=[Depends(crud_scope)]
 )
 
 

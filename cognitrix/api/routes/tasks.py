@@ -3,7 +3,7 @@ import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
-from cognitrix.common.security import get_current_user
+from cognitrix.common.security import AuthContext, crud_scope, get_auth_context, require
 from cognitrix.tasks import Task
 from cognitrix.tasks.base import TaskStatus
 from cognitrix.tasks.run import TaskRun, TaskRunStatus
@@ -11,6 +11,16 @@ from cognitrix.tasks.run import TaskRun, TaskRunStatus
 from ...celery_worker import broker_available, ensure_local_worker, run_task
 
 _ACTIVE_RUN_STATUSES = (TaskRunStatus.RUNNING, TaskRunStatus.CANCELLING)
+
+
+def _check_task_allowlists(ctx: AuthContext, task: Task) -> None:
+    """Invoke-path allowlist enforcement: a key restricted to certain
+    teams/agents may only execute tasks within them. JWT passes everything."""
+    if task.team_id and not ctx.team_allowed(task.team_id):
+        raise HTTPException(status_code=403, detail="API key not allowed for this task's team")
+    for agent_id in task.assigned_agents or []:
+        if not ctx.agent_allowed(agent_id):
+            raise HTTPException(status_code=403, detail="API key not allowed for this task's agents")
 
 
 def _run_summary(run: TaskRun) -> dict:
@@ -42,7 +52,17 @@ logger = logging.getLogger('cognitrix.log')
 
 tasks_api = APIRouter(
     prefix='/tasks',
-    dependencies=[Depends(get_current_user)]
+    dependencies=[Depends(crud_scope)]
+)
+
+# Execute routes live on their own router: starting/cancelling a run is the
+# 'run' scope, not the 'write' that crud_scope would infer from POST (or the
+# 'read' it would infer from the legacy GET start route). Registered BEFORE
+# tasks_api in routes/__init__.py so /tasks/start/{id} isn't swallowed by
+# GET /tasks/{task_id}.
+tasks_run_api = APIRouter(
+    prefix='/tasks',
+    dependencies=[Depends(require('run'))]
 )
 
 @tasks_api.get('')
@@ -51,7 +71,15 @@ async def list_tasks():
     return [task.json() for task in tasks]
 
 @tasks_api.post('')
-async def save_task(request: Request, task: Task, background_tasks: BackgroundTasks):
+async def save_task(request: Request, task: Task, background_tasks: BackgroundTasks,
+                    ctx: AuthContext = Depends(get_auth_context)):
+    # autostart executes the orchestrator — for API keys that is the 'run'
+    # scope + allowlists, not something 'write' alone may trigger.
+    if task.autostart and ctx.api_key is not None:
+        if not ctx.has_scope('run'):
+            raise HTTPException(status_code=403, detail="API key missing required scope: run (autostart)")
+        _check_task_allowlists(ctx, task)
+
     await task.save()
 
     if task.autostart:
@@ -59,16 +87,14 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
 
     return task.json()
 
-@tasks_api.get('/start/{task_id}')
-async def update_task_status(request: Request, task_id: str, resume: bool = False):
-    task = await Task.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+async def _enqueue_task_start(task: Task, resume: bool = False) -> Task:
+    """Shared start path: 409-guard, broker probe, enqueue, mark in-progress.
 
-    # Guard both signals: an active TaskRun AND task IN_PROGRESS — the latter
-    # covers the enqueue→pickup window before the worker creates the run row
-    # (a duplicate start there would execute the task twice).
-    if task.status == TaskStatus.IN_PROGRESS or await _active_run(task_id) is not None:
+    Guard both signals: an active TaskRun AND task IN_PROGRESS — the latter
+    covers the enqueue→pickup window before the worker creates the run row
+    (a duplicate start there would execute the task twice).
+    """
+    if task.status == TaskStatus.IN_PROGRESS or await _active_run(task.id) is not None:
         raise HTTPException(status_code=409, detail="Task already has an active run. Cancel it first.")
 
     # Enqueue on the Celery broker. If the broker is unreachable, surface a
@@ -85,24 +111,39 @@ async def update_task_status(request: Request, task_id: str, resume: bool = Fals
     if not await asyncio.to_thread(broker_available):
         raise HTTPException(status_code=503, detail=broker_down_detail)
     try:
-        result = run_task.apply_async(args=[task_id], kwargs={'resume': resume}, retry=False)
+        result = run_task.apply_async(args=[task.id], kwargs={'resume': resume}, retry=False)
     except Exception as exc:
         # Log the exception type only — the message can embed the broker URL
         # (with credentials, if configured).
-        logger.error("Failed to enqueue task %s: %s", task_id, type(exc).__name__)
+        logger.error("Failed to enqueue task %s: %s", task.id, type(exc).__name__)
         raise HTTPException(status_code=503, detail=broker_down_detail)
 
     task.status = TaskStatus.IN_PROGRESS
     task.pid = result.id
     await task.save()
-    return task.json()
+    return task
 
 
-@tasks_api.post('/{task_id}/cancel')
-async def cancel_task(task_id: str):
+@tasks_run_api.get('/start/{task_id}')
+async def update_task_status(request: Request, task_id: str, resume: bool = False,
+                             ctx: AuthContext = Depends(get_auth_context)):
+    """Legacy UI start route. Deliberately takes no callback_url — capability-
+    bearing URLs don't belong in query strings/access logs; API callers use
+    POST /tasks/{id}/run."""
     task = await Task.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    _check_task_allowlists(ctx, task)
+    task = await _enqueue_task_start(task, resume=resume)
+    return task.json()
+
+
+@tasks_run_api.post('/{task_id}/cancel')
+async def cancel_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)):
+    task = await Task.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    _check_task_allowlists(ctx, task)
 
     run = await _active_run(task_id)
     if run is not None:

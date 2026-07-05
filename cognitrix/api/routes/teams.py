@@ -1,12 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 
-from cognitrix.common.security import get_current_user
+from cognitrix.common.security import crud_scope
 from cognitrix.sessions.base import Session
 from cognitrix.teams.base import Team
 
 teams_api = APIRouter(
     prefix='/teams',
-    dependencies=[Depends(get_current_user)]
+    dependencies=[Depends(crud_scope)]
 )
 
 @teams_api.get("")
@@ -64,7 +64,3 @@ async def get_tasks_by_team(team_id: str):
     tasks = await team.get_assigned_tasks()
     return [task.json() for task in tasks]
 
-@teams_api.get(path="/generate")
-async def sse_endpoint(request: Request):
-    sse_manager = request.state.sse_manager
-    return await sse_manager.sse_endpoint(request)

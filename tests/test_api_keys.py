@@ -163,6 +163,32 @@ async def test_get_auth_context_key_paths(monkeypatch):
         await get_auth_context(_request({'X-API-Key': secret}))
 
 
+# --- invoke-path allowlist enforcement --------------------------------------
+
+def test_check_task_allowlists():
+    from cognitrix.api.routes.tasks import _check_task_allowlists
+
+    task = SimpleNamespace(team_id='t1', assigned_agents=['a1', 'a2'])
+    jwt_ctx = AuthContext(user=SimpleNamespace(id='u1'))
+    _check_task_allowlists(jwt_ctx, task)  # JWT passes
+
+    ok = AuthContext(user=SimpleNamespace(id='u1'),
+                     api_key=_key(scopes=['run'], allowed_teams=['t1'], allowed_agents=[]))
+    _check_task_allowlists(ok, task)  # allowlisted team, all agents
+
+    wrong_team = AuthContext(user=SimpleNamespace(id='u1'),
+                             api_key=_key(scopes=['run'], allowed_teams=['other']))
+    with pytest.raises(HTTPException) as e:
+        _check_task_allowlists(wrong_team, task)
+    assert e.value.status_code == 403
+
+    wrong_agent = AuthContext(user=SimpleNamespace(id='u1'),
+                              api_key=_key(scopes=['run'], allowed_agents=['a1']))
+    with pytest.raises(HTTPException) as e:
+        _check_task_allowlists(wrong_agent, task)  # a2 not allowlisted
+    assert e.value.status_code == 403
+
+
 # --- rate limiting ----------------------------------------------------------
 
 def test_rate_limit_window():

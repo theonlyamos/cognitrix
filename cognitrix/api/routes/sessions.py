@@ -3,12 +3,12 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from cognitrix.common.security import get_current_user
+from cognitrix.common.security import crud_scope, jwt_only
 from cognitrix.sessions.base import Session
 
 sessions_api = APIRouter(
     prefix='/sessions',
-    dependencies=[Depends(get_current_user)]
+    dependencies=[Depends(crud_scope)]
 )
 
 
@@ -72,13 +72,16 @@ async def delete_session(session_id: str):
     await Session.delete_many({'id': session_id})
     return JSONResponse({"message": "Session deleted successfully"})
 
-@sessions_api.get("/{session_id}/events")
+# Browser-session plumbing: the action queue runs tool-enabled agent turns
+# (including arbitrary client-supplied action dicts), so API keys are rejected
+# — they must use the scope-checked invoke endpoints instead.
+@sessions_api.get("/{session_id}/events", dependencies=[Depends(jwt_only)])
 async def sse_endpoint(request: Request):
     sse_manager = request.state.sse_manager
     return await sse_manager.sse_endpoint(request)
 
 # Add other endpoints to handle user input and trigger SSE events
-@sessions_api.post("/{session_id}/chat")
+@sessions_api.post("/{session_id}/chat", dependencies=[Depends(jwt_only)])
 async def chat_endpoint(request: Request):
     sse_manager = request.state.sse_manager
     data = await request.json()
