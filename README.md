@@ -221,6 +221,27 @@ curl -X POST http://localhost:8000/api/v1/teams/<team_id>/run \
 
 Poll `GET /api/v1/tasks/<task_id>` and `GET /api/v1/tasks/<task_id>/runs`, or supply a `callback_url` to receive a webhook when the run finishes. `POST /api/v1/tasks/<task_id>/run` starts a pre-created task the same way.
 
+### Schedule a task
+
+Tasks can run themselves: one-shot ("at a time") or recurring (fixed interval or cron). Schedule fields ride the normal task payload:
+
+```bash
+# every 6 hours
+curl -X POST http://localhost:8000/api/v1/tasks \
+  -H "Authorization: Bearer ctx_…" -H "Content-Type: application/json" \
+  -d '{"title": "Nightly digest", "description": "Summarize new issues",
+       "assigned_agents": ["<agent_id>"], "schedule_interval": 21600}'
+
+# weekdays at 9am (server-local time)
+#   "schedule_cron": "0 9 * * 1-5"
+# once, at a specific time (any ISO datetime; offsets are normalized to UTC)
+#   "schedule_at": "2026-08-01T09:00:00+02:00"
+```
+
+At most one of `schedule_at` / `schedule_interval` (seconds, min 60) / `schedule_cron` may be set. Setting one arms the schedule (`schedule_enabled` defaults true); the response carries `next_run_at` (UTC). Pause/resume with `POST /api/v1/tasks/<task_id>/schedule` `{"enabled": false}` — resuming recomputes `next_run_at`.
+
+Semantics: cron is evaluated in the server's local timezone; one-shot times are stored as UTC instants. If the server was down when a run was due, it fires **once** on startup (no backfill). If a run is still active when the next occurrence comes due, recurring schedules skip that occurrence; one-shots wait and fire when the run ends. Each fire creates a normal TaskRun, and the task's `callback_url` webhook applies. Scheduling via API key requires the `run` scope plus agent/team allowlists, same as starting a task directly.
+
 ### Webhook verification
 
 Deliveries carry `X-Cognitrix-Timestamp` and `X-Cognitrix-Signature: sha256=<hmac>`. The HMAC-SHA256 is computed over `"{timestamp}.{raw_body}"` with the key's webhook secret — recompute and compare in constant time, and reject stale timestamps:
