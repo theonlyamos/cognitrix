@@ -311,17 +311,21 @@ async def _ensure_schema():
     except Exception:
         log.exception("Could not set sqlite pragmas")
 
-    try:
-        cursor = await DBMS.Database.query('PRAGMA table_info(sessions)')
-        rows = cursor.fetchall() if hasattr(cursor, 'fetchall') else (cursor or [])
-        existing = {r[1] for r in rows}
-        if not existing:
-            return  # fresh DB — create_table builds the full schema later
-        for column, ctype in (('run_id', 'TEXT'), ('step_index', 'INTEGER'), ('step_title', 'TEXT')):
-            if column not in existing:
-                await DBMS.Database.query(f'ALTER TABLE sessions ADD COLUMN {column} {ctype}')
-    except Exception:
-        log.exception("Could not migrate sessions schema")
+    for table, columns in (
+        ('sessions', (('run_id', 'TEXT'), ('step_index', 'INTEGER'), ('step_title', 'TEXT'))),
+        ('tasks', (('callback_url', 'TEXT'), ('callback_key_id', 'TEXT'))),
+    ):
+        try:
+            cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')
+            rows = cursor.fetchall() if hasattr(cursor, 'fetchall') else (cursor or [])
+            existing = {r[1] for r in rows}
+            if not existing:
+                continue  # fresh DB — create_table builds the full schema later
+            for column, ctype in columns:
+                if column not in existing:
+                    await DBMS.Database.query(f'ALTER TABLE {table} ADD COLUMN {column} {ctype}')
+        except Exception:
+            log.exception("Could not migrate %s schema", table)
 
 
 def _patch_odbms_sqlite():

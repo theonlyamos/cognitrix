@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from cognitrix.common.security import AuthContext, crud_scope, get_auth_context, require
 from cognitrix.tasks import Task
@@ -21,6 +22,31 @@ def _check_task_allowlists(ctx: AuthContext, task: Task) -> None:
     for agent_id in task.assigned_agents or []:
         if not ctx.agent_allowed(agent_id):
             raise HTTPException(status_code=403, detail="API key not allowed for this task's agents")
+
+
+def _task_json(task: Task) -> dict:
+    """API projection of a task. Callback fields never leave the server —
+    callback URLs routinely embed capability tokens."""
+    data = task.json()
+    if isinstance(data, dict):
+        data.pop('callback_url', None)
+        data.pop('callback_key_id', None)
+    return data
+
+
+async def _set_callback(task: Task, callback_url: str | None, ctx: AuthContext) -> None:
+    """Attach a completion webhook to a task (mutates, does not save).
+    Key-authed only: the key's webhook_secret signs deliveries."""
+    if not callback_url:
+        return
+    if ctx.api_key is None:
+        raise HTTPException(status_code=400, detail="callback_url requires API-key authentication")
+    from cognitrix.utils.webhooks import check_callback_url
+    reason = await asyncio.to_thread(check_callback_url, callback_url)
+    if reason:
+        raise HTTPException(status_code=400, detail=reason)
+    task.callback_url = callback_url
+    task.callback_key_id = ctx.api_key.id
 
 
 def _run_summary(run: TaskRun) -> dict:
@@ -68,7 +94,7 @@ tasks_run_api = APIRouter(
 @tasks_api.get('')
 async def list_tasks():
     tasks = await Task.all()
-    return [task.json() for task in tasks]
+    return [_task_json(task) for task in tasks]
 
 @tasks_api.post('')
 async def save_task(request: Request, task: Task, background_tasks: BackgroundTasks,
@@ -85,7 +111,7 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
     if task.autostart:
         background_tasks.add_task(task.start)
 
-    return task.json()
+    return _task_json(task)
 
 async def _enqueue_task_start(task: Task, resume: bool = False) -> Task:
     """Shared start path: 409-guard, broker probe, enqueue, mark in-progress.
@@ -135,7 +161,27 @@ async def update_task_status(request: Request, task_id: str, resume: bool = Fals
         raise HTTPException(status_code=404, detail="Task not found")
     _check_task_allowlists(ctx, task)
     task = await _enqueue_task_start(task, resume=resume)
-    return task.json()
+    return _task_json(task)
+
+
+class TaskRunRequest(BaseModel):
+    resume: bool = False
+    callback_url: str | None = None
+
+
+@tasks_run_api.post('/{task_id}/run', status_code=202)
+async def start_task_run(task_id: str, body: TaskRunRequest | None = None,
+                         ctx: AuthContext = Depends(get_auth_context)):
+    """API-first start/resume for a pre-created task, with optional completion
+    webhook. Async — poll GET /tasks/{id} + /tasks/{id}/runs."""
+    body = body or TaskRunRequest()
+    task = await Task.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    _check_task_allowlists(ctx, task)
+    await _set_callback(task, body.callback_url, ctx)
+    task = await _enqueue_task_start(task, resume=body.resume)
+    return {'task_id': task.id, 'status': task.status}
 
 
 @tasks_run_api.post('/{task_id}/cancel')
@@ -174,7 +220,7 @@ async def cancel_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)
         # no-op and the prerun guard won't resurrect it.
         task.status = TaskStatus.CANCELLED
         await task.save()
-        return task.json()
+        return _task_json(task)
 
     raise HTTPException(status_code=409, detail="Nothing to cancel — no active run.")
 
@@ -188,7 +234,7 @@ async def list_task_runs(task_id: str):
 @tasks_api.get('/{task_id}')
 async def load_task(task_id: str):
     task = await Task.get(task_id)
-    return task.json() if task else {}
+    return _task_json(task) if task else {}
 
 @tasks_api.delete('/{task_id}')
 async def delete_task(task_id: str):

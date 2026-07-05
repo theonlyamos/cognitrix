@@ -62,6 +62,14 @@ class Task(Model):
     team_id: str | None = None
     """ID of the team assigned to this task"""
 
+    callback_url: str | None = None
+    """Webhook POSTed on run completion (API-started tasks only). Stripped
+    from API projections — callback URLs routinely embed capability tokens."""
+
+    callback_key_id: str | None = None
+    """APIKey that registered the callback; its webhook_secret signs the
+    payload. Revoked/expired keys stop deliveries."""
+
     async def team(self):
         agents: list[Agent] = []
         for agent_id in self.assigned_agents:

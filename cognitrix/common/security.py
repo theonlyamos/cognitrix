@@ -69,6 +69,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
 _SECRET_KEYS = {
     'api_key', 'apikey', 'api-key', 'password', 'token', 'access_token', 'secret',
     'authorization', 'x-api-key', 'helicone-auth', 'bearer',
+    'webhook_secret', 'key_hash', 'callback_url',
 }
 
 

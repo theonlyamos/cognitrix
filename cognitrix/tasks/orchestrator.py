@@ -28,6 +28,7 @@ from cognitrix.agents.base import Agent
 from cognitrix.agents.evaluator import Evaluator
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.run import TaskRun, TaskRunStatus
+from cognitrix.utils.webhooks import notify_completion
 
 if TYPE_CHECKING:
     from cognitrix.tasks.base import Task
@@ -567,6 +568,7 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
                          completed_at=_now(), error='no agents assigned to this task')
         await failed.save()
         await _set_task_status(task, TaskStatus.FAILED)
+        await notify_completion(task, failed)
         raise RuntimeError(f"Task {task.id} has no agents assigned")
 
     leader = await _resolve_leader(task, roster)
@@ -676,3 +678,9 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
         if await _set_run_status(run_rec, TaskRunStatus.FAILED, error=str(exc), completed=True):
             await _set_task_status(task, TaskStatus.FAILED)
         raise
+    finally:
+        # Completion webhook for API-started runs. In the finally so success,
+        # failure, cancel AND the re-raise path all notify; awaited because the
+        # worker loop won't service a fire-and-forget task after run() returns.
+        # notify_completion no-ops without callback fields and never raises.
+        await notify_completion(task, run_rec)
