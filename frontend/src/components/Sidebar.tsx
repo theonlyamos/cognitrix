@@ -73,7 +73,7 @@ export default function Sidebar() {
         </span>
         {!collapsed && (
           <span className="font-mono text-[12px] font-bold tracking-[0.13em]">
-            COGNITRIX<span className="font-medium text-fg-dim"> /v0.3.0</span>
+            COGNITRIX<span className="font-medium text-fg-dim"> /v{__APP_VERSION__}</span>
           </span>
         )}
       </div>
