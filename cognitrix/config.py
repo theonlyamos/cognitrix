@@ -292,16 +292,18 @@ async def _ensure_schema():
     if getattr(DBMS.Database, 'dbms', '') != 'sqlite':
         return
 
+    from cognitrix.models.api_key import APIKey
     from cognitrix.tasks.run import TaskRun
 
-    try:
-        create = getattr(TaskRun, '_create_table_async', None) or getattr(TaskRun, 'create_table', None)
-        if create is not None:
-            result = create()
-            if hasattr(result, '__await__'):
-                await result
-    except Exception:
-        log.exception("Could not create taskruns table")
+    for model in (TaskRun, APIKey):
+        try:
+            create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)
+            if create is not None:
+                result = create()
+                if hasattr(result, '__await__'):
+                    await result
+        except Exception:
+            log.exception("Could not create %s table", model.__name__)
 
     try:
         await DBMS.Database.query('PRAGMA journal_mode=WAL')
