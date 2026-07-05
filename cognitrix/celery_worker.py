@@ -226,6 +226,15 @@ def _run(coro):
 
 
 def _init_db():
+    # run_until_complete can't drive a loop that's already running — e.g. when
+    # the async web app imports this module inside asyncio.run(). Attempting it
+    # there raises and leaks an un-awaited initialize_database() coroutine. The
+    # host app initialises the DB in its own startup, so just skip.
+    try:
+        asyncio.get_running_loop()
+        return
+    except RuntimeError:
+        pass
     try:
         _run(initialize_database())
     except Exception:
