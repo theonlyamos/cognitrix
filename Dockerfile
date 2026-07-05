@@ -1,8 +1,12 @@
 # syntax=docker/dockerfile:1
 
 # --- Frontend build (Node) ---------------------------------------------------
-FROM node:20-slim AS frontend
-RUN corepack enable
+FROM node:22-slim AS frontend
+# Pin pnpm to the 10 line (which owns lockfileVersion 9.0, matching
+# pnpm-lock.yaml). Node 22 LTS is required because corepack's unpinned "latest"
+# pnpm now needs Node >= 22.13; pinning also stops a future pnpm bump from
+# breaking this build again.
+RUN corepack enable && corepack prepare pnpm@latest-10 --activate
 WORKDIR /frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
