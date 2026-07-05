@@ -1,62 +1,42 @@
-# Cognitrix on Fly.io — single-machine deploy (topology "A").
+# fly.toml app configuration file generated for cognitrix on 2026-07-05T17:06:26Z
 #
-# One always-warm machine runs the web UI + API, the in-process schedule loop,
-# and (via the filesystem-broker fallback) an auto-spawned Celery worker. No
-# Redis and no external DB: the SQLite database and all state live on a volume
-# mounted at the app workdir. Fly builds the local Dockerfile with its own
-# remote builder and pushes to registry.fly.io — no Docker Hub in the loop.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
-# First-time setup:
-#   fly apps create cognitrix
-#   fly volumes create cognitrix_data --region iad --size 3
-#   fly secrets set JWT_SECRET_KEY=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
-#   fly secrets set AI_PROVIDER=openrouter OPENROUTER_API_KEY=...   # + any provider keys
-#   fly deploy
-#
-app = "cognitrix"
-primary_region = "iad"          # change to your closest region
+
+app = 'cognitrix'
+primary_region = 'lhr'
 
 [build]
-  dockerfile = "Dockerfile"     # built by Fly's remote builder → registry.fly.io
+  dockerfile = 'Dockerfile'
+
+[deploy]
+  strategy = 'immediate'
 
 [env]
-  # Require a real JWT secret; set it with `fly secrets set JWT_SECRET_KEY=...`.
-  COGNITRIX_ENV = "production"
-  # Deliberately NO CELERY_BROKER_URL: absent, the app uses the filesystem
-  # broker and auto-spawns a local worker on this same machine.
-  # Skip the ChromaDB/embeddings vector store to keep the memory footprint down;
-  # comment this out (and raise the vm memory below) if you need agent long-term
-  # memory.
-  DISABLE_VECTOR_STORE = "true"
+  COGNITRIX_ENV = 'production'
+  DISABLE_VECTOR_STORE = 'true'
+
+[[mounts]]
+  source = 'cognitrix_data'
+  destination = '/root/.cognitrix'
 
 [http_service]
   internal_port = 8000
   force_https = true
-  # The schedule loop lives in this web process, so the machine must stay warm:
-  # never auto-stop, keep one running. Also keep it to exactly ONE machine — a
-  # second web machine would run a second scheduler and double-fire schedules.
-  auto_stop_machines = false
+  auto_stop_machines = 'off'
   auto_start_machines = false
   min_machines_running = 1
-  processes = ["app"]           # runs the image CMD: xvfb-run cognitrix --ui web
+  processes = ['app']
 
   [[http_service.checks]]
-    method = "GET"
-    path = "/health"
-    interval = "30s"
-    timeout = "5s"
-    grace_period = "40s"
-
-[[mounts]]
-  source = "cognitrix_data"           # fly volumes create cognitrix_data ...
-  destination = "/root/.cognitrix"    # SQLite DB, jwt_secret, celery-queue, mcp.json
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '40s'
+    method = 'GET'
+    path = '/health'
 
 [[vm]]
-  cpu_kind = "shared"
+  memory = '2gb'
+  cpu_kind = 'shared'
   cpus = 2
-  memory = "2gb"                # torch/chromadb are heavy; raise if you enable the vector store
-
-# One machine owns the single data volume, so replace it in place on deploy
-# rather than booting a second machine that can't attach the same volume.
-[deploy]
-  strategy = "immediate"
+  memory_mb = 2048
