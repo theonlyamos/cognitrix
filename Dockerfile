@@ -11,6 +11,9 @@ WORKDIR /frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY frontend/ ./
+# vite.config reads the app version from the repo-root pyproject.toml, which
+# sits at ../ of this /frontend workdir — make it available in this stage.
+COPY pyproject.toml /pyproject.toml
 RUN pnpm run build          # outputs /frontend/dist
 
 # --- Runtime (Python) --------------------------------------------------------
