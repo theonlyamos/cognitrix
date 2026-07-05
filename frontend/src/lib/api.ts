@@ -1,7 +1,10 @@
 import axios from 'axios';
 
-/** Base URL for the versioned API, e.g. http://localhost:8000/api/v1 */
-export const API_BASE = `${import.meta.env.VITE_BACKEND_URL}/api/v1`;
+/** Base URL for the versioned API. Defaults to the current origin — in
+ *  production the SPA is served by the API itself, so requests are same-origin
+ *  (`/api/v1`). Set VITE_BACKEND_URL for a cross-origin dev server, e.g.
+ *  http://localhost:8000. */
+export const API_BASE = `${import.meta.env.VITE_BACKEND_URL ?? ''}/api/v1`;
 
 /** Single axios instance. Auth token is attached from localStorage per request. */
 export const api = axios.create({ baseURL: API_BASE });

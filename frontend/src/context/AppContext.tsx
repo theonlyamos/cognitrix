@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
-const API_BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL}/api/v1`;
+const API_BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL ?? ''}/api/v1`;
 
 interface User {
   id?: string;
