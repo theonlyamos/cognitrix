@@ -188,6 +188,22 @@ For development purposes, you can also run the web UI locally without Docker. En
 3. **Access the Development Server**:
    Open your web browser and go to `http://localhost:5173` to view the web UI in development mode.
 
+## Docker deployment
+
+`docker-compose.yml` runs three services: the **web** app (FastAPI + the in-process schedule loop), a dedicated **worker** (Celery, executes task/team runs), and **Redis** as the broker. Web and worker share the SQLite app database over a named volume.
+
+```bash
+cp .env.example .env          # fill in provider keys + a JWT_SECRET_KEY
+docker compose up --build
+```
+
+The UI is then at `http://localhost:8000`.
+
+- **Provider keys / config** come from `.env` (injected into both web and worker). `COGNITRIX_ENV=production` is set in compose, so `JWT_SECRET_KEY` is required — generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+- **Scale execution** with `docker compose up --scale worker=3`. Keep **web at a single replica**: the schedule tick loop runs per-process, so multiple web containers would fire the same due schedules more than once.
+- **State** lives in the `cognitrix-data` volume (SQLite DB, JWT secret, MCP config) and `redis-data` (broker). For heavier concurrency, point `DB_*` at Postgres/MySQL/Mongo (via odbms) instead of the shared SQLite file.
+- Without `CELERY_BROKER_URL`, a single container falls back to an in-process filesystem broker + auto-spawned worker — handy for a one-container deploy, but the dedicated-worker compose stack is the recommended setup.
+
 ## API Access
 
 Cognitrix exposes an HTTP API for programmatic use by external apps, scripts, and automation platforms. Create an **API key** from the **API Keys** page in the web UI (or via `POST /api/v1/api-keys` with a session token). A key is shown **once** at creation — copy the key and its webhook signing secret then.
