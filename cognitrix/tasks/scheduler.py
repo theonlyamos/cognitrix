@@ -49,7 +49,11 @@ def validate_schedule(task: Task, *, respecified: bool, now: datetime | None = N
         return f'schedule_interval must be at least {MIN_INTERVAL} seconds'
     if task.schedule_cron:
         try:
-            croniter(task.schedule_cron)
+            # get_next (not bare construction) also rejects well-formed but
+            # unsatisfiable expressions like "0 0 30 2 *" (Feb 30) — croniter
+            # raises CroniterBadDateError there, a ValueError subclass. Without
+            # this, such a cron passes validation and 500s later in compute.
+            croniter(task.schedule_cron, now or _utcnow()).get_next(datetime)
         except (ValueError, KeyError) as exc:
             return f'invalid cron expression: {exc}'
     if task.schedule_at:
@@ -94,10 +98,15 @@ async def tick(now: datetime | None = None) -> int:
                 claim = {'next_run_at': None, 'schedule_enabled': False}
             else:
                 claim = {'next_run_at': compute_next_run(task, now)}
+            # Non-null claim values that uniquely pin our claim for this id, for
+            # a CAS revert later. Kept as its own dict: Model.update_one mutates
+            # the data dict it's handed (injects updated_at), so `claim` is not
+            # reusable as a WHERE clause afterwards.
+            claim_cond = {'id': task.id, **{k: v for k, v in claim.items() if v is not None}}
             # CAS on the exact stored string — rowcount 0 means another writer
             # (a concurrent tick or an edit) got there first.
             claimed = await Task.update_one(
-                {'id': task.id, 'next_run_at': task.next_run_at}, claim)
+                {'id': task.id, 'next_run_at': task.next_run_at}, dict(claim))
             if claimed != 1:
                 continue
             for key, value in claim.items():
@@ -116,8 +125,10 @@ async def tick(now: datetime | None = None) -> int:
                 else:
                     # One-shot blocked by an active run, broker down, or an
                     # unexpected failure: put the claim back so it retries next
-                    # tick instead of silently never firing.
-                    await Task.update_one({'id': task.id}, prev)
+                    # tick instead of silently never firing. CAS the revert on
+                    # our own claim values (broker probes make this window
+                    # seconds-long) so a concurrent pause/edit isn't clobbered.
+                    await Task.update_one(dict(claim_cond), dict(prev))
                     logger.warning('Scheduler could not start task %s (%s); will retry',
                                    task.id, exc)
         except Exception:

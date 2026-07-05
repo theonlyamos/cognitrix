@@ -92,6 +92,12 @@ def test_validate_bad_cron():
     assert validate_schedule(_task(schedule_cron='*/5 * * * *'), respecified=True) is None
 
 
+def test_validate_impossible_cron():
+    """Well-formed but unsatisfiable (Feb 30) must be rejected, not passed
+    through to a get_next() that raises later."""
+    assert 'invalid cron' in validate_schedule(_task(schedule_cron='0 0 30 2 *'), respecified=True)
+
+
 def test_validate_past_oneshot_only_when_respecified():
     t = _task(schedule_at='2020-01-01 00:00:00')
     assert 'in the past' in validate_schedule(t, respecified=True, now=NOW)
@@ -334,6 +340,42 @@ async def test_save_clearing_schedule_disables(sched_db):
     await _save(edit, _jwt_ctx())
     fresh = await Task.get(stored.id)
     assert fresh.schedule_enabled is False and fresh.next_run_at is None
+
+
+async def test_save_lone_enabled_toggles_not_wipes(sched_db):
+    """A payload with schedule_enabled but no type field is a toggle, not a
+    respecification — it must NOT wipe the stored schedule type."""
+    stored = Task(title='t', description='d', schedule_interval=300,
+                  next_run_at='2030-06-01 12:05:00', schedule_enabled=True)
+    await stored.save()
+
+    # Pause via the flag alone.
+    await _save(Task(id=stored.id, title='t', description='d', schedule_enabled=False), _jwt_ctx())
+    paused = await Task.get(stored.id)
+    assert paused.schedule_interval == 300  # NOT wiped
+    assert paused.schedule_enabled is False and paused.next_run_at is None
+
+    # Resume via the flag alone: type preserved, next_run_at recomputed.
+    await _save(Task(id=stored.id, title='t', description='d', schedule_enabled=True), _jwt_ctx())
+    resumed = await Task.get(stored.id)
+    assert resumed.schedule_interval == 300
+    assert resumed.schedule_enabled is True and resumed.next_run_at is not None
+
+
+async def test_save_lone_enable_write_key_403(sched_db):
+    """Enabling a stored (disabled) schedule via the flag arms execution —
+    an API key still needs run scope for it."""
+    stored = Task(title='t', description='d', schedule_interval=300, schedule_enabled=False)
+    await stored.save()
+    with pytest.raises(HTTPException) as exc:
+        await _save(Task(id=stored.id, title='t', description='d', schedule_enabled=True), _key_ctx(['write']))
+    assert exc.value.status_code == 403
+
+
+async def test_save_impossible_cron_422(sched_db):
+    with pytest.raises(HTTPException) as exc:
+        await _save(Task(title='t', description='d', schedule_cron='0 0 30 2 *'), _jwt_ctx())
+    assert exc.value.status_code == 422
 
 
 async def test_save_write_key_403_on_respec(sched_db):

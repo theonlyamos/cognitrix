@@ -28,7 +28,7 @@ interface TaskData {
 
 type ScheduleMode = 'none' | 'once' | 'interval' | 'cron';
 
-const UNIT_SECONDS: Record<string, number> = { minutes: 60, hours: 3600, days: 86400 };
+const UNIT_SECONDS: Record<string, number> = { seconds: 1, minutes: 60, hours: 3600, days: 86400 };
 
 // "now" as a datetime-local string (local wall-clock) so the one-shot picker
 // can't select a past instant.
@@ -90,9 +90,11 @@ export default function TaskPage() {
     } else if (existing.schedule_interval) {
       setScheduleMode('interval');
       const secs = existing.schedule_interval;
-      const unit = secs % 86400 === 0 ? 'days' : secs % 3600 === 0 ? 'hours' : 'minutes';
+      // Pick the coarsest unit that represents the value exactly — no rounding
+      // (a 90s interval hydrates as "90 seconds", not "2 minutes").
+      const unit = secs % 86400 === 0 ? 'days' : secs % 3600 === 0 ? 'hours' : secs % 60 === 0 ? 'minutes' : 'seconds';
       setIntervalUnit(unit);
-      setIntervalN(String(Math.max(1, Math.round(secs / UNIT_SECONDS[unit]))));
+      setIntervalN(String(secs / UNIT_SECONDS[unit]));
     } else if (existing.schedule_cron) {
       setScheduleMode('cron');
       setCronExpr(existing.schedule_cron);
@@ -246,6 +248,7 @@ export default function TaskPage() {
             <div className="flex gap-2">
               <Input type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(e.target.value)} className="w-28" />
               <Select value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
+                <option value="seconds">seconds</option>
                 <option value="minutes">minutes</option>
                 <option value="hours">hours</option>
                 <option value="days">days</option>

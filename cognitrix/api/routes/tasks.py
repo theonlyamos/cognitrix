@@ -110,7 +110,13 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
         _check_task_allowlists(ctx, task)
 
     stored = await Task.get(task.id) if task.id else None
-    respecified = bool(set(SCHEDULE_FIELDS) & task.model_fields_set)
+    # A schedule TYPE field (at/interval/cron) in the payload means the client
+    # is (re)defining the schedule; schedule_enabled alone is a pause/resume
+    # toggle over the stored schedule (like POST /tasks/{id}/schedule), not a
+    # respecification that would wipe the type. next_run_at is server-owned.
+    type_fields = ('schedule_at', 'schedule_interval', 'schedule_cron')
+    respecified = bool(set(type_fields) & task.model_fields_set)
+    toggling = 'schedule_enabled' in task.model_fields_set and not respecified
     if stored:
         # save() below is a full-row write: anything the client didn't send
         # resets to default. Callback fields never round-trip (stripped from
@@ -120,15 +126,19 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
             if field not in task.model_fields_set:
                 setattr(task, field, getattr(stored, field))
         if not respecified:
-            # No recompute either: pushing an enabled interval schedule back
-            # on a title-only edit would delay its next fire.
+            desired_enabled = task.schedule_enabled if toggling else None
+            # Carry the whole schedule over. A title-only edit leaves it as-is
+            # (recomputing would push an enabled interval's next fire back).
             for field in SCHEDULE_FIELDS:
                 setattr(task, field, getattr(stored, field))
+            if toggling:
+                task.schedule_enabled = desired_enabled
+                task.next_run_at = compute_next_run(task) if desired_enabled else None
 
     # Scheduling executes the orchestrator later — same rule as autostart:
-    # 'run' scope + allowlists for API keys. Also applies when a key edits a
-    # task whose stored schedule is enabled (repointing what will fire).
-    if ctx.api_key is not None and (respecified or (stored is not None and stored.schedule_enabled)):
+    # 'run' scope + allowlists for API keys. Covers (re)defining a schedule,
+    # toggling one on, and editing a task whose stored schedule is enabled.
+    if ctx.api_key is not None and (respecified or toggling or (stored is not None and stored.schedule_enabled)):
         if not ctx.has_scope('run'):
             raise HTTPException(status_code=403, detail="API key missing required scope: run (schedule)")
         _check_task_allowlists(ctx, task)
