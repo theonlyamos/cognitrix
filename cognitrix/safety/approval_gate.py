@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -16,6 +17,39 @@ logger = logging.getLogger('cognitrix.log')
 
 def _auto_approve_enabled() -> bool:
     return os.getenv('COGNITRIX_AUTO_APPROVE', '').strip().lower() in ('1', 'true', 'yes')
+
+
+# Per-turn web context: lets check_approval reach the SSE emit callback and the
+# turn's owner without threading them through every call layer. Set by the SSE
+# runner for a web chat turn; None for CLI/task/programmatic paths.
+web_turn_ctx: ContextVar[dict | None] = ContextVar('web_turn_ctx', default=None)
+
+# Pending browser approvals keyed by request_id. Module-level (not per gate
+# instance) so the REST resolve endpoint completes a future created by whichever
+# gate the turn used.
+# ponytail: in-process, single-worker assumption — a multi-instance deploy needs
+# shared state (redis) for the pending map.
+_WEB_PENDING: dict[str, dict] = {}
+_web_request_counter = 0
+
+
+def resolve_web_approval(request_id: str, approved: bool, user_key: str | None = None,
+                         remember: bool = False) -> bool:
+    """Resolve a pending browser approval. Returns False if unknown or not the owner.
+
+    `user_key` scopes the answer to the user who owns the turn — a different
+    authenticated user cannot approve someone else's pending tool call.
+    """
+    entry = _WEB_PENDING.get(request_id)
+    if not entry:
+        return False
+    owner = entry.get('user_key')
+    if user_key is not None and owner is not None and owner != user_key:
+        return False
+    future = entry.get('future')
+    if future is not None and not future.done():
+        future.set_result(ApprovalResult(approved=approved, remember=remember))
+    return True
 
 # Prefix of the tool-result message for a denied operation. The session loop's
 # deny-loop breaker matches on it — keep producer and matcher in sync.
@@ -159,17 +193,7 @@ class ApprovalGate:
         if interface in ('cli', 'task'):
             result = await self._cli_approval(tool_call, risk, timeout)
         elif interface in ('web', 'ws', 'websocket'):
-            # Interim: there is no interactive approval channel wired to the web
-            # frontend yet, so deny risky operations with a clear message rather
-            # than blocking on server-side input(). (Enabling live approval is a
-            # frontend feature; see plan H3.3.)
-            return ApprovalResult(
-                approved=False,
-                error=(
-                    f"'{tool_call.tool_name}' requires approval ({risk.risk_level.value} risk); "
-                    "interactive approval is not yet available over the web interface."
-                ),
-            )
+            result = await self._web_approval(tool_call, risk, timeout)
         else:
             return ApprovalResult(approved=False, error=f"Unknown interface: {interface}")
 
@@ -222,6 +246,62 @@ class ApprovalGate:
         except (EOFError, KeyboardInterrupt):
             return ApprovalResult(approved=False, error="User interrupted")
 
+    async def _web_approval(
+        self,
+        tool_call: ToolCall,
+        risk: RiskAssessment,
+        timeout: float,
+    ) -> ApprovalResult:
+        """Interactive approval over the SSE chat stream.
+
+        Emits an `approval_request` event to the browser and blocks on a future
+        that the `POST /agents/approval` endpoint resolves. Bypass mode
+        auto-approves. With no bound emit channel (e.g. the programmatic generate
+        path) it denies, matching the prior behaviour.
+        """
+        global _web_request_counter
+        ctx = web_turn_ctx.get(None)
+
+        if ctx and ctx.get('bypass'):
+            # Auto-approve tool calls only — the bash whitelist / sandbox-shell
+            # bypass is never enabled from the web.
+            return ApprovalResult(approved=True, auto=True)
+
+        emit = ctx.get('emit') if ctx else None
+        if emit is None:
+            return ApprovalResult(
+                approved=False,
+                error=(
+                    f"'{tool_call.tool_name}' requires approval ({risk.risk_level.value} risk); "
+                    "no interactive approval channel is available for this request."
+                ),
+            )
+
+        _web_request_counter += 1
+        request_id = f"web-approval-{_web_request_counter}"
+        future = asyncio.get_running_loop().create_future()
+        _WEB_PENDING[request_id] = {'future': future, 'user_key': ctx.get('user_key')}
+
+        try:
+            await emit({
+                'type': 'approval_request',
+                'request_id': request_id,
+                'tool_name': tool_call.tool_name,
+                'params': tool_call.params,
+                'risk_level': risk.risk_level.value,
+                'categories': risk.categories,
+                'details': risk.details,
+                'session_id': ctx.get('session_id'),
+            })
+            return await asyncio.wait_for(future, timeout=timeout)
+        except (TimeoutError, asyncio.TimeoutError):
+            return ApprovalResult(approved=False, error=f"Approval timed out after {timeout}s")
+        except Exception as e:
+            logger.exception("Web approval failed")
+            return ApprovalResult(approved=False, error=str(e))
+        finally:
+            _WEB_PENDING.pop(request_id, None)
+
     async def _websocket_approval(
         self,
         tool_call: ToolCall,
@@ -234,7 +314,7 @@ class ApprovalGate:
         request_id = f"approval_{self.request_counter}"
 
         # Create future for response
-        future = asyncio.get_event_loop().create_future()
+        future = asyncio.get_running_loop().create_future()
 
         # Store request
         request = ApprovalRequest(

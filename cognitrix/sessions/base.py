@@ -219,16 +219,48 @@ class Session(Model):
         await self.save()
         logger.info("Compacted session history: folded %s turns into a summary", len(fold_turns))
 
-    async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True):
+    async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None):
 
         # Add timing for turn duration
         turn_start_time = time.monotonic()
+
+        # Every agent can invoke skills: ensure the load_skill meta-tool is present
+        # for this turn. UI/API-created agents only carry their configured tools,
+        # so a `/skill` chat message would otherwise have nothing to load it.
+        try:
+            if not any(str(getattr(t, 'name', '')).lower() == 'load skill' for t in agent.tools):
+                from cognitrix.tools.base import ToolManager
+                _skill_tool = ToolManager.get_by_name('load_skill')
+                if _skill_tool:
+                    agent.tools.append(_skill_tool)
+        except Exception:
+            pass
 
         # Add the new message to the history before building the prompt
         if wsquery is None:
             wsquery = {}
         if save_history:
             self.update_history(agent.process_prompt(message))
+            # User uploads ride alongside the text turn: images become vision
+            # messages (kept on disk, encoded at send-time by format_query), and
+            # non-image files are surfaced as paths the agent can open with its
+            # file tools.
+            if attachments:
+                extra: list[dict[str, Any]] = []
+                for img in attachments.get('images', []):
+                    path = img.get('path')
+                    if path:
+                        extra.append({'role': 'User', 'type': 'image', 'content': path})
+                files = attachments.get('files', [])
+                if files:
+                    paths = '\n'.join(f.get('path', '') for f in files if f.get('path'))
+                    if paths:
+                        extra.append({
+                            'role': 'User', 'type': 'text',
+                            'content': f'[User uploaded files, readable with your file tools:]\n{paths}',
+                        })
+                if extra:
+                    self.update_history(extra)
 
         # Build the context-aware prompt using the manager
         prompt = await agent.get_context_manager().build_prompt(agent, self)
