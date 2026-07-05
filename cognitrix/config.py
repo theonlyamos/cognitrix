@@ -1,6 +1,7 @@
 import logging
 import os
 import secrets
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,25 @@ load_dotenv()
 
 logger = logging.getLogger('cognitrix.log')
 
-VERSION = '0.3.0'
+def _resolve_version() -> str:
+    """Version, sourced only from pyproject.toml. Read the source file directly
+    when running from a checkout (an edit then shows up without reinstalling),
+    otherwise fall back to installed package metadata (wheel installs, where
+    pyproject.toml isn't shipped)."""
+    pyproject = Path(__file__).resolve().parent.parent / 'pyproject.toml'
+    try:
+        import tomllib
+        with pyproject.open('rb') as fh:
+            return tomllib.load(fh)['tool']['poetry']['version']
+    except (OSError, KeyError, ModuleNotFoundError):
+        pass
+    try:
+        return _pkg_version('cognitrix')
+    except PackageNotFoundError:  # source tree with no install and no tomllib
+        return '0.0.0+dev'
+
+
+VERSION = _resolve_version()
 API_VERSION = 'v1'
 
 class CognitrixSettings:

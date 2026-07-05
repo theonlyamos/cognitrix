@@ -48,7 +48,7 @@ export default function Signup() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
           </span>
           <span className="font-mono text-[13px] font-bold tracking-[0.14em]">
-            COGNITRIX<span className="text-fg-dim font-medium"> /v0.3.0</span>
+            COGNITRIX<span className="text-fg-dim font-medium"> /v{__APP_VERSION__}</span>
           </span>
         </div>
         <div className="relative max-w-md">
