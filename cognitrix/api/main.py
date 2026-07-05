@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import FRONTEND_BUILD_DIR, settings
 from .routes import api_router
+from .routes.openai_compat import openai_api
 
 app = FastAPI()
 
@@ -18,6 +19,9 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+# OpenAI-compatible shim at the app root (/v1). MUST be registered before the
+# SPA catch-all below, or GET /v1/models would be served index.html with 200.
+app.include_router(openai_api)
 app.mount('/css', StaticFiles(directory=FRONTEND_BUILD_DIR / 'css', html=True),  name='static')
 app.mount('/assets', StaticFiles(directory=FRONTEND_BUILD_DIR / 'assets', html=True),  name='static')
 app.mount('/webfonts', StaticFiles(directory=FRONTEND_BUILD_DIR / 'webfonts', html=True),  name='static')
