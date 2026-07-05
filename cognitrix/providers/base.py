@@ -17,7 +17,7 @@ from odbms import Model
 from openai import AsyncOpenAI, OpenAI
 from pydantic import Field
 
-from cognitrix.utils import image_to_base64
+from cognitrix.utils import file_to_image_data_uri, image_to_base64
 from cognitrix.utils.llm_response import LLMResponse
 
 # Cache async OpenAI clients by effective config to avoid per-request overhead.
@@ -225,6 +225,24 @@ class LLMManager:
         return 'assistant'
 
     @staticmethod
+    def _image_url_from_content(content: Any) -> str | None:
+        """Resolve `type:'image'` content to an image_url string, or None if unusable.
+
+        Handles the three shapes that reach the formatter: a PIL image (screenshot
+        tool), an already-built `data:` URI, and a path to an uploaded image on disk.
+        """
+        try:
+            if isinstance(content, str):
+                if content.startswith('data:'):
+                    return content
+                if os.path.isfile(content):
+                    return file_to_image_data_uri(content)
+                return None
+            return f'data:image/jpeg;base64,{image_to_base64(content)}'
+        except Exception:
+            return None
+
+    @staticmethod
     def format_query(llm: LLM, messages: list[dict[str, Any]]) -> list:
         formatted_messages = []
         for fm in messages:
@@ -265,14 +283,24 @@ class LLMManager:
                     msg['tool_call_id'] = tool_call_id
                 formatted_messages.append(msg)
             elif msg_type == 'image' and llm.is_multimodal:
-                base64_image = image_to_base64(content)  # type: ignore
-                formatted_messages.append({
-                    'role': role,
-                    'content': [
-                        {'type': 'text', 'text': 'This is the result of the latest screenshot'},
-                        {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{base64_image}'}},
-                    ],
-                })
+                # content may be a PIL image (screenshot tool), a data: URI, or a
+                # path to a user-uploaded image on disk.
+                url = LLMManager._image_url_from_content(content)
+                if url:
+                    caption = ('This is the result of the latest screenshot'
+                               if not isinstance(content, str) else 'User-provided image')
+                    formatted_messages.append({
+                        'role': role,
+                        'content': [
+                            {'type': 'text', 'text': caption},
+                            {'type': 'image_url', 'image_url': {'url': url}},
+                        ],
+                    })
+                else:
+                    formatted_messages.append({
+                        'role': role,
+                        'content': '[An image was provided but could not be loaded.]',
+                    })
             elif msg_type == 'image':
                 # Non-multimodal model: don't silently drop the image — leave a text
                 # placeholder so the turn keeps context, and warn.

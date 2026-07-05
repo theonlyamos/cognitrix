@@ -22,6 +22,7 @@ _SSE_QUEUE_MAXSIZE = 512
 class SSEManager:
     def __init__(self, agent):
         self.agent = agent
+        self.user_key: str | None = None
         self.action_queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAXSIZE)
 
     async def _resolve_session(self, session_id: str | None) -> Session | None:
@@ -129,6 +130,15 @@ class SSEManager:
                 elif action['type'] == 'chat_message':
                     user_prompt = action['content']
                     requested_sid = action.get('session_id')
+                    # Uploaded attachments: images → vision, files → workspace paths.
+                    chat_images = action.get('images') or []
+                    chat_files = action.get('files') or []
+                    chat_attachments = (
+                        {'images': chat_images, 'files': chat_files}
+                        if (chat_images or chat_files) else None
+                    )
+                    # Bypass = auto-approve risky tools for this turn (approvals only).
+                    chat_bypass = bool(action.get('bypass_permissions'))
 
                     # Resolve the conversation up front (own try so a DB error
                     # can't propagate out of this generator and kill the SSE
@@ -166,7 +176,14 @@ class SSEManager:
                                 'session_id': _sid,
                             })
 
-                        async def _run_multistep(_prompt=user_prompt, _sess=session, _q=ms_queue):
+                        # ponytail: multi-step forwards file paths only (no vision) in v1.
+                        ms_prompt = user_prompt
+                        if chat_files:
+                            _fpaths = '\n'.join(f.get('path', '') for f in chat_files if f.get('path'))
+                            if _fpaths:
+                                ms_prompt = f"{user_prompt}\n\n[User uploaded files, readable with your file tools:]\n{_fpaths}"
+
+                        async def _run_multistep(_prompt=ms_prompt, _sess=session, _q=ms_queue):
                             try:
                                 result = await handle_multi_step_task(
                                     _prompt,
@@ -211,17 +228,28 @@ class SSEManager:
                                 payload = {**payload, 'session_id': _sid}
                             await _q.put(payload)
 
-                        async def _run(_prompt=user_prompt, _sess=session, _q=out_queue):
+                        async def _run(_prompt=user_prompt, _sess=session, _q=out_queue, _att=chat_attachments, _bypass=chat_bypass):
+                            # Bind the turn's approval context (emit channel, owner,
+                            # bypass) so a risky tool can prompt the browser.
+                            from cognitrix.safety.approval_gate import web_turn_ctx
+                            token = web_turn_ctx.set({
+                                'emit': _emit,
+                                'session_id': _sess.id,
+                                'bypass': _bypass,
+                                'user_key': self.user_key,
+                            })
                             try:
                                 await _sess(
                                     _prompt, self.agent,
                                     interface='web', stream=True, output=_emit,
                                     wsquery={'type': 'generate', 'action': 'chat_message'},
+                                    attachments=_att,
                                 )
                             except Exception as e:
                                 logger.exception("SSE session turn failed")
                                 await _q.put({'type': 'error', 'content': str(e)})
                             finally:
+                                web_turn_ctx.reset(token)
                                 await _q.put(None)
 
                         run_task = asyncio.create_task(_run())
@@ -269,4 +297,5 @@ def get_sse_manager(user_id: str, agent_id: str, agent) -> SSEManager:
     else:
         # Refresh the bound agent (it may have been edited/reloaded).
         mgr.agent = agent
+    mgr.user_key = str(user_id)
     return mgr

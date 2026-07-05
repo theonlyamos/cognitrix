@@ -75,6 +75,31 @@ def image_to_base64(image: Image.Image) -> str:
         _IMAGE_B64_CACHE.pop(key, None)
     return encoded
 
+
+def file_to_image_data_uri(path: str) -> str:
+    """Read an image file from disk and return a base64 `data:` URI for vision input.
+
+    Used for user-uploaded images (kept on disk, encoded at send-time) — mirrors the
+    OpenAI image_url shape the multimodal formatter emits. MIME is sniffed from the
+    actual bytes (client downscaling may re-encode to JPEG under an unchanged name),
+    falling back to the extension, then PNG.
+    """
+    mime = None
+    try:
+        with Image.open(path) as im:
+            fmt = (im.format or '').lower()
+        if fmt:
+            mime = 'image/jpeg' if fmt in ('jpg', 'jpeg') else f'image/{fmt}'
+    except Exception:
+        pass
+    if not mime:
+        import mimetypes
+        guessed, _ = mimetypes.guess_type(path)
+        mime = guessed if guessed and guessed.startswith('image/') else 'image/png'
+    with open(path, 'rb') as f:
+        encoded = base64.b64encode(f.read()).decode('utf-8')
+    return f'data:{mime};base64,{encoded}'
+
 def tool_to_functions(tool: Tool) -> dict:
     """
     Converts an instance of the Tool class to a JSON string in the OpenAI API format.

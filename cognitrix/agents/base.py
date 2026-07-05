@@ -167,7 +167,8 @@ class AgentManager:
             summaries = manager.get_skill_summaries()
             if not summaries:
                 return ''
-            lines = ["Available Skills (invoke with the 'Use Skill' tool):"]
+            lines = ["Available Skills — invoke by calling the load_skill tool with the skill name "
+                     "(e.g. load_skill(skill_name='<name>')) when a request matches one:"]
             for s in summaries:
                 hint = f" {s['argument_hint']}" if s.get('argument_hint') else ""
                 invocable = "" if s.get('user_invocable') == 'True' else " [auto-only]"

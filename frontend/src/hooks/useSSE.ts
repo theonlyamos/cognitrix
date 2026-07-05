@@ -145,7 +145,7 @@ export function useSSE(options: UseSSEOptions = {}) {
                   const event = JSON.parse(data) as SSEEvent;
                   setLastEvent(event);
 
-                  if (event.type === 'generate' || event.type === 'chat_history' || event.type === 'chat' || event.type === 'multistep_result' || event.type === 'status' || event.type === 'error') {
+                  if (event.type === 'generate' || event.type === 'chat_history' || event.type === 'chat' || event.type === 'multistep_result' || event.type === 'status' || event.type === 'error' || event.type === 'approval_request') {
                     onMessageRef.current?.(event);
                   } else if (event.type === 'tool') {
                     onToolRef.current?.(event.tool_name as string, event.status as string);

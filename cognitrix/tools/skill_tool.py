@@ -86,6 +86,7 @@ async def _execute_forked(manifest, skill_content: str, parent) -> str:
     from cognitrix.agents.base import AgentManager
     from cognitrix.models import Agent
     from cognitrix.providers.base import LLM
+    from cognitrix.tools.base import ToolManager
 
     # Get the parent's LLM
     if parent and hasattr(parent, 'llm'):
