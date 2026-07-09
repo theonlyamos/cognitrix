@@ -665,7 +665,7 @@ def mouse_right_click(x: int, y: int):
     return 'Mouse double-click completed.'
 
 @tool(category='system')
-async def create_agent(name: str, provider: str, description: str, tools: list[str], parent: Any | None = None):
+async def create_agent(name: str, provider: str, description: str, tools: list[str], model: str | None = None, temperature: float | None = None, parent: Any | None = None):
     """Use this tool to create sub agents for specific tasks.
 
     Args:
@@ -673,6 +673,8 @@ async def create_agent(name: str, provider: str, description: str, tools: list[s
         provider (str): The name of the provider to use. Select from [openai, google, anthropic, groq, together, clarifai].
         description (str): Prompt describing the agent's role and functionalities. Should include the agent's role, capabilities and any other info the agent needs to be able to complete it's task. Be as thorough as possible.
         tools (list): Tools the agent needs to complete it's tasks if any.
+        model (str, optional): Model id to use. Omit to use the provider's default model.
+        temperature (float, optional): Sampling temperature. Omit to use the provider's default temperature.
 
     Returns:
         str: A message indicating whether the the sub agent was created or not.
@@ -685,6 +687,8 @@ async def create_agent(name: str, provider: str, description: str, tools: list[s
         name=name,
         system_prompt=description,
         provider=provider,
+        model=model or '',
+        temperature=temperature,
         is_sub_agent=True if parent else False,
         parent_id=parent.id if parent else None,
         tools=tools
@@ -696,6 +700,34 @@ async def create_agent(name: str, provider: str, description: str, tools: list[s
         return {'status': 'success', 'message': f'Agent "{name}" created successfully'}
 
     return {'status': 'error', 'message': f'Error creating agent "{name}"'}
+
+
+@tool(category='system')
+async def list_agents():
+    """List the saved agents available to delegate tasks to (e.g. with call_agent).
+
+    Returns:
+        str: Each agent's name, provider/model, and a short description.
+    """
+    from cognitrix.agents import Agent  # noqa: WPS433
+
+    agents = await Agent.list_agents()  # type: ignore[attr-defined]
+    if not agents:
+        return "No agents found."
+
+    lines = [f"{len(agents)} agent(s):"]
+    for a in agents:
+        llm = getattr(a, 'llm', None)
+        provider = getattr(llm, 'provider', '') or '?'
+        model = getattr(llm, 'model', '') or '?'
+        desc = ' '.join((a.system_prompt or '').split())
+        if len(desc) > 160:
+            desc = desc[:160] + '…'
+        line = f"- {a.name} [{provider}/{model}]"
+        if desc:
+            line += f" — {desc}"
+        lines.append(line)
+    return '\n'.join(lines)
 
 # Delegation depth for call_agent: bounds agent->agent recursion (A calls B
 # calls A ...). Context-local so concurrent turns don't share a counter.

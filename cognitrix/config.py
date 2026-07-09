@@ -166,9 +166,9 @@ class CognitrixSettings:
         """Get default model for a provider"""
         model_mapping = {
             'openai': 'gpt-4o',
-            'openrouter': 'google/gemini-3.1-flash-lite-preview',
+            'openrouter': 'google/gemini-3.5-flash-preview',
             'anthropic': 'claude-4-5-sonnet',
-            'google': 'gemini-3.1-flash-lite',
+            'google': 'gemini-3.5-flash',
             'groq': 'llama-3.3-70b-versatile',
             'cohere': 'command-r-plus',
             'together': 'meta-llama/llama-3.3-70b-instruct',

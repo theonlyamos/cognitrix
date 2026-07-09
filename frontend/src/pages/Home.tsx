@@ -17,6 +17,19 @@ const SUGGESTIONS = [
   'What can you help me with?',
 ];
 
+// Tools are advertised to the model with spaces as underscores; show them back
+// readable (e.g. "web_search" → "web search").
+const humanizeTool = (name: string) => name.replace(/_/g, ' ');
+
+// Re-indent a JSON string for display; leave non-JSON (or already-pretty) as-is.
+const prettyJson = (s: string) => {
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2);
+  } catch {
+    return s;
+  }
+};
+
 const fmtTime = (t?: string | number) =>
   t ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '';
 
@@ -149,7 +162,7 @@ const downscaleImage = async (file: File): Promise<string> => {
 const dataUrlBytes = (dataUrl: string) => Math.floor(((dataUrl.split(',')[1] || '').length * 3) / 4);
 
 export default function Home() {
-  const { messages, addMessage, appendToLastMessage, setIsStreaming, toolEvents, clearMessages, setMessages } = useSession();
+  const { messages, addMessage, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, clearMessages, setMessages } = useSession();
   const [input, setInput] = useState('');
   const [waiting, setWaiting] = useState(false); // sent, before first token
   const [streaming, setStreaming] = useState(false); // actively streaming a reply
@@ -416,7 +429,7 @@ export default function Home() {
   }, [agentId, convos, convosSorted, loadConversation, resetThreadState]);
 
   const handleSSEEvent = useCallback(
-    (event: { type: string; content?: string; action?: string; session_id?: string }) => {
+    (event: { type: string; content?: string; action?: string; session_id?: string; tool_name?: string; status?: string; tool_call_id?: string; params?: string; result?: string }) => {
       const sid = event.session_id;
       // Drop only events that CARRY a mismatched id — untagged events (status,
       // transport errors) always belong to the active turn since switching is
@@ -466,6 +479,16 @@ export default function Home() {
           setStreaming(false);
           setPlanning(null);
           break;
+        case 'tool':
+          // The agent invoked a tool — show it running with its params, then flip
+          // to done/error and attach the result.
+          if (event.tool_name) {
+            if (event.status === 'started')
+              addToolCall(event.tool_name, { id: event.tool_call_id, params: event.params });
+            else
+              resolveToolCall(event.tool_name, event.status === 'error' ? 'error' : 'done', { id: event.tool_call_id, result: event.result });
+          }
+          break;
         case 'approval_request': {
           const req = event as unknown as ApprovalRequest;
           if (req.request_id) {
@@ -479,7 +502,7 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, addMessage, agentId, refetchConvos],
+    [appendToLastMessage, addMessage, addToolCall, resolveToolCall, agentId, refetchConvos],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
@@ -674,6 +697,58 @@ export default function Home() {
               {messages.map((m, i) => {
                 const isUser = m.role === 'user';
                 const isLast = i === messages.length - 1;
+                // Tool-activity row: the agent's tool calls as status chips.
+                if (m.role === 'tool') {
+                  if (!m.tools?.length) return null;
+                  return (
+                    <div key={m.id} className="grid grid-cols-[68px_1fr] gap-4 border-b border-line px-6 py-3">
+                      <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">TOOL</div>
+                      <div className="flex flex-col items-start gap-1.5">
+                        {m.tools.map((t, ti) => (
+                          // Collapsible: summary is the status chip; expands to the
+                          // call's params and result. Native <details> = free
+                          // keyboard/toggle handling, open state kept across the
+                          // running→done re-render.
+                          <details key={t.id || ti} className="group w-full max-w-2xl">
+                            <summary className="inline-flex list-none cursor-pointer select-none items-center gap-1.5 rounded border border-line bg-panel-2 px-2 py-1 font-mono text-[11px] transition-colors hover:border-fg-dim [&::-webkit-details-marker]:hidden">
+                              {t.status === 'running' ? (
+                                <span className="think-bars"><i /><i /><i /></span>
+                              ) : t.status === 'error' ? (
+                                <span className="text-danger-ink" aria-hidden>✗</span>
+                              ) : (
+                                <span className="text-accent-ink" aria-hidden>✓</span>
+                              )}
+                              <span className={cn(t.status === 'running' ? 'text-accent-ink' : 'text-fg')}>
+                                {humanizeTool(t.name)}
+                              </span>
+                              {t.status === 'running' && <span className="text-fg-dim">running…</span>}
+                              <svg className="ml-0.5 text-fg-dim transition-transform group-open:rotate-90" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+                            </summary>
+                            <div className="mt-1.5 space-y-2 rounded border border-line bg-panel-2 p-2 font-mono text-[11px]">
+                              {t.params && t.params !== '{}' && (
+                                <div>
+                                  <div className="mb-1 text-[10px] uppercase tracking-wider text-fg-dim">params</div>
+                                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-fg-dim">{prettyJson(t.params)}</pre>
+                                </div>
+                              )}
+                              <div>
+                                <div className="mb-1 text-[10px] uppercase tracking-wider text-fg-dim">result</div>
+                                {t.status === 'running' ? (
+                                  <span className="text-fg-dim">running…</span>
+                                ) : (
+                                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-fg-dim">{t.result || '(no output)'}</pre>
+                                )}
+                              </div>
+                            </div>
+                          </details>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                // Drop empty assistant placeholders left between tool rounds
+                // (an empty streaming chunk creates no text but can leave a shell).
+                if (m.role === 'assistant' && !m.content.trim() && !(isLast && streaming)) return null;
                 return (
                   <div key={m.id} className="grid grid-cols-[68px_1fr] gap-4 border-b border-line px-6 py-4">
                     <div className={cn('pt-0.5 font-mono text-[11px] tracking-[0.06em]', isUser ? 'text-accent-ink' : 'text-fg-dim')}>
@@ -889,12 +964,6 @@ export default function Home() {
               >
                 <span>[{bypass ? '✓' : 'x'}]</span> auto-approve
               </button>
-              {toolEvents.length > 0 && (
-                <span className="flex items-center gap-1.5 text-accent-ink">
-                  <span className="think-bars"><i /><i /><i /></span>
-                  {toolEvents[toolEvents.length - 1].toolName}
-                </span>
-              )}
               <span className="ml-auto"><kbd className="rounded border border-line px-1">⏎</kbd> send</span>
               <span><kbd className="rounded border border-line px-1">⇧⏎</kbd> newline</span>
             </div>

@@ -14,7 +14,6 @@ export interface SSEEvent {
 
 interface UseSSEOptions {
   onMessage?: (event: SSEEvent) => void;
-  onTool?: (toolName: string, status: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
   onError?: (error: Error) => void;
@@ -31,7 +30,6 @@ interface UseSSEOptions {
 export function useSSE(options: UseSSEOptions = {}) {
   const {
     onMessage,
-    onTool,
     onConnect,
     onDisconnect,
     onError,
@@ -47,14 +45,12 @@ export function useSSE(options: UseSSEOptions = {}) {
 
   // Use refs to store callbacks to prevent re-render triggering reconnect
   const onMessageRef = useRef(onMessage);
-  const onToolRef = useRef(onTool);
   const onConnectRef = useRef(onConnect);
   const onDisconnectRef = useRef(onDisconnect);
   const onErrorRef = useRef(onError);
 
   // Update refs when callbacks change
   onMessageRef.current = onMessage;
-  onToolRef.current = onTool;
   onConnectRef.current = onConnect;
   onDisconnectRef.current = onDisconnect;
   onErrorRef.current = onError;
@@ -145,10 +141,8 @@ export function useSSE(options: UseSSEOptions = {}) {
                   const event = JSON.parse(data) as SSEEvent;
                   setLastEvent(event);
 
-                  if (event.type === 'generate' || event.type === 'chat_history' || event.type === 'chat' || event.type === 'multistep_result' || event.type === 'status' || event.type === 'error' || event.type === 'approval_request') {
+                  if (event.type === 'generate' || event.type === 'chat_history' || event.type === 'chat' || event.type === 'multistep_result' || event.type === 'status' || event.type === 'error' || event.type === 'approval_request' || event.type === 'tool') {
                     onMessageRef.current?.(event);
-                  } else if (event.type === 'tool') {
-                    onToolRef.current?.(event.tool_name as string, event.status as string);
                   }
                 } catch (err) {
                   console.error('Failed to parse SSE event:', err);

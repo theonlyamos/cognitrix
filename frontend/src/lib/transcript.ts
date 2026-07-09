@@ -18,7 +18,7 @@ export interface BackendChatEntry {
 export type TranscriptEntry =
   | { kind: 'user'; content: string }
   | { kind: 'assistant'; content: string; name?: string }
-  | { kind: 'tool_calls'; content: string; name?: string; tools: { name: string; args: string }[] }
+  | { kind: 'tool_calls'; content: string; name?: string; tools: { name: string; args: string; result?: string }[] }
   | { kind: 'tool_result'; content: string }
   | { kind: 'timing'; label: string; tokens?: string }
   | { kind: 'summary'; content: string }
@@ -40,6 +40,14 @@ const safeArgs = (v: unknown): string => {
  *  shapes fall back to `system` so future entry types degrade gracefully. */
 export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): TranscriptEntry[] {
   const out: TranscriptEntry[] = [];
+  // Tool results are separate `role: 'tool'` messages; index them by
+  // tool_call_id so each tool call can carry its own result for display.
+  const resultsById: Record<string, string> = {};
+  for (const m of chat || []) {
+    if (String(m.role || '').toLowerCase() === 'tool' && m.tool_call_id) {
+      resultsById[m.tool_call_id] = asText(m.content);
+    }
+  }
   for (const m of chat || []) {
     const role = String(m.role || '').toLowerCase();
     const type = m.type || '';
@@ -54,7 +62,11 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
         kind: 'tool_calls',
         content,
         name: m.name || undefined,
-        tools: (m.tool_calls || []).map((t) => ({ name: t.name || 'tool', args: safeArgs(t.arguments) })),
+        tools: (m.tool_calls || []).map((t) => ({
+          name: t.name || 'tool',
+          args: safeArgs(t.arguments),
+          result: t.tool_call_id ? resultsById[t.tool_call_id] : undefined,
+        })),
       });
     } else if (role === 'assistant') {
       if (content.trim()) out.push({ kind: 'assistant', content, name: m.name || undefined });
@@ -80,8 +92,18 @@ export function toChatMessages(entries: TranscriptEntry[]): ChatMessage[] {
   for (const e of entries) {
     if (e.kind === 'user') out.push({ id: `hist-${out.length}`, role: 'user', content: e.content });
     else if (e.kind === 'assistant') out.push({ id: `hist-${out.length}`, role: 'assistant', content: e.content });
-    else if (e.kind === 'tool_calls' && e.content.trim())
-      out.push({ id: `hist-${out.length}`, role: 'assistant', content: e.content });
+    else if (e.kind === 'tool_calls') {
+      // The assistant's preamble (if any) first, then the tools it invoked as a
+      // chip row — matches how the live stream renders a tool round.
+      if (e.content.trim()) out.push({ id: `hist-${out.length}`, role: 'assistant', content: e.content });
+      if (e.tools.length)
+        out.push({
+          id: `hist-${out.length}`,
+          role: 'tool',
+          content: '',
+          tools: e.tools.map((t) => ({ name: t.name, status: 'done' as const, params: t.args, result: t.result })),
+        });
+    }
   }
   return out;
 }

@@ -1,26 +1,37 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp?: string;
+export type ToolStatus = 'running' | 'done' | 'error';
+
+export interface ToolUse {
+  /** tool_call_id — pairs the started chip with its completion. */
+  id?: string;
+  name: string;
+  status: ToolStatus;
+  /** Tool-call arguments (pretty JSON string), shown when the chip expands. */
+  params?: string;
+  /** Tool output preview (may be truncated), shown when the chip expands. */
+  result?: string;
 }
 
-export interface ToolEvent {
+export interface ChatMessage {
   id: string;
-  toolName: string;
-  status: 'started' | 'completed' | 'error';
-  timestamp: string;
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  timestamp?: string;
+  /** Tool chips for a `role: 'tool'` row (the agent's tool activity). */
+  tools?: ToolUse[];
 }
 
 interface SessionContextType {
   messages: ChatMessage[];
   currentAgentId: string | null;
   isStreaming: boolean;
-  toolEvents: ToolEvent[];
   addMessage: (role: ChatMessage['role'], content: string) => void;
   appendToLastMessage: (content: string) => void;
+  /** A tool started: append a running chip to the current tool row, or open one. */
+  addToolCall: (name: string, opts?: { id?: string; params?: string }) => void;
+  /** A tool finished: flip its most-recent running chip to done/error + result. */
+  resolveToolCall: (name: string, status: 'done' | 'error', opts?: { id?: string; result?: string }) => void;
   clearMessages: () => void;
   setMessages: (messages: ChatMessage[]) => void;
   setAgentId: (agentId: string | null) => void;
@@ -36,7 +47,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [messages, setMessagesState] = useState<ChatMessage[]>([]);
   const [currentAgentId, setCurrentAgentId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
 
   const addMessage = useCallback((role: ChatMessage['role'], content: string) => {
     const newMessage: ChatMessage = {
@@ -71,9 +81,51 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // A tool started: append a running chip. Merge into the last row if it's
+  // already a tool row (consecutive tool rounds with no text between), else
+  // open a new row — a text reply in between naturally splits the rows.
+  const addToolCall = useCallback((name: string, opts?: { id?: string; params?: string }) => {
+    setMessagesState(prev => {
+      const chip: ToolUse = { id: opts?.id, name, status: 'running', params: opts?.params };
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'tool') {
+        return [...prev.slice(0, -1), { ...last, tools: [...(last.tools || []), chip] }];
+      }
+      return [...prev, {
+        id: `tool-${Date.now()}-${prev.length}`,
+        role: 'tool',
+        content: '',
+        tools: [chip],
+        timestamp: new Date().toISOString(),
+      }];
+    });
+  }, []);
+
+  // A tool finished: flip the matching running chip to done/error and attach its
+  // result. Pair by tool_call_id when present, else by name (most recent running).
+  const resolveToolCall = useCallback((name: string, status: 'done' | 'error', opts?: { id?: string; result?: string }) => {
+    setMessagesState(prev => {
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const m = prev[i];
+        if (m.role !== 'tool' || !m.tools) continue;
+        let hit = -1;
+        for (let j = m.tools.length - 1; j >= 0; j--) {
+          const t = m.tools[j];
+          if (t.status !== 'running') continue;
+          if (opts?.id ? t.id === opts.id : t.name === name) { hit = j; break; }
+        }
+        if (hit === -1) continue;
+        const tools = m.tools.map((t, j) => (j === hit ? { ...t, status, result: opts?.result } : t));
+        const copy = [...prev];
+        copy[i] = { ...m, tools };
+        return copy;
+      }
+      return prev;
+    });
+  }, []);
+
   const clearMessages = useCallback(() => {
     setMessagesState([]);
-    setToolEvents([]);
   }, []);
 
   const setAgentId = useCallback((agentId: string | null) => {
@@ -85,9 +137,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       messages,
       currentAgentId,
       isStreaming,
-      toolEvents,
       addMessage,
       appendToLastMessage,
+      addToolCall,
+      resolveToolCall,
       clearMessages,
       setMessages: setMessagesState,
       setAgentId,

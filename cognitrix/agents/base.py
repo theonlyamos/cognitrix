@@ -400,7 +400,7 @@ class AgentManager:
 
     @staticmethod
     async def create_agent(name: str, system_prompt: str, provider: str | dict[str, Any] = 'groq',
-                           model: str | None = '', temperature: float = 0.0,  tools: list[str] = None,
+                           model: str | None = '', temperature: float | None = 0.0,  tools: list[str] = None,
                            mcp_servers: list[str] = None,
                            is_sub_agent: bool = False, parent_id=None,
                            ephemeral: bool = False) -> Agent | None:
@@ -412,9 +412,11 @@ class AgentManager:
         if not llm:
             return None
 
+        # Empty model / None temperature = keep the provider's default (from load_llm).
         if model:
             llm.model = model
-        llm.temperature = temperature
+        if temperature is not None:
+            llm.temperature = temperature
 
         loaded_tools: list[Tool] = []
         if tools:
