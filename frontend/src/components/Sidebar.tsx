@@ -70,8 +70,8 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
       aria-label="Primary navigation"
       data-mobile-open={mobileOpen}
       className={cn(
-        'fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(88vw,280px)] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 md:static md:z-auto md:h-screen md:translate-x-0 md:transition-[width]',
-        mobileOpen ? 'translate-x-0' : '-translate-x-full',
+        'fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(88vw,280px)] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 md:visible md:static md:z-auto md:h-screen md:translate-x-0 md:transition-[width]',
+        mobileOpen ? 'visible translate-x-0' : 'invisible -translate-x-full',
         collapsed ? 'md:w-[58px]' : 'md:w-[232px]',
       )}
     >
@@ -102,7 +102,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
               onClick={onNavigate}
               title={collapsed ? item.label : undefined}
               className={cn(
-                'group relative flex items-center gap-3 rounded px-2.5 py-2 text-[14px] font-medium transition-colors',
+                'group relative flex min-h-11 items-center gap-3 rounded px-2.5 py-2 text-[14px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg md:min-h-0',
                 collapsed && 'md:justify-center md:gap-0 md:px-0',
                 active ? 'bg-panel-2 text-fg' : 'text-fg-dim hover:bg-panel-2 hover:text-fg',
               )}
@@ -114,22 +114,6 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
           );
         })}
       </nav>
-
-      {/* Command palette hint (wired in Phase 3) */}
-      <button
-        type="button"
-        title={collapsed ? 'Search & run (⌘K)' : undefined}
-        className={cn(
-          'mx-2.5 flex items-center gap-2 rounded border border-line px-2.5 py-2 text-[12.5px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg',
-          collapsed && 'md:justify-center md:gap-0 md:px-0',
-        )}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></svg>
-        <span className={cn('flex min-w-0 flex-1 items-center', collapsed && 'md:hidden')}>
-            Search &amp; run
-            <kbd className="ml-auto rounded border border-line px-1.5 py-px font-mono text-[10px] text-fg-dim">⌘K</kbd>
-        </span>
-      </button>
 
       {/* Footer */}
       <div className="mt-auto border-t border-line p-2.5">
@@ -150,7 +134,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
             onClick={logout}
             title={collapsed ? 'Sign out' : undefined}
             className={cn(
-              'flex h-9 flex-1 items-center justify-center gap-2 rounded border border-line font-mono text-[11px] tracking-[0.04em] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink',
+              'flex h-11 flex-1 items-center justify-center gap-2 rounded border border-line font-mono text-[11px] tracking-[0.04em] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg md:h-9',
               collapsed && 'md:w-9 md:flex-none',
             )}
           >
@@ -164,7 +148,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
           onClick={toggle}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className={cn(
-            'mt-1.5 hidden h-8 w-full items-center justify-center gap-2 rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:flex',
+            'mt-1.5 hidden h-8 w-full items-center justify-center gap-2 rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg md:flex',
             !collapsed && 'font-mono text-[10.5px] tracking-[0.08em]',
           )}
         >

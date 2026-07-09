@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -66,6 +66,66 @@ describe('AppLayout', () => {
       'aria-expanded',
       'false',
     );
+  });
+
+  it('keeps the closed mobile drawer non-interactive with a desktop visibility override', async () => {
+    renderShell();
+    const navigation = screen.getByRole('complementary', { name: 'Primary navigation' });
+
+    expect(navigation).toHaveClass('invisible', '-translate-x-full', 'md:visible');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+
+    expect(navigation).toHaveClass('visible', 'translate-x-0', 'md:visible');
+    expect(navigation).not.toHaveClass('invisible');
+  });
+
+  it('does not expose an inactive search control', () => {
+    renderShell();
+
+    expect(screen.queryByRole('button', { name: /Search & run/i })).not.toBeInTheDocument();
+  });
+
+  it('uses 44px mobile touch targets with compact desktop overrides', () => {
+    renderShell();
+    const navigation = screen.getByRole('complementary', { name: 'Primary navigation' });
+
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveClass('h-11', 'w-11');
+    for (const link of within(navigation).getAllByRole('link')) {
+      expect(link).toHaveClass('min-h-11', 'md:min-h-0');
+    }
+    expect(within(navigation).getByRole('button', { name: /Switch to .* mode/i })).toHaveClass(
+      'h-11',
+      'w-11',
+      'md:h-9',
+      'md:w-9',
+    );
+    expect(within(navigation).getByRole('button', { name: 'SIGN OUT' })).toHaveClass(
+      'h-11',
+      'md:h-9',
+    );
+  });
+
+  it('uses an opaque focus-visible outline on shell controls', async () => {
+    renderShell();
+    const navigation = screen.getByRole('complementary', { name: 'Primary navigation' });
+    const focusClasses = [
+      'focus-visible:outline',
+      'focus-visible:outline-2',
+      'focus-visible:outline-fg',
+    ];
+
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveClass(...focusClasses);
+    for (const control of [
+      ...within(navigation).getAllByRole('link'),
+      ...within(navigation).getAllByRole('button'),
+    ]) {
+      expect(control).toHaveClass(...focusClasses);
+    }
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+
+    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveClass(...focusClasses);
   });
 
   it('renders authenticated content in a named main landmark', () => {
