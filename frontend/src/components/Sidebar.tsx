@@ -44,7 +44,12 @@ const NAV = [
   },
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+  mobileOpen?: boolean;
+  onNavigate?: () => void;
+}
+
+export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps) {
   const location = useLocation();
   const { user, logout } = useUser();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
@@ -61,42 +66,50 @@ export default function Sidebar() {
 
   return (
     <aside
+      id="primary-navigation"
+      aria-label="Primary navigation"
+      data-mobile-open={mobileOpen}
       className={cn(
-        'flex h-screen flex-none flex-col border-r border-line bg-panel transition-[width] duration-200',
-        collapsed ? 'w-[58px]' : 'w-[232px]',
+        'fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(88vw,280px)] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 md:static md:z-auto md:h-screen md:translate-x-0 md:transition-[width]',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full',
+        collapsed ? 'md:w-[58px]' : 'md:w-[232px]',
       )}
     >
       {/* Brand */}
-      <div className={cn('flex items-center border-b border-line py-4', collapsed ? 'justify-center px-0' : 'gap-2.5 px-4')}>
+      <div
+        className={cn(
+          'flex items-center gap-2.5 border-b border-line px-4 py-4',
+          collapsed && 'md:justify-center md:gap-0 md:px-0',
+        )}
+      >
         <span className="grid h-6 w-6 flex-none place-items-center rounded-sm bg-accent text-accent-foreground">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
         </span>
-        {!collapsed && (
-          <span className="font-mono text-[12px] font-bold tracking-[0.13em]">
-            COGNITRIX<span className="font-medium text-fg-dim"> /v{__APP_VERSION__}</span>
-          </span>
-        )}
+        <span className={cn('font-mono text-[12px] font-bold tracking-[0.13em]', collapsed && 'md:hidden')}>
+          COGNITRIX<span className="font-medium text-fg-dim"> /v{__APP_VERSION__}</span>
+        </span>
       </div>
 
       {/* Nav */}
-      <nav className={cn('flex flex-col gap-0.5 py-3', collapsed ? 'px-2' : 'px-2.5')}>
-        {!collapsed && <div className="px-2 pb-1.5 pt-2 font-mono text-[10px] tracking-[0.16em] text-fg-dim">WORKSPACE</div>}
+      <nav className={cn('flex flex-col gap-0.5 px-2.5 py-3', collapsed && 'md:px-2')}>
+        <div className={cn('px-2 pb-1.5 pt-2 font-mono text-[10px] tracking-[0.16em] text-fg-dim', collapsed && 'md:hidden')}>WORKSPACE</div>
         {NAV.map((item) => {
           const active = isActive(item.path);
           return (
             <Link
               key={item.path}
               to={item.path}
+              onClick={onNavigate}
               title={collapsed ? item.label : undefined}
               className={cn(
-                'group relative flex items-center rounded py-2 text-[14px] font-medium transition-colors',
-                collapsed ? 'justify-center px-0' : 'gap-3 px-2.5',
+                'group relative flex items-center gap-3 rounded px-2.5 py-2 text-[14px] font-medium transition-colors',
+                collapsed && 'md:justify-center md:gap-0 md:px-0',
                 active ? 'bg-panel-2 text-fg' : 'text-fg-dim hover:bg-panel-2 hover:text-fg',
               )}
             >
-              {active && <span className={cn('absolute top-1.5 bottom-1.5 w-[3px] rounded-r bg-accent', collapsed ? 'left-0' : '-left-2.5')} />}
+              {active && <span className={cn('absolute -left-2.5 bottom-1.5 top-1.5 w-[3px] rounded-r bg-accent', collapsed && 'md:left-0')} />}
               <item.icon className="h-[17px] w-[17px] flex-none" />
-              {!collapsed && item.label}
+              <span className={cn(collapsed && 'md:hidden')}>{item.label}</span>
             </Link>
           );
         })}
@@ -107,46 +120,42 @@ export default function Sidebar() {
         type="button"
         title={collapsed ? 'Search & run (⌘K)' : undefined}
         className={cn(
-          'mx-2.5 flex items-center rounded border border-line py-2 text-[12.5px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg',
-          collapsed ? 'justify-center px-0' : 'gap-2 px-2.5',
+          'mx-2.5 flex items-center gap-2 rounded border border-line px-2.5 py-2 text-[12.5px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg',
+          collapsed && 'md:justify-center md:gap-0 md:px-0',
         )}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></svg>
-        {!collapsed && (
-          <>
+        <span className={cn('flex min-w-0 flex-1 items-center', collapsed && 'md:hidden')}>
             Search &amp; run
             <kbd className="ml-auto rounded border border-line px-1.5 py-px font-mono text-[10px] text-fg-dim">⌘K</kbd>
-          </>
-        )}
+        </span>
       </button>
 
       {/* Footer */}
       <div className="mt-auto border-t border-line p-2.5">
-        {!collapsed && (
-          <div className="mb-1.5 flex items-center gap-2.5 rounded px-2 py-1.5">
-            <span className="grid h-7 w-7 flex-none place-items-center rounded-sm border border-line bg-panel-2 text-[12px] font-bold text-accent-ink">
-              {(user?.name?.[0] || 'U').toUpperCase()}
-            </span>
-            <div className="min-w-0 leading-tight">
-              <div className="truncate text-[13px] font-semibold">{user?.name || 'User'}</div>
-              <div className="truncate font-mono text-[10.5px] text-fg-dim">{user?.email}</div>
-            </div>
+        <div className={cn('mb-1.5 flex items-center gap-2.5 rounded px-2 py-1.5', collapsed && 'md:hidden')}>
+          <span className="grid h-7 w-7 flex-none place-items-center rounded-sm border border-line bg-panel-2 text-[12px] font-bold text-accent-ink">
+            {(user?.name?.[0] || 'U').toUpperCase()}
+          </span>
+          <div className="min-w-0 leading-tight">
+            <div className="truncate text-[13px] font-semibold">{user?.name || 'User'}</div>
+            <div className="truncate font-mono text-[10.5px] text-fg-dim">{user?.email}</div>
           </div>
-        )}
+        </div>
 
-        <div className={cn('flex items-center gap-1.5', collapsed && 'flex-col')}>
+        <div className={cn('flex items-center gap-1.5', collapsed && 'md:flex-col')}>
           <ThemeToggle className="flex-none" />
           <button
             type="button"
             onClick={logout}
             title={collapsed ? 'Sign out' : undefined}
             className={cn(
-              'flex h-9 items-center justify-center gap-2 rounded border border-line font-mono text-[11px] tracking-[0.04em] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink',
-              collapsed ? 'w-9 flex-none' : 'flex-1',
+              'flex h-9 flex-1 items-center justify-center gap-2 rounded border border-line font-mono text-[11px] tracking-[0.04em] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink',
+              collapsed && 'md:w-9 md:flex-none',
             )}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
-            {!collapsed && 'SIGN OUT'}
+            <span className={cn(collapsed && 'md:hidden')}>SIGN OUT</span>
           </button>
         </div>
 
@@ -155,7 +164,7 @@ export default function Sidebar() {
           onClick={toggle}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className={cn(
-            'mt-1.5 flex h-8 w-full items-center justify-center gap-2 rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg',
+            'mt-1.5 hidden h-8 w-full items-center justify-center gap-2 rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:flex',
             !collapsed && 'font-mono text-[10.5px] tracking-[0.08em]',
           )}
         >
