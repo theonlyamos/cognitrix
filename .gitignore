@@ -163,3 +163,6 @@ chroma_db/
 
 # Claude Code local config
 .claude/
+
+# Superpowers task briefs and progress ledger
+.superpowers/
