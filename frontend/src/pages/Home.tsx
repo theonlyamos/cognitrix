@@ -10,6 +10,7 @@ import { useResource } from '@/hooks/useResource';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
+import { Button } from '@/lib/components/ui/button';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
@@ -167,6 +168,7 @@ export default function Home() {
   const [waiting, setWaiting] = useState(false); // sent, before first token
   const [streaming, setStreaming] = useState(false); // actively streaming a reply
   const [planning, setPlanning] = useState<string | null>(null); // transient status (e.g. multi-step)
+  const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -287,6 +289,15 @@ export default function Home() {
   waitingRef.current = waiting;
 
   const busy = waiting || streaming;
+
+  useEffect(() => {
+    if (!mobileConversationsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileConversationsOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [mobileConversationsOpen]);
 
   // Default to the first agent once the list loads (or if the saved one is gone).
   useEffect(() => {
@@ -556,11 +567,13 @@ export default function Home() {
 
   const switchConversation = (id: string) => {
     if (busy || id === activeSessionId) return;
+    setMobileConversationsOpen(false);
     void loadConversation(id);
   };
 
   const newConversation = () => {
     if (busy) return;
+    setMobileConversationsOpen(false);
     adoptSession(null);
     resetThreadState();
     setInput('');
@@ -580,6 +593,7 @@ export default function Home() {
 
   const switchAgent = (id: string) => {
     if (id === agentId) return;
+    setMobileConversationsOpen(false);
     setAgentId(id);
     localStorage.setItem('selectedAgentId', id);
     setActiveSessionId(null);
@@ -589,69 +603,103 @@ export default function Home() {
 
   const empty = messages.length === 0;
 
+  const conversationPanel = (
+    <>
+      <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
+        <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">CONVERSATIONS</span>
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="sm" onClick={newConversation} disabled={busy}>
+            + new
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileConversationsOpen(false)}
+            aria-label="Close conversations"
+            className="md:hidden"
+          >
+            <span aria-hidden>×</span>
+          </Button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {convosSorted.length === 0 ? (
+          <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no conversations yet</p>
+        ) : (
+          convosSorted.map((c) => (
+            <div
+              key={c.id}
+              onClick={() => switchConversation(c.id)}
+              className={cn(
+                'group flex min-h-11 cursor-pointer items-center gap-2 border-b border-line px-4 py-2.5 transition-colors',
+                c.id === activeSessionId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
+                busy && 'pointer-events-none opacity-60',
+              )}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13px]">{c.title}</div>
+                <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">{fmtRelative(c.updated_at)}</div>
+              </div>
+              <button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void deleteConversation(c.id);
+                }}
+                aria-label="Delete conversation"
+                className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8"
+              >
+                ✕
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+
   return (
     <div className="flex-1 flex h-screen min-w-0 bg-bg text-fg">
+      {mobileConversationsOpen && agentId && (
+        <>
+          <button
+            type="button"
+            aria-label="Dismiss conversations"
+            className="fixed inset-0 z-40 bg-bg/70 md:hidden"
+            onClick={() => setMobileConversationsOpen(false)}
+          />
+          <aside
+            id="mobile-conversations"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Conversations"
+            className="fixed inset-y-0 right-0 z-50 flex w-[min(88vw,320px)] flex-col border-l border-line bg-panel shadow-xl md:hidden"
+          >
+            {conversationPanel}
+          </aside>
+        </>
+      )}
+
       {/* Conversations panel */}
       {agentId && (
         <aside className="hidden md:flex w-60 flex-none flex-col border-r border-line bg-panel">
-          <div className="flex h-14 flex-none items-center justify-between border-b border-line px-4">
-            <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">CONVERSATIONS</span>
-            <button
-              onClick={newConversation}
-              disabled={busy}
-              className="rounded border border-line px-2 py-1 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg disabled:pointer-events-none disabled:opacity-40"
-            >
-              + new
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {convosSorted.length === 0 ? (
-              <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no conversations yet</p>
-            ) : (
-              convosSorted.map((c) => (
-                <div
-                  key={c.id}
-                  onClick={() => switchConversation(c.id)}
-                  className={cn(
-                    'group flex cursor-pointer items-center gap-2 border-b border-line px-4 py-2.5 transition-colors',
-                    c.id === activeSessionId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
-                    busy && 'pointer-events-none opacity-60',
-                  )}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px]">{c.title}</div>
-                    <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">{fmtRelative(c.updated_at)}</div>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void deleteConversation(c.id);
-                    }}
-                    aria-label="Delete conversation"
-                    className="hidden h-6 w-6 flex-none place-items-center rounded border border-line text-fg-dim group-hover:grid hover:border-danger hover:text-danger-ink"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
+          {conversationPanel}
         </aside>
       )}
 
       {/* Chat column */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top bar */}
-        <header className="flex h-14 flex-none items-center gap-4 border-b border-line px-6">
-          <h1 className="text-[15px] font-semibold">Chat</h1>
-          {agents.length > 0 && (
-            <div className="relative">
+        <header className="app-page-header flex min-h-14 flex-none flex-col items-stretch gap-2 border-b border-line py-2 pl-16 pr-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4 md:px-6">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <h1 className="text-[15px] font-semibold">Chat</h1>
+            {agents.length > 0 && (
+              <div className="relative min-w-0">
               <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-[10px] text-fg-dim">/</span>
               <select
                 value={agentId || agents[0]?.id || ''}
                 onChange={(e) => switchAgent(e.target.value)}
                 aria-label="Active agent"
-                className="h-8 appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent focus:outline-none"
+                className="h-11 max-w-full appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent focus:outline-none md:h-8"
               >
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>{a.name}</option>
@@ -659,8 +707,21 @@ export default function Home() {
               </select>
               <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
             </div>
-          )}
-          <div className="ml-auto flex items-center gap-3">
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto sm:gap-3">
+            {agentId && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="md:hidden"
+                aria-controls="mobile-conversations"
+                aria-expanded={mobileConversationsOpen}
+                onClick={() => setMobileConversationsOpen(true)}
+              >
+                Conversations
+              </Button>
+            )}
             <span className="flex items-center gap-2 font-mono text-[11px] text-fg-dim">
               <span className={cn('h-1.5 w-1.5 rounded-full', isConnected ? 'bg-accent' : 'bg-danger')} />
               {isConnected ? 'connected' : (
@@ -701,7 +762,7 @@ export default function Home() {
                 if (m.role === 'tool') {
                   if (!m.tools?.length) return null;
                   return (
-                    <div key={m.id} className="grid grid-cols-[68px_1fr] gap-4 border-b border-line px-6 py-3">
+                    <div key={m.id} className="grid grid-cols-1 gap-2 border-b border-line px-4 py-3 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
                       <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">TOOL</div>
                       <div className="flex flex-col items-start gap-1.5">
                         {m.tools.map((t, ti) => (
@@ -750,7 +811,7 @@ export default function Home() {
                 // (an empty streaming chunk creates no text but can leave a shell).
                 if (m.role === 'assistant' && !m.content.trim() && !(isLast && streaming)) return null;
                 return (
-                  <div key={m.id} className="grid grid-cols-[68px_1fr] gap-4 border-b border-line px-6 py-4">
+                  <div key={m.id} className="grid grid-cols-1 gap-2 border-b border-line px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
                     <div className={cn('pt-0.5 font-mono text-[11px] tracking-[0.06em]', isUser ? 'text-accent-ink' : 'text-fg-dim')}>
                       {isUser ? 'YOU' : 'AGENT'}
                     </div>
@@ -780,7 +841,7 @@ export default function Home() {
               })}
 
               {waiting && (
-                <div className="grid grid-cols-[68px_1fr] gap-4 px-6 py-4">
+                <div className="grid grid-cols-1 gap-2 px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
                   <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">AGENT</div>
                   <div className="flex items-center gap-2.5 font-mono text-[12px] text-fg-dim">
                     <span className="think-bars"><i /><i /><i /><i /></span>

@@ -11,12 +11,12 @@ export function Spinner({ className = 'h-5 w-5' }: { className?: string }) {
 
 export function PageHeader({ title, subtitle, children }: { title: string; subtitle: string; children?: ReactNode }) {
   return (
-    <header className="flex flex-none items-center justify-between gap-4 border-b border-line px-6 py-4">
-      <div>
+    <header className="app-page-header flex flex-none flex-col items-stretch gap-4 border-b border-line py-4 pl-16 pr-4 sm:flex-row sm:items-center md:px-6">
+      <div className="min-w-0">
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
         <p className="mt-0.5 font-mono text-[11px] tracking-[0.02em] text-fg-dim">{subtitle}</p>
       </div>
-      {children}
+      {children && <div className="flex flex-wrap items-center gap-2 sm:ml-auto">{children}</div>}
     </header>
   );
 }

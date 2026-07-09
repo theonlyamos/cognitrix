@@ -115,8 +115,18 @@ export default function TaskDetail() {
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [togglingSchedule, setTogglingSchedule] = useState(false);
+  const [mobileRunsOpen, setMobileRunsOpen] = useState(false);
   const [error, setError] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!mobileRunsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileRunsOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [mobileRunsOpen]);
 
   const selectedRun = useMemo(
     () => (runs || []).find((r) => r.id === selectedRunId) || null,
@@ -303,15 +313,42 @@ export default function TaskDetail() {
 
   return (
     <div className="flex-1 flex h-screen min-w-0 bg-bg text-fg">
+      {mobileRunsOpen && (
+        <button
+          type="button"
+          aria-label="Dismiss runs"
+          className="fixed inset-0 z-40 bg-bg/70 md:hidden"
+          onClick={() => setMobileRunsOpen(false)}
+        />
+      )}
+
       {/* Runs sidebar */}
-      <aside className="hidden md:flex w-60 flex-none flex-col border-r border-line bg-panel">
-        <div className="flex h-14 flex-none items-center justify-between border-b border-line px-4">
+      <aside
+        id="mobile-runs"
+        aria-label="Runs"
+        className={cn(
+          'hidden w-60 flex-none flex-col border-r border-line bg-panel md:flex',
+          mobileRunsOpen && 'fixed inset-y-0 right-0 z-50 flex w-[min(88vw,320px)] border-l border-r-0 shadow-xl md:static md:z-auto md:w-60 md:border-l-0 md:border-r md:shadow-none',
+        )}
+      >
+        <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
           <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">RUNS · {(runs || []).length}</span>
-          {runsError && (
-            <button onClick={() => void refetchRuns()} className="font-mono text-[10.5px] text-danger-ink underline underline-offset-2">
-              ↻ retry
-            </button>
-          )}
+          <div className="flex items-center gap-1">
+            {runsError && (
+              <Button variant="ghost" size="sm" onClick={() => void refetchRuns()} className="text-danger-ink">
+                ↻ retry
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setMobileRunsOpen(false)}
+              aria-label="Close runs"
+              className="md:hidden"
+            >
+              <span aria-hidden>×</span>
+            </Button>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           {runsLoading && !runs ? (
@@ -326,9 +363,10 @@ export default function TaskDetail() {
                   onClick={() => {
                     manualPickRef.current = false;
                     setSelectedRunId(r.id);
+                    setMobileRunsOpen(false);
                   }}
                   className={cn(
-                    'cursor-pointer border-b border-line px-4 py-2.5 transition-colors',
+                    'min-h-11 cursor-pointer border-b border-line px-4 py-2.5 transition-colors',
                     r.id === selectedRunId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
                   )}
                 >
@@ -360,9 +398,10 @@ export default function TaskDetail() {
                         manualPickRef.current = true;
                         setSelectedRunId(null);
                         setSelected({ legacy: s.id });
+                        setMobileRunsOpen(false);
                       }}
                       className={cn(
-                        'cursor-pointer border-b border-line px-4 py-2 font-mono text-[10.5px] text-fg-dim transition-colors',
+                        'min-h-11 cursor-pointer border-b border-line px-4 py-2 font-mono text-[10.5px] text-fg-dim transition-colors',
                         typeof selected === 'object' && selected?.legacy === s.id ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
                       )}
                     >
@@ -378,10 +417,10 @@ export default function TaskDetail() {
 
       {/* Main pane */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 flex-none items-center gap-3 border-b border-line px-6">
+        <header className="app-page-header flex min-h-14 flex-none flex-col items-stretch gap-3 border-b border-line py-2 pl-16 pr-4 sm:flex-row sm:flex-wrap sm:items-center md:px-6">
           <Link
             to="/tasks"
-            className="grid h-8 w-8 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg"
+            className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
@@ -398,7 +437,17 @@ export default function TaskDetail() {
               {task?.schedule_enabled && task?.next_run_at ? `⏱ next ${nextRunLocal(task.next_run_at)}` : '⏸ schedule paused'}
             </span>
           )}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              className="md:hidden"
+              aria-controls="mobile-runs"
+              aria-expanded={mobileRunsOpen}
+              onClick={() => setMobileRunsOpen(true)}
+            >
+              Runs
+            </Button>
             {hasSchedule && (
               <Button variant="outline" size="sm" onClick={toggleSchedule} disabled={togglingSchedule}>
                 {task?.schedule_enabled ? 'Pause schedule' : 'Resume schedule'}
