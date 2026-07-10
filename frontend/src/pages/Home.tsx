@@ -680,7 +680,7 @@ export default function Home() {
                   key={message.id}
                   message={message}
                   isLast={index === messages.length - 1}
-                  streaming={streaming}
+                  streaming={streaming && index === messages.length - 1 && message.role === 'assistant'}
                 />
               ))}
 

@@ -32,7 +32,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({ message, isLast, st
         <div className="flex flex-col items-start gap-1.5">
           {message.tools.map((tool, index) => (
             <details key={tool.id || index} className="group w-full max-w-2xl">
-              <summary className="inline-flex list-none cursor-pointer select-none items-center gap-1.5 rounded border border-line bg-panel-2 px-2 py-1 font-mono text-[11px] transition-colors hover:border-fg-dim [&::-webkit-details-marker]:hidden">
+              <summary className="inline-flex min-h-11 list-none cursor-pointer select-none items-center gap-1.5 rounded border border-line bg-panel-2 px-2 py-1 font-mono text-[11px] transition-colors hover:border-fg-dim sm:min-h-0 [&::-webkit-details-marker]:hidden">
                 {tool.status === 'running' ? (
                   <span className="think-bars"><i /><i /><i /></span>
                 ) : tool.status === 'error' ? (
