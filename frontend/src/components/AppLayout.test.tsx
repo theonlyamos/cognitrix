@@ -1,9 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import AppLayout from '@/components/AppLayout';
 import { ThemeProvider } from '@/context/ThemeContext';
+
+const appSource = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
 
 vi.mock('@/context/AppContext', () => ({
   useUser: () => ({
@@ -38,6 +42,14 @@ function renderShell() {
 }
 
 describe('AppLayout', () => {
+  it('opts the production BrowserRouter into both React Router v7 future flags', () => {
+    const browserRouterTag = /<BrowserRouter[^>]*>/.exec(appSource)?.[0];
+
+    expect(browserRouterTag).toContain(
+      'future={{ v7_relativeSplatPath: true, v7_startTransition: true }}',
+    );
+  });
+
   it('opens and closes primary navigation on mobile', async () => {
     renderShell();
     const trigger = screen.getByRole('button', { name: 'Open navigation' });
