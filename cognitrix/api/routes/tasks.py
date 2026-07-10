@@ -168,6 +168,30 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
 
     return _task_json(task)
 
+
+class TaskAssignment(BaseModel):
+    assigned_agents: list[str]
+    team_id: str | None = None
+
+
+@tasks_api.patch('/{task_id}/assignment')
+async def assign_task(task_id: str, body: TaskAssignment,
+                      ctx: AuthContext = Depends(get_auth_context)):
+    """Update task ownership without touching execution or schedule state."""
+    task = await Task.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task.assigned_agents = list(dict.fromkeys(body.assigned_agents))
+    task.team_id = body.team_id
+    _check_task_allowlists(ctx, task)
+    await Task.update_one(
+        {'id': task_id},
+        {'assigned_agents': task.assigned_agents, 'team_id': task.team_id},
+    )
+    return _task_json(task)
+
+
 async def _enqueue_task_start(task: Task, resume: bool = False) -> Task:
     """Shared start path: 409-guard, broker probe, enqueue, mark in-progress.
 

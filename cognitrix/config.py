@@ -356,8 +356,11 @@ def _patch_odbms_sqlite():
 
     1. insert_one drops string ids, leaving the id column NULL, so a later
        update_one({'id': ...}) matches nothing and every re-save of the record
-       is silently lost (agents/sessions never persist across runs).
-       Shim: after a fresh insert, stamp a uuid into the row via its rowid.
+       is silently lost (agents/sessions never persist across runs). Newer
+       Pydantic also exposes odbms' inherited ``id`` alias as a dynamic field,
+       so ``self.id`` stays None even after SQLite returns a rowid.
+       Shim: recover that rowid, stamp a uuid into the row and real model field,
+       and route loaded SQL ids through the alias while retaining public ``id``.
     2. normalise serializes lists as '::'.join(str(v)) — irreversible for any
        list of dicts/models (Agent.tools, Session.chat).
        Shim: store lists as JSON; decode JSON list columns on read.
@@ -390,14 +393,58 @@ def _patch_odbms_sqlite():
             origin = get_origin(ftype)
         return origin is list or ftype is list
 
+    def _uses_inherited_id_alias(cls):
+        field = getattr(cls, 'model_fields', {}).get('id')
+        return getattr(field, 'alias', None) == '_id'
+
+    _orig_init = Model.__init__
+    _orig_setattr = Model.__setattr__
+
+    def _init(self, **data):
+        # odbms declares ``id`` on the base model with the ``_id`` alias, but
+        # its custom initializer only checks the concrete class annotations.
+        # Consequently public ``id=`` input is treated as a dynamic field and
+        # the real Pydantic field remains None. Route it through the alias.
+        prepared = dict(data)
+        if 'id' in prepared and _uses_inherited_id_alias(type(self)):
+            prepared.setdefault('_id', prepared.pop('id'))
+        _orig_init(self, **prepared)
+        dynamic = getattr(self, '_dynamic_fields', {})
+        if _uses_inherited_id_alias(type(self)):
+            dynamic.pop('_id', None)
+            if getattr(self, 'id', None) is not None:
+                dynamic['id'] = self.id
+
+    def _setattr(self, name, value):
+        # The same inherited-annotation check misroutes later ``self.id =``
+        # assignments. Keep the real field and public dynamic representation
+        # in sync; delegate every other attribute to odbms unchanged.
+        if name == 'id' and _uses_inherited_id_alias(type(self)):
+            object.__setattr__(self, name, value)
+            dynamic = self.__dict__.get('_dynamic_fields')
+            if isinstance(dynamic, dict):
+                dynamic['id'] = value
+            return
+        _orig_setattr(self, name, value)
+
+    Model.__init__ = _init
+    Model.__setattr__ = _setattr
+
     _orig_save = Model.save
 
     async def _save(self):
         is_new = not getattr(self, 'id', None)
         await _orig_save(self)
-        if is_new and isinstance(self.id, int) and _is_sqlite():
+        dynamic = getattr(self, '_dynamic_fields', {})
+        inserted_rowid = getattr(self, 'id', None) or dynamic.get('id')
+        if is_new and _is_sqlite() and (
+            isinstance(inserted_rowid, int)
+            or (isinstance(inserted_rowid, str) and inserted_rowid.isdigit())
+        ):
             new_id = str(uuid.uuid4())
-            await DBMS.Database.update_one(self.table_name(), {'rowid': self.id}, {'id': new_id})
+            await DBMS.Database.update_one(
+                self.table_name(), {'rowid': int(inserted_rowid)}, {'id': new_id}
+            )
             self.id = new_id
         return self
 
@@ -410,6 +457,7 @@ def _patch_odbms_sqlite():
             return _orig_normalise(cls, content, optype)
         if optype == 'params':
             out = _orig_normalise(cls, content, optype)
+            out.pop('_id', None)
             for key, value in content.items():
                 if isinstance(value, list):
                     out[key] = json.dumps(value, default=str)
@@ -418,6 +466,10 @@ def _patch_odbms_sqlite():
         # logic can mangle them. Only fields the model declares as lists — a
         # text column whose value happens to look like JSON stays a string.
         content = dict(content)
+        if content.get('id') is not None and _uses_inherited_id_alias(cls):
+            # Populate Pydantic's actual inherited id field via its alias while
+            # retaining the established public ``id`` key as a dynamic field.
+            content['_id'] = content['id']
         for key, value in content.items():
             if isinstance(value, str) and value[:1] == '[' and _is_list_field(cls, key):
                 try:

@@ -11,13 +11,14 @@ import '@/app.css';
 // Code-split the authenticated app; auth pages + shell stay eager for first paint.
 const Home = lazy(() => import('@/pages/Home'));
 const Agents = lazy(() => import('@/pages/Agents'));
+const AgentDetail = lazy(() => import('@/pages/AgentDetail'));
 const AgentPage = lazy(() => import('@/pages/AgentPage'));
 const Tasks = lazy(() => import('@/pages/Tasks'));
 const TaskPage = lazy(() => import('@/pages/TaskPage'));
 const TaskDetail = lazy(() => import('@/pages/TaskDetail'));
 const Teams = lazy(() => import('@/pages/Teams'));
+const TeamDetail = lazy(() => import('@/pages/TeamDetail'));
 const TeamPage = lazy(() => import('@/pages/TeamPage'));
-const TeamInteraction = lazy(() => import('@/pages/TeamInteraction'));
 const ApiKeys = lazy(() => import('@/pages/ApiKeys'));
 
 function LoadingScreen() {
@@ -60,18 +61,17 @@ function AppRoutes() {
           <Route path="/home" element={<Home />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/agents/new" element={<AgentPage />} />
-          <Route path="/agents/:agentId" element={<AgentPage />} />
+          <Route path="/agents/:agentId" element={<AgentDetail />} />
+          <Route path="/agents/:agentId/edit" element={<AgentPage />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/tasks/new" element={<TaskPage />} />
           <Route path="/tasks/:taskId" element={<TaskDetail />} />
           <Route path="/tasks/:taskId/edit" element={<TaskPage />} />
           <Route path="/teams" element={<Teams />} />
           <Route path="/teams/new" element={<TeamPage />} />
-          <Route path="/teams/:teamId" element={<TeamPage />} />
+          <Route path="/teams/:teamId" element={<TeamDetail />} />
+          <Route path="/teams/:teamId/edit" element={<TeamPage />} />
           <Route path="/api-keys" element={<ApiKeys />} />
-          <Route path="/teams/:teamId/interact" element={<TeamInteraction />} />
-          <Route path="/teams/:teamId/tasks/:taskId/interact" element={<TeamInteraction />} />
-          <Route path="/teams/:teamId/tasks/:taskId/sessions/:sessionId/interact" element={<TeamInteraction />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

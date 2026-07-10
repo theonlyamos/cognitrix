@@ -42,6 +42,7 @@ export default function AgentPage() {
   const { agentId } = useParams();
   const navigate = useNavigate();
   const editing = Boolean(agentId);
+  const backTo = editing ? `/agents/${agentId}` : '/agents';
 
   const { data: existing, loading: loadingAgent } = useResource<AgentData>(agentId ? `/agents/${agentId}` : null);
   const { data: toolList } = useResource<Tool[]>('/tools');
@@ -113,22 +114,13 @@ export default function AgentPage() {
         tools: (toolList || []).filter((t) => selected.has(t.name)),
         mcp_servers: [],
       };
-      await api.post('/agents', payload);
-      navigate('/agents');
+      const response = await api.post('/agents', payload);
+      const id = agentId || response.data?.id;
+      navigate(id ? `/agents/${id}` : '/agents');
     } catch (e) {
       setError(errorMessage(e, 'Could not save the agent.'));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const remove = async () => {
-    if (!agentId || !confirm('Delete this agent? This cannot be undone.')) return;
-    try {
-      await api.delete(`/agents/${agentId}`);
-      navigate('/agents');
-    } catch (e) {
-      setError(errorMessage(e, 'Could not delete the agent.'));
     }
   };
 
@@ -144,11 +136,10 @@ export default function AgentPage() {
     <PageForm
       eyebrow={editing ? 'EDIT AGENT' : 'NEW AGENT'}
       title={editing ? name || 'Edit agent' : 'New agent'}
-      backTo="/agents"
+      backTo={backTo}
       error={error}
       onSave={save}
       saving={saving}
-      onDelete={editing ? remove : undefined}
     >
       <Field label="NAME" required>
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Research Assistant" autoFocus />

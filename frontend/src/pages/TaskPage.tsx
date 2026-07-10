@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
 import { Input } from '@/lib/components/ui/input';
@@ -48,13 +48,14 @@ function utcToLocalInput(s: string): string {
 export default function TaskPage() {
   const { taskId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const editing = Boolean(taskId);
   // Where "done" leads: back to the details page when editing, the list when creating.
   const backTo = editing ? `/tasks/${taskId}` : '/tasks';
 
   const { data: existing, loading: loadingTask } = useResource<TaskData>(taskId ? `/tasks/${taskId}` : null);
-  const { data: agentList } = useResource<Agent[]>('/agents');
-  const { data: teamList } = useResource<Team[]>('/teams');
+  const { data: agentList, error: agentLoadError } = useResource<Agent[]>('/agents');
+  const { data: teamList, error: teamLoadError } = useResource<Team[]>('/teams');
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -70,6 +71,7 @@ export default function TaskPage() {
   const [scheduleEnabled, setScheduleEnabled] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const prefillApplied = useRef(false);
 
   useEffect(() => {
     if (!existing) return;
@@ -105,6 +107,31 @@ export default function TaskPage() {
       setScheduleEnabled(!!existing.schedule_enabled);
     }
   }, [existing]);
+
+  useEffect(() => {
+    if (editing || prefillApplied.current) return;
+
+    const requestedTeam = searchParams.get('teamId');
+    if (requestedTeam) {
+      if (!teamList && !teamLoadError) return;
+      const team = teamList?.find((item) => item.id === requestedTeam);
+      if (team) {
+        prefillApplied.current = true;
+        setTeamId(team.id);
+        setAssigned(new Set(team.assigned_agents || []));
+        return;
+      }
+    }
+
+    const requestedAgent = searchParams.get('agentId');
+    if (requestedAgent) {
+      if (!agentList && !agentLoadError) return;
+      if (agentList?.some((agent) => agent.id === requestedAgent)) {
+        setAssigned(new Set([requestedAgent]));
+      }
+    }
+    prefillApplied.current = true;
+  }, [agentList, agentLoadError, editing, searchParams, teamList, teamLoadError]);
 
   const changeScheduleMode = (mode: ScheduleMode) => {
     // Picking a schedule on an unscheduled task should arm it by default.
@@ -185,7 +212,7 @@ export default function TaskPage() {
       eyebrow={editing ? 'EDIT TASK' : 'NEW TASK'}
       title={editing ? title || 'Edit task' : 'New task'}
       backTo={backTo}
-      error={error}
+      error={error || agentLoadError || teamLoadError || ''}
       onSave={save}
       saving={saving}
       onDelete={editing ? remove : undefined}

@@ -70,7 +70,7 @@ There is no separate team Interact action or route.
 
 ## Task Assignment From Details
 
-Both detail pages include an `Assign task` action beside their task section and a `New task` action. These cover existing and new work without introducing a second task model or backend endpoint.
+Both detail pages include an `Assign task` action beside their task section and a `New task` action. These cover existing and new work without introducing a second task model. Existing-task ownership changes use a narrow assignment endpoint so execution and schedule fields never participate in the update.
 
 ### Assign an Existing Task
 
@@ -82,7 +82,7 @@ Assignments preserve the task model's existing rules:
 - Team detail: set each task's `team_id` to the team ID and set `assigned_agents` to the team's current member IDs, matching `TaskPage.changeTeam` semantics. Reassigning a task from another team requires no extra confirmation because the picker and final `Assign selected` action make the destination explicit.
 - Completed, failed, cancelled, scheduled, and running tasks remain eligible; assigning changes ownership only and does not change task status, run history, schedule, steps, or results.
 
-The frontend uses the existing full task objects returned by `/tasks`, changes only the assignment fields above, and saves through the existing `POST /tasks` route. No backend API change is required.
+The frontend sends only `assigned_agents` and `team_id` to `PATCH /tasks/:taskId/assignment`. The endpoint applies a partial database update and returns the refreshed task without invoking autostart or schedule logic. Multiple selections settle independently: successful updates are refreshed immediately, only failed tasks remain selected, and the error identifies partial failure instead of presenting it as a total rollback.
 
 ### Create a Preassigned Task
 
@@ -106,7 +106,7 @@ The existing forms remain responsible for creation and editing only:
 
 ## Loading and Error States
 
-Both detail pages use the existing full-page loading and retryable error components. Missing entities render the same retryable not-found state rather than a partially populated header. Buttons preserve the established responsive 44-pixel mobile touch targets.
+Both detail pages use the existing full-page loading and retryable error components. Missing entities render the same retryable not-found state rather than a partially populated header. Their task sections expose loading and retryable error states instead of coercing unavailable data to an empty list. The assignment picker keeps a persistent disclosure trigger, moves focus into the labelled checklist, disables every control while saving, and restores focus when it closes. Task status is exposed as an accessible description. Buttons preserve the established responsive 44-pixel mobile touch targets.
 
 ## Testing
 
@@ -120,7 +120,7 @@ Frontend tests will verify:
 - Agent detail lists assigned tasks and can append the agent to selected existing tasks without changing their other assignment fields.
 - Team detail renders members, leader, tasks, and edit action with canonical detail links.
 - Team detail can assign selected existing tasks to the team and synchronizes their assigned agents to current team members.
-- Existing-task assignment preserves non-assignment task fields, reports progress/errors accessibly, and refreshes the assigned-task list.
+- Existing-task assignment uses the narrow PATCH endpoint, preserves non-assignment task fields, reconciles partial failures, reports progress/errors accessibly, and refreshes the assigned-task list.
 - Agent and team `New task` links pass the correct query parameter.
 - Task create mode consumes valid assignment parameters, ignores invalid parameters, and edit mode ignores all prefill parameters.
 - Edit forms load from `/edit`, save back to detail, and use detail as their cancel/back destination.
@@ -128,7 +128,7 @@ Frontend tests will verify:
 
 ## Non-goals
 
-- No backend API changes.
+- No redesign of the task persistence model or execution API.
 - No new team chat or orchestration behavior.
 - No redesign of task details.
 - No compatibility redirects for removed `/interact` URLs because those routes are not part of the new navigation contract.

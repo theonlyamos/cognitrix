@@ -4,13 +4,13 @@
 
 **Goal:** Add canonical agent/team detail pages with header actions, task assignment for existing and new tasks, and dedicated `/edit` routes.
 
-**Architecture:** Route list clicks to read-only detail components and retain the current forms only for `/new` and `/:id/edit`. A shared `TaskAssignmentPanel` owns existing-task assignment, while query parameters prefill the existing task creation form. Agent chat handoff reuses Home's persisted agent/session keys.
+**Architecture:** Route list clicks to read-only detail components and retain the current forms only for `/new` and `/:id/edit`. A shared `TaskAssignmentPanel` owns existing-task assignment through a narrow partial-update API, while query parameters prefill the existing task creation form. Agent chat handoff reuses Home's persisted agent/session keys.
 
 **Tech Stack:** React 18, TypeScript, React Router 6, Tailwind CSS, Vitest, Testing Library, Axios API wrapper.
 
 ## Global Constraints
 
-- Preserve the existing task, agent, and team backend APIs.
+- Preserve the existing task, agent, and team contracts while adding only `PATCH /tasks/:taskId/assignment` for ownership-only updates.
 - Preserve all unrelated uncommitted remediation changes.
 - Use existing responsive button, loading, error, checklist, and header patterns.
 - Detail-page destructive actions require confirmation and redirect only after success.
@@ -87,12 +87,14 @@ Expected: PASS.
 
 **Files:**
 - Create: `frontend/src/components/TaskAssignmentPanel.tsx`
+- Modify: `cognitrix/api/routes/tasks.py`
 - Modify: `frontend/src/pages/AgentDetail.tsx`
 - Modify: `frontend/src/pages/TeamDetail.tsx`
+- Test: `tests/test_scheduler.py`
 - Test: `frontend/src/pages/entity-details.test.tsx`
 
 **Interfaces:**
-- Consumes: full task records from `useResource<TaskRecord[]>('/tasks')`, entity ID/type, current team member IDs, and the tasks resource's `refetch` function.
+- Consumes: task summaries from `useResource<TaskRecord[]>('/tasks')`, entity ID/type, current team member IDs, and the tasks resource's `refetch` function.
 - Produces: `TaskAssignmentPanel({ mode, entityId, memberIds, tasks, onAssigned })` and linked assigned-task sections on both detail pages.
 
 - [ ] **Step 1: Add failing assignment tests**
@@ -104,25 +106,23 @@ await user.click(screen.getByRole('button', { name: 'Assign task' }));
 await user.click(screen.getByRole('checkbox', { name: /Task Two/ }));
 await user.click(screen.getByRole('button', { name: 'Assign selected' }));
 
-expect(api.post).toHaveBeenCalledWith('/tasks', expect.objectContaining({
-  id: 'task-2',
+expect(api.patch).toHaveBeenCalledWith('/tasks/task-2/assignment', {
   assigned_agents: ['agent-existing', 'agent-1'],
   team_id: 'team-existing',
-  title: 'Task Two',
-}));
+});
 ```
 
-For teams, expect `team_id: 'team-1'` and `assigned_agents` equal to current member IDs. Also cover error retention, disabled progress state, and assigned-task links.
+For teams, expect `team_id: 'team-1'` and `assigned_agents` equal to current member IDs. Also cover partial-error reconciliation, disabled progress state, focus restoration, labelled checklist semantics, and assigned-task links.
 
 - [ ] **Step 2: Run focused tests and verify RED**
 
 Run: `pnpm exec vitest run src/pages/entity-details.test.tsx`
 
-Expected: FAIL because no assignment panel or API calls exist.
+Expected: FAIL because no assignment panel or narrow assignment endpoint exists.
 
 - [ ] **Step 3: Implement minimal shared panel**
 
-Define a task record that preserves unknown fields during the full-row save:
+Define the minimal task summary consumed by the picker:
 
 ```ts
 export interface TaskRecord {
@@ -135,7 +135,7 @@ export interface TaskRecord {
 }
 ```
 
-Filter eligible tasks by mode, render the existing `CheckList`, and save selected records with `Promise.all`. Agent mode de-duplicates appended IDs; team mode replaces the assignment fields with destination team/member values. Preserve selection on failure, close/reset on success, call `onAssigned`, and expose an `aria-live`/`role="status"` progress message.
+Add `PATCH /tasks/:taskId/assignment` and implement it with `Task.update_one` over only `assigned_agents` and `team_id`. Filter eligible tasks by mode, render the existing `CheckList`, and settle selected PATCH requests independently. Agent mode de-duplicates appended IDs; team mode replaces the assignment fields with destination team/member values. Refresh any successes, preserve only failed selections, close/reset on complete success, and expose accessible progress and failure messages.
 
 - [ ] **Step 4: Run focused tests and verify GREEN**
 

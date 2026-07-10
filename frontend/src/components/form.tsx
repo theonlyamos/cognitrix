@@ -46,6 +46,7 @@ export function CheckList({
   selected,
   onToggle,
   empty,
+  disabled = false,
   id,
   'aria-labelledby': ariaLabelledBy,
 }: {
@@ -53,6 +54,7 @@ export function CheckList({
   selected: Set<string>;
   onToggle: (v: string) => void;
   empty?: string;
+  disabled?: boolean;
   id?: string;
   'aria-labelledby'?: string;
 }) {
@@ -62,8 +64,8 @@ export function CheckList({
         <div className="px-3 py-4 font-mono text-[11px] text-fg-dim">{empty || 'nothing available'}</div>
       ) : (
         options.map((o) => (
-          <label key={o.value} className="flex min-h-11 cursor-pointer items-center gap-2.5 border-b border-line px-3 py-2 last:border-b-0 hover:bg-panel-2 md:min-h-0">
-            <input type="checkbox" checked={selected.has(o.value)} onChange={() => onToggle(o.value)} className="accent-[var(--accent)]" />
+          <label key={o.value} className={`flex min-h-11 items-center gap-2.5 border-b border-line px-3 py-2 last:border-b-0 md:min-h-0 ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-panel-2'}`}>
+            <input type="checkbox" checked={selected.has(o.value)} onChange={() => onToggle(o.value)} disabled={disabled} className="accent-[var(--accent)]" />
             <div className="min-w-0">
               <div className="truncate text-[13px]">{o.label}</div>
               {o.sub && <div className="truncate font-mono text-[10.5px] text-fg-dim">{o.sub}</div>}

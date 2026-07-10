@@ -281,6 +281,43 @@ async def _save(task, ctx):
     return await save_task(None, task, BackgroundTasks(), ctx)
 
 
+async def test_assignment_updates_only_ownership_fields(sched_db):
+    import cognitrix.api.routes.tasks as task_routes
+
+    stored = Task(
+        title='scheduled',
+        description='keep me',
+        status=TaskStatus.COMPLETED,
+        done=True,
+        autostart=True,
+        assigned_agents=['agent-old'],
+        team_id='team-old',
+        results=['keep result'],
+        pid='worker-1',
+        schedule_interval=300,
+        next_run_at='2030-06-01 12:05:00',
+        schedule_enabled=True,
+    )
+    await stored.save()
+
+    body = SimpleNamespace(assigned_agents=['agent-new'], team_id='team-new')
+    result = await task_routes.assign_task(stored.id, body, _jwt_ctx())
+    fresh = await Task.get(stored.id)
+
+    assert result['assigned_agents'] == ['agent-new']
+    assert result['team_id'] == 'team-new'
+    assert fresh.title == 'scheduled'
+    assert fresh.description == 'keep me'
+    assert fresh.status == TaskStatus.COMPLETED
+    assert fresh.done is True
+    assert fresh.autostart is True
+    assert fresh.results == ['keep result']
+    assert fresh.pid == 'worker-1'
+    assert fresh.schedule_interval == 300
+    assert fresh.next_run_at == '2030-06-01 12:05:00'
+    assert fresh.schedule_enabled is True
+
+
 async def test_save_new_schedule_defaults_enabled(sched_db):
     t = Task(title='t', description='d', schedule_interval=300)
     data = await _save(t, _jwt_ctx())

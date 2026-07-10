@@ -2,6 +2,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 
 const API_BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL ?? ''}/api/v1`;
 
+function cancelReader(reader: ReadableStreamReader<Uint8Array>) {
+  void reader.cancel().catch(() => undefined);
+}
+
 export interface SSEEvent {
   type: string;
   content?: string;
@@ -72,7 +76,7 @@ export function useSSE(options: UseSSEOptions = {}) {
       abortControllerRef.current.abort();
     }
     if (readerRef.current) {
-      readerRef.current.cancel();
+      cancelReader(readerRef.current);
     }
     if (retryTimeoutRef.current) {
       clearTimeout(retryTimeoutRef.current);
@@ -101,7 +105,6 @@ export function useSSE(options: UseSSEOptions = {}) {
       readerRef.current = reader;
       setIsConnected(true);
       setError(null);
-      retryCountRef.current = 0;
       onConnectRef.current?.();
 
       const decoder = new TextDecoder();
@@ -139,6 +142,10 @@ export function useSSE(options: UseSSEOptions = {}) {
               if (data) {
                 try {
                   const event = JSON.parse(data) as SSEEvent;
+                  // A valid event proves the stream is healthy. Until then,
+                  // preserve the retry count across successful handshakes so
+                  // connect-then-read failures still honor maxRetries.
+                  retryCountRef.current = 0;
                   setLastEvent(event);
 
                   if (event.type === 'generate' || event.type === 'chat_history' || event.type === 'chat' || event.type === 'multistep_result' || event.type === 'status' || event.type === 'error' || event.type === 'approval_request' || event.type === 'tool') {
@@ -152,6 +159,25 @@ export function useSSE(options: UseSSEOptions = {}) {
           }
 
           readChunk();
+        }).catch(err => {
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          const readError = err instanceof Error ? err : new Error(String(err));
+          console.error('SSE read error:', readError);
+          setIsConnected(false);
+
+          if (autoReconnect && retryCountRef.current < maxRetries) {
+            const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
+            retryTimeoutRef.current = setTimeout(() => {
+              retryCountRef.current++;
+              connect();
+            }, delay);
+          } else {
+            setError(readError);
+            onErrorRef.current?.(readError);
+          }
         });
       };
 
@@ -184,7 +210,7 @@ export function useSSE(options: UseSSEOptions = {}) {
       abortControllerRef.current.abort();
     }
     if (readerRef.current) {
-      readerRef.current.cancel();
+      cancelReader(readerRef.current);
       readerRef.current = null;
     }
     setIsConnected(false);
