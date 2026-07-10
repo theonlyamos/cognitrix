@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils';
 
 // Wide enough for real agent names ("BACKEND ENGINEER"); Home's chat keeps its
 // own narrower YOU/AGENT gutter.
-const ROW = 'grid grid-cols-[96px_1fr] gap-4 border-b border-line px-4 py-3';
+const ROW = 'grid grid-cols-1 gap-2 border-b border-line px-4 py-3 sm:grid-cols-[96px_1fr] sm:gap-4';
 const GUTTER = 'pt-0.5 font-mono text-[11px] tracking-[0.06em] break-words';
 
 /** Gutter label: the speaking agent's name when the entry carries one (multi-

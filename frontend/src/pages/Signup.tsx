@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
+import { Field } from '@/components/form';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 const GRID = {
@@ -84,11 +85,12 @@ export default function Signup() {
               <Field label="PASSWORD" hint="at least 8 characters"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required autoComplete="new-password" /></Field>
               <Field label="CONFIRM"><Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••" required autoComplete="new-password" /></Field>
 
-              {error && <p className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>}
+              {error && <p role="alert" className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>}
 
               <Button type="submit" disabled={loading} className="w-full">
-                {loading ? <><Spinner /> Creating…</> : <>Create account <span aria-hidden>→</span></>}
+                {loading ? <span className="inline-flex items-center gap-2"><Spinner /> Creating…</span> : <>Create account <span aria-hidden>→</span></>}
               </Button>
+              {loading && <span role="status" className="sr-only">Creating…</span>}
             </form>
 
             <p className="mt-6 text-sm text-fg-dim">
@@ -102,18 +104,6 @@ export default function Signup() {
           by creating an account you agree to the terms &amp; privacy policy
         </footer>
       </main>
-    </div>
-  );
-}
-
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-baseline justify-between">
-        <label className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">{label}</label>
-        {hint && <span className="font-mono text-[10px] text-fg-dim/70">{hint}</span>}
-      </div>
-      {children}
     </div>
   );
 }

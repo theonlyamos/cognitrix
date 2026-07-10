@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
 import { Input } from '@/lib/components/ui/input';
@@ -48,13 +48,14 @@ function utcToLocalInput(s: string): string {
 export default function TaskPage() {
   const { taskId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const editing = Boolean(taskId);
   // Where "done" leads: back to the details page when editing, the list when creating.
   const backTo = editing ? `/tasks/${taskId}` : '/tasks';
 
   const { data: existing, loading: loadingTask } = useResource<TaskData>(taskId ? `/tasks/${taskId}` : null);
-  const { data: agentList } = useResource<Agent[]>('/agents');
-  const { data: teamList } = useResource<Team[]>('/teams');
+  const { data: agentList, error: agentLoadError } = useResource<Agent[]>('/agents');
+  const { data: teamList, error: teamLoadError } = useResource<Team[]>('/teams');
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -70,6 +71,7 @@ export default function TaskPage() {
   const [scheduleEnabled, setScheduleEnabled] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const prefillApplied = useRef(false);
 
   useEffect(() => {
     if (!existing) return;
@@ -105,6 +107,31 @@ export default function TaskPage() {
       setScheduleEnabled(!!existing.schedule_enabled);
     }
   }, [existing]);
+
+  useEffect(() => {
+    if (editing || prefillApplied.current) return;
+
+    const requestedTeam = searchParams.get('teamId');
+    if (requestedTeam) {
+      if (!teamList && !teamLoadError) return;
+      const team = teamList?.find((item) => item.id === requestedTeam);
+      if (team) {
+        prefillApplied.current = true;
+        setTeamId(team.id);
+        setAssigned(new Set(team.assigned_agents || []));
+        return;
+      }
+    }
+
+    const requestedAgent = searchParams.get('agentId');
+    if (requestedAgent) {
+      if (!agentList && !agentLoadError) return;
+      if (agentList?.some((agent) => agent.id === requestedAgent)) {
+        setAssigned(new Set([requestedAgent]));
+      }
+    }
+    prefillApplied.current = true;
+  }, [agentList, agentLoadError, editing, searchParams, teamList, teamLoadError]);
 
   const changeScheduleMode = (mode: ScheduleMode) => {
     // Picking a schedule on an unscheduled task should arm it by default.
@@ -185,7 +212,7 @@ export default function TaskPage() {
       eyebrow={editing ? 'EDIT TASK' : 'NEW TASK'}
       title={editing ? title || 'Edit task' : 'New task'}
       backTo={backTo}
-      error={error}
+      error={error || agentLoadError || teamLoadError || ''}
       onSave={save}
       saving={saving}
       onDelete={editing ? remove : undefined}
@@ -198,8 +225,8 @@ export default function TaskPage() {
         <Textarea rows={4} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What should be done, and what does 'done' look like?" />
       </Field>
 
-      <Field label={`STEPS · ${steps.length}`} hint="optional — plan the task explicitly">
-        <div className="space-y-2">
+      <Field label={`STEPS · ${steps.length}`} hint="optional — plan the task explicitly" composite>
+        <div role="group" className="space-y-2">
           {steps.map((s, i) => (
             <div key={i} className="flex items-center gap-2">
               {s.done ? (
@@ -207,11 +234,11 @@ export default function TaskPage() {
               ) : (
                 <span className="w-6 flex-none text-right font-mono text-[11px] text-fg-dim tnum">{i + 1}</span>
               )}
-              <Input value={s.step} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, step: e.target.value } : x)))} placeholder={`step ${i + 1}`} />
-              <button type="button" onClick={() => setSteps((arr) => arr.filter((_, j) => j !== i))} className="grid h-8 w-8 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink" aria-label="Remove step">✕</button>
+              <Input aria-label={`Step ${i + 1}`} value={s.step} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, step: e.target.value } : x)))} placeholder={`step ${i + 1}`} />
+              <button type="button" onClick={() => setSteps((arr) => arr.filter((_, j) => j !== i))} className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8" aria-label={`Remove step ${i + 1}`}>✕</button>
             </div>
           ))}
-          <button type="button" onClick={() => setSteps((arr) => [...arr, { step: '', done: false }])} className="rounded border border-line px-3 py-1.5 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg">+ add step</button>
+          <button type="button" onClick={() => setSteps((arr) => [...arr, { step: '', done: false }])} className="min-h-11 rounded border border-line px-3 py-1.5 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">+ add step</button>
         </div>
       </Field>
 
@@ -224,7 +251,7 @@ export default function TaskPage() {
         </Select>
       </Field>
 
-      <Field label={`ASSIGNED AGENTS · ${assigned.size}`} hint={teamId ? 'from the selected team — editable' : undefined}>
+      <Field label={`ASSIGNED AGENTS · ${assigned.size}`} hint={teamId ? 'from the selected team — editable' : undefined} composite>
         <CheckList
           options={(agentList || []).filter((a) => a.id).map((a) => ({ value: a.id, label: a.name, sub: `${a.llm?.provider || '—'} · ${a.llm?.model || '—'}` }))}
           selected={assigned}
@@ -233,21 +260,21 @@ export default function TaskPage() {
         />
       </Field>
 
-      <Field label="SCHEDULE" hint="run this task automatically">
-        <div className="space-y-3">
-          <Select value={scheduleMode} onChange={(e) => changeScheduleMode(e.target.value as ScheduleMode)}>
+      <Field label="SCHEDULE" hint="run this task automatically" composite>
+        <div role="group" className="space-y-3">
+          <Select aria-label="Schedule type" value={scheduleMode} onChange={(e) => changeScheduleMode(e.target.value as ScheduleMode)}>
             <option value="none">— not scheduled —</option>
             <option value="once">once, at a time</option>
             <option value="interval">repeat every…</option>
             <option value="cron">cron expression</option>
           </Select>
           {scheduleMode === 'once' && (
-            <Input type="datetime-local" min={localNowMin()} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
+            <Input aria-label="Schedule time" type="datetime-local" min={localNowMin()} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
           )}
           {scheduleMode === 'interval' && (
             <div className="flex gap-2">
-              <Input type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(e.target.value)} className="w-28" />
-              <Select value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
+              <Input aria-label="Interval value" type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(e.target.value)} className="w-28" />
+              <Select aria-label="Interval unit" value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
                 <option value="seconds">seconds</option>
                 <option value="minutes">minutes</option>
                 <option value="hours">hours</option>
@@ -257,12 +284,12 @@ export default function TaskPage() {
           )}
           {scheduleMode === 'cron' && (
             <div>
-              <Input value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 9 * * 1-5" className="font-mono" />
+              <Input aria-label="Cron expression" value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 9 * * 1-5" className="font-mono" />
               <p className="mt-1 font-mono text-[11px] text-fg-dim">5-field cron, evaluated in the server's local time</p>
             </div>
           )}
           {scheduleMode !== 'none' && (
-            <label className="flex cursor-pointer items-center gap-2.5">
+            <label className="flex min-h-11 cursor-pointer items-center gap-2.5 md:min-h-0">
               <input type="checkbox" checked={scheduleEnabled} onChange={(e) => setScheduleEnabled(e.target.checked)} className="accent-[var(--accent)]" />
               <span className="text-sm">Schedule enabled</span>
             </label>
@@ -270,7 +297,7 @@ export default function TaskPage() {
         </div>
       </Field>
 
-      <label className="flex cursor-pointer items-center gap-2.5">
+      <label className="flex min-h-11 cursor-pointer items-center gap-2.5 md:min-h-0">
         <input type="checkbox" checked={autostart} onChange={(e) => setAutostart(e.target.checked)} className="accent-[var(--accent)]" />
         <span className="text-sm">Auto-start when created</span>
       </label>

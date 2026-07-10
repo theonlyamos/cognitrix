@@ -11,9 +11,9 @@ import { cn } from '@/lib/utils';
 
 const PROVIDERS = ['openrouter', 'openai', 'google', 'groq', 'cerebras', 'ollama'];
 const MODELS: Record<string, string[]> = {
-  openrouter: ['google/gemini-3.1-flash-lite', 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet'],
+  openrouter: ['google/gemini-3.5-flash', 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
-  google: ['gemini-3.1-flash-lite', 'gemini-2.0-flash', 'gemini-1.5-pro'],
+  google: ['gemini-3.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'],
   groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
   cerebras: ['llama-3.3-70b', 'llama3.1-8b'],
   ollama: ['llama3.2', 'qwen2.5', 'mistral'],
@@ -42,13 +42,14 @@ export default function AgentPage() {
   const { agentId } = useParams();
   const navigate = useNavigate();
   const editing = Boolean(agentId);
+  const backTo = editing ? `/agents/${agentId}` : '/agents';
 
   const { data: existing, loading: loadingAgent } = useResource<AgentData>(agentId ? `/agents/${agentId}` : null);
   const { data: toolList } = useResource<Tool[]>('/tools');
 
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('google');
-  const [model, setModel] = useState('gemini-3.1-flash-lite');
+  const [model, setModel] = useState('gemini-3.5-flash');
   const [temperature, setTemperature] = useState(0.4);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -113,22 +114,13 @@ export default function AgentPage() {
         tools: (toolList || []).filter((t) => selected.has(t.name)),
         mcp_servers: [],
       };
-      await api.post('/agents', payload);
-      navigate('/agents');
+      const response = await api.post('/agents', payload);
+      const id = agentId || response.data?.id;
+      navigate(id ? `/agents/${id}` : '/agents');
     } catch (e) {
       setError(errorMessage(e, 'Could not save the agent.'));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const remove = async () => {
-    if (!agentId || !confirm('Delete this agent? This cannot be undone.')) return;
-    try {
-      await api.delete(`/agents/${agentId}`);
-      navigate('/agents');
-    } catch (e) {
-      setError(errorMessage(e, 'Could not delete the agent.'));
     }
   };
 
@@ -144,11 +136,10 @@ export default function AgentPage() {
     <PageForm
       eyebrow={editing ? 'EDIT AGENT' : 'NEW AGENT'}
       title={editing ? name || 'Edit agent' : 'New agent'}
-      backTo="/agents"
+      backTo={backTo}
       error={error}
       onSave={save}
       saving={saving}
-      onDelete={editing ? remove : undefined}
     >
       <Field label="NAME" required>
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Research Assistant" autoFocus />
@@ -180,8 +171,8 @@ export default function AgentPage() {
         <Textarea rows={6} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder="You are a helpful assistant that…" />
       </Field>
 
-      <Field label={`TOOLS · ${selected.size} selected`}>
-        <div className="max-h-72 overflow-y-auto rounded border border-line">
+      <Field label={`TOOLS · ${selected.size} selected`} composite>
+        <div role="group" className="max-h-72 overflow-y-auto rounded border border-line">
           {toolsByCategory.length === 0 ? (
             <div className="px-3 py-4 font-mono text-[11px] text-fg-dim">no tools available</div>
           ) : (
@@ -207,7 +198,7 @@ export default function AgentPage() {
       <button
         type="button"
         onClick={() => setShowAdvanced((v) => !v)}
-        className="flex items-center gap-2 font-mono text-[11px] tracking-[0.06em] text-fg-dim transition-colors hover:text-fg"
+        className="flex min-h-11 items-center gap-2 font-mono text-[11px] tracking-[0.06em] text-fg-dim transition-colors hover:text-fg md:min-h-0"
       >
         <span className={cn('transition-transform', showAdvanced && 'rotate-90')}>▸</span> ADVANCED
       </button>

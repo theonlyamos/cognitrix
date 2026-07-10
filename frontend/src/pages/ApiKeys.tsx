@@ -50,7 +50,7 @@ function localNowMin(): string {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
-function CopyRow({ label, value }: { label: string; value: string }) {
+function CopyRow({ id, label, value }: { id: string; label: string; value: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -63,13 +63,14 @@ function CopyRow({ label, value }: { label: string; value: string }) {
   };
   return (
     <div>
-      <div className="mb-1 font-mono text-[11px] tracking-[0.12em] text-fg-dim">{label}</div>
+      <label htmlFor={id} className="mb-1 block font-mono text-[11px] tracking-[0.12em] text-fg-dim">{label}</label>
       <div className="flex gap-2">
         <input
+          id={id}
           readOnly
           value={value}
           onFocus={(e) => e.currentTarget.select()}
-          className="h-10 w-full rounded border border-line bg-bg px-3 font-mono text-[12px] text-fg"
+          className="h-11 w-full rounded border border-line bg-bg px-3 font-mono text-[12px] text-fg md:h-10"
         />
         <Button type="button" variant="outline" size="sm" onClick={copy} className="flex-none">
           {copied ? 'Copied' : 'Copy'}
@@ -98,7 +99,8 @@ export default function ApiKeys() {
 
   const toggle = (set: Set<string>, setter: (s: Set<string>) => void, v: string) => {
     const next = new Set(set);
-    next.has(v) ? next.delete(v) : next.add(v);
+    if (next.has(v)) next.delete(v);
+    else next.add(v);
     setter(next);
   };
 
@@ -170,8 +172,8 @@ export default function ApiKeys() {
                   This is the only time the secret and webhook signing key are shown. Store them somewhere safe.
                 </p>
               </div>
-              <CopyRow label="API KEY" value={created.key} />
-              <CopyRow label="WEBHOOK SECRET" value={created.webhook_secret} />
+              <CopyRow id="created-api-key" label="API KEY" value={created.key} />
+              <CopyRow id="created-webhook-secret" label="WEBHOOK SECRET" value={created.webhook_secret} />
               <div className="flex justify-end">
                 <Button variant="outline" size="sm" onClick={() => setCreated(null)}>Done</Button>
               </div>
@@ -182,19 +184,19 @@ export default function ApiKeys() {
           {showForm && (
             <div className="space-y-5 rounded border border-line bg-panel p-5">
               {formError && (
-                <p className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{formError}</p>
+                <p role="alert" className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{formError}</p>
               )}
               <Field label="NAME" required>
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. ci-pipeline" />
               </Field>
-              <Field label={`SCOPES · ${scopes.size}`} required hint="what this key may do">
+              <Field label={`SCOPES · ${scopes.size}`} required hint="what this key may do" composite>
                 <CheckList
                   options={SCOPES}
                   selected={scopes}
                   onToggle={(v) => toggle(scopes, setScopes, v)}
                 />
               </Field>
-              <Field label={`AGENT ALLOWLIST · ${agents.size}`} hint="empty = all agents">
+              <Field label={`AGENT ALLOWLIST · ${agents.size}`} hint="empty = all agents" composite>
                 <CheckList
                   options={(agentList || []).map((a) => ({ value: a.id, label: a.name, sub: `${a.llm?.provider || '—'} · ${a.llm?.model || '—'}` }))}
                   selected={agents}
@@ -202,7 +204,7 @@ export default function ApiKeys() {
                   empty="no agents"
                 />
               </Field>
-              <Field label={`TEAM ALLOWLIST · ${teams.size}`} hint="empty = all teams">
+              <Field label={`TEAM ALLOWLIST · ${teams.size}`} hint="empty = all teams" composite>
                 <CheckList
                   options={(teamList || []).map((t) => ({ value: t.id, label: t.name }))}
                   selected={teams}
@@ -221,6 +223,7 @@ export default function ApiKeys() {
               <div className="flex justify-end gap-2">
                 <Button variant="ghost" size="sm" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</Button>
                 <Button size="sm" onClick={create} disabled={saving}>{saving ? 'Creating…' : 'Create key'}</Button>
+                {saving && <span role="status" className="sr-only">Creating…</span>}
               </div>
             </div>
           )}

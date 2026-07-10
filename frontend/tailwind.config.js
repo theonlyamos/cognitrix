@@ -7,25 +7,41 @@ module.exports = {
     extend: {
       colors: {
         // "Technical / Signal" tokens (CSS-var backed; theme-reactive)
-        bg: 'var(--bg)',
-        panel: 'var(--panel)',
-        'panel-2': 'var(--panel-2)',
+        bg: 'rgb(var(--bg-rgb) / <alpha-value>)',
+        panel: 'rgb(var(--panel-rgb) / <alpha-value>)',
+        'panel-2': 'rgb(var(--panel-2-rgb) / <alpha-value>)',
         line: 'var(--line)',
-        fg: 'var(--fg)',
-        'fg-dim': 'var(--fg-dim)',
-        accent: { DEFAULT: 'var(--accent)', foreground: 'var(--on-accent)', ink: 'var(--accent-ink)' },
-        danger: { DEFAULT: 'var(--danger)', ink: 'var(--danger-ink)' },
-        ok: 'var(--ok)',
+        fg: 'rgb(var(--fg-rgb) / <alpha-value>)',
+        'fg-dim': 'rgb(var(--fg-dim-rgb) / <alpha-value>)',
+        accent: {
+          DEFAULT: 'rgb(var(--accent-rgb) / <alpha-value>)',
+          foreground: 'rgb(var(--on-accent-rgb) / <alpha-value>)',
+          ink: 'rgb(var(--accent-ink-rgb) / <alpha-value>)',
+        },
+        danger: {
+          DEFAULT: 'rgb(var(--danger-rgb) / <alpha-value>)',
+          ink: 'rgb(var(--danger-ink-rgb) / <alpha-value>)',
+        },
+        ok: 'rgb(var(--ok-rgb) / <alpha-value>)',
         // transition aliases so any lingering shadcn/base classes resolve sanely
         border: 'var(--line)',
         input: 'var(--line)',
-        ring: 'var(--accent)',
-        background: 'var(--bg)',
-        foreground: 'var(--fg)',
-        card: 'var(--panel)',
-        muted: { DEFAULT: 'var(--panel-2)', foreground: 'var(--fg-dim)' },
-        primary: { DEFAULT: 'var(--accent)', foreground: 'var(--on-accent)' },
-        destructive: { DEFAULT: 'var(--danger)', foreground: 'var(--on-accent)' },
+        ring: 'var(--focus)',
+        background: 'rgb(var(--bg-rgb) / <alpha-value>)',
+        foreground: 'rgb(var(--fg-rgb) / <alpha-value>)',
+        card: 'rgb(var(--panel-rgb) / <alpha-value>)',
+        muted: {
+          DEFAULT: 'rgb(var(--panel-2-rgb) / <alpha-value>)',
+          foreground: 'rgb(var(--fg-dim-rgb) / <alpha-value>)',
+        },
+        primary: {
+          DEFAULT: 'rgb(var(--accent-rgb) / <alpha-value>)',
+          foreground: 'rgb(var(--on-accent-rgb) / <alpha-value>)',
+        },
+        destructive: {
+          DEFAULT: 'rgb(var(--danger-rgb) / <alpha-value>)',
+          foreground: 'rgb(var(--on-accent-rgb) / <alpha-value>)',
+        },
       },
       fontFamily: {
         sans: ['Space Grotesk', 'ui-sans-serif', 'system-ui', 'sans-serif'],

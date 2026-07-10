@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 
 from croniter import croniter
 
-from cognitrix.models.api_key import normalize_expiry as normalize_schedule_at
+from cognitrix.models.api_key import normalize_expiry
 from cognitrix.tasks.base import Task
 
 logger = logging.getLogger('cognitrix.log')
@@ -29,6 +29,11 @@ TICK_SECONDS = 20
 
 SCHEDULE_FIELDS = ('schedule_at', 'schedule_interval', 'schedule_cron',
                    'next_run_at', 'schedule_enabled')
+
+
+def normalize_schedule_at(value: str | None) -> str | None:
+    """Normalize a scheduled datetime without relying on an import re-export."""
+    return normalize_expiry(value)
 
 
 def _utcnow() -> datetime:

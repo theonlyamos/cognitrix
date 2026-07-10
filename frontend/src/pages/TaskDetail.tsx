@@ -5,6 +5,8 @@ import { useResource } from '@/hooks/useResource';
 import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/lib/components/ui/button';
 import { LoadingState, Spinner } from '@/components/list-ui';
+import { MobileSheet } from '@/components/MobileSheet';
+import { SelectionRow } from '@/components/SelectionRow';
 import { TranscriptView } from '@/components/TranscriptView';
 import {
   parseChatEntries,
@@ -115,6 +117,8 @@ export default function TaskDetail() {
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [togglingSchedule, setTogglingSchedule] = useState(false);
+  const [mobileRunsOpen, setMobileRunsOpen] = useState(false);
+  const mobileRunsTriggerRef = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -296,6 +300,105 @@ export default function TaskDetail() {
   const stepsDone = plan.filter((s) => s.status === 'done').length;
   const canResume = !isLive && newestRun != null && (newestRun.status === 'failed' || newestRun.status === 'cancelled');
   const hasSynthesis = !!(selectedRunId && (stepSessions[selectedRunId] || {})['synthesis']);
+  const actionStatus = activeRun?.status === 'cancelling' || cancelling
+    ? 'Cancelling… (click to force)'
+    : starting
+      ? 'Starting…'
+      : null;
+
+  const runsPanel = (
+    <>
+      <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
+        <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">RUNS · {(runs || []).length}</span>
+        <div className="flex items-center gap-1">
+          {runsError && (
+            <div role="alert">
+              <span className="sr-only">{runsError}</span>
+              <Button variant="ghost" size="sm" onClick={() => void refetchRuns()} className="text-danger-ink">
+                ↻ retry
+              </Button>
+            </div>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileRunsOpen(false)}
+            aria-label="Close runs"
+            className="md:hidden"
+          >
+            <span aria-hidden>×</span>
+          </Button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {runsLoading && !runs ? (
+          <div role="status" className="flex items-center gap-2 px-4 py-6 font-mono text-[11px] text-fg-dim"><Spinner className="h-3.5 w-3.5" /> loading…</div>
+        ) : (runs || []).length === 0 && legacy.length === 0 ? (
+          <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no runs yet — hit ▶ Run</p>
+        ) : (
+          <>
+            {(runs || []).map((r, idx) => (
+              <SelectionRow
+                key={r.id}
+                selected={r.id === selectedRunId}
+                onSelect={() => {
+                  manualPickRef.current = false;
+                  setSelectedRunId(r.id);
+                  setMobileRunsOpen(false);
+                }}
+                className={cn(
+                  'min-h-11 border-b border-line transition-colors',
+                  r.id === selectedRunId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
+                )}
+                buttonClassName="self-stretch px-4 py-2.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-[12px] tnum">#{(runs || []).length - idx}</span>
+                  {ACTIVE_RUN.has(r.status) ? (
+                    <span className="flex items-center gap-1.5 font-mono text-[10.5px] text-accent-ink">
+                      <span className="think-bars"><i /><i /><i /></span>
+                      {r.status}
+                    </span>
+                  ) : (
+                    <span className={cn('font-mono text-[10.5px]', RUN_BADGE[r.status] || 'text-fg-dim')}>{r.status}</span>
+                  )}
+                </div>
+                <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">
+                  {r.started_at ? fmtRelative(r.started_at) : '—'}
+                  {!ACTIVE_RUN.has(r.status) && fmtDuration(r.started_at, r.completed_at) ? ` · ${fmtDuration(r.started_at, r.completed_at)}` : ''}
+                  {` · ${r.plan.filter((s) => s.status === 'done').length}/${r.plan.length || '?'} steps`}
+                </div>
+              </SelectionRow>
+            ))}
+            {legacy.length > 0 && (
+              <div className="border-t border-line">
+                <div className="px-4 pb-1 pt-3 font-mono text-[10px] tracking-[0.14em] text-fg-dim">LEGACY RUNS</div>
+                {legacy.map((s) => (
+                  <SelectionRow
+                    key={s.id}
+                    selected={typeof selected === 'object' && selected?.legacy === s.id}
+                    onSelect={() => {
+                      manualPickRef.current = true;
+                      setSelectedRunId(null);
+                      setSelected({ legacy: s.id });
+                      setMobileRunsOpen(false);
+                    }}
+                    className={cn(
+                      'min-h-11 border-b border-line font-mono text-[10.5px] text-fg-dim transition-colors',
+                      typeof selected === 'object' && selected?.legacy === s.id ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
+                    )}
+                    buttonClassName="self-stretch px-4 py-2"
+                  >
+                    {parseSessionDate(s.started_at)?.toLocaleString() || 'legacy run'} · {s.message_count ?? 0} msg
+                  </SelectionRow>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </>
+  );
 
   if (taskLoading && !task) {
     return <div className="flex-1 flex flex-col h-screen min-w-0 bg-bg"><LoadingState label="loading task…" /></div>;
@@ -303,85 +406,28 @@ export default function TaskDetail() {
 
   return (
     <div className="flex-1 flex h-screen min-w-0 bg-bg text-fg">
+      <MobileSheet
+        id="mobile-runs"
+        label="Runs"
+        open={mobileRunsOpen}
+        onClose={() => setMobileRunsOpen(false)}
+        triggerRef={mobileRunsTriggerRef}
+      >
+        {runsPanel}
+      </MobileSheet>
+
       {/* Runs sidebar */}
-      <aside className="hidden md:flex w-60 flex-none flex-col border-r border-line bg-panel">
-        <div className="flex h-14 flex-none items-center justify-between border-b border-line px-4">
-          <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">RUNS · {(runs || []).length}</span>
-          {runsError && (
-            <button onClick={() => void refetchRuns()} className="font-mono text-[10.5px] text-danger-ink underline underline-offset-2">
-              ↻ retry
-            </button>
-          )}
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {runsLoading && !runs ? (
-            <div className="flex items-center gap-2 px-4 py-6 font-mono text-[11px] text-fg-dim"><Spinner className="h-3.5 w-3.5" /> loading…</div>
-          ) : (runs || []).length === 0 && legacy.length === 0 ? (
-            <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no runs yet — hit ▶ Run</p>
-          ) : (
-            <>
-              {(runs || []).map((r, idx) => (
-                <div
-                  key={r.id}
-                  onClick={() => {
-                    manualPickRef.current = false;
-                    setSelectedRunId(r.id);
-                  }}
-                  className={cn(
-                    'cursor-pointer border-b border-line px-4 py-2.5 transition-colors',
-                    r.id === selectedRunId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-[12px] tnum">#{(runs || []).length - idx}</span>
-                    {ACTIVE_RUN.has(r.status) ? (
-                      <span className="flex items-center gap-1.5 font-mono text-[10.5px] text-accent-ink">
-                        <span className="think-bars"><i /><i /><i /></span>
-                        {r.status}
-                      </span>
-                    ) : (
-                      <span className={cn('font-mono text-[10.5px]', RUN_BADGE[r.status] || 'text-fg-dim')}>{r.status}</span>
-                    )}
-                  </div>
-                  <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">
-                    {r.started_at ? fmtRelative(r.started_at) : '—'}
-                    {!ACTIVE_RUN.has(r.status) && fmtDuration(r.started_at, r.completed_at) ? ` · ${fmtDuration(r.started_at, r.completed_at)}` : ''}
-                    {` · ${r.plan.filter((s) => s.status === 'done').length}/${r.plan.length || '?'} steps`}
-                  </div>
-                </div>
-              ))}
-              {legacy.length > 0 && (
-                <div className="border-t border-line">
-                  <div className="px-4 pb-1 pt-3 font-mono text-[10px] tracking-[0.14em] text-fg-dim">LEGACY RUNS</div>
-                  {legacy.map((s) => (
-                    <div
-                      key={s.id}
-                      onClick={() => {
-                        manualPickRef.current = true;
-                        setSelectedRunId(null);
-                        setSelected({ legacy: s.id });
-                      }}
-                      className={cn(
-                        'cursor-pointer border-b border-line px-4 py-2 font-mono text-[10.5px] text-fg-dim transition-colors',
-                        typeof selected === 'object' && selected?.legacy === s.id ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
-                      )}
-                    >
-                      {parseSessionDate(s.started_at)?.toLocaleString() || 'legacy run'} · {s.message_count ?? 0} msg
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </div>
+      <aside className="hidden w-60 flex-none flex-col border-r border-line bg-panel md:flex">
+        {runsPanel}
       </aside>
 
       {/* Main pane */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 flex-none items-center gap-3 border-b border-line px-6">
+        <header className="app-page-header flex min-h-14 flex-none flex-col items-stretch gap-3 border-b border-line py-2 pl-16 pr-4 sm:flex-row sm:flex-wrap sm:items-center md:px-6">
           <Link
             to="/tasks"
-            className="grid h-8 w-8 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg"
+            aria-label="Back to tasks"
+            className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
@@ -398,7 +444,18 @@ export default function TaskDetail() {
               {task?.schedule_enabled && task?.next_run_at ? `⏱ next ${nextRunLocal(task.next_run_at)}` : '⏸ schedule paused'}
             </span>
           )}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            <Button
+              ref={mobileRunsTriggerRef}
+              variant="outline"
+              size="sm"
+              className="md:hidden"
+              aria-controls="mobile-runs"
+              aria-expanded={mobileRunsOpen}
+              onClick={() => setMobileRunsOpen(true)}
+            >
+              Runs
+            </Button>
             {hasSchedule && (
               <Button variant="outline" size="sm" onClick={toggleSchedule} disabled={togglingSchedule}>
                 {task?.schedule_enabled ? 'Pause schedule' : 'Resume schedule'}
@@ -423,11 +480,12 @@ export default function TaskDetail() {
                 {starting ? 'Starting…' : '▶ Run'}
               </Button>
             )}
+            {actionStatus && <span role="status" className="sr-only">{actionStatus}</span>}
           </div>
         </header>
 
         {error && (
-          <p className="mx-6 mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
+          <p role="alert" className="mx-6 mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
         )}
 
         {/* Steps panel for the selected run */}
@@ -437,10 +495,11 @@ export default function TaskDetail() {
               <button
                 key={s.index}
                 type="button"
+                aria-pressed={selected === s.index}
                 onClick={() => pickStep(s)}
                 title={`${s.title}${s.agent_name ? ` — ${s.agent_name}` : ''}${(s.attempts ?? 0) > 1 ? ` · ${s.attempts} attempts` : ''}${s.gate === 'unverified' ? ' · unverified' : ''}`}
                 className={cn(
-                  'flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors',
+                  'flex min-h-11 min-w-11 items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors md:min-h-0 md:min-w-0',
                   selected === s.index ? 'border-accent bg-panel-2 text-fg' : 'border-line text-fg-dim hover:border-fg-dim',
                   s.status === 'pending' && 'opacity-50 cursor-default',
                 )}
@@ -458,12 +517,13 @@ export default function TaskDetail() {
             {hasSynthesis && (
               <button
                 type="button"
+                aria-pressed={selected === 'synthesis'}
                 onClick={() => {
                   manualPickRef.current = true;
                   setSelected('synthesis');
                 }}
                 className={cn(
-                  'flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors',
+                  'flex min-h-11 items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors md:min-h-0',
                   selected === 'synthesis' ? 'border-accent bg-panel-2 text-fg' : 'border-line text-fg-dim hover:border-fg-dim',
                 )}
               >
@@ -474,14 +534,14 @@ export default function TaskDetail() {
         )}
 
         {selectedRun?.error && (
-          <p className="mx-6 mt-3 whitespace-pre-wrap border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
+          <p role="alert" className="mx-6 mt-3 whitespace-pre-wrap border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
             {selectedRun.error}
           </p>
         )}
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           {isTaskRunning && !activeRun && (
-            <div className="mx-6 my-4 flex items-center gap-2.5 rounded border border-line bg-panel-2 px-3 py-2.5 font-mono text-[12px] text-fg-dim">
+            <div role="status" className="mx-6 my-4 flex items-center gap-2.5 rounded border border-line bg-panel-2 px-3 py-2.5 font-mono text-[12px] text-fg-dim">
               <span className="think-bars"><i /><i /><i /><i /></span>
               waiting for a worker to pick up the run…
             </div>
@@ -493,7 +553,7 @@ export default function TaskDetail() {
                 live={!!activeRun && typeof selected === 'number' && plan[selected]?.status === 'running'}
               />
             ) : (
-              <div className="flex items-center gap-2 px-6 py-4 font-mono text-[11px] text-fg-dim">
+              <div role="status" className="flex items-center gap-2 px-6 py-4 font-mono text-[11px] text-fg-dim">
                 <Spinner className="h-3.5 w-3.5" /> loading transcript…
               </div>
             )

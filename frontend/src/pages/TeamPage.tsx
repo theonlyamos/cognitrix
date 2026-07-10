@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
-import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { Textarea } from '@/lib/components/ui/textarea';
 import { Select } from '@/lib/components/ui/select';
@@ -22,6 +21,7 @@ export default function TeamPage() {
   const { teamId } = useParams();
   const navigate = useNavigate();
   const editing = Boolean(teamId);
+  const backTo = editing ? `/teams/${teamId}` : '/teams';
 
   const { data: existing, loading: loadingTeam } = useResource<TeamData>(teamId ? `/teams/${teamId}` : null);
   const { data: agentList } = useResource<Agent[]>('/agents');
@@ -60,28 +60,19 @@ export default function TeamPage() {
     setError('');
     setSaving(true);
     try {
-      await api.post('/teams', {
+      const response = await api.post('/teams', {
         ...(teamId ? { id: teamId } : {}),
         name: name.trim(),
         description: description.trim(),
         assigned_agents: [...assigned],
         leader_id: leader || null,
       });
-      navigate('/teams');
+      const id = teamId || response.data?.id;
+      navigate(id ? `/teams/${id}` : '/teams');
     } catch (e) {
       setError(errorMessage(e, 'Could not save the team.'));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const remove = async () => {
-    if (!teamId || !confirm('Delete this team?')) return;
-    try {
-      await api.delete(`/teams/${teamId}`);
-      navigate('/teams');
-    } catch (e) {
-      setError(errorMessage(e, 'Could not delete the team.'));
     }
   };
 
@@ -93,18 +84,10 @@ export default function TeamPage() {
     <PageForm
       eyebrow={editing ? 'EDIT TEAM' : 'NEW TEAM'}
       title={editing ? name || 'Edit team' : 'New team'}
-      backTo="/teams"
+      backTo={backTo}
       error={error}
       onSave={save}
       saving={saving}
-      onDelete={editing ? remove : undefined}
-      extraActions={
-        editing ? (
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/teams/${teamId}/interact`}>Interact →</Link>
-          </Button>
-        ) : undefined
-      }
     >
       <Field label="NAME" required>
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Research Squad" autoFocus />
@@ -114,7 +97,7 @@ export default function TeamPage() {
         <Textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What does this team do together?" />
       </Field>
 
-      <Field label={`MEMBERS · ${assigned.size}`}>
+      <Field label={`MEMBERS · ${assigned.size}`} composite>
         <CheckList
           options={agents.map((a) => ({ value: a.id, label: a.name, sub: `${a.llm?.provider || '—'} · ${a.llm?.model || '—'}` }))}
           selected={assigned}

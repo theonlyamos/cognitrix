@@ -42,14 +42,39 @@ MAX_CHAT_HISTORY = 1000
 # Max tool-call rounds in a single turn before the loop stops (guards against a
 # model that never stops calling tools). 10 was too low for build-style steps
 # (creating several files is >10 tool calls), which cut steps off mid-work;
-# 25 fits real multi-file steps while still bounding runaway loops. Configurable.
-MAX_TOOL_ROUNDS = int(os.getenv('COGNITRIX_MAX_TOOL_ROUNDS', '25'))
+# 100 fits long multi-file/agentic turns while still bounding runaway loops. Configurable.
+MAX_TOOL_ROUNDS = int(os.getenv('COGNITRIX_MAX_TOOL_ROUNDS', '100'))
 
 # Compaction: when the stored history estimate crosses this fraction of the
 # model's usable window, fold the oldest turns into a summary message.
 COMPACT_THRESHOLD = 0.7
 # Never fold the most recent turns — they are the working context.
 COMPACT_KEEP_TURNS = 4
+
+# Cap tool param/result previews streamed to the browser. A search tool can
+# return hundreds of KB; the chat UI only shows a preview in the collapsible.
+_TOOL_PREVIEW_MAX = 4000
+
+
+def _tool_preview(data: Any) -> str:
+    """Stringify and cap for the chat UI.
+
+    Pretty-print genuine dict/list; otherwise use str() — matching how tool
+    results are persisted (process_prompt does str(data)). Using json.dumps with
+    default=str on a string-like object would double-quote and escape newlines.
+    """
+    if isinstance(data, str):
+        s = data
+    elif isinstance(data, (dict, list)):
+        try:
+            s = json.dumps(data, default=str, indent=2)
+        except Exception:
+            s = str(data)
+    else:
+        s = str(data)
+    if len(s) > _TOOL_PREVIEW_MAX:
+        return s[:_TOOL_PREVIEW_MAX] + f"\n… (truncated, {len(s)} chars total)"
+    return s
 
 
 class Session(Model):
@@ -333,9 +358,32 @@ class Session(Model):
                                 'content': response.llm_response or '',
                                 'tool_calls': response.tool_calls,
                             })
+                            # Surface tool activity to browser transports so the chat
+                            # UI can show what the agent is running: name + params up
+                            # front, then the result on completion. The whole batch
+                            # runs concurrently in call_tools (all starts, then all
+                            # completions). Previews are stringified/capped and keyed
+                            # by tool_call_id so the UI pairs result to the right call.
+                            tool_meta = [
+                                (t.get('name'), t.get('tool_call_id'), t.get('arguments') or {})
+                                for t in response.tool_calls
+                            ]
+                            if interface in ('web', 'ws'):
+                                for name, tcid, args in tool_meta:
+                                    if name:
+                                        await output({'type': 'tool', 'status': 'started', 'tool_name': name,
+                                                      'tool_call_id': tcid, 'params': _tool_preview(args)})
                             result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls, interface=interface)
                             called_tools = True
                             tool_rounds += 1
+                            if interface in ('web', 'ws'):
+                                result_list = result['result'] if isinstance(result, dict) and result.get('type') == 'tool_calls_result' else []
+                                for i, (name, tcid, args) in enumerate(tool_meta):
+                                    if not name:
+                                        continue
+                                    data = result_list[i].get('data', '') if i < len(result_list) else ''
+                                    await output({'type': 'tool', 'status': 'completed', 'tool_name': name,
+                                                  'tool_call_id': tcid, 'result': _tool_preview(data)})
 
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                                 # If a tool call has a result, add it to history and rebuild the prompt

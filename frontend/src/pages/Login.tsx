@@ -91,16 +91,17 @@ export default function Login() {
               </div>
 
               {error && (
-                <p className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
+                <p role="alert" className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
               )}
 
               <Button type="submit" disabled={loading} className="w-full">
                 {loading ? (
-                  <><Spinner /> Signing in…</>
+                  <span className="inline-flex items-center gap-2"><Spinner /> Signing in…</span>
                 ) : (
                   <>Sign in <span aria-hidden>→</span></>
                 )}
               </Button>
+              {loading && <span role="status" className="sr-only">Signing in…</span>}
             </form>
 
             <p className="mt-6 text-sm text-fg-dim">

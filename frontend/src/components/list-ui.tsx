@@ -11,19 +11,19 @@ export function Spinner({ className = 'h-5 w-5' }: { className?: string }) {
 
 export function PageHeader({ title, subtitle, children }: { title: string; subtitle: string; children?: ReactNode }) {
   return (
-    <header className="flex flex-none items-center justify-between gap-4 border-b border-line px-6 py-4">
-      <div>
+    <header className="app-page-header flex flex-none flex-col items-stretch gap-4 border-b border-line py-4 pl-16 pr-4 sm:flex-row sm:items-center md:px-6">
+      <div className="min-w-0">
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
         <p className="mt-0.5 font-mono text-[11px] tracking-[0.02em] text-fg-dim">{subtitle}</p>
       </div>
-      {children}
+      {children && <div className="flex flex-wrap items-center gap-2 sm:ml-auto">{children}</div>}
     </header>
   );
 }
 
 export function LoadingState({ label }: { label: string }) {
   return (
-    <div className="flex h-full items-center justify-center gap-2 font-mono text-sm text-fg-dim">
+    <div role="status" className="flex h-full items-center justify-center gap-2 font-mono text-sm text-fg-dim">
       <Spinner className="h-4 w-4 text-accent" /> {label}
     </div>
   );
@@ -31,11 +31,11 @@ export function LoadingState({ label }: { label: string }) {
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center text-center">
+    <div role="alert" className="mx-auto flex h-full max-w-md flex-col items-center justify-center text-center">
       <div className="border-l-2 border-danger bg-danger/5 px-4 py-3 text-left font-mono text-[12px] text-danger-ink">{message}</div>
       <button
         onClick={onRetry}
-        className="mt-4 rounded border border-line px-4 py-2 font-mono text-[12px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg"
+        className="mt-4 min-h-11 rounded border border-line px-4 py-2 font-mono text-[12px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0"
       >
         ↻ retry
       </button>

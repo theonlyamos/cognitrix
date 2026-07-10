@@ -8,19 +8,53 @@ dicts like Session.chat). These tests lock the shims in cognitrix.config.
 import pytest
 
 
+async def _initialize_sqlite(DBMS, path):
+    initialize_async = getattr(DBMS, 'initialize_async', None)
+    if initialize_async is not None:
+        await initialize_async('sqlite', database=str(path))
+    else:
+        DBMS.initialize('sqlite', database=str(path))
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'factory'),
+    [
+        ('LLM', lambda: __import__('cognitrix.providers.base', fromlist=['LLM']).LLM(id='provided-id')),
+        ('Skill', lambda: __import__('cognitrix.skills.models', fromlist=['Skill']).Skill(id='provided-id')),
+        (
+            'Tool',
+            lambda: __import__('cognitrix.models.tool', fromlist=['Tool']).Tool(
+                id='provided-id', name='test', description='test tool'
+            ),
+        ),
+    ],
+)
+def test_patch_preserves_concrete_non_aliased_ids(model_name, factory):
+    from cognitrix.config import _patch_odbms_sqlite
+
+    _patch_odbms_sqlite()
+
+    assert factory().id == 'provided-id', f'{model_name} id was replaced'
+
+
 @pytest.mark.asyncio
 async def test_session_roundtrip_and_update(tmp_path):
     from odbms import DBMS
 
     from cognitrix.config import _patch_odbms_sqlite
 
-    await DBMS.initialize_async('sqlite', database=str(tmp_path / 't.db'))
+    await _initialize_sqlite(DBMS, tmp_path / 't.db')
     _patch_odbms_sqlite()
 
     from cognitrix.sessions.base import Session
 
     create = getattr(Session, '_create_table_async', None) or Session.create_table
     await create()
+
+    explicit = Session(id='provided-id', agent_id='agent-0')
+    assert explicit.id == 'provided-id'
+    explicit.id = 'assigned-id'
+    assert explicit.id == 'assigned-id'
 
     session = Session(agent_id='agent-1')
     session.chat = [
@@ -51,7 +85,7 @@ async def test_text_field_that_looks_like_json_stays_text(tmp_path):
 
     from cognitrix.config import _patch_odbms_sqlite
 
-    await DBMS.initialize_async('sqlite', database=str(tmp_path / 't2.db'))
+    await _initialize_sqlite(DBMS, tmp_path / 't2.db')
     _patch_odbms_sqlite()
 
     from cognitrix.sessions.base import Session

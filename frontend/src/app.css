@@ -14,17 +14,29 @@
 :root {
   color-scheme: light;
   --bg:#f7f7f4;
+  --bg-rgb:247 247 244;
   --panel:#ffffff;
+  --panel-rgb:255 255 255;
   --panel-2:#eeeee9;
+  --panel-2-rgb:238 238 233;
   --line:rgba(0,0,0,.11);
   --fg:#16181a;
+  --fg-rgb:22 24 26;
   --fg-dim:#5a5f5c;
+  --fg-dim-rgb:90 95 92;
   --accent:#c6f24e;
+  --accent-rgb:198 242 78;
   --on-accent:#0b0c0e;
+  --on-accent-rgb:11 12 14;
   --accent-ink:#4e6b00;   /* accent-as-text (lime fails contrast on light) */
+  --accent-ink-rgb:78 107 0;
   --danger:#c23528;
+  --danger-rgb:194 53 40;
   --danger-ink:#c23528;
+  --danger-ink-rgb:194 53 40;
   --ok:#3f7d20;
+  --ok-rgb:63 125 32;
+  --focus:#4e6b00;
   /* syntax highlighting (restrained, reads on the light code bg) */
   --syn-num:#a15c00;
   --syn-alt:#1f6f8b;
@@ -40,17 +52,29 @@
 html.dark {
   color-scheme: dark;
   --bg:#0b0c0e;
+  --bg-rgb:11 12 14;
   --panel:#141619;
+  --panel-rgb:20 22 25;
   --panel-2:#1c1f23;
+  --panel-2-rgb:28 31 35;
   --line:rgba(255,255,255,.09);
   --fg:#f4f4f2;
+  --fg-rgb:244 244 242;
   --fg-dim:#8b8f8b;
+  --fg-dim-rgb:139 143 139;
   --accent:#c6f24e;
+  --accent-rgb:198 242 78;
   --on-accent:#0b0c0e;
+  --on-accent-rgb:11 12 14;
   --accent-ink:#c6f24e;
+  --accent-ink-rgb:198 242 78;
   --danger:#ff6b5e;
+  --danger-rgb:255 107 94;
   --danger-ink:#ff6b5e;
+  --danger-ink-rgb:255 107 94;
   --ok:#9fe870;
+  --ok-rgb:159 232 112;
+  --focus:#c6f24e;
   --syn-num:#e5b567;
   --syn-alt:#6fb3d2;
 }
@@ -72,8 +96,8 @@ html.dark {
 
   ::selection { background: var(--accent); color: var(--on-accent); }
 
-  /* Focus ring (lime) */
-  :focus-visible { outline: none; box-shadow: var(--ring); border-radius: var(--r1); }
+  /* Focus indicator */
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
   /* Scrollbar */
   ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -82,6 +106,7 @@ html.dark {
   ::-webkit-scrollbar-thumb:hover { background: color-mix(in oklab, var(--fg-dim) 40%, var(--panel-2)); }
 
   @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
     *, ::before, ::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   }
 }
@@ -149,7 +174,7 @@ html.dark {
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: var(--r2);
-  padding: .8em .9em;
+  padding: 3.25rem .9em .8em;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: .86em;
   line-height: 1.5;
@@ -157,6 +182,7 @@ html.dark {
 .md-code pre code { background: none; border: 0; padding: 0; font-size: inherit; }
 .md-copy {
   position: absolute; top: .45em; right: .45em;
+  display: grid; min-width: 44px; min-height: 44px; place-items: center;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 10px; letter-spacing: .04em;
   color: var(--fg-dim);
@@ -164,10 +190,15 @@ html.dark {
   border: 1px solid var(--line);
   border-radius: var(--r1);
   padding: .12em .5em;
-  opacity: 0; transition: opacity .15s; cursor: pointer;
+  opacity: 1; transition: opacity .15s; cursor: pointer;
 }
-.md-code:hover .md-copy, .md-copy:focus-visible { opacity: 1; }
 .md-copy:hover { color: var(--fg); border-color: var(--fg-dim); }
+
+@media (min-width: 768px) and (hover: hover) and (pointer: fine) {
+  .md-code pre { padding-top: .8em; }
+  .md-copy { min-width: 0; min-height: 0; opacity: 0; }
+  .md-code:hover .md-copy, .md-copy:focus-visible { opacity: 1; }
+}
 
 /* highlight.js tokens — restrained, palette-driven, adapts to light/dark */
 .md .hljs { color: var(--fg); background: transparent; }

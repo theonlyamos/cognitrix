@@ -1,73 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import type { Components } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeHighlight from 'rehype-highlight';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChatMessageRow } from '@/components/ChatMessageRow';
 import { useSession } from '@/context/SessionContext';
+import { MobileSheet } from '@/components/MobileSheet';
+import { SelectionRow } from '@/components/SelectionRow';
 import { useSSE } from '@/hooks/useSSE';
 import { useResource } from '@/hooks/useResource';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
+import { Button } from '@/lib/components/ui/button';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
   'First research X, then write a short brief.',
   'What can you help me with?',
 ];
-
-const fmtTime = (t?: string | number) =>
-  t ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '';
-
-// Fenced code block with a hover copy button. Reads the rendered text from the
-// DOM so it works regardless of the syntax-highlight token spans inside.
-function CodeBlock({ children }: { children?: ReactNode }) {
-  const ref = useRef<HTMLPreElement>(null);
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    const text = ref.current?.innerText ?? '';
-    void navigator.clipboard?.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  };
-  return (
-    <div className="md-code">
-      <button type="button" className="md-copy" onClick={copy}>{copied ? 'copied' : 'copy'}</button>
-      <pre ref={ref}>{children}</pre>
-    </div>
-  );
-}
-
-// Route internal links (/tasks/… — multi-step replies carry a run link) through
-// the SPA router; open external links in a new tab safely.
-const mdComponents: Components = {
-  a({ href, children }) {
-    if (href && href.startsWith('/')) {
-      return <Link to={href} className="text-accent-ink underline underline-offset-2 hover:brightness-110">{children}</Link>;
-    }
-    return (
-      <a href={href} target="_blank" rel="noreferrer nofollow" className="text-accent-ink underline underline-offset-2 hover:brightness-110">
-        {children}
-      </a>
-    );
-  },
-  pre({ children }) {
-    return <CodeBlock>{children}</CodeBlock>;
-  },
-};
-
-function MarkdownMessage({ content }: { content: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-      components={mdComponents}
-    >
-      {content}
-    </ReactMarkdown>
-  );
-}
 
 interface ConvoSummary {
   id: string;
@@ -149,11 +96,13 @@ const downscaleImage = async (file: File): Promise<string> => {
 const dataUrlBytes = (dataUrl: string) => Math.floor(((dataUrl.split(',')[1] || '').length * 3) / 4);
 
 export default function Home() {
-  const { messages, addMessage, appendToLastMessage, setIsStreaming, toolEvents, clearMessages, setMessages } = useSession();
+  const { messages, addMessage, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, clearMessages, setMessages } = useSession();
   const [input, setInput] = useState('');
   const [waiting, setWaiting] = useState(false); // sent, before first token
   const [streaming, setStreaming] = useState(false); // actively streaming a reply
   const [planning, setPlanning] = useState<string | null>(null); // transient status (e.g. multi-step)
+  const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
+  const mobileConversationsTriggerRef = useRef<HTMLButtonElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -416,7 +365,7 @@ export default function Home() {
   }, [agentId, convos, convosSorted, loadConversation, resetThreadState]);
 
   const handleSSEEvent = useCallback(
-    (event: { type: string; content?: string; action?: string; session_id?: string }) => {
+    (event: { type: string; content?: string; action?: string; session_id?: string; tool_name?: string; status?: string; tool_call_id?: string; params?: string; result?: string }) => {
       const sid = event.session_id;
       // Drop only events that CARRY a mismatched id — untagged events (status,
       // transport errors) always belong to the active turn since switching is
@@ -466,6 +415,16 @@ export default function Home() {
           setStreaming(false);
           setPlanning(null);
           break;
+        case 'tool':
+          // The agent invoked a tool — show it running with its params, then flip
+          // to done/error and attach the result.
+          if (event.tool_name) {
+            if (event.status === 'started')
+              addToolCall(event.tool_name, { id: event.tool_call_id, params: event.params });
+            else
+              resolveToolCall(event.tool_name, event.status === 'error' ? 'error' : 'done', { id: event.tool_call_id, result: event.result });
+          }
+          break;
         case 'approval_request': {
           const req = event as unknown as ApprovalRequest;
           if (req.request_id) {
@@ -479,7 +438,7 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, addMessage, agentId, refetchConvos],
+    [appendToLastMessage, addMessage, addToolCall, resolveToolCall, agentId, refetchConvos],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
@@ -533,11 +492,13 @@ export default function Home() {
 
   const switchConversation = (id: string) => {
     if (busy || id === activeSessionId) return;
+    setMobileConversationsOpen(false);
     void loadConversation(id);
   };
 
   const newConversation = () => {
     if (busy) return;
+    setMobileConversationsOpen(false);
     adoptSession(null);
     resetThreadState();
     setInput('');
@@ -557,6 +518,7 @@ export default function Home() {
 
   const switchAgent = (id: string) => {
     if (id === agentId) return;
+    setMobileConversationsOpen(false);
     setAgentId(id);
     localStorage.setItem('selectedAgentId', id);
     setActiveSessionId(null);
@@ -566,69 +528,97 @@ export default function Home() {
 
   const empty = messages.length === 0;
 
+  const conversationPanel = (
+    <>
+      <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
+        <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">CONVERSATIONS</span>
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="sm" onClick={newConversation} disabled={busy}>
+            + new
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileConversationsOpen(false)}
+            aria-label="Close conversations"
+            className="md:hidden"
+          >
+            <span aria-hidden>×</span>
+          </Button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {convosSorted.length === 0 ? (
+          <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no conversations yet</p>
+        ) : (
+          convosSorted.map((c) => (
+            <SelectionRow
+              key={c.id}
+              selected={c.id === activeSessionId}
+              onSelect={() => switchConversation(c.id)}
+              disabled={busy}
+              className={cn(
+                'group min-h-11 gap-2 border-b border-line transition-colors',
+                c.id === activeSessionId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
+                busy && 'pointer-events-none opacity-60',
+              )}
+              buttonClassName="self-stretch px-4 py-2.5"
+              trailingAction={
+                <button
+                  type="button"
+                  onClick={() => void deleteConversation(c.id)}
+                  disabled={busy}
+                  aria-label={`Delete conversation ${c.title}`}
+                  className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8"
+                >
+                  ✕
+                </button>
+              }
+            >
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13px]">{c.title}</div>
+                <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">{fmtRelative(c.updated_at)}</div>
+              </div>
+            </SelectionRow>
+          ))
+        )}
+      </div>
+    </>
+  );
+
   return (
     <div className="flex-1 flex h-screen min-w-0 bg-bg text-fg">
+      <MobileSheet
+        id="mobile-conversations"
+        label="Conversations"
+        open={mobileConversationsOpen && !!agentId}
+        onClose={() => setMobileConversationsOpen(false)}
+        triggerRef={mobileConversationsTriggerRef}
+      >
+        {conversationPanel}
+      </MobileSheet>
+
       {/* Conversations panel */}
       {agentId && (
         <aside className="hidden md:flex w-60 flex-none flex-col border-r border-line bg-panel">
-          <div className="flex h-14 flex-none items-center justify-between border-b border-line px-4">
-            <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">CONVERSATIONS</span>
-            <button
-              onClick={newConversation}
-              disabled={busy}
-              className="rounded border border-line px-2 py-1 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg disabled:pointer-events-none disabled:opacity-40"
-            >
-              + new
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {convosSorted.length === 0 ? (
-              <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no conversations yet</p>
-            ) : (
-              convosSorted.map((c) => (
-                <div
-                  key={c.id}
-                  onClick={() => switchConversation(c.id)}
-                  className={cn(
-                    'group flex cursor-pointer items-center gap-2 border-b border-line px-4 py-2.5 transition-colors',
-                    c.id === activeSessionId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
-                    busy && 'pointer-events-none opacity-60',
-                  )}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px]">{c.title}</div>
-                    <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">{fmtRelative(c.updated_at)}</div>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void deleteConversation(c.id);
-                    }}
-                    aria-label="Delete conversation"
-                    className="hidden h-6 w-6 flex-none place-items-center rounded border border-line text-fg-dim group-hover:grid hover:border-danger hover:text-danger-ink"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
+          {conversationPanel}
         </aside>
       )}
 
       {/* Chat column */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top bar */}
-        <header className="flex h-14 flex-none items-center gap-4 border-b border-line px-6">
-          <h1 className="text-[15px] font-semibold">Chat</h1>
-          {agents.length > 0 && (
-            <div className="relative">
+        <header className="app-page-header flex min-h-14 flex-none flex-col items-stretch gap-2 border-b border-line py-2 pl-16 pr-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4 md:px-6">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <h1 className="text-[15px] font-semibold">Chat</h1>
+            {agents.length > 0 && (
+              <div className="relative min-w-0">
               <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-[10px] text-fg-dim">/</span>
               <select
                 value={agentId || agents[0]?.id || ''}
                 onChange={(e) => switchAgent(e.target.value)}
                 aria-label="Active agent"
-                className="h-8 appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent focus:outline-none"
+                className="h-11 max-w-full appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent md:h-8"
               >
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>{a.name}</option>
@@ -636,19 +626,33 @@ export default function Home() {
               </select>
               <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
             </div>
-          )}
-          <div className="ml-auto flex items-center gap-3">
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto sm:gap-3">
+            {agentId && (
+              <Button
+                ref={mobileConversationsTriggerRef}
+                variant="outline"
+                size="sm"
+                className="md:hidden"
+                aria-controls="mobile-conversations"
+                aria-expanded={mobileConversationsOpen}
+                onClick={() => setMobileConversationsOpen(true)}
+              >
+                Conversations
+              </Button>
+            )}
             <span className="flex items-center gap-2 font-mono text-[11px] text-fg-dim">
               <span className={cn('h-1.5 w-1.5 rounded-full', isConnected ? 'bg-accent' : 'bg-danger')} />
               {isConnected ? 'connected' : (
-                <button onClick={reconnect} className="underline underline-offset-2 hover:text-fg">reconnect</button>
+                <button onClick={reconnect} className="min-h-11 underline underline-offset-2 hover:text-fg md:min-h-0">reconnect</button>
               )}
             </span>
           </div>
         </header>
 
         {/* Stream */}
-        <div className="flex-1 overflow-y-auto">
+        <div role="log" aria-live="polite" aria-relevant="additions text" className="flex-1 overflow-y-auto">
           {empty ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col justify-center px-6">
               <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ start a conversation</p>
@@ -661,7 +665,7 @@ export default function Home() {
                   <button
                     key={s}
                     onClick={() => send(s)}
-                    className="group flex items-center gap-3 rounded border border-line px-3.5 py-2.5 text-left text-sm text-fg-dim transition-colors hover:border-fg-dim hover:text-fg"
+                    className="group flex min-h-11 items-center gap-3 rounded border border-line px-3.5 py-2.5 text-left text-sm text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0"
                   >
                     <span className="font-mono text-[11px] text-fg-dim group-hover:text-accent-ink">→</span>
                     {s}
@@ -671,41 +675,17 @@ export default function Home() {
             </div>
           ) : (
             <div>
-              {messages.map((m, i) => {
-                const isUser = m.role === 'user';
-                const isLast = i === messages.length - 1;
-                return (
-                  <div key={m.id} className="grid grid-cols-[68px_1fr] gap-4 border-b border-line px-6 py-4">
-                    <div className={cn('pt-0.5 font-mono text-[11px] tracking-[0.06em]', isUser ? 'text-accent-ink' : 'text-fg-dim')}>
-                      {isUser ? 'YOU' : 'AGENT'}
-                    </div>
-                    <div className="min-w-0">
-                      {isUser ? (
-                        <div className="whitespace-pre-wrap break-words leading-relaxed">{m.content}</div>
-                      ) : isLast && streaming ? (
-                        // Render plain text while streaming; swap to markdown on completion
-                        // so we don't re-parse the whole reply on every token.
-                        <div className="whitespace-pre-wrap break-words leading-relaxed">
-                          {m.content}
-                          <span className="caret" />
-                        </div>
-                      ) : (
-                        <div className="md break-words">
-                          <MarkdownMessage content={m.content} />
-                        </div>
-                      )}
-                      {m.timestamp && (
-                        <div className="mt-2 font-mono text-[10.5px] text-fg-dim">
-                          <span className="opacity-70">at</span> {fmtTime(m.timestamp)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+              {messages.map((message, index) => (
+                <ChatMessageRow
+                  key={message.id}
+                  message={message}
+                  isLast={index === messages.length - 1}
+                  streaming={streaming && index === messages.length - 1 && message.role === 'assistant'}
+                />
+              ))}
 
               {waiting && (
-                <div className="grid grid-cols-[68px_1fr] gap-4 px-6 py-4">
+                <div role="status" className="grid grid-cols-1 gap-2 px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
                   <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">AGENT</div>
                   <div className="flex items-center gap-2.5 font-mono text-[12px] text-fg-dim">
                     <span className="think-bars"><i /><i /><i /><i /></span>
@@ -717,16 +697,16 @@ export default function Home() {
           )}
 
           {error && (
-            <div className="mx-6 my-4 flex items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
+            <div role="alert" className="mx-6 my-4 flex items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
               <span>connection error — the stream stopped after several retries.</span>
-              <button onClick={reconnect} className="flex-none rounded border border-line px-2 py-0.5 transition-colors hover:border-fg-dim hover:text-fg">
+              <button onClick={reconnect} className="min-h-11 flex-none rounded border border-line px-2 py-0.5 transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">
                 ↻ retry
               </button>
             </div>
           )}
 
           {approvals.map((a) => (
-            <div key={a.request_id} className="animate-rise mx-6 my-4 border-l-2 border-danger bg-danger/5 px-3 py-3 font-mono text-[12px]">
+            <div key={a.request_id} role="alert" className="animate-rise mx-6 my-4 border-l-2 border-danger bg-danger/5 px-3 py-3 font-mono text-[12px]">
               <div className="flex items-center gap-2">
                 <span className="text-danger-ink">⚠ approval required</span>
                 <span className="rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-fg-dim">{a.risk_level} risk</span>
@@ -739,9 +719,9 @@ export default function Home() {
                 <pre className="mt-2 max-h-32 overflow-auto rounded border border-line bg-panel-2 p-2 text-[11px] text-fg-dim">{JSON.stringify(a.params, null, 2)}</pre>
               )}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                <button onClick={() => respondApproval(a.request_id, true)} className="rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent-ink">approve</button>
-                <button onClick={() => respondApproval(a.request_id, true, true)} className="rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg">approve for session</button>
-                <button onClick={() => respondApproval(a.request_id, false)} className="rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink">deny</button>
+                <button onClick={() => respondApproval(a.request_id, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent-ink md:min-h-0">approve</button>
+                <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">approve for session</button>
+                <button onClick={() => respondApproval(a.request_id, false)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:min-h-0">deny</button>
               </div>
             </div>
           ))}
@@ -807,7 +787,7 @@ export default function Home() {
                       <button
                         onClick={() => removeAttachment(a.id)}
                         aria-label={`Remove ${a.name}`}
-                        className="flex-none text-fg-dim transition-colors hover:text-danger-ink"
+                        className="grid h-11 w-11 flex-none place-items-center text-fg-dim transition-colors hover:text-danger-ink md:h-auto md:w-auto"
                       >
                         ✕
                       </button>
@@ -840,17 +820,18 @@ export default function Home() {
                   }
                 }}
                 role="combobox"
+                aria-label="Message the agent"
                 aria-expanded={skillMenuOpen}
                 aria-controls="skill-menu"
                 aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
                 placeholder="Message the agent…"
-                className="block max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-12 text-sm text-fg outline-none placeholder:text-fg-dim focus:outline-none focus-visible:shadow-none"
+                className="block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-12 text-sm text-fg placeholder:text-fg-dim md:min-h-0"
               />
               <button
                 onClick={() => send(input)}
                 disabled={(!input.trim() && attachments.length === 0) || waiting}
                 aria-label="Send"
-                className="absolute bottom-1 right-1.5 grid h-8 w-8 place-items-center rounded bg-accent text-accent-foreground transition disabled:cursor-not-allowed disabled:opacity-40 hover:brightness-105"
+                className="absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded bg-accent text-accent-foreground transition disabled:cursor-not-allowed disabled:opacity-40 hover:brightness-105 md:h-8 md:w-8"
               >
                 {waiting ? (
                   <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
@@ -868,14 +849,14 @@ export default function Home() {
               />
             </div>
             {uploadError && (
-              <div className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{uploadError}</div>
+              <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{uploadError}</div>
             )}
             <div className="mt-2 flex items-center gap-4 font-mono text-[10.5px] text-fg-dim">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 aria-label="Attach files"
-                className="flex items-center gap-1.5 transition-colors hover:text-fg"
+                className="flex min-h-11 items-center gap-1.5 transition-colors hover:text-fg md:min-h-0"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
                 attach
@@ -885,16 +866,10 @@ export default function Home() {
                 onClick={toggleBypass}
                 aria-pressed={bypass}
                 title="Auto-approve tool calls for this browser (skips the approval prompt). Use with care."
-                className={cn('flex items-center gap-1 transition-colors', bypass ? 'text-danger-ink' : 'hover:text-fg')}
+                className={cn('flex min-h-11 items-center gap-1 transition-colors md:min-h-0', bypass ? 'text-danger-ink' : 'hover:text-fg')}
               >
                 <span>[{bypass ? '✓' : 'x'}]</span> auto-approve
               </button>
-              {toolEvents.length > 0 && (
-                <span className="flex items-center gap-1.5 text-accent-ink">
-                  <span className="think-bars"><i /><i /><i /></span>
-                  {toolEvents[toolEvents.length - 1].toolName}
-                </span>
-              )}
               <span className="ml-auto"><kbd className="rounded border border-line px-1">⏎</kbd> send</span>
               <span><kbd className="rounded border border-line px-1">⇧⏎</kbd> newline</span>
             </div>

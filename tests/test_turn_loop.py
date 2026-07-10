@@ -137,6 +137,66 @@ async def test_tool_turn_persists_valid_sequence(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_web_turn_emits_tool_events(monkeypatch):
+    """A web turn surfaces each tool call as started -> completed events so the
+    chat UI can show what the agent is running. CLI/task turns must not."""
+    from cognitrix.sessions.base import Session
+
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    session = Session(agent_id="s5")
+
+    calls = {"n": 0}
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            r = LLMResponse()
+            r.tool_calls = [{"name": "Echo", "arguments": {"x": 1}, "tool_call_id": "call_1"}]
+            return r
+        r = LLMResponse()
+        r.add_chunk("final answer")
+        return r
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda name: Tool(name=name, description="d", parameters={})),
+    )
+
+    async def fake_run_tool(self, tool, params, **kw):
+        return ToolResult(success=True, data="echoed")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+
+    async def fake_save(self):
+        return None
+
+    monkeypatch.setattr(Session, "save", fake_save)
+
+    events = []
+
+    async def sink(payload=None, *a, **k):
+        events.append(payload)
+
+    await session("hello", agent, "web", False, sink, None, True)
+
+    tool_events = [e for e in events if isinstance(e, dict) and e.get("type") == "tool"]
+    started = next(e for e in tool_events if e["status"] == "started")
+    completed = next(e for e in tool_events if e["status"] == "completed")
+    # started carries name + params; completed carries the result. Paired by id.
+    assert started["tool_name"] == "Echo" and started["tool_call_id"] == "call_1"
+    assert '"x": 1' in started["params"]
+    assert completed["tool_name"] == "Echo" and completed["tool_call_id"] == "call_1"
+    assert completed["result"] == "echoed"
+    # started must precede completed (chip appears running, then resolves).
+    assert tool_events.index(started) < tool_events.index(completed)
+
+
+@pytest.mark.asyncio
 async def test_unknown_tool_does_not_abort_batch(monkeypatch):
     agent = Agent(name="A", llm=_llm(), system_prompt="sys")
 

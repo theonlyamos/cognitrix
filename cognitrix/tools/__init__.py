@@ -12,6 +12,7 @@ from cognitrix.tools.misc import (
     call_agent,
     create_agent,
     create_new_team,
+    list_agents,
     open_file,
 )
 from cognitrix.tools.skill_tool import load_skill
@@ -29,7 +30,7 @@ __all__ = [
     'WebFetch',
     'Search',
     'open_file',
-    'create_agent', 'call_agent', 'create_new_team',
+    'create_agent', 'call_agent', 'create_new_team', 'list_agents',
     'bash',
     'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool',
     'load_skill'
