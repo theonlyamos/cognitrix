@@ -36,6 +36,7 @@ The read-only content shows:
 - Configured tools as a count and named list.
 - Base URL when configured.
 - Short agent identifier for support/debugging context.
+- Tasks currently assigned to the agent, with links to their detail pages.
 
 ### Agent Interact Handoff
 
@@ -67,6 +68,31 @@ The existing overview remains the detail content:
 
 There is no separate team Interact action or route.
 
+## Task Assignment From Details
+
+Both detail pages include an `Assign task` action beside their task section and a `New task` action. These cover existing and new work without introducing a second task model or backend endpoint.
+
+### Assign an Existing Task
+
+`Assign task` expands an inline picker containing tasks that are not already assigned to the current entity. The picker supports selecting one or more tasks, then applying the assignment in one explicit action. While updates are running, its controls are disabled and an accessible status is announced. A failed update leaves the picker open, preserves the user's selection, and renders an inline error. Successful updates refresh the visible task section and close the picker.
+
+Assignments preserve the task model's existing rules:
+
+- Agent detail: append the agent ID to each task's `assigned_agents` list, preserving other assigned agents and any existing `team_id`.
+- Team detail: set each task's `team_id` to the team ID and set `assigned_agents` to the team's current member IDs, matching `TaskPage.changeTeam` semantics. Reassigning a task from another team requires no extra confirmation because the picker and final `Assign selected` action make the destination explicit.
+- Completed, failed, cancelled, scheduled, and running tasks remain eligible; assigning changes ownership only and does not change task status, run history, schedule, steps, or results.
+
+The frontend uses the existing full task objects returned by `/tasks`, changes only the assignment fields above, and saves through the existing `POST /tasks` route. No backend API change is required.
+
+### Create a Preassigned Task
+
+The `New task` action links to:
+
+- `/tasks/new?agentId=<agentId>` from agent detail.
+- `/tasks/new?teamId=<teamId>` from team detail.
+
+`TaskPage` reads these parameters only in create mode. After agent data loads, a valid `agentId` is added to the initial selected-agent set. After team data loads, a valid `teamId` selects the team and pre-fills its current members using the same logic as an interactive team selection. Invalid or missing IDs leave the form unassigned and do not block task creation. Edit routes ignore these parameters so existing assignments always come from the stored task.
+
 ## Edit Forms
 
 The existing forms remain responsible for creation and editing only:
@@ -91,7 +117,12 @@ Frontend tests will verify:
 - Agent detail renders configuration and all three header actions.
 - Agent Interact writes the existing Home selection/sentinel keys and navigates to `/home`.
 - Agent and team Delete actions call the correct API and return to their lists after confirmation.
+- Agent detail lists assigned tasks and can append the agent to selected existing tasks without changing their other assignment fields.
 - Team detail renders members, leader, tasks, and edit action with canonical detail links.
+- Team detail can assign selected existing tasks to the team and synchronizes their assigned agents to current team members.
+- Existing-task assignment preserves non-assignment task fields, reports progress/errors accessibly, and refreshes the assigned-task list.
+- Agent and team `New task` links pass the correct query parameter.
+- Task create mode consumes valid assignment parameters, ignores invalid parameters, and edit mode ignores all prefill parameters.
 - Edit forms load from `/edit`, save back to detail, and use detail as their cancel/back destination.
 - Existing accessibility, lint, type-check, build, and browser workflow checks remain green.
 
