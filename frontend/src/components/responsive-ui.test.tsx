@@ -3,17 +3,20 @@ import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { PageHeader } from '@/components/list-ui';
+import { CheckList } from '@/components/form';
 import { TranscriptView } from '@/components/TranscriptView';
 import { Button } from '@/lib/components/ui/button';
 
 const homeSource = readFileSync(resolve(process.cwd(), 'src/pages/Home.tsx'), 'utf8');
+const taskDetailSource = readFileSync(resolve(process.cwd(), 'src/pages/TaskDetail.tsx'), 'utf8');
+const apiKeysSource = readFileSync(resolve(process.cwd(), 'src/pages/ApiKeys.tsx'), 'utf8');
 
 function classesOnTag(source: string, anchor: string) {
   const anchorIndex = source.indexOf(anchor);
   expect(anchorIndex, `missing source anchor: ${anchor}`).toBeGreaterThan(-1);
 
   const boundedTagSource = source.slice(anchorIndex, anchorIndex + 1200);
-  const classValue = /className=(?:"([^"]*)"|\{cn\('([^']*)')/.exec(boundedTagSource);
+  const classValue = /className=(?:"([^"]*)"|\{cn\(\s*'([^']*)')/.exec(boundedTagSource);
 
   expect(classValue, `missing className near: ${anchor}`).not.toBeNull();
   return (classValue?.[1] ?? classValue?.[2] ?? '').split(/\s+/);
@@ -51,5 +54,35 @@ describe('responsive UI contracts', () => {
     expect(classesOnTag(homeSource, 'aria-label="Send"')).toEqual(expect.arrayContaining(['h-11', 'w-11', 'md:h-8', 'md:w-8']));
     expect(classesOnTag(homeSource, 'aria-label="Attach files"')).toEqual(expect.arrayContaining(['min-h-11', 'md:min-h-0']));
     expect(classesOnTag(homeSource, 'onClick={toggleBypass}')).toEqual(expect.arrayContaining(['min-h-11', 'md:min-h-0']));
+  });
+
+  it('keeps task transcript selectors 44px on mobile and compact at md+', () => {
+    expect(classesOnTag(taskDetailSource, 'aria-pressed={selected === s.index}')).toEqual(
+      expect.arrayContaining(['min-h-11', 'md:min-h-0']),
+    );
+    expect(classesOnTag(taskDetailSource, "aria-pressed={selected === 'synthesis'}")).toEqual(
+      expect.arrayContaining(['min-h-11', 'md:min-h-0']),
+    );
+  });
+
+  it('keeps checklist rows 44px on mobile and compact at md+', () => {
+    render(
+      <CheckList
+        options={[{ value: 'read', label: 'Read' }]}
+        selected={new Set()}
+        onToggle={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('checkbox', { name: 'Read' }).closest('label')).toHaveClass(
+      'min-h-11',
+      'md:min-h-0',
+    );
+  });
+
+  it('keeps API key secret inputs 44px on mobile and compact at md+', () => {
+    expect(classesOnTag(apiKeysSource, 'readOnly')).toEqual(
+      expect.arrayContaining(['h-11', 'md:h-10']),
+    );
   });
 });

@@ -70,7 +70,7 @@ function CopyRow({ id, label, value }: { id: string; label: string; value: strin
           readOnly
           value={value}
           onFocus={(e) => e.currentTarget.select()}
-          className="h-10 w-full rounded border border-line bg-bg px-3 font-mono text-[12px] text-fg"
+          className="h-11 w-full rounded border border-line bg-bg px-3 font-mono text-[12px] text-fg md:h-10"
         />
         <Button type="button" variant="outline" size="sm" onClick={copy} className="flex-none">
           {copied ? 'Copied' : 'Copy'}
