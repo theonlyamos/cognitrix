@@ -25,10 +25,11 @@ export function MobileSheet({ id, label, open, onClose, triggerRef, children }: 
     if (!open) return;
 
     const dialog = dialogRef.current;
+    const trigger = triggerRef.current;
     const firstControl = dialog?.querySelector<HTMLElement>(FOCUSABLE);
     (firstControl ?? dialog)?.focus();
 
-    return () => triggerRef.current?.focus();
+    return () => trigger?.focus();
   }, [open, triggerRef]);
 
   if (!open) return null;
