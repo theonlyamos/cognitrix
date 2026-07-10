@@ -9,9 +9,14 @@ from fastapi import BackgroundTasks, HTTPException
 from cognitrix.api.routes.tasks import ScheduleToggle, save_task, toggle_schedule
 from cognitrix.common.security import AuthContext
 from cognitrix.tasks.base import Task, TaskStatus
-from cognitrix.tasks.scheduler import compute_next_run, tick, validate_schedule
+from cognitrix.tasks.scheduler import compute_next_run, normalize_schedule_at, tick, validate_schedule
 
 NOW = datetime(2030, 6, 1, 12, 0, 0)
+
+
+def test_schedule_datetime_normalizer_is_a_scheduler_api():
+    """Public scheduler helpers must not be removable as unused imports."""
+    assert normalize_schedule_at.__module__ == 'cognitrix.tasks.scheduler'
 
 
 # --- model fields ------------------------------------------------------------
