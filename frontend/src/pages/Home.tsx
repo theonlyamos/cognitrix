@@ -5,6 +5,7 @@ import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { useSession } from '@/context/SessionContext';
+import { MobileSheet } from '@/components/MobileSheet';
 import { useSSE } from '@/hooks/useSSE';
 import { useResource } from '@/hooks/useResource';
 import { api } from '@/lib/api';
@@ -169,6 +170,7 @@ export default function Home() {
   const [streaming, setStreaming] = useState(false); // actively streaming a reply
   const [planning, setPlanning] = useState<string | null>(null); // transient status (e.g. multi-step)
   const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
+  const mobileConversationsTriggerRef = useRef<HTMLButtonElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -289,15 +291,6 @@ export default function Home() {
   waitingRef.current = waiting;
 
   const busy = waiting || streaming;
-
-  useEffect(() => {
-    if (!mobileConversationsOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMobileConversationsOpen(false);
-    };
-    document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [mobileConversationsOpen]);
 
   // Default to the first agent once the list loads (or if the saved one is gone).
   useEffect(() => {
@@ -659,25 +652,15 @@ export default function Home() {
 
   return (
     <div className="flex-1 flex h-screen min-w-0 bg-bg text-fg">
-      {mobileConversationsOpen && agentId && (
-        <>
-          <button
-            type="button"
-            aria-label="Dismiss conversations"
-            className="fixed inset-0 z-40 bg-bg/70 md:hidden"
-            onClick={() => setMobileConversationsOpen(false)}
-          />
-          <aside
-            id="mobile-conversations"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Conversations"
-            className="fixed inset-y-0 right-0 z-50 flex w-[min(88vw,320px)] flex-col border-l border-line bg-panel shadow-xl md:hidden"
-          >
-            {conversationPanel}
-          </aside>
-        </>
-      )}
+      <MobileSheet
+        id="mobile-conversations"
+        label="Conversations"
+        open={mobileConversationsOpen && !!agentId}
+        onClose={() => setMobileConversationsOpen(false)}
+        triggerRef={mobileConversationsTriggerRef}
+      >
+        {conversationPanel}
+      </MobileSheet>
 
       {/* Conversations panel */}
       {agentId && (
@@ -712,6 +695,7 @@ export default function Home() {
           <div className="flex flex-wrap items-center gap-2 sm:ml-auto sm:gap-3">
             {agentId && (
               <Button
+                ref={mobileConversationsTriggerRef}
                 variant="outline"
                 size="sm"
                 className="md:hidden"
@@ -745,7 +729,7 @@ export default function Home() {
                   <button
                     key={s}
                     onClick={() => send(s)}
-                    className="group flex items-center gap-3 rounded border border-line px-3.5 py-2.5 text-left text-sm text-fg-dim transition-colors hover:border-fg-dim hover:text-fg"
+                    className="group flex min-h-11 items-center gap-3 rounded border border-line px-3.5 py-2.5 text-left text-sm text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0"
                   >
                     <span className="font-mono text-[11px] text-fg-dim group-hover:text-accent-ink">→</span>
                     {s}
@@ -980,13 +964,13 @@ export default function Home() {
                 aria-controls="skill-menu"
                 aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
                 placeholder="Message the agent…"
-                className="block max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-12 text-sm text-fg outline-none placeholder:text-fg-dim focus:outline-none focus-visible:shadow-none"
+                className="block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-12 text-sm text-fg outline-none placeholder:text-fg-dim focus:outline-none focus-visible:shadow-none md:min-h-0"
               />
               <button
                 onClick={() => send(input)}
                 disabled={(!input.trim() && attachments.length === 0) || waiting}
                 aria-label="Send"
-                className="absolute bottom-1 right-1.5 grid h-8 w-8 place-items-center rounded bg-accent text-accent-foreground transition disabled:cursor-not-allowed disabled:opacity-40 hover:brightness-105"
+                className="absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded bg-accent text-accent-foreground transition disabled:cursor-not-allowed disabled:opacity-40 hover:brightness-105 md:h-8 md:w-8"
               >
                 {waiting ? (
                   <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
@@ -1011,7 +995,7 @@ export default function Home() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 aria-label="Attach files"
-                className="flex items-center gap-1.5 transition-colors hover:text-fg"
+                className="flex min-h-11 items-center gap-1.5 transition-colors hover:text-fg md:min-h-0"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
                 attach
@@ -1021,7 +1005,7 @@ export default function Home() {
                 onClick={toggleBypass}
                 aria-pressed={bypass}
                 title="Auto-approve tool calls for this browser (skips the approval prompt). Use with care."
-                className={cn('flex items-center gap-1 transition-colors', bypass ? 'text-danger-ink' : 'hover:text-fg')}
+                className={cn('flex min-h-11 items-center gap-1 transition-colors md:min-h-0', bypass ? 'text-danger-ink' : 'hover:text-fg')}
               >
                 <span>[{bypass ? '✓' : 'x'}]</span> auto-approve
               </button>

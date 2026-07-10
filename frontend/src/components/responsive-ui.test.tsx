@@ -1,8 +1,23 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { PageHeader } from '@/components/list-ui';
 import { TranscriptView } from '@/components/TranscriptView';
 import { Button } from '@/lib/components/ui/button';
+
+const homeSource = readFileSync(resolve(process.cwd(), 'src/pages/Home.tsx'), 'utf8');
+
+function classesOnTag(source: string, anchor: string) {
+  const anchorIndex = source.indexOf(anchor);
+  expect(anchorIndex, `missing source anchor: ${anchor}`).toBeGreaterThan(-1);
+
+  const boundedTagSource = source.slice(anchorIndex, anchorIndex + 1200);
+  const classValue = /className=(?:"([^"]*)"|\{cn\('([^']*)')/.exec(boundedTagSource);
+
+  expect(classValue, `missing className near: ${anchor}`).not.toBeNull();
+  return (classValue?.[1] ?? classValue?.[2] ?? '').split(/\s+/);
+}
 
 describe('responsive UI contracts', () => {
   it('gives small buttons a 44px mobile target and compact desktop height', () => {
@@ -28,5 +43,13 @@ describe('responsive UI contracts', () => {
       'grid-cols-1',
       'sm:grid-cols-[96px_1fr]',
     );
+  });
+
+  it('keeps Home composer controls at least 44px on mobile and compact at md+', () => {
+    expect(classesOnTag(homeSource, 'key={s}')).toEqual(expect.arrayContaining(['min-h-11', 'md:min-h-0']));
+    expect(classesOnTag(homeSource, 'placeholder="Message the agent…"')).toEqual(expect.arrayContaining(['min-h-11', 'md:min-h-0']));
+    expect(classesOnTag(homeSource, 'aria-label="Send"')).toEqual(expect.arrayContaining(['h-11', 'w-11', 'md:h-8', 'md:w-8']));
+    expect(classesOnTag(homeSource, 'aria-label="Attach files"')).toEqual(expect.arrayContaining(['min-h-11', 'md:min-h-0']));
+    expect(classesOnTag(homeSource, 'onClick={toggleBypass}')).toEqual(expect.arrayContaining(['min-h-11', 'md:min-h-0']));
   });
 });
