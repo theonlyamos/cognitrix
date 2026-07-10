@@ -300,6 +300,11 @@ export default function TaskDetail() {
   const stepsDone = plan.filter((s) => s.status === 'done').length;
   const canResume = !isLive && newestRun != null && (newestRun.status === 'failed' || newestRun.status === 'cancelled');
   const hasSynthesis = !!(selectedRunId && (stepSessions[selectedRunId] || {})['synthesis']);
+  const actionStatus = activeRun?.status === 'cancelling' || cancelling
+    ? 'Cancelling… (click to force)'
+    : starting
+      ? 'Starting…'
+      : null;
 
   const runsPanel = (
     <>
@@ -461,20 +466,21 @@ export default function TaskDetail() {
             </Button>
             {isLive ? (
               <Button variant="ghost" size="sm" onClick={cancel} disabled={cancelling} className="hover:text-danger-ink">
-                {activeRun?.status === 'cancelling' || cancelling ? <span role="status">Cancelling… (click to force)</span> : 'Cancel'}
+                {activeRun?.status === 'cancelling' || cancelling ? 'Cancelling… (click to force)' : 'Cancel'}
               </Button>
             ) : canResume ? (
               <>
                 <Button variant="outline" size="sm" onClick={() => start(true)} disabled={starting}>
-                  {starting ? <span role="status">Starting…</span> : '↻ Resume'}
+                  {starting ? 'Starting…' : '↻ Resume'}
                 </Button>
                 <Button size="sm" onClick={() => start(false)} disabled={starting}>▶ Run</Button>
               </>
             ) : (
               <Button size="sm" onClick={() => start(false)} disabled={starting}>
-                {starting ? <span role="status">Starting…</span> : '▶ Run'}
+                {starting ? 'Starting…' : '▶ Run'}
               </Button>
             )}
+            {actionStatus && <span role="status" className="sr-only">{actionStatus}</span>}
           </div>
         </header>
 

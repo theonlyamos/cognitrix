@@ -207,11 +207,11 @@ export default function TaskPage() {
               ) : (
                 <span className="w-6 flex-none text-right font-mono text-[11px] text-fg-dim tnum">{i + 1}</span>
               )}
-              <Input value={s.step} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, step: e.target.value } : x)))} placeholder={`step ${i + 1}`} />
-              <button type="button" onClick={() => setSteps((arr) => arr.filter((_, j) => j !== i))} className="grid h-8 w-8 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink" aria-label="Remove step">✕</button>
+              <Input aria-label={`Step ${i + 1}`} value={s.step} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, step: e.target.value } : x)))} placeholder={`step ${i + 1}`} />
+              <button type="button" onClick={() => setSteps((arr) => arr.filter((_, j) => j !== i))} className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8" aria-label={`Remove step ${i + 1}`}>✕</button>
             </div>
           ))}
-          <button type="button" onClick={() => setSteps((arr) => [...arr, { step: '', done: false }])} className="rounded border border-line px-3 py-1.5 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg">+ add step</button>
+          <button type="button" onClick={() => setSteps((arr) => [...arr, { step: '', done: false }])} className="min-h-11 rounded border border-line px-3 py-1.5 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">+ add step</button>
         </div>
       </Field>
 
@@ -235,19 +235,19 @@ export default function TaskPage() {
 
       <Field label="SCHEDULE" hint="run this task automatically" composite>
         <div role="group" className="space-y-3">
-          <Select value={scheduleMode} onChange={(e) => changeScheduleMode(e.target.value as ScheduleMode)}>
+          <Select aria-label="Schedule type" value={scheduleMode} onChange={(e) => changeScheduleMode(e.target.value as ScheduleMode)}>
             <option value="none">— not scheduled —</option>
             <option value="once">once, at a time</option>
             <option value="interval">repeat every…</option>
             <option value="cron">cron expression</option>
           </Select>
           {scheduleMode === 'once' && (
-            <Input type="datetime-local" min={localNowMin()} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
+            <Input aria-label="Schedule time" type="datetime-local" min={localNowMin()} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
           )}
           {scheduleMode === 'interval' && (
             <div className="flex gap-2">
-              <Input type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(e.target.value)} className="w-28" />
-              <Select value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
+              <Input aria-label="Interval value" type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(e.target.value)} className="w-28" />
+              <Select aria-label="Interval unit" value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
                 <option value="seconds">seconds</option>
                 <option value="minutes">minutes</option>
                 <option value="hours">hours</option>
@@ -257,7 +257,7 @@ export default function TaskPage() {
           )}
           {scheduleMode === 'cron' && (
             <div>
-              <Input value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 9 * * 1-5" className="font-mono" />
+              <Input aria-label="Cron expression" value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 9 * * 1-5" className="font-mono" />
               <p className="mt-1 font-mono text-[11px] text-fg-dim">5-field cron, evaluated in the server's local time</p>
             </div>
           )}

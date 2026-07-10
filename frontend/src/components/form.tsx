@@ -123,8 +123,9 @@ export function PageForm({
             <Link to={backTo}>Cancel</Link>
           </Button>
           <Button size="sm" onClick={onSave} disabled={saving}>
-            {saving ? <span role="status">Saving…</span> : 'Save'}
+            {saving ? 'Saving…' : 'Save'}
           </Button>
+          {saving && <span role="status" className="sr-only">Saving…</span>}
         </div>
       </header>
 

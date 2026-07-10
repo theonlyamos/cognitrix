@@ -645,7 +645,7 @@ export default function Home() {
             <span className="flex items-center gap-2 font-mono text-[11px] text-fg-dim">
               <span className={cn('h-1.5 w-1.5 rounded-full', isConnected ? 'bg-accent' : 'bg-danger')} />
               {isConnected ? 'connected' : (
-                <button onClick={reconnect} className="underline underline-offset-2 hover:text-fg">reconnect</button>
+                <button onClick={reconnect} className="min-h-11 underline underline-offset-2 hover:text-fg md:min-h-0">reconnect</button>
               )}
             </span>
           </div>
@@ -699,7 +699,7 @@ export default function Home() {
           {error && (
             <div role="alert" className="mx-6 my-4 flex items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
               <span>connection error — the stream stopped after several retries.</span>
-              <button onClick={reconnect} className="flex-none rounded border border-line px-2 py-0.5 transition-colors hover:border-fg-dim hover:text-fg">
+              <button onClick={reconnect} className="min-h-11 flex-none rounded border border-line px-2 py-0.5 transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">
                 ↻ retry
               </button>
             </div>
@@ -719,9 +719,9 @@ export default function Home() {
                 <pre className="mt-2 max-h-32 overflow-auto rounded border border-line bg-panel-2 p-2 text-[11px] text-fg-dim">{JSON.stringify(a.params, null, 2)}</pre>
               )}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                <button onClick={() => respondApproval(a.request_id, true)} className="rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent-ink">approve</button>
-                <button onClick={() => respondApproval(a.request_id, true, true)} className="rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg">approve for session</button>
-                <button onClick={() => respondApproval(a.request_id, false)} className="rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink">deny</button>
+                <button onClick={() => respondApproval(a.request_id, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent-ink md:min-h-0">approve</button>
+                <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">approve for session</button>
+                <button onClick={() => respondApproval(a.request_id, false)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:min-h-0">deny</button>
               </div>
             </div>
           ))}
@@ -787,7 +787,7 @@ export default function Home() {
                       <button
                         onClick={() => removeAttachment(a.id)}
                         aria-label={`Remove ${a.name}`}
-                        className="flex-none text-fg-dim transition-colors hover:text-danger-ink"
+                        className="grid h-11 w-11 flex-none place-items-center text-fg-dim transition-colors hover:text-danger-ink md:h-auto md:w-auto"
                       >
                         ✕
                       </button>

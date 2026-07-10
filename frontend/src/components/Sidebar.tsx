@@ -103,7 +103,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
               onClick={onNavigate}
               title={collapsed ? item.label : undefined}
               className={cn(
-                'group relative flex min-h-11 items-center gap-3 rounded px-2.5 py-2 text-[14px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg md:min-h-0',
+                'group relative flex min-h-11 items-center gap-3 rounded px-2.5 py-2 text-[14px] font-medium transition-colors md:min-h-0',
                 collapsed && 'md:justify-center md:gap-0 md:px-0',
                 active ? 'bg-panel-2 text-fg' : 'text-fg-dim hover:bg-panel-2 hover:text-fg',
               )}
@@ -135,7 +135,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
             onClick={logout}
             title={collapsed ? 'Sign out' : undefined}
             className={cn(
-              'flex h-11 flex-1 items-center justify-center gap-2 rounded border border-line font-mono text-[11px] tracking-[0.04em] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg md:h-9',
+              'flex h-11 flex-1 items-center justify-center gap-2 rounded border border-line font-mono text-[11px] tracking-[0.04em] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:h-9',
               collapsed && 'md:w-9 md:flex-none',
             )}
           >
@@ -149,7 +149,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
           onClick={toggle}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className={cn(
-            'mt-1.5 hidden h-8 w-full items-center justify-center gap-2 rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg md:flex',
+            'mt-1.5 hidden h-8 w-full items-center justify-center gap-2 rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:flex',
             !collapsed && 'font-mono text-[10.5px] tracking-[0.08em]',
           )}
         >

@@ -222,7 +222,8 @@ export default function ApiKeys() {
               </div>
               <div className="flex justify-end gap-2">
                 <Button variant="ghost" size="sm" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</Button>
-                <Button size="sm" onClick={create} disabled={saving}>{saving ? <span role="status">Creating…</span> : 'Create key'}</Button>
+                <Button size="sm" onClick={create} disabled={saving}>{saving ? 'Creating…' : 'Create key'}</Button>
+                {saving && <span role="status" className="sr-only">Creating…</span>}
               </div>
             </div>
           )}

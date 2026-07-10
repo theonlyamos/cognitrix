@@ -6,9 +6,12 @@ import { PageHeader } from '@/components/list-ui';
 import { CheckList } from '@/components/form';
 import { TranscriptView } from '@/components/TranscriptView';
 import { Button } from '@/lib/components/ui/button';
+import { Input } from '@/lib/components/ui/input';
+import { Select } from '@/lib/components/ui/select';
 
 const homeSource = readFileSync(resolve(process.cwd(), 'src/pages/Home.tsx'), 'utf8');
 const taskDetailSource = readFileSync(resolve(process.cwd(), 'src/pages/TaskDetail.tsx'), 'utf8');
+const taskPageSource = readFileSync(resolve(process.cwd(), 'src/pages/TaskPage.tsx'), 'utf8');
 const apiKeysSource = readFileSync(resolve(process.cwd(), 'src/pages/ApiKeys.tsx'), 'utf8');
 const agentPageSource = readFileSync(resolve(process.cwd(), 'src/pages/AgentPage.tsx'), 'utf8');
 
@@ -28,6 +31,18 @@ describe('responsive UI contracts', () => {
     render(<Button size="sm">Save</Button>);
 
     expect(screen.getByRole('button', { name: 'Save' })).toHaveClass('h-11', 'md:h-8');
+  });
+
+  it('gives shared inputs and selects 44px mobile targets with compact desktop heights', () => {
+    render(
+      <>
+        <Input aria-label="Task name" />
+        <Select aria-label="Task team"><option>None</option></Select>
+      </>,
+    );
+
+    expect(screen.getByRole('textbox', { name: 'Task name' })).toHaveClass('h-11', 'md:h-10');
+    expect(screen.getByRole('combobox', { name: 'Task team' })).toHaveClass('h-11', 'md:h-10');
   });
 
   it('stacks page-header content before the small breakpoint', () => {
@@ -89,6 +104,15 @@ describe('responsive UI contracts', () => {
 
   it('keeps the AgentPage Advanced button 44px on mobile and compact at md+', () => {
     expect(classesOnTag(agentPageSource, 'onClick={() => setShowAdvanced((v) => !v)}')).toEqual(
+      expect.arrayContaining(['min-h-11', 'md:min-h-0']),
+    );
+  });
+
+  it('keeps TaskPage step actions 44px on mobile and compact at md+', () => {
+    expect(classesOnTag(taskPageSource, 'onClick={() => setSteps((arr) => arr.filter')).toEqual(
+      expect.arrayContaining(['h-11', 'w-11', 'md:h-8', 'md:w-8']),
+    );
+    expect(classesOnTag(taskPageSource, "onClick={() => setSteps((arr) => [...arr, { step: '', done: false }])}")).toEqual(
       expect.arrayContaining(['min-h-11', 'md:min-h-0']),
     );
   });

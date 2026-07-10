@@ -96,11 +96,12 @@ export default function Login() {
 
               <Button type="submit" disabled={loading} className="w-full">
                 {loading ? (
-                  <span role="status" className="inline-flex items-center gap-2"><Spinner /> Signing in…</span>
+                  <span className="inline-flex items-center gap-2"><Spinner /> Signing in…</span>
                 ) : (
                   <>Sign in <span aria-hidden>→</span></>
                 )}
               </Button>
+              {loading && <span role="status" className="sr-only">Signing in…</span>}
             </form>
 
             <p className="mt-6 text-sm text-fg-dim">

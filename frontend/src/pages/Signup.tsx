@@ -88,8 +88,9 @@ export default function Signup() {
               {error && <p role="alert" className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>}
 
               <Button type="submit" disabled={loading} className="w-full">
-                {loading ? <span role="status" className="inline-flex items-center gap-2"><Spinner /> Creating…</span> : <>Create account <span aria-hidden>→</span></>}
+                {loading ? <span className="inline-flex items-center gap-2"><Spinner /> Creating…</span> : <>Create account <span aria-hidden>→</span></>}
               </Button>
+              {loading && <span role="status" className="sr-only">Creating…</span>}
             </form>
 
             <p className="mt-6 text-sm text-fg-dim">

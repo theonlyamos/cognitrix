@@ -30,7 +30,7 @@ export default function AppLayout() {
         aria-controls="primary-navigation"
         aria-expanded={mobileNavOpen}
         onClick={() => setMobileNavOpen(true)}
-        className="fixed left-2 top-2 z-40 grid h-11 w-11 place-items-center rounded border border-line bg-panel text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg md:hidden"
+        className="fixed left-2 top-2 z-40 grid h-11 w-11 place-items-center rounded border border-line bg-panel text-fg md:hidden"
       >
         <svg
           aria-hidden="true"
@@ -48,7 +48,7 @@ export default function AppLayout() {
         <button
           type="button"
           aria-label="Close navigation"
-          className="fixed inset-0 z-40 bg-bg/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-4px] focus-visible:outline-fg md:hidden"
+          className="fixed inset-0 z-40 bg-bg/70 md:hidden"
           onClick={() => setMobileNavOpen(false)}
         />
       )}

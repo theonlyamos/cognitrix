@@ -29,7 +29,12 @@ export function MobileSheet({ id, label, open, onClose, triggerRef, children }: 
     const firstControl = dialog?.querySelector<HTMLElement>(FOCUSABLE);
     (firstControl ?? dialog)?.focus();
 
-    return () => trigger?.focus();
+    return () => {
+      const activeElement = document.activeElement;
+      if (activeElement === document.body || (activeElement && dialog?.contains(activeElement))) {
+        trigger?.focus();
+      }
+    };
   }, [open, triggerRef]);
 
   if (!open) return null;

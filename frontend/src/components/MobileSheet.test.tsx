@@ -7,6 +7,7 @@ import { MobileSheet } from '@/components/MobileSheet';
 function SheetHarness() {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const destinationRef = useRef<HTMLButtonElement>(null);
 
   return (
     <>
@@ -19,8 +20,17 @@ function SheetHarness() {
         triggerRef={triggerRef}
       >
         <button>First action</button>
+        <button
+          onClick={() => {
+            destinationRef.current?.focus();
+            setOpen(false);
+          }}
+        >
+          Open destination
+        </button>
         <button onClick={() => setOpen(false)}>Last action</button>
       </MobileSheet>
+      <button ref={destinationRef}>Outside destination</button>
     </>
   );
 }
@@ -71,5 +81,15 @@ describe('MobileSheet', () => {
 
     expect(screen.queryByRole('dialog', { name: 'History' })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it('preserves an explicit focus handoff to an outside destination', async () => {
+    render(<SheetHarness />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open history' }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Open destination' }));
+
+    expect(screen.queryByRole('dialog', { name: 'History' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Outside destination' })).toHaveFocus();
   });
 });

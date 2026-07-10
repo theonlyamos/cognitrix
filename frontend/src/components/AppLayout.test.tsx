@@ -8,6 +8,7 @@ import AppLayout from '@/components/AppLayout';
 import { ThemeProvider } from '@/context/ThemeContext';
 
 const appSource = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+const cssSource = readFileSync(resolve(process.cwd(), 'src/app.css'), 'utf8');
 
 vi.mock('@/context/AppContext', () => ({
   useUser: () => ({
@@ -118,26 +119,27 @@ describe('AppLayout', () => {
     );
   });
 
-  it('uses an opaque focus-visible outline on shell controls', async () => {
+  it('leaves shell focus styling to the global semantic focus contract', async () => {
     renderShell();
     const navigation = screen.getByRole('complementary', { name: 'Primary navigation' });
-    const focusClasses = [
-      'focus-visible:outline',
-      'focus-visible:outline-2',
-      'focus-visible:outline-fg',
-    ];
-
-    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveClass(...focusClasses);
-    for (const control of [
+    const shellControls = [
+      screen.getByRole('button', { name: 'Open navigation' }),
       ...within(navigation).getAllByRole('link'),
       ...within(navigation).getAllByRole('button'),
-    ]) {
-      expect(control).toHaveClass(...focusClasses);
+    ];
+
+    expect(cssSource).toContain(
+      ':focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }',
+    );
+    for (const control of shellControls) {
+      expect(control.className).not.toContain('focus-visible:outline');
     }
 
     await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
 
-    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveClass(...focusClasses);
+    expect(screen.getByRole('button', { name: 'Close navigation' }).className).not.toContain(
+      'focus-visible:outline',
+    );
   });
 
   it('renders authenticated content in a named main landmark', () => {
