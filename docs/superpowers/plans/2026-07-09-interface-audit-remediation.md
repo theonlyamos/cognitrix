@@ -421,7 +421,7 @@ git commit -m "fix(theme): restore alpha and focus tokens"
 **Interfaces:**
 - `MarkdownMessage` is the only module importing `react-markdown`, `remark-gfm`, and `rehype-highlight`.
 - `ChatMessageRow` is `memo`-wrapped and accepts `{ message, isLast, streaming }`.
-- Home lazy-loads MarkdownMessage inside a local Suspense boundary.
+- `ChatMessageRow` lazy-loads `MarkdownMessage` inside its row-local Suspense boundary; Home renders the memoized row without importing Markdown packages.
 
 - [ ] **Step 1: Record the before measurement**
 
@@ -446,13 +446,13 @@ Expected: FAIL because the row component and lazy Markdown boundary do not exist
 
 - [ ] **Step 4: Extract and memoize message rendering**
 
-Move Markdown renderer configuration into `MarkdownMessage.tsx`. Export it as default. In Home:
+Move Markdown renderer configuration into `MarkdownMessage.tsx` and export it as default. In `ChatMessageRow`:
 
 ```tsx
 const MarkdownMessage = lazy(() => import('@/components/MarkdownMessage'));
 ```
 
-Render completed assistant content through a local Suspense fallback containing the same plain text. Move message/tool row markup into memoized components; preserve message object identity for all unchanged rows.
+Render completed assistant content through a row-local Suspense fallback containing the same plain text. Move message/tool row markup into the memoized component; preserve message object identity for all unchanged rows. This location keeps the exact three-prop row interface and makes the stable-row Markdown mock exercise the real render boundary without context injection.
 
 - [ ] **Step 5: Verify tests and after measurement**
 
