@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PageForm } from '@/components/form';
 import { ThemeProvider } from '@/context/ThemeContext';
+import AgentPage from '@/pages/AgentPage';
 import ApiKeys from '@/pages/ApiKeys';
 import Home from '@/pages/Home';
 import Login from '@/pages/Login';
@@ -118,6 +119,15 @@ function renderTaskDetail() {
   );
 }
 
+function renderAgentPage() {
+  return renderRoute(
+    <Routes>
+      <Route path="/agents/new" element={<AgentPage />} />
+    </Routes>,
+    '/agents/new',
+  );
+}
+
 function expectSiblingLiveStatus(button: HTMLElement, text: string) {
   expect(within(button).queryByRole('status')).not.toBeInTheDocument();
   const status = screen.getByRole('status');
@@ -159,6 +169,7 @@ describe('final accessibility contracts', () => {
     expect(screen.getByRole('group', { name: /STEPS/ })).toBeInTheDocument();
 
     const addStep = screen.getByRole('button', { name: /add step/i });
+    expect(addStep).toHaveClass('min-h-11', 'md:min-h-0');
     await userEvent.click(addStep);
 
     expect(screen.getByRole('textbox', { name: 'Step 1' })).toBeInTheDocument();
@@ -185,6 +196,108 @@ describe('final accessibility contracts', () => {
     await userEvent.selectOptions(scheduleType, 'cron');
     expect(screen.getByRole('textbox', { name: 'Cron expression' })).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Auto-start when created' })).toBeInTheDocument();
+  });
+
+  it('keeps the TaskPage schedule-enabled label touch-sized on mobile', async () => {
+    renderTaskPage();
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: 'Schedule type' }),
+      'once',
+    );
+
+    expect(screen.getByRole('checkbox', { name: 'Schedule enabled' }).closest('label')).toHaveClass(
+      'min-h-11',
+      'md:min-h-0',
+    );
+  });
+
+  it('keeps the TaskPage auto-start label touch-sized on mobile', () => {
+    renderTaskPage();
+
+    expect(screen.getByRole('checkbox', { name: 'Auto-start when created' }).closest('label')).toHaveClass(
+      'min-h-11',
+      'md:min-h-0',
+    );
+  });
+
+  it('renders Home composer actions with responsive touch targets', () => {
+    renderRoute(<Home />);
+
+    expect(screen.getByRole('button', { name: /Summarize the benefits of unit testing\./ })).toHaveClass(
+      'min-h-11',
+      'md:min-h-0',
+    );
+    expect(screen.getByRole('combobox', { name: 'Message the agent' })).toHaveClass(
+      'min-h-11',
+      'md:min-h-0',
+    );
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveClass(
+      'h-11',
+      'w-11',
+      'md:h-8',
+      'md:w-8',
+    );
+    expect(screen.getByRole('button', { name: 'Attach files' })).toHaveClass(
+      'min-h-11',
+      'md:min-h-0',
+    );
+    expect(screen.getByRole('button', { name: /auto-approve/i })).toHaveClass(
+      'min-h-11',
+      'md:min-h-0',
+    );
+  });
+
+  it('renders TaskDetail step and synthesis selectors with responsive touch targets', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'completed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-1',
+        status: 'completed',
+        plan: [{ index: 0, title: 'Research', status: 'done', agent_name: 'Agent One' }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockImplementation((path: string) => Promise.resolve({
+      data: path === '/sessions/runs/run-1'
+        ? [
+            { id: 'step-session', step_index: 0 },
+            { id: 'synthesis-session', step_index: null },
+          ]
+        : [],
+    }));
+    renderTaskDetail();
+
+    const synthesis = await screen.findByRole('button', { name: /synthesis/i });
+    const step = document.querySelector<HTMLButtonElement>('button[title^="Research"]');
+    expect(step).not.toBeNull();
+    expect(step).toHaveClass('min-h-11', 'min-w-11', 'md:min-h-0', 'md:min-w-0');
+    expect(synthesis).toHaveClass('min-h-11', 'md:min-h-0');
+  });
+
+  it('renders API key secrets with responsive input heights', async () => {
+    harness.resources.set('/api-keys', { data: [] });
+    harness.apiPost.mockResolvedValueOnce({
+      data: { key: 'ck_test_secret', webhook_secret: 'whsec_test' },
+    });
+    renderRoute(<ApiKeys />);
+    await userEvent.click(screen.getAllByRole('button', { name: '+ New key' })[0]);
+    await userEvent.type(screen.getByRole('textbox', { name: /NAME/ }), 'CI key');
+    await userEvent.click(screen.getByRole('button', { name: 'Create key' }));
+
+    expect(await screen.findByRole('textbox', { name: 'API KEY' })).toHaveClass('h-11', 'md:h-10');
+    expect(screen.getByRole('textbox', { name: 'WEBHOOK SECRET' })).toHaveClass('h-11', 'md:h-10');
+  });
+
+  it('renders the AgentPage advanced disclosure with a responsive touch target', () => {
+    harness.resources.set('/tools', { data: [] });
+    renderAgentPage();
+
+    expect(screen.getByRole('button', { name: /ADVANCED/ })).toHaveClass(
+      'min-h-11',
+      'md:min-h-0',
+    );
   });
 
   it('renders disconnected and retry actions as responsive touch targets', () => {

@@ -262,7 +262,7 @@ export default function TaskPage() {
             </div>
           )}
           {scheduleMode !== 'none' && (
-            <label className="flex cursor-pointer items-center gap-2.5">
+            <label className="flex min-h-11 cursor-pointer items-center gap-2.5 md:min-h-0">
               <input type="checkbox" checked={scheduleEnabled} onChange={(e) => setScheduleEnabled(e.target.checked)} className="accent-[var(--accent)]" />
               <span className="text-sm">Schedule enabled</span>
             </label>
@@ -270,7 +270,7 @@ export default function TaskPage() {
         </div>
       </Field>
 
-      <label className="flex cursor-pointer items-center gap-2.5">
+      <label className="flex min-h-11 cursor-pointer items-center gap-2.5 md:min-h-0">
         <input type="checkbox" checked={autostart} onChange={(e) => setAutostart(e.target.checked)} className="accent-[var(--accent)]" />
         <span className="text-sm">Auto-start when created</span>
       </label>

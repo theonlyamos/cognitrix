@@ -35,7 +35,7 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry: () 
       <div className="border-l-2 border-danger bg-danger/5 px-4 py-3 text-left font-mono text-[12px] text-danger-ink">{message}</div>
       <button
         onClick={onRetry}
-        className="mt-4 rounded border border-line px-4 py-2 font-mono text-[12px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg"
+        className="mt-4 min-h-11 rounded border border-line px-4 py-2 font-mono text-[12px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0"
       >
         ↻ retry
       </button>

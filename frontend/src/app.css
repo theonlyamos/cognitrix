@@ -174,7 +174,7 @@ html.dark {
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: var(--r2);
-  padding: .8em .9em;
+  padding: 3.25rem .9em .8em;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: .86em;
   line-height: 1.5;
@@ -195,6 +195,7 @@ html.dark {
 .md-copy:hover { color: var(--fg); border-color: var(--fg-dim); }
 
 @media (min-width: 768px) and (hover: hover) and (pointer: fine) {
+  .md-code pre { padding-top: .8em; }
   .md-copy { min-width: 0; min-height: 0; opacity: 0; }
   .md-code:hover .md-copy, .md-copy:focus-visible { opacity: 1; }
 }
