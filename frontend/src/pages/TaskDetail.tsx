@@ -493,7 +493,7 @@ export default function TaskDetail() {
                 onClick={() => pickStep(s)}
                 title={`${s.title}${s.agent_name ? ` — ${s.agent_name}` : ''}${(s.attempts ?? 0) > 1 ? ` · ${s.attempts} attempts` : ''}${s.gate === 'unverified' ? ' · unverified' : ''}`}
                 className={cn(
-                  'flex min-h-11 items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors md:min-h-0',
+                  'flex min-h-11 min-w-11 items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors md:min-h-0 md:min-w-0',
                   selected === s.index ? 'border-accent bg-panel-2 text-fg' : 'border-line text-fg-dim hover:border-fg-dim',
                   s.status === 'pending' && 'opacity-50 cursor-default',
                 )}

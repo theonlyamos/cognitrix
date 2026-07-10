@@ -58,7 +58,7 @@ describe('responsive UI contracts', () => {
 
   it('keeps task transcript selectors 44px on mobile and compact at md+', () => {
     expect(classesOnTag(taskDetailSource, 'aria-pressed={selected === s.index}')).toEqual(
-      expect.arrayContaining(['min-h-11', 'md:min-h-0']),
+      expect.arrayContaining(['min-h-11', 'min-w-11', 'md:min-h-0', 'md:min-w-0']),
     );
     expect(classesOnTag(taskDetailSource, "aria-pressed={selected === 'synthesis'}")).toEqual(
       expect.arrayContaining(['min-h-11', 'md:min-h-0']),
