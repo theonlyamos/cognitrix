@@ -1,9 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import type { Components } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeHighlight from 'rehype-highlight';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChatMessageRow } from '@/components/ChatMessageRow';
 import { useSession } from '@/context/SessionContext';
 import { MobileSheet } from '@/components/MobileSheet';
 import { SelectionRow } from '@/components/SelectionRow';
@@ -19,71 +15,6 @@ const SUGGESTIONS = [
   'First research X, then write a short brief.',
   'What can you help me with?',
 ];
-
-// Tools are advertised to the model with spaces as underscores; show them back
-// readable (e.g. "web_search" → "web search").
-const humanizeTool = (name: string) => name.replace(/_/g, ' ');
-
-// Re-indent a JSON string for display; leave non-JSON (or already-pretty) as-is.
-const prettyJson = (s: string) => {
-  try {
-    return JSON.stringify(JSON.parse(s), null, 2);
-  } catch {
-    return s;
-  }
-};
-
-const fmtTime = (t?: string | number) =>
-  t ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '';
-
-// Fenced code block with a hover copy button. Reads the rendered text from the
-// DOM so it works regardless of the syntax-highlight token spans inside.
-function CodeBlock({ children }: { children?: ReactNode }) {
-  const ref = useRef<HTMLPreElement>(null);
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    const text = ref.current?.innerText ?? '';
-    void navigator.clipboard?.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  };
-  return (
-    <div className="md-code">
-      <button type="button" className="md-copy" onClick={copy}>{copied ? 'copied' : 'copy'}</button>
-      <pre ref={ref}>{children}</pre>
-    </div>
-  );
-}
-
-// Route internal links (/tasks/… — multi-step replies carry a run link) through
-// the SPA router; open external links in a new tab safely.
-const mdComponents: Components = {
-  a({ href, children }) {
-    if (href && href.startsWith('/')) {
-      return <Link to={href} className="text-accent-ink underline underline-offset-2 hover:brightness-110">{children}</Link>;
-    }
-    return (
-      <a href={href} target="_blank" rel="noreferrer nofollow" className="text-accent-ink underline underline-offset-2 hover:brightness-110">
-        {children}
-      </a>
-    );
-  },
-  pre({ children }) {
-    return <CodeBlock>{children}</CodeBlock>;
-  },
-};
-
-function MarkdownMessage({ content }: { content: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-      components={mdComponents}
-    >
-      {content}
-    </ReactMarkdown>
-  );
-}
 
 interface ConvoSummary {
   id: string;
@@ -744,92 +675,14 @@ export default function Home() {
             </div>
           ) : (
             <div>
-              {messages.map((m, i) => {
-                const isUser = m.role === 'user';
-                const isLast = i === messages.length - 1;
-                // Tool-activity row: the agent's tool calls as status chips.
-                if (m.role === 'tool') {
-                  if (!m.tools?.length) return null;
-                  return (
-                    <div key={m.id} className="grid grid-cols-1 gap-2 border-b border-line px-4 py-3 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
-                      <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">TOOL</div>
-                      <div className="flex flex-col items-start gap-1.5">
-                        {m.tools.map((t, ti) => (
-                          // Collapsible: summary is the status chip; expands to the
-                          // call's params and result. Native <details> = free
-                          // keyboard/toggle handling, open state kept across the
-                          // running→done re-render.
-                          <details key={t.id || ti} className="group w-full max-w-2xl">
-                            <summary className="inline-flex list-none cursor-pointer select-none items-center gap-1.5 rounded border border-line bg-panel-2 px-2 py-1 font-mono text-[11px] transition-colors hover:border-fg-dim [&::-webkit-details-marker]:hidden">
-                              {t.status === 'running' ? (
-                                <span className="think-bars"><i /><i /><i /></span>
-                              ) : t.status === 'error' ? (
-                                <span className="text-danger-ink" aria-hidden>✗</span>
-                              ) : (
-                                <span className="text-accent-ink" aria-hidden>✓</span>
-                              )}
-                              <span className={cn(t.status === 'running' ? 'text-accent-ink' : 'text-fg')}>
-                                {humanizeTool(t.name)}
-                              </span>
-                              {t.status === 'running' && <span className="text-fg-dim">running…</span>}
-                              {t.status === 'done' && <span className="sr-only">Completed</span>}
-                              {t.status === 'error' && <span className="sr-only">Failed</span>}
-                              <svg className="ml-0.5 text-fg-dim transition-transform group-open:rotate-90" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
-                            </summary>
-                            <div className="mt-1.5 space-y-2 rounded border border-line bg-panel-2 p-2 font-mono text-[11px]">
-                              {t.params && t.params !== '{}' && (
-                                <div>
-                                  <div className="mb-1 text-[10px] uppercase tracking-wider text-fg-dim">params</div>
-                                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-fg-dim">{prettyJson(t.params)}</pre>
-                                </div>
-                              )}
-                              <div>
-                                <div className="mb-1 text-[10px] uppercase tracking-wider text-fg-dim">result</div>
-                                {t.status === 'running' ? (
-                                  <span className="text-fg-dim">running…</span>
-                                ) : (
-                                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-fg-dim">{t.result || '(no output)'}</pre>
-                                )}
-                              </div>
-                            </div>
-                          </details>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                }
-                // Drop empty assistant placeholders left between tool rounds
-                // (an empty streaming chunk creates no text but can leave a shell).
-                if (m.role === 'assistant' && !m.content.trim() && !(isLast && streaming)) return null;
-                return (
-                  <div key={m.id} className="grid grid-cols-1 gap-2 border-b border-line px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
-                    <div className={cn('pt-0.5 font-mono text-[11px] tracking-[0.06em]', isUser ? 'text-accent-ink' : 'text-fg-dim')}>
-                      {isUser ? 'YOU' : 'AGENT'}
-                    </div>
-                    <div className="min-w-0" aria-live={!isUser && isLast && streaming ? 'off' : undefined}>
-                      {isUser ? (
-                        <div className="whitespace-pre-wrap break-words leading-relaxed">{m.content}</div>
-                      ) : isLast && streaming ? (
-                        // Render plain text while streaming; swap to markdown on completion
-                        // so we don't re-parse the whole reply on every token.
-                        <div className="whitespace-pre-wrap break-words leading-relaxed">
-                          {m.content}
-                          <span className="caret" />
-                        </div>
-                      ) : (
-                        <div className="md break-words">
-                          <MarkdownMessage content={m.content} />
-                        </div>
-                      )}
-                      {m.timestamp && (
-                        <div className="mt-2 font-mono text-[10.5px] text-fg-dim">
-                          <span className="opacity-70">at</span> {fmtTime(m.timestamp)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+              {messages.map((message, index) => (
+                <ChatMessageRow
+                  key={message.id}
+                  message={message}
+                  isLast={index === messages.length - 1}
+                  streaming={streaming}
+                />
+              ))}
 
               {waiting && (
                 <div role="status" className="grid grid-cols-1 gap-2 px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
