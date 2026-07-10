@@ -25,9 +25,10 @@ def test_create_agent_tool_exposes_optional_model_and_temperature():
 
 
 @pytest.mark.asyncio
-async def test_create_agent_classmethod_temperature_is_optional():
+async def test_create_agent_classmethod_temperature_is_optional(monkeypatch):
     from cognitrix.agents import Agent
 
+    monkeypatch.setenv('GOOGLE_API_KEY', 'test-google-key')
     provider_default = LLM.load_llm('google').temperature
     a_default = await Agent.create_agent('T0', 'sys', provider='google', ephemeral=True)
     a_none = await Agent.create_agent('TN', 'sys', provider='google', temperature=None, ephemeral=True)
