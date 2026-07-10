@@ -10,6 +10,7 @@ import { Button } from '@/lib/components/ui/button';
 const homeSource = readFileSync(resolve(process.cwd(), 'src/pages/Home.tsx'), 'utf8');
 const taskDetailSource = readFileSync(resolve(process.cwd(), 'src/pages/TaskDetail.tsx'), 'utf8');
 const apiKeysSource = readFileSync(resolve(process.cwd(), 'src/pages/ApiKeys.tsx'), 'utf8');
+const agentPageSource = readFileSync(resolve(process.cwd(), 'src/pages/AgentPage.tsx'), 'utf8');
 
 function classesOnTag(source: string, anchor: string) {
   const anchorIndex = source.indexOf(anchor);
@@ -83,6 +84,12 @@ describe('responsive UI contracts', () => {
   it('keeps API key secret inputs 44px on mobile and compact at md+', () => {
     expect(classesOnTag(apiKeysSource, 'readOnly')).toEqual(
       expect.arrayContaining(['h-11', 'md:h-10']),
+    );
+  });
+
+  it('keeps the AgentPage Advanced button 44px on mobile and compact at md+', () => {
+    expect(classesOnTag(agentPageSource, 'onClick={() => setShowAdvanced((v) => !v)}')).toEqual(
+      expect.arrayContaining(['min-h-11', 'md:min-h-0']),
     );
   });
 });

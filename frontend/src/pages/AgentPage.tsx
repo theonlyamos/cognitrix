@@ -207,7 +207,7 @@ export default function AgentPage() {
       <button
         type="button"
         onClick={() => setShowAdvanced((v) => !v)}
-        className="flex items-center gap-2 font-mono text-[11px] tracking-[0.06em] text-fg-dim transition-colors hover:text-fg"
+        className="flex min-h-11 items-center gap-2 font-mono text-[11px] tracking-[0.06em] text-fg-dim transition-colors hover:text-fg md:min-h-0"
       >
         <span className={cn('transition-transform', showAdvanced && 'rotate-90')}>▸</span> ADVANCED
       </button>
