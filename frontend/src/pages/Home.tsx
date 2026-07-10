@@ -687,7 +687,7 @@ export default function Home() {
                 value={agentId || agents[0]?.id || ''}
                 onChange={(e) => switchAgent(e.target.value)}
                 aria-label="Active agent"
-                className="h-11 max-w-full appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent focus:outline-none md:h-8"
+                className="h-11 max-w-full appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent md:h-8"
               >
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>{a.name}</option>
@@ -972,7 +972,7 @@ export default function Home() {
                 aria-controls="skill-menu"
                 aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
                 placeholder="Message the agent…"
-                className="block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-12 text-sm text-fg outline-none placeholder:text-fg-dim focus:outline-none focus-visible:shadow-none md:min-h-0"
+                className="block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-12 text-sm text-fg placeholder:text-fg-dim md:min-h-0"
               />
               <button
                 onClick={() => send(input)}
