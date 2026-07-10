@@ -180,8 +180,8 @@ export default function AgentPage() {
         <Textarea rows={6} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder="You are a helpful assistant that…" />
       </Field>
 
-      <Field label={`TOOLS · ${selected.size} selected`}>
-        <div className="max-h-72 overflow-y-auto rounded border border-line">
+      <Field label={`TOOLS · ${selected.size} selected`} composite>
+        <div role="group" className="max-h-72 overflow-y-auto rounded border border-line">
           {toolsByCategory.length === 0 ? (
             <div className="px-3 py-4 font-mono text-[11px] text-fg-dim">no tools available</div>
           ) : (

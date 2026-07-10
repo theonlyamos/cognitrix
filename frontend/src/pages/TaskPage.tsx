@@ -198,8 +198,8 @@ export default function TaskPage() {
         <Textarea rows={4} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What should be done, and what does 'done' look like?" />
       </Field>
 
-      <Field label={`STEPS · ${steps.length}`} hint="optional — plan the task explicitly">
-        <div className="space-y-2">
+      <Field label={`STEPS · ${steps.length}`} hint="optional — plan the task explicitly" composite>
+        <div role="group" className="space-y-2">
           {steps.map((s, i) => (
             <div key={i} className="flex items-center gap-2">
               {s.done ? (
@@ -224,7 +224,7 @@ export default function TaskPage() {
         </Select>
       </Field>
 
-      <Field label={`ASSIGNED AGENTS · ${assigned.size}`} hint={teamId ? 'from the selected team — editable' : undefined}>
+      <Field label={`ASSIGNED AGENTS · ${assigned.size}`} hint={teamId ? 'from the selected team — editable' : undefined} composite>
         <CheckList
           options={(agentList || []).filter((a) => a.id).map((a) => ({ value: a.id, label: a.name, sub: `${a.llm?.provider || '—'} · ${a.llm?.model || '—'}` }))}
           selected={assigned}
@@ -233,8 +233,8 @@ export default function TaskPage() {
         />
       </Field>
 
-      <Field label="SCHEDULE" hint="run this task automatically">
-        <div className="space-y-3">
+      <Field label="SCHEDULE" hint="run this task automatically" composite>
+        <div role="group" className="space-y-3">
           <Select value={scheduleMode} onChange={(e) => changeScheduleMode(e.target.value as ScheduleMode)}>
             <option value="none">— not scheduled —</option>
             <option value="once">once, at a time</option>

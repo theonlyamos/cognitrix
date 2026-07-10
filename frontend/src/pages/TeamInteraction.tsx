@@ -48,7 +48,7 @@ export default function TeamInteraction() {
     <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden bg-bg text-fg">
       <header className="app-page-header flex flex-none flex-col items-stretch gap-3 border-b border-line py-3 pl-16 pr-4 sm:flex-row sm:flex-wrap sm:items-center md:px-6">
         <div className="flex min-w-0 items-center gap-3">
-          <Link to="/teams" className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
+          <Link to="/teams" aria-label="Back to teams" className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
           <div className="min-w-0">

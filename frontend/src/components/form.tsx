@@ -6,11 +6,13 @@ export function Field({
   label,
   hint,
   required,
+  composite,
   children,
 }: {
   label: string;
   hint?: string;
   required?: boolean;
+  composite?: boolean;
   children: ReactNode;
 }) {
   // Associate the label with a single-element control so clicking the label
@@ -18,14 +20,17 @@ export function Field({
   // input + its <datalist>) are left unassociated.
   const autoId = useId();
   const isControl = isValidElement(children) && children.type !== Fragment;
-  const el = children as ReactElement<{ id?: string }>;
-  const controlId = isControl ? el.props.id ?? autoId : undefined;
-  const control = isControl ? cloneElement(el, { id: controlId }) : children;
+  const el = children as ReactElement<{ id?: string; 'aria-labelledby'?: string }>;
+  const controlId = isControl && !composite ? el.props.id ?? autoId : undefined;
+  const labelId = composite ? autoId : undefined;
+  const control = isControl
+    ? cloneElement(el, composite ? { 'aria-labelledby': labelId } : { id: controlId })
+    : children;
 
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-3">
-        <label htmlFor={controlId} className="font-mono text-[11px] tracking-[0.12em] text-fg-dim">
+        <label id={labelId} htmlFor={controlId} className="font-mono text-[11px] tracking-[0.12em] text-fg-dim">
           {label}
           {required && <span className="text-accent-ink"> *</span>}
         </label>
@@ -42,15 +47,17 @@ export function CheckList({
   onToggle,
   empty,
   id,
+  'aria-labelledby': ariaLabelledBy,
 }: {
   options: { value: string; label: string; sub?: string }[];
   selected: Set<string>;
   onToggle: (v: string) => void;
   empty?: string;
   id?: string;
+  'aria-labelledby'?: string;
 }) {
   return (
-    <div id={id} role="group" className="max-h-64 overflow-y-auto rounded border border-line">
+    <div id={id} role="group" aria-labelledby={ariaLabelledBy} className="max-h-64 overflow-y-auto rounded border border-line">
       {options.length === 0 ? (
         <div className="px-3 py-4 font-mono text-[11px] text-fg-dim">{empty || 'nothing available'}</div>
       ) : (
@@ -95,6 +102,7 @@ export function PageForm({
         <div className="flex min-w-0 items-center gap-3">
           <Link
             to={backTo}
+            aria-label={`Back to ${eyebrow.toLowerCase().replace(/^(edit|new)\s+/, '')}s`}
             className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
@@ -115,7 +123,7 @@ export function PageForm({
             <Link to={backTo}>Cancel</Link>
           </Button>
           <Button size="sm" onClick={onSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? <span role="status">Saving…</span> : 'Save'}
           </Button>
         </div>
       </header>
@@ -128,7 +136,7 @@ export function PageForm({
           }}
           className="mx-auto max-w-2xl space-y-6 px-6 py-8"
         >
-          {error && <p className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>}
+          {error && <p role="alert" className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>}
           {children}
         </form>
       </div>

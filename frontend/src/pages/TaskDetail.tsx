@@ -6,6 +6,7 @@ import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/lib/components/ui/button';
 import { LoadingState, Spinner } from '@/components/list-ui';
 import { MobileSheet } from '@/components/MobileSheet';
+import { SelectionRow } from '@/components/SelectionRow';
 import { TranscriptView } from '@/components/TranscriptView';
 import {
   parseChatEntries,
@@ -306,9 +307,12 @@ export default function TaskDetail() {
         <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">RUNS · {(runs || []).length}</span>
         <div className="flex items-center gap-1">
           {runsError && (
-            <Button variant="ghost" size="sm" onClick={() => void refetchRuns()} className="text-danger-ink">
-              ↻ retry
-            </Button>
+            <div role="alert">
+              <span className="sr-only">{runsError}</span>
+              <Button variant="ghost" size="sm" onClick={() => void refetchRuns()} className="text-danger-ink">
+                ↻ retry
+              </Button>
+            </div>
           )}
           <Button
             variant="ghost"
@@ -323,23 +327,25 @@ export default function TaskDetail() {
       </div>
       <div className="flex-1 overflow-y-auto">
         {runsLoading && !runs ? (
-          <div className="flex items-center gap-2 px-4 py-6 font-mono text-[11px] text-fg-dim"><Spinner className="h-3.5 w-3.5" /> loading…</div>
+          <div role="status" className="flex items-center gap-2 px-4 py-6 font-mono text-[11px] text-fg-dim"><Spinner className="h-3.5 w-3.5" /> loading…</div>
         ) : (runs || []).length === 0 && legacy.length === 0 ? (
           <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no runs yet — hit ▶ Run</p>
         ) : (
           <>
             {(runs || []).map((r, idx) => (
-              <div
+              <SelectionRow
                 key={r.id}
-                onClick={() => {
+                selected={r.id === selectedRunId}
+                onSelect={() => {
                   manualPickRef.current = false;
                   setSelectedRunId(r.id);
                   setMobileRunsOpen(false);
                 }}
                 className={cn(
-                  'min-h-11 cursor-pointer border-b border-line px-4 py-2.5 transition-colors',
+                  'min-h-11 border-b border-line transition-colors',
                   r.id === selectedRunId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
                 )}
+                buttonClassName="self-stretch px-4 py-2.5"
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-mono text-[12px] tnum">#{(runs || []).length - idx}</span>
@@ -357,27 +363,29 @@ export default function TaskDetail() {
                   {!ACTIVE_RUN.has(r.status) && fmtDuration(r.started_at, r.completed_at) ? ` · ${fmtDuration(r.started_at, r.completed_at)}` : ''}
                   {` · ${r.plan.filter((s) => s.status === 'done').length}/${r.plan.length || '?'} steps`}
                 </div>
-              </div>
+              </SelectionRow>
             ))}
             {legacy.length > 0 && (
               <div className="border-t border-line">
                 <div className="px-4 pb-1 pt-3 font-mono text-[10px] tracking-[0.14em] text-fg-dim">LEGACY RUNS</div>
                 {legacy.map((s) => (
-                  <div
+                  <SelectionRow
                     key={s.id}
-                    onClick={() => {
+                    selected={typeof selected === 'object' && selected?.legacy === s.id}
+                    onSelect={() => {
                       manualPickRef.current = true;
                       setSelectedRunId(null);
                       setSelected({ legacy: s.id });
                       setMobileRunsOpen(false);
                     }}
                     className={cn(
-                      'min-h-11 cursor-pointer border-b border-line px-4 py-2 font-mono text-[10.5px] text-fg-dim transition-colors',
+                      'min-h-11 border-b border-line font-mono text-[10.5px] text-fg-dim transition-colors',
                       typeof selected === 'object' && selected?.legacy === s.id ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
                     )}
+                    buttonClassName="self-stretch px-4 py-2"
                   >
                     {parseSessionDate(s.started_at)?.toLocaleString() || 'legacy run'} · {s.message_count ?? 0} msg
-                  </div>
+                  </SelectionRow>
                 ))}
               </div>
             )}
@@ -413,6 +421,7 @@ export default function TaskDetail() {
         <header className="app-page-header flex min-h-14 flex-none flex-col items-stretch gap-3 border-b border-line py-2 pl-16 pr-4 sm:flex-row sm:flex-wrap sm:items-center md:px-6">
           <Link
             to="/tasks"
+            aria-label="Back to tasks"
             className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
@@ -452,25 +461,25 @@ export default function TaskDetail() {
             </Button>
             {isLive ? (
               <Button variant="ghost" size="sm" onClick={cancel} disabled={cancelling} className="hover:text-danger-ink">
-                {activeRun?.status === 'cancelling' || cancelling ? 'Cancelling… (click to force)' : 'Cancel'}
+                {activeRun?.status === 'cancelling' || cancelling ? <span role="status">Cancelling… (click to force)</span> : 'Cancel'}
               </Button>
             ) : canResume ? (
               <>
                 <Button variant="outline" size="sm" onClick={() => start(true)} disabled={starting}>
-                  {starting ? 'Starting…' : '↻ Resume'}
+                  {starting ? <span role="status">Starting…</span> : '↻ Resume'}
                 </Button>
                 <Button size="sm" onClick={() => start(false)} disabled={starting}>▶ Run</Button>
               </>
             ) : (
               <Button size="sm" onClick={() => start(false)} disabled={starting}>
-                {starting ? 'Starting…' : '▶ Run'}
+                {starting ? <span role="status">Starting…</span> : '▶ Run'}
               </Button>
             )}
           </div>
         </header>
 
         {error && (
-          <p className="mx-6 mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
+          <p role="alert" className="mx-6 mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
         )}
 
         {/* Steps panel for the selected run */}
@@ -480,6 +489,7 @@ export default function TaskDetail() {
               <button
                 key={s.index}
                 type="button"
+                aria-pressed={selected === s.index}
                 onClick={() => pickStep(s)}
                 title={`${s.title}${s.agent_name ? ` — ${s.agent_name}` : ''}${(s.attempts ?? 0) > 1 ? ` · ${s.attempts} attempts` : ''}${s.gate === 'unverified' ? ' · unverified' : ''}`}
                 className={cn(
@@ -501,6 +511,7 @@ export default function TaskDetail() {
             {hasSynthesis && (
               <button
                 type="button"
+                aria-pressed={selected === 'synthesis'}
                 onClick={() => {
                   manualPickRef.current = true;
                   setSelected('synthesis');
@@ -517,14 +528,14 @@ export default function TaskDetail() {
         )}
 
         {selectedRun?.error && (
-          <p className="mx-6 mt-3 whitespace-pre-wrap border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
+          <p role="alert" className="mx-6 mt-3 whitespace-pre-wrap border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
             {selectedRun.error}
           </p>
         )}
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           {isTaskRunning && !activeRun && (
-            <div className="mx-6 my-4 flex items-center gap-2.5 rounded border border-line bg-panel-2 px-3 py-2.5 font-mono text-[12px] text-fg-dim">
+            <div role="status" className="mx-6 my-4 flex items-center gap-2.5 rounded border border-line bg-panel-2 px-3 py-2.5 font-mono text-[12px] text-fg-dim">
               <span className="think-bars"><i /><i /><i /><i /></span>
               waiting for a worker to pick up the run…
             </div>
@@ -536,7 +547,7 @@ export default function TaskDetail() {
                 live={!!activeRun && typeof selected === 'number' && plan[selected]?.status === 'running'}
               />
             ) : (
-              <div className="flex items-center gap-2 px-6 py-4 font-mono text-[11px] text-fg-dim">
+              <div role="status" className="flex items-center gap-2 px-6 py-4 font-mono text-[11px] text-fg-dim">
                 <Spinner className="h-3.5 w-3.5" /> loading transcript…
               </div>
             )

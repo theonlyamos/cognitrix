@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { useSession } from '@/context/SessionContext';
 import { MobileSheet } from '@/components/MobileSheet';
+import { SelectionRow } from '@/components/SelectionRow';
 import { useSSE } from '@/hooks/useSSE';
 import { useResource } from '@/hooks/useResource';
 import { api } from '@/lib/api';
@@ -620,30 +621,34 @@ export default function Home() {
           <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no conversations yet</p>
         ) : (
           convosSorted.map((c) => (
-            <div
+            <SelectionRow
               key={c.id}
-              onClick={() => switchConversation(c.id)}
+              selected={c.id === activeSessionId}
+              onSelect={() => switchConversation(c.id)}
+              disabled={busy}
               className={cn(
-                'group flex min-h-11 cursor-pointer items-center gap-2 border-b border-line px-4 py-2.5 transition-colors',
+                'group min-h-11 gap-2 border-b border-line transition-colors',
                 c.id === activeSessionId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
                 busy && 'pointer-events-none opacity-60',
               )}
+              buttonClassName="self-stretch px-4 py-2.5"
+              trailingAction={
+                <button
+                  type="button"
+                  onClick={() => void deleteConversation(c.id)}
+                  disabled={busy}
+                  aria-label={`Delete conversation ${c.title}`}
+                  className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8"
+                >
+                  ✕
+                </button>
+              }
             >
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[13px]">{c.title}</div>
                 <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">{fmtRelative(c.updated_at)}</div>
               </div>
-              <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void deleteConversation(c.id);
-                }}
-                aria-label="Delete conversation"
-                className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8"
-              >
-                ✕
-              </button>
-            </div>
+            </SelectionRow>
           ))
         )}
       </div>
@@ -716,7 +721,7 @@ export default function Home() {
         </header>
 
         {/* Stream */}
-        <div className="flex-1 overflow-y-auto">
+        <div role="log" aria-live="polite" aria-relevant="additions text" className="flex-1 overflow-y-auto">
           {empty ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col justify-center px-6">
               <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ start a conversation</p>
@@ -767,6 +772,8 @@ export default function Home() {
                                 {humanizeTool(t.name)}
                               </span>
                               {t.status === 'running' && <span className="text-fg-dim">running…</span>}
+                              {t.status === 'done' && <span className="sr-only">Completed</span>}
+                              {t.status === 'error' && <span className="sr-only">Failed</span>}
                               <svg className="ml-0.5 text-fg-dim transition-transform group-open:rotate-90" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
                             </summary>
                             <div className="mt-1.5 space-y-2 rounded border border-line bg-panel-2 p-2 font-mono text-[11px]">
@@ -799,7 +806,7 @@ export default function Home() {
                     <div className={cn('pt-0.5 font-mono text-[11px] tracking-[0.06em]', isUser ? 'text-accent-ink' : 'text-fg-dim')}>
                       {isUser ? 'YOU' : 'AGENT'}
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0" aria-live={!isUser && isLast && streaming ? 'off' : undefined}>
                       {isUser ? (
                         <div className="whitespace-pre-wrap break-words leading-relaxed">{m.content}</div>
                       ) : isLast && streaming ? (
@@ -825,7 +832,7 @@ export default function Home() {
               })}
 
               {waiting && (
-                <div className="grid grid-cols-1 gap-2 px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
+                <div role="status" className="grid grid-cols-1 gap-2 px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
                   <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">AGENT</div>
                   <div className="flex items-center gap-2.5 font-mono text-[12px] text-fg-dim">
                     <span className="think-bars"><i /><i /><i /><i /></span>
@@ -837,7 +844,7 @@ export default function Home() {
           )}
 
           {error && (
-            <div className="mx-6 my-4 flex items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
+            <div role="alert" className="mx-6 my-4 flex items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
               <span>connection error — the stream stopped after several retries.</span>
               <button onClick={reconnect} className="flex-none rounded border border-line px-2 py-0.5 transition-colors hover:border-fg-dim hover:text-fg">
                 ↻ retry
@@ -846,7 +853,7 @@ export default function Home() {
           )}
 
           {approvals.map((a) => (
-            <div key={a.request_id} className="animate-rise mx-6 my-4 border-l-2 border-danger bg-danger/5 px-3 py-3 font-mono text-[12px]">
+            <div key={a.request_id} role="alert" className="animate-rise mx-6 my-4 border-l-2 border-danger bg-danger/5 px-3 py-3 font-mono text-[12px]">
               <div className="flex items-center gap-2">
                 <span className="text-danger-ink">⚠ approval required</span>
                 <span className="rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-fg-dim">{a.risk_level} risk</span>
@@ -960,6 +967,7 @@ export default function Home() {
                   }
                 }}
                 role="combobox"
+                aria-label="Message the agent"
                 aria-expanded={skillMenuOpen}
                 aria-controls="skill-menu"
                 aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
@@ -988,7 +996,7 @@ export default function Home() {
               />
             </div>
             {uploadError && (
-              <div className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{uploadError}</div>
+              <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{uploadError}</div>
             )}
             <div className="mt-2 flex items-center gap-4 font-mono text-[10.5px] text-fg-dim">
               <button

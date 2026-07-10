@@ -99,6 +99,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
             <Link
               key={item.path}
               to={item.path}
+              aria-current={active ? 'page' : undefined}
               onClick={onNavigate}
               title={collapsed ? item.label : undefined}
               className={cn(

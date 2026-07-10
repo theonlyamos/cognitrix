@@ -114,7 +114,7 @@ export default function TeamPage() {
         <Textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What does this team do together?" />
       </Field>
 
-      <Field label={`MEMBERS · ${assigned.size}`}>
+      <Field label={`MEMBERS · ${assigned.size}`} composite>
         <CheckList
           options={agents.map((a) => ({ value: a.id, label: a.name, sub: `${a.llm?.provider || '—'} · ${a.llm?.model || '—'}` }))}
           selected={assigned}

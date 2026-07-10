@@ -23,7 +23,7 @@ export function PageHeader({ title, subtitle, children }: { title: string; subti
 
 export function LoadingState({ label }: { label: string }) {
   return (
-    <div className="flex h-full items-center justify-center gap-2 font-mono text-sm text-fg-dim">
+    <div role="status" className="flex h-full items-center justify-center gap-2 font-mono text-sm text-fg-dim">
       <Spinner className="h-4 w-4 text-accent" /> {label}
     </div>
   );
@@ -31,7 +31,7 @@ export function LoadingState({ label }: { label: string }) {
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center text-center">
+    <div role="alert" className="mx-auto flex h-full max-w-md flex-col items-center justify-center text-center">
       <div className="border-l-2 border-danger bg-danger/5 px-4 py-3 text-left font-mono text-[12px] text-danger-ink">{message}</div>
       <button
         onClick={onRetry}
