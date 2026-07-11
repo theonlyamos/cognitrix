@@ -20,6 +20,7 @@ const homeHarness = vi.hoisted(() => ({
 }));
 
 const markdownRender = vi.fn();
+const scrollIntoViewMock = vi.fn();
 
 vi.mock('@/components/MarkdownMessage', () => ({
   default: ({ content }: { content: string }) => {
@@ -60,12 +61,13 @@ vi.mock('@/hooks/useSSE', () => ({
 describe('ChatMessageRow', () => {
   beforeEach(() => {
     markdownRender.mockClear();
+    scrollIntoViewMock.mockClear();
     homeHarness.messages = [];
     homeHarness.onMessage = null;
     localStorage.clear();
     localStorage.setItem('selectedAgentId', 'agent-1');
     localStorage.setItem('chatSession:agent-1', '');
-    Element.prototype.scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoViewMock;
   });
 
   it('does not rerender completed markdown when parent state changes', async () => {
@@ -129,6 +131,47 @@ describe('ChatMessageRow', () => {
 
     await waitFor(() => expect(document.querySelector('.caret')).toBeInTheDocument());
     expect(markdownRender).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps long-conversation auto-scroll inside the transcript', async () => {
+    homeHarness.messages = [{
+      id: 'assistant-1',
+      role: 'assistant',
+      content: 'first page',
+    }];
+
+    const renderHome = () => (
+      <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+        <Home />
+      </MemoryRouter>
+    );
+    const { rerender } = render(renderHome());
+    const transcript = screen.getByRole('log');
+
+    Object.defineProperty(transcript, 'scrollHeight', {
+      configurable: true,
+      value: 640,
+    });
+    Object.defineProperty(transcript, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    });
+
+    homeHarness.messages = [
+      ...homeHarness.messages,
+      { id: 'assistant-2', role: 'assistant', content: 'next page' },
+    ];
+    rerender(renderHome());
+
+    await waitFor(() => expect(transcript.scrollTop).toBe(640));
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+    expect(transcript).toHaveClass(
+      'min-h-0',
+      'overflow-y-auto',
+      'overscroll-contain',
+    );
+    expect(transcript.parentElement).toHaveClass('min-h-0', 'overflow-hidden');
   });
 
   it('gives tool summaries a 44px mobile target and compact desktop height', async () => {
