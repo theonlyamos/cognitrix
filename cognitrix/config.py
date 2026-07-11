@@ -312,9 +312,10 @@ async def _ensure_schema():
         return
 
     from cognitrix.models.api_key import APIKey
+    from cognitrix.tasks.events import TaskRunEvent
     from cognitrix.tasks.run import TaskRun
 
-    for model in (TaskRun, APIKey):
+    for model in (TaskRun, TaskRunEvent, APIKey):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)
             if create is not None:
