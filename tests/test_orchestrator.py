@@ -125,7 +125,7 @@ def _agent():
 
 @pytest.mark.asyncio
 async def test_gate_passes_at_threshold(monkeypatch):
-    async def fake_turn(session, agent, prompt, interface):
+    async def fake_turn(session, agent, prompt, interface, *args, **kwargs):
         return '{"finalscore": "7/10"}'
     monkeypatch.setattr(orch, '_run_agent_turn', fake_turn)
     step = orch._new_step(0, 's', 's', [])
@@ -135,7 +135,7 @@ async def test_gate_passes_at_threshold(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_gate_low_score_returns_suggestions(monkeypatch):
-    async def fake_turn(session, agent, prompt, interface):
+    async def fake_turn(session, agent, prompt, interface, *args, **kwargs):
         return '{"finalscore": "4/10", "suggestions": ["do better"]}'
     monkeypatch.setattr(orch, '_run_agent_turn', fake_turn)
     step = orch._new_step(0, 's', 's', [])
@@ -145,7 +145,7 @@ async def test_gate_low_score_returns_suggestions(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_gate_unparseable_twice_passes_unverified(monkeypatch):
-    async def fake_turn(session, agent, prompt, interface):
+    async def fake_turn(session, agent, prompt, interface, *args, **kwargs):
         return ''
     monkeypatch.setattr(orch, '_run_agent_turn', fake_turn)
     step = orch._new_step(0, 's', 's', [])
@@ -154,8 +154,33 @@ async def test_gate_unparseable_twice_passes_unverified(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_gate_does_not_publish_evaluator_output(monkeypatch):
+    calls = []
+
+    async def fake_turn(session, agent, prompt, interface, **kwargs):
+        calls.append(kwargs)
+        return '{"finalscore":"8/10"}'
+
+    monkeypatch.setattr(orch, '_run_agent_turn', fake_turn)
+    step = orch._new_step(0, 'Research', 'Research', [])
+
+    passed, _ = await orch._gate(
+        SimpleNamespace(),
+        SimpleNamespace(name='Evaluator source', llm=_llm()),
+        step,
+        'answer',
+        'web',
+    )
+
+    assert passed is True
+    assert calls == [{}]
+
+
+@pytest.mark.asyncio
 async def test_run_agent_turn_treats_provider_error_chunks_as_dead_turn(monkeypatch):
     class _ErrSession:
+        id = 'session-error'
+        step_index = 0
         chat: list = []
 
         async def __call__(self, prompt, agent, interface, stream, output, wsquery):
@@ -163,6 +188,148 @@ async def test_run_agent_turn_treats_provider_error_chunks_as_dead_turn(monkeypa
 
     out = await orch._run_agent_turn(_ErrSession(), SimpleNamespace(name='A', llm=_llm()), 'p', 'web')
     assert out == ''
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_publishes_before_turn_returns(monkeypatch):
+    import asyncio
+
+    from cognitrix.tasks.events import TaskRunEvent, TaskRunEventEmitter
+
+    persisted = asyncio.Event()
+    release = asyncio.Event()
+    saved = []
+
+    async def fake_save(self):
+        saved.append(self)
+        persisted.set()
+
+    class StreamingSession:
+        id = 'session-1'
+        step_index = 0
+        chat = []
+
+        async def __call__(self, prompt, agent, interface, stream, output, wsquery):
+            await output({'content': 'live text'})
+            await release.wait()
+
+    monkeypatch.setattr(TaskRunEvent, 'save', fake_save)
+    emitter = TaskRunEventEmitter('run-1')
+    turn = asyncio.create_task(orch._run_agent_turn(
+        StreamingSession(),
+        SimpleNamespace(name='A', llm=_llm()),
+        'prompt',
+        'web',
+        emitter=emitter,
+        publish=True,
+        attempt=1,
+    ))
+
+    try:
+        await asyncio.wait_for(persisted.wait(), timeout=1)
+        assert turn.done() is False
+        assert saved[0].kind == 'text_delta'
+        assert saved[0].data['content'] == 'live text'
+    finally:
+        release.set()
+    assert await turn == 'live text'
+    assert saved[-1].kind == 'turn_completed'
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_forwards_tool_start_and_result(monkeypatch):
+    from cognitrix.sessions.base import _tool_preview
+    from cognitrix.tasks.events import TaskRunEvent, TaskRunEventEmitter
+
+    saved = []
+    result_preview = _tool_preview('x' * 5000)
+
+    async def fake_save(self):
+        saved.append(self)
+
+    class ToolSession:
+        id = 'session-1'
+        step_index = 0
+        chat = []
+
+        async def __call__(self, prompt, agent, interface, stream, output, wsquery):
+            await output({
+                'type': 'tool',
+                'status': 'started',
+                'tool_name': 'Read',
+                'tool_call_id': 'call-1',
+                'params': '{"path":"README.md"}',
+            })
+            await output({
+                'type': 'tool',
+                'status': 'completed',
+                'tool_name': 'Read',
+                'tool_call_id': 'call-1',
+                'result': result_preview,
+            })
+            await output({'content': 'done'})
+
+    monkeypatch.setattr(TaskRunEvent, 'save', fake_save)
+    emitter = TaskRunEventEmitter('run-1')
+    await orch._run_agent_turn(
+        ToolSession(),
+        SimpleNamespace(name='A', llm=_llm()),
+        'prompt',
+        'web',
+        emitter=emitter,
+        publish=True,
+        attempt=1,
+    )
+
+    assert [event.kind for event in saved] == [
+        'tool_started',
+        'tool_completed',
+        'text_delta',
+        'turn_completed',
+    ]
+    assert saved[0].data['tool_call_id'] == 'call-1'
+    assert saved[1].data['result'] == result_preview
+    assert result_preview.startswith('x' * 4000)
+    assert 'truncated, 5000 chars total' in result_preview
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_flushes_batched_text_when_turn_raises(monkeypatch):
+    import cognitrix.tasks.events as events
+    from cognitrix.tasks.events import TaskRunEvent, TaskRunEventEmitter
+
+    saved = []
+
+    async def fake_save(self):
+        saved.append(self)
+
+    class FailingSession:
+        id = 'session-1'
+        step_index = 0
+        chat = []
+
+        async def __call__(self, prompt, agent, interface, stream, output, wsquery):
+            await output({'content': 'first'})
+            await output({'content': ' remainder'})
+            raise RuntimeError('turn crashed')
+
+    monkeypatch.setattr(TaskRunEvent, 'save', fake_save)
+    monkeypatch.setattr(events.time, 'monotonic', lambda: 10.0)
+    emitter = TaskRunEventEmitter('run-1')
+
+    with pytest.raises(RuntimeError, match='turn crashed'):
+        await orch._run_agent_turn(
+            FailingSession(),
+            SimpleNamespace(name='A', llm=_llm()),
+            'prompt',
+            'web',
+            emitter=emitter,
+            publish=True,
+            attempt=1,
+        )
+
+    assert [event.kind for event in saved] == ['text_delta', 'text_delta']
+    assert [event.data['content'] for event in saved] == ['first', ' remainder']
 
 
 # ---------------------------------------------------------------- step exec
@@ -188,6 +355,370 @@ async def test_set_run_status_respects_external_finalization(monkeypatch):
     applied = await orch._set_run_status(live, orch.TaskRunStatus.COMPLETED, result='x', completed=True)
     assert applied is False
     assert live.status == TaskRunStatus.CANCELLED  # mirrored the authoritative state
+
+
+@pytest.mark.asyncio
+async def test_set_run_status_reloads_when_force_cancel_wins_cas_race(monkeypatch):
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
+
+    running = TaskRun(task_id='t', status=TaskRunStatus.RUNNING)
+    running.id = 'run-1'
+    cancelled = TaskRun(
+        task_id='t',
+        status=TaskRunStatus.CANCELLED,
+        error='force-cancelled (worker did not respond)',
+    )
+    cancelled.id = running.id
+    reads = iter([running, cancelled])
+    updates = []
+
+    async def fake_get(_id):
+        return next(reads)
+
+    async def lose_cas(query, values):
+        updates.append((query, values))
+        return 0
+
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(fake_get))
+    monkeypatch.setattr(TaskRun, 'update_one', staticmethod(lose_cas))
+
+    live = TaskRun(task_id='t', status=TaskRunStatus.RUNNING)
+    live.id = running.id
+    applied = await orch._set_run_status(
+        live,
+        TaskRunStatus.COMPLETED,
+        result='synthesis',
+        completed=True,
+    )
+
+    assert updates[0][0] == {'id': live.id, 'status': TaskRunStatus.RUNNING.value}
+    assert applied is False
+    assert live.status == TaskRunStatus.CANCELLED
+    assert live.error == 'force-cancelled (worker did not respond)'
+    assert live.result is None and live.completed_at is None
+
+
+@pytest.mark.asyncio
+async def test_set_run_status_cancelling_beats_completion(monkeypatch):
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
+
+    cancelling = TaskRun(task_id='t', status=TaskRunStatus.CANCELLING)
+    cancelling.id = 'run-1'
+    updates = []
+
+    async def fake_get(_id):
+        return cancelling
+
+    async def record_update(query, values):
+        updates.append((query, values))
+        return 1
+
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(fake_get))
+    monkeypatch.setattr(TaskRun, 'update_one', staticmethod(record_update))
+
+    live = TaskRun(task_id='t', status=TaskRunStatus.RUNNING)
+    live.id = cancelling.id
+    applied = await orch._set_run_status(
+        live,
+        TaskRunStatus.COMPLETED,
+        result='synthesis',
+        completed=True,
+    )
+
+    assert applied is False
+    assert updates[0][0] == {
+        'id': live.id,
+        'status': TaskRunStatus.CANCELLING.value,
+    }
+    assert updates[0][1]['status'] == TaskRunStatus.CANCELLED.value
+    assert live.status == TaskRunStatus.CANCELLED
+    assert live.error == 'cancelled by user'
+    assert live.result is None and live.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_set_run_status_finalizes_cancelling_after_terminal_cas_miss(monkeypatch):
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
+
+    running = TaskRun(task_id='t', status=TaskRunStatus.RUNNING)
+    running.id = 'run-1'
+    cancelling = TaskRun(task_id='t', status=TaskRunStatus.CANCELLING)
+    cancelling.id = running.id
+    reads = iter([running, cancelling])
+    updates = []
+
+    async def fake_get(_id):
+        return next(reads)
+
+    async def race_then_cancel(query, values):
+        updates.append((query, values))
+        return 0 if len(updates) == 1 else 1
+
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(fake_get))
+    monkeypatch.setattr(TaskRun, 'update_one', staticmethod(race_then_cancel))
+
+    live = TaskRun(task_id='t', status=TaskRunStatus.RUNNING)
+    live.id = running.id
+    applied = await orch._set_run_status(
+        live,
+        TaskRunStatus.COMPLETED,
+        result='synthesis',
+        completed=True,
+    )
+
+    assert applied is False
+    assert updates[0][0] == {'id': live.id, 'status': TaskRunStatus.RUNNING.value}
+    assert updates[1][0] == {'id': live.id, 'status': TaskRunStatus.CANCELLING.value}
+    assert updates[1][1]['status'] == TaskRunStatus.CANCELLED.value
+    assert live.status == TaskRunStatus.CANCELLED
+    assert live.error == 'cancelled by user'
+    assert live.result is None and live.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_set_run_status_does_not_rewrite_matching_terminal_state(monkeypatch):
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
+
+    stored = TaskRun(
+        task_id='t',
+        status=TaskRunStatus.CANCELLED,
+        error='force-cancelled (worker did not respond)',
+    )
+    stored.id = 'run-1'
+
+    async def fake_get(_id):
+        return stored
+
+    async def fail_update(*args, **kwargs):
+        raise AssertionError('an existing terminal row is authoritative')
+
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(fake_get))
+    monkeypatch.setattr(TaskRun, 'update_one', staticmethod(fail_update))
+
+    live = TaskRun(task_id='t', status=TaskRunStatus.RUNNING)
+    live.id = stored.id
+    applied = await orch._set_run_status(
+        live,
+        TaskRunStatus.CANCELLED,
+        error='cancelled by user',
+        completed=True,
+    )
+
+    assert applied is False
+    assert live.status == TaskRunStatus.CANCELLED
+    assert live.error == 'force-cancelled (worker did not respond)'
+
+
+@pytest.mark.asyncio
+async def test_parallel_outcomes_persist_in_completion_order(monkeypatch):
+    import asyncio
+
+    fast = orch._new_step(0, 'fast', 'fast', [])
+    slow = orch._new_step(1, 'slow', 'slow', [])
+    fast['status'] = slow['status'] = 'running'
+    release = asyncio.Event()
+    first_saved = asyncio.Event()
+    snapshots = []
+    emitted = []
+
+    async def fast_result():
+        return fast, 'done', 'fast result'
+
+    async def slow_result():
+        await release.wait()
+        return slow, 'done', 'slow result'
+
+    async def save_plan(run):
+        snapshots.append([step['status'] for step in run.plan])
+        first_saved.set()
+
+    class Emitter:
+        async def emit(self, kind, **kwargs):
+            emitted.append((kind, kwargs))
+            return None
+
+    monkeypatch.setattr(orch, '_save_plan', save_plan)
+    run = SimpleNamespace(plan=[fast, slow])
+    dep_results = {}
+
+    consume = asyncio.create_task(orch._consume_step_outcomes(
+        run, [fast_result(), slow_result()], dep_results, Emitter(),
+    ))
+    try:
+        await asyncio.wait_for(first_saved.wait(), timeout=1)
+        assert snapshots[0] == ['done', 'running']
+        assert consume.done() is False
+    finally:
+        release.set()
+    cancelled, failure = await asyncio.wait_for(consume, timeout=1)
+
+    assert snapshots[-1] == ['done', 'done']
+    assert [event[1]['step_index'] for event in emitted] == [0, 1]
+    assert [event[1]['data']['status'] for event in emitted] == ['done', 'done']
+    assert dep_results == {0: 'fast result', 1: 'slow result'}
+    assert cancelled is False and failure is None
+
+
+@pytest.mark.asyncio
+async def test_consume_step_outcomes_cleans_up_siblings_when_persistence_fails(monkeypatch):
+    import asyncio
+
+    fast = orch._new_step(0, 'fast', 'fast', [])
+    slow = orch._new_step(1, 'slow', 'slow', [])
+    fast['status'] = slow['status'] = 'running'
+    slow_started = asyncio.Event()
+    slow_cancelled = asyncio.Event()
+    release_slow = asyncio.Event()
+
+    async def fast_result():
+        await slow_started.wait()
+        return fast, 'done', 'fast result'
+
+    async def slow_result():
+        slow_started.set()
+        try:
+            await release_slow.wait()
+        except asyncio.CancelledError:
+            slow_cancelled.set()
+            raise
+        return slow, 'done', 'slow result'
+
+    async def fail_save(_run):
+        raise RuntimeError('plan database unavailable')
+
+    class Emitter:
+        async def emit(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(orch, '_save_plan', fail_save)
+
+    try:
+        with pytest.raises(RuntimeError, match='plan database unavailable'):
+            await orch._consume_step_outcomes(
+                SimpleNamespace(plan=[fast, slow]),
+                [fast_result(), slow_result()],
+                {},
+                Emitter(),
+            )
+        assert slow_cancelled.is_set()
+        assert slow['status'] == 'cancelled'
+    finally:
+        release_slow.set()
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_run_uses_one_emitter_and_publishes_authoritative_terminal_status(monkeypatch):
+    from cognitrix.tasks.base import TaskStatus
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
+
+    emitter_instances = []
+    step_emitters = []
+    task_statuses = []
+    events = []
+    timeline = []
+
+    class RecordingEmitter:
+        def __init__(self, run_id):
+            self.run_id = run_id
+            emitter_instances.append(self)
+
+        async def emit(self, kind, **kwargs):
+            events.append((kind, kwargs))
+            timeline.append(('event', kind, kwargs.get('data', {}).get('status')))
+
+    monkeypatch.setattr(orch, 'TaskRunEventEmitter', RecordingEmitter)
+
+    class FakeTask(SimpleNamespace):
+        @staticmethod
+        async def get(_id):
+            return None
+
+        @staticmethod
+        async def update_one(*args, **kwargs):
+            return 1
+
+    task = FakeTask(
+        id='task-1',
+        title='Task',
+        description='Do it',
+        status=TaskStatus.PENDING,
+        step_instructions={'0': {'step': 'Work'}},
+        results=[],
+        team_id=None,
+    )
+    agent = SimpleNamespace(
+        id='agent-1',
+        name='Agent',
+        llm=_llm(),
+        tools=[],
+        system_prompt='',
+    )
+
+    async def team():
+        return [agent]
+
+    task.team = team
+
+    async def no_runs(_query):
+        return []
+
+    async def save_run(self):
+        self.id = 'run-1'
+        return self
+
+    async def no_op(*args, **kwargs):
+        return None
+
+    async def record_task_status(_task, status, **kwargs):
+        task_statuses.append(status)
+
+    async def false_cancel(_run):
+        return False
+
+    async def resolve_leader(_task, roster):
+        return roster[0]
+
+    async def finish_step(task, run, step, agent, dep_results, interface, semaphore, *, emitter=None):
+        step_emitters.append(emitter)
+        return step, 'done', 'step result'
+
+    async def synthesize(*args, **kwargs):
+        return 'synthesis'
+
+    async def external_cancel_wins(run, status, **kwargs):
+        assert status == TaskRunStatus.COMPLETED
+        run.status = TaskRunStatus.CANCELLED
+        timeline.append(('status_write', run.status.value))
+        return False
+
+    monkeypatch.setattr(TaskRun, 'find', staticmethod(no_runs))
+    monkeypatch.setattr(TaskRun, 'save', save_run)
+    monkeypatch.setattr(orch, '_set_task_status', record_task_status)
+    monkeypatch.setattr(orch, '_save_plan', no_op)
+    monkeypatch.setattr(orch, '_cancel_requested', false_cancel)
+    monkeypatch.setattr(orch, '_resolve_leader', resolve_leader)
+    monkeypatch.setattr(orch, '_run_step_guarded', finish_step)
+    monkeypatch.setattr(orch, '_synthesize', synthesize)
+    monkeypatch.setattr(orch, '_set_run_status', external_cancel_wins)
+    monkeypatch.setattr(orch, 'notify_completion', no_op)
+
+    run = await orch.run(task)
+
+    assert run is not None and run.status == TaskRunStatus.CANCELLED
+    assert len(emitter_instances) == 1
+    assert step_emitters == [emitter_instances[0]]
+    assert task_statuses == [TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED]
+    assert [(kind, data['data']['status']) for kind, data in events] == [
+        ('run_status', 'running'),
+        ('step_status', 'running'),
+        ('step_status', 'done'),
+        ('run_status', 'cancelled'),
+    ]
+    assert timeline[-2:] == [
+        ('status_write', 'cancelled'),
+        ('event', 'run_status', 'cancelled'),
+    ]
 
 
 # ---------------------------------------------------------------- P3: resume/cancel/timeout
@@ -252,7 +783,7 @@ async def test_execute_step_empty_turns_fail(monkeypatch):
     monkeypatch.setattr(orch, 'Session', _StubSession)
     monkeypatch.setattr(orch, 'EMPTY_TURN_BACKOFF', 0)
 
-    async def empty_turn(session, agent, prompt, interface):
+    async def empty_turn(session, agent, prompt, interface, *args, **kwargs):
         return ''
     monkeypatch.setattr(orch, '_run_agent_turn', empty_turn)
 
@@ -278,18 +809,28 @@ async def test_execute_step_gate_retry_succeeds(monkeypatch):
         'better draft',                                       # gate-retry agent turn
         '{"finalscore": "9/10"}',                             # gate 2: pass
     ])
+    calls = []
 
-    async def scripted_turn(session, agent, prompt, interface):
+    async def scripted_turn(session, agent, prompt, interface, **kwargs):
+        calls.append(kwargs)
         return next(replies)
     monkeypatch.setattr(orch, '_run_agent_turn', scripted_turn)
 
     task = SimpleNamespace(id='t', title='T', description='d')
     step = orch._new_step(0, 's', 's', [])
+    emitter = object()
     out = await orch._execute_step(task, SimpleNamespace(id='r'), step,
-                                   SimpleNamespace(id='a', name='A', llm=_llm()), {}, 'web')
+                                   SimpleNamespace(id='a', name='A', llm=_llm()), {}, 'web',
+                                   emitter=emitter)
     assert out == 'better draft'
     assert step['gate'] == 'passed'
     assert step['attempts'] == 2
+    assert calls == [
+        {'emitter': emitter, 'publish': True, 'attempt': 1},
+        {},
+        {'emitter': emitter, 'publish': True, 'attempt': 2},
+        {},
+    ]
 
 
 @pytest.mark.asyncio
@@ -303,7 +844,7 @@ async def test_execute_step_gate_fail_after_retry(monkeypatch):
         '{"finalscore": "2/10"}',
     ])
 
-    async def scripted_turn(session, agent, prompt, interface):
+    async def scripted_turn(session, agent, prompt, interface, *args, **kwargs):
         return next(replies)
     monkeypatch.setattr(orch, '_run_agent_turn', scripted_turn)
 

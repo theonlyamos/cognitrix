@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from cognitrix.agents.base import Agent
 from cognitrix.agents.evaluator import Evaluator
 from cognitrix.sessions.base import Session
+from cognitrix.tasks.events import TaskRunEventEmitter
 from cognitrix.tasks.run import TaskRun, TaskRunStatus
 from cognitrix.utils.webhooks import notify_completion
 
@@ -227,17 +228,76 @@ def _summarize_recent_activity(session: Session, window: int = 24) -> str:
     return ""
 
 
-async def _run_agent_turn(session: Session, agent: Agent, prompt: str, interface: str) -> str:
+async def _run_agent_turn(
+    session: Session,
+    agent: Agent,
+    prompt: str,
+    interface: str,
+    *,
+    emitter: TaskRunEventEmitter | None = None,
+    publish: bool = False,
+    attempt: int = 1,
+) -> str:
     """One session turn; returns the captured answer text ('' on a dead turn)."""
     captured = ''
+    turn_id = f'{session.id}:{attempt}'
 
     async def capture(payload=None, *args, **kwargs):
         nonlocal captured
-        content = payload.get('content', '') if isinstance(payload, dict) else (str(payload) if payload else '')
+        if isinstance(payload, dict) and payload.get('type') == 'tool':
+            if publish and emitter:
+                await emitter.flush_text(session_id=session.id, turn_id=turn_id)
+                status = str(payload.get('status') or '')
+                kind = 'tool_started' if status == 'started' else 'tool_completed'
+                data = {
+                    'turn_id': turn_id,
+                    'tool_call_id': payload.get('tool_call_id'),
+                    'tool_name': payload.get('tool_name'),
+                }
+                if kind == 'tool_started':
+                    data['params'] = payload.get('params') or ''
+                else:
+                    data['result'] = payload.get('result') or ''
+                    data['status'] = 'error' if status == 'error' else 'done'
+                await emitter.emit(
+                    kind,
+                    session_id=session.id,
+                    step_index=session.step_index,
+                    agent_name=agent.name,
+                    data=data,
+                )
+            return
+
+        content = payload.get('content', '') if isinstance(payload, dict) else (
+            str(payload) if payload else ''
+        )
         if content:
             captured += content
+            if publish and emitter:
+                await emitter.text_delta(
+                    session_id=session.id,
+                    step_index=session.step_index,
+                    agent_name=agent.name,
+                    turn_id=turn_id,
+                    attempt=attempt,
+                    content=content,
+                )
 
-    await session(prompt, agent, interface=interface, stream=True, output=capture, wsquery={})
+    try:
+        await session(prompt, agent, interface=interface, stream=True, output=capture, wsquery={})
+    finally:
+        # A provider/session failure can arrive after a batched delta. Flush in
+        # the finally path so terminal run events can never overtake live text.
+        if publish and emitter:
+            await emitter.flush_text(session_id=session.id, turn_id=turn_id)
+    if publish and emitter:
+        await emitter.emit(
+            'turn_completed',
+            session_id=session.id,
+            step_index=session.step_index,
+            agent_name=agent.name,
+            data={'turn_id': turn_id, 'attempt': attempt},
+        )
     answer = captured.strip()
     if 'Streaming error:' in answer:
         # Provider-level failures are forwarded as display chunks (so chat
@@ -302,8 +362,16 @@ def _step_prompt(task: 'Task', step: dict, dep_results: dict[int, str]) -> str:
     return '\n'.join(parts)
 
 
-async def _execute_step(task: 'Task', run: TaskRun, step: dict, agent: Agent,
-                        dep_results: dict[int, str], interface: str) -> str:
+async def _execute_step(
+    task: 'Task',
+    run: TaskRun,
+    step: dict,
+    agent: Agent,
+    dep_results: dict[int, str],
+    interface: str,
+    *,
+    emitter: TaskRunEventEmitter | None = None,
+) -> str:
     """Run one plan step in its own session. Raises StepFailure terminally."""
     session = Session(task_id=task.id, run_id=run.id, step_index=step['index'],
                       step_title=step['title'], agent_id=agent.id)
@@ -317,7 +385,15 @@ async def _execute_step(task: 'Task', run: TaskRun, step: dict, agent: Agent,
         answer = ''
         for attempt in range(2):
             step['attempts'] += 1
-            answer = await _run_agent_turn(session, agent, prompt, interface)
+            answer = await _run_agent_turn(
+                session,
+                agent,
+                prompt,
+                interface,
+                emitter=emitter,
+                publish=True,
+                attempt=step['attempts'],
+            )
             if answer:
                 break
             logger.warning("Task %s step %s: empty turn (attempt %s)", task.id, step['index'], attempt + 1)
@@ -336,7 +412,15 @@ async def _execute_step(task: 'Task', run: TaskRun, step: dict, agent: Agent,
                 + f"\n\nYour previous attempt:\n{answer[:4000]}"
             )
             step['attempts'] += 1
-            retry_answer = await _run_agent_turn(session, agent, retry_prompt, interface)
+            retry_answer = await _run_agent_turn(
+                session,
+                agent,
+                retry_prompt,
+                interface,
+                emitter=emitter,
+                publish=True,
+                attempt=step['attempts'],
+            )
             if not retry_answer:
                 raise StepFailure(f"Step #{step['index'] + 1} empty on gate retry")
             passed, _ = await _gate(session, agent, step, retry_answer, interface)
@@ -352,9 +436,17 @@ async def _execute_step(task: 'Task', run: TaskRun, step: dict, agent: Agent,
             logger.exception("Could not stamp step session %s", session.id)
 
 
-async def _run_step_guarded(task: 'Task', run: TaskRun, step: dict, agent: Agent,
-                            dep_results: dict[int, str], interface: str,
-                            semaphore: asyncio.Semaphore) -> tuple[dict, str, str]:
+async def _run_step_guarded(
+    task: 'Task',
+    run: TaskRun,
+    step: dict,
+    agent: Agent,
+    dep_results: dict[int, str],
+    interface: str,
+    semaphore: asyncio.Semaphore,
+    *,
+    emitter: TaskRunEventEmitter | None = None,
+) -> tuple[dict, str, str]:
     """Run one step under the concurrency slot with a hard timeout.
 
     Returns (step, outcome, payload) where outcome is 'done' | 'failed' |
@@ -368,7 +460,15 @@ async def _run_step_guarded(task: 'Task', run: TaskRun, step: dict, agent: Agent
             return step, 'cancelled', ''
         try:
             result = await asyncio.wait_for(
-                _execute_step(task, run, step, agent, dep_results, interface),
+                _execute_step(
+                    task,
+                    run,
+                    step,
+                    agent,
+                    dep_results,
+                    interface,
+                    emitter=emitter,
+                ),
                 STEP_TIMEOUT,
             )
             return step, 'done', result
@@ -387,6 +487,55 @@ async def _run_step_guarded(task: 'Task', run: TaskRun, step: dict, agent: Agent
             return step, 'failed', f"Step #{step['index'] + 1} crashed: {exc}"
 
 
+async def _consume_step_outcomes(
+    run: TaskRun,
+    awaitables,
+    dep_results: dict[int, str],
+    emitter: TaskRunEventEmitter,
+) -> tuple[bool, str | None]:
+    """Persist and publish each step result as soon as that step finishes."""
+    cancelled = False
+    failure_msg: str | None = None
+    tasks = [asyncio.create_task(item) for item in awaitables]
+    try:
+        for completed in asyncio.as_completed(tasks):
+            step, outcome, payload = await completed
+            if outcome == 'done':
+                step['status'] = 'done'
+                step['result'] = payload[:RESULT_TRUNCATE]
+                dep_results[step['index']] = step['result']
+            elif outcome == 'cancelled':
+                step['status'] = 'cancelled'
+                cancelled = True
+            else:
+                step['status'] = 'failed'
+                failure_msg = failure_msg or payload
+
+            await _save_plan(run)
+            await emitter.emit(
+                'step_status',
+                step_index=step['index'],
+                agent_name=step.get('agent_name'),
+                data={
+                    'status': step['status'],
+                    'title': step['title'],
+                    'attempts': step.get('attempts', 0),
+                },
+            )
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        # An aborted consumer has stopped every unfinished child. Mirror that
+        # in the plan so the exception-path save cannot leave phantom work.
+        for step in run.plan:
+            if step['status'] == 'running':
+                step['status'] = 'cancelled'
+    return cancelled, failure_msg
+
+
 # ---------------------------------------------------------------- run status
 
 async def _save_plan(run: TaskRun) -> None:
@@ -402,36 +551,87 @@ async def _cancel_requested(run: TaskRun) -> bool:
 _TERMINAL_RUN_STATUSES = {TaskRunStatus.COMPLETED, TaskRunStatus.FAILED, TaskRunStatus.CANCELLED}
 
 
+def _mirror_run_outcome(run: TaskRun, stored: TaskRun) -> None:
+    """Copy authoritative outcome fields without touching the live plan."""
+    run.status = stored.status
+    run.error = stored.error
+    run.result = stored.result
+    run.completed_at = stored.completed_at
+
+
 async def _set_run_status(run: TaskRun, status: TaskRunStatus, *,
                           error: str | None = None, result: str | None = None,
                           completed: bool = False) -> bool:
-    """Compare-and-set status write. Returns False (and applies nothing) when
-    the stored status is already terminal — e.g. the cancel endpoint
-    force-finalized the run while the worker was still executing; that write
-    is authoritative and must not be overwritten. Also never downgrades a
-    concurrently written 'cancelling' back to 'running'. Always partial
-    updates (a full-row save would clobber concurrent plan writes)."""
+    """Compare-and-set a run status, returning True only for the requested write.
+
+    An existing terminal row is authoritative. If cancellation races the CAS,
+    the worker finalizes it as CANCELLED instead of leaving a completed worker
+    attached to a nonterminal run. All writes stay partial so concurrent plan
+    updates cannot be clobbered.
+    """
     fresh = await TaskRun.get(run.id)
     current = fresh.status if fresh else run.status
-    if current in _TERMINAL_RUN_STATUSES and current != status:
-        run.status = current
+    requested_status = status
+    if current in _TERMINAL_RUN_STATUSES:
+        if fresh:
+            _mirror_run_outcome(run, fresh)
+        else:
+            run.status = current
         return False
-    if current == TaskRunStatus.CANCELLING and status == TaskRunStatus.RUNNING:
-        run.status = TaskRunStatus.CANCELLING
-        return False
+    if current == TaskRunStatus.CANCELLING:
+        if status == TaskRunStatus.RUNNING:
+            run.status = TaskRunStatus.CANCELLING
+            return False
+        if status != TaskRunStatus.CANCELLED:
+            status = TaskRunStatus.CANCELLED
+            error = 'cancelled by user'
+            result = None
+            completed = True
     updates: dict[str, Any] = {'status': status.value}
     if error is not None:
         updates['error'] = error
-        run.error = error
     if result is not None:
         updates['result'] = result
-        run.result = result
     if completed:
         updates['completed_at'] = _now()
-        run.completed_at = updates['completed_at']
-    await TaskRun.update_one({'id': run.id}, updates)
+    updated = await TaskRun.update_one(
+        {'id': run.id, 'status': current.value},
+        updates,
+    )
+    if updated != 1:
+        authoritative = await TaskRun.get(run.id)
+        if authoritative:
+            _mirror_run_outcome(run, authoritative)
+        if authoritative and authoritative.status == TaskRunStatus.CANCELLING:
+            cancelled_at = _now()
+            cancelled_updates = {
+                'status': TaskRunStatus.CANCELLED.value,
+                'error': 'cancelled by user',
+                'completed_at': cancelled_at,
+            }
+            cancelled = await TaskRun.update_one(
+                {'id': run.id, 'status': TaskRunStatus.CANCELLING.value},
+                cancelled_updates,
+            )
+            if cancelled == 1:
+                run.status = TaskRunStatus.CANCELLED
+                run.error = cancelled_updates['error']
+                run.result = None
+                run.completed_at = cancelled_at
+            else:
+                latest = await TaskRun.get(run.id)
+                if latest:
+                    _mirror_run_outcome(run, latest)
+        return False
+
     run.status = status
-    return True
+    if error is not None:
+        run.error = error
+    if result is not None:
+        run.result = result
+    if completed:
+        run.completed_at = updates['completed_at']
+    return status == requested_status
 
 
 async def _set_task_status(task: 'Task', status, *, append_result: str | None = None) -> None:
@@ -580,6 +780,9 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
     run_rec = TaskRun(task_id=task.id, status=TaskRunStatus.RUNNING, started_at=_now())
     await run_rec.save()  # the ONE instance save — partial updates after this
 
+    emitter = TaskRunEventEmitter(run_rec.id)
+    await emitter.emit('run_status', data={'status': TaskRunStatus.RUNNING.value})
+
     try:
         # Plan (resume reuses the copied snapshot, assignments included)
         if prev_plan is not None:
@@ -616,28 +819,38 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
             for s in runnable:
                 s['status'] = 'running'
             await _save_plan(run_rec)
-
-            outcomes = await asyncio.gather(*[
-                _run_step_guarded(
-                    task, run_rec, s,
-                    agents_by_name.get((s['agent_name'] or '').lower(), leader),
-                    dep_results, interface, semaphore,
+            for step in runnable:
+                await emitter.emit(
+                    'step_status',
+                    step_index=step['index'],
+                    agent_name=step.get('agent_name'),
+                    data={
+                        'status': step['status'],
+                        'title': step['title'],
+                        'attempts': step.get('attempts', 0),
+                    },
                 )
-                for s in runnable
-            ])
 
-            for step, outcome, payload in outcomes:
-                if outcome == 'done':
-                    step['status'] = 'done'
-                    step['result'] = payload[:RESULT_TRUNCATE]
-                    dep_results[step['index']] = step['result']
-                elif outcome == 'cancelled':
-                    step['status'] = 'cancelled'
-                    cancelled = True
-                else:
-                    step['status'] = 'failed'
-                    failure_msg = failure_msg or payload
-            await _save_plan(run_rec)
+            cancelled_batch, batch_failure = await _consume_step_outcomes(
+                run_rec,
+                [
+                    _run_step_guarded(
+                        task,
+                        run_rec,
+                        step,
+                        agents_by_name.get((step['agent_name'] or '').lower(), leader),
+                        dep_results,
+                        interface,
+                        semaphore,
+                        emitter=emitter,
+                    )
+                    for step in runnable
+                ],
+                dep_results,
+                emitter,
+            )
+            cancelled = cancelled or cancelled_batch
+            failure_msg = failure_msg or batch_failure
             if failure_msg or cancelled:
                 break
 
@@ -652,19 +865,34 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
             # IN_PROGRESS-only) leaves CANCELLED alone.
             _cancel_pending(plan)
             await _save_plan(run_rec)
-            if await _set_run_status(run_rec, TaskRunStatus.CANCELLED,
-                                     error='cancelled by user', completed=True):
+            applied = await _set_run_status(
+                run_rec,
+                TaskRunStatus.CANCELLED,
+                error='cancelled by user',
+                completed=True,
+            )
+            await emitter.emit('run_status', data={'status': run_rec.status.value})
+            if applied or run_rec.status == TaskRunStatus.CANCELLED:
                 await _set_task_status(task, TaskStatus.CANCELLED)
             logger.info("Task %s run %s cancelled", task.id, run_rec.id)
             return run_rec
 
         # Synthesize
         synthesis = await _synthesize(task, run_rec, leader, interface)
-        if await _set_run_status(run_rec, TaskRunStatus.COMPLETED, result=synthesis, completed=True):
+        applied = await _set_run_status(
+            run_rec,
+            TaskRunStatus.COMPLETED,
+            result=synthesis,
+            completed=True,
+        )
+        await emitter.emit('run_status', data={'status': run_rec.status.value})
+        if applied:
             await _set_task_status(task, TaskStatus.COMPLETED, append_result=synthesis)
+        elif run_rec.status == TaskRunStatus.CANCELLED:
+            await _set_task_status(task, TaskStatus.CANCELLED)
         else:
-            # The run was finalized externally (force-cancel) mid-flight — that
-            # write is authoritative; leave the task alone.
+            # Another terminal writer won the CAS. Its task update is
+            # authoritative, so leave the task alone.
             logger.info("Task %s run %s was finalized externally (%s); not overwriting",
                         task.id, run_rec.id, run_rec.status.value)
         return run_rec
@@ -675,8 +903,17 @@ async def run(task: 'Task', resume: bool = False, interface: str = 'web') -> Tas
             await _save_plan(run_rec)
         except Exception:
             logger.exception("Could not persist failed plan for run %s", run_rec.id)
-        if await _set_run_status(run_rec, TaskRunStatus.FAILED, error=str(exc), completed=True):
+        applied = await _set_run_status(
+            run_rec,
+            TaskRunStatus.FAILED,
+            error=str(exc),
+            completed=True,
+        )
+        await emitter.emit('run_status', data={'status': run_rec.status.value})
+        if applied:
             await _set_task_status(task, TaskStatus.FAILED)
+        elif run_rec.status == TaskRunStatus.CANCELLED:
+            await _set_task_status(task, TaskStatus.CANCELLED)
         raise
     finally:
         # Completion webhook for API-started runs. In the finally so success,
