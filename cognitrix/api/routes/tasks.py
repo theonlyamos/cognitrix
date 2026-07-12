@@ -280,19 +280,33 @@ async def cancel_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)
             # flag, and a stuck 'cancelling' run would 409-block ▶ Run forever.
             # Compare-and-set: a worker finishing in this window writes a
             # terminal status that must not be relabeled 'cancelled'.
-            fresh = await TaskRun.get(run.id)
-            if fresh and fresh.status == TaskRunStatus.CANCELLING:
-                await TaskRun.update_one({'id': run.id}, {
+            updated = await TaskRun.update_one(
+                {'id': run.id, 'status': TaskRunStatus.CANCELLING.value},
+                {
                     'status': TaskRunStatus.CANCELLED.value,
                     'error': 'force-cancelled (worker did not respond)',
-                })
-                task.status = TaskStatus.CANCELLED
-                await task.save()
+                },
+            )
+            if updated == 1:
+                run.status = TaskRunStatus.CANCELLED
+                run.error = 'force-cancelled (worker did not respond)'
             fresh = await TaskRun.get(run.id)
-            return fresh.json() if fresh else run.json()
+            authoritative = fresh or run
+            if authoritative.status == TaskRunStatus.CANCELLED:
+                task.status = TaskStatus.CANCELLED
+                await Task.update_one(
+                    {'id': task.id},
+                    {'status': TaskStatus.CANCELLED.value},
+                )
+            return authoritative.json()
         # Partial update only — a full-row save here would clobber plan/step
         # statuses the worker wrote since our read.
-        await TaskRun.update_one({'id': run.id}, {'status': TaskRunStatus.CANCELLING.value})
+        updated = await TaskRun.update_one(
+            {'id': run.id, 'status': TaskRunStatus.RUNNING.value},
+            {'status': TaskRunStatus.CANCELLING.value},
+        )
+        if updated == 1:
+            run.status = TaskRunStatus.CANCELLING
         fresh = await TaskRun.get(run.id)
         return fresh.json() if fresh else run.json()
 

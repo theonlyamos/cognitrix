@@ -275,12 +275,20 @@ class AgentManager:
                 args = t.get('arguments', {}) or {}
 
                 if not name:
-                    results_by_index[i] = {'tool_call_id': tc_id, 'data': "Error: malformed tool call (no name)"}
+                    results_by_index[i] = {
+                        'tool_call_id': tc_id,
+                        'data': "Error: malformed tool call (no name)",
+                        'success': False,
+                    }
                     continue
 
                 tool = ToolManager.get_by_name(name)
                 if not tool:
-                    results_by_index[i] = {'tool_call_id': tc_id, 'data': f"Error: Tool '{name}' not found"}
+                    results_by_index[i] = {
+                        'tool_call_id': tc_id,
+                        'data': f"Error: Tool '{name}' not found",
+                        'success': False,
+                    }
                     continue
 
                 # Safety check
@@ -299,7 +307,11 @@ class AgentManager:
                     )
 
                     if not approval.approved:
-                        results_by_index[i] = {'tool_call_id': tc_id, 'data': f"{OPERATION_BLOCKED_PREFIX}: user denied approval for {tool.name}"}
+                        results_by_index[i] = {
+                            'tool_call_id': tc_id,
+                            'data': f"{OPERATION_BLOCKED_PREFIX}: user denied approval for {tool.name}",
+                            'success': False,
+                        }
                         continue
 
                     if approval.cached:
@@ -333,11 +345,23 @@ class AgentManager:
                 i = task_indices[j]
                 tc_id = agent_tool_calls[i].get('tool_call_id')
                 if isinstance(result, Exception):
-                    results_by_index[i] = {'tool_call_id': tc_id, 'data': f"Error: {result}"}
+                    results_by_index[i] = {
+                        'tool_call_id': tc_id,
+                        'data': f"Error: {result}",
+                        'success': False,
+                    }
                 elif result.success:
-                    results_by_index[i] = {'tool_call_id': tc_id, 'data': result.data}
+                    results_by_index[i] = {
+                        'tool_call_id': tc_id,
+                        'data': result.data,
+                        'success': True,
+                    }
                 else:
-                    results_by_index[i] = {'tool_call_id': tc_id, 'data': f"Error: {result.error} (attempted {result.attempts} times)"}
+                    results_by_index[i] = {
+                        'tool_call_id': tc_id,
+                        'data': f"Error: {result.error} (attempted {result.attempts} times)",
+                        'success': False,
+                    }
 
             results = [results_by_index[i] for i in range(len(agent_tool_calls))]
             return {

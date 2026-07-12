@@ -381,8 +381,10 @@ class Session(Model):
                                 for i, (name, tcid, args) in enumerate(tool_meta):
                                     if not name:
                                         continue
-                                    data = result_list[i].get('data', '') if i < len(result_list) else ''
-                                    await output({'type': 'tool', 'status': 'completed', 'tool_name': name,
+                                    item = result_list[i] if i < len(result_list) else {}
+                                    data = item.get('data', '')
+                                    status = 'completed' if item.get('success') is True else 'error'
+                                    await output({'type': 'tool', 'status': status, 'tool_name': name,
                                                   'tool_call_id': tcid, 'result': _tool_preview(data)})
 
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
