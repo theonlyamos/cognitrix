@@ -122,6 +122,7 @@ export default function TaskDetail() {
   const manualPickRef = useRef(false);
   const [stepSessions, setStepSessions] = useState<Record<string, Record<string, string>>>({});
   const [chats, setChats] = useState<Record<string, BackendChatEntry[]>>({});
+  const chatRequestVersionsRef = useRef<Record<string, number>>({});
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [togglingSchedule, setTogglingSchedule] = useState(false);
@@ -144,8 +145,13 @@ export default function TaskDetail() {
   const isLive = !!activeRun || isTaskRunning;
 
   const loadChat = useCallback(async (sessionId: string): Promise<boolean> => {
+    const requestVersion = (chatRequestVersionsRef.current[sessionId] || 0) + 1;
+    chatRequestVersionsRef.current[sessionId] = requestVersion;
     try {
       const res = await api.get<BackendChatEntry[]>(`/sessions/${sessionId}/chat`);
+      if (chatRequestVersionsRef.current[sessionId] !== requestVersion) {
+        return false;
+      }
       setChats((previous) => ({ ...previous, [sessionId]: res.data }));
       return true;
     } catch {

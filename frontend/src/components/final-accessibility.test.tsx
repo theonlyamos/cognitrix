@@ -491,6 +491,114 @@ describe('final accessibility contracts', () => {
     expect(harness.pollingEnabled).toBe(true);
   });
 
+  it('keeps newer canonical chat when an older load resolves last', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'in_progress' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-live',
+        status: 'running',
+        plan: [{
+          index: 0,
+          title: 'Research',
+          status: 'running',
+          agent_name: 'Researcher',
+        }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+
+    type ChatResponse = { data: unknown[] };
+    let resolveOlder!: (response: ChatResponse) => void;
+    let resolveNewer!: (response: ChatResponse) => void;
+    const olderResponse = new Promise<ChatResponse>((resolve) => {
+      resolveOlder = resolve;
+    });
+    const newerResponse = new Promise<ChatResponse>((resolve) => {
+      resolveNewer = resolve;
+    });
+    let chatLoads = 0;
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-live') {
+        return Promise.resolve({
+          data: [{ id: 'session-1', step_index: 0, step_title: 'Research' }],
+        });
+      }
+      if (path === '/sessions/session-1/chat') {
+        chatLoads += 1;
+        return chatLoads === 1 ? olderResponse : newerResponse;
+      }
+      return Promise.resolve({ data: [] });
+    });
+    renderTaskDetail();
+    await waitFor(() => expect(chatLoads).toBe(1));
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-1',
+      run_id: 'run-live',
+      session_id: 'session-1',
+      step_index: 0,
+      sequence: 1,
+      kind: 'text_delta',
+      agent_name: 'Researcher',
+      data: {
+        turn_id: 'session-1:1',
+        attempt: 1,
+        content: 'newer partial output',
+      },
+    }));
+    expect(await screen.findByText('newer partial output')).toBeInTheDocument();
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-2',
+      run_id: 'run-live',
+      session_id: 'session-1',
+      step_index: 0,
+      sequence: 2,
+      kind: 'turn_completed',
+      agent_name: 'Researcher',
+      data: { turn_id: 'session-1:1', attempt: 1 },
+    }));
+    await waitFor(() => expect(chatLoads).toBe(2));
+
+    await act(async () => {
+      resolveNewer({
+        data: [{
+          role: 'assistant',
+          type: 'text',
+          name: 'Researcher',
+          content: '# New canonical',
+        }],
+      });
+      await newerResponse;
+    });
+    expect(
+      await screen.findByRole('heading', { name: 'New canonical' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('newer partial output')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveOlder({
+        data: [{
+          role: 'assistant',
+          type: 'text',
+          name: 'Researcher',
+          content: '# Stale canonical',
+        }],
+      });
+      await olderResponse;
+    });
+    expect(
+      screen.getByRole('heading', { name: 'New canonical' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Stale canonical' }),
+    ).not.toBeInTheDocument();
+  });
+
   it('renders API key secrets with responsive input heights', async () => {
     harness.resources.set('/api-keys', { data: [] });
     harness.apiPost.mockResolvedValueOnce({
