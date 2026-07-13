@@ -56,6 +56,21 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
       resultsById[m.tool_call_id] = asText(m.content);
     }
   }
+  const pairedResultIds = new Set<string>();
+  for (const m of chat || []) {
+    if (
+      String(m.role || '').toLowerCase() !== 'assistant'
+      || m.type !== 'tool_calls'
+    ) continue;
+    for (const tool of m.tool_calls || []) {
+      if (
+        tool.tool_call_id
+        && Object.prototype.hasOwnProperty.call(resultsById, tool.tool_call_id)
+      ) {
+        pairedResultIds.add(tool.tool_call_id);
+      }
+    }
+  }
   for (const m of chat || []) {
     const role = String(m.role || '').toLowerCase();
     const type = m.type || '';
@@ -86,7 +101,9 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
     } else if (role === 'assistant') {
       if (content.trim()) out.push({ kind: 'assistant', content, name: m.name || undefined });
     } else if (role === 'tool') {
-      out.push({ kind: 'tool_result', content });
+      if (!m.tool_call_id || !pairedResultIds.has(m.tool_call_id)) {
+        out.push({ kind: 'tool_result', content });
+      }
     } else if (role === 'system' && type === 'turn_timing') {
       const tokens =
         m.prompt_tokens || m.completion_tokens

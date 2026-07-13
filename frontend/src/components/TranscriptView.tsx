@@ -76,6 +76,11 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
                         ) : (
                           <span className="text-ok" aria-hidden>✓</span>
                         )}
+                        {tool.status !== 'running' && (
+                          <span className="sr-only">
+                            {tool.status === 'error' ? 'error' : 'done'}
+                          </span>
+                        )}
                         <span>{tool.name.replace(/_/g, ' ')}</span>
                         {tool.status === 'running' && (
                           <span className="text-fg-dim">running…</span>

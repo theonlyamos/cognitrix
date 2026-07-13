@@ -9,7 +9,6 @@ import { LoadingState, Spinner } from '@/components/list-ui';
 import { MobileSheet } from '@/components/MobileSheet';
 import { SelectionRow } from '@/components/SelectionRow';
 import { TranscriptView } from '@/components/TranscriptView';
-import '@/components/MarkdownMessage';
 import {
   parseChatEntries,
   parseSessionDate,
@@ -122,6 +121,7 @@ export default function TaskDetail() {
   const manualPickRef = useRef(false);
   const [stepSessions, setStepSessions] = useState<Record<string, Record<string, string>>>({});
   const [chats, setChats] = useState<Record<string, BackendChatEntry[]>>({});
+  const chatRequestGenerationRef = useRef(0);
   const chatRequestVersionsRef = useRef<Record<string, number>>({});
   const pendingCompletedTurnsRef = useRef<Record<string, Set<string>>>({});
   const [starting, setStarting] = useState(false);
@@ -146,11 +146,15 @@ export default function TaskDetail() {
   const isLive = !!activeRun || isTaskRunning;
 
   const loadChat = useCallback(async (sessionId: string): Promise<boolean> => {
+    const requestGeneration = chatRequestGenerationRef.current;
     const requestVersion = (chatRequestVersionsRef.current[sessionId] || 0) + 1;
     chatRequestVersionsRef.current[sessionId] = requestVersion;
     try {
       const res = await api.get<BackendChatEntry[]>(`/sessions/${sessionId}/chat`);
-      if (chatRequestVersionsRef.current[sessionId] !== requestVersion) {
+      if (
+        chatRequestGenerationRef.current !== requestGeneration
+        || chatRequestVersionsRef.current[sessionId] !== requestVersion
+      ) {
         return false;
       }
       setChats((previous) => ({ ...previous, [sessionId]: res.data }));
@@ -225,6 +229,9 @@ export default function TaskDetail() {
   });
 
   useEffect(() => {
+    chatRequestGenerationRef.current += 1;
+    chatRequestVersionsRef.current = {};
+    pendingCompletedTurnsRef.current = {};
     dispatchLive({ type: 'reset' });
   }, [selectedRunId]);
 

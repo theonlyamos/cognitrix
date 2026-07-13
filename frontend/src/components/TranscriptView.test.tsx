@@ -61,4 +61,58 @@ describe('TranscriptView live and Markdown output', () => {
     }]} />);
     expect(await screen.findByText('contents')).toBeInTheDocument();
   });
+
+  it('announces completed and failed tool statuses while retaining their visible icons', () => {
+    const { container } = render(<TranscriptView entries={[{
+      kind: 'tool_calls',
+      content: '',
+      tools: [
+        { name: 'read_file', args: '{}', status: 'done', result: 'contents' },
+        { name: 'write_file', args: '{}', status: 'error', result: 'permission denied' },
+      ],
+    }]} />);
+
+    expect(screen.getByText('done')).toHaveClass('sr-only');
+    expect(screen.getByText('error')).toHaveClass('sr-only');
+    expect(container.querySelectorAll('[aria-hidden="true"]')).toHaveLength(2);
+  });
+
+  it('shows the error status and result when a running tool fails', async () => {
+    const { rerender } = render(<TranscriptView entries={[{
+      kind: 'tool_calls',
+      content: '',
+      tools: [{ name: 'write_file', args: '{}', status: 'running' }],
+    }]} />);
+
+    expect(screen.getByText('running…')).toBeInTheDocument();
+
+    rerender(<TranscriptView entries={[{
+      kind: 'tool_calls',
+      content: '',
+      tools: [{
+        name: 'write_file',
+        args: '{}',
+        status: 'error',
+        result: 'permission denied',
+      }],
+    }]} />);
+
+    expect(screen.getByText('error')).toHaveClass('sr-only');
+    expect(await screen.findByText('permission denied')).toBeInTheDocument();
+  });
+
+  it('does not materialize raw HTML from completed Markdown as DOM', async () => {
+    const { container } = render(
+      <MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+        <TranscriptView entries={[{
+          kind: 'assistant',
+          content: '<img src="x" alt="unsafe image"><script>window.pwned = true</script>',
+        }]} />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText(/<img src="x"/);
+    expect(container.querySelector('img')).not.toBeInTheDocument();
+    expect(container.querySelector('script')).not.toBeInTheDocument();
+  });
 });

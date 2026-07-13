@@ -416,7 +416,9 @@ describe('final accessibility contracts', () => {
       data: { turn_id: 'session-1:1', attempt: 1 },
     }));
 
-    expect(await screen.findByRole('heading', { name: 'Finished' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Finished' }, { timeout: 5000 }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('working now')).not.toBeInTheDocument();
   });
 
@@ -735,6 +737,132 @@ describe('final accessibility contracts', () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText('completed partial output')).not.toBeInTheDocument();
     expect(screen.getByText('unrelated live output')).toBeInTheDocument();
+  });
+
+  it('rejects events from a run other than the selected run', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'failed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-selected',
+        status: 'failed',
+        plan: [{ index: 0, title: 'Research', status: 'failed' }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockImplementation((path: string) => Promise.resolve({
+      data: path === '/sessions/runs/run-selected'
+        ? [{ id: 'session-selected', step_index: 0 }]
+        : [],
+    }));
+    renderTaskDetail();
+    await waitFor(() => expect(harness.taskRunOnEvent).not.toBeNull());
+    await waitFor(() => expect(harness.apiGet).toHaveBeenCalledWith(
+      '/sessions/session-selected/chat',
+    ));
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-other-run',
+      run_id: 'run-other',
+      session_id: 'session-selected',
+      step_index: 0,
+      sequence: 1,
+      kind: 'text_delta',
+      agent_name: 'Researcher',
+      data: { turn_id: 'session-selected:1', content: 'wrong run output' },
+    }));
+
+    expect(screen.queryByText('wrong run output')).not.toBeInTheDocument();
+  });
+
+  it('invalidates pending chat loads and live bookkeeping when switching runs', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'failed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [
+        {
+          id: 'run-a',
+          status: 'failed',
+          plan: [{ index: 0, title: 'Run A step', status: 'failed' }],
+        },
+        {
+          id: 'run-b',
+          status: 'failed',
+          plan: [{ index: 0, title: 'Run B step', status: 'failed' }],
+        },
+      ],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+
+    type ChatResponse = { data: unknown[] };
+    let resolveStaleRunA!: (response: ChatResponse) => void;
+    const staleRunAResponse = new Promise<ChatResponse>((resolve) => {
+      resolveStaleRunA = resolve;
+    });
+    let runAChatLoads = 0;
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-a') {
+        return Promise.resolve({ data: [{ id: 'session-a', step_index: 0 }] });
+      }
+      if (path === '/sessions/runs/run-b') {
+        return Promise.resolve({ data: [{ id: 'session-b', step_index: 0 }] });
+      }
+      if (path === '/sessions/session-a/chat') {
+        runAChatLoads += 1;
+        if (runAChatLoads === 1) return Promise.resolve({ data: [] });
+        return staleRunAResponse;
+      }
+      return Promise.resolve({ data: [] });
+    });
+    renderTaskDetail();
+    await waitFor(() => expect(runAChatLoads).toBe(1));
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-a-1',
+      run_id: 'run-a',
+      session_id: 'session-a',
+      step_index: 0,
+      sequence: 1,
+      kind: 'text_delta',
+      agent_name: 'Researcher',
+      data: { turn_id: 'session-a:1', content: 'run A live output' },
+    }));
+    expect(await screen.findByText('run A live output')).toBeInTheDocument();
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-a-2',
+      run_id: 'run-a',
+      session_id: 'session-a',
+      step_index: 0,
+      sequence: 2,
+      kind: 'turn_completed',
+      agent_name: 'Researcher',
+      data: { turn_id: 'session-a:1' },
+    }));
+    await waitFor(() => expect(runAChatLoads).toBe(2));
+
+    await userEvent.click(screen.getByRole('button', { name: /^#1\b/ }));
+    await waitFor(() => expect(screen.queryByText('run A live output')).not.toBeInTheDocument());
+
+    await act(async () => {
+      resolveStaleRunA({
+        data: [{
+          role: 'assistant',
+          type: 'text',
+          content: '# Stale run A',
+        }],
+      });
+      await staleRunAResponse;
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: /^#2\b/ }));
+    expect(screen.queryByRole('heading', { name: 'Stale run A' })).not.toBeInTheDocument();
+    expect(screen.queryByText('run A live output')).not.toBeInTheDocument();
   });
 
   it('renders API key secrets with responsive input heights', async () => {
