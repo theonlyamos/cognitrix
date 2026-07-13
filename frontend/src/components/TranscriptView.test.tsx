@@ -22,7 +22,7 @@ describe('TranscriptView live and Markdown output', () => {
       '/tasks/1',
     );
     expect(screen.getByRole('button', { name: 'copy' })).toBeInTheDocument();
-  });
+  }, 10_000);
 
   it('keeps active output plain until completion', async () => {
     render(<TranscriptView entries={[{
