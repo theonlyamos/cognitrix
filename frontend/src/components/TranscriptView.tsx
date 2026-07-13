@@ -1,5 +1,8 @@
+import { lazy, Suspense } from 'react';
 import type { TranscriptEntry } from '@/lib/transcript';
 import { cn } from '@/lib/utils';
+
+const MarkdownMessage = lazy(() => import('@/components/MarkdownMessage'));
 
 // Wide enough for real agent names ("BACKEND ENGINEER"); Home's chat keeps its
 // own narrower YOU/AGENT gutter.
@@ -14,20 +17,38 @@ const speaker = (name?: string) => (name ? name.toUpperCase() : 'AGENT');
  *  rows). Shared by task run history and live monitoring. */
 export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; live?: boolean }) {
   return (
-    <div>
+    <div role="log" aria-live="polite" aria-relevant="additions text">
       {entries.map((e, i) => {
         switch (e.kind) {
           case 'user':
           case 'assistant': {
             const isUser = e.kind === 'user';
-            const mono = !isUser && e.content.trimStart().startsWith('{');
             return (
               <div key={i} className={ROW}>
                 <div className={cn(GUTTER, isUser ? 'text-accent-ink' : 'text-fg-dim')} title={isUser ? undefined : speaker(e.kind === 'assistant' ? e.name : undefined)}>
                   {isUser ? 'YOU' : speaker(e.name)}
                 </div>
-                <div className={cn('min-w-0 whitespace-pre-wrap break-words leading-relaxed', mono && 'font-mono text-[12px] text-fg-dim')}>
-                  {e.content}
+                <div className="min-w-0">
+                  {isUser ? (
+                    <div className="whitespace-pre-wrap break-words leading-relaxed">
+                      {e.content}
+                    </div>
+                  ) : e.live ? (
+                    <div className="whitespace-pre-wrap break-words leading-relaxed">
+                      {e.content}
+                      <span className="caret" />
+                    </div>
+                  ) : (
+                    <div className="md break-words">
+                      <Suspense fallback={
+                        <div className="whitespace-pre-wrap break-words leading-relaxed">
+                          {e.content}
+                        </div>
+                      }>
+                        <MarkdownMessage content={e.content} />
+                      </Suspense>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -37,11 +58,41 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
               <div key={i} className={ROW}>
                 <div className={cn(GUTTER, 'text-fg-dim')}>{speaker(e.name)}</div>
                 <div className="min-w-0 space-y-1.5">
-                  {e.content.trim() && <div className="whitespace-pre-wrap break-words leading-relaxed">{e.content}</div>}
-                  {e.tools.map((t, j) => (
-                    <details key={j} className="font-mono text-[11px]">
-                      <summary className="cursor-pointer text-accent-ink">→ {t.name}</summary>
-                      <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded border border-line bg-panel-2 p-2 text-fg-dim">{t.args}</pre>
+                  {e.content.trim() && (
+                    <div className="whitespace-pre-wrap break-words leading-relaxed">
+                      {e.content}
+                    </div>
+                  )}
+                  {e.tools.map((tool, toolIndex) => (
+                    <details
+                      key={tool.id || toolIndex}
+                      className="w-full max-w-2xl font-mono text-[11px]"
+                    >
+                      <summary className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 text-accent-ink sm:min-h-0">
+                        {tool.status === 'running' ? (
+                          <span className="think-bars"><i /><i /><i /></span>
+                        ) : tool.status === 'error' ? (
+                          <span className="text-danger-ink" aria-hidden>✕</span>
+                        ) : (
+                          <span className="text-ok" aria-hidden>✓</span>
+                        )}
+                        <span>{tool.name.replace(/_/g, ' ')}</span>
+                        {tool.status === 'running' && (
+                          <span className="text-fg-dim">running…</span>
+                        )}
+                      </summary>
+                      <div className="mt-1 space-y-2 rounded border border-line bg-panel-2 p-2">
+                        {tool.args && tool.args !== '{}' && (
+                          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-fg-dim">
+                            {tool.args}
+                          </pre>
+                        )}
+                        {tool.status !== 'running' && (
+                          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-fg-dim">
+                            {tool.result || '(no output)'}
+                          </pre>
+                        )}
+                      </div>
                     </details>
                   ))}
                 </div>

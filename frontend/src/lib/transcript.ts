@@ -15,10 +15,18 @@ export interface BackendChatEntry {
   completion_tokens?: number | null;
 }
 
+export type TranscriptTool = {
+  id?: string;
+  name: string;
+  args: string;
+  result?: string;
+  status?: 'running' | 'done' | 'error';
+};
+
 export type TranscriptEntry =
   | { kind: 'user'; content: string }
-  | { kind: 'assistant'; content: string; name?: string }
-  | { kind: 'tool_calls'; content: string; name?: string; tools: { name: string; args: string; result?: string }[] }
+  | { kind: 'assistant'; content: string; name?: string; live?: boolean }
+  | { kind: 'tool_calls'; content: string; name?: string; tools: TranscriptTool[] }
   | { kind: 'tool_result'; content: string }
   | { kind: 'timing'; label: string; tokens?: string }
   | { kind: 'summary'; content: string }
@@ -62,11 +70,18 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
         kind: 'tool_calls',
         content,
         name: m.name || undefined,
-        tools: (m.tool_calls || []).map((t) => ({
-          name: t.name || 'tool',
-          args: safeArgs(t.arguments),
-          result: t.tool_call_id ? resultsById[t.tool_call_id] : undefined,
-        })),
+        tools: (m.tool_calls || []).map((tool) => {
+          const result = tool.tool_call_id
+            ? resultsById[tool.tool_call_id]
+            : undefined;
+          return {
+            id: tool.tool_call_id || undefined,
+            name: tool.name || 'tool',
+            args: safeArgs(tool.arguments),
+            result,
+            status: result === undefined ? undefined : 'done',
+          };
+        }),
       });
     } else if (role === 'assistant') {
       if (content.trim()) out.push({ kind: 'assistant', content, name: m.name || undefined });
