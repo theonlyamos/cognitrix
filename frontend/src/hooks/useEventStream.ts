@@ -132,14 +132,17 @@ export function useEventStream<T>(options: UseEventStreamOptions<T>) {
               const parsed = consumeSSE(buffer);
               buffer = parsed.rest;
               for (const frame of parsed.frames) {
+                let data: T;
                 try {
-                  const data = JSON.parse(frame.data) as T;
-                  if (frame.id) lastEventIdRef.current = frame.id;
-                  retryCountRef.current = 0;
-                  onEventRef.current?.({ id: frame.id, event: frame.event, data });
+                  data = JSON.parse(frame.data) as T;
                 } catch (parseError) {
                   console.error('Failed to parse SSE event:', parseError);
+                  continue;
                 }
+
+                onEventRef.current?.({ id: frame.id, event: frame.event, data });
+                if (frame.id !== undefined) lastEventIdRef.current = frame.id;
+                retryCountRef.current = 0;
               }
               readChunk();
             })
