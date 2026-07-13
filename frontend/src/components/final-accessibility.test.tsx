@@ -33,6 +33,11 @@ const harness = vi.hoisted(() => ({
   sseConnected: true,
   sseError: null as Error | null,
   sseOnMessage: null as null | ((event: Record<string, unknown>) => void),
+  taskRunOnEvent: null as null | ((event: Record<string, unknown>) => void),
+  taskRunConnected: true,
+  taskRunError: null as Error | null,
+  taskRunReconnect: vi.fn(),
+  pollingEnabled: false,
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -56,7 +61,30 @@ vi.mock('@/hooks/useResource', () => ({
   },
 }));
 
-vi.mock('@/hooks/usePolling', () => ({ usePolling: () => undefined }));
+vi.mock('@/hooks/useTaskRunEvents', () => ({
+  useTaskRunEvents: ({
+    onEvent,
+  }: {
+    onEvent: (event: Record<string, unknown>) => void;
+  }) => {
+    harness.taskRunOnEvent = onEvent;
+    return {
+      isConnected: harness.taskRunConnected,
+      error: harness.taskRunError,
+      reconnect: harness.taskRunReconnect,
+    };
+  },
+}));
+
+vi.mock('@/hooks/usePolling', () => ({
+  usePolling: (
+    _callback: () => void,
+    _intervalMs: number,
+    enabled: boolean,
+  ) => {
+    harness.pollingEnabled = enabled;
+  },
+}));
 
 vi.mock('@/hooks/useSSE', () => ({
   useSSE: ({ onMessage }: { onMessage: (event: Record<string, unknown>) => void }) => {
@@ -155,6 +183,11 @@ describe('final accessibility contracts', () => {
     harness.sseConnected = true;
     harness.sseError = null;
     harness.sseOnMessage = null;
+    harness.taskRunOnEvent = null;
+    harness.taskRunConnected = true;
+    harness.taskRunError = null;
+    harness.taskRunReconnect.mockReset();
+    harness.pollingEnabled = false;
     localStorage.clear();
     localStorage.setItem('selectedAgentId', 'agent-1');
     localStorage.setItem('chatSession:agent-1', '');
@@ -274,6 +307,188 @@ describe('final accessibility contracts', () => {
     expect(step).not.toBeNull();
     expect(step).toHaveClass('min-h-11', 'min-w-11', 'md:min-h-0', 'md:min-w-0');
     expect(synthesis).toHaveClass('min-h-11', 'md:min-h-0');
+  });
+
+  it('shows live task text and tools before canonical chat is saved', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'in_progress' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-live',
+        status: 'running',
+        plan: [{
+          index: 0,
+          title: 'Research',
+          status: 'running',
+          agent_name: 'Researcher',
+        }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+
+    let canonicalChat: unknown[] = [];
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-live') {
+        return Promise.resolve({
+          data: [{ id: 'session-1', step_index: 0, step_title: 'Research' }],
+        });
+      }
+      if (path === '/sessions/session-1/chat') {
+        return Promise.resolve({ data: canonicalChat });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    renderTaskDetail();
+    await waitFor(() => expect(harness.taskRunOnEvent).not.toBeNull());
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-1',
+      run_id: 'run-live',
+      session_id: 'session-1',
+      step_index: 0,
+      sequence: 1,
+      kind: 'text_delta',
+      agent_name: 'Researcher',
+      data: { turn_id: 'session-1:1', attempt: 1, content: 'working now' },
+    }));
+    expect(await screen.findByText('working now')).toBeInTheDocument();
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-2',
+      run_id: 'run-live',
+      session_id: 'session-1',
+      step_index: 0,
+      sequence: 2,
+      kind: 'tool_started',
+      agent_name: 'Researcher',
+      data: {
+        turn_id: 'session-1:1',
+        tool_call_id: 'call-1',
+        tool_name: 'read_file',
+        params: '{"path":"README.md"}',
+      },
+    }));
+    expect(await screen.findByText('running…')).toBeInTheDocument();
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-3',
+      run_id: 'run-live',
+      session_id: 'session-1',
+      step_index: 0,
+      sequence: 3,
+      kind: 'tool_completed',
+      agent_name: 'Researcher',
+      data: {
+        turn_id: 'session-1:1',
+        tool_call_id: 'call-1',
+        tool_name: 'read_file',
+        result: 'file contents',
+        status: 'done',
+      },
+    }));
+    expect(await screen.findByText('file contents')).toBeInTheDocument();
+
+    canonicalChat = [{
+      role: 'assistant',
+      type: 'text',
+      name: 'Researcher',
+      content: '# Finished',
+    }];
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-4',
+      run_id: 'run-live',
+      session_id: 'session-1',
+      step_index: 0,
+      sequence: 4,
+      kind: 'turn_completed',
+      agent_name: 'Researcher',
+      data: { turn_id: 'session-1:1', attempt: 1 },
+    }));
+
+    expect(await screen.findByRole('heading', { name: 'Finished' })).toBeInTheDocument();
+    expect(screen.queryByText('working now')).not.toBeInTheDocument();
+  });
+
+  it('keeps live output when canonical reconciliation fails', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'in_progress' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-live',
+        status: 'running',
+        plan: [{
+          index: 0,
+          title: 'Research',
+          status: 'running',
+          agent_name: 'Researcher',
+        }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+
+    let failCanonical = false;
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-live') {
+        return Promise.resolve({
+          data: [{ id: 'session-1', step_index: 0, step_title: 'Research' }],
+        });
+      }
+      if (path === '/sessions/session-1/chat') {
+        return failCanonical
+          ? Promise.reject(new Error('offline'))
+          : Promise.resolve({ data: [] });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    renderTaskDetail();
+    await waitFor(() => expect(harness.taskRunOnEvent).not.toBeNull());
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-1',
+      run_id: 'run-live',
+      session_id: 'session-1',
+      step_index: 0,
+      sequence: 1,
+      kind: 'text_delta',
+      agent_name: 'Researcher',
+      data: {
+        turn_id: 'session-1:1',
+        attempt: 1,
+        content: 'keep this partial output',
+      },
+    }));
+    expect(
+      await screen.findByText('keep this partial output'),
+    ).toBeInTheDocument();
+
+    failCanonical = true;
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-2',
+      run_id: 'run-live',
+      session_id: 'session-1',
+      step_index: 0,
+      sequence: 2,
+      kind: 'turn_completed',
+      agent_name: 'Researcher',
+      data: { turn_id: 'session-1:1', attempt: 1 },
+    }));
+
+    await waitFor(() => {
+      const chatLoads = harness.apiGet.mock.calls.filter(
+        ([path]) => path === '/sessions/session-1/chat',
+      );
+      expect(chatLoads.length).toBeGreaterThanOrEqual(2);
+    });
+    expect(screen.getByText('keep this partial output')).toBeInTheDocument();
+    expect(harness.pollingEnabled).toBe(true);
   });
 
   it('renders API key secrets with responsive input heights', async () => {
