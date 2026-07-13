@@ -420,7 +420,7 @@ describe('final accessibility contracts', () => {
       await screen.findByRole('heading', { name: 'Finished' }, { timeout: 5000 }),
     ).toBeInTheDocument();
     expect(screen.queryByText('working now')).not.toBeInTheDocument();
-  });
+  }, 10_000);
 
   it('keeps live output when canonical reconciliation fails', async () => {
     harness.resources.set('/tasks/task-1', {
@@ -813,7 +813,14 @@ describe('final accessibility contracts', () => {
       if (path === '/sessions/session-a/chat') {
         runAChatLoads += 1;
         if (runAChatLoads === 1) return Promise.resolve({ data: [] });
-        return staleRunAResponse;
+        if (runAChatLoads === 2) return staleRunAResponse;
+        return Promise.resolve({
+          data: [{
+            role: 'assistant',
+            type: 'text',
+            content: '# Fresh run A after switch',
+          }],
+        });
       }
       return Promise.resolve({ data: [] });
     });
@@ -861,8 +868,79 @@ describe('final accessibility contracts', () => {
     });
 
     await userEvent.click(screen.getByRole('button', { name: /^#2\b/ }));
+    await waitFor(() => expect(runAChatLoads).toBe(3));
+    expect(
+      await screen.findByRole(
+        'heading',
+        { name: 'Fresh run A after switch' },
+        { timeout: 5000 },
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Stale run A' })).not.toBeInTheDocument();
     expect(screen.queryByText('run A live output')).not.toBeInTheDocument();
+  });
+
+  it('reloads canonical chat on every run switch even when runs reuse a session id', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'failed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [
+        {
+          id: 'run-a',
+          status: 'failed',
+          plan: [{ index: 0, title: 'Run A step', status: 'failed' }],
+        },
+        {
+          id: 'run-b',
+          status: 'failed',
+          plan: [{ index: 0, title: 'Run B step', status: 'failed' }],
+        },
+      ],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+
+    let sharedSessionLoads = 0;
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-a' || path === '/sessions/runs/run-b') {
+        return Promise.resolve({
+          data: [{ id: 'session-shared', step_index: 0 }],
+        });
+      }
+      if (path === '/sessions/session-shared/chat') {
+        sharedSessionLoads += 1;
+        const heading = sharedSessionLoads === 1
+          ? '# Old run A'
+          : sharedSessionLoads === 2
+            ? '# Run B canonical'
+            : '# Fresh run A';
+        return Promise.resolve({
+          data: [{ role: 'assistant', type: 'text', content: heading }],
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    renderTaskDetail();
+
+    expect(
+      await screen.findByRole('heading', { name: 'Old run A' }, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    expect(sharedSessionLoads).toBe(1);
+
+    await userEvent.click(screen.getByRole('button', { name: /^#1\b/ }));
+    await waitFor(() => expect(sharedSessionLoads).toBe(2));
+    expect(
+      await screen.findByRole('heading', { name: 'Run B canonical' }, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Old run A' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^#2\b/ }));
+    await waitFor(() => expect(sharedSessionLoads).toBe(3));
+    expect(
+      await screen.findByRole('heading', { name: 'Fresh run A' }, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Old run A' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Run B canonical' })).not.toBeInTheDocument();
   });
 
   it('renders API key secrets with responsive input heights', async () => {

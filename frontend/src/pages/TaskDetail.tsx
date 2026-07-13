@@ -232,6 +232,7 @@ export default function TaskDetail() {
     chatRequestGenerationRef.current += 1;
     chatRequestVersionsRef.current = {};
     pendingCompletedTurnsRef.current = {};
+    setChats({});
     dispatchLive({ type: 'reset' });
   }, [selectedRunId]);
 
@@ -273,10 +274,10 @@ export default function TaskDetail() {
     return map[selected === 'synthesis' ? 'synthesis' : String(selected)] || null;
   }, [selected, selectedRunId, stepSessions]);
 
+  const selectedChat = selectedSessionId ? chats[selectedSessionId] : undefined;
   useEffect(() => {
-    if (selectedSessionId && !chats[selectedSessionId]) void loadChat(selectedSessionId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSessionId]);
+    if (selectedSessionId && !selectedChat) void loadChat(selectedSessionId);
+  }, [loadChat, selectedChat, selectedRunId, selectedSessionId]);
 
   // Live polling: task + runs (slim plans) + the map + the watched transcript.
   // Backs off after 5 minutes (a dead worker leaves runs active forever).

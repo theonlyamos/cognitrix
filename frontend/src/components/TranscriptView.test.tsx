@@ -77,6 +77,22 @@ describe('TranscriptView live and Markdown output', () => {
     expect(container.querySelectorAll('[aria-hidden="true"]')).toHaveLength(2);
   });
 
+  it('keeps a tool with unknown status neutral', () => {
+    const { container } = render(<TranscriptView entries={[{
+      kind: 'tool_calls',
+      content: '',
+      tools: [{ name: 'read_file', args: '{}', result: 'contents' }],
+    }]} />);
+
+    const summary = container.querySelector('summary');
+    expect(summary).toHaveTextContent('·read file');
+    expect(summary).not.toHaveTextContent('✓');
+    expect(summary).not.toHaveTextContent('✕');
+    expect(screen.queryByText('done')).not.toBeInTheDocument();
+    expect(screen.queryByText('error')).not.toBeInTheDocument();
+    expect(screen.queryByText('running…')).not.toBeInTheDocument();
+  });
+
   it('shows the error status and result when a running tool fails', async () => {
     const { rerender } = render(<TranscriptView entries={[{
       kind: 'tool_calls',

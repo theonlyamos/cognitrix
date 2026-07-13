@@ -73,10 +73,12 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
                           <span className="think-bars"><i /><i /><i /></span>
                         ) : tool.status === 'error' ? (
                           <span className="text-danger-ink" aria-hidden>✕</span>
-                        ) : (
+                        ) : tool.status === 'done' ? (
                           <span className="text-ok" aria-hidden>✓</span>
+                        ) : (
+                          <span className="text-fg-dim" aria-hidden>·</span>
                         )}
-                        {tool.status !== 'running' && (
+                        {(tool.status === 'done' || tool.status === 'error') && (
                           <span className="sr-only">
                             {tool.status === 'error' ? 'error' : 'done'}
                           </span>
