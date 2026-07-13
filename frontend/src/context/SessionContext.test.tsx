@@ -31,4 +31,17 @@ describe('SessionContext tool calls', () => {
       }),
     ]);
   });
+
+  it('ignores an unmatched normal completion replay', () => {
+    const { result } = renderHook(() => useSession(), { wrapper });
+
+    act(() => {
+      result.current.resolveToolCall('Search docs', 'done', {
+        id: 'tool-1',
+        result: 'Found relevant documentation',
+      });
+    });
+
+    expect(result.current.messages).toEqual([]);
+  });
 });

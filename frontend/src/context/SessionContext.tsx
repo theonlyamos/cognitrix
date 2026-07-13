@@ -120,6 +120,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         copy[i] = { ...m, tools };
         return copy;
       }
+      if (status !== 'error') return prev;
       // Some provider responses are malformed before the backend can emit a
       // `started` event. Preserve their terminal error instead of dropping it.
       const chip: ToolUse = { id: opts?.id, name, status, result: opts?.result };
