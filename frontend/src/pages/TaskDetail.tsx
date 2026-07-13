@@ -123,6 +123,7 @@ export default function TaskDetail() {
   const [stepSessions, setStepSessions] = useState<Record<string, Record<string, string>>>({});
   const [chats, setChats] = useState<Record<string, BackendChatEntry[]>>({});
   const chatRequestVersionsRef = useRef<Record<string, number>>({});
+  const pendingCompletedTurnsRef = useRef<Record<string, Set<string>>>({});
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [togglingSchedule, setTogglingSchedule] = useState(false);
@@ -153,6 +154,13 @@ export default function TaskDetail() {
         return false;
       }
       setChats((previous) => ({ ...previous, [sessionId]: res.data }));
+      const pendingTurnIds = pendingCompletedTurnsRef.current[sessionId];
+      if (pendingTurnIds) {
+        delete pendingCompletedTurnsRef.current[sessionId];
+        for (const turnId of pendingTurnIds) {
+          dispatchLive({ type: 'reconcile', sessionId, turnId });
+        }
+      }
       return true;
     } catch {
       return false;
@@ -191,15 +199,11 @@ export default function TaskDetail() {
 
     if (event.kind === 'turn_completed' && event.session_id) {
       const turnId = String(event.data.turn_id || '');
-      void loadChat(event.session_id).then((loaded) => {
-        if (loaded) {
-          dispatchLive({
-            type: 'reconcile',
-            sessionId: event.session_id!,
-            turnId,
-          });
-        }
-      });
+      const pendingTurnIds = pendingCompletedTurnsRef.current[event.session_id]
+        || new Set<string>();
+      pendingTurnIds.add(turnId);
+      pendingCompletedTurnsRef.current[event.session_id] = pendingTurnIds;
+      void loadChat(event.session_id);
     }
 
     if (event.kind === 'run_status') {

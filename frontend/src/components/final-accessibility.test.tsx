@@ -38,6 +38,8 @@ const harness = vi.hoisted(() => ({
   taskRunError: null as Error | null,
   taskRunReconnect: vi.fn(),
   pollingEnabled: false,
+  pollingCallback: null as null | (() => void),
+  pollingIntervalMs: null as number | null,
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -78,11 +80,13 @@ vi.mock('@/hooks/useTaskRunEvents', () => ({
 
 vi.mock('@/hooks/usePolling', () => ({
   usePolling: (
-    _callback: () => void,
-    _intervalMs: number,
+    callback: () => void,
+    intervalMs: number,
     enabled: boolean,
   ) => {
     harness.pollingEnabled = enabled;
+    harness.pollingCallback = callback;
+    harness.pollingIntervalMs = intervalMs;
   },
 }));
 
@@ -188,6 +192,8 @@ describe('final accessibility contracts', () => {
     harness.taskRunError = null;
     harness.taskRunReconnect.mockReset();
     harness.pollingEnabled = false;
+    harness.pollingCallback = null;
+    harness.pollingIntervalMs = null;
     localStorage.clear();
     localStorage.setItem('selectedAgentId', 'agent-1');
     localStorage.setItem('chatSession:agent-1', '');
@@ -597,6 +603,138 @@ describe('final accessibility contracts', () => {
     expect(
       screen.queryByRole('heading', { name: 'Stale canonical' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('reconciles a completed live turn through a superseding poll load', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'in_progress' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-live',
+        status: 'running',
+        plan: [{
+          index: 0,
+          title: 'Research',
+          status: 'running',
+          agent_name: 'Researcher',
+        }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+
+    type ChatResponse = { data: unknown[] };
+    let resolveCompletion!: (response: ChatResponse) => void;
+    let resolvePoll!: (response: ChatResponse) => void;
+    const completionResponse = new Promise<ChatResponse>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const pollResponse = new Promise<ChatResponse>((resolve) => {
+      resolvePoll = resolve;
+    });
+    let chatLoads = 0;
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-live') {
+        return Promise.resolve({
+          data: [{ id: 'session-1', step_index: 0, step_title: 'Research' }],
+        });
+      }
+      if (path === '/sessions/session-1/chat') {
+        chatLoads += 1;
+        if (chatLoads === 1) return Promise.resolve({ data: [] });
+        return chatLoads === 2 ? completionResponse : pollResponse;
+      }
+      return Promise.resolve({ data: [] });
+    });
+    renderTaskDetail();
+    await waitFor(() => expect(chatLoads).toBe(1));
+    expect(harness.pollingIntervalMs).toBe(5000);
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-1',
+      run_id: 'run-live',
+      session_id: 'session-1',
+      step_index: 0,
+      sequence: 1,
+      kind: 'text_delta',
+      agent_name: 'Researcher',
+      data: {
+        turn_id: 'session-1:1',
+        attempt: 1,
+        content: 'completed partial output',
+      },
+    }));
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-2',
+      run_id: 'run-live',
+      session_id: 'session-1',
+      step_index: 0,
+      sequence: 2,
+      kind: 'text_delta',
+      agent_name: 'Researcher',
+      data: {
+        turn_id: 'session-1:2',
+        attempt: 1,
+        content: 'unrelated live output',
+      },
+    }));
+    expect(await screen.findByText('completed partial output')).toBeInTheDocument();
+    expect(screen.getByText('unrelated live output')).toBeInTheDocument();
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-3',
+      run_id: 'run-live',
+      session_id: 'session-1',
+      step_index: 0,
+      sequence: 3,
+      kind: 'turn_completed',
+      agent_name: 'Researcher',
+      data: { turn_id: 'session-1:1', attempt: 1 },
+    }));
+    await waitFor(() => expect(chatLoads).toBe(2));
+
+    act(() => harness.pollingCallback?.());
+    await waitFor(() => expect(chatLoads).toBe(3));
+
+    await act(async () => {
+      resolvePoll({
+        data: [{
+          role: 'assistant',
+          type: 'text',
+          name: 'Researcher',
+          content: '# Poll canonical',
+        }],
+      });
+      await pollResponse;
+    });
+    expect(
+      await screen.findByRole('heading', { name: 'Poll canonical' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('completed partial output')).not.toBeInTheDocument();
+    expect(screen.getByText('unrelated live output')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveCompletion({
+        data: [{
+          role: 'assistant',
+          type: 'text',
+          name: 'Researcher',
+          content: '# Superseded completion',
+        }],
+      });
+      await completionResponse;
+    });
+    expect(
+      screen.getByRole('heading', { name: 'Poll canonical' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Superseded completion' }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('completed partial output')).not.toBeInTheDocument();
+    expect(screen.getByText('unrelated live output')).toBeInTheDocument();
   });
 
   it('renders API key secrets with responsive input heights', async () => {
