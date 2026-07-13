@@ -15,10 +15,18 @@ export interface BackendChatEntry {
   completion_tokens?: number | null;
 }
 
+export type TranscriptTool = {
+  id?: string;
+  name: string;
+  args: string;
+  result?: string;
+  status?: 'running' | 'done' | 'error';
+};
+
 export type TranscriptEntry =
   | { kind: 'user'; content: string }
-  | { kind: 'assistant'; content: string; name?: string }
-  | { kind: 'tool_calls'; content: string; name?: string; tools: { name: string; args: string; result?: string }[] }
+  | { kind: 'assistant'; content: string; name?: string; live?: boolean }
+  | { kind: 'tool_calls'; content: string; name?: string; tools: TranscriptTool[] }
   | { kind: 'tool_result'; content: string }
   | { kind: 'timing'; label: string; tokens?: string }
   | { kind: 'summary'; content: string }
@@ -48,6 +56,21 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
       resultsById[m.tool_call_id] = asText(m.content);
     }
   }
+  const pairedResultIds = new Set<string>();
+  for (const m of chat || []) {
+    if (
+      String(m.role || '').toLowerCase() !== 'assistant'
+      || m.type !== 'tool_calls'
+    ) continue;
+    for (const tool of m.tool_calls || []) {
+      if (
+        tool.tool_call_id
+        && Object.prototype.hasOwnProperty.call(resultsById, tool.tool_call_id)
+      ) {
+        pairedResultIds.add(tool.tool_call_id);
+      }
+    }
+  }
   for (const m of chat || []) {
     const role = String(m.role || '').toLowerCase();
     const type = m.type || '';
@@ -62,16 +85,25 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
         kind: 'tool_calls',
         content,
         name: m.name || undefined,
-        tools: (m.tool_calls || []).map((t) => ({
-          name: t.name || 'tool',
-          args: safeArgs(t.arguments),
-          result: t.tool_call_id ? resultsById[t.tool_call_id] : undefined,
-        })),
+        tools: (m.tool_calls || []).map((tool) => {
+          const result = tool.tool_call_id
+            ? resultsById[tool.tool_call_id]
+            : undefined;
+          return {
+            id: tool.tool_call_id || undefined,
+            name: tool.name || 'tool',
+            args: safeArgs(tool.arguments),
+            result,
+            status: result === undefined ? undefined : 'done',
+          };
+        }),
       });
     } else if (role === 'assistant') {
       if (content.trim()) out.push({ kind: 'assistant', content, name: m.name || undefined });
     } else if (role === 'tool') {
-      out.push({ kind: 'tool_result', content });
+      if (!m.tool_call_id || !pairedResultIds.has(m.tool_call_id)) {
+        out.push({ kind: 'tool_result', content });
+      }
     } else if (role === 'system' && type === 'turn_timing') {
       const tokens =
         m.prompt_tokens || m.completion_tokens

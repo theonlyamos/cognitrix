@@ -1,13 +1,16 @@
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
 from cognitrix.common.security import AuthContext, crud_scope, get_auth_context, require
 from cognitrix.tasks import Task
 from cognitrix.tasks.base import TaskStatus
+from cognitrix.tasks.events import event_payload, events_after
 from cognitrix.tasks.run import TaskRun, TaskRunStatus
 from cognitrix.tasks.scheduler import (SCHEDULE_FIELDS, compute_next_run,
                                        normalize_schedule_at, validate_schedule)
@@ -15,6 +18,11 @@ from cognitrix.tasks.scheduler import (SCHEDULE_FIELDS, compute_next_run,
 from ...celery_worker import broker_available, ensure_local_worker, run_task
 
 _ACTIVE_RUN_STATUSES = (TaskRunStatus.RUNNING, TaskRunStatus.CANCELLING)
+_TERMINAL_RUN_STATUSES = (
+    TaskRunStatus.COMPLETED,
+    TaskRunStatus.FAILED,
+    TaskRunStatus.CANCELLED,
+)
 
 
 def _check_task_allowlists(ctx: AuthContext, task: Task) -> None:
@@ -76,6 +84,45 @@ def _run_summary(run: TaskRun) -> dict:
 async def _active_run(task_id: str) -> TaskRun | None:
     runs = await TaskRun.find({'task_id': task_id})
     return next((r for r in runs if r.status in _ACTIVE_RUN_STATUSES), None)
+
+
+def _event_cursor(request: Request, after: int | None) -> int:
+    values = [after or 0]
+    try:
+        values.append(int(request.headers.get('last-event-id', '0')))
+    except (TypeError, ValueError):
+        pass
+    return max(0, *values)
+
+
+async def _task_run_event_stream(
+    request: Request,
+    run_id: str,
+    after: int,
+    *,
+    poll_interval: float = 0.5,
+):
+    last_sequence = after
+    terminal_quiet_pass = False
+    while not await request.is_disconnected():
+        rows = await events_after(run_id, last_sequence)
+        if rows:
+            terminal_quiet_pass = False
+            for row in rows:
+                last_sequence = row.sequence
+                yield {
+                    'event': 'task_run',
+                    'id': str(row.sequence),
+                    'data': json.dumps(event_payload(row)),
+                }
+
+        fresh = await TaskRun.get(run_id)
+        terminal = bool(fresh and fresh.status in _TERMINAL_RUN_STATUSES)
+        if terminal and not rows:
+            if terminal_quiet_pass:
+                return
+            terminal_quiet_pass = True
+        await asyncio.sleep(poll_interval)
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -280,19 +327,33 @@ async def cancel_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)
             # flag, and a stuck 'cancelling' run would 409-block ▶ Run forever.
             # Compare-and-set: a worker finishing in this window writes a
             # terminal status that must not be relabeled 'cancelled'.
-            fresh = await TaskRun.get(run.id)
-            if fresh and fresh.status == TaskRunStatus.CANCELLING:
-                await TaskRun.update_one({'id': run.id}, {
+            updated = await TaskRun.update_one(
+                {'id': run.id, 'status': TaskRunStatus.CANCELLING.value},
+                {
                     'status': TaskRunStatus.CANCELLED.value,
                     'error': 'force-cancelled (worker did not respond)',
-                })
-                task.status = TaskStatus.CANCELLED
-                await task.save()
+                },
+            )
+            if updated == 1:
+                run.status = TaskRunStatus.CANCELLED
+                run.error = 'force-cancelled (worker did not respond)'
             fresh = await TaskRun.get(run.id)
-            return fresh.json() if fresh else run.json()
+            authoritative = fresh or run
+            if authoritative.status == TaskRunStatus.CANCELLED:
+                task.status = TaskStatus.CANCELLED
+                await Task.update_one(
+                    {'id': task.id},
+                    {'status': TaskStatus.CANCELLED.value},
+                )
+            return authoritative.json()
         # Partial update only — a full-row save here would clobber plan/step
         # statuses the worker wrote since our read.
-        await TaskRun.update_one({'id': run.id}, {'status': TaskRunStatus.CANCELLING.value})
+        updated = await TaskRun.update_one(
+            {'id': run.id, 'status': TaskRunStatus.RUNNING.value},
+            {'status': TaskRunStatus.CANCELLING.value},
+        )
+        if updated == 1:
+            run.status = TaskRunStatus.CANCELLING
         fresh = await TaskRun.get(run.id)
         return fresh.json() if fresh else run.json()
 
@@ -346,6 +407,27 @@ async def list_task_runs(task_id: str):
     runs = await TaskRun.find({'task_id': task_id})
     runs.sort(key=lambda r: r.json().get('created_at') or '', reverse=True)
     return [_run_summary(r) for r in runs]
+
+
+@tasks_api.get('/{task_id}/runs/{run_id}/events')
+async def stream_task_run_events(
+    request: Request,
+    task_id: str,
+    run_id: str,
+    after: int | None = None,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    task = await Task.get(task_id)
+    run = await TaskRun.get(run_id)
+    if task is None or run is None or run.task_id != task_id:
+        raise HTTPException(status_code=404, detail='Task run not found')
+    _check_task_allowlists(ctx, task)
+    cursor = _event_cursor(request, after)
+    return EventSourceResponse(
+        _task_run_event_stream(request, run_id, cursor),
+        ping=15,
+    )
+
 
 @tasks_api.get('/{task_id}')
 async def load_task(task_id: str):

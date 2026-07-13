@@ -76,8 +76,41 @@ async def test_call_tools_maps_results_to_correct_ids(monkeypatch):
     ]
     result = await agent.call_tools(tool_calls)
     assert [r["tool_call_id"] for r in result["result"]] == ["a", None, "c"]
+    assert [r["success"] for r in result["result"]] == [True, True, True]
     assert result["result"][0]["data"] == "ran:t1"
     assert result["result"][2]["data"] == "ran:t3"
+
+
+@pytest.mark.asyncio
+async def test_call_tools_preserves_execution_failure_state(monkeypatch):
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda name: Tool(name=name, description="d", parameters={})),
+    )
+
+    async def fake_run_tool(self, tool, params, **kw):
+        if tool.name == "Raises":
+            raise RuntimeError("tool crashed")
+        if tool.name == "Exhausted":
+            return ToolResult(success=False, error="still broken", attempts=3)
+        return ToolResult(success=True, data="worked")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+
+    result = await agent.call_tools([
+        {"name": "Raises", "arguments": {}, "tool_call_id": "raise-1"},
+        {"name": "Exhausted", "arguments": {}, "tool_call_id": "retry-1"},
+        {"name": "Works", "arguments": {}, "tool_call_id": "ok-1"},
+    ])
+
+    assert [item["success"] for item in result["result"]] == [False, False, True]
+    assert "tool crashed" in result["result"][0]["data"]
+    assert "attempted 3 times" in result["result"][1]["data"]
+    assert result["result"][2]["data"] == "worked"
 
 
 @pytest.mark.asyncio
@@ -197,6 +230,128 @@ async def test_web_turn_emits_tool_events(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_web_turn_emits_error_for_failed_and_denied_tools(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    session = Session(agent_id="s6")
+    calls = {"n": 0}
+    ran_bash = {"value": False}
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            response = LLMResponse()
+            response.tool_calls = [
+                {"name": "Works", "arguments": {}, "tool_call_id": "ok-1"},
+                {"name": "Broken", "arguments": {}, "tool_call_id": "fail-1"},
+                {"name": "bash", "arguments": {"command": "rm x"}, "tool_call_id": "deny-1"},
+            ]
+            return response
+        response = LLMResponse()
+        response.add_chunk("final answer")
+        return response
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda name: Tool(name=name, description="d", parameters={})),
+    )
+
+    async def fake_run_tool(self, tool, params, **kw):
+        if tool.name == "bash":
+            ran_bash["value"] = True
+            return ToolResult(success=True, data="must not run")
+        if tool.name == "Broken":
+            return ToolResult(success=False, error="boom", attempts=3)
+        return ToolResult(success=True, data="worked")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+
+    async def fake_save(self):
+        return None
+
+    monkeypatch.setattr(Session, "save", fake_save)
+    events = []
+
+    async def sink(payload=None, *a, **k):
+        events.append(payload)
+
+    await session("hello", agent, "web", False, sink, None, True)
+
+    tool_events = [event for event in events if isinstance(event, dict) and event.get("type") == "tool"]
+    terminal = {
+        event["tool_call_id"]: event
+        for event in tool_events
+        if event["status"] != "started"
+    }
+    assert terminal["ok-1"]["status"] == "completed"
+    assert terminal["ok-1"]["tool_name"] == "Works"
+    assert terminal["ok-1"]["result"] == "worked"
+    assert terminal["fail-1"]["status"] == "error"
+    assert terminal["fail-1"]["tool_name"] == "Broken"
+    assert "attempted 3 times" in terminal["fail-1"]["result"]
+    assert terminal["deny-1"]["status"] == "error"
+    assert terminal["deny-1"]["tool_name"] == "bash"
+    assert "denied" in terminal["deny-1"]["result"].lower()
+    assert ran_bash["value"] is False
+
+
+@pytest.mark.asyncio
+async def test_web_turn_emits_terminal_error_for_nameless_tool_call(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    session = Session(agent_id="s7")
+    calls = {"n": 0}
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            response = LLMResponse()
+            response.tool_calls = [{
+                "arguments": {"value": "x"},
+                "tool_call_id": "malformed-1",
+            }]
+            return response
+        response = LLMResponse()
+        response.add_chunk("final answer")
+        return response
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+
+    async def fake_save(self):
+        return None
+
+    monkeypatch.setattr(Session, "save", fake_save)
+    events = []
+
+    async def sink(payload=None, *args, **kwargs):
+        events.append(payload)
+
+    await session("hello", agent, "web", False, sink, None, True)
+
+    tool_events = [
+        event
+        for event in events
+        if isinstance(event, dict) and event.get("type") == "tool"
+    ]
+    assert tool_events == [{
+        "type": "tool",
+        "status": "error",
+        "tool_name": "Malformed tool call",
+        "tool_call_id": "malformed-1",
+        "result": "Error: malformed tool call (no name)",
+    }]
+
+
+@pytest.mark.asyncio
 async def test_unknown_tool_does_not_abort_batch(monkeypatch):
     agent = Agent(name="A", llm=_llm(), system_prompt="sys")
 
@@ -223,6 +378,7 @@ async def test_unknown_tool_does_not_abort_batch(monkeypatch):
     assert "not found" in data[1]
     assert data[2] == "ok:good2"
     assert [r["tool_call_id"] for r in res["result"]] == ["1", "2", "3"]
+    assert [r["success"] for r in res["result"]] == [True, False, True]
 
 
 @pytest.mark.asyncio
@@ -275,6 +431,7 @@ async def test_risky_tool_denied_over_web(monkeypatch):
         interface="web",
     )
     assert "denied" in res["result"][0]["data"].lower()
+    assert res["result"][0]["success"] is False
     assert ran["called"] is False
 
 
@@ -298,7 +455,9 @@ async def test_malformed_tool_call_does_not_abort_batch(monkeypatch):
         {"name": "good", "arguments": {}, "tool_call_id": "2"},
     ])
     assert "malformed" in res["result"][0]["data"].lower()
+    assert res["result"][0]["success"] is False
     assert res["result"][1]["data"] == "ok"
+    assert res["result"][1]["success"] is True
 
 
 @pytest.mark.asyncio
