@@ -721,6 +721,124 @@ async def test_run_uses_one_emitter_and_publishes_authoritative_terminal_status(
     ]
 
 
+@pytest.mark.asyncio
+async def test_run_stops_after_authoritative_force_cancelled_state(monkeypatch):
+    from cognitrix.tasks.base import TaskStatus
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
+
+    executed_steps = []
+    synthesis_calls = []
+    task_statuses = []
+    events = []
+
+    class RecordingEmitter:
+        def __init__(self, run_id):
+            self.run_id = run_id
+
+        async def emit(self, kind, **kwargs):
+            events.append((kind, kwargs))
+
+    monkeypatch.setattr(orch, 'TaskRunEventEmitter', RecordingEmitter)
+
+    class FakeTask(SimpleNamespace):
+        @staticmethod
+        async def get(_id):
+            return None
+
+        @staticmethod
+        async def update_one(*args, **kwargs):
+            return 1
+
+    task = FakeTask(
+        id='task-1',
+        title='Task',
+        description='Do it',
+        status=TaskStatus.PENDING,
+        step_instructions={
+            '0': {'step': 'First'},
+            '1': {'step': 'Second'},
+        },
+        results=[],
+        team_id=None,
+    )
+    agent = SimpleNamespace(
+        id='agent-1',
+        name='Agent',
+        llm=_llm(),
+        tools=[],
+        system_prompt='',
+    )
+
+    async def team():
+        return [agent]
+
+    task.team = team
+    stored = TaskRun(task_id=task.id, status=TaskRunStatus.RUNNING)
+    stored.id = 'run-1'
+
+    async def no_runs(_query):
+        return []
+
+    async def save_run(self):
+        self.id = stored.id
+        return self
+
+    async def get_run(_run_id):
+        return stored
+
+    async def fail_run_update(*args, **kwargs):
+        raise AssertionError('authoritative terminal run must not be rewritten')
+
+    async def no_op(*args, **kwargs):
+        return None
+
+    async def record_task_status(_task, status, **kwargs):
+        task_statuses.append(status)
+
+    async def resolve_leader(_task, roster):
+        return roster[0]
+
+    async def finish_step(task, run, step, agent, dep_results, interface, semaphore, *, emitter=None):
+        executed_steps.append(step['index'])
+        if step['index'] == 0:
+            stored.status = TaskRunStatus.CANCELLED
+            stored.error = 'force-cancelled (worker did not respond)'
+            stored.completed_at = 'cancelled-at'
+        return step, 'done', f"result-{step['index']}"
+
+    async def synthesize(*args, **kwargs):
+        synthesis_calls.append(True)
+        return 'must not synthesize'
+
+    monkeypatch.setattr(TaskRun, 'find', staticmethod(no_runs))
+    monkeypatch.setattr(TaskRun, 'save', save_run)
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(get_run))
+    monkeypatch.setattr(TaskRun, 'update_one', staticmethod(fail_run_update))
+    monkeypatch.setattr(orch, '_set_task_status', record_task_status)
+    monkeypatch.setattr(orch, '_save_plan', no_op)
+    monkeypatch.setattr(orch, '_resolve_leader', resolve_leader)
+    monkeypatch.setattr(orch, '_run_step_guarded', finish_step)
+    monkeypatch.setattr(orch, '_synthesize', synthesize)
+    monkeypatch.setattr(orch, 'notify_completion', no_op)
+
+    run = await orch.run(task)
+
+    assert run is not None
+    assert executed_steps == [0]
+    assert synthesis_calls == []
+    assert [step['status'] for step in run.plan] == ['done', 'cancelled']
+    assert run.status == TaskRunStatus.CANCELLED
+    assert run.error == 'force-cancelled (worker did not respond)'
+    assert run.completed_at == 'cancelled-at'
+    assert task_statuses == [TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED]
+    assert [(kind, data['data']['status']) for kind, data in events] == [
+        ('run_status', 'running'),
+        ('step_status', 'running'),
+        ('step_status', 'done'),
+        ('run_status', 'cancelled'),
+    ]
+
+
 # ---------------------------------------------------------------- P3: resume/cancel/timeout
 
 def test_copy_plan_for_resume_keeps_done_resets_rest():

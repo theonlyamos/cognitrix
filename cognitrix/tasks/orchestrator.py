@@ -545,7 +545,10 @@ async def _save_plan(run: TaskRun) -> None:
 async def _cancel_requested(run: TaskRun) -> bool:
     """Fresh DB read — the cancel endpoint may live in another process."""
     fresh = await TaskRun.get(run.id)
-    return bool(fresh and fresh.status == TaskRunStatus.CANCELLING)
+    return bool(
+        fresh
+        and fresh.status in (TaskRunStatus.CANCELLING, TaskRunStatus.CANCELLED)
+    )
 
 
 _TERMINAL_RUN_STATUSES = {TaskRunStatus.COMPLETED, TaskRunStatus.FAILED, TaskRunStatus.CANCELLED}

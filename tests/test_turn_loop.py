@@ -302,6 +302,56 @@ async def test_web_turn_emits_error_for_failed_and_denied_tools(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_web_turn_emits_terminal_error_for_nameless_tool_call(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    session = Session(agent_id="s7")
+    calls = {"n": 0}
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            response = LLMResponse()
+            response.tool_calls = [{
+                "arguments": {"value": "x"},
+                "tool_call_id": "malformed-1",
+            }]
+            return response
+        response = LLMResponse()
+        response.add_chunk("final answer")
+        return response
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+
+    async def fake_save(self):
+        return None
+
+    monkeypatch.setattr(Session, "save", fake_save)
+    events = []
+
+    async def sink(payload=None, *args, **kwargs):
+        events.append(payload)
+
+    await session("hello", agent, "web", False, sink, None, True)
+
+    tool_events = [
+        event
+        for event in events
+        if isinstance(event, dict) and event.get("type") == "tool"
+    ]
+    assert tool_events == [{
+        "type": "tool",
+        "status": "error",
+        "tool_name": "Malformed tool call",
+        "tool_call_id": "malformed-1",
+        "result": "Error: malformed tool call (no name)",
+    }]
+
+
+@pytest.mark.asyncio
 async def test_unknown_tool_does_not_abort_batch(monkeypatch):
     agent = Agent(name="A", llm=_llm(), system_prompt="sys")
 
