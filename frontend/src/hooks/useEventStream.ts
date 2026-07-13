@@ -132,6 +132,7 @@ export function useEventStream<T>(options: UseEventStreamOptions<T>) {
               const parsed = consumeSSE(buffer);
               buffer = parsed.rest;
               for (const frame of parsed.frames) {
+                if (!frame.data.trim()) continue;
                 let data: T;
                 try {
                   data = JSON.parse(frame.data) as T;

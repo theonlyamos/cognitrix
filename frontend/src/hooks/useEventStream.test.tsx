@@ -187,4 +187,29 @@ describe('useEventStream', () => {
     expect(onEvent.mock.calls[0][0].data).toEqual({ ok: true });
     expect(consoleError).toHaveBeenCalledOnce();
   });
+
+  it('ignores empty heartbeat events without logging parse errors', async () => {
+    const encoder = new TextEncoder();
+    const reader = {
+      read: vi.fn()
+        .mockResolvedValueOnce({
+          done: false,
+          value: encoder.encode('event: ping\ndata:\n\ndata: {"ok":true}\n\n'),
+        })
+        .mockResolvedValueOnce({ done: true, value: undefined }),
+      cancel: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, body: { getReader: () => reader },
+    }));
+    localStorage.setItem('token', 'test-token');
+    const onEvent = vi.fn();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    renderHook(() => useEventStream({ path: '/events', onEvent, autoReconnect: false }));
+
+    await waitFor(() => expect(onEvent).toHaveBeenCalledOnce());
+    expect(onEvent.mock.calls[0][0].data).toEqual({ ok: true });
+    expect(consoleError).not.toHaveBeenCalled();
+  });
 });
