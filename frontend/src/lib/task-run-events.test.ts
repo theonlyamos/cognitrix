@@ -83,6 +83,75 @@ describe('taskRunLiveReducer', () => {
     });
   });
 
+  it('pairs id-less same-name completions with running calls in FIFO order', () => {
+    let state = taskRunLiveReducer(initialTaskRunLiveState, {
+      type: 'event',
+      event: event(1, 'tool_started', {
+        turn_id: 'session-1:1',
+        tool_name: 'read_file',
+        params: '{"path":"first.md"}',
+      }),
+    });
+    state = taskRunLiveReducer(state, {
+      type: 'event',
+      event: event(2, 'tool_started', {
+        turn_id: 'session-1:1',
+        tool_name: 'read_file',
+        params: '{"path":"second.md"}',
+      }),
+    });
+    state = taskRunLiveReducer(state, {
+      type: 'event',
+      event: event(3, 'tool_completed', {
+        turn_id: 'session-1:1',
+        tool_name: 'read_file',
+        result: 'first contents',
+        status: 'done',
+      }),
+    });
+
+    expect(selectLiveTranscript(state, 'session-1')[0]).toMatchObject({
+      kind: 'tool_calls',
+      tools: [
+        {
+          args: '{"path":"first.md"}',
+          status: 'done',
+          result: 'first contents',
+        },
+        {
+          args: '{"path":"second.md"}',
+          status: 'running',
+        },
+      ],
+    });
+
+    state = taskRunLiveReducer(state, {
+      type: 'event',
+      event: event(4, 'tool_completed', {
+        turn_id: 'session-1:1',
+        tool_name: 'read_file',
+        result: 'second contents',
+        status: 'done',
+      }),
+    });
+
+    expect(selectLiveTranscript(state, 'session-1')[0]).toMatchObject({
+      kind: 'tool_calls',
+      tools: [
+        {
+          args: '{"path":"first.md"}',
+          status: 'done',
+          result: 'first contents',
+        },
+        {
+          args: '{"path":"second.md"}',
+          status: 'done',
+          result: 'second contents',
+        },
+      ],
+    });
+  });
+
   it('keeps parallel sessions separate and reconciles one turn', () => {
     const session2 = {
       ...event(2, 'text_delta', {

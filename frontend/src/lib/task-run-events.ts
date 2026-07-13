@@ -155,7 +155,9 @@ export function taskRunLiveReducer(
     const updated = entries.map((entry): LiveEntry => {
       if (entry.kind !== 'tool_calls' || entry.turnId !== turnId) return entry;
       const tools = entry.tools.map((tool) => {
-        const same = toolId ? tool.id === toolId : tool.name === toolName;
+        if (matched) return tool;
+        const same = tool.status === 'running'
+          && (toolId ? tool.id === toolId : tool.name === toolName);
         if (!same) return tool;
         matched = true;
         return {
