@@ -167,5 +167,8 @@ chroma_db/
 # Superpowers task briefs and progress ledger
 .superpowers/
 
+# Superpowers-generated plans and specifications
+docs/superpowers/
+
 # Local Git worktrees
 .worktrees/
