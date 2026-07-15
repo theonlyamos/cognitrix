@@ -13,7 +13,7 @@ const PROVIDERS = ['openrouter', 'openai', 'google', 'groq', 'cerebras', 'ollama
 const MODELS: Record<string, string[]> = {
   openrouter: ['google/gemini-3.5-flash', 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
-  google: ['gemini-3.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'],
+  google: ['gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-3.1-flash'],
   groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
   cerebras: ['llama-3.3-70b', 'llama3.1-8b'],
   ollama: ['llama3.2', 'qwen2.5', 'mistral'],

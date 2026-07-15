@@ -286,6 +286,19 @@ describe('final accessibility contracts', () => {
     );
   });
 
+  it('keeps the Home header on one compact mobile row', () => {
+    renderRoute(<Home />);
+
+    expect(screen.getByRole('banner')).toHaveClass('flex-row', 'flex-nowrap');
+    expect(screen.getByRole('banner')).not.toHaveClass('overflow-hidden');
+    expect(screen.getByRole('heading', { name: 'Chat' })).toHaveClass('sr-only', 'md:not-sr-only');
+    expect(screen.getByRole('combobox', { name: 'Active agent' })).toHaveClass('w-full', 'min-w-0');
+    expect(screen.getByRole('button', { name: 'Open conversations' })).toHaveClass('h-11', 'w-11', 'md:hidden');
+    const connectionStatus = screen.getByLabelText('Connection status: connected');
+    expect(connectionStatus).toHaveClass('flex', 'items-center');
+    expect(within(connectionStatus).getByText('connected')).toHaveClass('sr-only', 'md:not-sr-only');
+  });
+
   it('renders TaskDetail step and synthesis selectors with responsive touch targets', async () => {
     harness.resources.set('/tasks/task-1', {
       data: { id: 'task-1', title: 'Task', status: 'completed' },
@@ -313,6 +326,32 @@ describe('final accessibility contracts', () => {
     expect(step).not.toBeNull();
     expect(step).toHaveClass('min-h-11', 'min-w-11', 'md:min-h-0', 'md:min-w-0');
     expect(synthesis).toHaveClass('min-h-11', 'md:min-h-0');
+  });
+
+  it('keeps the pending TaskDetail header on one compact mobile row', () => {
+    harness.resources.set('/tasks/task-1', { data: { id: 'task-1', title: 'Task', status: 'pending' } });
+    harness.resources.set('/tasks/task-1/runs', { data: [] });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    renderTaskDetail();
+
+    expect(screen.getByRole('banner')).toHaveClass('flex-row', 'flex-nowrap');
+    expect(screen.getByRole('banner')).not.toHaveClass('overflow-hidden');
+    expect(screen.getByRole('button', { name: 'Open runs' })).toHaveClass('h-11', 'w-11', 'md:hidden');
+    expect(screen.getByRole('button', { name: 'Run task' })).toHaveClass('h-11', 'w-11');
+    expect(screen.getByRole('button', { name: 'More actions' })).toBeInTheDocument();
+  });
+
+  it('keeps Resume visible and moves fresh runs into TaskDetail page actions', async () => {
+    const user = userEvent.setup();
+    harness.resources.set('/tasks/task-1', { data: { id: 'task-1', title: 'Task', status: 'failed' } });
+    harness.resources.set('/tasks/task-1/runs', { data: [{ id: 'run-1', status: 'failed', plan: [] }] });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    renderTaskDetail();
+
+    expect(await screen.findByRole('button', { name: 'Resume task' })).toHaveClass('h-11', 'w-11');
+    await user.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.getByRole('dialog', { name: 'Page actions' })).toHaveTextContent('Run from beginning');
+    expect(screen.getByRole('dialog', { name: 'Page actions' })).toHaveTextContent('Edit task');
   });
 
   it('shows live task text and tools before canonical chat is saved', async () => {
@@ -416,6 +455,9 @@ describe('final accessibility contracts', () => {
       data: { turn_id: 'session-1:1', attempt: 1 },
     }));
 
+    await act(async () => {
+      await vi.dynamicImportSettled();
+    });
     expect(
       await screen.findByRole('heading', { name: 'Finished' }, { timeout: 5000 }),
     ).toBeInTheDocument();
@@ -972,9 +1014,10 @@ describe('final accessibility contracts', () => {
     harness.sseError = new Error('offline');
     renderRoute(<Home />);
 
-    expect(screen.getByRole('button', { name: 'reconnect' })).toHaveClass(
-      'min-h-11',
-      'md:min-h-0',
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toHaveClass(
+      'h-11',
+      'w-11',
+      'md:h-8',
     );
     expect(screen.getByRole('button', { name: /retry/i })).toHaveClass(
       'min-h-11',
@@ -1033,6 +1076,41 @@ describe('final accessibility contracts', () => {
     );
 
     expectSiblingLiveStatus(screen.getByRole('button', { name: 'Saving…' }), 'Saving…');
+  });
+
+  it('keeps PageForm actions on one mobile row with a compact save and contextual actions', () => {
+    renderRoute(
+      <PageForm
+        eyebrow="EDIT TASK"
+        title="A very long task title that must truncate in the mobile header"
+        backTo="/tasks"
+        onSave={() => undefined}
+        onDelete={() => undefined}
+      >
+        <div>Fields</div>
+      </PageForm>,
+    );
+
+    expect(screen.getByRole('banner')).toHaveClass('flex-row', 'flex-nowrap');
+    expect(screen.getByRole('banner')).not.toHaveClass('overflow-hidden');
+    expect(screen.getByRole('heading', { name: /very long task title/i })).toHaveClass('truncate');
+    expect(screen.getByRole('button', { name: 'Save changes' })).toHaveClass('h-11', 'w-11');
+    expect(screen.getByRole('button', { name: 'More actions' })).toBeInTheDocument();
+  });
+
+  it('omits redundant PageForm overflow actions when the back control is the only secondary action', () => {
+    renderRoute(
+      <PageForm
+        eyebrow="NEW TEAM"
+        title="New team"
+        backTo="/teams"
+        onSave={() => undefined}
+      >
+        <div>Fields</div>
+      </PageForm>,
+    );
+
+    expect(screen.queryByRole('button', { name: 'More actions' })).not.toBeInTheDocument();
   });
 
   it('keeps Login loading text plain and announces it from a sibling live region', async () => {

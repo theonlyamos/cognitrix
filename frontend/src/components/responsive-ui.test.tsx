@@ -27,14 +27,17 @@ describe('responsive UI contracts', () => {
     expect(screen.getByRole('combobox', { name: 'Task team' })).toHaveClass('h-11', 'md:h-10');
   });
 
-  it('stacks page-header content before the small breakpoint', () => {
+  it('keeps the shared page header on one non-wrapping mobile row', () => {
     render(
       <PageHeader title="Tasks" subtitle="2 tasks">
-        <Button>New</Button>
+        <Button>New task</Button>
       </PageHeader>,
     );
 
-    expect(screen.getByRole('banner')).toHaveClass('flex-col', 'sm:flex-row');
+    expect(screen.getByRole('banner')).toHaveClass('flex-row', 'flex-nowrap', 'min-h-14');
+    expect(screen.getByRole('banner')).not.toHaveClass('overflow-hidden');
+    expect(screen.getByRole('heading', { name: 'Tasks' })).toHaveClass('truncate');
+    expect(screen.getByText('2 tasks')).toHaveClass('sr-only', 'md:not-sr-only');
   });
 
   it('stacks transcript gutters on narrow screens', () => {

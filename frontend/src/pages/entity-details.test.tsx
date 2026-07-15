@@ -160,6 +160,32 @@ describe('entity detail routes', () => {
     expect(appSource).not.toContain('/interact');
   });
 
+  it('keeps the agent detail header on one mobile line and moves secondary actions into a sheet', async () => {
+    renderAgentDetail();
+
+    const header = screen.getByRole('heading', { name: 'Agent One' }).closest('header');
+    expect(header).toHaveClass('flex-row', 'flex-nowrap');
+    expect(header).not.toHaveClass('overflow-hidden');
+
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.getByRole('dialog', { name: 'Page actions' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Edit agent' })).toHaveAttribute('href', '/agents/agent-1/edit');
+    expect(screen.getByRole('button', { name: 'Delete agent' })).toBeInTheDocument();
+  });
+
+  it('keeps the team detail header on one mobile line and moves secondary actions into a sheet', async () => {
+    renderTeamDetail();
+
+    const header = screen.getByRole('heading', { name: 'Team One' }).closest('header');
+    expect(header).toHaveClass('flex-row', 'flex-nowrap');
+    expect(header).not.toHaveClass('overflow-hidden');
+
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.getByRole('dialog', { name: 'Page actions' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Edit team' })).toHaveAttribute('href', '/teams/team-1/edit');
+    expect(screen.getByRole('button', { name: 'Delete team' })).toBeInTheDocument();
+  });
+
   it('renders agent details and prepares a blank chat for Interact', async () => {
     renderAgentDetail();
 
@@ -170,7 +196,7 @@ describe('entity detail routes', () => {
     expect(screen.getByRole('link', { name: 'Edit' })).toHaveAttribute('href', '/agents/agent-1/edit');
     expect(screen.getByRole('link', { name: 'Agent Assigned Task', description: 'pending' })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('link', { name: 'Interact' }));
+    await userEvent.click(screen.getByRole('link', { name: 'Interact with agent' }));
 
     expect(localStorage.getItem('selectedAgentId')).toBe('agent-1');
     expect(localStorage.getItem('chatSession:agent-1')).toBe('');
@@ -180,7 +206,8 @@ describe('entity detail routes', () => {
   it('deletes an agent from its detail header and returns to the list', async () => {
     renderAgentDetail();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete agent' }));
 
     await waitFor(() => expect(harness.apiDelete).toHaveBeenCalledWith('/agents/agent-1'));
     expect(screen.getByText('Agent list')).toBeInTheDocument();
@@ -193,11 +220,12 @@ describe('entity detail routes', () => {
     expect(screen.getByText('Ships reliable work.')).toBeInTheDocument();
     expect(screen.getByText('Agent One')).toBeInTheDocument();
     expect(screen.getByText('LEAD')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Edit' })).toHaveAttribute('href', '/teams/team-1/edit');
+    expect(screen.getByRole('link', { name: 'Edit team' })).toHaveAttribute('href', '/teams/team-1/edit');
     expect(screen.getByRole('link', { name: 'Failed Team Task', description: 'failed' })).toBeInTheDocument();
     expect(screen.getByText('failed')).toHaveClass('text-danger-ink');
 
-    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete team' }));
 
     await waitFor(() => expect(harness.apiDelete).toHaveBeenCalledWith('/teams/team-1'));
     expect(screen.getByText('Team list')).toBeInTheDocument();
@@ -313,7 +341,7 @@ describe('entity detail routes', () => {
     renderAgentEdit();
 
     expect(screen.getByRole('link', { name: 'Cancel' })).toHaveAttribute('href', '/agents/agent-1');
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(harness.apiPost).toHaveBeenCalledWith('/agents', expect.objectContaining({ id: 'agent-1' })));
     expect(screen.getByText('Agent details destination')).toBeInTheDocument();
@@ -323,7 +351,7 @@ describe('entity detail routes', () => {
     renderTeamEdit();
 
     expect(screen.getByRole('link', { name: 'Cancel' })).toHaveAttribute('href', '/teams/team-1');
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(harness.apiPost).toHaveBeenCalledWith('/teams', expect.objectContaining({ id: 'team-1' })));
     expect(screen.getByText('Team details destination')).toBeInTheDocument();

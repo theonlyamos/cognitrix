@@ -4,6 +4,7 @@ import { useResource } from '@/hooks/useResource';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
 import { ErrorState, LoadingState } from '@/components/list-ui';
+import { MobileHeaderActions, type MobileHeaderAction } from '@/components/mobile-header-actions';
 import { TaskAssignmentPanel, type TaskRecord } from '@/components/TaskAssignmentPanel';
 
 interface Tool {
@@ -72,23 +73,35 @@ export default function AgentDetail() {
   const tasks = taskList || [];
   const assignedTasks = tasks.filter((task) => (task.assigned_agents || []).includes(agent.id));
   const providerModel = `${agent.llm?.provider || '—'} · ${agent.llm?.model || '—'}`;
+  const mobileActions: MobileHeaderAction[] = [
+    { key: 'edit', label: 'Edit agent', to: `/agents/${agent.id}/edit` },
+    { key: 'delete', label: 'Delete agent', destructive: true, onSelect: remove },
+  ];
 
   return (
     <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <header className="app-page-header flex flex-none flex-col items-stretch gap-3 border-b border-line py-3 pl-16 pr-4 sm:flex-row sm:flex-wrap sm:items-center md:px-6">
-        <div className="flex min-w-0 items-center gap-3">
+      <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
+        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
           <Link to="/agents" aria-label="Back to agents" className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
           <div className="min-w-0">
-            <p className="font-mono text-[10px] tracking-[0.18em] text-accent-ink">AGENT</p>
+            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">AGENT</p>
             <h1 className="truncate text-lg font-semibold tracking-tight">{agent.name}</h1>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          <Button asChild size="sm"><Link to="/home" onClick={prepareChat}>Interact</Link></Button>
-          <Button asChild variant="outline" size="sm"><Link to={`/agents/${agent.id}/edit`}>Edit</Link></Button>
-          <Button variant="ghost" size="sm" onClick={remove} className="hover:text-danger-ink">Delete</Button>
+        <div className="flex flex-none items-center gap-1 md:gap-2">
+          <Button asChild size="sm" className="w-11 px-0 md:w-auto md:px-3">
+            <Link to="/home" aria-label="Interact with agent" onClick={prepareChat}>
+              <svg className="h-4 w-4 md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" /></svg>
+              <span className="sr-only md:not-sr-only">Interact</span>
+            </Link>
+          </Button>
+          <div className="hidden items-center gap-2 md:flex">
+            <Button asChild variant="outline" size="sm"><Link to={`/agents/${agent.id}/edit`}>Edit</Link></Button>
+            <Button variant="ghost" size="sm" onClick={remove} className="hover:text-danger-ink">Delete</Button>
+          </div>
+          <MobileHeaderActions id={`agent-${agent.id}-actions`} actions={mobileActions} />
         </div>
       </header>
 

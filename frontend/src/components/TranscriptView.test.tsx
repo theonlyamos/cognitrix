@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TranscriptView } from '@/components/TranscriptView';
 
 describe('TranscriptView live and Markdown output', () => {
@@ -15,6 +15,9 @@ describe('TranscriptView live and Markdown output', () => {
       </MemoryRouter>,
     );
 
+    await act(async () => {
+      await vi.dynamicImportSettled();
+    });
     expect(await screen.findByRole('heading', { name: 'Result' }, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
     expect(screen.getByRole('link', { name: 'task' })).toHaveAttribute(

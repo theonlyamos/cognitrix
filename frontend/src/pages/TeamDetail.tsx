@@ -4,6 +4,7 @@ import { useResource } from '@/hooks/useResource';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
 import { LoadingState, ErrorState, Chevron } from '@/components/list-ui';
+import { MobileHeaderActions, type MobileHeaderAction } from '@/components/mobile-header-actions';
 import { cn } from '@/lib/utils';
 import { TaskAssignmentPanel, type TaskRecord } from '@/components/TaskAssignmentPanel';
 
@@ -54,21 +55,33 @@ export default function TeamDetail() {
   if (loading) return <div className="flex h-screen min-w-0 flex-1 flex-col bg-bg"><LoadingState label="loading team…" /></div>;
   if (error || !team) return <div className="flex h-screen min-w-0 flex-1 flex-col bg-bg"><ErrorState message={error || 'Team not found.'} onRetry={refetch} /></div>;
 
+  const mobileActions: MobileHeaderAction[] = [
+    { key: 'delete', label: 'Delete team', destructive: true, onSelect: remove },
+  ];
+
   return (
     <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <header className="app-page-header flex flex-none flex-col items-stretch gap-3 border-b border-line py-3 pl-16 pr-4 sm:flex-row sm:flex-wrap sm:items-center md:px-6">
-        <div className="flex min-w-0 items-center gap-3">
+      <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
+        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
           <Link to="/teams" aria-label="Back to teams" className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
           <div className="min-w-0">
-            <p className="font-mono text-[10px] tracking-[0.18em] text-accent-ink">TEAM</p>
+            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">TEAM</p>
             <h1 className="truncate text-lg font-semibold tracking-tight">{team.name}</h1>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          <Button asChild variant="outline" size="sm"><Link to={`/teams/${team.id}/edit`}>Edit</Link></Button>
-          <Button variant="ghost" size="sm" onClick={remove} className="hover:text-danger-ink">Delete</Button>
+        <div className="flex flex-none items-center gap-1 md:gap-2">
+          <Button asChild variant="outline" size="sm" className="w-11 px-0 md:w-auto md:px-3">
+            <Link to={`/teams/${team.id}/edit`} aria-label="Edit team">
+              <svg className="h-4 w-4 md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+              <span className="sr-only md:not-sr-only">Edit</span>
+            </Link>
+          </Button>
+          <div className="hidden items-center gap-2 md:flex">
+            <Button variant="ghost" size="sm" onClick={remove} className="hover:text-danger-ink">Delete</Button>
+          </div>
+          <MobileHeaderActions id={`team-${team.id}-actions`} actions={mobileActions} />
         </div>
       </header>
 

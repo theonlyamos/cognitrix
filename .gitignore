@@ -121,6 +121,7 @@ env.bak/
 venv.bak/
 
 .vite/
+.pnpm-store/
 
 # Spyder project settings
 .spyderproject
@@ -166,6 +167,9 @@ chroma_db/
 
 # Superpowers task briefs and progress ledger
 .superpowers/
+
+# Superpowers-generated plans and specifications
+docs/superpowers/
 
 # Local Git worktrees
 .worktrees/
