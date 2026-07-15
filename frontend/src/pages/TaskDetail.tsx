@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
 import { usePolling } from '@/hooks/usePolling';
+import { useTaskRunEvents } from '@/hooks/useTaskRunEvents';
 import { Button } from '@/lib/components/ui/button';
 import { LoadingState, Spinner } from '@/components/list-ui';
 import { MobileSheet } from '@/components/MobileSheet';
@@ -17,6 +18,12 @@ import {
   type BackendChatEntry,
 } from '@/lib/transcript';
 import { cn } from '@/lib/utils';
+import {
+  initialTaskRunLiveState,
+  selectLiveTranscript,
+  taskRunLiveReducer,
+  type TaskRunEvent,
+} from '@/lib/task-run-events';
 
 interface TaskData {
   id?: string;
@@ -115,6 +122,9 @@ export default function TaskDetail() {
   const manualPickRef = useRef(false);
   const [stepSessions, setStepSessions] = useState<Record<string, Record<string, string>>>({});
   const [chats, setChats] = useState<Record<string, BackendChatEntry[]>>({});
+  const chatRequestGenerationRef = useRef(0);
+  const chatRequestVersionsRef = useRef<Record<string, number>>({});
+  const pendingCompletedTurnsRef = useRef<Record<string, Set<string>>>({});
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [togglingSchedule, setTogglingSchedule] = useState(false);
@@ -122,6 +132,10 @@ export default function TaskDetail() {
   const mobileRunsTriggerRef = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [liveState, dispatchLive] = useReducer(
+    taskRunLiveReducer,
+    initialTaskRunLiveState,
+  );
 
   const selectedRun = useMemo(
     () => (runs || []).find((r) => r.id === selectedRunId) || null,
@@ -132,12 +146,29 @@ export default function TaskDetail() {
   const isTaskRunning = task?.status === 'in_progress';
   const isLive = !!activeRun || isTaskRunning;
 
-  const loadChat = useCallback(async (sessionId: string) => {
+  const loadChat = useCallback(async (sessionId: string): Promise<boolean> => {
+    const requestGeneration = chatRequestGenerationRef.current;
+    const requestVersion = (chatRequestVersionsRef.current[sessionId] || 0) + 1;
+    chatRequestVersionsRef.current[sessionId] = requestVersion;
     try {
       const res = await api.get<BackendChatEntry[]>(`/sessions/${sessionId}/chat`);
-      setChats((p) => ({ ...p, [sessionId]: res.data }));
+      if (
+        chatRequestGenerationRef.current !== requestGeneration
+        || chatRequestVersionsRef.current[sessionId] !== requestVersion
+      ) {
+        return false;
+      }
+      setChats((previous) => ({ ...previous, [sessionId]: res.data }));
+      const pendingTurnIds = pendingCompletedTurnsRef.current[sessionId];
+      if (pendingTurnIds) {
+        delete pendingCompletedTurnsRef.current[sessionId];
+        for (const turnId of pendingTurnIds) {
+          dispatchLive({ type: 'reconcile', sessionId, turnId });
+        }
+      }
+      return true;
     } catch {
-      // shown as "loading transcript…"; retried on next poll/click
+      return false;
     }
   }, []);
 
@@ -152,6 +183,59 @@ export default function TaskDetail() {
       return {};
     }
   }, []);
+
+  const handleRunEvent = useCallback((event: TaskRunEvent) => {
+    if (event.run_id !== selectedRunId) return;
+    dispatchLive({ type: 'event', event });
+
+    if (event.session_id && event.step_index !== null) {
+      setStepSessions((previous) => ({
+        ...previous,
+        [event.run_id]: {
+          ...(previous[event.run_id] || {}),
+          [String(event.step_index)]: event.session_id!,
+        },
+      }));
+    }
+
+    if (event.kind === 'step_status') {
+      void refetchRuns({ silent: true });
+    }
+
+    if (event.kind === 'turn_completed' && event.session_id) {
+      const turnId = String(event.data.turn_id || '');
+      const pendingTurnIds = pendingCompletedTurnsRef.current[event.session_id]
+        || new Set<string>();
+      pendingTurnIds.add(turnId);
+      pendingCompletedTurnsRef.current[event.session_id] = pendingTurnIds;
+      void loadChat(event.session_id);
+    }
+
+    if (event.kind === 'run_status') {
+      void refetch({ silent: true });
+      void refetchRuns({ silent: true });
+      if (selectedRunId) void loadRunSessions(selectedRunId);
+    }
+  }, [loadChat, loadRunSessions, refetch, refetchRuns, selectedRunId]);
+
+  const selectedRunIsLive = !!selectedRun && ACTIVE_RUN.has(selectedRun.status);
+  const {
+    isConnected: runStreamConnected,
+    error: runStreamError,
+    reconnect: reconnectRunStream,
+  } = useTaskRunEvents({
+    taskId,
+    runId: selectedRunIsLive ? selectedRunId : null,
+    onEvent: handleRunEvent,
+  });
+
+  useEffect(() => {
+    chatRequestGenerationRef.current += 1;
+    chatRequestVersionsRef.current = {};
+    pendingCompletedTurnsRef.current = {};
+    setChats({});
+    dispatchLive({ type: 'reset' });
+  }, [selectedRunId]);
 
   // Default run selection: the active run while live, else the newest.
   useEffect(() => {
@@ -191,10 +275,10 @@ export default function TaskDetail() {
     return map[selected === 'synthesis' ? 'synthesis' : String(selected)] || null;
   }, [selected, selectedRunId, stepSessions]);
 
+  const selectedChat = selectedSessionId ? chats[selectedSessionId] : undefined;
   useEffect(() => {
-    if (selectedSessionId && !chats[selectedSessionId]) void loadChat(selectedSessionId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSessionId]);
+    if (selectedSessionId && !selectedChat) void loadChat(selectedSessionId);
+  }, [loadChat, selectedChat, selectedRunId, selectedSessionId]);
 
   // Live polling: task + runs (slim plans) + the map + the watched transcript.
   // Backs off after 5 minutes (a dead worker leaves runs active forever).
@@ -231,12 +315,14 @@ export default function TaskDetail() {
   }, [isLive]);
 
   // Pin the live transcript to the bottom as it grows.
-  const liveLen = selectedSessionId && activeRun ? chats[selectedSessionId]?.length ?? 0 : -1;
+  const liveRevision = selectedSessionId && activeRun
+    ? (chats[selectedSessionId]?.length ?? 0) + liveState.lastSequence
+    : -1;
   useEffect(() => {
-    if (liveLen < 0) return;
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [liveLen]);
+    if (liveRevision < 0) return;
+    const element = scrollRef.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [liveRevision]);
 
   const start = async (resume = false) => {
     if (!taskId) return;
@@ -297,7 +383,13 @@ export default function TaskDetail() {
   };
 
   const status = task?.status || 'pending';
-  const plan = selectedRun?.plan || [];
+  const plan = useMemo(
+    () => (selectedRun?.plan || []).map((step) => ({
+      ...step,
+      status: liveState.stepStatuses[step.index] || step.status,
+    })),
+    [liveState.stepStatuses, selectedRun?.plan],
+  );
   const stepsDone = plan.filter((s) => s.status === 'done').length;
   const canResume = !isLive && newestRun != null && (newestRun.status === 'failed' || newestRun.status === 'cancelled');
   const hasSynthesis = !!(selectedRunId && (stepSessions[selectedRunId] || {})['synthesis']);
@@ -306,6 +398,11 @@ export default function TaskDetail() {
     : starting
       ? 'Starting…'
       : null;
+  const canonicalEntries = selectedSessionId && chats[selectedSessionId]
+    ? parseChatEntries(chats[selectedSessionId])
+    : [];
+  const liveEntries = selectLiveTranscript(liveState, selectedSessionId);
+  const transcriptEntries = [...canonicalEntries, ...liveEntries];
 
   const mobileActions: MobileHeaderAction[] = [
     { key: 'edit', label: 'Edit task', to: `/tasks/${taskId}/edit` },
@@ -577,6 +674,27 @@ export default function TaskDetail() {
           </p>
         )}
 
+        {selectedRunIsLive && (
+          <div className="flex flex-none items-center gap-2 border-b border-line px-6 py-1.5 font-mono text-[10.5px] text-fg-dim">
+            <span
+              className={cn(
+                'h-1.5 w-1.5 rounded-full',
+                runStreamConnected ? 'bg-accent' : 'bg-danger',
+              )}
+            />
+            <span>{runStreamConnected ? 'live progress' : 'live progress disconnected'}</span>
+            {runStreamError && (
+              <button
+                type="button"
+                onClick={reconnectRunStream}
+                className="ml-auto min-h-11 underline underline-offset-2 md:min-h-0"
+              >
+                reconnect
+              </button>
+            )}
+          </div>
+        )}
+
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           {isTaskRunning && !activeRun && (
             <div role="status" className="mx-6 my-4 flex items-center gap-2.5 rounded border border-line bg-panel-2 px-3 py-2.5 font-mono text-[12px] text-fg-dim">
@@ -585,9 +703,9 @@ export default function TaskDetail() {
             </div>
           )}
           {selectedSessionId ? (
-            chats[selectedSessionId] ? (
+            chats[selectedSessionId] || liveEntries.length > 0 ? (
               <TranscriptView
-                entries={parseChatEntries(chats[selectedSessionId])}
+                entries={transcriptEntries}
                 live={!!activeRun && typeof selected === 'number' && plan[selected]?.status === 'running'}
               />
             ) : (

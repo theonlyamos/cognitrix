@@ -1,10 +1,16 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRef, useState } from 'react';
+import { useEventStream } from '@/hooks/useEventStream';
 
-const API_BACKEND_URI = `${import.meta.env.VITE_BACKEND_URL ?? ''}/api/v1`;
-
-function cancelReader(reader: ReadableStreamReader<Uint8Array>) {
-  void reader.cancel().catch(() => undefined);
-}
+const CHAT_EVENT_TYPES = new Set([
+  'generate',
+  'chat_history',
+  'chat',
+  'multistep_result',
+  'status',
+  'error',
+  'approval_request',
+  'tool',
+]);
 
 export interface SSEEvent {
   type: string;
@@ -23,11 +29,7 @@ interface UseSSEOptions {
   onError?: (error: Error) => void;
   autoReconnect?: boolean;
   maxRetries?: number;
-  /** Subscribe to a specific agent's stream. Must match the agent_id used when
-   *  posting to /agents/chat (they rendezvous on a per-(user, agent) manager). */
   agentId?: string;
-  /** Gate the connection until the caller is ready (e.g. the agent is resolved).
-   *  Default true. Avoids a connect-then-reconnect when agentId arrives async. */
   enabled?: boolean;
 }
 
@@ -42,206 +44,24 @@ export function useSSE(options: UseSSEOptions = {}) {
     agentId,
     enabled = true,
   } = options;
-
-  const [isConnected, setIsConnected] = useState(false);
   const [lastEvent, setLastEvent] = useState<SSEEvent | null>(null);
-  const [error, setError] = useState<Error | null>(null);
-
-  // Use refs to store callbacks to prevent re-render triggering reconnect
   const onMessageRef = useRef(onMessage);
-  const onConnectRef = useRef(onConnect);
-  const onDisconnectRef = useRef(onDisconnect);
-  const onErrorRef = useRef(onError);
-
-  // Update refs when callbacks change
   onMessageRef.current = onMessage;
-  onConnectRef.current = onConnect;
-  onDisconnectRef.current = onDisconnect;
-  onErrorRef.current = onError;
 
-  const readerRef = useRef<ReadableStreamReader<Uint8Array> | null>(null);
-  const retryCountRef = useRef(0);
-  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const path = `/agents/sse${agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ''}`;
+  const stream = useEventStream<SSEEvent>({
+    path,
+    enabled,
+    autoReconnect,
+    maxRetries,
+    onConnect,
+    onDisconnect,
+    onError,
+    onEvent: ({ data: event }) => {
+      setLastEvent(event);
+      if (CHAT_EVENT_TYPES.has(event.type)) onMessageRef.current?.(event);
+    },
+  });
 
-  const connect = useCallback(() => {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      setError(new Error('No auth token available'));
-      return;
-    }
-
-    // Cancel any existing connection
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    if (readerRef.current) {
-      cancelReader(readerRef.current);
-    }
-    if (retryTimeoutRef.current) {
-      clearTimeout(retryTimeoutRef.current);
-    }
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    const url = `${API_BACKEND_URI}/agents/sse${agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ''}`;
-
-    fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      },
-      signal: controller.signal
-    }).then(response => {
-      if (!response.ok) {
-        throw new Error(`SSE connection failed: ${response.status}`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('Failed to get reader from response');
-      }
-
-      readerRef.current = reader;
-      setIsConnected(true);
-      setError(null);
-      onConnectRef.current?.();
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      const readChunk = () => {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        reader.read().then(({ done, value }) => {
-          if (done || controller.signal.aborted) {
-            console.log('SSE stream ended');
-            setIsConnected(false);
-            onDisconnectRef.current?.();
-
-            // Auto reconnect if enabled and not intentionally aborted
-            if (autoReconnect && !controller.signal.aborted && retryCountRef.current < maxRetries) {
-              const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
-              retryTimeoutRef.current = setTimeout(() => {
-                retryCountRef.current++;
-                connect();
-              }, delay);
-            }
-            return;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (line.startsWith('data:')) {
-              const data = line.slice(5).trim();
-              if (data) {
-                try {
-                  const event = JSON.parse(data) as SSEEvent;
-                  // A valid event proves the stream is healthy. Until then,
-                  // preserve the retry count across successful handshakes so
-                  // connect-then-read failures still honor maxRetries.
-                  retryCountRef.current = 0;
-                  setLastEvent(event);
-
-                  if (event.type === 'generate' || event.type === 'chat_history' || event.type === 'chat' || event.type === 'multistep_result' || event.type === 'status' || event.type === 'error' || event.type === 'approval_request' || event.type === 'tool') {
-                    onMessageRef.current?.(event);
-                  }
-                } catch (err) {
-                  console.error('Failed to parse SSE event:', err);
-                }
-              }
-            }
-          }
-
-          readChunk();
-        }).catch(err => {
-          if (controller.signal.aborted) {
-            return;
-          }
-
-          const readError = err instanceof Error ? err : new Error(String(err));
-          console.error('SSE read error:', readError);
-          setIsConnected(false);
-
-          if (autoReconnect && retryCountRef.current < maxRetries) {
-            const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
-            retryTimeoutRef.current = setTimeout(() => {
-              retryCountRef.current++;
-              connect();
-            }, delay);
-          } else {
-            setError(readError);
-            onErrorRef.current?.(readError);
-          }
-        });
-      };
-
-      readChunk();
-    }).catch(err => {
-      if (controller.signal.aborted) {
-        return;
-      }
-      console.error('SSE fetch error:', err);
-      setIsConnected(false);
-
-      if (autoReconnect && retryCountRef.current < maxRetries) {
-        const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
-        retryTimeoutRef.current = setTimeout(() => {
-          retryCountRef.current++;
-          connect();
-        }, delay);
-      } else {
-        setError(err);
-        onErrorRef.current?.(err);
-      }
-    });
-  }, [autoReconnect, maxRetries, agentId]);
-
-  const disconnect = useCallback(() => {
-    if (retryTimeoutRef.current) {
-      clearTimeout(retryTimeoutRef.current);
-    }
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    if (readerRef.current) {
-      cancelReader(readerRef.current);
-      readerRef.current = null;
-    }
-    setIsConnected(false);
-    onDisconnectRef.current?.();
-  }, []);
-
-  const reconnect = useCallback(() => {
-    disconnect();
-    retryCountRef.current = 0;
-    connect();
-  }, [connect, disconnect]);
-
-  const clearError = useCallback(() => {
-    setError(null);
-  }, []);
-
-  // Connect once enabled, and reconnect whenever the selected agent changes.
-  useEffect(() => {
-    if (!enabled) return;
-    connect();
-    return () => disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId, enabled]);
-
-  return {
-    isConnected,
-    lastEvent,
-    error,
-    connect,
-    disconnect,
-    reconnect,
-    clearError,
-  };
+  return { ...stream, lastEvent };
 }

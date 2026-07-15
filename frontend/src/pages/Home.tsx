@@ -103,7 +103,7 @@ export default function Home() {
   const [planning, setPlanning] = useState<string | null>(null); // transient status (e.g. multi-step)
   const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
   const mobileConversationsTriggerRef = useRef<HTMLButtonElement>(null);
-  const endRef = useRef<HTMLDivElement>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -235,7 +235,8 @@ export default function Home() {
   }, [agents, agentId]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const transcript = transcriptRef.current;
+    if (transcript) transcript.scrollTop = transcript.scrollHeight;
   }, [messages, waiting, planning]);
 
   // Auto-grow the composer to fit multi-line input (capped by max-h-40 → scroll).
@@ -587,7 +588,7 @@ export default function Home() {
   );
 
   return (
-    <div className="flex-1 flex h-screen min-w-0 bg-bg text-fg">
+    <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-bg text-fg">
       <MobileSheet
         id="mobile-conversations"
         label="Conversations"
@@ -600,13 +601,13 @@ export default function Home() {
 
       {/* Conversations panel */}
       {agentId && (
-        <aside className="hidden md:flex w-60 flex-none flex-col border-r border-line bg-panel">
+        <aside className="hidden min-h-0 w-60 flex-none flex-col border-r border-line bg-panel md:flex">
           {conversationPanel}
         </aside>
       )}
 
       {/* Chat column */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {/* Top bar */}
         <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:flex-wrap md:px-6">
           <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-hidden">
@@ -659,7 +660,13 @@ export default function Home() {
         </header>
 
         {/* Stream */}
-        <div role="log" aria-live="polite" aria-relevant="additions text" className="flex-1 overflow-y-auto">
+        <div
+          ref={transcriptRef}
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions text"
+          className="min-h-0 flex-1 overscroll-contain overflow-y-auto"
+        >
           {empty ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col justify-center px-6">
               <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ start a conversation</p>
@@ -732,7 +739,6 @@ export default function Home() {
               </div>
             </div>
           ))}
-          <div ref={endRef} />
         </div>
 
         {/* Composer */}

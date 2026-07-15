@@ -54,6 +54,7 @@ COMPACT_KEEP_TURNS = 4
 # Cap tool param/result previews streamed to the browser. A search tool can
 # return hundreds of KB; the chat UI only shows a preview in the collapsible.
 _TOOL_PREVIEW_MAX = 4000
+_MALFORMED_TOOL_LABEL = 'Malformed tool call'
 
 
 def _tool_preview(data: Any) -> str:
@@ -378,11 +379,12 @@ class Session(Model):
                             tool_rounds += 1
                             if interface in ('web', 'ws'):
                                 result_list = result['result'] if isinstance(result, dict) and result.get('type') == 'tool_calls_result' else []
-                                for i, (name, tcid, args) in enumerate(tool_meta):
-                                    if not name:
-                                        continue
-                                    data = result_list[i].get('data', '') if i < len(result_list) else ''
-                                    await output({'type': 'tool', 'status': 'completed', 'tool_name': name,
+                                for i, (name, tcid, _args) in enumerate(tool_meta):
+                                    item = result_list[i] if i < len(result_list) else {}
+                                    data = item.get('data', '')
+                                    status = 'completed' if item.get('success') is True else 'error'
+                                    tool_name = name or _MALFORMED_TOOL_LABEL
+                                    await output({'type': 'tool', 'status': status, 'tool_name': tool_name,
                                                   'tool_call_id': tcid, 'result': _tool_preview(data)})
 
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
