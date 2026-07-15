@@ -34,6 +34,11 @@ def test_prompt_file_default_empty():
     assert _parse(["-p", "x"]).prompt_file == ""
 
 
+def test_model_is_unset_unless_explicitly_supplied():
+    assert _parse(["--provider", "openrouter"]).model == ""
+    assert _parse(["--provider", "openrouter", "--model", "custom/model"]).model == "custom/model"
+
+
 def test_stream_flag_is_toggleable():
     # `--stream` used type=bool, so `--stream false` was truthy and streaming
     # could never be disabled. BooleanOptionalAction gives a real off-switch.
