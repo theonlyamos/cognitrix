@@ -65,7 +65,7 @@ def _tool_preview(data: Any) -> str:
     """
     if isinstance(data, str):
         s = data
-    elif isinstance(data, (dict, list)):
+    elif isinstance(data, dict | list):
         try:
             s = json.dumps(data, default=str, indent=2)
         except Exception:
@@ -244,7 +244,7 @@ class Session(Model):
         await self.save()
         logger.info("Compacted session history: folded %s turns into a summary", len(fold_turns))
 
-    async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None):
+    async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws', 'compat'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None, tool_context=None):
 
         # Add timing for turn duration
         turn_start_time = time.monotonic()
@@ -296,6 +296,7 @@ class Session(Model):
         active_tools = formatted_tools if agent.llm.supports_tool_use else None
 
         tool_rounds = 0
+        turn_call_counts: dict[str, int] = {}
         last_denied_sig = None
         stop_turn = False
         try:
@@ -373,17 +374,41 @@ class Session(Model):
                                     if name:
                                         await output({'type': 'tool', 'status': 'started', 'tool_name': name,
                                                       'tool_call_id': tcid, 'params': _tool_preview(args)})
-                            result: dict[Any, Any] | str = await agent.call_tools(response.tool_calls, interface=interface)
+                            # Tool artifacts are session-owned.  ContextVars keep
+                            # concurrent browser/task turns isolated without
+                            # allowing the model to choose a storage namespace.
+                            from cognitrix.artifacts import reset_session, set_session
+                            from cognitrix.tools.utils import (
+                                ToolExecutionContext, reset_execution_context, set_execution_context,
+                            )
+                            bound_context = tool_context or ToolExecutionContext()
+                            artifact_token = set_session(
+                                str(self.id), str(agent.id), bound_context.user_id
+                            )
+                            execution_token = set_execution_context(bound_context)
+                            try:
+                                result: dict[Any, Any] | str = await agent.call_tools(
+                                    response.tool_calls,
+                                    interface=interface,
+                                    call_counts=turn_call_counts,
+                                )
+                            finally:
+                                reset_execution_context(execution_token)
+                                reset_session(artifact_token)
                             called_tools = True
                             tool_rounds += 1
                             if interface in ('web', 'ws'):
                                 result_list = result['result'] if isinstance(result, dict) and result.get('type') == 'tool_calls_result' else []
-                                for i, (name, tcid, args) in enumerate(tool_meta):
+                                for i, (name, tcid, _args) in enumerate(tool_meta):
                                     if not name:
                                         continue
                                     data = result_list[i].get('data', '') if i < len(result_list) else ''
-                                    await output({'type': 'tool', 'status': 'completed', 'tool_name': name,
-                                                  'tool_call_id': tcid, 'result': _tool_preview(data)})
+                                    outcome = result_list[i].get('outcome') if i < len(result_list) else None
+                                    status = 'completed' if not outcome or outcome.get('status') == 'success' else 'error'
+                                    await output({'type': 'tool', 'status': status, 'tool_name': name,
+                                                  'tool_call_id': tcid, 'result': _tool_preview(data),
+                                                  'outcome': outcome,
+                                                  'artifacts': (outcome or {}).get('artifacts', [])})
 
                             if isinstance(result, dict) and result['type'] == 'tool_calls_result':
                                 # If a tool call has a result, add it to history and rebuild the prompt

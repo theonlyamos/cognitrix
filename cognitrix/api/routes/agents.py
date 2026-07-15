@@ -239,7 +239,7 @@ async def generate(agent_id: str, body: GenerateRequest,
     session = await _resolve_generate_session(agent, body.session_id)
 
     if body.stream:
-        return _stream_generate(session, agent, body.message)
+        return _stream_generate(session, agent, body.message, ctx.tool_execution_context())
 
     captured = ''
 
@@ -251,7 +251,8 @@ async def generate(agent_id: str, body: GenerateRequest,
 
     try:
         await asyncio.wait_for(
-            session(body.message, agent, interface='web', stream=True, output=capture, wsquery={}),
+            session(body.message, agent, interface='web', stream=True, output=capture,
+                    wsquery={}, tool_context=ctx.tool_execution_context()),
             timeout=CHAT_TIMEOUT,
         )
     except asyncio.TimeoutError:
@@ -269,7 +270,7 @@ async def generate(agent_id: str, body: GenerateRequest,
     return {'reply': answer, 'session_id': session.id}
 
 
-def _stream_generate(session: Session, agent: Agent, message: str) -> EventSourceResponse:
+def _stream_generate(session: Session, agent: Agent, message: str, tool_context) -> EventSourceResponse:
     """SSE bridge: a producer task runs the turn pushing chunks into a bounded
     queue; the generator drains it. Session.__call__ has no end-of-stream
     signal — the sentinel goes in after the awaited turn returns."""
@@ -284,7 +285,8 @@ def _stream_generate(session: Session, agent: Agent, message: str) -> EventSourc
     async def producer():
         try:
             await asyncio.wait_for(
-                session(message, agent, interface='web', stream=True, output=push, wsquery={}),
+                session(message, agent, interface='web', stream=True, output=push,
+                        wsquery={}, tool_context=tool_context),
                 timeout=CHAT_TIMEOUT,
             )
         except asyncio.TimeoutError:

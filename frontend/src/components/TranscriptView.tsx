@@ -1,5 +1,6 @@
 import type { TranscriptEntry } from '@/lib/transcript';
 import { cn } from '@/lib/utils';
+import { ArtifactPreview } from '@/components/ArtifactPreview';
 
 // Wide enough for real agent names ("BACKEND ENGINEER"); Home's chat keeps its
 // own narrower YOU/AGENT gutter.
@@ -39,10 +40,16 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
                 <div className="min-w-0 space-y-1.5">
                   {e.content.trim() && <div className="whitespace-pre-wrap break-words leading-relaxed">{e.content}</div>}
                   {e.tools.map((t, j) => (
-                    <details key={j} className="font-mono text-[11px]">
-                      <summary className="cursor-pointer text-accent-ink">→ {t.name}</summary>
-                      <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded border border-line bg-panel-2 p-2 text-fg-dim">{t.args}</pre>
-                    </details>
+                    <div key={j} className="space-y-2">
+                      <details className="font-mono text-[11px]">
+                        <summary className={cn('cursor-pointer', t.status === 'error' ? 'text-danger-ink' : 'text-accent-ink')}>
+                          {t.status === 'error' ? 'failed:' : '→'} {t.name}
+                        </summary>
+                        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded border border-line bg-panel-2 p-2 text-fg-dim">{t.args}</pre>
+                        {t.result !== undefined && <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded border border-line bg-panel-2 p-2 text-fg-dim">{t.result}</pre>}
+                      </details>
+                      {t.artifacts?.map((artifact) => <ArtifactPreview key={artifact.id} artifact={artifact} />)}
+                    </div>
                   ))}
                 </div>
               </div>

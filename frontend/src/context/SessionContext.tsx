@@ -2,6 +2,14 @@ import React, { createContext, useContext, useState, useCallback } from 'react';
 
 export type ToolStatus = 'running' | 'done' | 'error';
 
+export interface ToolArtifact {
+  id: string;
+  mime_type: string;
+  filename?: string;
+  width?: number;
+  height?: number;
+}
+
 export interface ToolUse {
   /** tool_call_id — pairs the started chip with its completion. */
   id?: string;
@@ -11,6 +19,7 @@ export interface ToolUse {
   params?: string;
   /** Tool output preview (may be truncated), shown when the chip expands. */
   result?: string;
+  artifacts?: ToolArtifact[];
 }
 
 export interface ChatMessage {
@@ -31,7 +40,7 @@ interface SessionContextType {
   /** A tool started: append a running chip to the current tool row, or open one. */
   addToolCall: (name: string, opts?: { id?: string; params?: string }) => void;
   /** A tool finished: flip its most-recent running chip to done/error + result. */
-  resolveToolCall: (name: string, status: 'done' | 'error', opts?: { id?: string; result?: string }) => void;
+  resolveToolCall: (name: string, status: 'done' | 'error', opts?: { id?: string; result?: string; artifacts?: ToolArtifact[] }) => void;
   clearMessages: () => void;
   setMessages: (messages: ChatMessage[]) => void;
   setAgentId: (agentId: string | null) => void;
@@ -103,7 +112,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   // A tool finished: flip the matching running chip to done/error and attach its
   // result. Pair by tool_call_id when present, else by name (most recent running).
-  const resolveToolCall = useCallback((name: string, status: 'done' | 'error', opts?: { id?: string; result?: string }) => {
+  const resolveToolCall = useCallback((name: string, status: 'done' | 'error', opts?: { id?: string; result?: string; artifacts?: ToolArtifact[] }) => {
     setMessagesState(prev => {
       for (let i = prev.length - 1; i >= 0; i--) {
         const m = prev[i];
@@ -115,7 +124,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           if (opts?.id ? t.id === opts.id : t.name === name) { hit = j; break; }
         }
         if (hit === -1) continue;
-        const tools = m.tools.map((t, j) => (j === hit ? { ...t, status, result: opts?.result } : t));
+        const tools = m.tools.map((t, j) => (j === hit ? { ...t, status, result: opts?.result, artifacts: opts?.artifacts } : t));
         const copy = [...prev];
         copy[i] = { ...m, tools };
         return copy;
