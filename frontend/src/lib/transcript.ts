@@ -21,7 +21,7 @@ export type TranscriptTool = {
   name: string;
   args: string;
   result?: string;
-  status?: 'running' | 'done' | 'error';
+  status?: 'running' | 'done' | 'error' | 'stopped';
   artifacts?: ToolArtifact[];
 };
 
@@ -66,12 +66,17 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
   const out: TranscriptEntry[] = [];
   // Tool results are separate `role: 'tool'` messages; index them by
   // tool_call_id so each tool call can carry its own result for display.
-  const resultsById: Record<string, { content: string; status: 'done' | 'error'; artifacts?: ToolArtifact[] }> = {};
+  const resultsById: Record<string, { content: string; status: 'done' | 'error' | 'stopped'; artifacts?: ToolArtifact[] }> = {};
   for (const m of chat || []) {
     if (String(m.role || '').toLowerCase() === 'tool' && m.tool_call_id) {
+      const outcomeStatus = m.outcome?.status;
       resultsById[m.tool_call_id] = {
         content: asText(m.content),
-        status: m.outcome?.status === 'success' || !m.outcome ? 'done' : 'error',
+        status: outcomeStatus === 'stopped'
+          ? 'stopped'
+          : outcomeStatus === 'success' || !m.outcome
+            ? 'done'
+            : 'error',
         artifacts: safeArtifacts(m.outcome?.artifacts),
       };
     }

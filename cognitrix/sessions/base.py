@@ -55,6 +55,7 @@ COMPACT_KEEP_TURNS = 4
 # return hundreds of KB; the chat UI only shows a preview in the collapsible.
 _TOOL_PREVIEW_MAX = 4000
 _MALFORMED_TOOL_LABEL = 'Malformed tool call'
+_STOPPED_TOOL_TEXT = 'Stopped by user.'
 
 
 def _tool_preview(data: Any) -> str:
@@ -76,6 +77,26 @@ def _tool_preview(data: Any) -> str:
     if len(s) > _TOOL_PREVIEW_MAX:
         return s[:_TOOL_PREVIEW_MAX] + f"\n… (truncated, {len(s)} chars total)"
     return s
+
+
+def _stopped_tool_messages(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build terminal results for tool calls left unresolved by cancellation."""
+    stopped = []
+    for tool_call in tool_calls:
+        stopped.append({
+            'role': 'tool',
+            'tool_call_id': tool_call.get('tool_call_id'),
+            'content': _STOPPED_TOOL_TEXT,
+            'outcome': {
+                'status': 'stopped',
+                'text': _STOPPED_TOOL_TEXT,
+                'artifacts': [],
+                'entities': [],
+                'warnings': [],
+                'error': None,
+            },
+        })
+    return stopped
 
 
 class Session(Model):
@@ -297,7 +318,7 @@ class Session(Model):
         active_tools = formatted_tools if agent.llm.supports_tool_use else None
 
         tool_rounds = 0
-        turn_call_counts: dict[str, int] = {}
+        active_tool_calls: list[dict[str, Any]] = []
         last_denied_sig = None
         stop_turn = False
         try:
@@ -346,6 +367,7 @@ class Session(Model):
                                     await output({'type': wsquery.get('type'), 'content': response.llm_response, 'action': wsquery.get('action'), 'complete': False})
 
                         if response.tool_calls and not called_tools:
+                            active_tool_calls = response.tool_calls
                             # (interface is threaded into call_tools so approval uses
                             # the right channel — CLI prompts, web/ws deny for now.)
                             # Record the assistant message that ISSUED the tool calls
@@ -391,15 +413,68 @@ class Session(Model):
                                 result: dict[Any, Any] | str = await agent.call_tools(
                                     response.tool_calls,
                                     interface=interface,
-                                    call_counts=turn_call_counts,
                                 )
+                            except asyncio.CancelledError as exc:
+                                # call_tools records outcomes incrementally. Keep
+                                # completed siblings (including artifacts) and
+                                # leave only unresolved calls for the outer stop
+                                # handler to close with a stopped result.
+                                completed_by_index = getattr(
+                                    exc, 'completed_results_by_index', None
+                                )
+                                if isinstance(completed_by_index, dict):
+                                    terminal_messages: list[dict[str, Any]] = []
+                                    for i, tool_call in enumerate(active_tool_calls):
+                                        completed_entry = completed_by_index.get(i)
+                                        if completed_entry is None:
+                                            terminal_messages.extend(
+                                                _stopped_tool_messages([tool_call])
+                                            )
+                                            continue
+                                        processed = agent.process_prompt({
+                                            'type': 'tool_calls_result',
+                                            'result': [completed_entry],
+                                        })
+                                        if isinstance(processed, list):
+                                            terminal_messages.extend(processed)
+                                        else:
+                                            terminal_messages.append(processed)
+                                    if terminal_messages:
+                                        self.update_history(terminal_messages)
+                                    active_tool_calls = []
+                                else:
+                                    # Compatibility fallback for a cancellation
+                                    # raised outside AgentManager.call_tools.
+                                    completed = getattr(exc, 'completed_result', None)
+                                    if (
+                                        isinstance(completed, dict)
+                                        and completed.get('type') == 'tool_calls_result'
+                                        and completed.get('result')
+                                    ):
+                                        self.update_history(agent.process_prompt(completed))
+                                    unresolved = getattr(
+                                        exc, 'unresolved_tool_calls', None
+                                    )
+                                    if unresolved is not None:
+                                        active_tool_calls = unresolved
+                                raise
                             finally:
                                 reset_execution_context(execution_token)
                                 reset_session(artifact_token)
                             called_tools = True
                             tool_rounds += 1
+                            is_tool_result = (
+                                isinstance(result, dict)
+                                and result.get('type') == 'tool_calls_result'
+                            )
+                            if is_tool_result:
+                                # Persist protocol results before any awaited UI
+                                # emission, so a transport cancellation cannot
+                                # relabel completed calls as stopped.
+                                self.update_history(agent.process_prompt(result))
+                                active_tool_calls = []
                             if interface in ('web', 'ws'):
-                                result_list = result['result'] if isinstance(result, dict) and result.get('type') == 'tool_calls_result' else []
+                                result_list = result['result'] if is_tool_result else []
                                 for i, (name, tcid, _args) in enumerate(tool_meta):
                                     item = result_list[i] if i < len(result_list) else {}
                                     data = item.get('data', '')
@@ -413,10 +488,7 @@ class Session(Model):
                                                   'outcome': outcome,
                                                   'artifacts': (outcome or {}).get('artifacts', [])})
 
-                            if isinstance(result, dict) and result['type'] == 'tool_calls_result':
-                                # If a tool call has a result, add it to history and rebuild the prompt
-                                self.update_history(agent.process_prompt(result))
-
+                            if is_tool_result:
                                 # Deny-loop breaker: if every call in the batch was
                                 # blocked and the model re-issues the exact same
                                 # batch, stop instead of re-prompting for approval
@@ -550,6 +622,18 @@ class Session(Model):
                 except Exception as e:
                     logger.error(f"Failed to add to memory: {e}")
 
+        except asyncio.CancelledError:
+            if save_history:
+                stopped_messages = _stopped_tool_messages(active_tool_calls)
+                if stopped_messages:
+                    self.update_history(stopped_messages)
+                try:
+                    # Preserve the protocol-closing tool results before the
+                    # transport reports the stopped turn to the client.
+                    await asyncio.shield(self.save())
+                except Exception:
+                    logger.exception("Failed to persist stopped tool results")
+            raise
         except Exception as e:
             logger.exception(e)
 

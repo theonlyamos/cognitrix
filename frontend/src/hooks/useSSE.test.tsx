@@ -10,6 +10,59 @@ describe('useSSE cleanup', () => {
     vi.useRealTimers();
   });
 
+  it('uses one stable stream id for the SSE connection and reconnects', async () => {
+    const reader = {
+      cancel: vi.fn().mockResolvedValue(undefined),
+      read: vi.fn(() => new Promise(() => undefined)),
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      body: { getReader: () => reader },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    localStorage.setItem('token', 'test-token');
+
+    const { result } = renderHook(() => useSSE({ agentId: 'agent-1', autoReconnect: false }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    expect(result.current.streamId).toBeTruthy();
+    const firstUrl = String(fetchMock.mock.calls[0][0]);
+    expect(firstUrl).toContain(`agent_id=agent-1`);
+    expect(firstUrl).toContain(`stream_id=${encodeURIComponent(result.current.streamId)}`);
+
+    act(() => result.current.reconnect());
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(String(fetchMock.mock.calls[1][0])).toContain(
+      `stream_id=${encodeURIComponent(result.current.streamId)}`,
+    );
+  });
+
+  it('forwards the stopped-turn terminal event to the chat consumer', async () => {
+    const encoder = new TextEncoder();
+    const reader = {
+      cancel: vi.fn().mockResolvedValue(undefined),
+      read: vi.fn()
+        .mockResolvedValueOnce({
+          done: false,
+          value: encoder.encode('data: {"type":"turn_stopped","session_id":"session-1"}\n\n'),
+        })
+        .mockResolvedValueOnce({ done: true, value: undefined }),
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      body: { getReader: () => reader },
+    }));
+    localStorage.setItem('token', 'test-token');
+    const onMessage = vi.fn();
+
+    renderHook(() => useSSE({ onMessage, autoReconnect: false }));
+
+    await waitFor(() => expect(onMessage).toHaveBeenCalledWith({
+      type: 'turn_stopped',
+      session_id: 'session-1',
+    }));
+  });
+
   it('consumes pending read and cancellation rejections when the connection unmounts', async () => {
     const cancelCatch = vi.fn().mockResolvedValue(undefined);
     const readCatch = vi.fn();

@@ -44,4 +44,72 @@ describe('SessionContext tool calls', () => {
 
     expect(result.current.messages).toEqual([]);
   });
+
+  it('keeps an unmatched successful artifact completion visible', () => {
+    const { result } = renderHook(() => useSession(), { wrapper });
+
+    act(() => {
+      result.current.resolveToolCall('Generate Image', 'done', {
+        id: 'image-1',
+        result: 'Image generated.',
+        artifacts: [{ id: 'artifact-1', mime_type: 'image/png', filename: 'image.png' }],
+      });
+    });
+
+    expect(result.current.messages).toEqual([
+      expect.objectContaining({
+        role: 'tool',
+        tools: [expect.objectContaining({
+          id: 'image-1',
+          name: 'Generate Image',
+          status: 'done',
+          artifacts: [{ id: 'artifact-1', mime_type: 'image/png', filename: 'image.png' }],
+        })],
+      }),
+    ]);
+  });
+
+  it('marks only running tools as stopped while preserving completed tools', () => {
+    const { result } = renderHook(() => useSession(), { wrapper });
+
+    act(() => {
+      result.current.addToolCall('Generate Image', { id: 'image-1' });
+      result.current.addToolCall('Search docs', { id: 'search-1' });
+      result.current.resolveToolCall('Search docs', 'done', {
+        id: 'search-1',
+        result: 'Found it',
+      });
+      result.current.stopRunningTools();
+    });
+
+    expect(result.current.messages[0].tools).toEqual([
+      expect.objectContaining({
+        id: 'image-1',
+        status: 'stopped',
+        result: 'Stopped by user.',
+      }),
+      expect.objectContaining({
+        id: 'search-1',
+        status: 'done',
+        result: 'Found it',
+      }),
+    ]);
+  });
+
+  it('marks only running tools as failed after a terminal turn error', () => {
+    const { result } = renderHook(() => useSession(), { wrapper });
+
+    act(() => {
+      result.current.addToolCall('Search docs', { id: 'search-1' });
+      result.current.failRunningTools('Provider disconnected');
+    });
+
+    expect(result.current.messages[0].tools).toEqual([
+      expect.objectContaining({
+        id: 'search-1',
+        status: 'error',
+        result: 'Provider disconnected',
+      }),
+    ]);
+  });
 });
