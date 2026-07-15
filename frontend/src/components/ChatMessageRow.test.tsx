@@ -21,6 +21,9 @@ const homeHarness = vi.hoisted(() => ({
 
 const markdownRender = vi.fn();
 const scrollIntoViewMock = vi.fn();
+const apiGet = vi.hoisted(() => vi.fn());
+
+vi.mock('@/lib/api', () => ({ api: { get: apiGet } }));
 
 vi.mock('@/components/MarkdownMessage', () => ({
   default: ({ content }: { content: string }) => {
@@ -68,6 +71,9 @@ describe('ChatMessageRow', () => {
     localStorage.setItem('selectedAgentId', 'agent-1');
     localStorage.setItem('chatSession:agent-1', '');
     Element.prototype.scrollIntoView = scrollIntoViewMock;
+    apiGet.mockReset();
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn() });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
   });
 
   it('does not rerender completed markdown when parent state changes', async () => {
@@ -194,6 +200,40 @@ describe('ChatMessageRow', () => {
 
     const summary = screen.getByText('read file').closest('summary');
     expect(summary).toHaveClass('min-h-11', 'sm:min-h-0');
+  });
+
+  it('shows generated images outside the closed tool details', async () => {
+    apiGet.mockResolvedValue({ data: new Blob(['image'], { type: 'image/png' }) });
+    vi.mocked(URL.createObjectURL).mockReturnValue('blob:generated');
+    const { ChatMessageRow } = await import('@/components/ChatMessageRow');
+    const toolMessage: ChatMessage = {
+      id: 'tool-image', role: 'tool', content: '',
+      tools: [{
+        id: 'generate-1', name: 'generate_image', status: 'done',
+        artifacts: [{ id: 'artifact-1', mime_type: 'image/png', filename: 'result.png' }],
+      }],
+    };
+    render(<ChatMessageRow message={toolMessage} isLast streaming={false} />);
+
+    const image = await screen.findByRole('img', { name: 'Generated image' });
+    expect(image).toHaveAttribute('src', 'blob:generated');
+    expect(image.closest('a')).toHaveAttribute('download', 'result.png');
+    expect(image.closest('details')).toBeNull();
+  });
+
+  it('shows an artifact error with a retry action', async () => {
+    apiGet.mockRejectedValue(new Error('nope'));
+    const { ChatMessageRow } = await import('@/components/ChatMessageRow');
+    const toolMessage: ChatMessage = {
+      id: 'tool-error', role: 'tool', content: '',
+      tools: [{
+        name: 'generate_image', status: 'error',
+        artifacts: [{ id: 'artifact-2', mime_type: 'image/png' }],
+      }],
+    };
+    render(<ChatMessageRow message={toolMessage} isLast streaming={false} />);
+    expect(await screen.findByText('Generated image unavailable.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry image' })).toBeInTheDocument();
   });
 
   it('keeps markdown packages behind the Home route boundary', () => {

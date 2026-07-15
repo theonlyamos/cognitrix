@@ -85,11 +85,13 @@ def _template_plan(task: 'Task') -> list[dict[str, Any]]:
         # Hand-edited data with non-numeric keys — degrade to string order
         # instead of failing the whole run.
         keys = sorted(si, key=str)
-    return [
-        _new_step(i, str(si[k].get('step', '')), str(si[k].get('step', '')),
-                  [i - 1] if i > 0 else [])
-        for i, k in enumerate(keys)
-    ]
+    plan = []
+    for i, key in enumerate(keys):
+        raw = si[key]
+        instruction = str(raw.get('step') or raw.get('description') or '')
+        title = str(raw.get('step_title') or instruction)
+        plan.append(_new_step(i, title, instruction, [i - 1] if i > 0 else []))
+    return plan
 
 
 async def _planner_plan(task: 'Task', roster: list[Agent], leader: Agent) -> list[dict[str, Any]]:

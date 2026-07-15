@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from cognitrix.artifacts import delete_session_artifacts
 from cognitrix.common.security import crud_scope, jwt_only
 from cognitrix.sessions.base import Session
 
@@ -69,6 +70,7 @@ async def delete_session(session_id: str):
 
     # remove()/delete_one emit DELETE ... LIMIT on sqlite, which it rejects;
     # delete_many works (same fix as agents/tasks/teams).
+    await delete_session_artifacts(str(session.id))
     await Session.delete_many({'id': session_id})
     return JSONResponse({"message": "Session deleted successfully"})
 
@@ -105,6 +107,7 @@ async def delete_chat(session_id: str):
 
     session.chat = []
     await session.save()
+    await delete_session_artifacts(str(session.id))
     return JSONResponse({"message": "Chat deleted successfully"})
 
 # List endpoints return summaries, not full sessions: every session carries its

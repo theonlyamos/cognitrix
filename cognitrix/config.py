@@ -1,7 +1,8 @@
 import logging
 import os
 import secrets
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -308,14 +309,12 @@ async def _ensure_schema():
 
     log = _logging.getLogger('cognitrix.log')
 
-    if getattr(DBMS.Database, 'dbms', '') != 'sqlite':
-        return
-
+    from cognitrix.artifacts import Artifact
     from cognitrix.models.api_key import APIKey
     from cognitrix.tasks.events import TaskRunEvent
     from cognitrix.tasks.run import TaskRun
 
-    for model in (TaskRun, TaskRunEvent, APIKey):
+    for model in (TaskRun, TaskRunEvent, APIKey, Artifact):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)
             if create is not None:
@@ -325,6 +324,9 @@ async def _ensure_schema():
         except Exception:
             log.exception("Could not create %s table", model.__name__)
 
+    if getattr(DBMS.Database, 'dbms', '') != 'sqlite':
+        return
+
     try:
         await DBMS.Database.query('PRAGMA journal_mode=WAL')
         await DBMS.Database.query('PRAGMA busy_timeout=15000')
@@ -333,6 +335,7 @@ async def _ensure_schema():
 
     for table, columns in (
         ('sessions', (('run_id', 'TEXT'), ('step_index', 'INTEGER'), ('step_title', 'TEXT'))),
+        ('artifacts', (('user_id', 'TEXT'),)),
         ('tasks', (('callback_url', 'TEXT'), ('callback_key_id', 'TEXT'),
                    ('schedule_at', 'TEXT'), ('schedule_interval', 'INTEGER'),
                    ('schedule_cron', 'TEXT'), ('next_run_at', 'TEXT'),

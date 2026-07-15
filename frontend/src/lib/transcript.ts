@@ -1,4 +1,4 @@
-import type { ChatMessage } from '@/context/SessionContext';
+import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 
 /** Raw session.chat entry as the backend persists it. Roles are inconsistent
  *  in case ('User' vs 'user') and tool results carry no `type` — parse, don't
@@ -10,6 +10,7 @@ export interface BackendChatEntry {
   content?: unknown;
   tool_calls?: { name?: string; arguments?: unknown; tool_call_id?: string | null }[];
   tool_call_id?: string | null;
+  outcome?: { status?: unknown; artifacts?: unknown };
   duration?: number;
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
@@ -21,6 +22,7 @@ export type TranscriptTool = {
   args: string;
   result?: string;
   status?: 'running' | 'done' | 'error';
+  artifacts?: ToolArtifact[];
 };
 
 export type TranscriptEntry =
@@ -44,16 +46,34 @@ const safeArgs = (v: unknown): string => {
   }
 };
 
+const safeArtifacts = (value: unknown): ToolArtifact[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const artifacts = value.filter((item): item is ToolArtifact => {
+    if (!item || typeof item !== 'object') return false;
+    const candidate = item as Record<string, unknown>;
+    return typeof candidate.id === 'string' && candidate.id.length > 0
+      && typeof candidate.mime_type === 'string' && candidate.mime_type.length > 0
+      && (candidate.filename === undefined || typeof candidate.filename === 'string')
+      && (candidate.width === undefined || typeof candidate.width === 'number')
+      && (candidate.height === undefined || typeof candidate.height === 'number');
+  });
+  return artifacts.length ? artifacts : undefined;
+};
+
 /** Map raw backend chat entries to render-ready transcript entries. Unknown
  *  shapes fall back to `system` so future entry types degrade gracefully. */
 export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): TranscriptEntry[] {
   const out: TranscriptEntry[] = [];
   // Tool results are separate `role: 'tool'` messages; index them by
   // tool_call_id so each tool call can carry its own result for display.
-  const resultsById: Record<string, string> = {};
+  const resultsById: Record<string, { content: string; status: 'done' | 'error'; artifacts?: ToolArtifact[] }> = {};
   for (const m of chat || []) {
     if (String(m.role || '').toLowerCase() === 'tool' && m.tool_call_id) {
-      resultsById[m.tool_call_id] = asText(m.content);
+      resultsById[m.tool_call_id] = {
+        content: asText(m.content),
+        status: m.outcome?.status === 'success' || !m.outcome ? 'done' : 'error',
+        artifacts: safeArtifacts(m.outcome?.artifacts),
+      };
     }
   }
   const pairedResultIds = new Set<string>();
@@ -93,8 +113,9 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
             id: tool.tool_call_id || undefined,
             name: tool.name || 'tool',
             args: safeArgs(tool.arguments),
-            result,
-            status: result === undefined ? undefined : 'done',
+            result: result?.content,
+            status: result?.status,
+            artifacts: result?.artifacts,
           };
         }),
       });
@@ -133,7 +154,13 @@ export function toChatMessages(entries: TranscriptEntry[]): ChatMessage[] {
           id: `hist-${out.length}`,
           role: 'tool',
           content: '',
-          tools: e.tools.map((t) => ({ name: t.name, status: 'done' as const, params: t.args, result: t.result })),
+          tools: e.tools.map((t) => ({
+            name: t.name,
+            status: t.status ?? 'error',
+            params: t.args,
+            result: t.result,
+            artifacts: t.artifacts,
+          })),
         });
     }
   }

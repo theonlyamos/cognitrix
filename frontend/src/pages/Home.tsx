@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
-import { useSession } from '@/context/SessionContext';
+import { useSession, type ToolArtifact } from '@/context/SessionContext';
 import { MobileSheet } from '@/components/MobileSheet';
 import { SelectionRow } from '@/components/SelectionRow';
 import { useSSE } from '@/hooks/useSSE';
@@ -366,7 +366,7 @@ export default function Home() {
   }, [agentId, convos, convosSorted, loadConversation, resetThreadState]);
 
   const handleSSEEvent = useCallback(
-    (event: { type: string; content?: string; action?: string; session_id?: string; tool_name?: string; status?: string; tool_call_id?: string; params?: string; result?: string }) => {
+    (event: { type: string; content?: string; action?: string; session_id?: string; tool_name?: string; status?: string; tool_call_id?: string; params?: string; result?: string; artifacts?: ToolArtifact[] }) => {
       const sid = event.session_id;
       // Drop only events that CARRY a mismatched id — untagged events (status,
       // transport errors) always belong to the active turn since switching is
@@ -423,7 +423,7 @@ export default function Home() {
             if (event.status === 'started')
               addToolCall(event.tool_name, { id: event.tool_call_id, params: event.params });
             else
-              resolveToolCall(event.tool_name, event.status === 'error' ? 'error' : 'done', { id: event.tool_call_id, result: event.result });
+              resolveToolCall(event.tool_name, event.status === 'error' ? 'error' : 'done', { id: event.tool_call_id, result: event.result, artifacts: event.artifacts });
           }
           break;
         case 'approval_request': {

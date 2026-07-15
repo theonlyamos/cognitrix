@@ -9,11 +9,13 @@ from rich import print
 
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 from cognitrix.models import Agent, Message, Tool
+from cognitrix.models.tool import MCPTool
 from cognitrix.providers.base import LLM
 from cognitrix.safety.approval_gate import OPERATION_BLOCKED_PREFIX, ApprovalGate, ToolCall
 from cognitrix.safety.destructive_ops import DestructiveOpDetector
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
+from cognitrix.tools.utils import ToolCallResult, ToolOutcome
 from cognitrix.utils import extract_json
 from cognitrix.utils.llm_response import LLMResponse
 
@@ -38,6 +40,25 @@ def _truncate_tool_result(content: str) -> str:
         content[:MAX_TOOL_RESULT_CHARS]
         + f"\n[truncated {dropped} chars — re-run the tool with a narrower range if you need more]"
     )
+
+
+def _tool_outcome(value: Any) -> ToolOutcome:
+    """Normalize legacy tool values into the stable public result contract."""
+    if isinstance(value, ToolCallResult) and value.outcome:
+        return value.outcome
+    return ToolOutcome.success(str(value))
+
+
+def _tool_result_entry(tool_call_id: str | None, outcome: ToolOutcome) -> dict[str, Any]:
+    return {
+        'tool_call_id': tool_call_id,
+        # `data` remains the compact, provider-compatible model-facing text.
+        'data': outcome.text,
+        # Preserve the legacy flag for callers that have not migrated to the
+        # richer outcome contract yet.
+        'success': outcome.status == 'success',
+        'outcome': outcome.model_dump(),
+    }
 
 class MessagePriority(Enum):
     LOW = 1
@@ -196,14 +217,21 @@ class AgentManager:
                         if isinstance(r, dict):
                             tool_call_id = r.get('tool_call_id')
                             content = str(r.get('data', ''))
+                            outcome = r.get('outcome')
                         else:
                             tool_call_id = None
                             content = str(r)
-                        tool_messages.append({
+                            outcome = None
+                        message = {
                             'role': 'tool',
                             'tool_call_id': tool_call_id,
                             'content': _truncate_tool_result(content)
-                        })
+                        }
+                        # Extra structured data is ignored by provider formatters
+                        # but keeps session reloads/UI transports artifact-aware.
+                        if outcome:
+                            message['outcome'] = outcome
+                        tool_messages.append(message)
                     # Return list of tool messages instead of single prompt
                     return tool_messages
                 else:
@@ -247,12 +275,15 @@ class AgentManager:
         return next((agent for agent in self.agent.sub_agents if agent.name.lower() == name.lower()), None)
 
     def get_tool_by_name(self, name: str) -> Tool | None:
-        return next((tool for tool in self.agent.tools if tool.name.lower() == name.lower()), None)
+        normalized = name.casefold().replace('_', ' ')
+        return next((tool for tool in self.agent.tools
+                     if tool.name.casefold().replace('_', ' ') == normalized), None)
 
     async def call_tools(
         self,
         tool_calls: dict[str, Any] | list[dict[str, Any]],
-        interface: str = 'cli'
+        interface: str = 'cli',
+        call_counts: dict[str, int] | None = None,
     ) -> dict[str, Any] | str:
         """Execute tool calls with safety checks and retry logic."""
         try:
@@ -268,6 +299,7 @@ class AgentManager:
             results_by_index: dict[int, dict[str, Any]] = {}
             tasks = []
             task_indices = []
+            calls_by_tool = call_counts if call_counts is not None else {}
 
             for i, t in enumerate(agent_tool_calls):
                 tc_id = t.get('tool_call_id')
@@ -275,27 +307,61 @@ class AgentManager:
                 args = t.get('arguments', {}) or {}
 
                 if not name:
-                    results_by_index[i] = {
-                        'tool_call_id': tc_id,
-                        'data': "Error: malformed tool call (no name)",
-                        'success': False,
-                    }
+                    results_by_index[i] = _tool_result_entry(
+                        tc_id, ToolOutcome.failure('malformed_tool_call', 'Error: malformed tool call (no name)')
+                    )
                     continue
 
-                tool = ToolManager.get_by_name(name)
-                if not tool:
-                    results_by_index[i] = {
-                        'tool_call_id': tc_id,
-                        'data': f"Error: Tool '{name}' not found",
-                        'success': False,
-                    }
+                # A tool being registered makes it discoverable to the app, not
+                # automatically available to every agent.  Resolve exclusively
+                # from the agent's assigned allowlist before doing any safety
+                # checks or execution.
+                assigned_tool = self.get_tool_by_name(name)
+                if not assigned_tool:
+                    results_by_index[i] = _tool_result_entry(
+                        tc_id,
+                        ToolOutcome.failure(
+                            'tool_not_assigned', f"Error: Tool '{name}' is not assigned to this agent", denied=True
+                        ),
+                    )
+                    continue
+
+                tool = assigned_tool if isinstance(assigned_tool, MCPTool) else (
+                    ToolManager.get_by_name(name) or assigned_tool
+                )
+
+                if assigned_tool.supported_interfaces and interface not in assigned_tool.supported_interfaces:
+                    results_by_index[i] = _tool_result_entry(
+                        tc_id,
+                        ToolOutcome.failure(
+                            'unsupported_interface',
+                            f"Tool '{tool.name}' is not available from the {interface} interface",
+                            denied=True,
+                        ),
+                    )
+                    continue
+
+                count_key = assigned_tool.name.casefold().replace('_', ' ')
+                calls_by_tool[count_key] = calls_by_tool.get(count_key, 0) + 1
+                if (assigned_tool.max_calls_per_turn is not None
+                        and calls_by_tool[count_key] > assigned_tool.max_calls_per_turn):
+                    results_by_index[i] = _tool_result_entry(
+                        tc_id,
+                        ToolOutcome.failure(
+                            'tool_turn_limit',
+                            f"Tool '{assigned_tool.name}' may be called only {assigned_tool.max_calls_per_turn} time(s) per turn",
+                            denied=True,
+                        ),
+                    )
                     continue
 
                 # Safety check
-                tool_call = ToolCall(tool_name=tool.name, params=args)
-                risk = self.detector.analyze(tool.name, args)
+                tool_call = ToolCall(tool_name=assigned_tool.name, params=args)
+                risk = self.detector.analyze(assigned_tool.name, args)
 
-                if risk.risk_level.value in ['medium', 'high']:
+                if assigned_tool.approval_mode == 'always' or (
+                    assigned_tool.approval_mode == 'risk_based' and risk.risk_level.value in ['medium', 'high']
+                ):
                     print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
                     print(f"   Details: {risk.details}")
 
@@ -307,11 +373,14 @@ class AgentManager:
                     )
 
                     if not approval.approved:
-                        results_by_index[i] = {
-                            'tool_call_id': tc_id,
-                            'data': f"{OPERATION_BLOCKED_PREFIX}: user denied approval for {tool.name}",
-                            'success': False,
-                        }
+                        results_by_index[i] = _tool_result_entry(
+                            tc_id,
+                            ToolOutcome.failure(
+                                'approval_denied',
+                                f"{OPERATION_BLOCKED_PREFIX}: user denied approval for {tool.name}",
+                                denied=True,
+                            ),
+                        )
                         continue
 
                     if approval.cached:
@@ -333,8 +402,8 @@ class AgentManager:
                     resilient_manager.run_tool(
                         tool=tool,
                         params=args,
-                        max_retries=3,
-                        attempt_recovery=True
+                        max_retries=assigned_tool.max_attempts,
+                        attempt_recovery=assigned_tool.retryable
                     )
                 )
                 task_indices.append(i)
@@ -345,23 +414,20 @@ class AgentManager:
                 i = task_indices[j]
                 tc_id = agent_tool_calls[i].get('tool_call_id')
                 if isinstance(result, Exception):
-                    results_by_index[i] = {
-                        'tool_call_id': tc_id,
-                        'data': f"Error: {result}",
-                        'success': False,
-                    }
+                    results_by_index[i] = _tool_result_entry(
+                        tc_id, ToolOutcome.failure('tool_execution_error', f"Error: {result}", retryable=False)
+                    )
                 elif result.success:
-                    results_by_index[i] = {
-                        'tool_call_id': tc_id,
-                        'data': result.data,
-                        'success': True,
-                    }
+                    results_by_index[i] = _tool_result_entry(tc_id, _tool_outcome(result.data))
                 else:
-                    results_by_index[i] = {
-                        'tool_call_id': tc_id,
-                        'data': f"Error: {result.error} (attempted {result.attempts} times)",
-                        'success': False,
-                    }
+                    results_by_index[i] = _tool_result_entry(
+                        tc_id,
+                        ToolOutcome.failure(
+                            'tool_execution_error',
+                            f"Error: {result.error} (attempted {result.attempts} times)",
+                            retryable=False,
+                        ),
+                    )
 
             results = [results_by_index[i] for i in range(len(agent_tool_calls))]
             return {
@@ -508,9 +574,11 @@ Agent.manager = property(_agent_manager)
 Agent.process_prompt = lambda self, query, role='User': AgentManager(self).process_prompt(query, role)  # type: ignore[attr-defined]
 
 
-async def _agent_call_tools(self, tool_calls, interface='cli'):
+async def _agent_call_tools(self, tool_calls, interface='cli', call_counts=None):
     """Delegate call_tools to AgentManager."""
-    return await AgentManager(self).call_tools(tool_calls, interface=interface)
+    return await AgentManager(self).call_tools(
+        tool_calls, interface=interface, call_counts=call_counts
+    )
 
 
 Agent.call_tools = _agent_call_tools  # type: ignore[attr-defined]

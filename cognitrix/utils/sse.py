@@ -9,6 +9,7 @@ from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.agents.generators import TaskInstructor
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
+from cognitrix.tools.utils import ToolExecutionContext
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -244,6 +245,7 @@ class SSEManager:
                                     interface='web', stream=True, output=_emit,
                                     wsquery={'type': 'generate', 'action': 'chat_message'},
                                     attachments=_att,
+                                    tool_context=ToolExecutionContext(user_id=self.user_key),
                                 )
                             except Exception as e:
                                 logger.exception("SSE session turn failed")
