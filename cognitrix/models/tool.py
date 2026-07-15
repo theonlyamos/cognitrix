@@ -38,9 +38,6 @@ class Tool(Model):
     max_attempts: int = 3
     """Maximum provider/runtime attempts for a single call."""
 
-    max_calls_per_turn: int | None = None
-    """Optional per-agent-turn cap, used for side-effecting tools."""
-
     supported_interfaces: list[str] | None = None
     """Runtime interfaces allowed to execute this capability, or all when None."""
 

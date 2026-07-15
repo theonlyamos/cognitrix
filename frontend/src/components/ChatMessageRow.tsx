@@ -39,6 +39,8 @@ export const ChatMessageRow = memo(function ChatMessageRow({ message, isLast, st
                   <span className="think-bars"><i /><i /><i /></span>
                 ) : tool.status === 'error' ? (
                   <span className="text-danger-ink" aria-hidden>✗</span>
+                ) : tool.status === 'stopped' ? (
+                  <span className="text-fg-dim" aria-hidden>■</span>
                 ) : (
                   <span className="text-accent-ink" aria-hidden>✓</span>
                 )}
@@ -48,6 +50,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({ message, isLast, st
                 {tool.status === 'running' && <span className="text-fg-dim">running…</span>}
                 {tool.status === 'done' && <span className="sr-only">Completed</span>}
                 {tool.status === 'error' && <span className="sr-only">Failed</span>}
+                {tool.status === 'stopped' && <span className="sr-only">Stopped</span>}
                 <svg className="ml-0.5 text-fg-dim transition-transform group-open:rotate-90" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
               </summary>
               <div className="mt-1.5 space-y-2 rounded border border-line bg-panel-2 p-2 font-mono text-[11px]">

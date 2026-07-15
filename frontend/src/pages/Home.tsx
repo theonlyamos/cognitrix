@@ -25,6 +25,7 @@ interface ConvoSummary {
 }
 
 const sessionKey = (agentId: string) => `chatSession:${agentId}`;
+const STOP_RECONCILE_DELAY_MS = 4_000;
 
 // ── Attachments ──
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -96,10 +97,12 @@ const downscaleImage = async (file: File): Promise<string> => {
 const dataUrlBytes = (dataUrl: string) => Math.floor(((dataUrl.split(',')[1] || '').length * 3) / 4);
 
 export default function Home() {
-  const { messages, addMessage, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, clearMessages, setMessages } = useSession();
+  const { messages, addMessage, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, stopRunningTools, failRunningTools, clearMessages, setMessages } = useSession();
   const [input, setInput] = useState('');
   const [waiting, setWaiting] = useState(false); // sent, before first token
   const [streaming, setStreaming] = useState(false); // actively streaming a reply
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
   const [planning, setPlanning] = useState<string | null>(null); // transient status (e.g. multi-step)
   const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
   const mobileConversationsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -223,6 +226,18 @@ export default function Home() {
   waitingRef.current = waiting;
 
   const busy = waiting || streaming;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const turnGenerationRef = useRef(0);
+  const stopFallbackRef = useRef<number | null>(null);
+  const clearStopFallback = useCallback(() => {
+    if (stopFallbackRef.current !== null) {
+      window.clearTimeout(stopFallbackRef.current);
+      stopFallbackRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearStopFallback, [clearStopFallback]);
 
   // Default to the first agent once the list loads (or if the saved one is gone).
   useEffect(() => {
@@ -298,12 +313,17 @@ export default function Home() {
   }, []);
 
   const resetThreadState = useCallback(() => {
+    clearStopFallback();
+    turnGenerationRef.current += 1;
     clearMessages();
     setWaiting(false);
     setStreaming(false);
+    setStopping(false);
+    setStopError(null);
     setPlanning(null);
     setApprovals([]);
-  }, [clearMessages]);
+    setIsStreaming(false);
+  }, [clearMessages, clearStopFallback, setIsStreaming]);
 
   const adoptSession = useCallback(
     (id: string | null) => {
@@ -318,23 +338,53 @@ export default function Home() {
   );
 
   const loadConversation = useCallback(
-    async (id: string) => {
+    async (id: string, expectedGeneration?: number) => {
       try {
         const res = await api.get(`/sessions/${id}/chat`);
+        if (
+          expectedGeneration !== undefined
+          && turnGenerationRef.current !== expectedGeneration
+        ) return false;
         adoptSession(id);
         setMessages(toChatMessages(parseChatEntries(res.data)));
         setWaiting(false);
         setStreaming(false);
+        setStopping(false);
+        setStopError(null);
         setPlanning(null);
+        setApprovals([]);
+        setIsStreaming(false);
         return true;
       } catch {
         // Deleted/stale id — clear it and let the caller fall back.
+        if (
+          expectedGeneration !== undefined
+          && turnGenerationRef.current !== expectedGeneration
+        ) return false;
         if (agentId) localStorage.removeItem(sessionKey(agentId));
         return false;
       }
     },
-    [adoptSession, agentId, setMessages],
+    [adoptSession, agentId, setIsStreaming, setMessages],
   );
+
+  const finishTurn = useCallback((
+    reason: 'complete' | 'stopped' | 'error' = 'complete',
+    errorResult?: string,
+  ) => {
+    clearStopFallback();
+    turnGenerationRef.current += 1;
+    setStreaming(false);
+    setWaiting(false);
+    setStopping(false);
+    setStopError(null);
+    setIsStreaming(false);
+    setPlanning(null);
+    setApprovals([]);
+    if (reason === 'stopped') stopRunningTools();
+    else if (reason === 'error') failRunningTools(errorResult);
+    void refetchConvos({ silent: true });
+  }, [clearStopFallback, failRunningTools, refetchConvos, setIsStreaming, stopRunningTools]);
 
   // Restore the last-active conversation when the agent resolves or changes.
   // Waits for the conversation list so the stored id can be validated against
@@ -388,19 +438,17 @@ export default function Home() {
             setWaiting(false);
             setStreaming(true);
             setPlanning(null);
-          } else {
-            // final empty chunk = stream complete
-            setStreaming(false);
-            setWaiting(false);
-            refetchConvos({ silent: true });
           }
+          break;
+        case 'turn_complete':
+          finishTurn();
+          break;
+        case 'turn_stopped':
+          finishTurn('stopped');
           break;
         case 'multistep_result':
           if (event.content) appendToLastMessage(event.content);
-          setWaiting(false);
-          setStreaming(false);
-          setPlanning(null);
-          refetchConvos({ silent: true });
+          finishTurn();
           break;
         case 'status':
           // transient indicator (e.g. "Planning multi-step task…") — NOT a message
@@ -412,9 +460,7 @@ export default function Home() {
             localStorage.removeItem(sessionKey(agentId));
             setActiveSessionId(null);
           }
-          setWaiting(false);
-          setStreaming(false);
-          setPlanning(null);
+          finishTurn('error', event.content);
           break;
         case 'tool':
           // The agent invoked a tool — show it running with its params, then flip
@@ -439,13 +485,13 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, addMessage, addToolCall, resolveToolCall, agentId, refetchConvos],
+    [appendToLastMessage, addMessage, addToolCall, resolveToolCall, agentId, finishTurn],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
   // so a fresh visitor doesn't connect to the default agent then reconnect.
   const sseReady = !!agentId || (!agentsLoading && agents.length === 0);
-  const { isConnected, error, reconnect } = useSSE({
+  const { isConnected, error, reconnect, streamId } = useSSE({
     onMessage: handleSSEEvent,
     onError: useCallback((e: Error) => console.error('SSE error:', e), []),
     agentId: agentId || undefined,
@@ -456,7 +502,9 @@ export default function Home() {
     async (text: string) => {
       const msg = text.trim();
       const pending = attachmentsRef.current;
-      if ((!msg && pending.length === 0) || waiting) return;
+      if (!isConnected || (!msg && pending.length === 0) || busy) return;
+      clearStopFallback();
+      turnGenerationRef.current += 1;
       // Keep a record of what was attached in the visible user message.
       const shown = pending.length
         ? `${msg}${msg ? '\n' : ''}📎 ${pending.map((a) => a.name).join(', ')}`
@@ -467,12 +515,15 @@ export default function Home() {
       setUploadError(null);
       setWaiting(true);
       setStreaming(false);
+      setStopping(false);
+      setStopError(null);
       setPlanning(null);
       setIsStreaming(true);
       try {
         await api.post('/agents/chat', {
           message: msg,
           ...(agentId ? { agent_id: agentId } : {}),
+          ...(streamId ? { stream_id: streamId } : {}),
           // No id on a fresh thread: the server creates the session and the
           // client adopts its id from the first tagged SSE event.
           ...(activeSessionId ? { session_id: activeSessionId } : {}),
@@ -483,13 +534,46 @@ export default function Home() {
         });
       } catch {
         addMessage('assistant', 'Unable to reach the agent. Check the connection and try again.');
-        setWaiting(false);
-      } finally {
-        setIsStreaming(false);
+        finishTurn();
       }
     },
-    [waiting, addMessage, setIsStreaming, agentId, activeSessionId],
+    [busy, addMessage, clearStopFallback, finishTurn, isConnected, setIsStreaming, agentId, activeSessionId, streamId],
   );
+
+  const stop = useCallback(async () => {
+    if (!busy || stopping) return;
+    const generation = turnGenerationRef.current;
+    setStopping(true);
+    setStopError(null);
+    clearStopFallback();
+    stopFallbackRef.current = window.setTimeout(() => {
+      stopFallbackRef.current = null;
+      if (turnGenerationRef.current !== generation) return;
+      const sessionId = activeRef.current;
+      finishTurn('stopped');
+      const terminalGeneration = turnGenerationRef.current;
+      if (sessionId) void loadConversation(sessionId, terminalGeneration);
+    }, STOP_RECONCILE_DELAY_MS);
+    try {
+      await api.post('/agents/stop', {
+        ...(agentId ? { agent_id: agentId } : {}),
+        ...(streamId ? { stream_id: streamId } : {}),
+      });
+      if (turnGenerationRef.current !== generation || !busyRef.current) return;
+    } catch (error) {
+      if (turnGenerationRef.current !== generation) return;
+      if ((error as { response?: { status?: number } })?.response?.status === 409) {
+        const sessionId = activeRef.current;
+        finishTurn('stopped');
+        const terminalGeneration = turnGenerationRef.current;
+        if (sessionId) void loadConversation(sessionId, terminalGeneration);
+        return;
+      }
+      clearStopFallback();
+      setStopping(false);
+      setStopError('Unable to stop the response. Try again.');
+    }
+  }, [agentId, busy, clearStopFallback, finishTurn, loadConversation, stopping, streamId]);
 
   const switchConversation = (id: string) => {
     if (busy || id === activeSessionId) return;
@@ -518,7 +602,7 @@ export default function Home() {
   };
 
   const switchAgent = (id: string) => {
-    if (id === agentId) return;
+    if (busy || id === agentId) return;
     setMobileConversationsOpen(false);
     setAgentId(id);
     localStorage.setItem('selectedAgentId', id);
@@ -618,6 +702,7 @@ export default function Home() {
               <select
                 value={agentId || agents[0]?.id || ''}
                 onChange={(e) => switchAgent(e.target.value)}
+                disabled={busy}
                 aria-label="Active agent"
                 className="h-11 w-full min-w-0 appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent md:h-8"
               >
@@ -841,13 +926,18 @@ export default function Home() {
                 className="block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-12 text-sm text-fg placeholder:text-fg-dim md:min-h-0"
               />
               <button
-                onClick={() => send(input)}
-                disabled={(!input.trim() && attachments.length === 0) || waiting}
-                aria-label="Send"
-                className="absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded bg-accent text-accent-foreground transition disabled:cursor-not-allowed disabled:opacity-40 hover:brightness-105 md:h-8 md:w-8"
+                onClick={() => { if (busy) void stop(); else void send(input); }}
+                disabled={busy ? stopping : (!isConnected || (!input.trim() && attachments.length === 0))}
+                aria-label={busy ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
+                className={cn(
+                  'absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded transition disabled:cursor-not-allowed disabled:opacity-60 hover:brightness-105 md:h-8 md:w-8',
+                  busy ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
+                )}
               >
-                {waiting ? (
+                {busy && stopping ? (
                   <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
+                ) : busy ? (
+                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
                 ) : (
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12l16-8-6 16-3-6-7-2z" /></svg>
                 )}
@@ -863,6 +953,9 @@ export default function Home() {
             </div>
             {uploadError && (
               <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{uploadError}</div>
+            )}
+            {stopError && (
+              <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
             )}
             <div className="mt-2 flex items-center gap-4 font-mono text-[10.5px] text-fg-dim">
               <button

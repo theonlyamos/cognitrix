@@ -5,6 +5,7 @@ an assistant message carrying tool_calls precedes the matching tool-result
 messages, and tool results map to the correct tool_call_id.
 """
 
+import asyncio
 import json
 
 import pytest
@@ -13,6 +14,7 @@ from cognitrix.models import Agent
 from cognitrix.models.tool import Tool
 from cognitrix.providers.base import LLM, LLMManager
 from cognitrix.tools.resilient_tool_wrapper import ToolResult
+from cognitrix.tools.utils import ToolCallResult, ToolOutcome
 from cognitrix.utils.llm_response import LLMResponse
 
 
@@ -175,8 +177,8 @@ async def test_call_tools_normalizes_provider_name_and_runs_registry_implementat
 
 
 @pytest.mark.asyncio
-async def test_tool_call_limit_can_be_shared_across_rounds(monkeypatch):
-    assigned = Tool(name="Generate Image", description="d", parameters={}, max_calls_per_turn=1)
+async def test_repeated_tool_calls_are_not_limited(monkeypatch):
+    assigned = Tool(name="Generate Image", description="d", parameters={})
     agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
     monkeypatch.setattr(
         "cognitrix.agents.base.ToolManager.get_by_name", staticmethod(lambda name: assigned)
@@ -188,17 +190,314 @@ async def test_tool_call_limit_can_be_shared_across_rounds(monkeypatch):
     monkeypatch.setattr(
         "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
     )
-    counts = {}
-    first = await agent.call_tools(
-        [{"name": "Generate_Image", "arguments": {}, "tool_call_id": "1"}],
-        call_counts=counts,
+    result = await agent.call_tools([
+        {"name": "Generate_Image", "arguments": {}, "tool_call_id": "1"},
+        {"name": "Generate_Image", "arguments": {}, "tool_call_id": "2"},
+    ])
+    assert [item['outcome']['status'] for item in result['result']] == ['success', 'success']
+
+
+@pytest.mark.asyncio
+async def test_call_tools_bounds_concurrency_without_dropping_or_reordering_calls(monkeypatch):
+    import cognitrix.agents.base as agent_base
+
+    tool_names = [f"Tool {i}" for i in range(6)]
+    assigned = [Tool(name=name, description="d", parameters={}) for name in tool_names]
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=assigned)
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda name: next(tool for tool in assigned if tool.name == name)),
     )
-    second = await agent.call_tools(
-        [{"name": "Generate_Image", "arguments": {}, "tool_call_id": "2"}],
-        call_counts=counts,
+    # The production default is intentionally small, while this override makes
+    # the regression deterministic and documents the configuration surface.
+    monkeypatch.setattr(agent_base, "MAX_CONCURRENT_TOOL_CALLS", 2, raising=False)
+
+    active = 0
+    peak = 0
+    completed = []
+
+    async def fake_run_tool(self, tool, params, **kw):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        try:
+            await asyncio.sleep(0.01)
+            completed.append(tool.name)
+            return ToolResult(success=True, data=f"ran:{tool.name}")
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
     )
-    assert first['result'][0]['outcome']['status'] == 'success'
-    assert second['result'][0]['outcome']['error']['code'] == 'tool_turn_limit'
+
+    calls = [
+        {"name": name, "arguments": {}, "tool_call_id": f"call-{i}"}
+        for i, name in enumerate(tool_names)
+    ]
+    result = await agent.call_tools(calls)
+
+    assert peak <= 2
+    assert len(completed) == len(calls)
+    assert [item["tool_call_id"] for item in result["result"]] == [
+        call["tool_call_id"] for call in calls
+    ]
+    assert [item["data"] for item in result["result"]] == [
+        f"ran:{name}" for name in tool_names
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tool_concurrency_limit_is_shared_across_batches(monkeypatch):
+    import cognitrix.agents.base as agent_base
+
+    assigned = [Tool(name=f"Tool {i}", description="d", parameters={}) for i in range(4)]
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=assigned)
+    monkeypatch.setattr(agent_base, "MAX_CONCURRENT_TOOL_CALLS", 2)
+    monkeypatch.setattr(
+        agent_base.ToolManager,
+        "get_by_name",
+        staticmethod(lambda name: next(tool for tool in assigned if tool.name == name)),
+    )
+    active = 0
+    peak = 0
+
+    async def fake_run_tool(self, tool, params, **kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        try:
+            await asyncio.sleep(0.02)
+            return ToolResult(success=True, data=tool.name)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool",
+        fake_run_tool,
+    )
+    calls = [
+        {"name": tool.name, "arguments": {}, "tool_call_id": f"{batch}-{i}"}
+        for batch in ("a", "b")
+        for i, tool in enumerate(assigned)
+    ]
+
+    first, second = await asyncio.gather(
+        agent.call_tools(calls[:4]), agent.call_tools(calls[4:])
+    )
+
+    assert peak <= 2
+    assert len(first["result"]) == 4
+    assert len(second["result"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_large_tool_batch_creates_only_one_worker_per_execution_slot(monkeypatch):
+    import cognitrix.agents.base as agent_base
+
+    assigned = Tool(name="Slow Tool", description="d", parameters={})
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
+    monkeypatch.setattr(agent_base, "MAX_CONCURRENT_TOOL_CALLS", 3)
+    monkeypatch.setattr(
+        agent_base.ToolManager, "get_by_name", staticmethod(lambda _name: assigned)
+    )
+    release = asyncio.Event()
+    started = 0
+
+    async def fake_run_tool(self, tool, params, **kwargs):
+        nonlocal started
+        started += 1
+        await release.wait()
+        return ToolResult(success=True, data=params["index"])
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool",
+        fake_run_tool,
+    )
+    calls = [
+        {
+            "name": assigned.name,
+            "arguments": {"index": i},
+            "tool_call_id": f"call-{i}",
+        }
+        for i in range(50)
+    ]
+    loop = asyncio.get_running_loop()
+    original_create_task = loop.create_task
+    created_tasks = []
+
+    def counting_create_task(coro, *args, **kwargs):
+        task = original_create_task(coro, *args, **kwargs)
+        created_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(loop, "create_task", counting_create_task)
+    turn = original_create_task(agent.call_tools(calls))
+    for _ in range(100):
+        if started == 3:
+            break
+        await asyncio.sleep(0)
+
+    try:
+        assert started == 3
+        assert len(created_tasks) <= 3
+    finally:
+        release.set()
+        result = await turn
+
+    assert [item["tool_call_id"] for item in result["result"]] == [
+        call["tool_call_id"] for call in calls
+    ]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(None, 4), ("", 4), ("invalid", 4), ("0", 4), ("-3", 4), ("9999", 4), ("7", 7)],
+)
+def test_concurrency_config_uses_bounded_fallback(raw, expected):
+    import cognitrix.agents.base as agent_base
+
+    assert agent_base._parse_max_concurrent_tool_calls(raw) == expected
+
+
+@pytest.mark.asyncio
+async def test_call_tools_propagates_a_child_cancelled_error(monkeypatch):
+    assigned = Tool(name="Cancel Tool", description="d", parameters={})
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda _name: assigned),
+    )
+
+    async def fake_run_tool(self, tool, params, **kwargs):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool",
+        fake_run_tool,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await agent.call_tools([
+            {"name": assigned.name, "arguments": {}, "tool_call_id": "cancel-1"}
+        ])
+
+
+@pytest.mark.asyncio
+async def test_cancelled_tool_batch_exposes_completed_results_and_unresolved_calls(monkeypatch):
+    import cognitrix.agents.base as agent_base
+
+    fast = Tool(name="Fast Tool", description="d", parameters={})
+    slow = Tool(name="Slow Tool", description="d", parameters={})
+    assigned = [fast, slow]
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=assigned)
+    monkeypatch.setattr(agent_base, "MAX_CONCURRENT_TOOL_CALLS", 2)
+    monkeypatch.setattr(
+        agent_base.ToolManager,
+        "get_by_name",
+        staticmethod(lambda name: next(tool for tool in assigned if tool.name == name)),
+    )
+    slow_started = asyncio.Event()
+    fast_finished = asyncio.Event()
+
+    async def fake_run_tool(self, tool, params, **kwargs):
+        if tool.name == fast.name:
+            fast_finished.set()
+            outcome = ToolOutcome.success(
+                "fast result",
+                artifacts=[{
+                    "id": "artifact-1",
+                    "mime_type": "image/png",
+                    "filename": "fast.png",
+                }],
+            )
+            value = ToolCallResult(
+                tool_name=tool.name, content="fast result", outcome=outcome
+            )
+            return ToolResult(success=True, data=value)
+        slow_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool",
+        fake_run_tool,
+    )
+    calls = [
+        {"name": fast.name, "arguments": {}, "tool_call_id": "fast-1"},
+        {"name": slow.name, "arguments": {}, "tool_call_id": "slow-1"},
+    ]
+    batch = asyncio.create_task(agent.call_tools(calls))
+    await asyncio.wait_for(fast_finished.wait(), timeout=5)
+    await asyncio.wait_for(slow_started.wait(), timeout=5)
+    await asyncio.sleep(0)
+    batch.cancel()
+
+    with pytest.raises(asyncio.CancelledError) as exc:
+        await batch
+
+    completed = exc.value.completed_result
+    assert [item["tool_call_id"] for item in completed["result"]] == ["fast-1"]
+    assert completed["result"][0]["outcome"]["status"] == "success"
+    assert completed["result"][0]["outcome"]["artifacts"][0]["id"] == "artifact-1"
+    assert exc.value.unresolved_tool_calls == [calls[1]]
+
+
+@pytest.mark.asyncio
+async def test_same_tool_can_run_across_multiple_llm_tool_rounds(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    assigned = Tool(name="Generate Image", description="d", parameters={})
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
+    session = Session(agent_id="multi-round")
+    llm_round = 0
+    executed = []
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        nonlocal llm_round
+        llm_round += 1
+        response = LLMResponse()
+        if llm_round <= 2:
+            response.tool_calls = [{
+                "name": "Generate Image",
+                "arguments": {"round": llm_round},
+                "tool_call_id": f"image-{llm_round}",
+            }]
+        else:
+            response.add_chunk("both images generated")
+        return response
+
+    async def fake_run_tool(self, tool, params, **kw):
+        executed.append(params["round"])
+        return ToolResult(success=True, data=f"image:{params['round']}")
+
+    async def fake_save(self):
+        return None
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name", staticmethod(lambda name: assigned)
+    )
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+    monkeypatch.setattr(Session, "save", fake_save)
+
+    await session("make two", agent, "cli", False, lambda *args, **kwargs: None)
+
+    assert executed == [1, 2]
+    assert [
+        message["tool_call_id"]
+        for message in session.chat
+        if message.get("role") == "tool"
+    ] == ["image-1", "image-2"]
+    assert session.chat[-2]["content"] == "both images generated"
+
+
+def test_tool_model_has_no_per_turn_call_limit_metadata():
+    tool = Tool(name="Echo", description="d", parameters={})
+    assert not hasattr(tool, 'max_calls_per_turn')
 
 
 @pytest.mark.asyncio
@@ -282,6 +581,196 @@ async def test_tool_turn_persists_valid_sequence(monkeypatch):
 
     # The full message list sent to the provider is spec-valid.
     _assert_spec_valid(LLMManager.format_query(_llm(), [{"role": "system", "content": "s"}] + session.chat))
+
+
+@pytest.mark.asyncio
+async def test_cancelled_turn_persists_stopped_results_for_outstanding_tool_calls(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    assigned = Tool(name="Slow Tool", description="d", parameters={})
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
+    session = Session(agent_id="cancelled-turn")
+    tool_started = asyncio.Event()
+    saved_histories = []
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        response = LLMResponse()
+        response.tool_calls = [{
+            "name": "Slow Tool",
+            "arguments": {},
+            "tool_call_id": "slow-1",
+        }]
+        return response
+
+    async def fake_run_tool(self, tool, params, **kw):
+        tool_started.set()
+        await asyncio.Event().wait()
+
+    async def fake_save(self):
+        saved_histories.append([dict(message) for message in self.chat])
+
+    async def sink(payload=None, *args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name", staticmethod(lambda name: assigned)
+    )
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+    monkeypatch.setattr(Session, "save", fake_save)
+
+    turn = asyncio.create_task(session("run slowly", agent, "web", False, sink))
+    await asyncio.wait_for(tool_started.wait(), timeout=1)
+    turn.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await turn
+
+    tool_messages = [message for message in session.chat if message.get("role") == "tool"]
+    assert len(tool_messages) == 1
+    assert tool_messages[0]["tool_call_id"] == "slow-1"
+    assert tool_messages[0]["content"] == "Stopped by user."
+    assert tool_messages[0]["outcome"] == {
+        "status": "stopped",
+        "text": "Stopped by user.",
+        "artifacts": [],
+        "entities": [],
+        "warnings": [],
+        "error": None,
+    }
+    assert saved_histories
+    assert saved_histories[-1][-1] == tool_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_turn_preserves_completed_sibling_and_stops_only_unresolved(monkeypatch):
+    import cognitrix.agents.base as agent_base
+    from cognitrix.sessions.base import Session
+
+    fast = Tool(name="Fast Tool", description="d", parameters={})
+    slow = Tool(name="Slow Tool", description="d", parameters={})
+    assigned = [fast, slow]
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=assigned)
+    session = Session(agent_id="partial-cancel")
+    monkeypatch.setattr(agent_base, "MAX_CONCURRENT_TOOL_CALLS", 2)
+    slow_started = asyncio.Event()
+    fast_finished = asyncio.Event()
+    saved_histories = []
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kwargs):
+        response = LLMResponse()
+        response.tool_calls = [
+            {"name": slow.name, "arguments": {}, "tool_call_id": "slow-1"},
+            {"name": fast.name, "arguments": {}, "tool_call_id": "fast-1"},
+        ]
+        return response
+
+    async def fake_run_tool(self, tool, params, **kwargs):
+        if tool.name == fast.name:
+            fast_finished.set()
+            outcome = ToolOutcome.success(
+                "fast result",
+                artifacts=[{
+                    "id": "artifact-1",
+                    "mime_type": "image/png",
+                    "filename": "fast.png",
+                }],
+            )
+            value = ToolCallResult(
+                tool_name=tool.name, content="fast result", outcome=outcome
+            )
+            return ToolResult(success=True, data=value)
+        slow_started.set()
+        await asyncio.Event().wait()
+
+    async def fake_save(self):
+        saved_histories.append([dict(message) for message in self.chat])
+
+    async def sink(payload=None, *args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response",
+        staticmethod(fake_generate),
+    )
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda name: next(tool for tool in assigned if tool.name == name)),
+    )
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool",
+        fake_run_tool,
+    )
+    monkeypatch.setattr(Session, "save", fake_save)
+
+    turn = asyncio.create_task(session("run both", agent, "web", False, sink))
+    await asyncio.wait_for(fast_finished.wait(), timeout=5)
+    await asyncio.wait_for(slow_started.wait(), timeout=5)
+    await asyncio.sleep(0)
+    turn.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await turn
+
+    tool_messages = [message for message in session.chat if message.get("role") == "tool"]
+    assert [message["tool_call_id"] for message in tool_messages] == ["slow-1", "fast-1"]
+    assert tool_messages[0]["outcome"]["status"] == "stopped"
+    assert tool_messages[1]["outcome"]["status"] == "success"
+    assert tool_messages[1]["outcome"]["artifacts"][0]["id"] == "artifact-1"
+    assert saved_histories[-1][-2:] == tool_messages
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_completed_event_keeps_completed_tool_outcome(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    assigned = Tool(name="Fast Tool", description="d", parameters={})
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
+    session = Session(agent_id="completed-event-cancel")
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kwargs):
+        response = LLMResponse()
+        response.tool_calls = [{
+            "name": assigned.name,
+            "arguments": {},
+            "tool_call_id": "fast-1",
+        }]
+        return response
+
+    async def fake_run_tool(self, tool, params, **kwargs):
+        return ToolResult(success=True, data="finished")
+
+    async def fake_save(self):
+        return None
+
+    async def cancelling_sink(payload=None, *args, **kwargs):
+        if isinstance(payload, dict) and payload.get("status") == "completed":
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response",
+        staticmethod(fake_generate),
+    )
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda _name: assigned),
+    )
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool",
+        fake_run_tool,
+    )
+    monkeypatch.setattr(Session, "save", fake_save)
+
+    with pytest.raises(asyncio.CancelledError):
+        await session("run", agent, "web", False, cancelling_sink)
+
+    tool_messages = [message for message in session.chat if message.get("role") == "tool"]
+    assert len(tool_messages) == 1
+    assert tool_messages[0]["tool_call_id"] == "fast-1"
+    assert tool_messages[0]["content"] == "finished"
+    assert tool_messages[0]["outcome"]["status"] == "success"
 
 
 @pytest.mark.asyncio

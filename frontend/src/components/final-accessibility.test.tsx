@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,6 +28,8 @@ const harness = vi.hoisted(() => ({
   setIsStreaming: vi.fn(),
   addToolCall: vi.fn(),
   resolveToolCall: vi.fn(),
+  stopRunningTools: vi.fn(),
+  failRunningTools: vi.fn(),
   clearMessages: vi.fn(),
   setMessages: vi.fn(),
   sseConnected: true,
@@ -97,6 +99,7 @@ vi.mock('@/hooks/useSSE', () => ({
       isConnected: harness.sseConnected,
       error: harness.sseError,
       reconnect: vi.fn(),
+      streamId: 'browser-stream-1',
     };
   },
 }));
@@ -117,6 +120,8 @@ vi.mock('@/context/SessionContext', () => ({
     setIsStreaming: harness.setIsStreaming,
     addToolCall: harness.addToolCall,
     resolveToolCall: harness.resolveToolCall,
+    stopRunningTools: harness.stopRunningTools,
+    failRunningTools: harness.failRunningTools,
     clearMessages: harness.clearMessages,
     setMessages: harness.setMessages,
   }),
@@ -182,6 +187,8 @@ describe('final accessibility contracts', () => {
     harness.apiGet.mockReset().mockResolvedValue({ data: [] });
     harness.apiPost.mockReset().mockResolvedValue({ data: {} });
     harness.apiDelete.mockReset().mockResolvedValue({ data: {} });
+    harness.stopRunningTools.mockReset();
+    harness.failRunningTools.mockReset();
     harness.login.mockReset();
     harness.messages = [];
     harness.sseConnected = true;
@@ -286,6 +293,121 @@ describe('final accessibility contracts', () => {
     );
   });
 
+  it('switches Send to a stream-scoped stop control until the stopped event arrives', async () => {
+    const user = userEvent.setup();
+    renderRoute(<Home />);
+
+    await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Generate a large image');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const stop = await screen.findByRole('button', { name: 'Stop response' });
+    expect(stop).toHaveClass('bg-danger');
+    await user.click(stop);
+
+    await waitFor(() => expect(harness.apiPost).toHaveBeenCalledWith('/agents/stop', {
+      agent_id: 'agent-1',
+      stream_id: 'browser-stream-1',
+    }));
+
+    const clearCallsBeforeStop = harness.clearMessages.mock.calls.length;
+    act(() => harness.sseOnMessage?.({ type: 'turn_stopped' }));
+
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeInTheDocument();
+    expect(harness.stopRunningTools).toHaveBeenCalledTimes(1);
+    expect(harness.clearMessages).toHaveBeenCalledTimes(clearCallsBeforeStop);
+  });
+
+  it('clears stop state when a multi-step result wins the cancellation race', async () => {
+    const user = userEvent.setup();
+    renderRoute(<Home />);
+
+    await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Run several steps');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(screen.getByRole('button', { name: 'Stop response' }));
+
+    act(() => harness.sseOnMessage?.({ type: 'multistep_result', content: 'Finished during cancellation.' }));
+
+    const send = await screen.findByRole('button', { name: 'Send' });
+    expect(send.querySelector('.animate-spin')).not.toBeInTheDocument();
+    expect(harness.setIsStreaming).toHaveBeenLastCalledWith(false);
+  });
+
+  it('recovers from a lost terminal stop event after a bounded wait', async () => {
+    harness.apiPost
+      .mockResolvedValueOnce({ data: {} })
+      .mockReturnValueOnce(new Promise(() => undefined));
+    const user = userEvent.setup();
+    renderRoute(<Home />);
+
+    await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Generate a large image');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    act(() => harness.sseOnMessage?.({
+      type: 'generate', content: 'Working', session_id: 'session-active',
+    }));
+    harness.apiGet.mockReturnValueOnce(new Promise(() => undefined));
+    let reconcile: (() => void) | undefined;
+    const timeout = vi.spyOn(window, 'setTimeout').mockImplementationOnce((handler) => {
+      reconcile = typeof handler === 'function' ? handler : undefined;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Stop response' }));
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByRole('button', { name: 'Stopping response' })).toBeDisabled();
+    expect(timeout).toHaveBeenCalled();
+
+    await act(async () => { reconcile?.(); await Promise.resolve(); });
+
+    expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
+    expect(harness.stopRunningTools).toHaveBeenCalledTimes(1);
+    timeout.mockRestore();
+  });
+
+  it('terminalizes running tools when a turn ends with an error', async () => {
+    const user = userEvent.setup();
+    renderRoute(<Home />);
+
+    await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Run a tool');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    act(() => harness.sseOnMessage?.({
+      type: 'tool', status: 'started', tool_name: 'Search docs', tool_call_id: 'tool-1',
+    }));
+    act(() => harness.sseOnMessage?.({ type: 'error', content: 'Provider disconnected' }));
+
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeInTheDocument();
+    expect(harness.failRunningTools).toHaveBeenCalledWith('Provider disconnected');
+  });
+
+  it('reconciles when stop races with an already-finished backend turn', async () => {
+    harness.apiPost
+      .mockResolvedValueOnce({ data: {} })
+      .mockRejectedValueOnce({ response: { status: 409 } });
+    const user = userEvent.setup();
+    renderRoute(<Home />);
+
+    await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Finish near stop');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(screen.getByRole('button', { name: 'Stop response' }));
+
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeInTheDocument();
+    expect(harness.stopRunningTools).toHaveBeenCalledTimes(1);
+  });
+
+  it('prevents switching agents while a turn is active', async () => {
+    harness.resources.set('/agents', {
+      data: [
+        { id: 'agent-1', name: 'Agent One' },
+        { id: 'agent-2', name: 'Agent Two' },
+      ],
+    });
+    const user = userEvent.setup();
+    renderRoute(<Home />);
+
+    await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Keep this turn attached');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(screen.getByRole('combobox', { name: 'Active agent' })).toBeDisabled();
+  });
+
   it('keeps the Home header on one compact mobile row', () => {
     renderRoute(<Home />);
 
@@ -297,6 +419,19 @@ describe('final accessibility contracts', () => {
     const connectionStatus = screen.getByLabelText('Connection status: connected');
     expect(connectionStatus).toHaveClass('flex', 'items-center');
     expect(within(connectionStatus).getByText('connected')).toHaveClass('sr-only', 'md:not-sr-only');
+  });
+
+  it('does not send a new turn until its event stream is connected', async () => {
+    harness.sseConnected = false;
+    const user = userEvent.setup();
+    renderRoute(<Home />);
+
+    await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Wait for the stream');
+    const send = screen.getByRole('button', { name: 'Send' });
+
+    expect(send).toBeDisabled();
+    await user.click(send);
+    expect(harness.apiPost).not.toHaveBeenCalled();
   });
 
   it('renders TaskDetail step and synthesis selectors with responsive touch targets', async () => {

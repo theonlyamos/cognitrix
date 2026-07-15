@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { act, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { ComponentType } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -202,7 +203,28 @@ describe('ChatMessageRow', () => {
     expect(summary).toHaveClass('min-h-11', 'sm:min-h-0');
   });
 
-  it('shows generated images outside the closed tool details', async () => {
+  it('renders a stopped tool as a distinct terminal state', async () => {
+    const { ChatMessageRow } = await import('@/components/ChatMessageRow');
+    const toolMessage: ChatMessage = {
+      id: 'tool-stopped',
+      role: 'tool',
+      content: '',
+      tools: [{
+        id: 'generate-1',
+        name: 'generate_image',
+        status: 'stopped',
+        result: 'Stopped by user.',
+      }],
+    };
+
+    render(<ChatMessageRow message={toolMessage} isLast streaming={false} />);
+
+    expect(screen.getByText('Stopped')).toHaveClass('sr-only');
+    await userEvent.click(screen.getByText('generate image'));
+    expect(screen.getByText('Stopped by user.')).toBeInTheDocument();
+  });
+
+  it('shows generated images with separate expand and download controls', async () => {
     apiGet.mockResolvedValue({ data: new Blob(['image'], { type: 'image/png' }) });
     vi.mocked(URL.createObjectURL).mockReturnValue('blob:generated');
     const { ChatMessageRow } = await import('@/components/ChatMessageRow');
@@ -217,8 +239,38 @@ describe('ChatMessageRow', () => {
 
     const image = await screen.findByRole('img', { name: 'Generated image' });
     expect(image).toHaveAttribute('src', 'blob:generated');
-    expect(image.closest('a')).toHaveAttribute('download', 'result.png');
+    expect(image.closest('a')).toBeNull();
+    expect(image.closest('button')).toBeNull();
     expect(image.closest('details')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Expand generated image' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Download result.png' })).toHaveAttribute('download', 'result.png');
+  });
+
+  it('opens the generated image in a modal from the expand control', async () => {
+    const user = userEvent.setup();
+    apiGet.mockResolvedValue({ data: new Blob(['image'], { type: 'image/png' }) });
+    vi.mocked(URL.createObjectURL).mockReturnValue('blob:generated');
+    const { ChatMessageRow } = await import('@/components/ChatMessageRow');
+    const toolMessage: ChatMessage = {
+      id: 'tool-image', role: 'tool', content: '',
+      tools: [{
+        id: 'generate-1', name: 'generate_image', status: 'done',
+        artifacts: [{ id: 'artifact-1', mime_type: 'image/png', filename: 'result.png' }],
+      }],
+    };
+    render(<ChatMessageRow message={toolMessage} isLast streaming={false} />);
+
+    const expandButton = await screen.findByRole('button', { name: 'Expand generated image' });
+    await user.click(expandButton);
+
+    expect(screen.getByRole('dialog', { name: 'Generated image preview' })).toHaveAttribute('aria-modal', 'true');
+    expect(screen.getByRole('img', { name: 'Generated image, full size' })).toHaveAttribute('src', 'blob:generated');
+    expect(screen.getByRole('button', { name: 'Close image preview' })).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('dialog', { name: 'Generated image preview' })).not.toBeInTheDocument();
+    expect(expandButton).toHaveFocus();
   });
 
   it('shows an artifact error with a retry action', async () => {

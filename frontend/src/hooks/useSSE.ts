@@ -10,6 +10,8 @@ const CHAT_EVENT_TYPES = new Set([
   'error',
   'approval_request',
   'tool',
+  'turn_complete',
+  'turn_stopped',
 ]);
 
 export interface SSEEvent {
@@ -45,10 +47,15 @@ export function useSSE(options: UseSSEOptions = {}) {
     enabled = true,
   } = options;
   const [lastEvent, setLastEvent] = useState<SSEEvent | null>(null);
+  const streamIdRef = useRef<string | null>(null);
+  if (!streamIdRef.current) streamIdRef.current = crypto.randomUUID();
+  const streamId = streamIdRef.current;
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
 
-  const path = `/agents/sse${agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ''}`;
+  const streamParams = new URLSearchParams({ stream_id: streamId });
+  if (agentId) streamParams.set('agent_id', agentId);
+  const path = `/agents/sse?${streamParams.toString()}`;
   const stream = useEventStream<SSEEvent>({
     path,
     enabled,
@@ -63,5 +70,5 @@ export function useSSE(options: UseSSEOptions = {}) {
     },
   });
 
-  return { ...stream, lastEvent };
+  return { ...stream, lastEvent, streamId };
 }

@@ -24,7 +24,7 @@ from cognitrix.common.security import (
     require,
 )
 from cognitrix.sessions.base import Session
-from cognitrix.utils.sse import get_sse_manager
+from cognitrix.utils.sse import SSEManagerCapacityError, get_sse_manager
 
 from ...providers import LLM
 
@@ -152,13 +152,22 @@ async def save_agent(request: Request, agent: Agent):
 # the SSE action queue, so API keys (which must pass 'chat' scope + agent
 # allowlists on the invoke endpoints) are rejected here.
 @agents_api.get("/sse", dependencies=[Depends(jwt_only)])
-async def sse_endpoint(request: Request, agent_id: str | None = None, user=Depends(get_current_user)):
-    # Per-(user, agent) manager: isolates concurrent users so one client's
-    # stream never carries another's messages/agent.
+async def sse_endpoint(request: Request, agent_id: str | None = None,
+                       stream_id: str | None = None, user=Depends(get_current_user)):
+    # Per-browser manager: isolates users and prevents another tab or stale
+    # reconnect for the same agent from consuming this stream's chat action.
     agent = await _resolve_agent(agent_id, request)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
-    manager = get_sse_manager(_user_key(user), agent.id, agent)
+    if stream_id is not None and (not stream_id.strip() or len(stream_id) > 128):
+        raise HTTPException(status_code=400, detail="Invalid stream_id")
+    try:
+        manager = get_sse_manager(
+            _user_key(user), agent.id, agent, stream_id=stream_id
+        )
+    except SSEManagerCapacityError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    assert manager is not None
     return await manager.sse_endpoint(request)
 
 # Add other endpoints to handle user input and trigger SSE events
@@ -168,18 +177,61 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
     agent = await _resolve_agent(data.get("agent_id"), request)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    stream_id = data.get("stream_id")
+    if stream_id is not None and (
+        not isinstance(stream_id, str) or not stream_id.strip() or len(stream_id) > 128
+    ):
+        raise HTTPException(status_code=400, detail="Invalid stream_id")
     # base64-decode + PIL verify + disk writes are blocking — keep them off the loop.
-    images, files = await asyncio.to_thread(_save_attachments, data.get("attachments") or [])
-    manager = get_sse_manager(_user_key(user), agent.id, agent)
-    await manager.action_queue.put({
-        "type": "chat_message",
-        "content": data.get("message", ""),
-        "session_id": data.get("session_id"),
-        "images": images,
-        "files": files,
-        "bypass_permissions": bool(data.get("bypass_permissions")),
-    })
+    manager = get_sse_manager(
+        _user_key(user), agent.id, agent, stream_id=stream_id, create=False
+    )
+    if manager is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Connect to the event stream before sending a message",
+        )
+    if not manager.begin_turn():
+        raise HTTPException(status_code=409, detail="A turn is already running for this browser stream")
+    try:
+        images, files = await asyncio.to_thread(_save_attachments, data.get("attachments") or [])
+        await manager.action_queue.put({
+            "type": "chat_message",
+            "content": data.get("message", ""),
+            "session_id": data.get("session_id"),
+            "images": images,
+            "files": files,
+            "bypass_permissions": bool(data.get("bypass_permissions")),
+        })
+    except BaseException:
+        manager.finish_turn()
+        raise
     return {"status": "Message sent"}
+
+
+@agents_api.post("/stop", dependencies=[Depends(jwt_only)])
+async def stop_endpoint(request: Request, user=Depends(get_current_user)):
+    """Cancel the pending or active turn for this exact browser stream."""
+    data = await request.json()
+    agent = await _resolve_agent(data.get("agent_id"), request)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    stream_id = data.get("stream_id")
+    if stream_id is not None and (
+        not isinstance(stream_id, str) or not stream_id.strip() or len(stream_id) > 128
+    ):
+        raise HTTPException(status_code=400, detail="Invalid stream_id")
+    manager = get_sse_manager(
+        _user_key(user), agent.id, agent, stream_id=stream_id, create=False
+    )
+    if manager is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No turn is running for this browser stream",
+        )
+    if not manager.stop_current_turn():
+        raise HTTPException(status_code=409, detail="No turn is running for this browser stream")
+    return {"status": "stopping"}
 
 
 @agents_api.post("/approval", dependencies=[Depends(jwt_only)])

@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import weakref
 from collections.abc import Callable
 from datetime import datetime
 from enum import Enum
@@ -30,6 +32,65 @@ AgentList: TypeAlias = list['Agent']
 # results bloat every subsequent prompt; the model can re-run the tool with a
 # narrower range if it needs more.
 MAX_TOOL_RESULT_CHARS = 8000
+
+# Bound simultaneous executions without limiting how many calls a turn may
+# make. The limiter is shared by every batch on the same event loop (the normal
+# deployment model is one loop per server process).
+_DEFAULT_MAX_CONCURRENT_TOOL_CALLS = 4
+_MAX_ALLOWED_CONCURRENT_TOOL_CALLS = 64
+
+
+def _parse_max_concurrent_tool_calls(raw: str | None) -> int:
+    try:
+        value = int(raw) if raw else _DEFAULT_MAX_CONCURRENT_TOOL_CALLS
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid COGNITRIX_MAX_CONCURRENT_TOOL_CALLS=%r; using %s",
+            raw,
+            _DEFAULT_MAX_CONCURRENT_TOOL_CALLS,
+        )
+        return _DEFAULT_MAX_CONCURRENT_TOOL_CALLS
+    if not 1 <= value <= _MAX_ALLOWED_CONCURRENT_TOOL_CALLS:
+        logger.warning(
+            "COGNITRIX_MAX_CONCURRENT_TOOL_CALLS must be between 1 and %s; using %s",
+            _MAX_ALLOWED_CONCURRENT_TOOL_CALLS,
+            _DEFAULT_MAX_CONCURRENT_TOOL_CALLS,
+        )
+        return _DEFAULT_MAX_CONCURRENT_TOOL_CALLS
+    return value
+
+
+MAX_CONCURRENT_TOOL_CALLS = _parse_max_concurrent_tool_calls(
+    os.getenv('COGNITRIX_MAX_CONCURRENT_TOOL_CALLS')
+)
+
+_TOOL_EXECUTION_LIMITERS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def _tool_execution_limiter() -> asyncio.Semaphore:
+    """Return the shared limiter for the running loop and current config."""
+    loop = asyncio.get_running_loop()
+    configured = MAX_CONCURRENT_TOOL_CALLS
+    entry = _TOOL_EXECUTION_LIMITERS.get(loop)
+    if entry is None or entry[0] != configured:
+        entry = (configured, asyncio.Semaphore(configured))
+        _TOOL_EXECUTION_LIMITERS[loop] = entry
+    return entry[1]
+
+
+class ToolBatchCancelled(asyncio.CancelledError):
+    """Cancellation carrying the completed and still-outstanding batch state."""
+
+    def __init__(
+        self,
+        completed_result: dict[str, Any],
+        unresolved_tool_calls: list[dict[str, Any]],
+        completed_results_by_index: dict[int, dict[str, Any]],
+    ):
+        super().__init__("Tool batch cancelled")
+        self.completed_result = completed_result
+        self.unresolved_tool_calls = unresolved_tool_calls
+        self.completed_results_by_index = completed_results_by_index
 
 
 def _truncate_tool_result(content: str) -> str:
@@ -283,24 +344,28 @@ class AgentManager:
         self,
         tool_calls: dict[str, Any] | list[dict[str, Any]],
         interface: str = 'cli',
-        call_counts: dict[str, int] | None = None,
     ) -> dict[str, Any] | str:
         """Execute tool calls with safety checks and retry logic."""
+        agent_tool_calls = tool_calls if isinstance(tool_calls, list) else [tool_calls]
+        results_by_index: dict[int, dict[str, Any]] = {}
+        jobs: list[tuple[int, Tool, dict[str, Any], int, bool]] = []
+        worker_tasks: list[asyncio.Task] = []
+
+        def completed_result() -> dict[str, Any]:
+            return {
+                'type': 'tool_calls_result',
+                'result': [results_by_index[i] for i in sorted(results_by_index)],
+            }
+
         try:
             if not tool_calls:
                 return ''
-            agent_tool_calls = tool_calls if isinstance(tool_calls, list) else [tool_calls]
 
             resilient_manager = ResilientToolManager(llm=self.agent.llm)
 
             # Results keyed by original position so every call gets exactly one
             # answer (required by the tool-call protocol) and a missing tool or a
             # denied approval does NOT abort the other calls in the batch.
-            results_by_index: dict[int, dict[str, Any]] = {}
-            tasks = []
-            task_indices = []
-            calls_by_tool = call_counts if call_counts is not None else {}
-
             for i, t in enumerate(agent_tool_calls):
                 tc_id = t.get('tool_call_id')
                 name = t.get('name')
@@ -336,20 +401,6 @@ class AgentManager:
                         ToolOutcome.failure(
                             'unsupported_interface',
                             f"Tool '{tool.name}' is not available from the {interface} interface",
-                            denied=True,
-                        ),
-                    )
-                    continue
-
-                count_key = assigned_tool.name.casefold().replace('_', ' ')
-                calls_by_tool[count_key] = calls_by_tool.get(count_key, 0) + 1
-                if (assigned_tool.max_calls_per_turn is not None
-                        and calls_by_tool[count_key] > assigned_tool.max_calls_per_turn):
-                    results_by_index[i] = _tool_result_entry(
-                        tc_id,
-                        ToolOutcome.failure(
-                            'tool_turn_limit',
-                            f"Tool '{assigned_tool.name}' may be called only {assigned_tool.max_calls_per_turn} time(s) per turn",
                             denied=True,
                         ),
                     )
@@ -398,36 +449,60 @@ class AgentManager:
                 if tool.name.lower() == 'call agent':
                     args['interface'] = interface
 
-                tasks.append(
-                    resilient_manager.run_tool(
-                        tool=tool,
-                        params=args,
-                        max_retries=assigned_tool.max_attempts,
-                        attempt_recovery=assigned_tool.retryable
+                jobs.append(
+                    (
+                        i,
+                        tool,
+                        args,
+                        assigned_tool.max_attempts,
+                        assigned_tool.retryable,
                     )
                 )
-                task_indices.append(i)
 
-            tool_results = await asyncio.gather(*tasks, return_exceptions=True)
+            # A fixed worker pool avoids creating one asyncio.Task per model-
+            # supplied call. All batches share the same execution limiter.
+            next_job = 0
+            execution_slots = _tool_execution_limiter()
 
-            for j, result in enumerate(tool_results):
-                i = task_indices[j]
-                tc_id = agent_tool_calls[i].get('tool_call_id')
-                if isinstance(result, Exception):
-                    results_by_index[i] = _tool_result_entry(
-                        tc_id, ToolOutcome.failure('tool_execution_error', f"Error: {result}", retryable=False)
-                    )
-                elif result.success:
-                    results_by_index[i] = _tool_result_entry(tc_id, _tool_outcome(result.data))
-                else:
-                    results_by_index[i] = _tool_result_entry(
-                        tc_id,
-                        ToolOutcome.failure(
+            async def worker() -> None:
+                nonlocal next_job
+                while next_job < len(jobs):
+                    job_index = next_job
+                    next_job += 1
+                    i, tool, params, max_retries, attempt_recovery = jobs[job_index]
+                    tc_id = agent_tool_calls[i].get('tool_call_id')
+                    try:
+                        async with execution_slots:
+                            result = await resilient_manager.run_tool(
+                                tool=tool,
+                                params=params,
+                                max_retries=max_retries,
+                                attempt_recovery=attempt_recovery,
+                            )
+                        if result.success:
+                            outcome = _tool_outcome(result.data)
+                        else:
+                            outcome = ToolOutcome.failure(
+                                'tool_execution_error',
+                                f"Error: {result.error} (attempted {result.attempts} times)",
+                                retryable=False,
+                            )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        outcome = ToolOutcome.failure(
                             'tool_execution_error',
-                            f"Error: {result.error} (attempted {result.attempts} times)",
+                            f"Error: {exc}",
                             retryable=False,
-                        ),
-                    )
+                        )
+                    results_by_index[i] = _tool_result_entry(tc_id, outcome)
+
+            worker_count = min(MAX_CONCURRENT_TOOL_CALLS, len(jobs))
+            worker_tasks = [
+                asyncio.create_task(worker()) for _ in range(worker_count)
+            ]
+            if worker_tasks:
+                await asyncio.gather(*worker_tasks)
 
             results = [results_by_index[i] for i in range(len(agent_tool_calls))]
             return {
@@ -435,9 +510,33 @@ class AgentManager:
                 'result': results
             }
 
+        except asyncio.CancelledError as exc:
+            for task in worker_tasks:
+                if not task.done():
+                    task.cancel()
+            if worker_tasks:
+                await asyncio.gather(*worker_tasks, return_exceptions=True)
+            unresolved = [
+                call for i, call in enumerate(agent_tool_calls)
+                if i not in results_by_index
+            ]
+            raise ToolBatchCancelled(
+                completed_result(), unresolved, dict(results_by_index)
+            ) from exc
         except Exception as e:
             logger.exception("Tool execution error")
-            return str(e)
+            # Preserve the assistant/tool protocol even for an unexpected
+            # preprocessing/worker failure: every unresolved call gets an
+            # explicit error result in its original position.
+            for i, call in enumerate(agent_tool_calls):
+                if i not in results_by_index:
+                    results_by_index[i] = _tool_result_entry(
+                        call.get('tool_call_id'),
+                        ToolOutcome.failure(
+                            'tool_execution_error', f"Error: {e}", retryable=False
+                        ),
+                    )
+            return completed_result()
 
     def add_tool(self, tool: Tool):
         if tool not in self.agent.tools:
@@ -574,11 +673,9 @@ Agent.manager = property(_agent_manager)
 Agent.process_prompt = lambda self, query, role='User': AgentManager(self).process_prompt(query, role)  # type: ignore[attr-defined]
 
 
-async def _agent_call_tools(self, tool_calls, interface='cli', call_counts=None):
+async def _agent_call_tools(self, tool_calls, interface='cli'):
     """Delegate call_tools to AgentManager."""
-    return await AgentManager(self).call_tools(
-        tool_calls, interface=interface, call_counts=call_counts
-    )
+    return await AgentManager(self).call_tools(tool_calls, interface=interface)
 
 
 Agent.call_tools = _agent_call_tools  # type: ignore[attr-defined]

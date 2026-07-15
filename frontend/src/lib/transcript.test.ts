@@ -59,4 +59,22 @@ describe('parseChatEntries tool results', () => {
       { id: 'good', mime_type: 'image/png', filename: 'good.png' },
     ]);
   });
+
+  it('restores a persisted stopped tool as stopped rather than failed', () => {
+    const entries = parseChatEntries([
+      {
+        role: 'assistant', type: 'tool_calls', content: '',
+        tool_calls: [{ name: 'generate_image', arguments: {}, tool_call_id: 'call-stopped' }],
+      },
+      {
+        role: 'tool', tool_call_id: 'call-stopped', content: 'Stopped by user.',
+        outcome: { status: 'stopped' },
+      },
+    ]);
+
+    expect(toChatMessages(entries)[0].tools?.[0]).toEqual(expect.objectContaining({
+      status: 'stopped',
+      result: 'Stopped by user.',
+    }));
+  });
 });
