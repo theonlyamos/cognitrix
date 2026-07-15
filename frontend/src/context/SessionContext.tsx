@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 
-export type ToolStatus = 'running' | 'done' | 'error';
+export type ToolStatus = 'running' | 'done' | 'error' | 'stopped';
 
 export interface ToolArtifact {
   id: string;
@@ -41,6 +41,10 @@ interface SessionContextType {
   addToolCall: (name: string, opts?: { id?: string; params?: string }) => void;
   /** A tool finished: flip its most-recent running chip to done/error + result. */
   resolveToolCall: (name: string, status: 'done' | 'error', opts?: { id?: string; result?: string; artifacts?: ToolArtifact[] }) => void;
+  /** Mark every still-running tool in the active transcript as user-stopped. */
+  stopRunningTools: () => void;
+  /** Mark every still-running tool as failed when the turn terminates in error. */
+  failRunningTools: (result?: string) => void;
   clearMessages: () => void;
   setMessages: (messages: ChatMessage[]) => void;
   setAgentId: (agentId: string | null) => void;
@@ -129,10 +133,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         copy[i] = { ...m, tools };
         return copy;
       }
-      if (status !== 'error') return prev;
-      // Some provider responses are malformed before the backend can emit a
-      // `started` event. Preserve their terminal error instead of dropping it.
-      const chip: ToolUse = { id: opts?.id, name, status, result: opts?.result };
+      if (status !== 'error' && !opts?.artifacts?.length) return prev;
+      // Preserve terminal errors and artifact-bearing completions even if a
+      // reconnect caused the matching `started` event to be missed.
+      const chip: ToolUse = {
+        id: opts?.id,
+        name,
+        status,
+        result: opts?.result,
+        artifacts: opts?.artifacts,
+      };
       const last = prev[prev.length - 1];
       if (last && last.role === 'tool') {
         return [...prev.slice(0, -1), { ...last, tools: [...(last.tools || []), chip] }];
@@ -145,6 +155,34 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         timestamp: new Date().toISOString(),
       }];
     });
+  }, []);
+
+  const stopRunningTools = useCallback(() => {
+    setMessagesState(prev => prev.map(message => {
+      if (!message.tools?.some(tool => tool.status === 'running')) return message;
+      return {
+        ...message,
+        tools: message.tools.map(tool => (
+          tool.status === 'running'
+            ? { ...tool, status: 'stopped' as const, result: 'Stopped by user.' }
+            : tool
+        )),
+      };
+    }));
+  }, []);
+
+  const failRunningTools = useCallback((result = 'The turn ended before this tool completed.') => {
+    setMessagesState(prev => prev.map(message => {
+      if (!message.tools?.some(tool => tool.status === 'running')) return message;
+      return {
+        ...message,
+        tools: message.tools.map(tool => (
+          tool.status === 'running'
+            ? { ...tool, status: 'error' as const, result }
+            : tool
+        )),
+      };
+    }));
   }, []);
 
   const clearMessages = useCallback(() => {
@@ -164,6 +202,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       appendToLastMessage,
       addToolCall,
       resolveToolCall,
+      stopRunningTools,
+      failRunningTools,
       clearMessages,
       setMessages: setMessagesState,
       setAgentId,
