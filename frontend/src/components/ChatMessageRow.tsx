@@ -1,4 +1,5 @@
 import { lazy, memo, Suspense } from 'react';
+import { ArtifactPreview } from '@/components/ArtifactPreview';
 import type { ChatMessage } from '@/context/SessionContext';
 import { cn } from '@/lib/utils';
 
@@ -31,7 +32,8 @@ export const ChatMessageRow = memo(function ChatMessageRow({ message, isLast, st
         <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">TOOL</div>
         <div className="flex flex-col items-start gap-1.5">
           {message.tools.map((tool, index) => (
-            <details key={tool.id || index} className="group w-full max-w-2xl">
+            <div key={tool.id || index} className="w-full max-w-2xl space-y-2">
+              <details className="group w-full">
               <summary className="inline-flex min-h-11 list-none cursor-pointer select-none items-center gap-1.5 rounded border border-line bg-panel-2 px-2 py-1 font-mono text-[11px] transition-colors hover:border-fg-dim sm:min-h-0 [&::-webkit-details-marker]:hidden">
                 {tool.status === 'running' ? (
                   <span className="think-bars"><i /><i /><i /></span>
@@ -64,7 +66,9 @@ export const ChatMessageRow = memo(function ChatMessageRow({ message, isLast, st
                   )}
                 </div>
               </div>
-            </details>
+              </details>
+              {tool.artifacts?.map((artifact) => <ArtifactPreview key={artifact.id} artifact={artifact} />)}
+            </div>
           ))}
         </div>
       </div>

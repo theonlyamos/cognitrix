@@ -93,7 +93,9 @@ async def chat_completions(body: ChatCompletionRequest, ctx: AuthContext = Depen
     created = int(time.time())
 
     if body.stream:
-        return _stream_completion(session, agent, completion_id, created, body.model)
+        return _stream_completion(
+            session, agent, completion_id, created, body.model, ctx.tool_execution_context()
+        )
 
     captured = ''
 
@@ -107,10 +109,11 @@ async def chat_completions(body: ChatCompletionRequest, ctx: AuthContext = Depen
         # Inert message: save_history=False means it never enters the prompt;
         # the seeded session.chat is the actual input.
         await asyncio.wait_for(
-            session('', agent, interface='web', stream=True, output=capture, wsquery={}, save_history=False),
+            session('', agent, interface='compat', stream=True, output=capture, wsquery={},
+                    save_history=False, tool_context=ctx.tool_execution_context()),
             timeout=CHAT_TIMEOUT,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise HTTPException(status_code=504, detail="Generation timed out")
 
     answer = captured.strip()
@@ -132,7 +135,7 @@ async def chat_completions(body: ChatCompletionRequest, ctx: AuthContext = Depen
 
 
 def _stream_completion(session: Session, agent: Agent, completion_id: str,
-                       created: int, model: str) -> StreamingResponse:
+                       created: int, model: str, tool_context) -> StreamingResponse:
     queue: asyncio.Queue = asyncio.Queue(maxsize=512)
 
     async def push(payload=None, *args, **kwargs):
@@ -143,7 +146,8 @@ def _stream_completion(session: Session, agent: Agent, completion_id: str,
     async def producer():
         try:
             await asyncio.wait_for(
-                session('', agent, interface='web', stream=True, output=push, wsquery={}, save_history=False),
+                session('', agent, interface='compat', stream=True, output=push, wsquery={},
+                        save_history=False, tool_context=tool_context),
                 timeout=CHAT_TIMEOUT,
             )
         except Exception:

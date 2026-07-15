@@ -32,6 +32,21 @@ class Tool(Model):
     user_id: str | None = Field(default=None)
     """User ID of the user the tool belongs to"""
 
+    retryable: bool = True
+    """Whether a failed invocation may be retried by the runtime."""
+
+    max_attempts: int = 3
+    """Maximum provider/runtime attempts for a single call."""
+
+    max_calls_per_turn: int | None = None
+    """Optional per-agent-turn cap, used for side-effecting tools."""
+
+    supported_interfaces: list[str] | None = None
+    """Runtime interfaces allowed to execute this capability, or all when None."""
+
+    approval_mode: str = 'risk_based'
+    """risk_based, assigned_only, or always."""
+
     class Config:
         arbitrary_types_allowed = True
 
@@ -52,6 +67,11 @@ class Tool(Model):
         """
         def python_type_to_json_type(py_type: str) -> str:
             """Convert Python types to JSON Schema types"""
+            normalized = py_type.lower().replace('typing.', '')
+            if normalized.startswith('list[') or normalized.startswith('sequence['):
+                return 'array'
+            if normalized.startswith('dict['):
+                return 'object'
             type_mapping = {
                 'str': 'string',
                 'int': 'integer',
@@ -61,7 +81,7 @@ class Tool(Model):
                 'dict': 'object',
                 'None': 'null'
             }
-            return type_mapping.get(py_type, 'string')
+            return type_mapping.get(normalized, 'string')
 
         parameters = self.parameters if (hasattr(self, 'parameters') and self.parameters) else {}
 
@@ -87,7 +107,10 @@ class Tool(Model):
             vtype = python_type_to_json_type(param_type)
             prop = {"type": vtype, "description": param_descs.get(name, "")}
             if vtype == 'array':
-                prop['items'] = {"type": "string"} # type: ignore
+                item_type = 'string'
+                if isinstance(param_type, str) and '[' in param_type:
+                    item_type = python_type_to_json_type(param_type.split('[', 1)[1].rstrip(']'))
+                prop['items'] = {"type": item_type} # type: ignore
             properties[name] = prop
 
         # Only params without defaults are required (if we know them); otherwise

@@ -105,8 +105,9 @@ class ResilientToolManager:
         params: dict[str, Any]
     ) -> dict[str, Any]:
         """Validate and sanitize parameters before execution."""
-        # Basic validation - ensure required params are present
-        # Tool-specific validation can be added here
+        validator = getattr(tool, 'validate_parameters', None)
+        if callable(validator):
+            return validator(params)
         return params
 
     async def _attempt_param_recovery(

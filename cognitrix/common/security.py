@@ -133,6 +133,19 @@ class AuthContext:
     def team_allowed(self, team_id: str) -> bool:
         return self.api_key is None or self.api_key.team_allowed(team_id)
 
+    def tool_execution_context(self):
+        from cognitrix.tools.utils import ToolExecutionContext
+
+        if self.api_key is None:
+            return ToolExecutionContext(user_id=str(self.user.id))
+        return ToolExecutionContext(
+            user_id=str(self.user.id),
+            api_key_id=str(self.api_key.id),
+            scopes=frozenset(self.api_key.scopes or []),
+            allowed_agents=frozenset(self.api_key.allowed_agents) if self.api_key.allowed_agents else None,
+            allowed_teams=frozenset(self.api_key.allowed_teams) if self.api_key.allowed_teams else None,
+        )
+
 
 def _extract_credential(request: Request) -> str | None:
     auth = request.headers.get('Authorization', '')

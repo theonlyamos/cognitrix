@@ -54,7 +54,10 @@ def test_format_query_reconstructs_assistant_tool_calls():
 
 @pytest.mark.asyncio
 async def test_call_tools_maps_results_to_correct_ids(monkeypatch):
-    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[
+        Tool(name="t1", description="d", parameters={}), Tool(name="t2", description="d", parameters={}),
+        Tool(name="t3", description="d", parameters={}),
+    ])
 
     monkeypatch.setattr(
         "cognitrix.agents.base.ToolManager.get_by_name",
@@ -83,7 +86,8 @@ async def test_call_tools_maps_results_to_correct_ids(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_tools_preserves_execution_failure_state(monkeypatch):
-    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    tools = [Tool(name=name, description="d", parameters={}) for name in ("Raises", "Exhausted", "Works")]
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=tools)
 
     monkeypatch.setattr(
         "cognitrix.agents.base.ToolManager.get_by_name",
@@ -114,10 +118,121 @@ async def test_call_tools_preserves_execution_failure_state(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_call_tools_denies_a_registered_tool_not_assigned_to_agent(monkeypatch):
+    """The global registry must not grant a model extra capabilities."""
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    registered = Tool(name="Sensitive Action", description="d", parameters={})
+    ran = False
+
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda name: registered),
+    )
+
+    async def fake_run_tool(self, tool, params, **kw):
+        nonlocal ran
+        ran = True
+        return ToolResult(success=True, data="should not run")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+
+    result = await agent.call_tools(
+        [{"name": "Sensitive Action", "arguments": {}, "tool_call_id": "call_1"}]
+    )
+
+    assert not ran
+    assert "not assigned" in result["result"][0]["data"].lower()
+
+
+@pytest.mark.asyncio
+async def test_call_tools_normalizes_provider_name_and_runs_registry_implementation(monkeypatch):
+    """Persisted Tool rows authorize a capability; live registry tools execute it."""
+    assigned = Tool(name="Create Task", description="persisted", parameters={})
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
+    canonical = Tool(name="Create Task", description="live", parameters={})
+    seen = {}
+
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name",
+        staticmethod(lambda name: canonical if name.replace('_', ' ').lower() == 'create task' else None),
+    )
+
+    async def fake_run_tool(self, tool, params, **kw):
+        seen['tool'] = tool
+        return ToolResult(success=True, data="created")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+
+    result = await agent.call_tools(
+        [{"name": "Create_Task", "arguments": {}, "tool_call_id": "call_1"}]
+    )
+    assert result["result"][0]["data"] == "created"
+    assert seen['tool'] is canonical
+
+
+@pytest.mark.asyncio
+async def test_tool_call_limit_can_be_shared_across_rounds(monkeypatch):
+    assigned = Tool(name="Generate Image", description="d", parameters={}, max_calls_per_turn=1)
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name", staticmethod(lambda name: assigned)
+    )
+
+    async def fake_run_tool(self, tool, params, **kw):
+        return ToolResult(success=True, data="image")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+    counts = {}
+    first = await agent.call_tools(
+        [{"name": "Generate_Image", "arguments": {}, "tool_call_id": "1"}],
+        call_counts=counts,
+    )
+    second = await agent.call_tools(
+        [{"name": "Generate_Image", "arguments": {}, "tool_call_id": "2"}],
+        call_counts=counts,
+    )
+    assert first['result'][0]['outcome']['status'] == 'success'
+    assert second['result'][0]['outcome']['error']['code'] == 'tool_turn_limit'
+
+
+@pytest.mark.asyncio
+async def test_call_tools_exposes_a_normalized_outcome(monkeypatch):
+    assigned = Tool(name="Echo", description="d", parameters={})
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
+
+    async def fake_run_tool(self, tool, params, **kw):
+        return ToolResult(success=True, data="echoed")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+
+    result = await agent.call_tools(
+        [{"name": "Echo", "arguments": {}, "tool_call_id": "call_1"}]
+    )
+
+    outcome = result["result"][0]["outcome"]
+    assert outcome == {
+        "status": "success",
+        "text": "echoed",
+        "artifacts": [],
+        "entities": [],
+        "warnings": [],
+        "error": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tool_turn_persists_valid_sequence(monkeypatch):
     from cognitrix.sessions.base import Session
 
-    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[Tool(name="Echo", description="d", parameters={})])
     session = Session(agent_id="s1")
 
     # Scripted LLM: first call emits a tool_call, second returns the final answer.
@@ -175,7 +290,7 @@ async def test_web_turn_emits_tool_events(monkeypatch):
     chat UI can show what the agent is running. CLI/task turns must not."""
     from cognitrix.sessions.base import Session
 
-    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[Tool(name="Echo", description="d", parameters={})])
     session = Session(agent_id="s5")
 
     calls = {"n": 0}
@@ -233,7 +348,16 @@ async def test_web_turn_emits_tool_events(monkeypatch):
 async def test_web_turn_emits_error_for_failed_and_denied_tools(monkeypatch):
     from cognitrix.sessions.base import Session
 
-    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    agent = Agent(
+        name="A",
+        llm=_llm(),
+        system_prompt="sys",
+        tools=[
+            Tool(name="Works", description="d", parameters={}),
+            Tool(name="Broken", description="d", parameters={}),
+            Tool(name="bash", description="d", parameters={}),
+        ],
+    )
     session = Session(agent_id="s6")
     calls = {"n": 0}
     ran_bash = {"value": False}
@@ -342,18 +466,22 @@ async def test_web_turn_emits_terminal_error_for_nameless_tool_call(monkeypatch)
         for event in events
         if isinstance(event, dict) and event.get("type") == "tool"
     ]
-    assert tool_events == [{
-        "type": "tool",
-        "status": "error",
-        "tool_name": "Malformed tool call",
-        "tool_call_id": "malformed-1",
-        "result": "Error: malformed tool call (no name)",
-    }]
+    assert len(tool_events) == 1
+    event = tool_events[0]
+    assert event["type"] == "tool"
+    assert event["status"] == "error"
+    assert event["tool_name"] == "Malformed tool call"
+    assert event["tool_call_id"] == "malformed-1"
+    assert event["result"] == "Error: malformed tool call (no name)"
+    assert event["outcome"]["error"]["code"] == "malformed_tool_call"
+    assert event["artifacts"] == []
 
 
 @pytest.mark.asyncio
 async def test_unknown_tool_does_not_abort_batch(monkeypatch):
-    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[
+        Tool(name="good1", description="d", parameters={}), Tool(name="good2", description="d", parameters={}),
+    ])
 
     def get_by_name(name):
         return None if name == "missing" else Tool(name=name, description="d", parameters={})
@@ -375,7 +503,7 @@ async def test_unknown_tool_does_not_abort_batch(monkeypatch):
     res = await agent.call_tools(calls)
     data = [r["data"] for r in res["result"]]
     assert data[0] == "ok:good1"
-    assert "not found" in data[1]
+    assert "not assigned" in data[1]
     assert data[2] == "ok:good2"
     assert [r["tool_call_id"] for r in res["result"]] == ["1", "2", "3"]
     assert [r["success"] for r in res["result"]] == [True, False, True]
@@ -385,7 +513,7 @@ async def test_unknown_tool_does_not_abort_batch(monkeypatch):
 async def test_provider_error_not_persisted_as_answer(monkeypatch):
     from cognitrix.sessions.base import Session
 
-    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[Tool(name="bash", description="d", parameters={})])
     session = Session(agent_id="s2")
 
     async def err_generate(llm, prompt, stream=False, tools=None, **kw):
@@ -410,7 +538,7 @@ async def test_provider_error_not_persisted_as_answer(monkeypatch):
 async def test_risky_tool_denied_over_web(monkeypatch):
     # A risky tool over the web interface must be denied (not executed, and not
     # blocked on server-side input()).
-    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[Tool(name="bash", description="d", parameters={})])
     ran = {"called": False}
 
     monkeypatch.setattr(
@@ -437,7 +565,7 @@ async def test_risky_tool_denied_over_web(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_malformed_tool_call_does_not_abort_batch(monkeypatch):
-    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[Tool(name="good", description="d", parameters={})])
     monkeypatch.setattr(
         "cognitrix.agents.base.ToolManager.get_by_name",
         staticmethod(lambda name: Tool(name=name, description="d", parameters={})),
@@ -483,7 +611,7 @@ async def test_denied_tool_retry_loop_is_broken(monkeypatch):
     # same batch, the turn must stop instead of re-prompting round after round.
     from cognitrix.sessions.base import Session
 
-    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[Tool(name="bash", description="d", parameters={})])
     session = Session(agent_id="s3")
     calls = {"n": 0}
 
