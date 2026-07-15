@@ -17,7 +17,7 @@ from cognitrix.tools.utils import ToolOutcome
 
 MODEL = 'gemini-3.1-flash-lite-image'
 URL = 'https://generativelanguage.googleapis.com/v1beta/interactions'
-ASPECT_RATIOS = {'1:1', '1:4', '1:8', '2:3', '3:2', '3:4', '4:1', '4:3', '4:5', '5:4', '8:1', '9:16', '16:9', '21:9'}
+ASPECT_RATIOS = {'1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_PIXELS = 20_000_000
 MAX_PROVIDER_RESPONSE_BYTES = 15 * 1024 * 1024
@@ -83,18 +83,26 @@ async def generate_image(prompt: str, source_artifact_id: str | None = None,
     api_key = os.getenv('GOOGLE_API_KEY', '')
     if not api_key:
         return ToolOutcome.failure('missing_google_api_key', 'GOOGLE_API_KEY is required for image generation')
-    content: list[dict[str, Any]] = [{'type': 'text', 'text': prompt.strip()}]
+    prompt_text = prompt.strip()
+    # The Interactions API is not OpenAI-shaped: text-only prompts are sent as a
+    # plain string, while edits/reference-image calls use a direct list of content
+    # blocks. Wrapping blocks in {'role': 'user', 'content': ...} makes Google
+    # reject the request with HTTP 400 before generation starts.
+    input_content: str | list[dict[str, Any]] = prompt_text
     source_id = None
     try:
         if source_artifact_id:
             source, data = await source_image(source_artifact_id, current_session_id())
             source_id = str(source.id)
-            content.append({'type': 'image', 'mime_type': source.mime_type,
-                            'data': base64.b64encode(data).decode('ascii')})
+            input_content = [
+                {'type': 'text', 'text': prompt_text},
+                {'type': 'image', 'mime_type': source.mime_type,
+                 'data': base64.b64encode(data).decode('ascii')},
+            ]
         payload: dict[str, Any] = {
             'model': MODEL,
             'store': False,
-            'input': [{'role': 'user', 'content': content}],
+            'input': input_content,
             'response_format': {
                 'type': 'image', 'image_size': '1K',
                 'aspect_ratio': aspect_ratio or '1:1', 'delivery': 'inline',
@@ -118,6 +126,10 @@ async def generate_image(prompt: str, source_artifact_id: str | None = None,
         artifact = await store_png(png, prompt=prompt.strip(), source_artifact_id=source_id,
                                    model=MODEL, width=width, height=height)
         return ToolOutcome.success('Image generated.', artifacts=[ref(artifact)])
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:1000] if exc.response is not None else ''
+        suffix = f': {detail}' if detail else ''
+        return ToolOutcome.failure('image_provider_error', f'Image provider request failed: {exc}{suffix}')
     except httpx.HTTPError as exc:
         return ToolOutcome.failure('image_provider_error', f'Image provider request failed: {exc}')
     except (ValueError, OSError) as exc:
