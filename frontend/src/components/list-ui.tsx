@@ -11,12 +11,12 @@ export function Spinner({ className = 'h-5 w-5' }: { className?: string }) {
 
 export function PageHeader({ title, subtitle, children }: { title: string; subtitle: string; children?: ReactNode }) {
   return (
-    <header className="app-page-header flex flex-none flex-col items-stretch gap-4 border-b border-line py-4 pl-16 pr-4 sm:flex-row sm:items-center md:px-6">
-      <div className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-        <p className="mt-0.5 font-mono text-[11px] tracking-[0.02em] text-fg-dim">{subtitle}</p>
+    <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <h1 className="truncate text-xl font-semibold tracking-tight">{title}</h1>
+        <p className="sr-only mt-0.5 font-mono text-[11px] tracking-[0.02em] text-fg-dim md:not-sr-only">{subtitle}</p>
       </div>
-      {children && <div className="flex flex-wrap items-center gap-2 sm:ml-auto">{children}</div>}
+      {children && <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-2">{children}</div>}
     </header>
   );
 }

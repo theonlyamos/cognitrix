@@ -1,5 +1,6 @@
 import { useId, isValidElement, cloneElement, Fragment, type ReactNode, type ReactElement } from 'react';
 import { Link } from 'react-router-dom';
+import { MobileHeaderActions, type MobileHeaderAction } from '@/components/mobile-header-actions';
 import { Button } from '@/lib/components/ui/button';
 
 export function Field({
@@ -98,34 +99,49 @@ export function PageForm({
   extraActions?: ReactNode;
   children: ReactNode;
 }) {
+  const entityLabel = eyebrow.toLowerCase().replace(/^(edit|new)\s+/, '');
+  const mobileActions: MobileHeaderAction[] = [
+    ...(onDelete ? [{ key: 'delete', label: `Delete ${entityLabel}`, destructive: true, onSelect: onDelete }] : []),
+  ];
+
   return (
     <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden bg-bg text-fg">
-      <header className="app-page-header flex flex-none flex-col items-stretch gap-3 border-b border-line py-3 pl-16 pr-4 sm:flex-row sm:flex-wrap sm:items-center md:px-6">
-        <div className="flex min-w-0 items-center gap-3">
+      <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <Link
             to={backTo}
-            aria-label={`Back to ${eyebrow.toLowerCase().replace(/^(edit|new)\s+/, '')}s`}
+            aria-label={`Back to ${entityLabel}s`}
             className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
-          <div className="min-w-0">
-            <p className="font-mono text-[10px] tracking-[0.18em] text-accent-ink">{eyebrow}</p>
+          <div className="min-w-0 overflow-hidden">
+            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">{eyebrow}</p>
             <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          {extraActions}
-          {onDelete && (
-            <Button variant="ghost" size="sm" onClick={onDelete} className="hover:text-danger-ink">
-              Delete
+        <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-2">
+          <div className="hidden items-center gap-2 md:flex">
+            {extraActions}
+            {onDelete && (
+              <Button variant="ghost" size="sm" onClick={onDelete} className="hover:text-danger-ink">
+                Delete
+              </Button>
+            )}
+            <Button asChild variant="outline" size="sm">
+              <Link to={backTo}>Cancel</Link>
             </Button>
-          )}
-          <Button asChild variant="outline" size="sm">
-            <Link to={backTo}>Cancel</Link>
-          </Button>
-          <Button size="sm" onClick={onSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
+          </div>
+          {mobileActions.length > 0 && <MobileHeaderActions id="page-form-actions" actions={mobileActions} />}
+          <Button
+            size="sm"
+            className="w-11 px-0 md:w-auto md:px-3"
+            aria-label={saving ? 'Saving…' : 'Save changes'}
+            onClick={onSave}
+            disabled={saving}
+          >
+            <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l4 4L19 6" /></svg>
+            <span className="sr-only md:not-sr-only">{saving ? 'Saving…' : 'Save'}</span>
           </Button>
           {saving && <span role="status" className="sr-only">Saving…</span>}
         </div>

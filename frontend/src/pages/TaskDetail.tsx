@@ -6,6 +6,7 @@ import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/lib/components/ui/button';
 import { LoadingState, Spinner } from '@/components/list-ui';
 import { MobileSheet } from '@/components/MobileSheet';
+import { MobileHeaderActions, type MobileHeaderAction } from '@/components/mobile-header-actions';
 import { SelectionRow } from '@/components/SelectionRow';
 import { TranscriptView } from '@/components/TranscriptView';
 import {
@@ -306,6 +307,19 @@ export default function TaskDetail() {
       ? 'Starting…'
       : null;
 
+  const mobileActions: MobileHeaderAction[] = [
+    { key: 'edit', label: 'Edit task', to: `/tasks/${taskId}/edit` },
+    ...(hasSchedule
+      ? [{
+          key: 'schedule',
+          label: task?.schedule_enabled ? 'Pause task schedule' : 'Resume task schedule',
+          disabled: togglingSchedule,
+          onSelect: toggleSchedule,
+        }]
+      : []),
+    ...(canResume ? [{ key: 'run-from-start', label: 'Run from beginning', disabled: starting, onSelect: () => start(false) }] : []),
+  ];
+
   const runsPanel = (
     <>
       <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
@@ -423,7 +437,8 @@ export default function TaskDetail() {
 
       {/* Main pane */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="app-page-header flex min-h-14 flex-none flex-col items-stretch gap-3 border-b border-line py-2 pl-16 pr-4 sm:flex-row sm:flex-wrap sm:items-center md:px-6">
+        <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:flex-wrap md:px-6">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <Link
             to="/tasks"
             aria-label="Back to tasks"
@@ -431,55 +446,78 @@ export default function TaskDetail() {
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
-          <div className="min-w-0">
-            <p className="font-mono text-[10px] tracking-[0.18em] text-accent-ink">TASK</p>
+          <div className="min-w-0 overflow-hidden">
+            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">TASK</p>
             <h1 className="truncate text-[15px] font-semibold tracking-tight">{task?.title || 'Task'}</h1>
           </div>
-          <span className={cn('rounded border px-2 py-0.5 font-mono text-[10.5px]', STATUS[status] || STATUS.pending)}>{status}</span>
+          </div>
+          <span className={cn('sr-only rounded border px-2 py-0.5 font-mono text-[10.5px] md:not-sr-only', STATUS[status] || STATUS.pending)}>{status}</span>
           {plan.length > 0 && (
-            <span className="font-mono text-[10.5px] text-fg-dim tnum">steps {stepsDone}/{plan.length}</span>
+            <span className="sr-only font-mono text-[10.5px] text-fg-dim tnum md:not-sr-only">steps {stepsDone}/{plan.length}</span>
           )}
           {hasSchedule && (
-            <span className="font-mono text-[10.5px] text-fg-dim" title="schedule">
+            <span className="sr-only font-mono text-[10.5px] text-fg-dim md:not-sr-only" title="schedule">
               {task?.schedule_enabled && task?.next_run_at ? `⏱ next ${nextRunLocal(task.next_run_at)}` : '⏸ schedule paused'}
             </span>
           )}
-          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-2">
             <Button
               ref={mobileRunsTriggerRef}
               variant="outline"
-              size="sm"
+              size="icon"
               className="md:hidden"
+              aria-label="Open runs"
               aria-controls="mobile-runs"
               aria-expanded={mobileRunsOpen}
               onClick={() => setMobileRunsOpen(true)}
             >
-              Runs
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16v11H7l-3 3V5z" /></svg>
             </Button>
             {hasSchedule && (
-              <Button variant="outline" size="sm" onClick={toggleSchedule} disabled={togglingSchedule}>
+              <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={toggleSchedule} disabled={togglingSchedule}>
                 {task?.schedule_enabled ? 'Pause schedule' : 'Resume schedule'}
               </Button>
             )}
-            <Button asChild variant="outline" size="sm">
+            <Button asChild variant="outline" size="sm" className="hidden md:inline-flex">
               <Link to={`/tasks/${taskId}/edit`}>Edit</Link>
             </Button>
             {isLive ? (
-              <Button variant="ghost" size="sm" onClick={cancel} disabled={cancelling} className="hover:text-danger-ink">
+              <Button variant="ghost" size="sm" onClick={cancel} disabled={cancelling} className="hidden hover:text-danger-ink md:inline-flex">
                 {activeRun?.status === 'cancelling' || cancelling ? 'Cancelling… (click to force)' : 'Cancel'}
               </Button>
             ) : canResume ? (
-              <>
-                <Button variant="outline" size="sm" onClick={() => start(true)} disabled={starting}>
+              <div className="hidden md:contents">
+                <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={() => start(true)} disabled={starting}>
                   {starting ? 'Starting…' : '↻ Resume'}
                 </Button>
                 <Button size="sm" onClick={() => start(false)} disabled={starting}>▶ Run</Button>
-              </>
+              </div>
             ) : (
-              <Button size="sm" onClick={() => start(false)} disabled={starting}>
+              <Button size="sm" className="hidden md:inline-flex" onClick={() => start(false)} disabled={starting}>
                 {starting ? 'Starting…' : '▶ Run'}
               </Button>
             )}
+            {isLive ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="md:hidden hover:text-danger-ink"
+                aria-label={activeRun?.status === 'cancelling' || cancelling ? 'Force cancel task' : 'Cancel task'}
+                onClick={cancel}
+                disabled={cancelling}
+              >
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </Button>
+            ) : canResume ? (
+              <Button variant="outline" size="icon" className="md:hidden" aria-label="Resume task" onClick={() => start(true)} disabled={starting}>
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12a8 8 0 1 0 2-5.5" /><path d="M4 5v6h6" /></svg>
+              </Button>
+            ) : (
+              <Button size="icon" className="md:hidden" aria-label={starting ? 'Starting task' : 'Run task'} onClick={() => start(false)} disabled={starting}>
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 5l11 7-11 7V5z" /></svg>
+              </Button>
+            )}
+            <MobileHeaderActions id="task-actions" actions={mobileActions} />
             {actionStatus && <span role="status" className="sr-only">{actionStatus}</span>}
           </div>
         </header>

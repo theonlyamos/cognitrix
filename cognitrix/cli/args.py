@@ -50,7 +50,7 @@ def get_arguments():
 
     # Main arguments
     parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
-    parser.add_argument('--provider', default='openrouter', help='LLM provider. Config from env: AI_PROVIDER, *_BASE_URL, *_API_KEY, *_MODEL')
+    parser.add_argument('--provider', default='google', help='LLM provider. Config from env: AI_PROVIDER, *_BASE_URL, *_API_KEY, *_MODEL')
     parser.add_argument('--agents', action='store_true', help='List all saved agents')
     parser.add_argument('--tasks', action='store_true', help='List all saved tasks')
     parser.add_argument('--teams', action='store_true', help='List all saved teams')
@@ -58,7 +58,7 @@ def get_arguments():
     parser.add_argument('--agent', type=str, default='Assistant', help='Set which saved agent to use')
     parser.add_argument('--load-tools', type=lambda s: [i for i in s.split(',')],
                        default='all', help='Add tools by categories to agent')
-    parser.add_argument('--model', type=str, default='google/gemini-3.5-flash', help='Specify model or model_url to use')
+    parser.add_argument('--model', type=str, default='gemini-3.5-flash', help='Specify model or model_url to use')
     parser.add_argument('--api-key', type=str, default='', help='Set api key of selected llm')
     parser.add_argument('--api-base', type=str, default='',
                        help='Override provider base_url (e.g. for local Ollama).')

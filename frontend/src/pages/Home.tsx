@@ -608,17 +608,17 @@ export default function Home() {
       {/* Chat column */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Top bar */}
-        <header className="app-page-header flex min-h-14 flex-none flex-col items-stretch gap-2 border-b border-line py-2 pl-16 pr-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4 md:px-6">
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <h1 className="text-[15px] font-semibold">Chat</h1>
+        <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:flex-wrap md:px-6">
+          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-hidden">
+            <h1 className="sr-only text-[15px] font-semibold md:not-sr-only">Chat</h1>
             {agents.length > 0 && (
-              <div className="relative min-w-0">
+              <div className="relative min-w-0 flex-1">
               <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-[10px] text-fg-dim">/</span>
               <select
                 value={agentId || agents[0]?.id || ''}
                 onChange={(e) => switchAgent(e.target.value)}
                 aria-label="Active agent"
-                className="h-11 max-w-full appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent md:h-8"
+                className="h-11 w-full min-w-0 appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent md:h-8"
               >
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>{a.name}</option>
@@ -628,26 +628,33 @@ export default function Home() {
             </div>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-2 sm:ml-auto sm:gap-3">
+          <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-3">
             {agentId && (
               <Button
                 ref={mobileConversationsTriggerRef}
                 variant="outline"
-                size="sm"
+                size="icon"
                 className="md:hidden"
+                aria-label="Open conversations"
                 aria-controls="mobile-conversations"
                 aria-expanded={mobileConversationsOpen}
                 onClick={() => setMobileConversationsOpen(true)}
               >
-                Conversations
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16v11H7l-3 3V5z" /></svg>
               </Button>
             )}
-            <span className="flex items-center gap-2 font-mono text-[11px] text-fg-dim">
-              <span className={cn('h-1.5 w-1.5 rounded-full', isConnected ? 'bg-accent' : 'bg-danger')} />
-              {isConnected ? 'connected' : (
-                <button onClick={reconnect} className="min-h-11 underline underline-offset-2 hover:text-fg md:min-h-0">reconnect</button>
-              )}
-            </span>
+            {isConnected ? (
+              <span aria-label="Connection status: connected" className="flex h-11 w-11 items-center justify-center text-fg-dim md:h-8 md:w-auto md:justify-start md:gap-2" title="Connected">
+                <svg aria-hidden="true" className="h-4 w-4 text-accent md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l4 4L19 6" /></svg>
+                <span aria-hidden="true" className="hidden h-1.5 w-1.5 rounded-full bg-accent md:block" />
+                <span className="sr-only md:not-sr-only">connected</span>
+              </span>
+            ) : (
+              <Button variant="ghost" size="icon" aria-label="Reconnect" onClick={reconnect} className="md:h-8 md:w-auto md:px-2">
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11a8 8 0 1 0 2 5.5" /><path d="M20 5v6h-6" /></svg>
+                <span className="sr-only md:not-sr-only">reconnect</span>
+              </Button>
+            )}
           </div>
         </header>
 

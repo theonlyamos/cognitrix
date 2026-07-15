@@ -121,6 +121,7 @@ env.bak/
 venv.bak/
 
 .vite/
+.pnpm-store/
 
 # Spyder project settings
 .spyderproject

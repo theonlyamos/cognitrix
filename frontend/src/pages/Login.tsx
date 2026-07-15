@@ -66,7 +66,7 @@ export default function Login() {
 
       {/* Form column */}
       <main className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between p-6">
+        <header className="flex min-h-14 flex-nowrap items-center justify-between p-6">
           <span className="font-mono text-[11px] tracking-[0.16em] text-fg-dim lg:hidden">COGNITRIX</span>
           <span className="lg:hidden" />
           <ThemeToggle className="ml-auto" />
