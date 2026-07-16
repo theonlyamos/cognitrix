@@ -1,6 +1,8 @@
+import io
 from datetime import datetime, timezone
 
 import pytest
+from PIL import Image
 
 
 def test_artifact_declares_persistent_media_metadata():
@@ -128,13 +130,32 @@ async def test_artifact_session_ids_remain_exact_and_collision_free(monkeypatch,
 
     monkeypatch.setattr(artifacts, '_root', lambda: tmp_path)
     saved = []
+
     async def save(self):
         saved.append(self)
         return self
-    monkeypatch.setattr(artifacts.Artifact, 'save', save)
 
-    first = await artifacts.store_png(b'a', session_id='a.b', user_id='u1')
-    second = await artifacts.store_png(b'b', session_id='ab', user_id='u1')
+    async def get(artifact_id):
+        return next((item for item in saved if str(item.id) == artifact_id), None)
+
+    async def find(query):
+        return [
+            item
+            for item in saved
+            if all(getattr(item, key) == value for key, value in query.items())
+        ]
+
+    monkeypatch.setattr(artifacts.Artifact, 'save', save)
+    monkeypatch.setattr(artifacts.Artifact, 'get', get)
+    monkeypatch.setattr(artifacts.Artifact, 'find', find)
+
+    def png(color):
+        output = io.BytesIO()
+        Image.new('RGB', (2, 2), color).save(output, format='PNG')
+        return output.getvalue()
+
+    first = await artifacts.store_png(png('red'), session_id='a.b', user_id='u1')
+    second = await artifacts.store_png(png('blue'), session_id='ab', user_id='u1')
     assert first.session_id == 'a.b'
     assert second.session_id == 'ab'
     assert first.storage_key.split('/')[0] != second.storage_key.split('/')[0]

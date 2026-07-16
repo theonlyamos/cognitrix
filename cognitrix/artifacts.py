@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextvars
 import hashlib
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -112,70 +110,55 @@ async def store_png(data: bytes, *, session_id: str | None = None, agent_id: str
                     user_id: str | None = None,
                     prompt: str = '', source_artifact_id: str | None = None,
                     model: str = '', width: int | None = None, height: int | None = None) -> Artifact:
-    if len(data) > MAX_IMAGE_BYTES:
-        raise ValueError('Generated image exceeds the 10MB limit')
-    session = session_id or current_session_id()
-    namespace = _storage_namespace(session)
+    from cognitrix.media.service import media_assets
+    from cognitrix.media.types import MediaOwnership
 
-    def _quota_and_write(path: Path) -> None:
-        existing = list(path.parent.glob('*.png')) if path.parent.exists() else []
-        if len(existing) >= MAX_SESSION_ARTIFACTS:
-            raise ValueError('This session has reached its retained image limit')
-        retained = sum(item.stat().st_size for item in existing)
-        if retained + len(data) > MAX_SESSION_BYTES:
-            raise ValueError('This session has reached its retained image storage limit')
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-
-    artifact_id = str(uuid.uuid4())
-    key = f'{namespace}/{artifact_id}.png'
-    path = _root() / key
-    await asyncio.to_thread(_quota_and_write, path)
-    artifact = Artifact(session_id=session, agent_id=agent_id or _agent_id.get(),
-                        user_id=user_id or _user_id.get(), storage_key=key, mime_type='image/png',
-                        filename=f'image-{artifact_id[:8]}.png', width=width, height=height,
-                        size_bytes=len(data), prompt=prompt[:1000], source_artifact_id=source_artifact_id,
-                        model=model)
-    await artifact.save()
+    ownership = MediaOwnership(
+        session_id=session_id or current_session_id(),
+        agent_id=agent_id if agent_id is not None else _agent_id.get(),
+        user_id=user_id if user_id is not None else _user_id.get(),
+    )
+    artifact_ref = await media_assets.store_generated_image(
+        data,
+        {
+            'prompt': prompt,
+            'source_artifact_id': source_artifact_id,
+            'model': model,
+            'width': width,
+            'height': height,
+        },
+        ownership,
+    )
+    artifact = await Artifact.get(artifact_ref.id)
+    if artifact is None:
+        raise ValueError('Stored artifact metadata is unavailable')
     return artifact
 
 
 async def source_image(artifact_id: str, session_id: str | None = None,
                        user_id: str | None = None) -> tuple[Artifact, bytes]:
-    artifact = await Artifact.get(artifact_id)
+    from cognitrix.media.service import media_assets
+    from cognitrix.media.types import MediaOwnership
+
+    resolved = await media_assets.resolve_image(
+        artifact_id,
+        MediaOwnership(
+            session_id=session_id or current_session_id(),
+            user_id=user_id if user_id is not None else _user_id.get(),
+            agent_id=_agent_id.get(),
+        ),
+    )
+    artifact = await Artifact.get(resolved.ref.id)
     if artifact is None:
         raise ValueError('Source artifact was not found')
-    if artifact.session_id != (session_id or current_session_id()):
-        raise ValueError('Source artifact belongs to a different session')
-    expected_user = user_id or _user_id.get()
-    if artifact.user_id != expected_user:
-        raise ValueError('Source artifact belongs to a different user')
-    path = absolute_path(artifact)
-    size = await asyncio.to_thread(lambda: path.stat().st_size)
-    if size > MAX_IMAGE_BYTES:
-        raise ValueError('Source image exceeds the 10MB limit')
-    data = await asyncio.to_thread(path.read_bytes)
-    return artifact, data
+    return artifact, resolved.data
 
 
 async def delete_session_artifacts(session_id: str) -> None:
     """Remove a conversation's retained media when its chat is cleared/deleted."""
-    session = session_id
-    artifacts = await Artifact.find({'session_id': session}) or []
-    storage_keys = {
-        key
-        for artifact in artifacts
-        for variant in _VARIANT_KEY_FIELDS
-        if (key := _variant_storage_key(artifact, variant))
-    }
-    for key in storage_keys:
-        await asyncio.to_thread(_resolve_storage_key(key).unlink, missing_ok=True)
-    await Artifact.delete_many({'session_id': session})
-    directory = _root() / _storage_namespace(session)
-    try:
-        await asyncio.to_thread(directory.rmdir)
-    except OSError:
-        pass
+    from cognitrix.media.service import media_assets
+
+    await media_assets.delete_session_media(session_id)
 
 
 def ref(artifact: Artifact) -> ArtifactRef:
