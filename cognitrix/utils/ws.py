@@ -7,6 +7,11 @@ from starlette.websockets import WebSocketDisconnect
 
 from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.prompts.generator import agent_generator, task_details_generator, team_details_generator
+from cognitrix.sessions.access import (
+    browser_authorization,
+    session_access_allowed,
+    visible_sessions,
+)
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 from cognitrix.tools.base import Tool
@@ -19,10 +24,11 @@ class WebSocketManager:
         from cognitrix.utils.core import register_websocket_manager
         register_websocket_manager(agent.id, self)
 
-    async def websocket_endpoint(self, websocket: WebSocket):
+    async def websocket_endpoint(self, websocket: WebSocket, user_id: str):
         web_agent = self.agent
         await websocket.accept()
-        session = await Session.get_by_agent_id(web_agent.id)
+        authorization = browser_authorization(user_id)
+        session = await Session.get_by_agent_id(web_agent.id, user_id)
         try:
             self.websocket = websocket
             while True:
@@ -36,7 +42,18 @@ class WebSocketManager:
                         session_id = query['session_id']
 
                         if action == 'get':
-                            session = await Session.load(session_id)
+                            candidate = await Session.get(session_id)
+                            if candidate is None or not await session_access_allowed(
+                                candidate,
+                                authorization,
+                            ):
+                                await websocket.send_json({
+                                    'type': 'error',
+                                    'content': 'This conversation is unavailable.',
+                                    'session_id': session_id,
+                                })
+                                continue
+                            session = candidate
 
                             if not session.agent_id:
                                 session.agent_id = web_agent.id
@@ -55,14 +72,29 @@ class WebSocketManager:
                             await websocket.send_json({'type': query_type, 'content': chat_history, 'agent_name': web_agent.name, 'action': action})
 
                         elif action == 'delete':
-                            session = await Session.load(session_id)
+                            candidate = await Session.get(session_id)
+                            if candidate is None or not await session_access_allowed(
+                                candidate,
+                                authorization,
+                            ):
+                                await websocket.send_json({
+                                    'type': 'error',
+                                    'content': 'This conversation is unavailable.',
+                                    'session_id': session_id,
+                                })
+                                continue
+                            session = candidate
                             session.chat = []
                             await session.save()
                             await websocket.send_json({'type': query_type, 'content': session.chat, 'agent_name': web_agent.name, 'action': action})
 
                     elif query_type == 'sessions':
                         if action == 'list':
-                            sessions = [sess.dict() for sess in await Session.list_sessions()]
+                            allowed = await visible_sessions(
+                                list(await Session.list_sessions()),
+                                authorization,
+                            )
+                            sessions = [sess.dict() for sess in allowed]
                             await websocket.send_json({'type': query_type, 'content': sessions, 'action': action})
 
                         elif action == 'get':
@@ -71,13 +103,31 @@ class WebSocketManager:
                             if loaded_agent:
                                 web_agent = loaded_agent
                                 self.websocket = websocket
-                                session = await Session.get_by_agent_id(loaded_agent.id)
+                                session = await Session.get_by_agent_id(
+                                    loaded_agent.id,
+                                    user_id,
+                                )
                                 await websocket.send_json({'type': query_type, 'agent_name': web_agent.name, 'content': session.dict(), 'action': action})
 
                         elif action == 'delete':
                             session_id = query['session_id']
+                            candidate = await Session.get(session_id)
+                            if candidate is None or not await session_access_allowed(
+                                candidate,
+                                authorization,
+                            ):
+                                await websocket.send_json({
+                                    'type': 'error',
+                                    'content': 'This conversation is unavailable.',
+                                    'session_id': session_id,
+                                })
+                                continue
                             await Session.delete(session_id)
-                            sessions = [sess.dict() for sess in await Session.list_sessions()]
+                            allowed = await visible_sessions(
+                                list(await Session.list_sessions()),
+                                authorization,
+                            )
+                            sessions = [sess.dict() for sess in allowed]
                             await websocket.send_json({'type': query_type, 'content': sessions, 'action': action})
 
                     elif query_type == 'generate':

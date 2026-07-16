@@ -76,6 +76,10 @@ def create_mcp_tool_wrapper(server_name: str, tool_info: dict[str, Any]) -> Tool
     mcp_tool_wrapper.__doc__ = "\n".join(doc_lines)
 
     wrapped_tool = tool(category="mcp_dynamic", name=unique_name)(mcp_tool_wrapper)
+    # The generic decorator derives a human-readable title from the Python
+    # function name. MCP capabilities use the canonical server_tool identifier
+    # as an authority boundary, so retain that exact sanitized name instead.
+    wrapped_tool.name = unique_name
     # Override the (kwargs-only) introspected schema with the server's real one.
     wrapped_tool.parameters = {
         pname: _JSON_TO_PYNAME.get((pinfo or {}).get('type', 'string'), 'str')

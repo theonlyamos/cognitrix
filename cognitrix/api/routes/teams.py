@@ -29,7 +29,13 @@ async def run_team(team_id: str, body: TeamRunRequest,
                    ctx: AuthContext = Depends(get_auth_context)):
     """Create a task for this team and enqueue it. Async by design — poll
     GET /tasks/{id} + /tasks/{id}/runs, or register a callback_url webhook."""
-    from cognitrix.api.routes.tasks import _check_task_allowlists, _enqueue_task_start, _set_callback
+    from cognitrix.api.routes.tasks import (
+        _active_run,
+        _check_task_allowlists,
+        _enqueue_task_start,
+        _run_identity,
+        _set_callback,
+    )
     from cognitrix.tasks import Task
 
     team = await Team.get(team_id)
@@ -54,8 +60,17 @@ async def run_team(team_id: str, body: TeamRunRequest,
     _check_task_allowlists(ctx, task)
     await _set_callback(task, body.callback_url, ctx)
     await task.save()
-    task = await _enqueue_task_start(task)
-    return {'task_id': task.id, 'status': task.status}
+    requested_by, actor_key = _run_identity(ctx)
+    run = await _enqueue_task_start(
+        task,
+        requested_by=requested_by,
+        actor_key=actor_key,
+    )
+    return {
+        'task_id': task.id,
+        'run_id': run.id,
+        'status': run.status,
+    }
 
 @teams_api.get("")
 async def get_all_teams():
@@ -99,18 +114,38 @@ async def delete_team(team_id: str):
     return {"message": "Team deleted successfully"}
 
 @teams_api.get("/{team_id}/sessions")
-async def sessions(team_id: str):
-    sessions = await Session.find({'team_id': team_id})
-    return [session.json() for session in sessions]
+async def sessions(
+    team_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    # Keep this legacy alias aligned with /sessions/teams/{team_id}: TaskRun
+    # transcripts are governed by the immutable enqueue-time ACL and list
+    # responses must not carry full chat bodies.
+    from cognitrix.api.routes.sessions import _session_summary, _visible_sessions
+
+    rows = await _visible_sessions(
+        list(await Session.find({'team_id': team_id})),
+        ctx,
+    )
+    return [_session_summary(session) for session in rows]
 
 
 @teams_api.get("/{team_id}/tasks")
 async def get_tasks_by_team(team_id: str):
     from cognitrix.api.routes.tasks import _task_json
+    from cognitrix.tasks import Task
 
     team = await Team.get(team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    tasks = await team.get_assigned_tasks()
+    # Team.tasks contains compatibility snapshots.  Rehydrate each reference
+    # from the Task table so edits, reassignment, and soft deletion are
+    # authoritative while preserving the embedded list's order.
+    tasks = []
+    for snapshot in await team.get_assigned_tasks():
+        task = await Task.get(snapshot.id)
+        if task is None or task.deleted_at or task.team_id != team.id:
+            continue
+        tasks.append(task)
     return [_task_json(task) for task in tasks]
 

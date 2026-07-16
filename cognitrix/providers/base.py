@@ -17,6 +17,7 @@ from odbms import Model
 from openai import AsyncOpenAI, OpenAI
 from pydantic import Field
 
+from cognitrix.errors import ExecutionControlError
 from cognitrix.utils import file_to_image_data_uri, image_to_base64
 from cognitrix.utils.llm_response import LLMResponse
 
@@ -146,7 +147,12 @@ def _get_or_create_client(
     """Reuse an async OpenAI client per effective config."""
     key = _client_cache_key(base_url, api_key, default_headers)
     if key not in _client_cache:
-        kwargs: dict[str, Any] = {'api_key': api_key, 'base_url': base_url}
+        # The explicit, budget-accounted retry loop owns provider retries.
+        kwargs: dict[str, Any] = {
+            'api_key': api_key,
+            'base_url': base_url,
+            'max_retries': 0,
+        }
         if default_headers:
             kwargs['default_headers'] = default_headers
         _client_cache[key] = AsyncOpenAI(**kwargs)
@@ -202,7 +208,22 @@ class LLM(Model):
     async def __call__(self, prompt: list[dict[str, Any]], stream: bool = False, tools: Any = None, **kwds: Any):
         if tools is None:
             tools = []
-        return await LLMManager.generate_response(self, prompt, stream, tools, **kwds)
+        # Imported lazily to keep the provider layer usable without the task
+        # runtime and to avoid a module cycle through provider limiters.
+        from cognitrix.tasks.accounting import wrap_llm_result
+
+        return await wrap_llm_result(
+            self,
+            prompt,
+            lambda runtime_llm: LLMManager.generate_response(
+                runtime_llm,
+                prompt,
+                stream,
+                tools,
+                **kwds,
+            ),
+            stream=stream,
+        )
 
 
 LLMList: TypeAlias = list[LLM]
@@ -396,8 +417,9 @@ class LLMManager:
                 completion_params['stream_options'] = {'include_usage': True}
             if formatted_tools:
                 completion_params['tools'] = formatted_tools
-            if llm.response_format:
-                completion_params['response_format'] = llm.response_format
+            response_format = kwds.get('response_format', llm.response_format)
+            if response_format:
+                completion_params['response_format'] = response_format
             if llm.extra_body:
                 completion_params['extra_body'] = llm.extra_body
 
@@ -405,6 +427,8 @@ class LLMManager:
                 return LLMManager._handle_streaming_response(client, completion_params)
             return await LLMManager._handle_non_streaming_response(client, completion_params)
 
+        except ExecutionControlError:
+            raise
         except openai.OpenAIError as e:
             logger.error(f"OpenAI API error: {str(e)}")
             msg = f"Error: OpenAI API encountered an issue - {str(e)}"
@@ -549,6 +573,8 @@ class LLMManager:
             # current_chunk so consumers don't print the last chunk twice.
             response.current_chunk = '\n</think>\n' if in_reasoning else ''
             yield response
+        except ExecutionControlError:
+            raise
         except Exception as e:
             logger.exception(f"Error in streaming response: {str(e)}")
             msg = f"Streaming error: {str(e)}"
@@ -578,16 +604,34 @@ class LLMManager:
                 openai.RateLimitError, openai.APITimeoutError,
                 openai.APIConnectionError, openai.InternalServerError,
             )
+            from cognitrix.tasks.accounting import current_task_accounting
+
+            accounting = current_task_accounting()
             response = None
             for attempt in range(1, 4):
+                if attempt > 1 and accounting is not None:
+                    retry_output_tokens = await accounting.begin_provider_retry()
+                    if retry_output_tokens is not None:
+                        # Re-apply the live token clamp after the failed attempt
+                        # has consumed budget. Keep all other provider params.
+                        params = {**params, 'max_tokens': retry_output_tokens}
                 try:
                     response = await client.chat.completions.create(**params)
                     break
                 except transient as e:
+                    if accounting is not None:
+                        # The request may be billable even when it failed before
+                        # returning usage. Close this attempt conservatively
+                        # before reserving any subsequent request.
+                        await accounting.finish_failed_provider_attempt()
                     if attempt == 3:
                         raise
                     logger.warning("Transient LLM error (attempt %s): %s", attempt, e)
-                    await asyncio.sleep(2 ** (attempt - 1))
+                    delay = 2 ** (attempt - 1)
+                    if accounting is not None:
+                        await accounting.wait_within_wall(asyncio.sleep(delay))
+                    else:
+                        await asyncio.sleep(delay)
             msg = response.choices[0].message
             content = msg.content or ""
             reasoning = LLMManager._get_reasoning_from_message(msg)
@@ -607,6 +651,8 @@ class LLMManager:
                     'completion_tokens': resp_usage.completion_tokens or 0,
                 }
             return llm_resp
+        except ExecutionControlError:
+            raise
         except Exception as e:
             logger.exception(f"Error in non-streaming response: {str(e)}")
             msg = f"Response error: {str(e)}"

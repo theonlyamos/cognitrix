@@ -1,10 +1,12 @@
 """Planning prompts and Pydantic models for structured plan generation."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Step(BaseModel):
     """A single step in a workflow plan."""
+    model_config = ConfigDict(extra="allow")
+
     step_number: int = Field(..., description="Sequential step number (1-based)")
     title: str = Field(..., description="Short, descriptive title")
     description: str = Field(..., description="Detailed description of what to do")
@@ -12,20 +14,17 @@ class Step(BaseModel):
     assigned_agent: str = Field(default="auto", description="Agent name or 'auto' for automatic assignment")
     required_tools: list[str] = Field(default_factory=list, description="Tools needed for this step")
     dependencies: list[int] = Field(default_factory=list, description="Step numbers this step depends on")
-    estimated_duration: str = Field(default="medium", description="short/medium/long")
     verification_criteria: str = Field(..., description="How to verify this step succeeded")
 
 
 class TaskPlan(BaseModel):
     """Complete plan for executing a task."""
-    task_analysis: str = Field(..., description="Brief analysis of what needs to be done")
-    estimated_complexity: str = Field(..., description="simple/moderate/complex")
+    # Historical callers may still pass the old analysis/duration/fallback
+    # metadata. ``extra=allow`` keeps those attributes readable without
+    # advertising them to the planner or persisting unused schema fields.
+    model_config = ConfigDict(extra="allow")
+
     steps: list[Step] = Field(..., description="Ordered list of steps to execute")
-    parallel_groups: list[list[int]] = Field(
-        default_factory=list,
-        description="Groups of step numbers that can run in parallel"
-    )
-    fallback_strategy: str = Field(..., description="What to do if the main approach fails")
 
 
 PLANNING_SYSTEM_PROMPT = """You are an expert task planner. Break down complex tasks into concrete, actionable steps.
@@ -34,13 +33,11 @@ PLANNING_SYSTEM_PROMPT = """You are an expert task planner. Break down complex t
 - Return ONLY valid JSON - start with { and end with }
 - Do NOT use markdown code blocks (no ```json or ```)
 - Do NOT include any text before or after the JSON
-- All fields in the TaskPlan schema are REQUIRED
+- Every field in the schema is REQUIRED
 - The JSON must be parseable by json.loads()
 
 ## Schema
 {
-  "task_analysis": "string - brief analysis of what needs to be done",
-  "estimated_complexity": "simple|moderate|complex",
   "steps": [
     {
       "step_number": 1,
@@ -50,12 +47,9 @@ PLANNING_SYSTEM_PROMPT = """You are an expert task planner. Break down complex t
       "assigned_agent": "string",
       "required_tools": [],
       "dependencies": [],
-      "estimated_duration": "short|medium|long",
       "verification_criteria": "string"
     }
-  ],
-  "parallel_groups": [],
-  "fallback_strategy": "string"
+  ]
 }
 
 ## Rules
@@ -96,7 +90,7 @@ PLANNING_USER_TEMPLATE = """Create a detailed plan for the following task:
 {budget_info}
 {constraints}
 
-Generate a structured plan with steps, dependencies, and parallelization opportunities.
+Generate a structured plan with steps and dependencies.
 Each step MUST include specific verification criteria that can be checked."""
 
 

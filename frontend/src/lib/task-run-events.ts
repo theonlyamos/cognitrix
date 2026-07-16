@@ -1,12 +1,16 @@
 import type { TranscriptEntry, TranscriptTool } from '@/lib/transcript';
 
-export type TaskRunEventKind =
+export type KnownTaskRunEventKind =
   | 'step_status'
   | 'text_delta'
   | 'tool_started'
   | 'tool_completed'
   | 'turn_completed'
   | 'run_status';
+
+// Event streams are additive. Older clients must be able to advance their
+// cursor past event kinds introduced by newer servers.
+export type TaskRunEventKind = KnownTaskRunEventKind | (string & {});
 
 export interface TaskRunEvent {
   type: 'task_run_event';

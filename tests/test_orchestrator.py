@@ -1,10 +1,11 @@
-"""Unit tests for the task orchestrator (plan/assign/gate/schedule logic).
+"""Unit tests for durable task planning, assignment, and run lifecycle logic.
 
 LLM and DB surfaces are stubbed; e2e behavior is covered by the manual runs in
 the implementation plan.
 """
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -12,41 +13,52 @@ import cognitrix.tasks.orchestrator as orch
 from cognitrix.providers.base import LLM
 
 
+@pytest.mark.asyncio
+async def test_changed_team_leader_cannot_escape_authorized_roster(monkeypatch):
+    allowed = SimpleNamespace(id="allowed")
+    outside = SimpleNamespace(id="outside")
+    task = SimpleNamespace(team_id="team-1")
+    monkeypatch.setattr(
+        "cognitrix.teams.base.Team.get",
+        AsyncMock(return_value=SimpleNamespace(leader_id=outside.id)),
+    )
+    monkeypatch.setattr(
+        orch.Agent,
+        "get",
+        AsyncMock(side_effect=AssertionError("must not load outside roster")),
+    )
+
+    assert await orch._resolve_leader(task, [allowed]) is allowed
+
+
 def _llm():
     return LLM(provider="openai", base_url="http://x", api_key="k", model="m")
 
 
-# ---------------------------------------------------------------- parsing
+def test_only_durable_step_execution_engine_is_exposed():
+    legacy_symbols = {
+        "_dependency_batches",
+        "_summarize_recent_activity",
+        "_run_agent_turn",
+        "_parse_finalscore",
+        "_gate",
+        "_step_prompt",
+        "_execute_step",
+        "_run_step_guarded",
+        "_consume_step_outcomes",
+        "_save_plan",
+        "_cancel_pending",
+        "_copy_plan_for_resume",
+        "_synthesize",
+    }
 
-def test_parse_finalscore_variants():
-    assert orch._parse_finalscore('{"finalscore": "7/10", "suggestions": ["a"]}') == (7.0, ["a"])
-    assert orch._parse_finalscore('```json\n{"finalscore": "9"}\n```') == (9.0, [])
-    assert orch._parse_finalscore('{"finalscore": null, "suggestions": ["s"]}') == (None, ["s"])
-    assert orch._parse_finalscore('no json here') == (None, [])
-    assert orch._parse_finalscore('') == (None, [])
+    assert callable(orch._execute_compiled_steps)
+    assert legacy_symbols.isdisjoint(vars(orch))
 
 
 def test_extract_json_prefers_fenced():
     text = 'noise {"a": 1} noise ```json\n{"b": 2}\n``` tail'
     assert orch._extract_json(text) == {"b": 2}
-
-
-# ---------------------------------------------------------------- scheduling
-
-def _plan_with_deps(deps: dict[int, list[int]]):
-    return [orch._new_step(i, f"s{i}", f"s{i}", d) for i, d in sorted(deps.items())]
-
-
-def test_dependency_batches_diamond():
-    plan = _plan_with_deps({0: [], 1: [0], 2: [0], 3: [1, 2]})
-    assert orch._dependency_batches(plan) == [[0], [1, 2], [3]]
-
-
-def test_dependency_batches_cycle_falls_back_sequential():
-    plan = _plan_with_deps({0: [1], 1: [0]})
-    batches = orch._dependency_batches(plan)
-    assert sorted(i for b in batches for i in b) == [0, 1]
-    assert all(len(b) == 1 for b in batches)
 
 
 # ---------------------------------------------------------------- plan build
@@ -117,222 +129,158 @@ async def test_assign_agents_parses_mapping_and_falls_back(monkeypatch):
     assert plan[1]['agent_name'] == 'Lead'  # unmatched -> leader
 
 
-# ---------------------------------------------------------------- gate
-
-def _agent():
-    return SimpleNamespace(name='A', llm=_llm())
-
+# ---------------------------------------------------------------- run lifecycle
 
 @pytest.mark.asyncio
-async def test_gate_passes_at_threshold(monkeypatch):
-    async def fake_turn(session, agent, prompt, interface, *args, **kwargs):
-        return '{"finalscore": "7/10"}'
-    monkeypatch.setattr(orch, '_run_agent_turn', fake_turn)
-    step = orch._new_step(0, 's', 's', [])
-    passed, suggestions = await orch._gate(None, _agent(), step, 'answer', 'web')
-    assert passed and step['gate'] == 'passed'
+async def test_set_run_status_persists_claimed_terminal_event_atomically(monkeypatch):
+    from cognitrix.tasks.repository import LeaseClaim
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
 
+    run = TaskRun(_id='run-1', task_id='task-1', status=TaskRunStatus.RUNNING)
+    claim = LeaseClaim(run_id=run.id, owner='worker-1', generation=3)
+    mutations = []
 
-@pytest.mark.asyncio
-async def test_gate_low_score_returns_suggestions(monkeypatch):
-    async def fake_turn(session, agent, prompt, interface, *args, **kwargs):
-        return '{"finalscore": "4/10", "suggestions": ["do better"]}'
-    monkeypatch.setattr(orch, '_run_agent_turn', fake_turn)
-    step = orch._new_step(0, 's', 's', [])
-    passed, suggestions = await orch._gate(None, _agent(), step, 'answer', 'web')
-    assert not passed and suggestions == ['do better'] and step['gate'] is None
+    async def get_run(_run_id):
+        return run
 
+    class RecordingRepository:
+        async def mutate(self, run_id, **kwargs):
+            mutations.append((run_id, kwargs))
+            return run
 
-@pytest.mark.asyncio
-async def test_gate_unparseable_twice_passes_unverified(monkeypatch):
-    async def fake_turn(session, agent, prompt, interface, *args, **kwargs):
-        return ''
-    monkeypatch.setattr(orch, '_run_agent_turn', fake_turn)
-    step = orch._new_step(0, 's', 's', [])
-    passed, _ = await orch._gate(None, _agent(), step, 'answer', 'web')
-    assert passed and step['gate'] == 'unverified'
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(get_run))
+    monkeypatch.setattr(orch, 'RunRepository', RecordingRepository)
 
-
-@pytest.mark.asyncio
-async def test_gate_does_not_publish_evaluator_output(monkeypatch):
-    calls = []
-
-    async def fake_turn(session, agent, prompt, interface, **kwargs):
-        calls.append(kwargs)
-        return '{"finalscore":"8/10"}'
-
-    monkeypatch.setattr(orch, '_run_agent_turn', fake_turn)
-    step = orch._new_step(0, 'Research', 'Research', [])
-
-    passed, _ = await orch._gate(
-        SimpleNamespace(),
-        SimpleNamespace(name='Evaluator source', llm=_llm()),
-        step,
-        'answer',
-        'web',
+    applied = await orch._set_run_status(
+        run,
+        TaskRunStatus.COMPLETED,
+        result='done',
+        completed=True,
+        claim=claim,
     )
 
-    assert passed is True
-    assert calls == [{}]
+    assert applied is True
+    assert len(mutations) == 1
+    run_id, mutation = mutations[0]
+    assert run_id == run.id
+    assert mutation['claim'] == claim
+    assert mutation['updates']['status'] == TaskRunStatus.COMPLETED.value
+    assert mutation['expected_statuses'] == {TaskRunStatus.RUNNING}
+    assert mutation['event'] == {
+        'kind': 'run_status',
+        'data': {'status': TaskRunStatus.COMPLETED.value},
+    }
 
 
 @pytest.mark.asyncio
-async def test_run_agent_turn_treats_provider_error_chunks_as_dead_turn(monkeypatch):
-    class _ErrSession:
-        id = 'session-error'
-        step_index = 0
-        chat: list = []
+async def test_direct_run_creates_queued_record_and_claims_before_execution(monkeypatch):
+    from cognitrix.tasks.base import TaskStatus
+    from cognitrix.tasks.repository import LeaseClaim
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
 
-        async def __call__(self, prompt, agent, interface, stream, output, wsquery):
-            await output({'content': 'Streaming error: Upstream error from X: ResourceExhausted'})
-
-    out = await orch._run_agent_turn(_ErrSession(), SimpleNamespace(name='A', llm=_llm()), 'p', 'web')
-    assert out == ''
-
-
-@pytest.mark.asyncio
-async def test_run_agent_turn_publishes_before_turn_returns(monkeypatch):
-    import asyncio
-
-    from cognitrix.tasks.events import TaskRunEvent, TaskRunEventEmitter
-
-    persisted = asyncio.Event()
-    release = asyncio.Event()
-    saved = []
-
-    async def fake_save(self):
-        saved.append(self)
-        persisted.set()
-
-    class StreamingSession:
-        id = 'session-1'
-        step_index = 0
-        chat = []
-
-        async def __call__(self, prompt, agent, interface, stream, output, wsquery):
-            await output({'content': 'live text'})
-            await release.wait()
-
-    monkeypatch.setattr(TaskRunEvent, 'save', fake_save)
-    emitter = TaskRunEventEmitter('run-1')
-    turn = asyncio.create_task(orch._run_agent_turn(
-        StreamingSession(),
-        SimpleNamespace(name='A', llm=_llm()),
-        'prompt',
-        'web',
-        emitter=emitter,
-        publish=True,
-        attempt=1,
-    ))
-
-    try:
-        await asyncio.wait_for(persisted.wait(), timeout=1)
-        assert turn.done() is False
-        assert saved[0].kind == 'text_delta'
-        assert saved[0].data['content'] == 'live text'
-    finally:
-        release.set()
-    assert await turn == 'live text'
-    assert saved[-1].kind == 'turn_completed'
-
-
-@pytest.mark.asyncio
-async def test_run_agent_turn_forwards_tool_start_and_result(monkeypatch):
-    from cognitrix.sessions.base import _tool_preview
-    from cognitrix.tasks.events import TaskRunEvent, TaskRunEventEmitter
-
-    saved = []
-    result_preview = _tool_preview('x' * 5000)
-
-    async def fake_save(self):
-        saved.append(self)
-
-    class ToolSession:
-        id = 'session-1'
-        step_index = 0
-        chat = []
-
-        async def __call__(self, prompt, agent, interface, stream, output, wsquery):
-            await output({
-                'type': 'tool',
-                'status': 'started',
-                'tool_name': 'Read',
-                'tool_call_id': 'call-1',
-                'params': '{"path":"README.md"}',
-            })
-            await output({
-                'type': 'tool',
-                'status': 'completed',
-                'tool_name': 'Read',
-                'tool_call_id': 'call-1',
-                'result': result_preview,
-            })
-            await output({'content': 'done'})
-
-    monkeypatch.setattr(TaskRunEvent, 'save', fake_save)
-    emitter = TaskRunEventEmitter('run-1')
-    await orch._run_agent_turn(
-        ToolSession(),
-        SimpleNamespace(name='A', llm=_llm()),
-        'prompt',
-        'web',
-        emitter=emitter,
-        publish=True,
-        attempt=1,
+    timeline = []
+    queued = TaskRun(
+        _id='run-direct',
+        task_id='task-direct',
+        status=TaskRunStatus.QUEUED,
+        acl_version=1,
+        acl_agent_ids=[],
     )
 
-    assert [event.kind for event in saved] == [
-        'tool_started',
-        'tool_completed',
-        'text_delta',
-        'turn_completed',
+    class RecordingRepository:
+        async def create_queued(self, **kwargs):
+            timeline.append(('create_queued', kwargs))
+            return queued
+
+        async def claim(self, run_id, *, owner, **kwargs):
+            timeline.append(('claim', run_id, owner))
+            queued.status = TaskRunStatus.RUNNING
+            queued.lease_owner = owner
+            queued.lease_generation = 1
+            return LeaseClaim(run_id=run_id, owner=owner, generation=1)
+
+        async def heartbeat(self, *args, **kwargs):
+            return queued
+
+        async def record_metric(self, _run_id, *, claim, metric):
+            return metric
+
+        async def emit_event(self, _run_id, *, claim, kind, **kwargs):
+            return SimpleNamespace(kind=kind, **kwargs)
+
+        async def mutate(self, run_id, **kwargs):
+            timeline.append(('mutate', run_id, kwargs))
+            for key, value in kwargs['updates'].items():
+                setattr(queued, key, value)
+            return queued
+
+    repository = RecordingRepository()
+
+    class FakeTask(SimpleNamespace):
+        @staticmethod
+        async def get(_id):
+            return None
+
+        @staticmethod
+        async def update_one(*args, **kwargs):
+            return 1
+
+    task = FakeTask(
+        id='task-direct',
+        title='Direct task',
+        description='No agents assigned',
+        status=TaskStatus.PENDING,
+        step_instructions={},
+        assigned_agents=[],
+        results=[],
+        team_id=None,
+    )
+
+    async def team():
+        return []
+
+    async def no_runs(_query):
+        return []
+
+    async def get_run(_run_id):
+        return queued
+
+    async def reject_raw_save(self):
+        raise AssertionError('direct execution must not save an already-running TaskRun')
+
+    async def no_op(*args, **kwargs):
+        return None
+
+    task.team = team
+    monkeypatch.setattr(orch, 'RunRepository', lambda: repository)
+    monkeypatch.setattr(
+        'cognitrix.tasks.repository.RunRepository',
+        lambda: repository,
+    )
+    monkeypatch.setattr(TaskRun, 'find', staticmethod(no_runs))
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(get_run))
+    monkeypatch.setattr(TaskRun, 'save', reject_raw_save)
+    monkeypatch.setattr(orch, 'deliver_completion_notification', no_op)
+
+    with pytest.raises(RuntimeError, match='no agents assigned'):
+        await orch.run(task)
+
+    assert [entry[0] for entry in timeline] == [
+        'create_queued',
+        'claim',
+        'mutate',
     ]
-    assert saved[0].data['tool_call_id'] == 'call-1'
-    assert saved[1].data['result'] == result_preview
-    assert result_preview.startswith('x' * 4000)
-    assert 'truncated, 5000 chars total' in result_preview
+    assert timeline[0][1]['task_id'] == task.id
+    assert timeline[1][1] == queued.id
+    terminal = timeline[2][2]
+    assert terminal['claim'].run_id == queued.id
+    assert terminal['updates']['status'] == TaskRunStatus.FAILED.value
+    assert terminal['event'] == {
+        'kind': 'run_status',
+        'data': {'status': TaskRunStatus.FAILED.value},
+    }
+    assert queued.status == TaskRunStatus.FAILED.value
 
-
-@pytest.mark.asyncio
-async def test_run_agent_turn_flushes_batched_text_when_turn_raises(monkeypatch):
-    import cognitrix.tasks.events as events
-    from cognitrix.tasks.events import TaskRunEvent, TaskRunEventEmitter
-
-    saved = []
-
-    async def fake_save(self):
-        saved.append(self)
-
-    class FailingSession:
-        id = 'session-1'
-        step_index = 0
-        chat = []
-
-        async def __call__(self, prompt, agent, interface, stream, output, wsquery):
-            await output({'content': 'first'})
-            await output({'content': ' remainder'})
-            raise RuntimeError('turn crashed')
-
-    monkeypatch.setattr(TaskRunEvent, 'save', fake_save)
-    monkeypatch.setattr(events.time, 'monotonic', lambda: 10.0)
-    emitter = TaskRunEventEmitter('run-1')
-
-    with pytest.raises(RuntimeError, match='turn crashed'):
-        await orch._run_agent_turn(
-            FailingSession(),
-            SimpleNamespace(name='A', llm=_llm()),
-            'prompt',
-            'web',
-            emitter=emitter,
-            publish=True,
-            attempt=1,
-        )
-
-    assert [event.kind for event in saved] == ['text_delta', 'text_delta']
-    assert [event.data['content'] for event in saved] == ['first', ' remainder']
-
-
-# ---------------------------------------------------------------- step exec
 
 @pytest.mark.asyncio
 async def test_set_run_status_respects_external_finalization(monkeypatch):
@@ -510,106 +458,10 @@ async def test_set_run_status_does_not_rewrite_matching_terminal_state(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_parallel_outcomes_persist_in_completion_order(monkeypatch):
-    import asyncio
-
-    fast = orch._new_step(0, 'fast', 'fast', [])
-    slow = orch._new_step(1, 'slow', 'slow', [])
-    fast['status'] = slow['status'] = 'running'
-    release = asyncio.Event()
-    first_saved = asyncio.Event()
-    snapshots = []
-    emitted = []
-
-    async def fast_result():
-        return fast, 'done', 'fast result'
-
-    async def slow_result():
-        await release.wait()
-        return slow, 'done', 'slow result'
-
-    async def save_plan(run):
-        snapshots.append([step['status'] for step in run.plan])
-        first_saved.set()
-
-    class Emitter:
-        async def emit(self, kind, **kwargs):
-            emitted.append((kind, kwargs))
-            return None
-
-    monkeypatch.setattr(orch, '_save_plan', save_plan)
-    run = SimpleNamespace(plan=[fast, slow])
-    dep_results = {}
-
-    consume = asyncio.create_task(orch._consume_step_outcomes(
-        run, [fast_result(), slow_result()], dep_results, Emitter(),
-    ))
-    try:
-        await asyncio.wait_for(first_saved.wait(), timeout=1)
-        assert snapshots[0] == ['done', 'running']
-        assert consume.done() is False
-    finally:
-        release.set()
-    cancelled, failure = await asyncio.wait_for(consume, timeout=1)
-
-    assert snapshots[-1] == ['done', 'done']
-    assert [event[1]['step_index'] for event in emitted] == [0, 1]
-    assert [event[1]['data']['status'] for event in emitted] == ['done', 'done']
-    assert dep_results == {0: 'fast result', 1: 'slow result'}
-    assert cancelled is False and failure is None
-
-
-@pytest.mark.asyncio
-async def test_consume_step_outcomes_cleans_up_siblings_when_persistence_fails(monkeypatch):
-    import asyncio
-
-    fast = orch._new_step(0, 'fast', 'fast', [])
-    slow = orch._new_step(1, 'slow', 'slow', [])
-    fast['status'] = slow['status'] = 'running'
-    slow_started = asyncio.Event()
-    slow_cancelled = asyncio.Event()
-    release_slow = asyncio.Event()
-
-    async def fast_result():
-        await slow_started.wait()
-        return fast, 'done', 'fast result'
-
-    async def slow_result():
-        slow_started.set()
-        try:
-            await release_slow.wait()
-        except asyncio.CancelledError:
-            slow_cancelled.set()
-            raise
-        return slow, 'done', 'slow result'
-
-    async def fail_save(_run):
-        raise RuntimeError('plan database unavailable')
-
-    class Emitter:
-        async def emit(self, *args, **kwargs):
-            return None
-
-    monkeypatch.setattr(orch, '_save_plan', fail_save)
-
-    try:
-        with pytest.raises(RuntimeError, match='plan database unavailable'):
-            await orch._consume_step_outcomes(
-                SimpleNamespace(plan=[fast, slow]),
-                [fast_result(), slow_result()],
-                {},
-                Emitter(),
-            )
-        assert slow_cancelled.is_set()
-        assert slow['status'] == 'cancelled'
-    finally:
-        release_slow.set()
-        await asyncio.sleep(0)
-
-
-@pytest.mark.asyncio
 async def test_run_uses_one_emitter_and_publishes_authoritative_terminal_status(monkeypatch):
     from cognitrix.tasks.base import TaskStatus
+    from cognitrix.tasks.repository import LeaseClaim
+    from cognitrix.tasks.results import StepResult
     from cognitrix.tasks.run import TaskRun, TaskRunStatus
 
     emitter_instances = []
@@ -619,8 +471,9 @@ async def test_run_uses_one_emitter_and_publishes_authoritative_terminal_status(
     timeline = []
 
     class RecordingEmitter:
-        def __init__(self, run_id):
+        def __init__(self, run_id, *, claim=None):
             self.run_id = run_id
+            self.claim = claim
             emitter_instances.append(self)
 
         async def emit(self, kind, **kwargs):
@@ -644,6 +497,7 @@ async def test_run_uses_one_emitter_and_publishes_authoritative_terminal_status(
         description='Do it',
         status=TaskStatus.PENDING,
         step_instructions={'0': {'step': 'Work'}},
+        assigned_agents=['agent-1'],
         results=[],
         team_id=None,
     )
@@ -660,12 +514,49 @@ async def test_run_uses_one_emitter_and_publishes_authoritative_terminal_status(
 
     task.team = team
 
+    queued = TaskRun(
+        _id='run-1',
+        task_id=task.id,
+        status=TaskRunStatus.QUEUED,
+        acl_version=1,
+        acl_agent_ids=['agent-1'],
+    )
+
+    class RecordingRepository:
+        async def claim(self, run_id, *, owner, **kwargs):
+            queued.status = TaskRunStatus.RUNNING
+            return LeaseClaim(run_id=run_id, owner=owner, generation=1)
+
+        async def heartbeat(self, *args, **kwargs):
+            return queued
+
+        async def persist_usage(self, run_id, *, snapshot, **kwargs):
+            queued.usage = dict(snapshot)
+            return queued
+
+        async def record_metric(self, _run_id, *, claim, metric):
+            return metric
+
+        async def compile_steps(self, run_id, plan, **kwargs):
+            return [
+                SimpleNamespace(
+                    step_index=int(entry['index']),
+                    to_plan_entry=lambda entry=entry: {
+                        **entry,
+                        'status': 'pending',
+                        'attempts': 0,
+                        'result': None,
+                        'gate': None,
+                    },
+                )
+                for entry in plan
+            ]
+
+    async def get_run(_run_id):
+        return queued
+
     async def no_runs(_query):
         return []
-
-    async def save_run(self):
-        self.id = 'run-1'
-        return self
 
     async def no_op(*args, **kwargs):
         return None
@@ -679,12 +570,13 @@ async def test_run_uses_one_emitter_and_publishes_authoritative_terminal_status(
     async def resolve_leader(_task, roster):
         return roster[0]
 
-    async def finish_step(task, run, step, agent, dep_results, interface, semaphore, *, emitter=None):
+    async def finish_steps(
+        task, run, rows, repository, claim, emitter, *args, **kwargs
+    ):
         step_emitters.append(emitter)
-        return step, 'done', 'step result'
-
-    async def synthesize(*args, **kwargs):
-        return 'synthesis'
+        await emitter.emit('step_status', data={'status': 'running'})
+        await emitter.emit('step_status', data={'status': 'done'})
+        return {0: StepResult(text='step result')}
 
     async def external_cancel_wins(run, status, **kwargs):
         assert status == TaskRunStatus.COMPLETED
@@ -693,17 +585,16 @@ async def test_run_uses_one_emitter_and_publishes_authoritative_terminal_status(
         return False
 
     monkeypatch.setattr(TaskRun, 'find', staticmethod(no_runs))
-    monkeypatch.setattr(TaskRun, 'save', save_run)
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(get_run))
+    monkeypatch.setattr(orch, 'RunRepository', RecordingRepository)
     monkeypatch.setattr(orch, '_set_task_status', record_task_status)
-    monkeypatch.setattr(orch, '_save_plan', no_op)
     monkeypatch.setattr(orch, '_cancel_requested', false_cancel)
     monkeypatch.setattr(orch, '_resolve_leader', resolve_leader)
-    monkeypatch.setattr(orch, '_run_step_guarded', finish_step)
-    monkeypatch.setattr(orch, '_synthesize', synthesize)
+    monkeypatch.setattr(orch, '_execute_compiled_steps', finish_steps)
     monkeypatch.setattr(orch, '_set_run_status', external_cancel_wins)
-    monkeypatch.setattr(orch, 'notify_completion', no_op)
+    monkeypatch.setattr(orch, 'deliver_completion_notification', no_op)
 
-    run = await orch.run(task)
+    run = await orch.run(task, run_record=queued)
 
     assert run is not None and run.status == TaskRunStatus.CANCELLED
     assert len(emitter_instances) == 1
@@ -713,27 +604,25 @@ async def test_run_uses_one_emitter_and_publishes_authoritative_terminal_status(
         ('run_status', 'running'),
         ('step_status', 'running'),
         ('step_status', 'done'),
-        ('run_status', 'cancelled'),
     ]
-    assert timeline[-2:] == [
-        ('status_write', 'cancelled'),
-        ('event', 'run_status', 'cancelled'),
-    ]
+    assert timeline[-1] == ('status_write', 'cancelled')
 
 
 @pytest.mark.asyncio
 async def test_run_stops_after_authoritative_force_cancelled_state(monkeypatch):
     from cognitrix.tasks.base import TaskStatus
+    from cognitrix.tasks.repository import LeaseClaim
+    from cognitrix.tasks.results import StepResult
     from cognitrix.tasks.run import TaskRun, TaskRunStatus
 
     executed_steps = []
-    synthesis_calls = []
     task_statuses = []
     events = []
 
     class RecordingEmitter:
-        def __init__(self, run_id):
+        def __init__(self, run_id, *, claim=None):
             self.run_id = run_id
+            self.claim = claim
 
         async def emit(self, kind, **kwargs):
             events.append((kind, kwargs))
@@ -758,6 +647,7 @@ async def test_run_stops_after_authoritative_force_cancelled_state(monkeypatch):
             '0': {'step': 'First'},
             '1': {'step': 'Second'},
         },
+        assigned_agents=['agent-1'],
         results=[],
         team_id=None,
     )
@@ -773,15 +663,46 @@ async def test_run_stops_after_authoritative_force_cancelled_state(monkeypatch):
         return [agent]
 
     task.team = team
-    stored = TaskRun(task_id=task.id, status=TaskRunStatus.RUNNING)
-    stored.id = 'run-1'
+    stored = TaskRun(
+        _id='run-1',
+        task_id=task.id,
+        status=TaskRunStatus.QUEUED,
+        acl_version=1,
+        acl_agent_ids=['agent-1'],
+    )
+
+    class RecordingRepository:
+        async def claim(self, run_id, *, owner, **kwargs):
+            stored.status = TaskRunStatus.RUNNING
+            return LeaseClaim(run_id=run_id, owner=owner, generation=1)
+
+        async def heartbeat(self, *args, **kwargs):
+            return stored
+
+        async def persist_usage(self, run_id, *, snapshot, **kwargs):
+            stored.usage = dict(snapshot)
+            return stored
+
+        async def record_metric(self, _run_id, *, claim, metric):
+            return metric
+
+        async def compile_steps(self, run_id, plan, **kwargs):
+            return [
+                SimpleNamespace(
+                    step_index=int(entry['index']),
+                    to_plan_entry=lambda entry=entry: {
+                        **entry,
+                        'status': 'pending',
+                        'attempts': 0,
+                        'result': None,
+                        'gate': None,
+                    },
+                )
+                for entry in plan
+            ]
 
     async def no_runs(_query):
         return []
-
-    async def save_run(self):
-        self.id = stored.id
-        return self
 
     async def get_run(_run_id):
         return stored
@@ -798,34 +719,36 @@ async def test_run_stops_after_authoritative_force_cancelled_state(monkeypatch):
     async def resolve_leader(_task, roster):
         return roster[0]
 
-    async def finish_step(task, run, step, agent, dep_results, interface, semaphore, *, emitter=None):
-        executed_steps.append(step['index'])
-        if step['index'] == 0:
-            stored.status = TaskRunStatus.CANCELLED
-            stored.error = 'force-cancelled (worker did not respond)'
-            stored.completed_at = 'cancelled-at'
-        return step, 'done', f"result-{step['index']}"
+    async def finish_steps(
+        task, run, rows, repository, claim, emitter, *args, **kwargs
+    ):
+        executed_steps.append(0)
+        run.plan[0]['status'] = 'done'
+        run.plan[1]['status'] = 'cancelled'
+        stored.status = TaskRunStatus.CANCELLED
+        stored.error = 'force-cancelled (worker did not respond)'
+        stored.completed_at = 'cancelled-at'
+        await emitter.emit('step_status', data={'status': 'running'})
+        await emitter.emit('step_status', data={'status': 'done'})
+        raise orch.DagExecutionCancelled({0: StepResult(text='result-0')})
 
-    async def synthesize(*args, **kwargs):
-        synthesis_calls.append(True)
-        return 'must not synthesize'
+    async def keep_authoritative_cancel(*args, **kwargs):
+        return None
 
     monkeypatch.setattr(TaskRun, 'find', staticmethod(no_runs))
-    monkeypatch.setattr(TaskRun, 'save', save_run)
     monkeypatch.setattr(TaskRun, 'get', staticmethod(get_run))
     monkeypatch.setattr(TaskRun, 'update_one', staticmethod(fail_run_update))
+    monkeypatch.setattr(orch, 'RunRepository', RecordingRepository)
     monkeypatch.setattr(orch, '_set_task_status', record_task_status)
-    monkeypatch.setattr(orch, '_save_plan', no_op)
     monkeypatch.setattr(orch, '_resolve_leader', resolve_leader)
-    monkeypatch.setattr(orch, '_run_step_guarded', finish_step)
-    monkeypatch.setattr(orch, '_synthesize', synthesize)
-    monkeypatch.setattr(orch, 'notify_completion', no_op)
+    monkeypatch.setattr(orch, '_execute_compiled_steps', finish_steps)
+    monkeypatch.setattr(orch, '_cancel_unfinished_steps', keep_authoritative_cancel)
+    monkeypatch.setattr(orch, 'deliver_completion_notification', no_op)
 
-    run = await orch.run(task)
+    run = await orch.run(task, run_record=stored)
 
     assert run is not None
     assert executed_steps == [0]
-    assert synthesis_calls == []
     assert [step['status'] for step in run.plan] == ['done', 'cancelled']
     assert run.status == TaskRunStatus.CANCELLED
     assert run.error == 'force-cancelled (worker did not respond)'
@@ -835,139 +758,4 @@ async def test_run_stops_after_authoritative_force_cancelled_state(monkeypatch):
         ('run_status', 'running'),
         ('step_status', 'running'),
         ('step_status', 'done'),
-        ('run_status', 'cancelled'),
     ]
-
-
-# ---------------------------------------------------------------- P3: resume/cancel/timeout
-
-def test_copy_plan_for_resume_keeps_done_resets_rest():
-    plan = [
-        {**orch._new_step(0, 'a', 'a', []), 'status': 'done', 'result': 'kept', 'attempts': 2, 'gate': 'passed'},
-        {**orch._new_step(1, 'b', 'b', [0]), 'status': 'failed', 'result': 'junk', 'attempts': 2, 'gate': None},
-        {**orch._new_step(2, 'c', 'c', [1]), 'status': 'cancelled'},
-    ]
-    new = orch._copy_plan_for_resume(plan)
-    assert new[0]['status'] == 'done' and new[0]['result'] == 'kept'
-    assert new[1]['status'] == 'pending' and new[1]['result'] is None and new[1]['attempts'] == 0
-    assert new[2]['status'] == 'pending'
-    assert plan[1]['status'] == 'failed'  # original untouched (deep copy)
-
-
-@pytest.mark.asyncio
-async def test_run_step_guarded_cancel_before_launch(monkeypatch):
-    async def cancelling(run):
-        return True
-    monkeypatch.setattr(orch, '_cancel_requested', cancelling)
-    step = orch._new_step(0, 's', 's', [])
-    out = await orch._run_step_guarded(
-        SimpleNamespace(id='t'), SimpleNamespace(id='r'), step,
-        SimpleNamespace(id='a', name='A', llm=_llm()), {}, 'web', __import__('asyncio').Semaphore(1))
-    assert out == (step, 'cancelled', '')
-
-
-@pytest.mark.asyncio
-async def test_run_step_guarded_timeout_is_terminal(monkeypatch):
-    import asyncio as _asyncio
-
-    async def not_cancelling(run):
-        return False
-    monkeypatch.setattr(orch, '_cancel_requested', not_cancelling)
-
-    async def slow_step(*a, **kw):
-        await _asyncio.sleep(5)
-    monkeypatch.setattr(orch, '_execute_step', slow_step)
-    monkeypatch.setattr(orch, 'STEP_TIMEOUT', 0.05)
-
-    step = orch._new_step(0, 's', 's', [])
-    _, outcome, payload = await orch._run_step_guarded(
-        SimpleNamespace(id='t'), SimpleNamespace(id='r'), step,
-        SimpleNamespace(id='a', name='A', llm=_llm()), {}, 'web', _asyncio.Semaphore(1))
-    assert outcome == 'failed' and 'timed out' in payload
-
-
-class _StubSession:
-    def __init__(self, **kw):
-        self.chat = []
-        self.id = 'stub'
-        self.__dict__.update(kw)
-
-    async def save(self):
-        pass
-
-
-@pytest.mark.asyncio
-async def test_execute_step_empty_turns_fail(monkeypatch):
-    monkeypatch.setattr(orch, 'Session', _StubSession)
-    monkeypatch.setattr(orch, 'EMPTY_TURN_BACKOFF', 0)
-
-    async def empty_turn(session, agent, prompt, interface, *args, **kwargs):
-        return ''
-    monkeypatch.setattr(orch, '_run_agent_turn', empty_turn)
-
-    task = SimpleNamespace(id='t', title='T', description='d')
-    run = SimpleNamespace(id='r')
-    step = orch._new_step(0, 's', 's', [])
-    with pytest.raises(orch.StepFailure):
-        await orch._execute_step(task, run, step, SimpleNamespace(id='a', name='A', llm=_llm()), {}, 'web')
-    assert step['attempts'] == 2
-
-
-async def _never_cancelling(run):
-    return False
-
-
-@pytest.mark.asyncio
-async def test_execute_step_gate_retry_succeeds(monkeypatch):
-    monkeypatch.setattr(orch, 'Session', _StubSession)
-    monkeypatch.setattr(orch, '_cancel_requested', _never_cancelling)
-    replies = iter([
-        'first draft',                                        # agent turn
-        '{"finalscore": "4/10", "suggestions": ["expand"]}',  # gate 1: low
-        'better draft',                                       # gate-retry agent turn
-        '{"finalscore": "9/10"}',                             # gate 2: pass
-    ])
-    calls = []
-
-    async def scripted_turn(session, agent, prompt, interface, **kwargs):
-        calls.append(kwargs)
-        return next(replies)
-    monkeypatch.setattr(orch, '_run_agent_turn', scripted_turn)
-
-    task = SimpleNamespace(id='t', title='T', description='d')
-    step = orch._new_step(0, 's', 's', [])
-    emitter = object()
-    out = await orch._execute_step(task, SimpleNamespace(id='r'), step,
-                                   SimpleNamespace(id='a', name='A', llm=_llm()), {}, 'web',
-                                   emitter=emitter)
-    assert out == 'better draft'
-    assert step['gate'] == 'passed'
-    assert step['attempts'] == 2
-    assert calls == [
-        {'emitter': emitter, 'publish': True, 'attempt': 1},
-        {},
-        {'emitter': emitter, 'publish': True, 'attempt': 2},
-        {},
-    ]
-
-
-@pytest.mark.asyncio
-async def test_execute_step_gate_fail_after_retry(monkeypatch):
-    monkeypatch.setattr(orch, 'Session', _StubSession)
-    monkeypatch.setattr(orch, '_cancel_requested', _never_cancelling)
-    replies = iter([
-        'draft',
-        '{"finalscore": "3/10", "suggestions": ["x"]}',
-        'still bad',
-        '{"finalscore": "2/10"}',
-    ])
-
-    async def scripted_turn(session, agent, prompt, interface, *args, **kwargs):
-        return next(replies)
-    monkeypatch.setattr(orch, '_run_agent_turn', scripted_turn)
-
-    step = orch._new_step(0, 's', 's', [])
-    with pytest.raises(orch.StepFailure):
-        await orch._execute_step(SimpleNamespace(id='t', title='T', description='d'),
-                                 SimpleNamespace(id='r'), step,
-                                 SimpleNamespace(id='a', name='A', llm=_llm()), {}, 'web')

@@ -157,8 +157,8 @@ async def sched_db(tmp_path):
     else:
         DBMS.initialize('sqlite', database=db_file)
     _patch_odbms_sqlite()
-    from cognitrix.tasks.run import TaskRun
-    for model in (Task, TaskRun):
+    from cognitrix.tasks.run import TaskRun, TaskRunHead
+    for model in (Task, TaskRun, TaskRunHead):
         create = getattr(model, '_create_table_async', None) or model.create_table
         await create()
 
@@ -171,14 +171,16 @@ def enqueue(monkeypatch):
     calls: list = []
     script: list = []
 
-    async def fake_enqueue(task, resume=False):
+    async def fake_enqueue(task, resume=False, **kwargs):
         calls.append(task)
+        fake_enqueue.kwargs.append(kwargs)
         if script:
             raise script.pop(0)
         return task
 
     monkeypatch.setattr(task_routes, '_enqueue_task_start', fake_enqueue)
     fake_enqueue.calls = calls
+    fake_enqueue.kwargs = []
     fake_enqueue.script = script
     return fake_enqueue
 
@@ -193,6 +195,12 @@ async def test_tick_fires_due_interval_and_advances(sched_db, enqueue):
     t = await _mk(schedule_interval=300, next_run_at='2030-06-01 11:59:00')
     assert await tick(NOW) == 1
     assert len(enqueue.calls) == 1
+    assert enqueue.kwargs == [{
+        'actor_key': 'scheduler',
+        'requested_by': None,
+        'authority_kind': None,
+        'authority_id': None,
+    }]
     fresh = await Task.get(t.id)
     assert fresh.next_run_at == '2030-06-01 12:05:00'
     assert fresh.schedule_enabled is True
@@ -502,3 +510,113 @@ async def test_enqueue_partial_write_preserves_concurrent_claim(sched_db, monkey
     fresh = await Task.get(stored.id)
     assert fresh.status == TaskStatus.IN_PROGRESS and fresh.pid == 'celery-1'
     assert fresh.next_run_at == '2030-06-01 12:05:00'  # claim survived
+
+
+async def test_enqueue_persists_queued_run_before_publish_and_records_job_id(
+    sched_db,
+    monkeypatch,
+):
+    """The durable run is the queue payload identity and exists before Celery
+    can observe it. The broker job id is then persisted on both the run and the
+    legacy Task cache without changing the run to RUNNING.
+    """
+    import cognitrix.api.routes.tasks as task_routes
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
+
+    stored = Task(
+        title='queued',
+        description='d',
+        team_id='team-1',
+        assigned_agents=['agent-1'],
+        callback_url='https://hooks.example.test/task',
+        callback_key_id='key-1',
+    )
+    await stored.save()
+
+    timeline = []
+    apply_calls = []
+    original_create = task_routes.RunRepository.create_queued
+
+    async def traced_create(self, **kwargs):
+        run = await original_create(self, **kwargs)
+        timeline.append(('run_saved', run.id, run.status))
+        return run
+
+    def fake_apply_async(*args, **kwargs):
+        timeline.append(('apply_async',))
+        apply_calls.append((args, kwargs))
+        return SimpleNamespace(id='celery-run-1')
+
+    monkeypatch.setattr(task_routes, 'ensure_local_worker', lambda: True)
+    monkeypatch.setattr(task_routes, 'broker_available', lambda: True)
+    monkeypatch.setattr(task_routes.RunRepository, 'create_queued', traced_create)
+    monkeypatch.setattr(task_routes.run_task, 'apply_async', fake_apply_async)
+
+    await task_routes._enqueue_task_start(stored)
+
+    runs = await TaskRun.find({'task_id': stored.id})
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.acl_version == 1
+    assert run.acl_team_id == 'team-1'
+    assert run.acl_agent_ids == ['agent-1']
+    assert run.callback_url == 'https://hooks.example.test/task'
+    assert run.callback_key_id == 'key-1'
+    assert timeline[0][0] == 'run_saved'
+    assert timeline[1][0] == 'apply_async'
+    assert apply_calls[0][0] == ()
+    assert apply_calls[0][1]['args'] == [run.id]
+    assert apply_calls[0][1].get('kwargs') in (None, {})
+    assert run.status == TaskRunStatus.QUEUED
+    assert run.queue_job_id == 'celery-run-1'
+
+    fresh_task = await Task.get(stored.id)
+    assert fresh_task.status == TaskStatus.IN_PROGRESS
+    assert fresh_task.pid == 'celery-run-1'
+
+
+async def test_enqueue_failure_terminalizes_precreated_run_without_starting_task(
+    sched_db,
+    monkeypatch,
+):
+    import cognitrix.api.routes.tasks as task_routes
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
+
+    stored = Task(title='queue failure', description='d')
+    await stored.save()
+
+    timeline = []
+    original_create = task_routes.RunRepository.create_queued
+
+    async def traced_create(self, **kwargs):
+        run = await original_create(self, **kwargs)
+        timeline.append(('run_saved', run.id, run.status))
+        return run
+
+    def fail_publish(*args, **kwargs):
+        timeline.append(('apply_async',))
+        raise RuntimeError('broker URL with secret must not escape')
+
+    monkeypatch.setattr(task_routes, 'ensure_local_worker', lambda: True)
+    monkeypatch.setattr(task_routes, 'broker_available', lambda: True)
+    monkeypatch.setattr(task_routes.RunRepository, 'create_queued', traced_create)
+    monkeypatch.setattr(task_routes.run_task, 'apply_async', fail_publish)
+
+    with pytest.raises(HTTPException) as exc:
+        await task_routes._enqueue_task_start(stored)
+
+    assert exc.value.status_code == 503
+    assert timeline[0][0] == 'run_saved'
+    assert timeline[1][0] == 'apply_async'
+
+    runs = await TaskRun.find({'task_id': stored.id})
+    assert len(runs) == 1
+    failed = runs[0]
+    assert failed.status == TaskRunStatus.FAILED
+    assert failed.error_code == 'queue_publish_failed'
+    assert failed.completed_at
+    assert failed.queue_job_id is None
+
+    fresh_task = await Task.get(stored.id)
+    assert fresh_task.status == TaskStatus.PENDING
+    assert fresh_task.pid is None

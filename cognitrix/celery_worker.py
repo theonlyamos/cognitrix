@@ -19,6 +19,12 @@ from celery.signals import (
 
 from cognitrix.config import COGNITRIX_WORKDIR, initialize_database
 from cognitrix.tasks.base import Task, TaskStatus
+from cognitrix.tasks.completion import (
+    deliver_completion_notification,
+    project_task_status,
+)
+from cognitrix.tasks.repository import ActiveRunExists, RunRepository
+from cognitrix.tasks.run import TaskRun, TaskRunStatus, utc_now
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -238,7 +244,11 @@ def _init_db():
     try:
         _run(initialize_database())
     except Exception:
+        # Schema, reconciliation, and index failures make durable-run fencing
+        # unsafe.  Let Celery abort this worker process instead of consuming
+        # jobs against a partially initialized database.
         logger.exception("Database initialization failed")
+        raise
 
 
 # Fallback init for non-worker importers (e.g. the API enqueuing jobs, or a
@@ -276,6 +286,14 @@ def task_prerun_handler(task_id, task, *args, **kwargs):
 @task_postrun.connect
 def task_postrun_handler(task_id, task, *args, retval=None, state=None, **kwargs):
     logger.info(f"Task completed: {task_id}, State: {state}")
+    run_record = _run(TaskRun.find_one({'queue_job_id': task_id}))
+    if run_record is not None:
+        # Celery SUCCESS means only that the message returned. A late queued
+        # message may return successfully after recovery already failed or
+        # cancelled the authoritative TaskRun.
+        _run(project_task_status(run_record.task_id))
+        _run(deliver_completion_notification(run_record.id))
+        return
     task_obj = _run(Task.find_one({'pid': task_id}))
     # Backstop only — the orchestrator writes terminal statuses itself. Touch
     # the task ONLY when still IN_PROGRESS (a pre-terminal crash): anything
@@ -296,16 +314,76 @@ def task_failure_handler(sender=None, task_id=None, exception=None, **kwargs):
     logger.error(f"Task failed: {task_id}, Exception: {exception}")
 
 
-@celery.task(name="generic_task")
-def run_task(task_id, resume=False):
-    task = _run(Task.get(task_id))
-    if task:
-        run = _run(task.start(resume=resume))
+@celery.task(name="task_run")
+def run_task(run_id):
+    run_record = _run(TaskRun.get(run_id))
+    if run_record:
+        task = _run(Task.get(run_record.task_id))
+        if task is None:
+            _run(
+                RunRepository().mutate(
+                    run_record.id,
+                    claim=None,
+                    updates={
+                        'status': TaskRunStatus.FAILED.value,
+                        'error_code': 'task_missing',
+                        'error': 'owning task no longer exists',
+                        'completed_at': utc_now(),
+                    },
+                    expected_statuses={TaskRunStatus.QUEUED},
+                )
+            )
+            return None
+        run = _run(task.start(run=run_record))
         # Return a plain id, never the TaskRun model: on Redis deployments the
         # result backend JSON-serializes the retval, and a pydantic model would
         # raise EncodeError AFTER a successful run (flipping it to FAILED).
         return getattr(run, 'id', None)
     return None
+
+
+@celery.task(name="generic_task")
+def run_legacy_task(task_id, resume=False):
+    """Compatibility adapter for task-id messages published before v2.
+
+    The old Celery task name remains registered, but it first creates the one
+    durable run identity and then enters the same pre-created-run path as new
+    messages. New publications use ``task_run`` and carry only a run id.
+    """
+    task = _run(Task.get(task_id))
+    if task is None:
+        return None
+    resume_from_run_id = None
+    if resume:
+        prior = _run(TaskRun.find({'task_id': task_id})) or []
+        resumable = [
+            run for run in prior
+            if run.status in (TaskRunStatus.FAILED, TaskRunStatus.CANCELLED)
+        ]
+        if resumable:
+            resume_from_run_id = max(
+                resumable,
+                key=lambda item: (item.json().get('created_at') or '', str(item.id)),
+            ).id
+    create_kwargs = {'task_id': task_id, 'actor_key': 'system'}
+    # Payloads published before the durable ACL rollout may hydrate through a
+    # compatibility object without resource fields. The orchestrator still
+    # rejects any resume from an unsnapshotted source.
+    if hasattr(task, 'team_id') or hasattr(task, 'assigned_agents'):
+        create_kwargs.update(
+            acl_team_id=getattr(task, 'team_id', None),
+            acl_agent_ids=list(getattr(task, 'assigned_agents', None) or []),
+        )
+    if resume_from_run_id is not None:
+        create_kwargs['resume_from_run_id'] = resume_from_run_id
+    try:
+        run_record = _run(
+            RunRepository().create_queued(**create_kwargs)
+        )
+    except ActiveRunExists:
+        return None
+    run = _run(task.start(run=run_record))
+    return getattr(run, 'id', None)
 
 
 if __name__ == '__main__':

@@ -144,6 +144,11 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
                     assigned_agents=agent_ids, team_id=str(team.id) if team else None, autostart=False,
                     schedule_at=schedule_at, schedule_interval=schedule_interval_seconds,
                     schedule_cron=schedule_cron, schedule_enabled=enabled)
+        if enabled:
+            authority = current_execution_context()
+            task.schedule_requested_by = authority.user_id
+            task.schedule_authority_kind = "api_key" if authority.api_key_id else "jwt"
+            task.schedule_authority_id = authority.api_key_id or authority.user_id
         reason = validate_schedule(task, respecified=True)
         if reason:
             return ToolOutcome.failure('invalid_schedule', reason)

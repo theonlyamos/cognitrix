@@ -50,6 +50,9 @@ class Task(Model):
     status: TaskStatus = Field(default=TaskStatus.PENDING)
     """Status of the task"""
 
+    deleted_at: str | None = None
+    """Server-owned soft-delete timestamp. Durable run history keeps the row."""
+
     assigned_agents: list[str] = Field(default_factory=list)
     """List of ids of agents assigned to this task"""
 
@@ -87,6 +90,15 @@ class Task(Model):
     schedule_enabled: bool = False
     """Pause/resume toggle for the schedule."""
 
+    schedule_requested_by: str | None = None
+    """Owner principal used when the scheduler starts a run."""
+
+    schedule_authority_kind: str | None = None
+    """JWT/API-key authority class for scheduled execution."""
+
+    schedule_authority_id: str | None = None
+    """Non-secret user/API-key reference revalidated at scheduled pickup."""
+
     async def team(self):
         agents: list[Agent] = []
         for agent_id in self.assigned_agents:
@@ -98,16 +110,21 @@ class Task(Model):
     async def sessions(self):
         return await Session.get_by_task_id(self.id)
 
-    async def start(self, resume: bool = False):
+    async def start(self, resume: bool = False, run=None):
         """Execute this task via the orchestrator (plan → assign → execute →
         gate → synthesize). Returns the TaskRun, or None if the task was
         cancelled before pickup."""
         from cognitrix.tasks.orchestrator import run as run_orchestration
-        return await run_orchestration(self, resume=resume, interface='web')
+        return await run_orchestration(
+            self,
+            resume=resume,
+            interface='web',
+            run_record=run,
+        )
 
     @classmethod
     async def list_tasks(cls) -> TaskList:
-        return cls.all()
+        return [task for task in await cls.all() if task.deleted_at is None]
 
     @classmethod
     async def delete(cls, task_id: str):

@@ -28,7 +28,8 @@ MIN_INTERVAL = 60
 TICK_SECONDS = 20
 
 SCHEDULE_FIELDS = ('schedule_at', 'schedule_interval', 'schedule_cron',
-                   'next_run_at', 'schedule_enabled')
+                   'next_run_at', 'schedule_enabled', 'schedule_requested_by',
+                   'schedule_authority_kind', 'schedule_authority_id')
 
 
 def normalize_schedule_at(value: str | None) -> str | None:
@@ -93,6 +94,8 @@ async def tick(now: datetime | None = None) -> int:
     tasks = await Task.find({'schedule_enabled': True})
     for task in tasks or []:
         try:
+            if task.deleted_at:
+                continue
             if not task.next_run_at:
                 continue
             if datetime.fromisoformat(task.next_run_at) > now:
@@ -119,7 +122,13 @@ async def tick(now: datetime | None = None) -> int:
 
             from cognitrix.api.routes.tasks import _enqueue_task_start
             try:
-                await _enqueue_task_start(task)
+                await _enqueue_task_start(
+                    task,
+                    actor_key='scheduler',
+                    requested_by=task.schedule_requested_by,
+                    authority_kind=task.schedule_authority_kind,
+                    authority_id=task.schedule_authority_id,
+                )
                 fired += 1
             except Exception as exc:
                 status = getattr(exc, 'status_code', None)

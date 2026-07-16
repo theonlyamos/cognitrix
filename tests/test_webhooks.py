@@ -148,6 +148,8 @@ async def test_notify_delivers_with_valid_signature(fake_http, key_lookup):
     ts = call['headers']['X-Cognitrix-Timestamp']
     expected = webhooks.sign(call['body'], 'topsecret', ts)
     assert hmac_mod.compare_digest(call['headers']['X-Cognitrix-Signature'], expected)
+    assert call['headers']['Idempotency-Key'] == 'task-run:run1'
+    assert call['headers']['X-Cognitrix-Delivery-Id'] == 'run1'
 
 
 async def test_notify_retries_then_succeeds(fake_http, key_lookup):
@@ -181,15 +183,16 @@ async def test_notify_reports_failure_status(fake_http, key_lookup):
 async def test_orchestrator_notifies_on_failure_path(monkeypatch):
     """The finally-hook must fire even when run() raises (failed plan)."""
     import cognitrix.tasks.orchestrator as orch
-    from cognitrix.tasks.run import TaskRun
+    from cognitrix.tasks.repository import LeaseClaim
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
 
     notified = []
 
-    async def fake_notify(task, run):
-        notified.append((task, run))
+    async def fake_notify(run_id):
+        notified.append(run_id)
         return True
 
-    monkeypatch.setattr(orch, 'notify_completion', fake_notify)
+    monkeypatch.setattr(orch, 'deliver_completion_notification', fake_notify)
 
     class _FakeTaskCls:
         @staticmethod
@@ -204,7 +207,11 @@ async def test_orchestrator_notifies_on_failure_path(monkeypatch):
         get = _FakeTaskCls.get
         update_one = _FakeTaskCls.update_one
 
-    agent = SimpleNamespace(id='a1', name='Agent A')
+    agent = SimpleNamespace(
+        id='a1',
+        name='Agent A',
+        llm=SimpleNamespace(provider='test', model='test-model'),
+    )
     task = FakeTask(
         id='t1', title='t', description='d', status='pending',
         step_instructions={'0': {'step_title': 's1', 'description': 'do'}},
@@ -220,16 +227,50 @@ async def test_orchestrator_notifies_on_failure_path(monkeypatch):
         return []
     monkeypatch.setattr(TaskRun, 'find', staticmethod(no_find))
 
-    async def fake_save(self):
-        self.id = 'r1'
-        return self
-    monkeypatch.setattr(TaskRun, 'save', fake_save)
+    queued = TaskRun(
+        _id='r1',
+        task_id=task.id,
+        status=TaskRunStatus.QUEUED,
+        acl_version=1,
+        acl_agent_ids=['a1'],
+    )
+
+    async def get_run(_run_id):
+        return queued
+
+    class FakeRepository:
+        async def claim(self, run_id, *, owner, **kwargs):
+            queued.status = TaskRunStatus.RUNNING
+            return LeaseClaim(run_id=run_id, owner=owner, generation=1)
+
+        async def heartbeat(self, *args, **kwargs):
+            return queued
+
+        async def persist_usage(self, run_id, *, snapshot, **kwargs):
+            queued.usage = dict(snapshot)
+            return queued
+
+        async def record_metric(self, _run_id, *, claim, metric):
+            return metric
+
+        async def emit_event(self, *args, **kwargs):
+            return None
+
+    class NoOpEmitter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def emit(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(get_run))
+    monkeypatch.setattr(orch, 'RunRepository', FakeRepository)
+    monkeypatch.setattr(orch, 'TaskRunEventEmitter', NoOpEmitter)
 
     async def no_op(*a, **kw):
         return True
     monkeypatch.setattr(orch, '_set_task_status', no_op)
     monkeypatch.setattr(orch, '_set_run_status', no_op)
-    monkeypatch.setattr(orch, '_save_plan', no_op)
 
     async def resolve_leader(_task, roster):
         return roster[0]
@@ -240,22 +281,22 @@ async def test_orchestrator_notifies_on_failure_path(monkeypatch):
     monkeypatch.setattr(orch, '_template_plan', boom)
 
     with pytest.raises(RuntimeError, match='planning exploded'):
-        await orch.run(task)  # type: ignore[arg-type]
+        await orch.run(task, run_record=queued)  # type: ignore[arg-type]
 
-    assert len(notified) == 1
-    assert notified[0][0] is task and notified[0][1].id == 'r1'
+    assert notified == ['r1']
 
 
 async def test_orchestrator_notifies_on_no_roster(monkeypatch):
     import cognitrix.tasks.orchestrator as orch
-    from cognitrix.tasks.run import TaskRun
+    from cognitrix.tasks.repository import LeaseClaim
+    from cognitrix.tasks.run import TaskRun, TaskRunStatus
 
     notified = []
 
-    async def fake_notify(task, run):
-        notified.append(run)
+    async def fake_notify(run_id):
+        notified.append(run_id)
         return True
-    monkeypatch.setattr(orch, 'notify_completion', fake_notify)
+    monkeypatch.setattr(orch, 'deliver_completion_notification', fake_notify)
 
     async def fake_get(_id):
         return None
@@ -281,16 +322,49 @@ async def test_orchestrator_notifies_on_no_roster(monkeypatch):
         return []
     monkeypatch.setattr(TaskRun, 'find', staticmethod(no_find))
 
-    async def fake_save(self):
-        self.id = 'r-no-roster'
-        return self
-    monkeypatch.setattr(TaskRun, 'save', fake_save)
+    queued = TaskRun(
+        _id='r-no-roster',
+        task_id=task.id,
+        status=TaskRunStatus.QUEUED,
+        acl_version=1,
+        acl_agent_ids=[],
+    )
+
+    async def get_run(_run_id):
+        return queued
+
+    class FakeRepository:
+        async def claim(self, run_id, *, owner, **kwargs):
+            queued.status = TaskRunStatus.RUNNING
+            return LeaseClaim(run_id=run_id, owner=owner, generation=1)
+
+        async def heartbeat(self, *args, **kwargs):
+            return queued
+
+        async def record_metric(self, _run_id, *, claim, metric):
+            return metric
+
+        async def mutate(self, run_id, **kwargs):
+            for key, value in kwargs['updates'].items():
+                setattr(queued, key, value)
+            return queued
+
+    class NoOpEmitter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def emit(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(get_run))
+    monkeypatch.setattr(orch, 'RunRepository', FakeRepository)
+    monkeypatch.setattr(orch, 'TaskRunEventEmitter', NoOpEmitter)
 
     async def no_op(*a, **kw):
         return True
     monkeypatch.setattr(orch, '_set_task_status', no_op)
 
     with pytest.raises(RuntimeError, match='no agents'):
-        await orch.run(task)  # type: ignore[arg-type]
+        await orch.run(task, run_record=queued)  # type: ignore[arg-type]
 
-    assert [r.id for r in notified] == ['r-no-roster']
+    assert notified == ['r-no-roster']

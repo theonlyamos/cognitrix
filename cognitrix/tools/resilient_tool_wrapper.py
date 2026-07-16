@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from cognitrix.providers.base import LLM
+from cognitrix.errors import ExecutionControlError
+from cognitrix.tasks.accounting import current_task_accounting
 from cognitrix.tools.base import Tool
 
 logger = logging.getLogger('cognitrix.log')
@@ -59,12 +61,19 @@ class ResilientToolManager:
         attempt = 0
 
         for attempt in range(1, max_retries + 1):
+            accounting = current_task_accounting()
+            if accounting is not None:
+                await accounting.consume_tool_attempt(first_for_call=attempt == 1)
             try:
                 # Validate parameters
                 validated = await self._validate_params(tool, current_params)
 
                 # Execute tool
-                result = await tool.run(**validated)
+                operation = tool.run(**validated)
+                if accounting is not None:
+                    result = await accounting.wait_within_wall(operation)
+                else:
+                    result = await operation
 
                 return ToolResult(
                     success=True,
@@ -72,6 +81,8 @@ class ResilientToolManager:
                     attempts=attempt
                 )
 
+            except ExecutionControlError:
+                raise
             except Exception as e:
                 last_error = str(e)
                 logger.warning(f"Tool {tool.name} attempt {attempt} failed: {e}")
@@ -147,6 +158,8 @@ Provide corrected parameters as valid JSON only. If unrecoverable, return {{"_un
 
                 return recovered
 
+        except ExecutionControlError:
+            raise
         except Exception as e:
             logger.error(f"Parameter recovery failed: {e}")
 

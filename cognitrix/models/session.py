@@ -18,6 +18,9 @@ class Session(Model):
     agent_id: str | None = None
     """The id of the agent that started the session"""
 
+    user_id: str | None = None
+    """Durable owner of an ordinary web/API chat"""
+
     task_id: str | None = None
     """The id of the task that started the session"""
 
@@ -68,11 +71,14 @@ class Session(Model):
         return await Team.get(self.team_id) if self.team_id else None
 
     @classmethod
-    async def get_by_agent_id(cls, agent_id: str) -> Session:
+    async def get_by_agent_id(cls, agent_id: str, user_id: str | None = None) -> Session:
         """Retrieve a session by agent_id"""
-        session = await cls.find_one({'agent_id': agent_id})
+        query = {'agent_id': agent_id}
+        if user_id is not None:
+            query['user_id'] = str(user_id)
+        session = await cls.find_one(query)
         if not session:
-            session = cls(agent_id=agent_id)
+            session = cls(agent_id=agent_id, user_id=user_id)
             await session.save()
         return session
 

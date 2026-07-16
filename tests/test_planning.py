@@ -26,11 +26,18 @@ class TestStructuredPlanner:
     def mock_agents(self):
         """Create mock agents."""
         agents = []
+        capability = {
+            'researcher': 'search',
+            'coder': 'code_executor',
+            'writer': 'file_writer',
+        }
         for name in ['researcher', 'coder', 'writer']:
             agent = MagicMock()
             agent.name = name
             agent.system_prompt = f"You are a {name}"
-            agent.tools = []
+            tool = MagicMock()
+            tool.name = capability[name]
+            agent.tools = [tool]
             agents.append(agent)
         return agents
 
@@ -200,6 +207,29 @@ class TestPlanGeneration(TestStructuredPlanner):
         assert plan.fallback_strategy
 
     @pytest.mark.asyncio
+    async def test_capability_validation_error_never_degrades_to_tool_free_fallback(
+        self,
+        planner,
+        mock_llm,
+        mock_agents,
+        mock_tools,
+        sample_plan_dict,
+    ):
+        sample_plan_dict["steps"][0]["required_tools"] = ["unavailable_private_tool"]
+        response = MagicMock()
+        response.llm_response = json.dumps(sample_plan_dict)
+        mock_llm.return_value = response
+
+        with pytest.raises(PlanningError, match="unavailable_private_tool"):
+            await planner.create_plan(
+                task="Use the private capability",
+                available_agents=mock_agents,
+                available_tools=mock_tools,
+            )
+
+        assert mock_llm.await_count == 1
+
+    @pytest.mark.asyncio
     async def test_create_plan_with_streaming_response(self, planner, mock_llm, mock_agents, mock_tools, sample_plan_dict):
         """Test plan generation with streaming LLM response."""
         # Mock streaming response
@@ -274,8 +304,8 @@ class TestPlanValidation(TestStructuredPlanner):
             fallback_strategy='Ask'
         )
 
-        # Should not raise error, just log warning
-        planner._validate_references(plan, mock_agents, mock_tools)
+        with pytest.raises(PlanningError, match="nonexistent_tool"):
+            planner._validate_references(plan, mock_agents, mock_tools)
 
     @pytest.mark.asyncio
     async def test_validate_valid_references(self, planner, mock_agents, mock_tools):
@@ -301,6 +331,35 @@ class TestPlanValidation(TestStructuredPlanner):
         planner._validate_references(plan, mock_agents, mock_tools)
 
         assert plan.steps[0].assigned_agent == 'researcher'
+
+    @pytest.mark.asyncio
+    async def test_tool_step_reassigns_away_from_model_without_tool_use(
+        self,
+        planner,
+        mock_agents,
+        mock_tools,
+    ):
+        mock_agents[0].llm.supports_tool_use = False
+        mock_agents[1].tools = [mock_agents[0].tools[0]]
+        mock_agents[1].llm.supports_tool_use = True
+        plan = TaskPlan(
+            task_analysis="Test",
+            estimated_complexity="simple",
+            steps=[Step(
+                step_number=1,
+                title="Research",
+                description="Research topic",
+                expected_output="Notes",
+                assigned_agent="researcher",
+                required_tools=["search"],
+                verification_criteria="Done",
+            )],
+            fallback_strategy="Ask",
+        )
+
+        planner._validate_references(plan, mock_agents, mock_tools)
+
+        assert plan.steps[0].assigned_agent == "coder"
 
 
 class TestDependencyResolution(TestStructuredPlanner):
@@ -615,3 +674,66 @@ class TestFormatHelpers(TestStructuredPlanner):
         formatted = planner._format_tools([])
 
         assert formatted == ""
+
+
+def test_planner_schema_contains_only_runtime_consumed_fields():
+    assert set(TaskPlan.model_json_schema()["properties"]) == {"steps"}
+    assert set(Step.model_json_schema()["properties"]) == {
+        "step_number",
+        "title",
+        "description",
+        "expected_output",
+        "assigned_agent",
+        "required_tools",
+        "dependencies",
+        "verification_criteria",
+    }
+
+
+def test_capability_validation_reassigns_to_exact_capable_agent():
+    from cognitrix.models import Agent
+    from cognitrix.models.tool import Tool
+    from cognitrix.providers.base import LLM
+
+    planner = StructuredPlanner(llm=AsyncMock())
+    llm = LLM(provider="openai", base_url="http://x", api_key="k", model="m")
+    search = Tool(name="Web Search", description="d", parameters={})
+    writer = Agent(name="Writer", llm=llm, system_prompt="w", tools=[])
+    researcher = Agent(name="Researcher", llm=llm, system_prompt="r", tools=[search])
+    plan = TaskPlan(steps=[Step(
+        step_number=1,
+        title="Research",
+        description="Find it",
+        expected_output="facts",
+        assigned_agent="Writer",
+        required_tools=["Web Search"],
+        dependencies=[],
+        verification_criteria="Accurate",
+    )])
+
+    planner._validate_references(plan, [writer, researcher], [search])
+    assert plan.steps[0].assigned_agent == "Researcher"
+
+
+def test_capability_validation_rejects_missing_or_case_mismatched_tool():
+    from cognitrix.models import Agent
+    from cognitrix.models.tool import Tool
+    from cognitrix.providers.base import LLM
+
+    planner = StructuredPlanner(llm=AsyncMock())
+    llm = LLM(provider="openai", base_url="http://x", api_key="k", model="m")
+    search = Tool(name="Web Search", description="d", parameters={})
+    agent = Agent(name="Researcher", llm=llm, system_prompt="r", tools=[search])
+    plan = TaskPlan(steps=[Step(
+        step_number=1,
+        title="Research",
+        description="Find it",
+        expected_output="facts",
+        assigned_agent="Researcher",
+        required_tools=["web search"],
+        dependencies=[],
+        verification_criteria="Accurate",
+    )])
+
+    with pytest.raises(PlanningError, match="web search"):
+        planner._validate_references(plan, [agent], [search])

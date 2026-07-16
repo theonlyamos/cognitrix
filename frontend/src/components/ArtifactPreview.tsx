@@ -5,14 +5,37 @@ import { api } from '@/lib/api';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function ArtifactPreview({ artifact }: { artifact: ToolArtifact }) {
+const isCanonicalTaskArtifactPath = (value: string | undefined): value is string => {
+  if (!value || !/^\/tasks\/[^/?#]+\/runs\/[^/?#]+\/artifacts\/[^/?#]+$/.test(value)) {
+    return false;
+  }
+  try {
+    return [2, 4, 6].every((index) => {
+      const segment = decodeURIComponent(value.split('/')[index]);
+      return segment !== '.' && segment !== '..' && !segment.includes('/') && !segment.includes('\\');
+    });
+  } catch {
+    return false;
+  }
+};
+
+export function ArtifactPreview({
+  artifact,
+  sourcePath,
+}: {
+  artifact: ToolArtifact;
+  sourcePath?: string;
+}) {
+  const isImage = artifact.mime_type.startsWith('image/');
+  const endpoint = isCanonicalTaskArtifactPath(sourcePath)
+    ? sourcePath
+    : `/artifacts/${artifact.id}`;
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'error'>(isImage ? 'loading' : 'idle');
   const [url, setUrl] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const expandTriggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const isImage = artifact.mime_type.startsWith('image/');
 
   useEffect(() => {
     if (!isImage) return;
@@ -21,7 +44,7 @@ export function ArtifactPreview({ artifact }: { artifact: ToolArtifact }) {
     let objectUrl: string | null = null;
     setState('loading');
     setUrl(null);
-    api.get(`/artifacts/${artifact.id}`, { responseType: 'blob', signal: controller.signal })
+    api.get(endpoint, { responseType: 'blob', signal: controller.signal })
       .then(({ data }) => {
         objectUrl = URL.createObjectURL(data as Blob);
         if (!active) {
@@ -39,7 +62,23 @@ export function ArtifactPreview({ artifact }: { artifact: ToolArtifact }) {
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [artifact.id, attempt, isImage]);
+  }, [artifact.id, attempt, endpoint, isImage]);
+
+  const downloadFile = async () => {
+    setState('loading');
+    try {
+      const { data } = await api.get(endpoint, { responseType: 'blob' });
+      const objectUrl = URL.createObjectURL(data as Blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = artifact.filename || 'artifact';
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      setState('idle');
+    } catch {
+      setState('error');
+    }
+  };
 
   useEffect(() => {
     if (!expanded) return;
@@ -83,7 +122,23 @@ export function ArtifactPreview({ artifact }: { artifact: ToolArtifact }) {
     }
   };
 
-  if (!isImage) return null;
+  if (!isImage) {
+    const filename = artifact.filename || 'artifact';
+    return (
+      <button
+        type="button"
+        className="min-h-11 text-accent-ink underline underline-offset-2 sm:min-h-0"
+        disabled={state === 'loading'}
+        onClick={() => void downloadFile()}
+      >
+        {state === 'loading'
+          ? `Downloading ${filename}...`
+          : state === 'error'
+            ? `Retry download ${filename}`
+            : `Download ${filename}`}
+      </button>
+    );
+  }
   if (state === 'error') {
     return (
       <div className="flex items-center gap-2 text-sm text-danger-ink">

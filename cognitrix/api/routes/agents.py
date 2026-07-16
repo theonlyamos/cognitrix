@@ -24,6 +24,7 @@ from cognitrix.common.security import (
     require,
 )
 from cognitrix.sessions.base import Session
+from cognitrix.sessions.access import authorization_user_id, session_access_allowed
 from cognitrix.utils.sse import SSEManagerCapacityError, get_sse_manager
 
 from ...providers import LLM
@@ -264,13 +265,24 @@ class GenerateRequest(BaseModel):
     stream: bool = False
 
 
-async def _resolve_generate_session(agent: Agent, session_id: str | None) -> Session:
+async def _resolve_generate_session(
+    agent: Agent,
+    session_id: str | None,
+    ctx: AuthContext,
+) -> Session:
     if session_id:
         session = await Session.get(session_id)
-        if session is None or (session.agent_id and session.agent_id != agent.id):
+        if (
+            session is None
+            or (session.agent_id and session.agent_id != agent.id)
+            or not await session_access_allowed(session, ctx)
+        ):
             raise HTTPException(status_code=404, detail="Session not found for this agent")
         return session
-    session = Session(agent_id=agent.id)
+    session = Session(
+        agent_id=agent.id,
+        user_id=authorization_user_id(ctx),
+    )
     await session.save()
     return session
 
@@ -288,7 +300,7 @@ async def generate(agent_id: str, body: GenerateRequest,
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
 
-    session = await _resolve_generate_session(agent, body.session_id)
+    session = await _resolve_generate_session(agent, body.session_id, ctx)
 
     if body.stream:
         return _stream_generate(session, agent, body.message, ctx.tool_execution_context())
@@ -397,18 +409,20 @@ async def delete_agent(agent_id: str):
     return {"message": "Agent deleted successfully"}
 
 @agents_api.get('/{agent_id}/session')
-async def load_session(agent_id: str):
+async def load_session(
+    agent_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+):
     agent = await Agent.find_one({'id': agent_id})
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     session_id: str = ''
     if agent:
-        session = await Session.get_by_agent_id(agent_id)
-        if not session:
-            session = Session(agent_id=agent_id)
-
+        session = await Session.get_by_agent_id(
+            agent_id,
+            authorization_user_id(ctx),
+        )
         session_id = session.id
-        await session.save()
 
     return JSONResponse({'session_id': session_id})
 
