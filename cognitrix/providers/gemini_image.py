@@ -16,6 +16,7 @@ from cognitrix.media.types import ResolvedImage
 MODEL = 'gemini-3.1-flash-image'
 URL = 'https://generativelanguage.googleapis.com/v1beta/interactions'
 MAX_PROVIDER_RESPONSE_BYTES = 15 * 1024 * 1024
+PROVIDER_STREAM_CHUNK_BYTES = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,8 @@ def _decode_image(value: dict[str, Any]) -> ProviderImage | None:
     try:
         data = base64.b64decode(encoded, validate=True)
     except (ValueError, TypeError):
+        return None
+    if not data:
         return None
     return ProviderImage(data=data, reported_mime_type=mime_type)
 
@@ -162,13 +165,18 @@ class GeminiImageProvider:
                     headers={'x-goog-api-key': api_key},
                     json=payload,
                 ) as response:
-                    async for chunk in response.aiter_bytes():
-                        response_body.extend(chunk)
-                        if len(response_body) > MAX_PROVIDER_RESPONSE_BYTES:
+                    async for chunk in response.aiter_bytes(
+                        chunk_size=PROVIDER_STREAM_CHUNK_BYTES
+                    ):
+                        remaining = (
+                            MAX_PROVIDER_RESPONSE_BYTES - len(response_body)
+                        )
+                        if len(chunk) > remaining:
                             raise GeminiImageError(
                                 'image_generation_error',
                                 'Image provider response exceeds the 15MB limit',
                             )
+                        response_body.extend(chunk)
                     response.raise_for_status()
         except GeminiImageError:
             raise

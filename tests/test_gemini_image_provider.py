@@ -46,7 +46,8 @@ def _install_stream(monkeypatch, provider_module, payload, *, chunks=None, statu
         async def __aexit__(self, *args):
             pass
 
-        async def aiter_bytes(self):
+        async def aiter_bytes(self, chunk_size=None):
+            captured['chunk_size'] = chunk_size
             for chunk in body_chunks:
                 yield chunk
 
@@ -111,6 +112,7 @@ async def test_generate_sends_stateless_direct_blocks_and_encodes_source_off_loo
 
     assert image.data == b'provider image'
     assert image.reported_mime_type == 'image/webp'
+    assert captured['chunk_size'] == 64 * 1024
     assert len(cpu_calls) == 2
     assert cpu_calls[0][1] == (b'verified source bytes',)
     assert len(cpu_calls[1][1]) == 1
@@ -225,6 +227,51 @@ async def test_invalid_final_image_does_not_fall_back(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_empty_final_image_does_not_fall_back(monkeypatch):
+    from cognitrix.providers import gemini_image as provider_module
+    from cognitrix.providers.gemini_image import GeminiImageError, GeminiImageProvider
+
+    monkeypatch.setenv('GOOGLE_API_KEY', 'test-key')
+    payload = {
+        'steps': [{
+            'type': 'model_output',
+            'content': [
+                {'type': 'image', 'data': base64.b64encode(b'valid').decode()},
+                {'type': 'image', 'data': ''},
+            ],
+        }],
+    }
+    _install_stream(monkeypatch, provider_module, payload)
+
+    with pytest.raises(GeminiImageError) as exc_info:
+        await GeminiImageProvider().generate('prompt', source=None, aspect_ratio='1:1')
+
+    assert exc_info.value.code == 'invalid_provider_output'
+    assert str(exc_info.value) == 'Image provider returned no image'
+
+
+@pytest.mark.asyncio
+async def test_legacy_traversal_skips_empty_image_for_a_later_valid_one(monkeypatch):
+    from cognitrix.providers import gemini_image as provider_module
+    from cognitrix.providers.gemini_image import GeminiImageProvider
+
+    monkeypatch.setenv('GOOGLE_API_KEY', 'test-key')
+    payload = {
+        'output': [
+            {'data': ''},
+            {'data': base64.b64encode(b'legacy valid').decode()},
+        ],
+    }
+    _install_stream(monkeypatch, provider_module, payload)
+
+    image = await GeminiImageProvider().generate(
+        'prompt', source=None, aspect_ratio='1:1'
+    )
+
+    assert image.data == b'legacy valid'
+
+
+@pytest.mark.asyncio
 async def test_streamed_response_is_capped_at_fifteen_mib(monkeypatch):
     from cognitrix.providers import gemini_image as provider_module
     from cognitrix.providers.gemini_image import GeminiImageError, GeminiImageProvider
@@ -235,6 +282,35 @@ async def test_streamed_response_is_capped_at_fifteen_mib(monkeypatch):
         provider_module,
         {},
         chunks=[b'x' * (15 * 1024 * 1024), b'x'],
+    )
+
+    with pytest.raises(GeminiImageError) as exc_info:
+        await GeminiImageProvider().generate('prompt', source=None, aspect_ratio='1:1')
+
+    assert exc_info.value.code == 'image_generation_error'
+    assert str(exc_info.value) == 'Image provider response exceeds the 15MB limit'
+
+
+@pytest.mark.asyncio
+async def test_single_oversized_stream_chunk_is_rejected_before_copy(monkeypatch):
+    from cognitrix.providers import gemini_image as provider_module
+    from cognitrix.providers.gemini_image import GeminiImageError, GeminiImageProvider
+
+    monkeypatch.setenv('GOOGLE_API_KEY', 'test-key')
+    monkeypatch.setattr(provider_module, 'MAX_PROVIDER_RESPONSE_BYTES', 3)
+
+    class OversizedChunk:
+        def __len__(self):
+            return 4
+
+        def __iter__(self):
+            raise AssertionError('oversized chunk must not be copied')
+
+    _install_stream(
+        monkeypatch,
+        provider_module,
+        {},
+        chunks=[OversizedChunk()],
     )
 
     with pytest.raises(GeminiImageError) as exc_info:
