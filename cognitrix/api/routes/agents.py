@@ -32,6 +32,7 @@ from ...media.staging import (
     MAX_UPLOAD_TOTAL_BYTES,
     StagedAttachmentSet,
     _decode_data_url as _staging_decode_data_url,
+    cleanup_staged_attachments,
     stage_legacy_data_urls,
     stage_upload_files,
 )
@@ -391,7 +392,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 manager.finish_turn()
             finally:
                 if staged is not None:
-                    await staged.cleanup()
+                    await cleanup_staged_attachments(staged)
             raise
     return {'status': 'Message sent'}
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
 import re
+import struct
 import time
 import uuid
 import weakref
@@ -13,9 +15,12 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from PIL import Image, UnidentifiedImageError
+
 from cognitrix import artifacts as artifact_store
 from cognitrix.artifacts import Artifact, ref, variant_path
 from cognitrix.media.processing import (
+    _ACCEPTED_FORMATS,
     _ProcessedImage,
     _is_valid_thumbnail,
     _make_thumbnail,
@@ -44,6 +49,13 @@ MAX_SESSION_BYTES = 100 * 1024 * 1024
 _VALID_VARIANTS = {'original', 'vision', 'thumbnail'}
 _SESSION_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 _ARTIFACT_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+
+Image.init()
+_PILLOW_ACCEPTORS = tuple(
+    (image_format.upper(), plugin[1])
+    for image_format, plugin in Image.OPEN.items()
+    if plugin[1] is not None
+)
 
 
 def _shared_lock(cache: weakref.WeakValueDictionary, key: str) -> asyncio.Lock:
@@ -144,6 +156,31 @@ def _raster_signature_kind(data: bytes) -> str | None:
         )
     ):
         return 'unsupported'
+
+    prefix = data[:16]
+    for image_format, accept in _PILLOW_ACCEPTORS:
+        try:
+            accepted = accept(prefix)
+        except (IndexError, OSError, SyntaxError, TypeError, ValueError, struct.error):
+            continue
+        if accepted and not isinstance(accepted, (str, bytes)):
+            return 'supported' if image_format in _ACCEPTED_FORMATS else 'unsupported'
+
+    # Some Pillow plugins have no prefix acceptor. Image.open only parses their
+    # bounded in-memory header here; pixel decoding remains in _process_image.
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image_format = (image.format or '').upper()
+    except (
+        Image.DecompressionBombError,
+        UnidentifiedImageError,
+        OSError,
+        SyntaxError,
+        ValueError,
+    ):
+        return None
+    if image_format:
+        return 'supported' if image_format in _ACCEPTED_FORMATS else 'unsupported'
     return None
 
 

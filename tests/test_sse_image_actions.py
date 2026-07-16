@@ -1146,6 +1146,116 @@ async def test_session_failure_after_adoption_keeps_persisted_media(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_durable_session_adoption_releases_transferred_cleanup_capacity(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(staging.settings, 'workdir', tmp_path)
+    monkeypatch.setattr(
+        staging,
+        'MAX_ATTACHMENT_CLEANUP_OBLIGATION_UNITS',
+        2,
+    )
+    staged = await staging.stage_upload_files(
+        [Upload('photo.png', _png(), 'image/png')],
+        user_key='user-1',
+        stream_id='durable-adoption-capacity',
+    )
+    assert staging._attachment_cleanup_obligation_count() == 2
+
+    async def ingest(*_args, **_kwargs):
+        return _ref('adopted-image')
+
+    monkeypatch.setattr(
+        staging.media_assets,
+        'ingest_staged_image_if_recognized',
+        ingest,
+    )
+
+    class Session:
+        id = 'session-1'
+        agent_id = 'agent-1'
+
+        async def __call__(self, *_args, attachments, **_kwargs):
+            attachments['_on_adopted']()
+
+    manager = sse.SSEManager(_agent())
+    manager.user_key = 'user-1'
+    assert manager.begin_turn()
+    manager._resolve_session = lambda _sid: asyncio.sleep(0, result=Session())
+    await manager.action_queue.put({
+        'type': 'chat_message',
+        'content': 'keep this',
+        'session_id': 'session-1',
+        'staged_attachments': staged,
+    })
+
+    response = await manager.sse_endpoint(Request())
+    assert (await _next_json(response.body_iterator))['type'] == 'attachments_ingested'
+    assert staging._attachment_cleanup_obligation_count() == 0
+    await response.body_iterator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_promoted_cleanup_outage_retains_unit_and_blocks_new_batch(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(staging.settings, 'workdir', tmp_path)
+    monkeypatch.setattr(
+        staging,
+        'MAX_ATTACHMENT_CLEANUP_OBLIGATION_UNITS',
+        2,
+    )
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+    staged = await staging.stage_upload_files(
+        [Upload('photo.png', _png(), 'image/png')],
+        user_key='user-1',
+        stream_id='promoted-outage-capacity',
+    )
+
+    async def ingest(*_args, **_kwargs):
+        return _ref('retained-image')
+
+    monkeypatch.setattr(
+        staging.media_assets,
+        'ingest_staged_image_if_recognized',
+        ingest,
+    )
+    ownership = MediaOwnership('session-1', 'user-1', 'agent-1')
+    promoted = await staging.promote_staged_attachments(staged, ownership)
+    assert staging._attachment_cleanup_obligation_count() == 1
+
+    async def unavailable_delete(*_args, **_kwargs):
+        raise OSError('simulated artifact-store outage')
+
+    monkeypatch.setattr(staging.media_assets, 'delete_artifacts', unavailable_delete)
+    with pytest.raises(staging.AttachmentCleanupError):
+        await staging.rollback_promoted_attachments(promoted, ownership)
+    assert staging.pending_attachment_cleanup_count() == 1
+    assert staging._attachment_cleanup_obligation_count() == 1
+
+    blocked = Upload('blocked.png', _png(), 'image/png')
+    with pytest.raises(__import__('fastapi').HTTPException) as exc:
+        await staging.stage_upload_files(
+            [blocked],
+            user_key='user-1',
+            stream_id='blocked-by-promoted-outage',
+        )
+    assert exc.value.status_code == 503
+    assert blocked.offset == 0
+
+    monkeypatch.setattr(
+        staging.media_assets,
+        'delete_artifacts',
+        lambda *_args, **_kwargs: asyncio.sleep(0),
+    )
+    assert await staging.retry_pending_attachment_cleanups() == 0
+    assert staging._attachment_cleanup_obligation_count() == 0
+
+
+@pytest.mark.asyncio
 async def test_direct_prestart_task_cancel_uses_supervised_cleanup():
     staged = FakeStaged()
     manager = sse.SSEManager(_agent())
@@ -1319,6 +1429,7 @@ async def test_expired_queued_batch_is_claimed_before_slow_session_resolution(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(staging.settings, 'workdir', tmp_path)
+    cleanup_baseline = staging._attachment_cleanup_obligation_count()
     staged = await staging.stage_upload_files(
         [Upload('note.txt', b'note')], user_key='user-1', stream_id='browser-1'
     )
@@ -1352,6 +1463,8 @@ async def test_expired_queued_batch_is_claimed_before_slow_session_resolution(
     assert staged.batch_dir.exists()
     release.set()
     assert json.loads((await pending)['data'])['type'] == 'error'
+    await asyncio.wait_for(manager.turn_terminal_event.wait(), timeout=1)
+    assert staging._attachment_cleanup_obligation_count() == cleanup_baseline
     await response.body_iterator.aclose()
 
 
@@ -1385,6 +1498,7 @@ async def test_source_replacement_after_preflight_is_rejected(
 ):
     monkeypatch.setattr(staging.settings, 'workdir', tmp_path)
     monkeypatch.setattr(staging.settings, 'tools_root', tmp_path / 'tools')
+    cleanup_baseline = staging._attachment_cleanup_obligation_count()
     staged = await staging.stage_upload_files(
         [Upload('note.txt', b'good')], user_key='user-1', stream_id='browser-1'
     )
@@ -1408,6 +1522,12 @@ async def test_source_replacement_after_preflight_is_rejected(
             staged, MediaOwnership('session-1', 'user-1', 'agent-1')
         )
     assert hook_called is True
+    # The identity replacement is intentionally quarantined fail-closed. Model
+    # operator removal of that unknown replacement, then resolve the retained
+    # cleanup obligation so this process-level test does not leak capacity.
+    staged.entries[0].path.unlink()
+    await staging.cleanup_staged_attachments(staged)
+    assert staging._attachment_cleanup_obligation_count() == cleanup_baseline
 
 
 @pytest.mark.asyncio

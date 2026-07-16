@@ -14,6 +14,7 @@ from cognitrix.media.staging import (
     PromotedAttachments,
     cleanup_staged_attachments,
     promote_staged_attachments,
+    release_promoted_attachment_reservation,
     rollback_promoted_attachments,
 )
 from cognitrix.sessions.base import Session
@@ -399,6 +400,10 @@ class SSEManager:
         def mark_adopted() -> None:
             nonlocal adopted, ingestion_emitted
             adopted = True
+            if promoted is not None:
+                # Session invokes this only after its history save succeeds;
+                # durable adoption ends the rollback obligation exactly once.
+                release_promoted_attachment_reservation(promoted)
             if promoted is not None and not ingestion_emitted:
                 output_queue.put_nowait({
                     'type': 'attachments_ingested',

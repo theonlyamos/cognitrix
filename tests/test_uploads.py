@@ -91,6 +91,18 @@ def _forget_live_batch(staged) -> None:
         staging._ACTIVE_BATCHES.discard(batch)
         staging._BATCH_LEASES.pop(batch, None)
         staging._BATCH_OBJECTS.pop(batch, None)
+    # A real process restart drops its process-local admission counter while
+    # the manifest remains durable for the next sweep.
+    staged._release_removed_reservations()
+
+
+def _load_api_main(tmp_path, monkeypatch):
+    frontend = tmp_path / 'frontend-dist'
+    for leaf in ('css', 'assets', 'webfonts', 'fonts'):
+        (frontend / leaf).mkdir(parents=True, exist_ok=True)
+    config = __import__('cognitrix.config', fromlist=['config'])
+    monkeypatch.setattr(config, 'FRONTEND_BUILD_DIR', frontend)
+    return __import__('importlib').import_module('cognitrix.api.main')
 
 
 def test_staging_limits_are_the_transport_contract():
@@ -98,6 +110,589 @@ def test_staging_limits_are_the_transport_contract():
     assert staging.MAX_UPLOAD_FILE_BYTES == 10 * 1024 * 1024
     assert staging.MAX_UPLOAD_TOTAL_BYTES == 25 * 1024 * 1024
     assert staging.MAX_UPLOAD_COUNT == 20
+
+
+@pytest.mark.asyncio
+async def test_saturated_multipart_rejects_before_sweep_read_or_root_mutation(
+    staging_workdir,
+    monkeypatch,
+):
+    baseline = staging._attachment_cleanup_obligation_count()
+    monkeypatch.setattr(
+        staging,
+        'MAX_ATTACHMENT_CLEANUP_OBLIGATION_UNITS',
+        baseline,
+        raising=False,
+    )
+    upload = FakeUpload('never-read.txt', b'must-not-read')
+
+    async def unexpected_sweep(*_args, **_kwargs):
+        raise AssertionError('saturated admission must precede the sweep')
+
+    monkeypatch.setattr(staging, 'sweep_stale_staging', unexpected_sweep)
+
+    with pytest.raises(HTTPException) as exc:
+        await staging.stage_upload_files(
+            [upload],
+            user_key='user',
+            stream_id='saturated-multipart',
+        )
+
+    assert exc.value.status_code == 503
+    assert upload.read_sizes == []
+    assert upload.closed is True
+    assert not staging_workdir.exists()
+
+
+@pytest.mark.asyncio
+async def test_saturated_legacy_rejects_before_sweep_or_root_mutation(
+    staging_workdir,
+    monkeypatch,
+):
+    baseline = staging._attachment_cleanup_obligation_count()
+    monkeypatch.setattr(
+        staging,
+        'MAX_ATTACHMENT_CLEANUP_OBLIGATION_UNITS',
+        baseline,
+        raising=False,
+    )
+
+    async def unexpected_sweep(*_args, **_kwargs):
+        raise AssertionError('saturated admission must precede the sweep')
+
+    monkeypatch.setattr(staging, 'sweep_stale_staging', unexpected_sweep)
+
+    with pytest.raises(HTTPException) as exc:
+        await staging.stage_legacy_data_urls(
+            [{'name': 'never.txt', 'dataUrl': _text_data_url('never')}],
+            user_key='user',
+            stream_id='saturated-legacy',
+        )
+
+    assert exc.value.status_code == 503
+    assert not staging_workdir.exists()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_attachment_admission_never_exceeds_global_unit_cap(
+    staging_workdir,
+    monkeypatch,
+):
+    baseline = staging._attachment_cleanup_obligation_count()
+    monkeypatch.setattr(
+        staging,
+        'MAX_ATTACHMENT_CLEANUP_OBLIGATION_UNITS',
+        baseline + 4,
+        raising=False,
+    )
+    tasks = [
+        staging.stage_legacy_data_urls(
+            [{'name': f'{index}.txt', 'dataUrl': _text_data_url(str(index))}],
+            user_key='user',
+            stream_id=f'concurrent-{index}',
+        )
+        for index in range(6)
+    ]
+    results = await __import__('asyncio').gather(*tasks, return_exceptions=True)
+    admitted = [
+        result for result in results
+        if isinstance(result, staging.StagedAttachmentSet)
+    ]
+    rejected = [result for result in results if isinstance(result, HTTPException)]
+    try:
+        assert len(admitted) == 2
+        assert len(rejected) == 4
+        assert all(error.status_code == 503 for error in rejected)
+        assert staging._attachment_cleanup_obligation_count() == baseline + 4
+    finally:
+        await __import__('asyncio').gather(
+            *(item.cleanup() for item in admitted),
+            return_exceptions=True,
+        )
+    assert staging._attachment_cleanup_obligation_count() == baseline
+    assert not staging_workdir.exists() or list(staging_workdir.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_failed_staging_cleanup_retains_one_unit_and_backpressures_new_batches(
+    staging_workdir,
+    monkeypatch,
+):
+    baseline = staging._attachment_cleanup_obligation_count()
+    monkeypatch.setattr(
+        staging,
+        'MAX_ATTACHMENT_CLEANUP_OBLIGATION_UNITS',
+        baseline + 2,
+        raising=False,
+    )
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+    staged = await staging.stage_upload_files(
+        [FakeUpload('retained.txt', b'retained')],
+        user_key='user',
+        stream_id='retained-cleanup',
+    )
+    original_remove = staging._remove_staged_batch_capability
+
+    def unavailable_remove(_staged):
+        raise OSError('simulated staging storage outage')
+
+    monkeypatch.setattr(
+        staging,
+        '_remove_staged_batch_capability',
+        unavailable_remove,
+    )
+    try:
+        assert staging._attachment_cleanup_obligation_count() == baseline + 2
+        with pytest.raises(staging.AttachmentCleanupError):
+            await staging.cleanup_staged_attachments(staged)
+        assert staging.pending_attachment_cleanup_count() == 1
+        assert staging._attachment_cleanup_obligation_count() == baseline + 1
+
+        blocked = FakeUpload('blocked.txt', b'blocked')
+        existing = set(staging_workdir.iterdir())
+        with pytest.raises(HTTPException) as exc:
+            await staging.stage_upload_files(
+                [blocked],
+                user_key='user',
+                stream_id='blocked-by-retained-cleanup',
+            )
+        assert exc.value.status_code == 503
+        assert blocked.read_sizes == []
+        assert blocked.closed is True
+        assert set(staging_workdir.iterdir()) == existing
+    finally:
+        monkeypatch.setattr(
+            staging,
+            '_remove_staged_batch_capability',
+            original_remove,
+        )
+        await staging.retry_pending_attachment_cleanups()
+    assert staging.pending_attachment_cleanup_count() == 0
+    assert staging._attachment_cleanup_obligation_count() == baseline
+
+
+@pytest.mark.asyncio
+async def test_maintenance_sweeps_periodically_and_retries_pending_until_resolved(
+    monkeypatch,
+):
+    now = 0.0
+    delays = []
+    sweeps = 0
+    retries = 0
+
+    def clock():
+        return now
+
+    async def wait(delay):
+        nonlocal now
+        delays.append(delay)
+        now += delay
+
+    async def sweep(*_args, **_kwargs):
+        nonlocal sweeps
+        sweeps += 1
+        return 0
+
+    async def retry():
+        nonlocal retries
+        retries += 1
+        return 1
+
+    monkeypatch.setattr(staging, 'ATTACHMENT_MAINTENANCE_SWEEP_SECONDS', 3, raising=False)
+    monkeypatch.setattr(staging, 'ATTACHMENT_MAINTENANCE_RETRY_INITIAL_SECONDS', 1, raising=False)
+    monkeypatch.setattr(staging, 'ATTACHMENT_MAINTENANCE_RETRY_MAX_SECONDS', 4, raising=False)
+    monkeypatch.setattr(staging, 'sweep_stale_staging', sweep)
+    monkeypatch.setattr(staging, 'retry_pending_attachment_cleanups', retry)
+    monkeypatch.setattr(staging, 'pending_attachment_cleanup_count', lambda: 1)
+
+    await staging._run_attachment_maintenance(
+        wait=wait,
+        clock=clock,
+        cycles=7,
+    )
+
+    assert retries == 7
+    assert sweeps >= 2
+    assert delays
+    assert max(delays) <= 4
+
+
+@pytest.mark.asyncio
+async def test_maintenance_uses_one_task_and_joins_shutdown(monkeypatch):
+    await staging.stop_attachment_maintenance()
+    started = __import__('asyncio').Event()
+    cancelled = __import__('asyncio').Event()
+
+    async def worker():
+        started.set()
+        try:
+            await __import__('asyncio').Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(staging, '_run_attachment_maintenance', worker)
+
+    first = staging.start_attachment_maintenance()
+    second = staging.start_attachment_maintenance()
+    assert first is second
+    await __import__('asyncio').wait_for(started.wait(), timeout=1)
+
+    await staging.stop_attachment_maintenance()
+
+    await __import__('asyncio').wait_for(cancelled.wait(), timeout=1)
+    assert first.done()
+    assert staging._ATTACHMENT_MAINTENANCE_TASK is None
+
+
+@pytest.mark.asyncio
+async def test_existing_pending_retry_does_not_self_wake_maintenance(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    wake_calls = 0
+
+    def wake():
+        nonlocal wake_calls
+        wake_calls += 1
+
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', wake)
+
+    class Cleanup:
+        batch_dir = tmp_path / 'self-wake'
+
+        def __init__(self):
+            self.fail = True
+
+        async def cleanup(self):
+            if self.fail:
+                raise OSError('still unavailable')
+
+    retained = Cleanup()
+    with pytest.raises(staging.AttachmentCleanupError):
+        await staging.cleanup_staged_attachments(retained)
+    with pytest.raises(staging.AttachmentCleanupError):
+        await staging.cleanup_staged_attachments(retained)
+
+    assert wake_calls == 1
+    retained.fail = False
+    await staging.cleanup_staged_attachments(retained)
+
+
+@pytest.mark.asyncio
+async def test_maintenance_shutdown_survives_cancel_consumed_by_failed_cleanup(
+    tmp_path,
+    monkeypatch,
+):
+    await staging.stop_attachment_maintenance()
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+
+    async def no_sweep(*_args, **_kwargs):
+        return 0
+
+    monkeypatch.setattr(staging, 'sweep_stale_staging', no_sweep)
+    started = __import__('asyncio').Event()
+    release = __import__('asyncio').Event()
+
+    class Cleanup:
+        batch_dir = tmp_path / 'cancelled-maintenance-cleanup'
+
+        def __init__(self):
+            self.block = False
+            self.fail = True
+
+        async def cleanup(self):
+            if self.block:
+                started.set()
+                await release.wait()
+            if self.fail:
+                raise OSError('still unavailable')
+
+    retained = Cleanup()
+    with pytest.raises(staging.AttachmentCleanupError):
+        await staging.cleanup_staged_attachments(retained)
+    retained.block = True
+    staging.start_attachment_maintenance()
+    await __import__('asyncio').wait_for(started.wait(), timeout=1)
+    stopping = __import__('asyncio').create_task(
+        staging.stop_attachment_maintenance()
+    )
+    await __import__('asyncio').sleep(0)
+    release.set()
+    try:
+        await __import__('asyncio').wait_for(stopping, timeout=1)
+    finally:
+        retained.block = False
+        retained.fail = False
+        release.set()
+        await staging.stop_attachment_maintenance()
+        await staging.cleanup_staged_attachments(retained)
+
+
+@pytest.mark.asyncio
+async def test_start_maintenance_replaces_state_from_a_closed_foreign_loop(
+    monkeypatch,
+):
+    await staging.stop_attachment_maintenance()
+    started = __import__('asyncio').Event()
+
+    class StaleTask:
+        def done(self):
+            return False
+
+    class ClosedLoop:
+        def is_closed(self):
+            return True
+
+        def is_running(self):
+            return False
+
+    class ForeignWake:
+        def set(self):
+            raise AssertionError('must not signal a foreign-loop event')
+
+    async def worker():
+        started.set()
+        await __import__('asyncio').Event().wait()
+
+    monkeypatch.setattr(staging, '_ATTACHMENT_MAINTENANCE_TASK', StaleTask())
+    monkeypatch.setattr(staging, '_ATTACHMENT_MAINTENANCE_WAKE', ForeignWake())
+    monkeypatch.setattr(
+        staging,
+        '_ATTACHMENT_MAINTENANCE_LOOP',
+        ClosedLoop(),
+        raising=False,
+    )
+    monkeypatch.setattr(staging, '_run_attachment_maintenance', worker)
+
+    task = staging.start_attachment_maintenance()
+    try:
+        assert task is not None and not isinstance(task, StaleTask)
+        await __import__('asyncio').wait_for(started.wait(), timeout=1)
+    finally:
+        await staging.stop_attachment_maintenance()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_stops_maintenance_when_scheduler_shutdown_fails(
+    tmp_path,
+    monkeypatch,
+):
+    api_main = _load_api_main(tmp_path, monkeypatch)
+
+    scheduler_started = __import__('asyncio').Event()
+    scheduler_release = __import__('asyncio').Event()
+    maintenance_stopped = False
+
+    async def initialize():
+        return None
+
+    async def failing_scheduler():
+        scheduler_started.set()
+        try:
+            await scheduler_release.wait()
+        except __import__('asyncio').CancelledError as exc:
+            raise RuntimeError('scheduler shutdown failed') from exc
+
+    def start_maintenance():
+        return None
+
+    async def stop_maintenance():
+        nonlocal maintenance_stopped
+        maintenance_stopped = True
+
+    monkeypatch.setattr(api_main, 'initialize_database', initialize)
+    monkeypatch.setattr(api_main, 'scheduler_loop', failing_scheduler)
+    monkeypatch.setattr(
+        api_main,
+        'start_attachment_maintenance',
+        start_maintenance,
+    )
+    monkeypatch.setattr(
+        api_main,
+        'stop_attachment_maintenance',
+        stop_maintenance,
+    )
+
+    with pytest.raises(RuntimeError, match='scheduler shutdown failed'):
+        async with api_main.lifespan(api_main.app):
+            await __import__('asyncio').wait_for(
+                scheduler_started.wait(),
+                timeout=1,
+            )
+
+    assert maintenance_stopped is True
+
+
+@pytest.mark.asyncio
+async def test_lifespan_joins_scheduler_when_maintenance_start_fails(
+    tmp_path,
+    monkeypatch,
+):
+    api_main = _load_api_main(tmp_path, monkeypatch)
+    real_asyncio = __import__('asyncio')
+    created = []
+
+    async def scheduler():
+        await real_asyncio.Event().wait()
+
+    async def initialize():
+        return None
+
+    def create_task(coroutine):
+        task = real_asyncio.create_task(coroutine)
+        created.append(task)
+        return task
+
+    def fail_maintenance_start():
+        raise RuntimeError('maintenance startup failed')
+
+    monkeypatch.setattr(api_main, 'initialize_database', initialize)
+    monkeypatch.setattr(api_main, 'scheduler_loop', scheduler)
+    monkeypatch.setattr(
+        api_main,
+        'start_attachment_maintenance',
+        fail_maintenance_start,
+    )
+    monkeypatch.setattr(
+        api_main,
+        'asyncio',
+        __import__('types').SimpleNamespace(
+            CancelledError=real_asyncio.CancelledError,
+            create_task=create_task,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match='maintenance startup failed'):
+        async with api_main.lifespan(api_main.app):
+            raise AssertionError('lifespan must not yield after startup failure')
+
+    assert len(created) == 1
+    assert created[0].cancelled()
+    assert created[0].done()
+
+
+@pytest.mark.asyncio
+async def test_partial_batch_create_cleanup_failure_retains_reserved_obligation(
+    staging_workdir,
+    monkeypatch,
+):
+    baseline = staging._attachment_cleanup_obligation_count()
+    monkeypatch.setattr(
+        staging,
+        'MAX_ATTACHMENT_CLEANUP_OBLIGATION_UNITS',
+        baseline + 2,
+    )
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+    original_create = staging._create_pinned_batch
+    original_remove = staging._remove_staged_batch_capability
+
+    def fail_after_create(*args, **kwargs):
+        original_create(*args, **kwargs)
+        raise OSError('simulated create handoff failure')
+
+    def unavailable_remove(_staged):
+        raise OSError('simulated cleanup outage')
+
+    monkeypatch.setattr(staging, '_create_pinned_batch', fail_after_create)
+    monkeypatch.setattr(staging, '_remove_staged_batch_capability', unavailable_remove)
+    upload = FakeUpload('never-read.txt', b'never-read')
+    try:
+        with pytest.raises(staging.AttachmentCleanupError):
+            await staging.stage_upload_files(
+                [upload],
+                user_key='user',
+                stream_id='partial-create-retained',
+            )
+        assert upload.read_sizes == []
+        assert upload.closed is True
+        assert staging.pending_attachment_cleanup_count() == 1
+        assert staging._attachment_cleanup_obligation_count() == baseline + 1
+        assert staging_workdir.exists() and list(staging_workdir.iterdir())
+    finally:
+        monkeypatch.setattr(staging, '_create_pinned_batch', original_create)
+        monkeypatch.setattr(staging, '_remove_staged_batch_capability', original_remove)
+        await staging.retry_pending_attachment_cleanups()
+    assert staging._attachment_cleanup_obligation_count() == baseline
+
+
+@pytest.mark.asyncio
+async def test_distinct_failed_cleanup_objects_never_collide_or_evict(
+    tmp_path,
+    monkeypatch,
+):
+    baseline = staging._attachment_cleanup_obligation_count()
+    monkeypatch.setattr(
+        staging,
+        'MAX_ATTACHMENT_CLEANUP_OBLIGATION_UNITS',
+        baseline + 2,
+    )
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+
+    class FailingCleanup:
+        def __init__(self):
+            self.batch_dir = tmp_path / 'same-legacy-key'
+            self.fail = True
+
+        async def cleanup(self):
+            if self.fail:
+                raise OSError('blocked')
+
+    first = FailingCleanup()
+    second = FailingCleanup()
+    try:
+        with pytest.raises(staging.AttachmentCleanupError):
+            await staging.cleanup_staged_attachments(first)
+        with pytest.raises(staging.AttachmentCleanupError):
+            await staging.cleanup_staged_attachments(second)
+        assert staging.pending_attachment_cleanup_count() == 2
+        assert staging._attachment_cleanup_obligation_count() == baseline + 2
+    finally:
+        first.fail = second.fail = False
+        await staging.retry_pending_attachment_cleanups()
+        for item in (first, second):
+            reservation = getattr(item, '_cleanup_reservation', None)
+            if reservation is not None:
+                reservation.release_all()
+    assert staging._attachment_cleanup_obligation_count() == baseline
+
+
+@pytest.mark.asyncio
+async def test_cleanup_success_only_removes_the_same_retained_obligation(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+
+    class Cleanup:
+        batch_dir = tmp_path / 'identity-conditional-pop'
+
+        def __init__(self):
+            self.fail = True
+
+        async def cleanup(self):
+            if self.fail:
+                raise OSError('blocked')
+
+    retained = Cleanup()
+    replacement = Cleanup()
+    with pytest.raises(staging.AttachmentCleanupError):
+        await staging.cleanup_staged_attachments(retained)
+    key = staging._staging_cleanup_key(retained)
+    retained.fail = False
+    with staging._PENDING_CLEANUP_LOCK:
+        staging._PENDING_STAGING_CLEANUPS[key] = replacement
+
+    await staging.cleanup_staged_attachments(retained)
+
+    with staging._PENDING_CLEANUP_LOCK:
+        assert staging._PENDING_STAGING_CLEANUPS.get(key) is replacement
+        staging._PENDING_STAGING_CLEANUPS.pop(key, None)
 
 
 @pytest.mark.asyncio
@@ -267,6 +862,7 @@ async def test_cleanup_is_idempotent_and_stale_sweep_excludes_active_batches(
 async def test_queued_lease_survives_default_sweep_then_expires_for_ttl_cleanup(
     staging_workdir,
 ):
+    baseline = staging._attachment_cleanup_obligation_count()
     queued = await staging.stage_upload_files(
         [FakeUpload('queued.txt', b'queued')], user_key='user', stream_id='stream'
     )
@@ -280,6 +876,7 @@ async def test_queued_lease_survives_default_sweep_then_expires_for_ttl_cleanup(
         now=created + staging.STAGING_LEASE_SECONDS + 1
     ) == 1
     assert not queued.batch_dir.exists()
+    assert staging._attachment_cleanup_obligation_count() == baseline
 
 
 @pytest.mark.asyncio
@@ -469,6 +1066,200 @@ async def test_recovery_journal_directory_flush_precedes_destructive_delete(
 
 
 @pytest.mark.asyncio
+async def test_torn_recovery_journal_is_repaired_before_batch_mutation(
+    staging_workdir,
+):
+    orphan = await staging.stage_upload_files(
+        [FakeUpload('known.txt', b'known')],
+        user_key='user',
+        stream_id='torn-recovery-journal',
+    )
+    manifest = staging._parse_staging_manifest(
+        (orphan.batch_dir / staging.STAGING_MANIFEST_LEAF).read_bytes()
+    )
+    _forget_live_batch(orphan)
+    recovery = staging_workdir / staging._recovery_leaf(orphan.batch_dir.name)
+    recovery.write_bytes(b'')
+
+    assert await staging.sweep_stale_staging(now=manifest.expires_at + 1) == 1
+    assert not orphan.batch_dir.exists()
+    assert not recovery.exists()
+
+
+@pytest.mark.asyncio
+async def test_post_mutation_sweep_failure_stays_recovering_and_resumes_after_restart(
+    staging_workdir,
+    monkeypatch,
+):
+    queued = await staging.stage_upload_files(
+        [FakeUpload('known.txt', b'known')],
+        user_key='user',
+        stream_id='recover-after-directory-delete-failure',
+    )
+    manifest_path = queued.batch_dir / staging.STAGING_MANIFEST_LEAF
+    manifest = staging._parse_staging_manifest(manifest_path.read_bytes())
+    recovery = staging_workdir / staging._recovery_leaf(queued.batch_dir.name)
+    original_delete_directory = (
+        staging.secure_fs.DirectoryCapability.delete_directory
+    )
+    failed_once = False
+
+    def fail_final_batch_delete(
+        capability,
+        leaf,
+        *,
+        expected_identity,
+    ):
+        nonlocal failed_once
+        if leaf == queued.batch_dir.name and not failed_once:
+            failed_once = True
+            raise OSError('simulated final batch-directory delete failure')
+        return original_delete_directory(
+            capability,
+            leaf,
+            expected_identity=expected_identity,
+        )
+
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'delete_directory',
+        fail_final_batch_delete,
+    )
+
+    assert await staging.sweep_stale_staging(now=manifest.expires_at + 1) == 0
+    lexical = staging._lexical_absolute(queued.batch_dir)
+    with staging._ACTIVE_LOCK:
+        assert staging._BATCH_LEASES[lexical][0] == 'recovering'
+    with pytest.raises(staging.MediaValidationError):
+        queued.claim_now()
+    assert queued.batch_dir.exists()
+    assert not queued.entries[0].path.exists()
+    assert not manifest_path.exists()
+    assert recovery.exists()
+
+    _forget_live_batch(queued)
+
+    assert await staging.sweep_stale_staging(now=manifest.expires_at + 2) == 1
+    assert not queued.batch_dir.exists()
+    assert not recovery.exists()
+
+
+@pytest.mark.asyncio
+async def test_restart_resumes_existing_journal_before_surviving_manifest(
+    staging_workdir,
+    monkeypatch,
+):
+    queued = await staging.stage_upload_files(
+        [
+            FakeUpload('first.txt', b'first'),
+            FakeUpload('second.txt', b'second'),
+        ],
+        user_key='user',
+        stream_id='recover-before-surviving-manifest',
+    )
+    manifest_path = queued.batch_dir / staging.STAGING_MANIFEST_LEAF
+    manifest = staging._parse_staging_manifest(manifest_path.read_bytes())
+    first_leaf, second_leaf = [entry.path.name for entry in queued.entries]
+    recovery = staging_workdir / staging._recovery_leaf(queued.batch_dir.name)
+    original_delete_file = staging.secure_fs.DirectoryCapability.delete_file
+    failed_once = False
+
+    def fail_second_child_once(
+        capability,
+        leaf,
+        *,
+        expected_identity,
+    ):
+        nonlocal failed_once
+        if leaf == second_leaf and not failed_once:
+            failed_once = True
+            raise OSError('simulated restart after first child delete')
+        return original_delete_file(
+            capability,
+            leaf,
+            expected_identity=expected_identity,
+        )
+
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'delete_file',
+        fail_second_child_once,
+    )
+
+    assert await staging.sweep_stale_staging(now=manifest.expires_at + 1) == 0
+    assert recovery.exists()
+    assert not (queued.batch_dir / first_leaf).exists()
+    assert (queued.batch_dir / second_leaf).exists()
+    assert manifest_path.exists()
+
+    _forget_live_batch(queued)
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'delete_file',
+        original_delete_file,
+    )
+
+    assert await staging.sweep_stale_staging(now=manifest.expires_at + 2) == 1
+    assert not queued.batch_dir.exists()
+    assert not recovery.exists()
+
+
+@pytest.mark.asyncio
+async def test_restart_removes_valid_journal_when_pinned_batch_is_absent(
+    staging_workdir,
+    monkeypatch,
+):
+    queued = await staging.stage_upload_files(
+        [FakeUpload('known.txt', b'known')],
+        user_key='user',
+        stream_id='journal-only-restart',
+    )
+    manifest = staging._parse_staging_manifest(
+        (queued.batch_dir / staging.STAGING_MANIFEST_LEAF).read_bytes()
+    )
+    recovery_leaf = staging._recovery_leaf(queued.batch_dir.name)
+    recovery = staging_workdir / recovery_leaf
+    original_delete_file = staging.secure_fs.DirectoryCapability.delete_file
+    failed_once = False
+
+    def fail_recovery_delete_once(
+        capability,
+        leaf,
+        *,
+        expected_identity,
+    ):
+        nonlocal failed_once
+        if leaf == recovery_leaf and not failed_once:
+            failed_once = True
+            raise OSError('simulated crash before recovery journal deletion')
+        return original_delete_file(
+            capability,
+            leaf,
+            expected_identity=expected_identity,
+        )
+
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'delete_file',
+        fail_recovery_delete_once,
+    )
+
+    assert await staging.sweep_stale_staging(now=manifest.expires_at + 1) == 1
+    assert not queued.batch_dir.exists()
+    assert recovery.exists()
+
+    _forget_live_batch(queued)
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'delete_file',
+        original_delete_file,
+    )
+
+    assert await staging.sweep_stale_staging(now=manifest.expires_at + 2) == 0
+    assert not recovery.exists()
+
+
+@pytest.mark.asyncio
 async def test_claim_can_win_after_expiry_before_sweep_reserves_batch(staging_workdir):
     queued = await staging.stage_upload_files(
         [FakeUpload('queued.txt', b'queued')], user_key='user', stream_id='stream'
@@ -643,6 +1434,7 @@ async def test_cleanup_identity_mismatch_retains_replacement_and_other_batch(
     assert batch_b.batch_dir in staging._ACTIVE_BATCHES
     assert batch_a.batch_dir not in staging._ACTIVE_BATCHES
     __import__('shutil').rmtree(batch_a.batch_dir)
+    await batch_a.cleanup()
     await batch_b.cleanup()
 
 

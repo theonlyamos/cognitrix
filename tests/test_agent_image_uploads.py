@@ -549,6 +549,7 @@ async def test_chunked_json_body_envelope_is_enforced_before_parsing(monkeypatch
 async def test_oversize_stage_failure_finishes_reserved_turn_and_removes_batch(
     staging_root, monkeypatch
 ):
+    cleanup_baseline = staging._attachment_cleanup_obligation_count()
     manager = FakeManager()
     agent = _install_route_fakes(monkeypatch, manager)
     monkeypatch.setattr(staging, 'MAX_UPLOAD_FILE_BYTES', 3)
@@ -570,6 +571,10 @@ async def test_oversize_stage_failure_finishes_reserved_turn_and_removes_batch(
     assert manager.finish_calls == 1
     assert manager.action_queue.actions == []
     assert not staging_root.exists() or list(staging_root.iterdir()) == []
+    assert (
+        staging._attachment_cleanup_obligation_count()
+        == cleanup_baseline
+    )
 
 
 @pytest.mark.asyncio

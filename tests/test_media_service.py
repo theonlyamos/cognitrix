@@ -226,6 +226,92 @@ async def test_ingest_rejects_invalid_image_without_files_or_row(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    'data',
+    [
+        pytest.param(b'P6\n1 1\n255\n\x01\x02\x03', id='ppm'),
+        pytest.param(b'P5\n1 1\n255\n\x01', id='pnm'),
+    ],
+)
+async def test_classifier_rejects_pillow_recognized_unsupported_pnm_rasters(
+    artifact_store, tmp_path, data
+):
+    rows, root = artifact_store
+
+    with pytest.raises(MediaValidationError, match='Unsupported image format'):
+        await MediaAssetService().ingest_staged_image_if_recognized(
+            _stage(
+                tmp_path,
+                data,
+                filename='declared-document.txt',
+                declared_mime='text/plain',
+            ),
+            MediaOwnership('session', 'user', 'agent'),
+        )
+
+    assert rows == {}
+    assert not root.exists() or not any(root.rglob('*'))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'data',
+    [
+        pytest.param(b'P6', id='truncated-header'),
+        pytest.param(b'P6\n1 1\n255\n', id='missing-pixels'),
+    ],
+)
+async def test_classifier_rejects_truncated_recognized_ppm(
+    artifact_store, tmp_path, data
+):
+    rows, root = artifact_store
+
+    with pytest.raises(MediaValidationError):
+        await MediaAssetService().ingest_staged_image_if_recognized(
+            _stage(tmp_path, data),
+            MediaOwnership('session', 'user', 'agent'),
+        )
+
+    assert rows == {}
+    assert not root.exists() or not any(root.rglob('*'))
+
+
+@pytest.mark.asyncio
+async def test_classifier_returns_none_only_for_non_image_bytes(tmp_path):
+    result = await MediaAssetService().ingest_staged_image_if_recognized(
+        _stage(
+            tmp_path,
+            b'arbitrary non-image bytes',
+            filename='pretend.png',
+            declared_mime='image/png',
+        ),
+        MediaOwnership('session', 'user', 'agent'),
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_classifier_keeps_accepting_supported_raster_bytes(
+    artifact_store, tmp_path, rgba_png_bytes
+):
+    rows, _ = artifact_store
+
+    result = await MediaAssetService().ingest_staged_image_if_recognized(
+        _stage(
+            tmp_path,
+            rgba_png_bytes,
+            filename='declared-document.txt',
+            declared_mime='text/plain',
+        ),
+        MediaOwnership('session', 'user', 'agent'),
+    )
+
+    assert result is not None
+    assert rows[result.id].mime_type == 'image/png'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     'ownership',
     [
         MediaOwnership(session_id='other', user_id='user', agent_id='agent'),

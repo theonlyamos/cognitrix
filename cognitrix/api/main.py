@@ -8,6 +8,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import FRONTEND_BUILD_DIR, initialize_database, settings
+from ..media.staging import (
+    start_attachment_maintenance,
+    stop_attachment_maintenance,
+)
 from ..tasks.scheduler import scheduler_loop
 from .routes import api_router
 from .routes.openai_compat import openai_api
@@ -19,10 +23,19 @@ async def lifespan(app: FastAPI):
     # `uvicorn cognitrix.api.main:app` must work too.
     await initialize_database()
     scheduler = asyncio.create_task(scheduler_loop())
-    yield
-    scheduler.cancel()
-    with suppress(asyncio.CancelledError):
-        await scheduler
+    maintenance_started = False
+    try:
+        start_attachment_maintenance()
+        maintenance_started = True
+        yield
+    finally:
+        try:
+            scheduler.cancel()
+            with suppress(asyncio.CancelledError):
+                await scheduler
+        finally:
+            if maintenance_started:
+                await stop_attachment_maintenance()
 
 
 app = FastAPI(lifespan=lifespan)
