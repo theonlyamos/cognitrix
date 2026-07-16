@@ -122,16 +122,49 @@ async def _read_path(path: Path) -> bytes:
     return await asyncio.to_thread(path.read_bytes)
 
 
-def _has_supported_raster_signature(data: bytes) -> bool:
-    """Recognize supported raster containers without trusting declared MIME."""
-    return (
+def _raster_signature_kind(data: bytes) -> str | None:
+    """Return supported/unsupported for recognizable raster containers."""
+    if (
         data.startswith(b'\x89PNG\r\n\x1a\n')
         or data.startswith(b'\xff\xd8\xff')
         or data.startswith((b'GIF87a', b'GIF89a'))
         or data.startswith(b'BM')
         or data.startswith((b'II*\x00', b'MM\x00*'))
         or (len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP')
-    )
+    ):
+        return 'supported'
+    if (
+        data.startswith((b'\x00\x00\x01\x00', b'\x00\x00\x02\x00'))
+        or data.startswith(b'8BPS')
+        or data.startswith(b'\x00\x00\x00\x0cjP  \r\n\x87\n')
+        or (
+            len(data) >= 12
+            and data[4:8] == b'ftyp'
+            and data[8:12] in {b'avif', b'heic', b'heix', b'hevc', b'mif1'}
+        )
+    ):
+        return 'unsupported'
+    return None
+
+
+def _process_staged_snapshot(
+    staged: StagedAttachment,
+    data: bytes,
+    *,
+    allow_unrecognized: bool,
+) -> tuple[int, _ProcessedImage | None]:
+    if len(data) > MAX_IMAGE_BYTES:
+        raise MediaValidationError('Source image exceeds the 10 MiB limit')
+    if len(data) != staged.size_bytes:
+        raise MediaValidationError('Staged attachment size changed')
+    signature = _raster_signature_kind(data)
+    if signature is None:
+        if allow_unrecognized:
+            return len(data), None
+        raise MediaValidationError('Attachment is not a valid image')
+    if signature == 'unsupported':
+        raise MediaValidationError('Unsupported image format')
+    return len(data), _process_image(data)
 
 
 def _read_and_process_staged(
@@ -142,15 +175,11 @@ def _read_and_process_staged(
     """Read one bounded upload snapshot and decode that exact snapshot."""
     with staged.path.open('rb') as stream:
         data = stream.read(MAX_IMAGE_BYTES + 1)
-    if len(data) > MAX_IMAGE_BYTES:
-        raise MediaValidationError('Source image exceeds the 10 MiB limit')
-    if len(data) != staged.size_bytes:
-        raise MediaValidationError('Staged attachment size changed')
-    if not _has_supported_raster_signature(data):
-        if allow_unrecognized:
-            return len(data), None
-        raise MediaValidationError('Attachment is not a supported image')
-    return len(data), _process_image(data)
+    return _process_staged_snapshot(
+        staged,
+        data,
+        allow_unrecognized=allow_unrecognized,
+    )
 
 
 def _read_and_validate_thumbnail(path: Path) -> bool:
@@ -273,6 +302,8 @@ class MediaAssetService:
         self,
         staged: StagedAttachment,
         ownership: MediaOwnership,
+        *,
+        snapshot: bytes | None = None,
     ) -> ArtifactRef | None:
         """Ingest a recognized raster; return ``None`` only for other bytes."""
         started = time.perf_counter()
@@ -283,11 +314,19 @@ class MediaAssetService:
             if not ownership.session_id:
                 raise MediaValidationError('Media ownership requires a session')
             async with _shared_lock(_SESSION_LOCKS, ownership.session_id):
-                input_bytes, processed = await run_media_cpu(
-                    _read_and_process_staged,
-                    staged,
-                    allow_unrecognized=True,
-                )
+                if snapshot is None:
+                    input_bytes, processed = await run_media_cpu(
+                        _read_and_process_staged,
+                        staged,
+                        allow_unrecognized=True,
+                    )
+                else:
+                    input_bytes, processed = await run_media_cpu(
+                        _process_staged_snapshot,
+                        staged,
+                        snapshot,
+                        allow_unrecognized=True,
+                    )
                 if processed is None:
                     status = 'unrecognized'
                     return None

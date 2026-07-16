@@ -84,6 +84,15 @@ def staging_workdir(tmp_path, monkeypatch):
     return tmp_path / 'staging' / 'chat-media'
 
 
+def _forget_live_batch(staged) -> None:
+    """Model a process restart while leaving the durable batch on disk."""
+    batch = staging._lexical_absolute(staged.batch_dir)
+    with staging._ACTIVE_LOCK:
+        staging._ACTIVE_BATCHES.discard(batch)
+        staging._BATCH_LEASES.pop(batch, None)
+        staging._BATCH_OBJECTS.pop(batch, None)
+
+
 def test_staging_limits_are_the_transport_contract():
     assert staging.CHUNK_BYTES == 1024 * 1024
     assert staging.MAX_UPLOAD_FILE_BYTES == 10 * 1024 * 1024
@@ -236,17 +245,18 @@ async def test_cleanup_is_idempotent_and_stale_sweep_excludes_active_batches(
     active = await staging.stage_upload_files(
         [FakeUpload('active.txt', b'active')], user_key='user', stream_id='stream'
     )
-    inactive = staging_workdir / 'inactive-batch'
-    inactive.mkdir(parents=True)
-    (inactive / 'old.txt').write_text('old')
-    old = time.time() - 7200
-    os.utime(inactive, (old, old))
-    os.utime(active.batch_dir, (old, old))
+    await active.claim()
+    inactive = await staging.stage_upload_files(
+        [FakeUpload('old.txt', b'old')], user_key='user', stream_id='restart'
+    )
+    _forget_live_batch(inactive)
 
-    removed = await staging.sweep_stale_staging(now=time.time(), max_age_seconds=3600)
+    removed = await staging.sweep_stale_staging(
+        now=time.time() + staging.STAGING_LEASE_SECONDS + 1
+    )
 
     assert removed == 1
-    assert not inactive.exists()
+    assert not inactive.batch_dir.exists()
     assert active.batch_dir.exists()
     await active.cleanup()
     await active.cleanup()
@@ -270,6 +280,192 @@ async def test_queued_lease_survives_default_sweep_then_expires_for_ttl_cleanup(
         now=created + staging.STAGING_LEASE_SECONDS + 1
     ) == 1
     assert not queued.batch_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_restart_sweep_uses_manifest_expiry_not_directory_mtime(
+    staging_workdir,
+):
+    orphan = await staging.stage_upload_files(
+        [FakeUpload('orphan.txt', b'orphan')],
+        user_key='user',
+        stream_id='restart-orphan',
+    )
+    manifest_path = orphan.batch_dir / staging.STAGING_MANIFEST_LEAF
+    manifest = staging._parse_staging_manifest(manifest_path.read_bytes())
+    _forget_live_batch(orphan)
+    old = manifest.created_at - 7200
+    os.utime(orphan.batch_dir, (old, old))
+
+    assert await staging.sweep_stale_staging(
+        now=manifest.expires_at - 1,
+        max_age_seconds=0,
+    ) == 0
+    assert orphan.batch_dir.exists()
+    assert await staging.sweep_stale_staging(
+        now=manifest.expires_at + 1,
+        max_age_seconds=10**9,
+    ) == 1
+    assert not orphan.batch_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_restart_sweep_invalid_manifest_fails_closed(staging_workdir):
+    orphan = await staging.stage_upload_files(
+        [FakeUpload('orphan.txt', b'orphan')],
+        user_key='user',
+        stream_id='invalid-manifest',
+    )
+    manifest_path = orphan.batch_dir / staging.STAGING_MANIFEST_LEAF
+    manifest_path.write_bytes(b'{invalid json\n')
+    _forget_live_batch(orphan)
+
+    assert await staging.sweep_stale_staging(now=time.time() + 10_000) == 0
+    assert orphan.batch_dir.exists()
+    assert orphan.entries[0].path.read_bytes() == b'orphan'
+    __import__('shutil').rmtree(orphan.batch_dir)
+
+
+@pytest.mark.asyncio
+async def test_restart_sweep_missing_manifest_retains_nonempty_batch(
+    staging_workdir,
+):
+    orphan = await staging.stage_upload_files(
+        [FakeUpload('orphan.txt', b'orphan')],
+        user_key='user',
+        stream_id='missing-manifest',
+    )
+    (orphan.batch_dir / staging.STAGING_MANIFEST_LEAF).unlink()
+    _forget_live_batch(orphan)
+
+    assert await staging.sweep_stale_staging(now=time.time() + 10_000) == 0
+    assert orphan.entries[0].path.read_bytes() == b'orphan'
+    __import__('shutil').rmtree(orphan.batch_dir)
+
+
+@pytest.mark.asyncio
+async def test_restart_sweep_may_remove_empty_unmanifested_batch(
+    staging_workdir,
+):
+    empty = staging_workdir / 'empty_orphan'
+    empty.mkdir(parents=True)
+
+    assert await staging.sweep_stale_staging(now=time.time()) == 1
+    assert not empty.exists()
+
+
+@pytest.mark.asyncio
+async def test_unexpired_sweep_probe_never_blocks_concurrent_claim(
+    staging_workdir,
+    monkeypatch,
+):
+    queued = await staging.stage_upload_files(
+        [FakeUpload('queued.txt', b'queued')],
+        user_key='user',
+        stream_id='claim-during-probe',
+    )
+    started = threading.Event()
+    release = threading.Event()
+    original_open_root = staging.secure_fs.open_root
+    block_once = True
+
+    def blocking_open_root(path):
+        nonlocal block_once
+        if block_once and Path(path) == staging_workdir:
+            block_once = False
+            started.set()
+            release.wait(timeout=5)
+        return original_open_root(path)
+
+    monkeypatch.setattr(staging.secure_fs, 'open_root', blocking_open_root)
+    sweep = __import__('asyncio').create_task(
+        staging.sweep_stale_staging(now=time.time())
+    )
+    assert await __import__('asyncio').to_thread(started.wait, 2)
+
+    queued.claim_now()
+    release.set()
+
+    assert await sweep == 0
+    assert queued.batch_dir.exists()
+    await queued.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_unknown_extra_retains_external_recovery_journal(
+    staging_workdir,
+):
+    orphan = await staging.stage_upload_files(
+        [FakeUpload('known.txt', b'known')],
+        user_key='user',
+        stream_id='unknown-extra',
+    )
+    manifest_path = orphan.batch_dir / staging.STAGING_MANIFEST_LEAF
+    manifest_bytes = manifest_path.read_bytes()
+    expires_at = staging._parse_staging_manifest(manifest_bytes).expires_at
+    extra = orphan.batch_dir / 'unknown_extra'
+    extra.write_bytes(b'unknown')
+    _forget_live_batch(orphan)
+
+    assert await staging.sweep_stale_staging(now=expires_at + 1) == 0
+    recovery = staging_workdir / staging._recovery_leaf(orphan.batch_dir.name)
+    assert recovery.exists()
+    journal = recovery.read_bytes()
+    assert orphan.batch_dir.name.encode() in journal
+    assert manifest_bytes in journal
+    assert extra.read_bytes() == b'unknown'
+
+    __import__('shutil').rmtree(orphan.batch_dir)
+    recovery.unlink()
+
+
+@pytest.mark.asyncio
+async def test_recovery_journal_directory_flush_precedes_destructive_delete(
+    staging_workdir,
+    monkeypatch,
+):
+    orphan = await staging.stage_upload_files(
+        [FakeUpload('known.txt', b'known')],
+        user_key='user',
+        stream_id='journal-ordering',
+    )
+    manifest = staging._parse_staging_manifest(
+        (orphan.batch_dir / staging.STAGING_MANIFEST_LEAF).read_bytes()
+    )
+    _forget_live_batch(orphan)
+    events = []
+    original_delete_file = staging.secure_fs.DirectoryCapability.delete_file
+
+    def tracked_flush(capability):
+        events.append(('flush-directory', capability.identity))
+
+    def tracked_delete(capability, leaf, *, expected_identity):
+        events.append(('delete-file', leaf))
+        return original_delete_file(
+            capability,
+            leaf,
+            expected_identity=expected_identity,
+        )
+
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'flush',
+        tracked_flush,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'delete_file',
+        tracked_delete,
+    )
+
+    assert await staging.sweep_stale_staging(now=manifest.expires_at + 1) == 1
+    first_delete = next(
+        index for index, event in enumerate(events)
+        if event[0] == 'delete-file'
+    )
+    assert any(event[0] == 'flush-directory' for event in events[:first_delete])
+    assert events[-1][0] == 'flush-directory'
 
 
 @pytest.mark.asyncio
@@ -298,14 +494,16 @@ async def test_cleanup_settles_filesystem_removal_before_propagating_cancellatio
     )
     started = threading.Event()
     release = threading.Event()
-    original = staging.shutil.rmtree
+    original = staging._remove_staged_batch_capability
 
-    def blocking_rmtree(path):
+    def blocking_remove(value):
         started.set()
         release.wait(timeout=5)
-        original(path)
+        original(value)
 
-    monkeypatch.setattr(staging.shutil, 'rmtree', blocking_rmtree)
+    monkeypatch.setattr(
+        staging, '_remove_staged_batch_capability', blocking_remove
+    )
     task = __import__('asyncio').create_task(staged.cleanup())
     assert await __import__('asyncio').to_thread(started.wait, 2)
     task.cancel()
@@ -324,15 +522,15 @@ async def test_batch_creation_cancellation_removes_the_just_created_directory(
 ):
     started = threading.Event()
     release = threading.Event()
-    original = Path.mkdir
+    original = staging._create_pinned_batch
 
-    def blocking_mkdir(path, *args, **kwargs):
-        if path.parent.name == 'chat-media':
-            started.set()
-            release.wait(timeout=5)
-        return original(path, *args, **kwargs)
+    def blocking_create(*args, **kwargs):
+        result = original(*args, **kwargs)
+        started.set()
+        release.wait(timeout=5)
+        return result
 
-    monkeypatch.setattr(Path, 'mkdir', blocking_mkdir)
+    monkeypatch.setattr(staging, '_create_pinned_batch', blocking_create)
     task = __import__('asyncio').create_task(
         staging.stage_upload_files([], user_key='user', stream_id='stream')
     )
@@ -352,15 +550,17 @@ async def test_destination_open_cancellation_closes_handle_before_batch_cleanup(
 ):
     started = threading.Event()
     release = threading.Event()
-    original = Path.open
+    original = staging._create_staged_file_capability
 
-    def blocking_open(path, *args, **kwargs):
-        if path.parent.parent == staging_workdir:
-            started.set()
-            release.wait(timeout=5)
-        return original(path, *args, **kwargs)
+    def blocking_open(*args, **kwargs):
+        capability = original(*args, **kwargs)
+        started.set()
+        release.wait(timeout=5)
+        return capability
 
-    monkeypatch.setattr(Path, 'open', blocking_open)
+    monkeypatch.setattr(
+        staging, '_create_staged_file_capability', blocking_open
+    )
     task = __import__('asyncio').create_task(
         staging.stage_upload_files(
             [FakeUpload('file.txt', b'content')], user_key='user', stream_id='stream'
@@ -400,24 +600,24 @@ async def test_cleanup_failure_releases_active_ownership_for_ttl_retry(
     staged = await staging.stage_upload_files(
         [FakeUpload('active.txt', b'active')], user_key='user', stream_id='stream'
     )
-    original = staging.shutil.rmtree
+    original = staging._remove_staged_batch_capability
 
-    def fail_delete(_path):
+    def fail_delete(_staged):
         raise PermissionError('busy')
 
-    monkeypatch.setattr(staging.shutil, 'rmtree', fail_delete)
+    monkeypatch.setattr(staging, '_remove_staged_batch_capability', fail_delete)
     with pytest.raises(PermissionError, match='busy'):
         await staged.cleanup()
     assert staged.batch_dir.exists()
     assert staged.batch_dir.resolve() not in staging._ACTIVE_BATCHES
 
-    monkeypatch.setattr(staging.shutil, 'rmtree', original)
+    monkeypatch.setattr(staging, '_remove_staged_batch_capability', original)
     await staged.cleanup()
     assert not staged.batch_dir.exists()
 
 
 @pytest.mark.asyncio
-async def test_cleanup_uses_lexical_batch_path_and_never_follows_reparse_target(
+async def test_cleanup_identity_mismatch_retains_replacement_and_other_batch(
     staging_workdir, monkeypatch
 ):
     batch_a = await staging.stage_upload_files(
@@ -426,34 +626,23 @@ async def test_cleanup_uses_lexical_batch_path_and_never_follows_reparse_target(
     batch_b = await staging.stage_upload_files(
         [FakeUpload('b.txt', b'b')], user_key='user', stream_id='stream-b'
     )
-    marker_b = batch_b.batch_dir / 'keep.marker'
-    marker_b.write_text('keep')
+    marker_b = batch_b.entries[0].path
 
-    # Deterministic Windows seam: model A as a top-level reparse point whose
-    # resolved target is B without requiring symlink privileges in CI.
+    # Replace A after staging. Capability cleanup must reject the new identity
+    # and must never redirect deletion into another live batch.
     __import__('shutil').rmtree(batch_a.batch_dir)
     batch_a.batch_dir.mkdir()
-    original_resolve = Path.resolve
+    replacement = batch_a.batch_dir / 'replacement.marker'
+    replacement.write_text('retain')
 
-    def redirected_resolve(path, *args, **kwargs):
-        if path == batch_a.batch_dir:
-            return batch_b.batch_dir
-        return original_resolve(path, *args, **kwargs)
+    with pytest.raises(staging.MediaValidationError, match='cleanup failed'):
+        await batch_a.cleanup()
 
-    monkeypatch.setattr(Path, 'resolve', redirected_resolve)
-    monkeypatch.setattr(
-        staging,
-        '_is_top_level_link',
-        lambda path: path == batch_a.batch_dir,
-        raising=False,
-    )
-
-    await batch_a.cleanup()
-
-    assert not batch_a.batch_dir.exists()
-    assert marker_b.read_text() == 'keep'
+    assert replacement.read_text() == 'retain'
+    assert marker_b.read_bytes() == b'b'
     assert batch_b.batch_dir in staging._ACTIVE_BATCHES
     assert batch_a.batch_dir not in staging._ACTIVE_BATCHES
+    __import__('shutil').rmtree(batch_a.batch_dir)
     await batch_b.cleanup()
 
 

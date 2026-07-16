@@ -335,7 +335,34 @@ class Session(Model):
                             'content': f'[User uploaded files, readable with your file tools:]\n{paths}',
                         })
                 if extra:
+                    attachment_history_start = len(self.chat)
                     self.update_history(extra)
+                    on_adopted = attachments.get('_on_adopted')
+                    if callable(on_adopted):
+                        # Media ownership transfers only after these safe refs
+                        # are durably recorded. If cancellation arrives during
+                        # save, settle it, acknowledge adoption, then propagate.
+                        try:
+                            save_task = asyncio.create_task(self.save())
+                            cancelled: asyncio.CancelledError | None = None
+                            try:
+                                await asyncio.shield(save_task)
+                            except asyncio.CancelledError as exc:
+                                cancelled = exc
+                                while not save_task.done():
+                                    try:
+                                        await asyncio.shield(save_task)
+                                    except asyncio.CancelledError:
+                                        continue
+                            save_task.result()
+                        except BaseException:
+                            # A failed durable adoption must not leave dead
+                            # promoted refs in a reusable in-memory Session.
+                            del self.chat[attachment_history_start:]
+                            raise
+                        on_adopted()
+                        if cancelled is not None:
+                            raise cancelled
 
         # Build the context-aware prompt using the manager
         prompt = await agent.get_context_manager().build_prompt(agent, self)

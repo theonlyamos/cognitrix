@@ -8,9 +8,11 @@ from sse_starlette.sse import EventSourceResponse
 
 from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.agents.generators import TaskInstructor
-from cognitrix.media import MediaOwnership, media_assets
+from cognitrix.media import MediaOwnership, MediaValidationError, media_assets
 from cognitrix.media.staging import (
+    AttachmentCleanupError,
     PromotedAttachments,
+    cleanup_staged_attachments,
     promote_staged_attachments,
     rollback_promoted_attachments,
 )
@@ -55,6 +57,8 @@ class SSEManager:
         self.completed_output_at: float | None = None
         self.active_task: asyncio.Task | None = None
         self._active_task_started = True
+        self._fallback_tasks: set[asyncio.Task] = set()
+        self.last_action_error: BaseException | None = None
         self.turn_pending = False
         self.stop_requested = False
         # A superseded consumer may already have dequeued one item. Preserve it
@@ -254,24 +258,130 @@ class SSEManager:
         await session.save()
         return session
 
+    def _start_chat_action(
+        self,
+        action: dict,
+        output_queue: asyncio.Queue,
+        terminal_event: asyncio.Event,
+    ) -> asyncio.Task:
+        """Claim staging and launch a supervised manager-owned action task."""
+        claimed_action = action
+        staged = action.get('staged_attachments')
+        claim_now = getattr(staged, 'claim_now', None)
+        if callable(claim_now):
+            try:
+                claim_now()
+                claimed_action = {
+                    **action,
+                    '_staging_cleanup_owned': True,
+                }
+            except BaseException:
+                logger.exception('Failed to claim staged chat attachments')
+                # A failed claim may mean another consumer already owns this
+                # batch. Never let the losing action delete another owner's
+                # staging directory.
+                claimed_action = {
+                    **action,
+                    '_staging_claim_failed': True,
+                    '_staging_cleanup_owned': False,
+                }
+
+        started = {'value': False}
+        self._active_task_started = False
+        task = asyncio.create_task(
+            self._process_chat_action(
+                claimed_action,
+                output_queue,
+                terminal_event,
+                _started=started,
+            )
+        )
+        self.active_task = task
+
+        def done(completed: asyncio.Task) -> None:
+            if not started['value']:
+                fallback = asyncio.create_task(
+                    self._finalize_unstarted_chat_action(
+                        completed,
+                        claimed_action,
+                        output_queue,
+                        terminal_event,
+                    )
+                )
+                self._fallback_tasks.add(fallback)
+
+                def fallback_done(finished: asyncio.Task) -> None:
+                    self._fallback_tasks.discard(finished)
+                    try:
+                        error = finished.exception()
+                    except asyncio.CancelledError as exc:
+                        error = exc
+                    if error is not None:
+                        self.last_action_error = error
+                        logger.error('Pre-start attachment cleanup task failed')
+
+                fallback.add_done_callback(fallback_done)
+                return
+            try:
+                error = completed.exception()
+            except asyncio.CancelledError as exc:
+                error = exc
+            if error is not None:
+                self.last_action_error = error
+                logger.error('Manager-owned chat action failed internally')
+
+        task.add_done_callback(done)
+        return task
+
+    async def _finalize_unstarted_chat_action(
+        self,
+        task: asyncio.Task,
+        action: dict,
+        output_queue: asyncio.Queue,
+        terminal_event: asyncio.Event,
+    ) -> None:
+        cleanup_error: BaseException | None = None
+        staged = action.get('staged_attachments')
+        cleanup_owned = action.get('_staging_cleanup_owned', staged is not None)
+        if staged is not None and cleanup_owned:
+            try:
+                await cleanup_staged_attachments(staged)
+            except BaseException as exc:
+                cleanup_error = exc
+                logger.exception('Pre-start staged attachment cleanup failed')
+        terminal = {
+            'type': 'turn_stopped' if cleanup_error is None else 'error',
+            'content': '' if cleanup_error is None else _ATTACHMENT_UNAVAILABLE,
+            'session_id': action.get('session_id'),
+        }
+        self._complete_turn_output(task, output_queue, terminal_event, terminal)
+        if cleanup_error is not None:
+            raise AttachmentCleanupError([cleanup_error]) from cleanup_error
+
     async def _process_chat_action(
         self,
         action: dict,
         output_queue: asyncio.Queue,
         terminal_event: asyncio.Event,
+        *,
+        _started: dict[str, bool] | None = None,
     ) -> None:
         """Own a dequeued chat action independently of one HTTP consumer."""
         # This assignment happens before the coroutine's first await. Stops
         # recorded before it starts therefore do not cancel away its cleanup.
+        if _started is not None:
+            _started['value'] = True
         self._active_task_started = True
         requested_sid = action.get('session_id')
         staged = action.get('staged_attachments')
+        cleanup_owned = action.get('_staging_cleanup_owned', staged is not None)
         selected_id = action.get('edit_source_artifact_id')
         has_media = staged is not None or bool(selected_id)
         session = None
         ownership: MediaOwnership | None = None
         promoted: PromotedAttachments | None = None
-        handed_off = False
+        adopted = False
+        ingestion_emitted = False
         terminal = {
             'type': 'turn_complete',
             'content': '',
@@ -286,9 +396,25 @@ class SSEManager:
                 }
             await output_queue.put(payload)
 
+        def mark_adopted() -> None:
+            nonlocal adopted, ingestion_emitted
+            adopted = True
+            if promoted is not None and not ingestion_emitted:
+                output_queue.put_nowait({
+                    'type': 'attachments_ingested',
+                    'artifacts': [
+                        item.model_dump() for item in promoted.image_refs
+                    ],
+                    'document_count': len(promoted.document_paths),
+                    'session_id': session.id,
+                })
+                ingestion_emitted = True
+
         try:
             if self.stop_requested:
                 raise asyncio.CancelledError
+            if action.get('_staging_claim_failed'):
+                raise MediaValidationError('Staged attachments are unavailable')
 
             try:
                 session = await self._resolve_session(requested_sid)
@@ -356,16 +482,8 @@ class SSEManager:
                     'image_selection': (
                         selected_ref.model_dump() if selected_ref is not None else None
                     ),
+                    '_on_adopted': mark_adopted,
                 }
-            if promoted is not None:
-                await emit({
-                    'type': 'attachments_ingested',
-                    'artifacts': [item.model_dump() for item in image_refs],
-                    'document_count': len(documents),
-                })
-                if self.stop_requested:
-                    raise asyncio.CancelledError
-
             user_prompt = action['content']
             bypass = bool(action.get('bypass_permissions'))
             # Attachment-bearing prompts use Session so their immutable refs
@@ -386,7 +504,6 @@ class SSEManager:
                         'task_id': task_id,
                     })
 
-                handed_off = True
                 result = await handle_multi_step_task(
                     user_prompt,
                     self.agent,
@@ -411,7 +528,6 @@ class SSEManager:
                     'user_key': self.user_key,
                 })
                 try:
-                    handed_off = True
                     await session(
                         user_prompt,
                         self.agent,
@@ -422,6 +538,12 @@ class SSEManager:
                         attachments=attachments,
                         tool_context=ToolExecutionContext(user_id=self.user_key),
                     )
+                    if promoted is not None and (
+                        promoted.image_refs or promoted.document_paths
+                    ) and not adopted:
+                        raise MediaValidationError(
+                            'Session did not durably adopt promoted attachments'
+                        )
                 finally:
                     web_turn_ctx.reset(token)
         except asyncio.CancelledError:
@@ -437,17 +559,26 @@ class SSEManager:
                 'content': _ATTACHMENT_UNAVAILABLE if has_media else str(exc),
             })
         finally:
-            if promoted is not None and not handed_off and ownership is not None:
+            cleanup_errors: list[BaseException] = []
+            if promoted is not None and not adopted and ownership is not None:
                 try:
                     await rollback_promoted_attachments(promoted, ownership)
-                except BaseException:
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
                     logger.exception('Failed to roll back unscheduled attachments')
-            if staged is not None:
+            if staged is not None and cleanup_owned:
                 try:
-                    await staged.cleanup()
-                except BaseException:
+                    await cleanup_staged_attachments(staged)
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
                     logger.exception('Failed to clean staged chat attachments')
-            if self.stop_requested:
+            if cleanup_errors:
+                terminal = {
+                    'type': 'error',
+                    'content': _ATTACHMENT_UNAVAILABLE,
+                    'session_id': terminal.get('session_id'),
+                }
+            elif self.stop_requested:
                 terminal = {
                     'type': 'turn_stopped',
                     'content': '',
@@ -459,6 +590,8 @@ class SSEManager:
                 terminal_event,
                 terminal,
             )
+            if cleanup_errors:
+                raise AttachmentCleanupError(cleanup_errors)
 
     async def sse_endpoint(self, request: Request):
         async def event_generator(superseded: asyncio.Event):
@@ -577,13 +710,9 @@ class SSEManager:
 
                 elif action['type'] == 'chat_message':
                     out_queue, out_terminal_event = self._open_turn_output()
-                    self._active_task_started = False
-                    run_task = asyncio.create_task(
-                        self._process_chat_action(
-                            action, out_queue, out_terminal_event
-                        )
+                    self._start_chat_action(
+                        action, out_queue, out_terminal_event
                     )
-                    self.active_task = run_task
                     continue
 
         async def owned_event_generator():

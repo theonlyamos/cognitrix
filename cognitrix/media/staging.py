@@ -6,10 +6,10 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import json
 import logging
 import os
-import shutil
-import stat
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -24,6 +24,7 @@ from cognitrix.media.service import media_assets
 from cognitrix.media.types import MediaOwnership, MediaValidationError
 from cognitrix.tools.utils import ArtifactRef
 
+from . import secure_fs
 from .types import StagedAttachment
 
 CHUNK_BYTES = 1024 * 1024
@@ -31,12 +32,32 @@ MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024
 MAX_UPLOAD_TOTAL_BYTES = 25 * 1024 * 1024
 MAX_UPLOAD_COUNT = 20
 STAGING_LEASE_SECONDS = 3600.0
+ATTACHMENT_CLEANUP_ATTEMPTS = 3
+STAGING_MANIFEST_LEAF = 'manifest_v1'
+STAGING_MANIFEST_MAX_BYTES = 64 * 1024
+STAGING_MANIFEST_MAX_RECORDS = 1 + (2 * MAX_UPLOAD_COUNT)
+STAGING_RECOVERY_PREFIX = 'recovery_'
+STAGING_RECOVERY_MAX_BYTES = STAGING_MANIFEST_MAX_BYTES + 2048
+_OPAQUE_LEAF = re.compile(r'[A-Za-z0-9_-]{1,128}\Z')
 
 _ACTIVE_BATCHES: set[Path] = set()
 _BATCH_LEASES: dict[Path, tuple[str, float | None]] = {}
+_BATCH_OBJECTS: dict[Path, 'StagedAttachmentSet'] = {}
 _ACTIVE_LOCK = threading.RLock()
+_PENDING_ROLLBACKS: dict[str, tuple['PromotedAttachments', MediaOwnership]] = {}
+_PENDING_STAGING_CLEANUPS: dict[str, 'StagedAttachmentSet'] = {}
+_PENDING_CLEANUP_LOCK = threading.RLock()
+_PENDING_DRAIN_TASK: asyncio.Task | None = None
 _T = TypeVar('_T')
 logger = logging.getLogger('cognitrix.log')
+
+
+class AttachmentCleanupError(RuntimeError):
+    """A bounded attachment cleanup could not be completed."""
+
+    def __init__(self, causes: list[BaseException] | None = None) -> None:
+        super().__init__('Attachment cleanup did not complete')
+        self.causes = tuple(causes or ())
 
 
 def _staging_root() -> Path:
@@ -60,39 +81,43 @@ def _path_lexists(path: Path) -> bool:
     return os.path.lexists(os.fspath(path))
 
 
-def _is_top_level_link(path: Path) -> bool:
-    """Identify symlinks and Windows junction/reparse points via lstat."""
+def _remove_staged_batch_capability(staged: 'StagedAttachmentSet') -> None:
+    if staged._root_identity is None or staged._batch_identity is None:
+        raise MediaValidationError('Staged cleanup identity is unavailable')
     try:
-        if path.is_symlink():
-            return True
-        is_junction = getattr(path, 'is_junction', None)
-        if is_junction is not None and is_junction():
-            return True
-        metadata = os.lstat(path)
-    except FileNotFoundError:
-        return False
-    attributes = getattr(metadata, 'st_file_attributes', 0)
-    reparse_flag = getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
-    return bool(attributes & reparse_flag)
-
-
-def _unlink_top_level_link(path: Path) -> None:
-    """Remove the link/junction itself, never anything below its target."""
-    try:
-        path.unlink()
-    except (IsADirectoryError, PermissionError):
-        os.rmdir(path)
-
-
-def _remove_batch_path(path: Path) -> None:
-    if _is_top_level_link(path):
-        _unlink_top_level_link(path)
-        return
-    metadata = os.lstat(path)
-    if stat.S_ISDIR(metadata.st_mode):
-        shutil.rmtree(path)
-    else:
-        path.unlink()
+        with secure_fs.open_root(_staging_root()) as root_capability:
+            if root_capability.identity != staged._root_identity:
+                raise secure_fs.CapabilityError()
+            try:
+                batch_capability = root_capability.open_directory(
+                    staged.batch_dir.name,
+                    expected_identity=staged._batch_identity,
+                )
+            except FileNotFoundError:
+                return
+            with batch_capability:
+                for leaf, identity in list(staged._entry_identities.items()):
+                    try:
+                        batch_capability.delete_file(
+                            leaf,
+                            expected_identity=identity,
+                        )
+                    except FileNotFoundError:
+                        pass
+                if staged._manifest_identity is not None:
+                    try:
+                        batch_capability.delete_file(
+                            STAGING_MANIFEST_LEAF,
+                            expected_identity=staged._manifest_identity,
+                        )
+                    except FileNotFoundError:
+                        pass
+            root_capability.delete_directory(
+                staged.batch_dir.name,
+                expected_identity=staged._batch_identity,
+            )
+    except (OSError, secure_fs.CapabilityError, ValueError) as exc:
+        raise MediaValidationError('Staged attachment cleanup failed') from exc
 
 
 async def _run_thread_joined(func: Callable[..., _T], *args: Any) -> _T:
@@ -137,9 +162,44 @@ async def _run_awaitable_joined(operation):
         raise
 
 
-async def _open_path_joined(path: Path, mode: str):
-    """Close a file opened by a worker if cancellation wins the handoff."""
-    worker = asyncio.create_task(asyncio.to_thread(path.open, mode))
+async def _settle_cleanup_attempt(
+    operation,
+) -> tuple[asyncio.CancelledError | None, BaseException | None]:
+    """Settle one cleanup attempt without hiding failure behind cancellation."""
+    worker = asyncio.create_task(operation)
+    cancelled: asyncio.CancelledError | None = None
+    try:
+        await asyncio.shield(worker)
+    except asyncio.CancelledError as exc:
+        # A worker that cancelled itself is a failed cleanup, not an outer
+        # cancellation. Otherwise keep settling the owned cleanup attempt.
+        if not worker.cancelled():
+            cancelled = exc
+        if not worker.done():
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError as repeated:
+                    cancelled = cancelled or repeated
+                    continue
+                except BaseException:
+                    break
+    except BaseException:
+        # Retrieve the worker exception below so it can be retried/retained.
+        pass
+
+    if worker.cancelled():
+        return cancelled, asyncio.CancelledError()
+    try:
+        worker.result()
+    except BaseException as exc:
+        return cancelled, exc
+    return cancelled, None
+
+
+async def _open_capability_joined(func: Callable[..., _T], *args: Any) -> _T:
+    """Close a capability opened by a worker if cancellation wins handoff."""
+    worker = asyncio.create_task(asyncio.to_thread(func, *args))
     try:
         return await asyncio.shield(worker)
     except asyncio.CancelledError as cancelled:
@@ -188,10 +248,29 @@ def _invalid_attachment() -> HTTPException:
 class StagedAttachmentSet:
     batch_dir: Path
     entries: list[StagedAttachment]
+    _root_identity: secure_fs.FileIdentity | None = field(
+        default=None, init=False, repr=False
+    )
+    _batch_identity: secure_fs.FileIdentity | None = field(
+        default=None, init=False, repr=False
+    )
+    _entry_identities: dict[str, secure_fs.FileIdentity] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _manifest_capability: secure_fs.FileCapability | None = field(
+        default=None, init=False, repr=False
+    )
+    _manifest_identity: secure_fs.FileIdentity | None = field(
+        default=None, init=False, repr=False
+    )
+    _manifest_bytes: int = field(default=0, init=False, repr=False)
+    _manifest_records: int = field(default=0, init=False, repr=False)
+    _expires_at: float | None = field(default=None, init=False, repr=False)
     _cleanup_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _cleaned: bool = field(default=False, init=False, repr=False)
+    _claimed: bool = field(default=False, init=False, repr=False)
 
-    async def claim(self) -> None:
+    def claim_now(self) -> None:
         """Atomically transfer a queued batch to the SSE consumer."""
         batch = _lexical_absolute(self.batch_dir)
         with _ACTIVE_LOCK:
@@ -199,11 +278,22 @@ class StagedAttachmentSet:
             if state is None:
                 raise MediaValidationError('Staged attachments are unavailable')
             phase, expires_at = state
+            if self._claimed and phase == 'claimed':
+                return
             if phase != 'queued':
                 raise MediaValidationError('Staged attachments are unavailable')
             # Even an elapsed queued lease may be claimed if the sweep has not
             # atomically reserved it yet. This avoids deleting a dequeued batch.
             _BATCH_LEASES[batch] = ('claimed', None)
+            self._claimed = True
+
+    async def claim(self) -> None:
+        self.claim_now()
+
+    async def seal_manifest(self) -> None:
+        capability, self._manifest_capability = self._manifest_capability, None
+        if capability is not None:
+            await _run_thread_joined(capability.close)
 
     async def cleanup(self) -> None:
         """Delete this batch exactly once; repeated calls are harmless."""
@@ -217,23 +307,86 @@ class StagedAttachmentSet:
             cancelled: asyncio.CancelledError | None = None
             try:
                 try:
-                    await _run_thread_joined(_remove_batch_path, batch)
+                    await self.seal_manifest()
+                except asyncio.CancelledError as exc:
+                    cancelled = exc
+                try:
+                    await _run_thread_joined(
+                        _remove_staged_batch_capability, self
+                    )
                 except FileNotFoundError:
                     pass
                 except asyncio.CancelledError as exc:
                     # The joined worker has already settled; finish the
                     # ownership transition before cancellation escapes.
-                    cancelled = exc
+                    cancelled = cancelled or exc
                 if not _path_lexists(batch):
                     self._cleaned = True
+                else:
+                    raise OSError('Staged attachment cleanup did not remove the batch')
             finally:
                 # cleanup() is the ownership release point. If deletion failed,
                 # leave the batch inactive so a later cleanup/TTL sweep can retry.
                 with _ACTIVE_LOCK:
                     _ACTIVE_BATCHES.discard(batch)
                     _BATCH_LEASES.pop(batch, None)
+                    _BATCH_OBJECTS.pop(batch, None)
+                    self._claimed = False
             if cancelled is not None:
                 raise cancelled
+
+
+def _manifest_line(record: dict[str, Any]) -> bytes:
+    return (
+        json.dumps(record, sort_keys=True, separators=(',', ':')) + '\n'
+    ).encode('utf-8')
+
+
+def _manifest_done_record(
+    leaf: str,
+    size: int,
+    digest: str,
+    identity: secure_fs.FileIdentity,
+) -> dict[str, Any]:
+    return {
+        'file_id': identity.file_id.hex(),
+        'leaf': leaf,
+        'op': 'done',
+        'sha256': digest,
+        'size': size,
+        'volume': identity.volume,
+    }
+
+
+def _create_pinned_batch(
+    root: Path,
+    leaf: str,
+    created: dict[str, Any],
+    created_at: float,
+) -> None:
+    with secure_fs.open_root(root) as root_capability:
+        created['root'] = root_capability.identity
+        with root_capability.create_directory(leaf) as batch_capability:
+            created['batch'] = batch_capability.identity
+            manifest = batch_capability.create_file(STAGING_MANIFEST_LEAF)
+            try:
+                header = _manifest_line({
+                    'created_at': created_at,
+                    'expires_at': created_at + STAGING_LEASE_SECONDS,
+                    'version': 1,
+                })
+                manifest.write_bytes(
+                    header,
+                    max_bytes=STAGING_MANIFEST_MAX_BYTES,
+                )
+            except BaseException:
+                manifest.close()
+                raise
+            created['manifest'] = manifest
+            created['manifest_identity'] = manifest.identity
+            created['manifest_bytes'] = len(header)
+            created['manifest_records'] = 1
+            created['expires_at'] = created_at + STAGING_LEASE_SECONDS
 
 
 async def _create_batch(*, user_key: str, stream_id: str) -> StagedAttachmentSet:
@@ -247,18 +400,49 @@ async def _create_batch(*, user_key: str, stream_id: str) -> StagedAttachmentSet
     with _ACTIVE_LOCK:
         _ACTIVE_BATCHES.add(batch)
         _BATCH_LEASES[batch] = ('writing', None)
+    identities: dict[str, Any] = {}
+    created_at = time.time()
     try:
-        await _run_thread_joined(batch.mkdir, 0o700, False, False)
+        await _run_thread_joined(
+            _create_pinned_batch,
+            root,
+            batch.name,
+            identities,
+            created_at,
+        )
+        root_identity = identities['root']
+        batch_identity = identities['batch']
     except BaseException:
         try:
-            if _path_lexists(batch):
-                await _run_thread_joined(_remove_batch_path, batch)
+            root_identity = identities.get('root')
+            batch_identity = identities.get('batch')
+            if root_identity is not None and batch_identity is not None:
+                created = StagedAttachmentSet(batch_dir=batch, entries=[])
+                created._root_identity = root_identity
+                created._batch_identity = batch_identity
+                created._manifest_capability = identities.get('manifest')
+                created._manifest_identity = identities.get('manifest_identity')
+                await created.seal_manifest()
+                await _run_thread_joined(
+                    _remove_staged_batch_capability, created
+                )
         finally:
             with _ACTIVE_LOCK:
                 _ACTIVE_BATCHES.discard(batch)
                 _BATCH_LEASES.pop(batch, None)
+                _BATCH_OBJECTS.pop(batch, None)
         raise
-    return StagedAttachmentSet(batch_dir=batch, entries=[])
+    staged = StagedAttachmentSet(batch_dir=batch, entries=[])
+    staged._root_identity = root_identity
+    staged._batch_identity = batch_identity
+    staged._manifest_capability = identities['manifest']
+    staged._manifest_identity = identities['manifest_identity']
+    staged._manifest_bytes = identities['manifest_bytes']
+    staged._manifest_records = identities['manifest_records']
+    staged._expires_at = identities['expires_at']
+    with _ACTIVE_LOCK:
+        _BATCH_OBJECTS[batch] = staged
+    return staged
 
 
 def _mark_queued(batch: StagedAttachmentSet) -> None:
@@ -267,7 +451,9 @@ def _mark_queued(batch: StagedAttachmentSet) -> None:
         state = _BATCH_LEASES.get(path)
         if state is None or state[0] != 'writing':
             raise RuntimeError('Staging ownership was lost before enqueue')
-        _BATCH_LEASES[path] = ('queued', time.time() + STAGING_LEASE_SECONDS)
+        if batch._expires_at is None:
+            raise RuntimeError('Staging expiry is unavailable')
+        _BATCH_LEASES[path] = ('queued', batch._expires_at)
 
 
 async def _close_uploads(files: list[Any]) -> None:
@@ -291,13 +477,56 @@ async def _close_uploads(files: list[Any]) -> None:
         raise cancelled
 
 
+def _create_staged_file_capability(
+    batch: StagedAttachmentSet,
+    leaf: str,
+) -> secure_fs.FileCapability:
+    if batch._root_identity is None or batch._batch_identity is None:
+        raise MediaValidationError('Staged attachments are unavailable')
+    with secure_fs.open_root(_staging_root()) as root_capability:
+        if root_capability.identity != batch._root_identity:
+            raise MediaValidationError('Staging root changed')
+        with root_capability.open_directory(
+            batch.batch_dir.name,
+            expected_identity=batch._batch_identity,
+        ) as batch_capability:
+            file_capability = batch_capability.create_file(leaf)
+            batch._entry_identities[leaf] = file_capability.identity
+            return file_capability
+
+
+def _append_manifest_record(
+    batch: StagedAttachmentSet,
+    record: dict[str, Any],
+) -> None:
+    capability = batch._manifest_capability
+    if capability is None or batch._manifest_identity is None:
+        raise MediaValidationError('Staging manifest is unavailable')
+    payload = _manifest_line(record)
+    if batch._manifest_bytes + len(payload) > STAGING_MANIFEST_MAX_BYTES:
+        raise MediaValidationError('Staging manifest exceeds its size limit')
+    if batch._manifest_records >= STAGING_MANIFEST_MAX_RECORDS:
+        raise MediaValidationError('Staging manifest has too many records')
+    capability.write_bytes(payload, max_bytes=len(payload))
+    if capability.refresh_identity() != batch._manifest_identity:
+        raise MediaValidationError('Staging manifest changed')
+    batch._manifest_bytes += len(payload)
+    batch._manifest_records += 1
+
+
 async def _open_destination(batch: StagedAttachmentSet, index: int):
-    destination = _lexical_absolute(
-        batch.batch_dir / f'{index:02d}-{uuid4().hex}'
-    )
+    leaf = f'{index:02d}-{uuid4().hex}'
+    destination = _lexical_absolute(batch.batch_dir / leaf)
     if destination.parent != batch.batch_dir:
         raise RuntimeError('Unsafe staging destination path')
-    handle = await _open_path_joined(destination, 'xb')
+    await _run_thread_joined(
+        _append_manifest_record,
+        batch,
+        {'op': 'plan', 'leaf': leaf},
+    )
+    handle = await _open_capability_joined(
+        _create_staged_file_capability, batch, leaf
+    )
     return destination, handle
 
 
@@ -314,6 +543,7 @@ async def _copy_upload(
 ) -> int:
     destination, handle = await _open_destination(batch, index)
     size = 0
+    digest = hashlib.sha256()
     try:
         while True:
             chunk = await upload.read(CHUNK_BYTES)
@@ -324,9 +554,23 @@ async def _copy_upload(
             size += len(chunk)
             if size > MAX_UPLOAD_FILE_BYTES or total_so_far + size > MAX_UPLOAD_TOTAL_BYTES:
                 raise _limit_error()
-            await _run_thread_joined(handle.write, chunk)
+            payload = bytes(chunk)
+            digest.update(payload)
+            await _run_thread_joined(
+                lambda: handle.write_bytes(payload, max_bytes=len(payload))
+            )
     finally:
         await _close_handle(handle)
+    await _run_thread_joined(
+        _append_manifest_record,
+        batch,
+        _manifest_done_record(
+            destination.name,
+            size,
+            digest.hexdigest(),
+            batch._entry_identities[destination.name],
+        ),
+    )
     batch.entries.append(StagedAttachment(
         path=destination,
         filename=_safe_filename(getattr(upload, 'filename', None)),
@@ -370,6 +614,7 @@ async def stage_upload_files(
         await batch.cleanup()
         raise
     try:
+        await batch.seal_manifest()
         _mark_queued(batch)
     except BaseException:
         await batch.cleanup()
@@ -423,6 +668,7 @@ async def _write_legacy_payload(
 ) -> None:
     destination, handle = await _open_destination(batch, index)
     written = 0
+    digest = hashlib.sha256()
     encoded_chunk = (CHUNK_BYTES // 3) * 4
     encoded_chunk = max(4, encoded_chunk - (encoded_chunk % 4))
     try:
@@ -433,13 +679,26 @@ async def _write_legacy_payload(
             except (binascii.Error, ValueError) as exc:
                 raise _invalid_attachment() from exc
             written += len(decoded)
+            digest.update(decoded)
             if written > expected_size:
                 raise _limit_error()
-            await _run_thread_joined(handle.write, decoded)
+            await _run_thread_joined(
+                lambda: handle.write_bytes(decoded, max_bytes=len(decoded))
+            )
     finally:
         await _close_handle(handle)
     if written != expected_size:
         raise _invalid_attachment()
+    await _run_thread_joined(
+        _append_manifest_record,
+        batch,
+        _manifest_done_record(
+            destination.name,
+            written,
+            digest.hexdigest(),
+            batch._entry_identities[destination.name],
+        ),
+    )
     batch.entries.append(StagedAttachment(
         path=destination,
         filename=filename,
@@ -486,6 +745,7 @@ async def stage_legacy_data_urls(
                 mime=mime,
                 expected_size=size,
             )
+        await batch.seal_manifest()
         _mark_queued(batch)
         return batch
     except BaseException:
@@ -494,12 +754,109 @@ async def stage_legacy_data_urls(
 
 
 @dataclass(frozen=True)
+class _UploadDestination:
+    path: Path
+    tools_root_identity: secure_fs.FileIdentity
+    uploads_identity: secure_fs.FileIdentity
+
+
+@dataclass(frozen=True)
 class PromotedAttachments:
     image_refs: list[ArtifactRef]
     document_paths: list[dict[str, str]]
+    _rollback_records: list['_DocumentRollbackRecord'] = field(
+        default_factory=list,
+        repr=False,
+        compare=False,
+    )
+    _record_lock: threading.RLock = field(
+        default_factory=threading.RLock,
+        repr=False,
+        compare=False,
+    )
 
 
-def _preflight_staged_entries(staged: StagedAttachmentSet) -> list[StagedAttachment]:
+@dataclass(frozen=True)
+class _DocumentRollbackRecord:
+    relative_path: str
+    directory_leaf: str
+    file_leaf: str
+    expected_size: int
+    expected_digest: str
+    tools_root_identity: secure_fs.FileIdentity | None = None
+    uploads_identity: secure_fs.FileIdentity | None = None
+    directory_identity: secure_fs.FileIdentity | None = None
+    file_identity: secure_fs.FileIdentity | None = None
+
+
+@dataclass(frozen=True)
+class _PinnedAttachment:
+    staged: StagedAttachment
+    snapshot: bytes
+    identity: secure_fs.FileIdentity
+
+
+def _verify_pinned_source(
+    pinned: _PinnedAttachment,
+    staged: StagedAttachmentSet,
+) -> None:
+    if staged._root_identity is None or staged._batch_identity is None:
+        raise MediaValidationError('Staged attachments are unavailable')
+    try:
+        with secure_fs.open_root(_staging_root()) as root_capability:
+            if root_capability.identity != staged._root_identity:
+                raise MediaValidationError('Staging root changed')
+            with root_capability.open_directory(
+                staged.batch_dir.name,
+                expected_identity=staged._batch_identity,
+            ) as batch_capability:
+                with batch_capability.open_file(
+                    pinned.staged.path.name,
+                    expected_identity=pinned.identity,
+                ) as file_capability:
+                    if file_capability.refresh_identity() != pinned.identity:
+                        raise MediaValidationError('Staged attachment changed')
+    except (OSError, secure_fs.CapabilityError) as exc:
+        raise MediaValidationError('Staged attachment changed') from exc
+
+
+def _after_preflight_hook(_entries: list[_PinnedAttachment]) -> None:
+    """Deterministic test seam for source replacement races."""
+
+
+def _record_document_rollback(
+    promoted: PromotedAttachments,
+    relative_path: str,
+    *,
+    directory_leaf: str,
+    file_leaf: str,
+    expected_size: int,
+    expected_digest: str,
+    tools_root_identity: secure_fs.FileIdentity | None = None,
+    uploads_identity: secure_fs.FileIdentity | None = None,
+    directory_identity: secure_fs.FileIdentity | None = None,
+    file_identity: secure_fs.FileIdentity | None = None,
+) -> None:
+    replacement = _DocumentRollbackRecord(
+        relative_path=relative_path,
+        directory_leaf=directory_leaf,
+        file_leaf=file_leaf,
+        expected_size=expected_size,
+        expected_digest=expected_digest,
+        tools_root_identity=tools_root_identity,
+        uploads_identity=uploads_identity,
+        directory_identity=directory_identity,
+        file_identity=file_identity,
+    )
+    with promoted._record_lock:
+        for index, record in enumerate(promoted._rollback_records):
+            if record.relative_path == relative_path:
+                promoted._rollback_records[index] = replacement
+                return
+        promoted._rollback_records.append(replacement)
+
+
+def _preflight_staged_entries(staged: StagedAttachmentSet) -> list[_PinnedAttachment]:
     root = _staging_root()
     raw_batch = Path(staged.batch_dir)
     batch = _lexical_absolute(raw_batch)
@@ -507,102 +864,253 @@ def _preflight_staged_entries(staged: StagedAttachmentSet) -> list[StagedAttachm
         raise MediaValidationError('Staged attachments are unavailable')
     if batch.parent != root or not _is_within(batch, root):
         raise MediaValidationError('Staged attachments are unavailable')
-    if _is_top_level_link(batch):
-        raise MediaValidationError('Staged attachments are unavailable')
-    try:
-        batch_metadata = os.lstat(batch)
-    except OSError as exc:
-        raise MediaValidationError('Staged attachments are unavailable') from exc
-    if not stat.S_ISDIR(batch_metadata.st_mode):
-        raise MediaValidationError('Staged attachments are unavailable')
 
     entries = list(staged.entries)
     if len(entries) > MAX_UPLOAD_COUNT:
         raise MediaValidationError('Staged attachments exceed the count limit')
     total = 0
-    for entry in entries:
-        raw_path = Path(entry.path)
-        path = _lexical_absolute(raw_path)
-        if not raw_path.is_absolute() or raw_path != path:
-            raise MediaValidationError('Staged attachments are unavailable')
-        if path.parent != batch or not _is_within(path, batch):
-            raise MediaValidationError('Staged attachments are unavailable')
-        if _is_top_level_link(path):
-            raise MediaValidationError('Staged attachments are unavailable')
-        try:
-            metadata = os.lstat(path)
-        except OSError as exc:
-            raise MediaValidationError('Staged attachments are unavailable') from exc
-        if not stat.S_ISREG(metadata.st_mode):
-            raise MediaValidationError('Staged attachment is not a regular file')
-        if metadata.st_size != entry.size_bytes or entry.size_bytes < 0:
-            raise MediaValidationError('Staged attachment size changed')
-        if entry.size_bytes > MAX_UPLOAD_FILE_BYTES:
-            raise MediaValidationError('Staged attachment exceeds the size limit')
-        total += entry.size_bytes
-        if total > MAX_UPLOAD_TOTAL_BYTES:
-            raise MediaValidationError('Staged attachments exceed the total size limit')
-    return entries
+    if staged._root_identity is None or staged._batch_identity is None:
+        raise MediaValidationError('Staged attachments are unavailable')
+    pinned: list[_PinnedAttachment] = []
+    try:
+        with secure_fs.open_root(root) as root_capability:
+            if root_capability.identity != staged._root_identity:
+                raise MediaValidationError('Staging root changed')
+            with root_capability.open_directory(
+                batch.name,
+                expected_identity=staged._batch_identity,
+            ) as batch_capability:
+                for entry in entries:
+                    raw_path = Path(entry.path)
+                    path = _lexical_absolute(raw_path)
+                    if not raw_path.is_absolute() or raw_path != path:
+                        raise MediaValidationError('Staged attachments are unavailable')
+                    if path.parent != batch or not _is_within(path, batch):
+                        raise MediaValidationError('Staged attachments are unavailable')
+                    if entry.size_bytes < 0:
+                        raise MediaValidationError('Staged attachment size changed')
+                    if entry.size_bytes > MAX_UPLOAD_FILE_BYTES:
+                        raise MediaValidationError(
+                            'Staged attachment exceeds the size limit'
+                        )
+                    total += entry.size_bytes
+                    if total > MAX_UPLOAD_TOTAL_BYTES:
+                        raise MediaValidationError(
+                            'Staged attachments exceed the total size limit'
+                        )
+                    expected = staged._entry_identities.get(path.name)
+                    if expected is None:
+                        raise MediaValidationError('Staged attachment identity is missing')
+                    with batch_capability.open_file(
+                        path.name,
+                        expected_identity=expected,
+                    ) as file_capability:
+                        snapshot = file_capability.read_bytes(
+                            max_bytes=MAX_UPLOAD_FILE_BYTES
+                        )
+                        if (
+                            len(snapshot) != entry.size_bytes
+                            or file_capability.refresh_identity() != expected
+                        ):
+                            raise MediaValidationError('Staged attachment changed')
+                    pinned.append(_PinnedAttachment(entry, snapshot, expected))
+    except (OSError, secure_fs.CapabilityError) as exc:
+        raise MediaValidationError('Staged attachments are unavailable') from exc
+    return pinned
 
 
-def _tools_upload_root() -> Path:
+def _tools_upload_root() -> _UploadDestination:
     tools_root = _lexical_absolute(settings.tools_root)
     uploads = _lexical_absolute(tools_root / 'uploads')
     if uploads.parent != tools_root:
         raise MediaValidationError('Upload destination is unavailable')
-    uploads.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if _is_top_level_link(uploads):
-        raise MediaValidationError('Upload destination is unavailable')
+    tools_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        with secure_fs.open_root(tools_root) as tools_capability:
+            tools_root_identity = tools_capability.identity
+            if tools_capability.refresh_identity() != tools_root_identity:
+                raise MediaValidationError('Upload destination changed')
+            try:
+                uploads_capability = tools_capability.open_directory('uploads')
+            except FileNotFoundError:
+                try:
+                    uploads_capability = tools_capability.create_directory('uploads')
+                except FileExistsError:
+                    uploads_capability = tools_capability.open_directory('uploads')
+            with uploads_capability:
+                uploads_identity = uploads_capability.identity
+                if (
+                    uploads_capability.refresh_identity()
+                    != uploads_identity
+                ):
+                    raise MediaValidationError('Upload destination changed')
+    except (OSError, secure_fs.CapabilityError) as exc:
+        raise MediaValidationError('Upload destination is unavailable') from exc
+    return _UploadDestination(
+        path=uploads,
+        tools_root_identity=tools_root_identity,
+        uploads_identity=uploads_identity,
+    )
+
+
+def _before_secure_document_create_hook(
+    _uploads: Path,
+    _directory_leaf: str,
+    _file_leaf: str,
+) -> None:
+    """Deterministic test seam before handle-relative destination creation."""
+
+
+def _create_document_transaction(
+    snapshot: bytes,
+    destination: _UploadDestination,
+    directory_leaf: str,
+    file_leaf: str,
+    expected_size: int,
+    promoted: PromotedAttachments,
+    relative_path: str,
+    expected_digest: str,
+) -> None:
+    if len(snapshot) != expected_size or len(snapshot) > MAX_UPLOAD_FILE_BYTES:
+        raise MediaValidationError('Staged attachment changed')
+    try:
+        with secure_fs.open_root(destination.path) as root_capability:
+            if (
+                root_capability.identity != destination.uploads_identity
+                or root_capability.refresh_identity()
+                != destination.uploads_identity
+            ):
+                raise secure_fs.CapabilityError()
+            with root_capability.create_directory(
+                directory_leaf
+            ) as directory_capability:
+                _record_document_rollback(
+                    promoted,
+                    relative_path,
+                    directory_leaf=directory_leaf,
+                    file_leaf=file_leaf,
+                    expected_size=expected_size,
+                    expected_digest=expected_digest,
+                    tools_root_identity=destination.tools_root_identity,
+                    uploads_identity=destination.uploads_identity,
+                    directory_identity=directory_capability.identity,
+                )
+                with directory_capability.create_file(file_leaf) as output:
+                    # Record identity before writing so cancellation or a
+                    # partial write remains safely rollback-addressable.
+                    _record_document_rollback(
+                        promoted,
+                        relative_path,
+                        directory_leaf=directory_leaf,
+                        file_leaf=file_leaf,
+                        expected_size=expected_size,
+                        expected_digest=expected_digest,
+                        tools_root_identity=destination.tools_root_identity,
+                        uploads_identity=destination.uploads_identity,
+                        directory_identity=directory_capability.identity,
+                        file_identity=output.identity,
+                    )
+                    output.write_bytes(snapshot, max_bytes=MAX_UPLOAD_FILE_BYTES)
+                    if output.refresh_identity() != output.identity:
+                        raise secure_fs.CapabilityError()
+                if (
+                    directory_capability.refresh_identity()
+                    != directory_capability.identity
+                ):
+                    raise secure_fs.CapabilityError()
+    except (OSError, secure_fs.CapabilityError, ValueError) as exc:
+        raise MediaValidationError('Upload destination is unavailable') from exc
+
+
+def _resolve_upload_root_for_cleanup(
+    record: _DocumentRollbackRecord,
+) -> Path:
+    """Open the recorded roots without creating or repairing any namespace."""
+    if record.tools_root_identity is None or record.uploads_identity is None:
+        raise MediaValidationError('Promoted document cleanup identity is missing')
+    tools_root = _lexical_absolute(settings.tools_root)
+    uploads = _lexical_absolute(tools_root / 'uploads')
+    if uploads.parent != tools_root:
+        raise MediaValidationError('Promoted document cleanup root changed')
+    try:
+        with secure_fs.open_root(tools_root) as tools_capability:
+            if (
+                tools_capability.identity != record.tools_root_identity
+                or tools_capability.refresh_identity()
+                != record.tools_root_identity
+            ):
+                raise secure_fs.CapabilityError()
+            with tools_capability.open_directory(
+                'uploads',
+                expected_identity=record.uploads_identity,
+            ) as uploads_capability:
+                if (
+                    uploads_capability.refresh_identity()
+                    != record.uploads_identity
+                ):
+                    raise secure_fs.CapabilityError()
+    except (OSError, secure_fs.CapabilityError, ValueError) as exc:
+        raise MediaValidationError(
+            'Promoted document cleanup root changed'
+        ) from exc
     return uploads
 
 
-def _copy_document_transaction(
-    source: Path,
-    temporary: Path,
-    final: Path,
-    expected_size: int,
-) -> None:
-    if _is_top_level_link(source):
-        raise MediaValidationError('Staged attachments are unavailable')
-    copied = 0
-    temporary.parent.mkdir(mode=0o700, parents=False, exist_ok=False)
-    if _is_top_level_link(temporary.parent):
-        raise MediaValidationError('Upload destination is unavailable')
+def _delete_secure_document(record: _DocumentRollbackRecord) -> None:
+    expected_path = (
+        Path('uploads') / record.directory_leaf / record.file_leaf
+    ).as_posix()
+    if record.relative_path != expected_path:
+        raise MediaValidationError('Invalid promoted document path')
     try:
-        with source.open('rb') as input_stream, temporary.open('xb') as output_stream:
-            while True:
-                chunk = input_stream.read(CHUNK_BYTES)
-                if not chunk:
-                    break
-                copied += len(chunk)
-                if copied > expected_size or copied > MAX_UPLOAD_FILE_BYTES:
-                    raise MediaValidationError('Staged attachment size changed')
-                output_stream.write(chunk)
-        if copied != expected_size:
-            raise MediaValidationError('Staged attachment size changed')
-        os.replace(temporary, final)
-        source.unlink()
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
-def _document_final_path(relative_value: str) -> Path:
-    relative = Path(relative_value)
-    if (
-        relative.is_absolute()
-        or relative.drive
-        or '..' in relative.parts
-        or len(relative.parts) < 3
-        or relative.parts[0] != 'uploads'
-    ):
-        raise MediaValidationError('Invalid promoted document path')
-    tools_root = _lexical_absolute(settings.tools_root)
-    path = _lexical_absolute(tools_root / relative)
-    uploads = _lexical_absolute(tools_root / 'uploads')
-    if not _is_within(path, uploads):
-        raise MediaValidationError('Invalid promoted document path')
-    return path
+        uploads = _resolve_upload_root_for_cleanup(record)
+        with secure_fs.open_root(uploads) as root_capability:
+            if (
+                root_capability.identity != record.uploads_identity
+                or root_capability.refresh_identity()
+                != record.uploads_identity
+            ):
+                raise secure_fs.CapabilityError()
+            if record.directory_identity is None:
+                # Creation may fail before the directory identity is journaled.
+                # Absence is a completed rollback; an unexpected directory is
+                # retained because deleting it without identity would be unsafe.
+                try:
+                    unexpected = root_capability.open_directory(
+                        record.directory_leaf
+                    )
+                except FileNotFoundError:
+                    return
+                with unexpected:
+                    pass
+                raise secure_fs.CapabilityError()
+            try:
+                directory_capability = root_capability.open_directory(
+                    record.directory_leaf,
+                    expected_identity=record.directory_identity,
+                )
+            except FileNotFoundError:
+                return
+            with directory_capability:
+                if (
+                    directory_capability.refresh_identity()
+                    != record.directory_identity
+                ):
+                    raise secure_fs.CapabilityError()
+                if record.file_identity is not None:
+                    try:
+                        directory_capability.delete_file(
+                            record.file_leaf,
+                            expected_identity=record.file_identity,
+                        )
+                    except FileNotFoundError:
+                        pass
+            root_capability.delete_directory(
+                record.directory_leaf,
+                expected_identity=record.directory_identity,
+            )
+    except (OSError, secure_fs.CapabilityError, ValueError) as exc:
+        raise MediaValidationError('Promoted document cleanup failed') from exc
 
 
 async def _rollback_promoted_attachments(
@@ -611,6 +1119,10 @@ async def _rollback_promoted_attachments(
 ) -> None:
     """Remove a promoted batch after a pre-scheduling stop or failure."""
     errors: list[BaseException] = []
+    with promoted._record_lock:
+        rollback_records = {
+            record.relative_path: record for record in promoted._rollback_records
+        }
     if promoted.image_refs:
         try:
             await media_assets.delete_artifacts(
@@ -621,12 +1133,12 @@ async def _rollback_promoted_attachments(
             logger.exception('Failed to roll back promoted image artifacts')
     for document in reversed(promoted.document_paths):
         try:
-            path = _document_final_path(document['path'])
-            await _run_thread_joined(lambda: path.unlink(missing_ok=True))
-            try:
-                await _run_thread_joined(path.parent.rmdir)
-            except OSError:
-                pass
+            record = rollback_records.get(document['path'])
+            if record is None:
+                raise MediaValidationError(
+                    'Promoted document cleanup identity is missing'
+                )
+            await _run_thread_joined(_delete_secure_document, record)
         except BaseException as exc:
             errors.append(exc)
             logger.exception('Failed to roll back promoted document')
@@ -634,24 +1146,146 @@ async def _rollback_promoted_attachments(
         raise errors[0]
 
 
+def _rollback_key(
+    promoted: PromotedAttachments,
+    ownership: MediaOwnership,
+) -> str:
+    values = (
+        ownership.session_id,
+        ownership.user_id,
+        ownership.agent_id,
+        tuple(item.id for item in promoted.image_refs),
+        tuple(item.get('path', '') for item in promoted.document_paths),
+    )
+    return hashlib.sha256(repr(values).encode('utf-8')).hexdigest()
+
+
+def _staging_cleanup_key(staged: StagedAttachmentSet) -> str:
+    batch_dir = getattr(staged, 'batch_dir', None)
+    if batch_dir is None:
+        return f'object-{id(staged)}'
+    return hashlib.sha256(
+        os.fspath(_lexical_absolute(batch_dir)).encode('utf-8')
+    ).hexdigest()
+
+
+def pending_attachment_cleanup_count() -> int:
+    with _PENDING_CLEANUP_LOCK:
+        return len(_PENDING_ROLLBACKS) + len(_PENDING_STAGING_CLEANUPS)
+
+
+async def cleanup_staged_attachments(staged: StagedAttachmentSet) -> None:
+    key = _staging_cleanup_key(staged)
+    errors: list[BaseException] = []
+    cancelled: asyncio.CancelledError | None = None
+    for _attempt in range(ATTACHMENT_CLEANUP_ATTEMPTS):
+        attempt_cancelled, error = await _settle_cleanup_attempt(staged.cleanup())
+        cancelled = cancelled or attempt_cancelled
+        if error is None:
+            with _PENDING_CLEANUP_LOCK:
+                _PENDING_STAGING_CLEANUPS.pop(key, None)
+            if cancelled is not None:
+                raise cancelled
+            return
+        errors.append(error)
+        logger.error(
+            'Staged attachment cleanup attempt failed',
+            exc_info=(type(error), error, error.__traceback__),
+        )
+    with _PENDING_CLEANUP_LOCK:
+        _PENDING_STAGING_CLEANUPS[key] = staged
+    _schedule_pending_cleanup_drain()
+    raise AttachmentCleanupError(errors) from errors[-1]
+
+
 async def rollback_promoted_attachments(
     promoted: PromotedAttachments,
     ownership: MediaOwnership,
 ) -> None:
-    """Cancellation-settled public rollback for an already promoted batch."""
-    await _run_awaitable_joined(
-        _rollback_promoted_attachments(promoted, ownership)
-    )
+    """Retry and retain a cancellation-settled promoted-media rollback."""
+    key = _rollback_key(promoted, ownership)
+    errors: list[BaseException] = []
+    cancelled: asyncio.CancelledError | None = None
+    for _attempt in range(ATTACHMENT_CLEANUP_ATTEMPTS):
+        attempt_cancelled, error = await _settle_cleanup_attempt(
+            _rollback_promoted_attachments(promoted, ownership)
+        )
+        cancelled = cancelled or attempt_cancelled
+        if error is None:
+            with _PENDING_CLEANUP_LOCK:
+                _PENDING_ROLLBACKS.pop(key, None)
+            if cancelled is not None:
+                raise cancelled
+            return
+        errors.append(error)
+        logger.error(
+            'Promoted attachment rollback attempt failed',
+            exc_info=(type(error), error, error.__traceback__),
+        )
+    with _PENDING_CLEANUP_LOCK:
+        _PENDING_ROLLBACKS[key] = (promoted, ownership)
+    _schedule_pending_cleanup_drain()
+    raise AttachmentCleanupError(errors) from errors[-1]
+
+
+async def retry_pending_attachment_cleanups() -> int:
+    """Retry retained cleanup work; return the number still pending."""
+    with _PENDING_CLEANUP_LOCK:
+        rollbacks = list(_PENDING_ROLLBACKS.values())
+        staged_batches = list(_PENDING_STAGING_CLEANUPS.values())
+    for promoted, ownership in rollbacks:
+        try:
+            await rollback_promoted_attachments(promoted, ownership)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('Pending promoted attachment cleanup remains blocked')
+    for staged in staged_batches:
+        try:
+            await cleanup_staged_attachments(staged)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('Pending staging cleanup remains blocked')
+    return pending_attachment_cleanup_count()
+
+
+async def _drain_pending_attachment_cleanups() -> None:
+    """Supervise a few delayed retries while retaining any permanent work."""
+    for delay in (0.25, 1.0, 4.0):
+        await asyncio.sleep(delay)
+        if await retry_pending_attachment_cleanups() == 0:
+            return
+
+
+def _schedule_pending_cleanup_drain() -> None:
+    global _PENDING_DRAIN_TASK
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if _PENDING_DRAIN_TASK is not None and not _PENDING_DRAIN_TASK.done():
+        return
+    task = loop.create_task(_drain_pending_attachment_cleanups())
+    _PENDING_DRAIN_TASK = task
+
+    def done(completed: asyncio.Task) -> None:
+        global _PENDING_DRAIN_TASK
+        if _PENDING_DRAIN_TASK is completed:
+            _PENDING_DRAIN_TASK = None
+        try:
+            completed.exception()
+        except asyncio.CancelledError:
+            pass
+
+    task.add_done_callback(done)
 
 
 async def _rollback_joined(
     promoted: PromotedAttachments,
     ownership: MediaOwnership,
 ) -> None:
-    try:
-        await rollback_promoted_attachments(promoted, ownership)
-    except BaseException:
-        logger.exception('Attachment promotion rollback did not fully complete')
+    await rollback_promoted_attachments(promoted, ownership)
 
 
 async def promote_staged_attachments(
@@ -665,51 +1299,73 @@ async def promote_staged_attachments(
     try:
         await staged.claim()
         entries = await _run_thread_joined(_preflight_staged_entries, staged)
-        documents: list[StagedAttachment] = []
-        for entry in entries:
+        _after_preflight_hook(entries)
+        documents: list[_PinnedAttachment] = []
+        for pinned in entries:
+            await _run_thread_joined(
+                _verify_pinned_source, pinned, staged
+            )
+            entry = pinned.staged
             image_ref = await media_assets.ingest_staged_image_if_recognized(
-                entry, ownership
+                entry, ownership, snapshot=pinned.snapshot
             )
             if image_ref is None:
-                documents.append(entry)
+                documents.append(pinned)
             else:
                 promoted.image_refs.append(image_ref)
 
         if documents:
-            uploads = await _run_thread_joined(_tools_upload_root)
-            for document in documents:
-                opaque = uuid4().hex
-                directory = _lexical_absolute(uploads / opaque)
-                filename = _safe_filename(document.filename)
-                final = _lexical_absolute(directory / filename)
-                temporary = _lexical_absolute(
-                    directory / f'.{uuid4().hex}.tmp'
+            destination = await _run_thread_joined(_tools_upload_root)
+            for pinned in documents:
+                await _run_thread_joined(
+                    _verify_pinned_source,
+                    pinned,
+                    staged,
                 )
-                if (
-                    directory.parent != uploads
-                    or not _is_within(directory, uploads)
-                    or final.parent != directory
-                    or temporary.parent != directory
-                ):
-                    raise MediaValidationError('Upload destination is unavailable')
-                relative = final.relative_to(_lexical_absolute(settings.tools_root))
+                document = pinned.staged
+                directory_leaf = f'd_{uuid4().hex}'
+                file_leaf = f'f_{uuid4().hex}'
+                filename = _safe_filename(document.filename)
+                relative_value = (
+                    Path('uploads') / directory_leaf / file_leaf
+                ).as_posix()
+                # Journal the planned opaque path before cancellation-settled
+                # creation. A missing target is harmless during rollback.
                 promoted.document_paths.append({
                     'name': filename,
-                    'path': relative.as_posix(),
+                    'path': relative_value,
                 })
+                expected_digest = hashlib.sha256(pinned.snapshot).hexdigest()
+                _record_document_rollback(
+                    promoted,
+                    relative_value,
+                    directory_leaf=directory_leaf,
+                    file_leaf=file_leaf,
+                    expected_size=document.size_bytes,
+                    expected_digest=expected_digest,
+                    tools_root_identity=destination.tools_root_identity,
+                    uploads_identity=destination.uploads_identity,
+                )
+                _before_secure_document_create_hook(
+                    destination.path, directory_leaf, file_leaf
+                )
                 await _run_thread_joined(
-                    _copy_document_transaction,
-                    _lexical_absolute(document.path),
-                    temporary,
-                    final,
+                    _create_document_transaction,
+                    pinned.snapshot,
+                    destination,
+                    directory_leaf,
+                    file_leaf,
                     document.size_bytes,
+                    promoted,
+                    relative_value,
+                    expected_digest,
                 )
     except BaseException as exc:
         primary_error = exc
         primary_traceback = exc.__traceback__
 
     try:
-        await staged.cleanup()
+        await cleanup_staged_attachments(staged)
     except BaseException as exc:
         if primary_error is None:
             primary_error = exc
@@ -719,14 +1375,396 @@ async def promote_staged_attachments(
 
     if primary_error is not None:
         if promoted.image_refs or promoted.document_paths:
-            await _rollback_joined(promoted, ownership)
+            try:
+                await _rollback_joined(promoted, ownership)
+            except BaseException as rollback_error:
+                raise AttachmentCleanupError(
+                    [primary_error, rollback_error]
+                ) from rollback_error
         raise primary_error.with_traceback(primary_traceback)
     return promoted
 
 
+@dataclass(frozen=True)
+class _ManifestEntry:
+    identity: secure_fs.FileIdentity | None = None
+    size: int | None = None
+    digest: str | None = None
+
+
+@dataclass(frozen=True)
+class _ParsedManifest:
+    created_at: float
+    expires_at: float
+    entries: dict[str, _ManifestEntry]
+
+
+@dataclass(frozen=True)
+class _SweepInspection:
+    root_identity: secure_fs.FileIdentity
+    batch_identity: secure_fs.FileIdentity
+    manifest_identity: secure_fs.FileIdentity | None
+    manifest_bytes: bytes | None
+    manifest: _ParsedManifest | None
+
+
+def _parse_staging_manifest(data: bytes) -> _ParsedManifest:
+    if len(data) > STAGING_MANIFEST_MAX_BYTES:
+        raise MediaValidationError('Staging manifest exceeds its size limit')
+    try:
+        text = data.decode('utf-8')
+    except UnicodeDecodeError as exc:
+        raise MediaValidationError('Staging manifest is invalid') from exc
+    lines = text.splitlines()
+    if not lines or len(lines) > STAGING_MANIFEST_MAX_RECORDS:
+        raise MediaValidationError('Staging manifest is invalid')
+    try:
+        records = [json.loads(line) for line in lines]
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise MediaValidationError('Staging manifest is invalid') from exc
+    header = records[0]
+    if not isinstance(header, dict) or set(header) != {
+        'created_at', 'expires_at', 'version'
+    } or header.get('version') != 1:
+        raise MediaValidationError('Staging manifest is invalid')
+    try:
+        created_at = float(header['created_at'])
+        expires_at = float(header['expires_at'])
+    except (TypeError, ValueError) as exc:
+        raise MediaValidationError('Staging manifest is invalid') from exc
+    if (
+        not (created_at > 0 and expires_at > created_at)
+        or expires_at - created_at > STAGING_LEASE_SECONDS + 1.0
+    ):
+        raise MediaValidationError('Staging manifest is invalid')
+
+    entries: dict[str, _ManifestEntry] = {}
+    for record in records[1:]:
+        if not isinstance(record, dict):
+            raise MediaValidationError('Staging manifest is invalid')
+        operation = record.get('op')
+        leaf = record.get('leaf')
+        if (
+            not isinstance(leaf, str)
+            or not _OPAQUE_LEAF.fullmatch(leaf)
+            or leaf == STAGING_MANIFEST_LEAF
+        ):
+            raise MediaValidationError('Staging manifest is invalid')
+        if operation == 'plan':
+            if set(record) != {'leaf', 'op'} or leaf in entries:
+                raise MediaValidationError('Staging manifest is invalid')
+            entries[leaf] = _ManifestEntry()
+            continue
+        if operation != 'done' or set(record) != {
+            'file_id', 'leaf', 'op', 'sha256', 'size', 'volume'
+        }:
+            raise MediaValidationError('Staging manifest is invalid')
+        planned = entries.get(leaf)
+        size = record.get('size')
+        digest = record.get('sha256')
+        file_id = record.get('file_id')
+        volume = record.get('volume')
+        if (
+            planned is None
+            or planned.identity is not None
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+            or size > MAX_UPLOAD_FILE_BYTES
+            or not isinstance(digest, str)
+            or re.fullmatch(r'[0-9a-f]{64}', digest) is None
+            or not isinstance(file_id, str)
+            or re.fullmatch(r'[0-9a-f]{32}', file_id) is None
+            or not isinstance(volume, int)
+            or isinstance(volume, bool)
+            or volume < 0
+        ):
+            raise MediaValidationError('Staging manifest is invalid')
+        entries[leaf] = _ManifestEntry(
+            identity=secure_fs.FileIdentity(
+                volume=volume,
+                file_id=bytes.fromhex(file_id),
+                is_directory=False,
+            ),
+            size=size,
+            digest=digest,
+        )
+    if len(entries) > MAX_UPLOAD_COUNT:
+        raise MediaValidationError('Staging manifest is invalid')
+    return _ParsedManifest(created_at, expires_at, entries)
+
+
+def _recovery_leaf(batch_leaf: str) -> str:
+    return STAGING_RECOVERY_PREFIX + hashlib.sha256(
+        batch_leaf.encode('ascii')
+    ).hexdigest()[:32]
+
+
+def _identity_manifest_value(identity: secure_fs.FileIdentity) -> dict[str, Any]:
+    return {
+        'file_id': identity.file_id.hex(),
+        'is_directory': identity.is_directory,
+        'volume': identity.volume,
+    }
+
+
+def _recovery_journal_bytes(
+    leaf: str,
+    inspection: _SweepInspection,
+) -> bytes:
+    if inspection.manifest_identity is None or inspection.manifest_bytes is None:
+        raise MediaValidationError('Staging recovery identity is unavailable')
+    header = _manifest_line({
+        'batch': _identity_manifest_value(inspection.batch_identity),
+        'batch_leaf': leaf,
+        'manifest': _identity_manifest_value(inspection.manifest_identity),
+        'root': _identity_manifest_value(inspection.root_identity),
+        'version': 1,
+    })
+    payload = header + inspection.manifest_bytes
+    if len(payload) > STAGING_RECOVERY_MAX_BYTES:
+        raise MediaValidationError('Staging recovery journal is too large')
+    return payload
+
+
+def _inspect_manifest_batch(root: Path, leaf: str) -> _SweepInspection | None:
+    if (
+        not _OPAQUE_LEAF.fullmatch(leaf)
+        or leaf == STAGING_MANIFEST_LEAF
+        or leaf.startswith(STAGING_RECOVERY_PREFIX)
+    ):
+        return None
+    with secure_fs.open_root(root) as root_capability:
+        root_identity = root_capability.identity
+        if root_capability.refresh_identity() != root_identity:
+            raise secure_fs.CapabilityError()
+        try:
+            batch_capability = root_capability.open_directory(leaf)
+        except FileNotFoundError:
+            return None
+        batch_identity = batch_capability.identity
+        with batch_capability:
+            if batch_capability.refresh_identity() != batch_identity:
+                raise secure_fs.CapabilityError()
+            try:
+                manifest_capability = batch_capability.open_file(
+                    STAGING_MANIFEST_LEAF
+                )
+            except FileNotFoundError:
+                manifest_capability = None
+            if manifest_capability is None:
+                return _SweepInspection(
+                    root_identity=root_identity,
+                    batch_identity=batch_identity,
+                    manifest_identity=None,
+                    manifest_bytes=None,
+                    manifest=None,
+                )
+            with manifest_capability:
+                manifest_identity = manifest_capability.identity
+                manifest_bytes = manifest_capability.read_bytes(
+                    max_bytes=STAGING_MANIFEST_MAX_BYTES
+                )
+                if manifest_capability.refresh_identity() != manifest_identity:
+                    raise secure_fs.CapabilityError()
+                manifest = _parse_staging_manifest(manifest_bytes)
+        return _SweepInspection(
+            root_identity=root_identity,
+            batch_identity=batch_identity,
+            manifest_identity=manifest_identity,
+            manifest_bytes=manifest_bytes,
+            manifest=manifest,
+        )
+
+
+def _delete_empty_unmanifested_batch(
+    root: Path,
+    leaf: str,
+    inspection: _SweepInspection,
+) -> bool:
+    if inspection.manifest is not None:
+        raise ValueError('Expected an unmanifested batch')
+    with secure_fs.open_root(root) as root_capability:
+        if (
+            root_capability.identity != inspection.root_identity
+            or root_capability.refresh_identity() != inspection.root_identity
+        ):
+            raise secure_fs.CapabilityError()
+        try:
+            batch_capability = root_capability.open_directory(
+                leaf,
+                expected_identity=inspection.batch_identity,
+            )
+        except FileNotFoundError:
+            return True
+        with batch_capability:
+            if batch_capability.refresh_identity() != inspection.batch_identity:
+                raise secure_fs.CapabilityError()
+        # A missing manifest authorizes removal only when the batch is empty.
+        try:
+            root_capability.delete_directory(
+                leaf,
+                expected_identity=inspection.batch_identity,
+            )
+        except (OSError, secure_fs.CapabilityError):
+            return False
+    return True
+
+
+def _create_recovery_journal(
+    root_capability: secure_fs.DirectoryCapability,
+    leaf: str,
+    inspection: _SweepInspection,
+) -> tuple[str, secure_fs.FileIdentity]:
+    recovery_leaf = _recovery_leaf(leaf)
+    payload = _recovery_journal_bytes(leaf, inspection)
+    try:
+        journal = root_capability.create_file(recovery_leaf)
+    except FileExistsError:
+        with root_capability.open_file(recovery_leaf) as existing:
+            if (
+                existing.read_bytes(max_bytes=STAGING_RECOVERY_MAX_BYTES)
+                != payload
+                or existing.refresh_identity() != existing.identity
+            ):
+                raise secure_fs.CapabilityError()
+            return recovery_leaf, existing.identity
+    with journal:
+        journal.write_bytes(payload, max_bytes=STAGING_RECOVERY_MAX_BYTES)
+        journal.flush()
+        if journal.refresh_identity() != journal.identity:
+            raise secure_fs.CapabilityError()
+        return recovery_leaf, journal.identity
+
+
+def _delete_inspected_manifest_batch(
+    root: Path,
+    leaf: str,
+    timestamp: float,
+    inspection: _SweepInspection,
+) -> bool:
+    if (
+        inspection.manifest is None
+        or inspection.manifest_identity is None
+        or inspection.manifest_bytes is None
+    ):
+        raise ValueError('Expected a manifested batch')
+    recovery: tuple[str, secure_fs.FileIdentity] | None = None
+    with secure_fs.open_root(root) as root_capability:
+        if (
+            root_capability.identity != inspection.root_identity
+            or root_capability.refresh_identity() != inspection.root_identity
+        ):
+            raise secure_fs.CapabilityError()
+        with root_capability.open_directory(
+            leaf,
+            expected_identity=inspection.batch_identity,
+        ) as batch_capability:
+            if batch_capability.refresh_identity() != inspection.batch_identity:
+                raise secure_fs.CapabilityError()
+            with batch_capability.open_file(
+                STAGING_MANIFEST_LEAF,
+                expected_identity=inspection.manifest_identity,
+            ) as manifest_capability:
+                manifest_bytes = manifest_capability.read_bytes(
+                    max_bytes=STAGING_MANIFEST_MAX_BYTES
+                )
+                if (
+                    manifest_bytes != inspection.manifest_bytes
+                    or manifest_capability.refresh_identity()
+                    != inspection.manifest_identity
+                ):
+                    raise secure_fs.CapabilityError()
+                manifest = _parse_staging_manifest(manifest_bytes)
+            if manifest != inspection.manifest:
+                raise secure_fs.CapabilityError()
+            if timestamp < manifest.expires_at:
+                return False
+
+            # Verify every known child before the first destructive mutation.
+            deletions: list[tuple[str, secure_fs.FileIdentity]] = []
+            for child_leaf, record in manifest.entries.items():
+                try:
+                    if record.identity is None:
+                        child = batch_capability.open_file(child_leaf)
+                    else:
+                        child = batch_capability.open_file(
+                            child_leaf,
+                            expected_identity=record.identity,
+                        )
+                except FileNotFoundError:
+                    continue
+                with child:
+                    identity = child.identity
+                    if record.identity is not None:
+                        content = child.read_bytes(
+                            max_bytes=MAX_UPLOAD_FILE_BYTES
+                        )
+                        if (
+                            len(content) != record.size
+                            or hashlib.sha256(content).hexdigest()
+                            != record.digest
+                            or child.refresh_identity() != record.identity
+                        ):
+                            raise MediaValidationError(
+                                'Staged attachment changed before sweep'
+                            )
+                deletions.append((child_leaf, identity))
+
+            # Preserve the authoritative identities outside the directory that
+            # is about to be mutated. If an unknown extra prevents final removal,
+            # operators still have a durable recovery journal.
+            recovery = _create_recovery_journal(
+                root_capability,
+                leaf,
+                inspection,
+            )
+            # The recovery file contents and its staging-root directory entry
+            # must both be durable before the first destructive mutation.
+            root_capability.flush()
+            for child_leaf, identity in deletions:
+                batch_capability.delete_file(
+                    child_leaf,
+                    expected_identity=identity,
+                )
+            batch_capability.delete_file(
+                STAGING_MANIFEST_LEAF,
+                expected_identity=inspection.manifest_identity,
+            )
+        root_capability.delete_directory(
+            leaf,
+            expected_identity=inspection.batch_identity,
+        )
+        try:
+            root_capability.flush()
+        except (OSError, secure_fs.CapabilityError):
+            # Keep the external journal if the batch-directory deletion cannot
+            # yet be proven durable.
+            logger.exception('Failed to flush completed batch deletion')
+            return True
+        if recovery is not None:
+            try:
+                try:
+                    root_capability.delete_file(
+                        recovery[0],
+                        expected_identity=recovery[1],
+                    )
+                except FileNotFoundError:
+                    pass
+                root_capability.flush()
+            except (OSError, secure_fs.CapabilityError):
+                # The stale batch is gone; retain a redundant journal rather
+                # than restoring a live lease for a nonexistent directory.
+                logger.exception('Failed to remove completed recovery journal')
+    return True
+
+
 async def sweep_stale_staging(now=None, max_age_seconds: float = 3600) -> int:
-    """Remove inactive top-level batches older than the configured TTL."""
+    """Remove expired batches through their durable capability manifest."""
     root = _staging_root()
+    # Kept for API compatibility. The durable manifest expiry is authoritative
+    # across restarts; mutable directory mtimes cannot authorize deletion.
+    del max_age_seconds
     if now is None:
         timestamp = time.time()
     elif hasattr(now, 'timestamp'):
@@ -740,42 +1778,103 @@ async def sweep_stale_staging(now=None, max_age_seconds: float = 3600) -> int:
 
     removed = 0
     for candidate in candidates:
-        lexical = _lexical_absolute(candidate)
-        if lexical.parent != root:
+        leaf = candidate.name
+        if (
+            not _OPAQUE_LEAF.fullmatch(leaf)
+            or leaf == STAGING_MANIFEST_LEAF
+            or leaf.startswith(STAGING_RECOVERY_PREFIX)
+        ):
+            continue
+        lexical = _lexical_absolute(root / leaf)
+        observed_lease: tuple[str, float | None] | None
+        with _ACTIVE_LOCK:
+            observed_lease = _BATCH_LEASES.get(lexical)
+            if observed_lease is not None and observed_lease[0] != 'queued':
+                continue
+        try:
+            inspection = await _run_thread_joined(
+                _inspect_manifest_batch,
+                root,
+                leaf,
+            )
+        except (OSError, MediaValidationError, secure_fs.CapabilityError):
+            logger.exception('Failed closed while inspecting staged attachments')
+            continue
+        if inspection is None:
+            continue
+        if inspection.manifest is None:
+            # A registered batch must retain its durable ownership manifest.
+            if observed_lease is not None:
+                continue
+            try:
+                deleted = await _run_thread_joined(
+                    _delete_empty_unmanifested_batch,
+                    root,
+                    leaf,
+                    inspection,
+                )
+            except (OSError, MediaValidationError, secure_fs.CapabilityError):
+                logger.exception(
+                    'Failed closed while sweeping unmanifested attachments'
+                )
+                deleted = False
+            if deleted:
+                removed += 1
+            continue
+        if timestamp < inspection.manifest.expires_at:
+            # Inspection is read-only; an unexpired queued action remains
+            # claimable throughout this filesystem probe.
+            continue
+
+        reserved_lease: tuple[str, float | None] | None = None
+        with _ACTIVE_LOCK:
+            current_lease = _BATCH_LEASES.get(lexical)
+            if observed_lease is None:
+                if current_lease is not None:
+                    continue
+            else:
+                if (
+                    current_lease != observed_lease
+                    or observed_lease[0] != 'queued'
+                    or observed_lease[1] != inspection.manifest.expires_at
+                ):
+                    continue
+                reserved_lease = observed_lease
+                _BATCH_LEASES[lexical] = (
+                    'sweeping',
+                    observed_lease[1],
+                )
+        try:
+            deleted = await _run_thread_joined(
+                _delete_inspected_manifest_batch,
+                root,
+                leaf,
+                timestamp,
+                inspection,
+            )
+        except (OSError, MediaValidationError, secure_fs.CapabilityError):
+            logger.exception('Failed closed while sweeping staged attachments')
+            deleted = False
+        if not deleted:
+            if reserved_lease is not None:
+                with _ACTIVE_LOCK:
+                    current = _BATCH_LEASES.get(lexical)
+                    if current is not None and current[0] == 'sweeping':
+                        _BATCH_LEASES[lexical] = reserved_lease
             continue
         with _ACTIVE_LOCK:
-            lease = _BATCH_LEASES.get(lexical)
-            if lease is not None:
-                phase, expires_at = lease
-                if phase in {'writing', 'claimed'}:
-                    continue
-                if expires_at is None or timestamp < expires_at:
-                    continue
-        try:
-            metadata = await _run_thread_joined(os.lstat, lexical)
-        except FileNotFoundError:
-            continue
-        if timestamp - metadata.st_mtime <= max_age_seconds:
-            continue
-        # Claim deletion under the same lock used by StagedAttachmentSet.claim.
-        # A claimant either wins first or observes that the lease is gone.
-        with _ACTIVE_LOCK:
-            lease = _BATCH_LEASES.get(lexical)
-            if lease is not None:
-                phase, expires_at = lease
-                if phase != 'queued' or expires_at is None or timestamp < expires_at:
-                    continue
-                _BATCH_LEASES.pop(lexical, None)
-                _ACTIVE_BATCHES.discard(lexical)
-        try:
-            await _run_thread_joined(_remove_batch_path, lexical)
-        except FileNotFoundError:
-            continue
+            _ACTIVE_BATCHES.discard(lexical)
+            _BATCH_LEASES.pop(lexical, None)
+            staged = _BATCH_OBJECTS.pop(lexical, None)
+            if staged is not None:
+                staged._cleaned = True
+                staged._claimed = False
         removed += 1
     return removed
 
 
 __all__ = [
+    'AttachmentCleanupError',
     'CHUNK_BYTES',
     'MAX_UPLOAD_COUNT',
     'MAX_UPLOAD_FILE_BYTES',
@@ -784,8 +1883,11 @@ __all__ = [
     'STAGING_LEASE_SECONDS',
     'StagedAttachmentSet',
     '_decode_data_url',
+    'cleanup_staged_attachments',
+    'pending_attachment_cleanup_count',
     'promote_staged_attachments',
     'rollback_promoted_attachments',
+    'retry_pending_attachment_cleanups',
     'stage_legacy_data_urls',
     'stage_upload_files',
     'sweep_stale_staging',
