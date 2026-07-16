@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.formparsers import MultiPartException
+from starlette.formparsers import MultiPartException, MultiPartParser
 
 from cognitrix.agents import Agent
 from cognitrix.common.security import (
@@ -105,6 +105,57 @@ def _multipart_parser_error(exc: MultiPartException) -> HTTPException:
     return HTTPException(status_code=400, detail='Malformed multipart request')
 
 
+async def _run_awaitable_joined(operation):
+    """Let an async close finish before request cancellation propagates."""
+    worker = asyncio.create_task(operation)
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        if worker.done() and not worker.cancelled():
+            try:
+                worker.result()
+            except BaseException:
+                pass
+        raise
+
+
+def _close_partial_parser_files(parser: MultiPartParser) -> None:
+    """Synchronously close every spool even for cancellation/disconnect."""
+    for file in tuple(parser._files_to_close_on_error):
+        try:
+            file.close()
+        except BaseException:
+            logger.exception('Could not close a partial multipart spool')
+
+
+async def _close_form_uploads(form) -> None:
+    """Close all completed UploadFiles, settling each under cancellation."""
+    cancelled: asyncio.CancelledError | None = None
+    first_error: BaseException | None = None
+    seen: set[int] = set()
+    for _key, value in form.multi_items():
+        if not isinstance(value, UploadFile) or id(value) in seen:
+            continue
+        seen.add(id(value))
+        try:
+            await _run_awaitable_joined(value.close())
+        except asyncio.CancelledError as exc:
+            cancelled = cancelled or exc
+        except BaseException as exc:
+            first_error = first_error or exc
+    if cancelled is not None:
+        raise cancelled
+    if first_error is not None:
+        raise first_error
+
+
 def _parse_json_payload(raw: str | bytes) -> dict:
     if isinstance(raw, str):
         if len(raw) > MAX_CHAT_PAYLOAD_BYTES:
@@ -151,11 +202,20 @@ async def _chat_request_parts(request: Request):
         yield data, []
         return
 
+    parser = MultiPartParser(
+        request.headers,
+        request.stream(),
+        max_files=MAX_UPLOAD_COUNT + 1,
+        max_fields=10,
+    )
+    form = None
     try:
-        async with request.form(
-            max_files=MAX_UPLOAD_COUNT + 1,
-            max_fields=10,
-        ) as form:
+        try:
+            form = await parser.parse()
+        except BaseException:
+            _close_partial_parser_files(parser)
+            raise
+        try:
             items = list(form.multi_items())
             if any(key not in {'payload', 'files'} for key, _value in items):
                 raise HTTPException(status_code=400, detail='Unexpected multipart field')
@@ -188,6 +248,8 @@ async def _chat_request_parts(request: Request):
                     detail='Do not mix multipart files with legacy attachments',
                 )
             yield data, file_parts
+        finally:
+            await _close_form_uploads(form)
     except _RequestBodyTooLarge as exc:
         raise _body_limit_error() from exc
     except MultiPartException as exc:

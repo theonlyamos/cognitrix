@@ -6,7 +6,9 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import os
 import shutil
+import stat
 import threading
 import time
 from dataclasses import dataclass, field
@@ -40,6 +42,50 @@ def _is_within(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _lexical_absolute(path: Path) -> Path:
+    """Normalize dot segments without resolving links or reparse points."""
+    return Path(os.path.abspath(os.fspath(path)))
+
+
+def _path_lexists(path: Path) -> bool:
+    return os.path.lexists(os.fspath(path))
+
+
+def _is_top_level_link(path: Path) -> bool:
+    """Identify symlinks and Windows junction/reparse points via lstat."""
+    try:
+        if path.is_symlink():
+            return True
+        is_junction = getattr(path, 'is_junction', None)
+        if is_junction is not None and is_junction():
+            return True
+        metadata = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    attributes = getattr(metadata, 'st_file_attributes', 0)
+    reparse_flag = getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
+    return bool(attributes & reparse_flag)
+
+
+def _unlink_top_level_link(path: Path) -> None:
+    """Remove the link/junction itself, never anything below its target."""
+    try:
+        path.unlink()
+    except (IsADirectoryError, PermissionError):
+        os.rmdir(path)
+
+
+def _remove_batch_path(path: Path) -> None:
+    if _is_top_level_link(path):
+        _unlink_top_level_link(path)
+        return
+    metadata = os.lstat(path)
+    if stat.S_ISDIR(metadata.st_mode):
+        shutil.rmtree(path)
+    else:
+        path.unlink()
 
 
 async def _run_thread_joined(func: Callable[..., _T], *args: Any) -> _T:
@@ -144,20 +190,20 @@ class StagedAttachmentSet:
             if self._cleaned:
                 return
             root = _staging_root()
-            batch = self.batch_dir.resolve()
+            batch = _lexical_absolute(self.batch_dir)
             if batch.parent != root or not _is_within(batch, root):
                 raise ValueError('Refusing to clean a path outside the staging root')
             cancelled: asyncio.CancelledError | None = None
             try:
                 try:
-                    await _run_thread_joined(shutil.rmtree, batch)
+                    await _run_thread_joined(_remove_batch_path, batch)
                 except FileNotFoundError:
                     pass
                 except asyncio.CancelledError as exc:
                     # The joined worker has already settled; finish the
                     # ownership transition before cancellation escapes.
                     cancelled = exc
-                if not batch.exists():
+                if not _path_lexists(batch):
                     self._cleaned = True
             finally:
                 # cleanup() is the ownership release point. If deletion failed,
@@ -173,7 +219,7 @@ async def _create_batch(*, user_key: str, stream_id: str) -> StagedAttachmentSet
     await _run_thread_joined(root.mkdir, 0o700, True, True)
     user_hash = hashlib.sha256(str(user_key).encode('utf-8')).hexdigest()[:16]
     stream_hash = hashlib.sha256(str(stream_id).encode('utf-8')).hexdigest()[:16]
-    batch = (root / f'{user_hash}-{stream_hash}-{uuid4().hex}').resolve()
+    batch = _lexical_absolute(root / f'{user_hash}-{stream_hash}-{uuid4().hex}')
     if batch.parent != root:
         raise RuntimeError('Unsafe staging batch path')
     with _ACTIVE_LOCK:
@@ -182,8 +228,8 @@ async def _create_batch(*, user_key: str, stream_id: str) -> StagedAttachmentSet
         await _run_thread_joined(batch.mkdir, 0o700, False, False)
     except BaseException:
         try:
-            if batch.exists():
-                await _run_thread_joined(shutil.rmtree, batch)
+            if _path_lexists(batch):
+                await _run_thread_joined(_remove_batch_path, batch)
         finally:
             with _ACTIVE_LOCK:
                 _ACTIVE_BATCHES.discard(batch)
@@ -213,7 +259,9 @@ async def _close_uploads(files: list[Any]) -> None:
 
 
 async def _open_destination(batch: StagedAttachmentSet, index: int):
-    destination = (batch.batch_dir / f'{index:02d}-{uuid4().hex}').resolve()
+    destination = _lexical_absolute(
+        batch.batch_dir / f'{index:02d}-{uuid4().hex}'
+    )
     if destination.parent != batch.batch_dir:
         raise RuntimeError('Unsafe staging destination path')
     handle = await _open_path_joined(destination, 'xb')
@@ -422,23 +470,20 @@ async def sweep_stale_staging(now=None, max_age_seconds: float = 3600) -> int:
 
     removed = 0
     for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved.parent != root:
+        lexical = _lexical_absolute(candidate)
+        if lexical.parent != root:
             continue
         with _ACTIVE_LOCK:
-            if resolved in _ACTIVE_BATCHES:
+            if lexical in _ACTIVE_BATCHES:
                 continue
         try:
-            stat = await _run_thread_joined(candidate.stat)
+            metadata = await _run_thread_joined(os.lstat, lexical)
         except FileNotFoundError:
             continue
-        if timestamp - stat.st_mtime <= max_age_seconds:
+        if timestamp - metadata.st_mtime <= max_age_seconds:
             continue
         try:
-            if candidate.is_dir() and not candidate.is_symlink():
-                await _run_thread_joined(shutil.rmtree, candidate)
-            else:
-                await _run_thread_joined(candidate.unlink)
+            await _run_thread_joined(_remove_batch_path, lexical)
         except FileNotFoundError:
             continue
         removed += 1

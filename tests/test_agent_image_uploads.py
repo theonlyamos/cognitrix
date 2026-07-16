@@ -10,7 +10,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from starlette import formparsers
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 
 import cognitrix.api.routes.agents as agent_routes
 import cognitrix.media.staging as staging
@@ -470,6 +470,60 @@ async def test_chunked_body_overflow_closes_already_spooled_multipart_parts(monk
 
     assert exc.value.status_code == 413
     assert created, 'the first chunk should have opened a spooled payload part'
+    assert all(file.closed for file in created)
+    assert manager.begin_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('termination', ['cancel', 'disconnect'])
+async def test_interrupted_multipart_parse_closes_every_partial_spool(
+    monkeypatch, termination
+):
+    manager = FakeManager()
+    agent = _install_route_fakes(monkeypatch, manager)
+    created = []
+    original_spool = formparsers.SpooledTemporaryFile
+
+    def tracked_spool(*args, **kwargs):
+        file = original_spool(*args, **kwargs)
+        created.append(file)
+        return file
+
+    monkeypatch.setattr(formparsers, 'SpooledTemporaryFile', tracked_spool)
+    request = _multipart_request(
+        {'agent_id': agent.id, 'stream_id': 'browser-a', 'message': 'hello'},
+        [('file.txt', b'x' * 512, 'text/plain')],
+        include_content_length=False,
+        first_chunk_size=256,
+    )
+    original_receive = request._receive
+    second_receive = __import__('asyncio').Event()
+    calls = 0
+
+    async def interrupted_receive():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return await original_receive()
+        second_receive.set()
+        if termination == 'disconnect':
+            return {'type': 'http.disconnect'}
+        await __import__('asyncio').Event().wait()
+
+    request._receive = interrupted_receive
+    task = __import__('asyncio').create_task(
+        agent_routes.chat_endpoint(request, user=types.SimpleNamespace(id='user-a'))
+    )
+    await __import__('asyncio').wait_for(second_receive.wait(), timeout=2)
+    assert created, 'the first chunk must open the payload spool before interruption'
+    if termination == 'cancel':
+        task.cancel()
+        expected = __import__('asyncio').CancelledError
+    else:
+        expected = ClientDisconnect
+
+    with pytest.raises(expected):
+        await task
     assert all(file.closed for file in created)
     assert manager.begin_calls == 0
 

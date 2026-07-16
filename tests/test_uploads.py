@@ -380,6 +380,47 @@ async def test_cleanup_failure_releases_active_ownership_for_ttl_retry(
     assert not staged.batch_dir.exists()
 
 
+@pytest.mark.asyncio
+async def test_cleanup_uses_lexical_batch_path_and_never_follows_reparse_target(
+    staging_workdir, monkeypatch
+):
+    batch_a = await staging.stage_upload_files(
+        [FakeUpload('a.txt', b'a')], user_key='user', stream_id='stream-a'
+    )
+    batch_b = await staging.stage_upload_files(
+        [FakeUpload('b.txt', b'b')], user_key='user', stream_id='stream-b'
+    )
+    marker_b = batch_b.batch_dir / 'keep.marker'
+    marker_b.write_text('keep')
+
+    # Deterministic Windows seam: model A as a top-level reparse point whose
+    # resolved target is B without requiring symlink privileges in CI.
+    __import__('shutil').rmtree(batch_a.batch_dir)
+    batch_a.batch_dir.mkdir()
+    original_resolve = Path.resolve
+
+    def redirected_resolve(path, *args, **kwargs):
+        if path == batch_a.batch_dir:
+            return batch_b.batch_dir
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'resolve', redirected_resolve)
+    monkeypatch.setattr(
+        staging,
+        '_is_top_level_link',
+        lambda path: path == batch_a.batch_dir,
+        raising=False,
+    )
+
+    await batch_a.cleanup()
+
+    assert not batch_a.batch_dir.exists()
+    assert marker_b.read_text() == 'keep'
+    assert batch_b.batch_dir in staging._ACTIVE_BATCHES
+    assert batch_a.batch_dir not in staging._ACTIVE_BATCHES
+    await batch_b.cleanup()
+
+
 def test_decode_data_url_compatibility_helper():
     assert staging._decode_data_url(_text_data_url('hi')) == b'hi'
     assert staging._decode_data_url('not-a-data-url') is None
