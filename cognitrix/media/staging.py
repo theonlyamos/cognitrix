@@ -167,8 +167,21 @@ def _attachment_cleanup_obligation_count() -> int:
         return _ATTACHMENT_CLEANUP_OBLIGATION_UNITS
 
 
+def _normalize_windows_path_spelling(path: str | os.PathLike[str]) -> Path:
+    value = os.fspath(path)
+    if os.name == 'nt' and value.startswith('\\\\?\\'):
+        tail = value[4:]
+        if len(tail) >= 3 and tail[1] == ':' and tail[2] in {'\\', '/'}:
+            value = tail
+        elif tail.upper().startswith('UNC\\'):
+            value = '\\\\' + tail[4:]
+    return Path(value)
+
+
 def _staging_root() -> Path:
-    return (settings.workdir / 'staging' / 'chat-media').resolve()
+    return _normalize_windows_path_spelling(
+        (settings.workdir / 'staging' / 'chat-media').resolve()
+    )
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -181,7 +194,9 @@ def _is_within(path: Path, root: Path) -> bool:
 
 def _lexical_absolute(path: Path) -> Path:
     """Normalize dot segments without resolving links or reparse points."""
-    return Path(os.path.abspath(os.fspath(path)))
+    return _normalize_windows_path_spelling(
+        os.path.abspath(os.fspath(path))
+    )
 
 
 def _path_lexists(path: Path) -> bool:
@@ -518,6 +533,21 @@ def _manifest_done_record(
     }
 
 
+def _identity_from_unsettled_creation(
+    error: secure_fs.CreatedChildCleanupError,
+    *,
+    expected_leaf: str,
+    directory: bool,
+) -> secure_fs.FileIdentity:
+    if (
+        error.leaf != expected_leaf
+        or error.is_directory is not directory
+        or error.identity.is_directory is not directory
+    ):
+        raise secure_fs.CapabilityError() from error
+    return error.identity
+
+
 def _create_pinned_batch(
     root: Path,
     leaf: str,
@@ -526,9 +556,26 @@ def _create_pinned_batch(
 ) -> None:
     with secure_fs.open_root(root) as root_capability:
         created['root'] = root_capability.identity
-        with root_capability.create_directory(leaf) as batch_capability:
+        try:
+            batch_capability = root_capability.create_directory(leaf)
+        except secure_fs.CreatedChildCleanupError as exc:
+            created['batch'] = _identity_from_unsettled_creation(
+                exc,
+                expected_leaf=leaf,
+                directory=True,
+            )
+            raise
+        with batch_capability:
             created['batch'] = batch_capability.identity
-            manifest = batch_capability.create_file(STAGING_MANIFEST_LEAF)
+            try:
+                manifest = batch_capability.create_file(STAGING_MANIFEST_LEAF)
+            except secure_fs.CreatedChildCleanupError as exc:
+                created['manifest_identity'] = _identity_from_unsettled_creation(
+                    exc,
+                    expected_leaf=STAGING_MANIFEST_LEAF,
+                    directory=False,
+                )
+                raise
             # Publish the pinned capability/identity to the caller before the
             # first manifest write so any partial-create failure remains
             # cleanup-addressable and capacity-accounted.
@@ -665,7 +712,17 @@ def _create_staged_file_capability(
             batch.batch_dir.name,
             expected_identity=batch._batch_identity,
         ) as batch_capability:
-            file_capability = batch_capability.create_file(leaf)
+            try:
+                file_capability = batch_capability.create_file(leaf)
+            except secure_fs.CreatedChildCleanupError as exc:
+                batch._entry_identities[leaf] = (
+                    _identity_from_unsettled_creation(
+                        exc,
+                        expected_leaf=leaf,
+                        directory=False,
+                    )
+                )
+                raise
             batch._entry_identities[leaf] = file_capability.identity
             return file_capability
 

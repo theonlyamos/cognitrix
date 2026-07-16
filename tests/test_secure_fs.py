@@ -563,6 +563,122 @@ def test_child_creation_flushes_parent_before_return(method_name: str) -> None:
     child.close()
 
 
+@pytest.mark.parametrize(
+    ('method_name', 'is_directory'),
+    [
+        ('create_file', False),
+        ('create_directory', True),
+    ],
+)
+def test_parent_flush_failure_rolls_back_exact_created_child(
+    method_name: str,
+    is_directory: bool,
+) -> None:
+    secure_fs = _secure_fs()
+    parent_identity = secure_fs.FileIdentity(1, b'p' * 16, True)
+    child_identity = secure_fs.FileIdentity(1, b'c' * 16, is_directory)
+
+    class Backend:
+        def __init__(self) -> None:
+            self.names = {'child_123': child_identity}
+            self.flushes = 0
+            self.events: list[tuple[object, ...]] = []
+
+        def open_child(self, parent, leaf, **kwargs):
+            self.events.append(('open_child', parent, leaf, kwargs))
+            return 502
+
+        def identity(self, handle, *, directory):
+            self.events.append(('identity', handle, directory))
+            return parent_identity if handle == 501 else child_identity
+
+        def flush_directory(self, handle) -> None:
+            self.flushes += 1
+            self.events.append(('flush_directory', handle, self.flushes))
+            if self.flushes == 1:
+                raise OSError('simulated parent flush failure')
+
+        def delete_child(
+            self,
+            parent,
+            leaf,
+            *,
+            expected_identity,
+            directory,
+        ) -> None:
+            self.events.append((
+                'delete_child',
+                parent,
+                leaf,
+                expected_identity,
+                directory,
+            ))
+            assert expected_identity == child_identity
+            assert directory is is_directory
+            assert self.names[leaf] == expected_identity
+            del self.names[leaf]
+
+        def close(self, handle) -> None:
+            self.events.append(('close', handle))
+
+    backend = Backend()
+    parent = secure_fs._DirectoryCapability(backend, 501, parent_identity)
+
+    with pytest.raises(OSError, match='parent flush failure'):
+        getattr(parent, method_name)('child_123')
+
+    assert backend.names == {}
+    close_index = backend.events.index(('close', 502))
+    delete_index = next(
+        index
+        for index, event in enumerate(backend.events)
+        if event[0] == 'delete_child'
+    )
+    assert close_index < delete_index
+    assert backend.flushes == 2
+
+
+@pytest.mark.parametrize(
+    ('method_name', 'is_directory'),
+    [
+        ('create_file', False),
+        ('create_directory', True),
+    ],
+)
+def test_failed_created_child_rollback_exposes_pinned_identity(
+    method_name: str,
+    is_directory: bool,
+) -> None:
+    secure_fs = _secure_fs()
+    parent_identity = secure_fs.FileIdentity(1, b'p' * 16, True)
+    child_identity = secure_fs.FileIdentity(1, b'c' * 16, is_directory)
+
+    class Backend:
+        def open_child(self, _parent, _leaf, **_kwargs):
+            return 512
+
+        def identity(self, handle, *, directory):
+            return parent_identity if handle == 511 else child_identity
+
+        def flush_directory(self, _handle) -> None:
+            raise OSError('simulated parent flush failure')
+
+        def delete_child(self, *_args, **_kwargs) -> None:
+            raise OSError('simulated exact rollback failure')
+
+        def close(self, _handle) -> None:
+            pass
+
+    parent = secure_fs._DirectoryCapability(Backend(), 511, parent_identity)
+
+    with pytest.raises(secure_fs.CreatedChildCleanupError) as exc:
+        getattr(parent, method_name)('child_123')
+
+    assert exc.value.leaf == 'child_123'
+    assert exc.value.identity == child_identity
+    assert exc.value.is_directory is is_directory
+
+
 def test_windows_backend_directory_flush_delegates_to_native_api() -> None:
     secure_fs = _secure_fs()
 

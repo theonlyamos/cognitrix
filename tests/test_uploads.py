@@ -112,6 +112,16 @@ def test_staging_limits_are_the_transport_contract():
     assert staging.MAX_UPLOAD_COUNT == 20
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='Windows path spelling contract')
+def test_lexical_absolute_normalizes_extended_windows_drive_prefix():
+    extended = Path('//?/C:/staging/chat-media/batch_123')
+    ordinary = Path('C:/staging/chat-media/batch_123')
+
+    assert staging._lexical_absolute(extended) == staging._lexical_absolute(
+        ordinary
+    )
+
+
 @pytest.mark.asyncio
 async def test_saturated_multipart_rejects_before_sweep_read_or_root_mutation(
     staging_workdir,
@@ -205,10 +215,13 @@ async def test_concurrent_attachment_admission_never_exceeds_global_unit_cap(
         assert all(error.status_code == 503 for error in rejected)
         assert staging._attachment_cleanup_obligation_count() == baseline + 4
     finally:
-        await __import__('asyncio').gather(
+        cleanup_results = await __import__('asyncio').gather(
             *(item.cleanup() for item in admitted),
             return_exceptions=True,
         )
+        for cleanup_result in cleanup_results:
+            if isinstance(cleanup_result, BaseException):
+                raise cleanup_result
     assert staging._attachment_cleanup_obligation_count() == baseline
     assert not staging_workdir.exists() or list(staging_workdir.iterdir()) == []
 
@@ -617,6 +630,153 @@ async def test_partial_batch_create_cleanup_failure_retains_reserved_obligation(
         monkeypatch.setattr(staging, '_remove_staged_batch_capability', original_remove)
         await staging.retry_pending_attachment_cleanups()
     assert staging._attachment_cleanup_obligation_count() == baseline
+
+
+@pytest.mark.parametrize(
+    ('phase', 'flush_number'),
+    [
+        ('batch', 1),
+        ('manifest', 2),
+        ('entry', 3),
+    ],
+)
+@pytest.mark.asyncio
+async def test_created_child_parent_flush_failure_leaves_no_staging_orphan(
+    staging_workdir,
+    monkeypatch,
+    phase,
+    flush_number,
+):
+    baseline_pending = staging.pending_attachment_cleanup_count()
+    baseline_units = staging._attachment_cleanup_obligation_count()
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+    original_flush = staging.secure_fs.DirectoryCapability.flush
+    flushes = 0
+
+    def fail_selected_parent_flush(capability):
+        nonlocal flushes
+        flushes += 1
+        if flushes == flush_number:
+            raise OSError(f'simulated {phase} parent flush failure')
+        return original_flush(capability)
+
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'flush',
+        fail_selected_parent_flush,
+    )
+    try:
+        with pytest.raises(Exception):
+            await staging.stage_upload_files(
+                [FakeUpload('known.txt', b'known')],
+                user_key='user',
+                stream_id=f'{phase}-flush-rollback',
+            )
+
+        assert not staging_workdir.exists() or list(staging_workdir.iterdir()) == []
+        assert staging.pending_attachment_cleanup_count() == baseline_pending
+        assert staging._attachment_cleanup_obligation_count() == baseline_units
+    finally:
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            'flush',
+            original_flush,
+        )
+        if staging_workdir.exists():
+            __import__('shutil').rmtree(staging_workdir)
+        staging_workdir.mkdir(parents=True, exist_ok=True)
+        await staging.retry_pending_attachment_cleanups()
+
+
+@pytest.mark.parametrize(
+    ('phase', 'flush_number', 'delete_method'),
+    [
+        ('batch', 1, 'delete_directory'),
+        ('manifest', 2, 'delete_file'),
+        ('entry', 3, 'delete_file'),
+    ],
+)
+@pytest.mark.asyncio
+async def test_unsettled_created_child_rollback_retains_cleanup_obligation(
+    staging_workdir,
+    monkeypatch,
+    phase,
+    flush_number,
+    delete_method,
+):
+    baseline_pending = staging.pending_attachment_cleanup_count()
+    baseline_units = staging._attachment_cleanup_obligation_count()
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+    original_flush = staging.secure_fs.DirectoryCapability.flush
+    original_delete = getattr(
+        staging.secure_fs.DirectoryCapability,
+        delete_method,
+    )
+    flushes = 0
+    deletion_blocked = True
+
+    def fail_selected_parent_flush(capability):
+        nonlocal flushes
+        flushes += 1
+        if flushes == flush_number:
+            raise OSError(f'simulated {phase} parent flush failure')
+        return original_flush(capability)
+
+    def block_exact_delete(capability, leaf, *, expected_identity):
+        if deletion_blocked:
+            raise OSError(f'simulated persistent {phase} rollback failure')
+        return original_delete(
+            capability,
+            leaf,
+            expected_identity=expected_identity,
+        )
+
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'flush',
+        fail_selected_parent_flush,
+    )
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        delete_method,
+        block_exact_delete,
+    )
+    try:
+        with pytest.raises(staging.AttachmentCleanupError):
+            await staging.stage_upload_files(
+                [FakeUpload('known.txt', b'known')],
+                user_key='user',
+                stream_id=f'{phase}-flush-retained',
+            )
+
+        assert staging_workdir.exists() and list(staging_workdir.iterdir())
+        assert staging.pending_attachment_cleanup_count() == baseline_pending + 1
+        assert staging._attachment_cleanup_obligation_count() == baseline_units + 1
+
+        deletion_blocked = False
+        await staging.retry_pending_attachment_cleanups()
+
+        assert not staging_workdir.exists() or list(staging_workdir.iterdir()) == []
+        assert staging.pending_attachment_cleanup_count() == baseline_pending
+        assert staging._attachment_cleanup_obligation_count() == baseline_units
+    finally:
+        deletion_blocked = False
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            'flush',
+            original_flush,
+        )
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            delete_method,
+            original_delete,
+        )
+        if staging_workdir.exists():
+            __import__('shutil').rmtree(staging_workdir)
+        staging_workdir.mkdir(parents=True, exist_ok=True)
+        await staging.retry_pending_attachment_cleanups()
 
 
 @pytest.mark.asyncio

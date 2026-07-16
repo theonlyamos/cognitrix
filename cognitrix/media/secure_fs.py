@@ -37,6 +37,22 @@ class FileIdentity:
     is_directory: bool
 
 
+class CreatedChildCleanupError(CapabilityError):
+    """A created child remains possible after its parent flush failed."""
+
+    def __init__(
+        self,
+        *,
+        leaf: str,
+        identity: FileIdentity,
+        is_directory: bool,
+    ) -> None:
+        super().__init__()
+        self.leaf = leaf
+        self.identity = identity
+        self.is_directory = is_directory
+
+
 _OPAQUE_COMPONENT = re.compile(r'[A-Za-z0-9_-]{1,128}\Z')
 _WINDOWS_RESERVED = {
     'CON',
@@ -170,18 +186,10 @@ class _DirectoryCapability(_Capability):
         )
 
     def create_directory(self, leaf: str) -> _DirectoryCapability:
-        capability = self._open_child(
+        return self._create_child(
             leaf,
             directory=True,
-            create=True,
-            writable=True,
         )
-        try:
-            self.flush()
-        except BaseException:
-            capability.close()
-            raise
-        return capability
 
     def open_file(
         self,
@@ -198,16 +206,53 @@ class _DirectoryCapability(_Capability):
         )
 
     def create_file(self, leaf: str) -> _FileCapability:
-        capability = self._open_child(
+        return self._create_child(
             leaf,
             directory=False,
+        )
+
+    def _create_child(self, leaf: str, *, directory: bool):
+        opaque_leaf = _validate_leaf(leaf)
+        capability = self._open_child(
+            opaque_leaf,
+            directory=directory,
             create=True,
             writable=True,
         )
         try:
             self.flush()
         except BaseException:
-            capability.close()
+            identity = capability.identity
+            cleanup_errors: list[BaseException] = []
+            try:
+                capability.close()
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+            try:
+                if directory:
+                    self.delete_directory(
+                        opaque_leaf,
+                        expected_identity=identity,
+                    )
+                else:
+                    self.delete_file(
+                        opaque_leaf,
+                        expected_identity=identity,
+                    )
+            except FileNotFoundError:
+                pass
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+            try:
+                self.flush()
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+            if cleanup_errors:
+                raise CreatedChildCleanupError(
+                    leaf=opaque_leaf,
+                    identity=identity,
+                    is_directory=directory,
+                ) from cleanup_errors[-1]
             raise
         return capability
 
@@ -1117,6 +1162,7 @@ def open_root(path: str | os.PathLike[str]) -> DirectoryCapability:
 
 __all__ = [
     'CapabilityError',
+    'CreatedChildCleanupError',
     'DirectoryCapability',
     'FileCapability',
     'FileIdentity',
