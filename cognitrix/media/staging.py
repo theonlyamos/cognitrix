@@ -6,6 +6,7 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import logging
 import os
 import shutil
 import stat
@@ -19,6 +20,9 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from cognitrix.config import settings
+from cognitrix.media.service import media_assets
+from cognitrix.media.types import MediaOwnership, MediaValidationError
+from cognitrix.tools.utils import ArtifactRef
 
 from .types import StagedAttachment
 
@@ -26,10 +30,13 @@ CHUNK_BYTES = 1024 * 1024
 MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024
 MAX_UPLOAD_TOTAL_BYTES = 25 * 1024 * 1024
 MAX_UPLOAD_COUNT = 20
+STAGING_LEASE_SECONDS = 3600.0
 
 _ACTIVE_BATCHES: set[Path] = set()
+_BATCH_LEASES: dict[Path, tuple[str, float | None]] = {}
 _ACTIVE_LOCK = threading.RLock()
 _T = TypeVar('_T')
+logger = logging.getLogger('cognitrix.log')
 
 
 def _staging_root() -> Path:
@@ -184,6 +191,20 @@ class StagedAttachmentSet:
     _cleanup_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _cleaned: bool = field(default=False, init=False, repr=False)
 
+    async def claim(self) -> None:
+        """Atomically transfer a queued batch to the SSE consumer."""
+        batch = _lexical_absolute(self.batch_dir)
+        with _ACTIVE_LOCK:
+            state = _BATCH_LEASES.get(batch)
+            if state is None:
+                raise MediaValidationError('Staged attachments are unavailable')
+            phase, expires_at = state
+            if phase != 'queued':
+                raise MediaValidationError('Staged attachments are unavailable')
+            # Even an elapsed queued lease may be claimed if the sweep has not
+            # atomically reserved it yet. This avoids deleting a dequeued batch.
+            _BATCH_LEASES[batch] = ('claimed', None)
+
     async def cleanup(self) -> None:
         """Delete this batch exactly once; repeated calls are harmless."""
         async with self._cleanup_lock:
@@ -210,6 +231,7 @@ class StagedAttachmentSet:
                 # leave the batch inactive so a later cleanup/TTL sweep can retry.
                 with _ACTIVE_LOCK:
                     _ACTIVE_BATCHES.discard(batch)
+                    _BATCH_LEASES.pop(batch, None)
             if cancelled is not None:
                 raise cancelled
 
@@ -224,6 +246,7 @@ async def _create_batch(*, user_key: str, stream_id: str) -> StagedAttachmentSet
         raise RuntimeError('Unsafe staging batch path')
     with _ACTIVE_LOCK:
         _ACTIVE_BATCHES.add(batch)
+        _BATCH_LEASES[batch] = ('writing', None)
     try:
         await _run_thread_joined(batch.mkdir, 0o700, False, False)
     except BaseException:
@@ -233,8 +256,18 @@ async def _create_batch(*, user_key: str, stream_id: str) -> StagedAttachmentSet
         finally:
             with _ACTIVE_LOCK:
                 _ACTIVE_BATCHES.discard(batch)
+                _BATCH_LEASES.pop(batch, None)
         raise
     return StagedAttachmentSet(batch_dir=batch, entries=[])
+
+
+def _mark_queued(batch: StagedAttachmentSet) -> None:
+    path = _lexical_absolute(batch.batch_dir)
+    with _ACTIVE_LOCK:
+        state = _BATCH_LEASES.get(path)
+        if state is None or state[0] != 'writing':
+            raise RuntimeError('Staging ownership was lost before enqueue')
+        _BATCH_LEASES[path] = ('queued', time.time() + STAGING_LEASE_SECONDS)
 
 
 async def _close_uploads(files: list[Any]) -> None:
@@ -333,6 +366,11 @@ async def stage_upload_files(
         raise
     try:
         await _close_uploads(uploads)
+    except BaseException:
+        await batch.cleanup()
+        raise
+    try:
+        _mark_queued(batch)
     except BaseException:
         await batch.cleanup()
         raise
@@ -448,10 +486,242 @@ async def stage_legacy_data_urls(
                 mime=mime,
                 expected_size=size,
             )
+        _mark_queued(batch)
         return batch
     except BaseException:
         await batch.cleanup()
         raise
+
+
+@dataclass(frozen=True)
+class PromotedAttachments:
+    image_refs: list[ArtifactRef]
+    document_paths: list[dict[str, str]]
+
+
+def _preflight_staged_entries(staged: StagedAttachmentSet) -> list[StagedAttachment]:
+    root = _staging_root()
+    raw_batch = Path(staged.batch_dir)
+    batch = _lexical_absolute(raw_batch)
+    if not raw_batch.is_absolute() or raw_batch != batch:
+        raise MediaValidationError('Staged attachments are unavailable')
+    if batch.parent != root or not _is_within(batch, root):
+        raise MediaValidationError('Staged attachments are unavailable')
+    if _is_top_level_link(batch):
+        raise MediaValidationError('Staged attachments are unavailable')
+    try:
+        batch_metadata = os.lstat(batch)
+    except OSError as exc:
+        raise MediaValidationError('Staged attachments are unavailable') from exc
+    if not stat.S_ISDIR(batch_metadata.st_mode):
+        raise MediaValidationError('Staged attachments are unavailable')
+
+    entries = list(staged.entries)
+    if len(entries) > MAX_UPLOAD_COUNT:
+        raise MediaValidationError('Staged attachments exceed the count limit')
+    total = 0
+    for entry in entries:
+        raw_path = Path(entry.path)
+        path = _lexical_absolute(raw_path)
+        if not raw_path.is_absolute() or raw_path != path:
+            raise MediaValidationError('Staged attachments are unavailable')
+        if path.parent != batch or not _is_within(path, batch):
+            raise MediaValidationError('Staged attachments are unavailable')
+        if _is_top_level_link(path):
+            raise MediaValidationError('Staged attachments are unavailable')
+        try:
+            metadata = os.lstat(path)
+        except OSError as exc:
+            raise MediaValidationError('Staged attachments are unavailable') from exc
+        if not stat.S_ISREG(metadata.st_mode):
+            raise MediaValidationError('Staged attachment is not a regular file')
+        if metadata.st_size != entry.size_bytes or entry.size_bytes < 0:
+            raise MediaValidationError('Staged attachment size changed')
+        if entry.size_bytes > MAX_UPLOAD_FILE_BYTES:
+            raise MediaValidationError('Staged attachment exceeds the size limit')
+        total += entry.size_bytes
+        if total > MAX_UPLOAD_TOTAL_BYTES:
+            raise MediaValidationError('Staged attachments exceed the total size limit')
+    return entries
+
+
+def _tools_upload_root() -> Path:
+    tools_root = _lexical_absolute(settings.tools_root)
+    uploads = _lexical_absolute(tools_root / 'uploads')
+    if uploads.parent != tools_root:
+        raise MediaValidationError('Upload destination is unavailable')
+    uploads.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if _is_top_level_link(uploads):
+        raise MediaValidationError('Upload destination is unavailable')
+    return uploads
+
+
+def _copy_document_transaction(
+    source: Path,
+    temporary: Path,
+    final: Path,
+    expected_size: int,
+) -> None:
+    if _is_top_level_link(source):
+        raise MediaValidationError('Staged attachments are unavailable')
+    copied = 0
+    temporary.parent.mkdir(mode=0o700, parents=False, exist_ok=False)
+    if _is_top_level_link(temporary.parent):
+        raise MediaValidationError('Upload destination is unavailable')
+    try:
+        with source.open('rb') as input_stream, temporary.open('xb') as output_stream:
+            while True:
+                chunk = input_stream.read(CHUNK_BYTES)
+                if not chunk:
+                    break
+                copied += len(chunk)
+                if copied > expected_size or copied > MAX_UPLOAD_FILE_BYTES:
+                    raise MediaValidationError('Staged attachment size changed')
+                output_stream.write(chunk)
+        if copied != expected_size:
+            raise MediaValidationError('Staged attachment size changed')
+        os.replace(temporary, final)
+        source.unlink()
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _document_final_path(relative_value: str) -> Path:
+    relative = Path(relative_value)
+    if (
+        relative.is_absolute()
+        or relative.drive
+        or '..' in relative.parts
+        or len(relative.parts) < 3
+        or relative.parts[0] != 'uploads'
+    ):
+        raise MediaValidationError('Invalid promoted document path')
+    tools_root = _lexical_absolute(settings.tools_root)
+    path = _lexical_absolute(tools_root / relative)
+    uploads = _lexical_absolute(tools_root / 'uploads')
+    if not _is_within(path, uploads):
+        raise MediaValidationError('Invalid promoted document path')
+    return path
+
+
+async def _rollback_promoted_attachments(
+    promoted: PromotedAttachments,
+    ownership: MediaOwnership,
+) -> None:
+    """Remove a promoted batch after a pre-scheduling stop or failure."""
+    errors: list[BaseException] = []
+    if promoted.image_refs:
+        try:
+            await media_assets.delete_artifacts(
+                [item.id for item in promoted.image_refs], ownership
+            )
+        except BaseException as exc:
+            errors.append(exc)
+            logger.exception('Failed to roll back promoted image artifacts')
+    for document in reversed(promoted.document_paths):
+        try:
+            path = _document_final_path(document['path'])
+            await _run_thread_joined(lambda: path.unlink(missing_ok=True))
+            try:
+                await _run_thread_joined(path.parent.rmdir)
+            except OSError:
+                pass
+        except BaseException as exc:
+            errors.append(exc)
+            logger.exception('Failed to roll back promoted document')
+    if errors:
+        raise errors[0]
+
+
+async def rollback_promoted_attachments(
+    promoted: PromotedAttachments,
+    ownership: MediaOwnership,
+) -> None:
+    """Cancellation-settled public rollback for an already promoted batch."""
+    await _run_awaitable_joined(
+        _rollback_promoted_attachments(promoted, ownership)
+    )
+
+
+async def _rollback_joined(
+    promoted: PromotedAttachments,
+    ownership: MediaOwnership,
+) -> None:
+    try:
+        await rollback_promoted_attachments(promoted, ownership)
+    except BaseException:
+        logger.exception('Attachment promotion rollback did not fully complete')
+
+
+async def promote_staged_attachments(
+    staged: StagedAttachmentSet,
+    ownership: MediaOwnership,
+) -> PromotedAttachments:
+    """Transactionally promote one claimed batch into session-owned storage."""
+    promoted = PromotedAttachments(image_refs=[], document_paths=[])
+    primary_error: BaseException | None = None
+    primary_traceback = None
+    try:
+        await staged.claim()
+        entries = await _run_thread_joined(_preflight_staged_entries, staged)
+        documents: list[StagedAttachment] = []
+        for entry in entries:
+            image_ref = await media_assets.ingest_staged_image_if_recognized(
+                entry, ownership
+            )
+            if image_ref is None:
+                documents.append(entry)
+            else:
+                promoted.image_refs.append(image_ref)
+
+        if documents:
+            uploads = await _run_thread_joined(_tools_upload_root)
+            for document in documents:
+                opaque = uuid4().hex
+                directory = _lexical_absolute(uploads / opaque)
+                filename = _safe_filename(document.filename)
+                final = _lexical_absolute(directory / filename)
+                temporary = _lexical_absolute(
+                    directory / f'.{uuid4().hex}.tmp'
+                )
+                if (
+                    directory.parent != uploads
+                    or not _is_within(directory, uploads)
+                    or final.parent != directory
+                    or temporary.parent != directory
+                ):
+                    raise MediaValidationError('Upload destination is unavailable')
+                relative = final.relative_to(_lexical_absolute(settings.tools_root))
+                promoted.document_paths.append({
+                    'name': filename,
+                    'path': relative.as_posix(),
+                })
+                await _run_thread_joined(
+                    _copy_document_transaction,
+                    _lexical_absolute(document.path),
+                    temporary,
+                    final,
+                    document.size_bytes,
+                )
+    except BaseException as exc:
+        primary_error = exc
+        primary_traceback = exc.__traceback__
+
+    try:
+        await staged.cleanup()
+    except BaseException as exc:
+        if primary_error is None:
+            primary_error = exc
+            primary_traceback = exc.__traceback__
+        else:
+            logger.exception('Failed to clean staged attachment batch')
+
+    if primary_error is not None:
+        if promoted.image_refs or promoted.document_paths:
+            await _rollback_joined(promoted, ownership)
+        raise primary_error.with_traceback(primary_traceback)
+    return promoted
 
 
 async def sweep_stale_staging(now=None, max_age_seconds: float = 3600) -> int:
@@ -474,14 +744,29 @@ async def sweep_stale_staging(now=None, max_age_seconds: float = 3600) -> int:
         if lexical.parent != root:
             continue
         with _ACTIVE_LOCK:
-            if lexical in _ACTIVE_BATCHES:
-                continue
+            lease = _BATCH_LEASES.get(lexical)
+            if lease is not None:
+                phase, expires_at = lease
+                if phase in {'writing', 'claimed'}:
+                    continue
+                if expires_at is None or timestamp < expires_at:
+                    continue
         try:
             metadata = await _run_thread_joined(os.lstat, lexical)
         except FileNotFoundError:
             continue
         if timestamp - metadata.st_mtime <= max_age_seconds:
             continue
+        # Claim deletion under the same lock used by StagedAttachmentSet.claim.
+        # A claimant either wins first or observes that the lease is gone.
+        with _ACTIVE_LOCK:
+            lease = _BATCH_LEASES.get(lexical)
+            if lease is not None:
+                phase, expires_at = lease
+                if phase != 'queued' or expires_at is None or timestamp < expires_at:
+                    continue
+                _BATCH_LEASES.pop(lexical, None)
+                _ACTIVE_BATCHES.discard(lexical)
         try:
             await _run_thread_joined(_remove_batch_path, lexical)
         except FileNotFoundError:
@@ -495,8 +780,12 @@ __all__ = [
     'MAX_UPLOAD_COUNT',
     'MAX_UPLOAD_FILE_BYTES',
     'MAX_UPLOAD_TOTAL_BYTES',
+    'PromotedAttachments',
+    'STAGING_LEASE_SECONDS',
     'StagedAttachmentSet',
     '_decode_data_url',
+    'promote_staged_attachments',
+    'rollback_promoted_attachments',
     'stage_legacy_data_urls',
     'stage_upload_files',
     'sweep_stale_staging',

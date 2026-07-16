@@ -254,6 +254,42 @@ async def test_cleanup_is_idempotent_and_stale_sweep_excludes_active_batches(
 
 
 @pytest.mark.asyncio
+async def test_queued_lease_survives_default_sweep_then_expires_for_ttl_cleanup(
+    staging_workdir,
+):
+    queued = await staging.stage_upload_files(
+        [FakeUpload('queued.txt', b'queued')], user_key='user', stream_id='stream'
+    )
+    created = time.time()
+    old = created - 7200
+    os.utime(queued.batch_dir, (old, old))
+
+    assert await staging.sweep_stale_staging(now=created) == 0
+    assert queued.batch_dir.exists()
+    assert await staging.sweep_stale_staging(
+        now=created + staging.STAGING_LEASE_SECONDS + 1
+    ) == 1
+    assert not queued.batch_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_claim_can_win_after_expiry_before_sweep_reserves_batch(staging_workdir):
+    queued = await staging.stage_upload_files(
+        [FakeUpload('queued.txt', b'queued')], user_key='user', stream_id='stream'
+    )
+    batch = queued.batch_dir.resolve()
+    with staging._ACTIVE_LOCK:
+        staging._BATCH_LEASES[batch] = ('queued', time.time() - 1)
+
+    await queued.claim()
+    old = time.time() - 7200
+    os.utime(queued.batch_dir, (old, old))
+    assert await staging.sweep_stale_staging(now=time.time()) == 0
+    assert queued.batch_dir.exists()
+    await queued.cleanup()
+
+
+@pytest.mark.asyncio
 async def test_cleanup_settles_filesystem_removal_before_propagating_cancellation(
     staging_workdir, monkeypatch
 ):

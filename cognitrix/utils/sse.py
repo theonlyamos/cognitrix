@@ -8,6 +8,12 @@ from sse_starlette.sse import EventSourceResponse
 
 from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.agents.generators import TaskInstructor
+from cognitrix.media import MediaOwnership, media_assets
+from cognitrix.media.staging import (
+    PromotedAttachments,
+    promote_staged_attachments,
+    rollback_promoted_attachments,
+)
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 from cognitrix.tools.utils import ToolExecutionContext
@@ -24,6 +30,9 @@ _QUEUE_TIMEOUT = object()
 _CONSUMER_GONE = object()
 _TURN_TERMINAL = object()
 _NO_REPLAY = object()
+_ATTACHMENT_UNAVAILABLE = (
+    'Attachments or the selected image are unavailable. Please try again.'
+)
 
 
 class SSEManagerCapacityError(RuntimeError):
@@ -45,6 +54,7 @@ class SSEManager:
         self.turn_terminal: dict | None = None
         self.completed_output_at: float | None = None
         self.active_task: asyncio.Task | None = None
+        self._active_task_started = True
         self.turn_pending = False
         self.stop_requested = False
         # A superseded consumer may already have dequeued one item. Preserve it
@@ -79,7 +89,11 @@ class SSEManager:
             self.active_task is not None,
             self.active_task.done() if self.active_task is not None else None,
         )
-        if self.active_task is not None and not self.active_task.done():
+        if (
+            self.active_task is not None
+            and not self.active_task.done()
+            and self._active_task_started
+        ):
             self.active_task.cancel()
         return True
 
@@ -88,6 +102,7 @@ class SSEManager:
         if task is not None and self.active_task is not task:
             return
         self.active_task = None
+        self._active_task_started = True
         self.turn_pending = False
         self.stop_requested = False
 
@@ -239,6 +254,212 @@ class SSEManager:
         await session.save()
         return session
 
+    async def _process_chat_action(
+        self,
+        action: dict,
+        output_queue: asyncio.Queue,
+        terminal_event: asyncio.Event,
+    ) -> None:
+        """Own a dequeued chat action independently of one HTTP consumer."""
+        # This assignment happens before the coroutine's first await. Stops
+        # recorded before it starts therefore do not cancel away its cleanup.
+        self._active_task_started = True
+        requested_sid = action.get('session_id')
+        staged = action.get('staged_attachments')
+        selected_id = action.get('edit_source_artifact_id')
+        has_media = staged is not None or bool(selected_id)
+        session = None
+        ownership: MediaOwnership | None = None
+        promoted: PromotedAttachments | None = None
+        handed_off = False
+        terminal = {
+            'type': 'turn_complete',
+            'content': '',
+            'session_id': requested_sid,
+        }
+
+        async def emit(payload):
+            if isinstance(payload, dict):
+                payload = {
+                    **payload,
+                    'session_id': session.id if session is not None else requested_sid,
+                }
+            await output_queue.put(payload)
+
+        try:
+            if self.stop_requested:
+                raise asyncio.CancelledError
+
+            try:
+                session = await self._resolve_session(requested_sid)
+            except Exception:
+                logger.exception('Failed to resolve chat session')
+                await emit({
+                    'type': 'error',
+                    'content': (
+                        _ATTACHMENT_UNAVAILABLE if has_media else
+                        'Could not load the conversation. Please try again.'
+                    ),
+                })
+                return
+            if self.stop_requested:
+                raise asyncio.CancelledError
+            if session is None:
+                await emit({
+                    'type': 'error',
+                    'content': (
+                        _ATTACHMENT_UNAVAILABLE if has_media else
+                        'This conversation no longer exists â€” start a new one.'
+                    ),
+                })
+                return
+            terminal['session_id'] = session.id
+            session_agent_id = getattr(session, 'agent_id', None)
+            if session_agent_id and str(session_agent_id) != str(self.agent.id):
+                logger.warning(
+                    'Rejected chat session with wrong agent session=%s', session.id
+                )
+                await emit({
+                    'type': 'error',
+                    'content': (
+                        _ATTACHMENT_UNAVAILABLE if has_media else
+                        'Could not load the conversation. Please try again.'
+                    ),
+                })
+                return
+
+            ownership = MediaOwnership(
+                session_id=str(session.id),
+                user_id=self.user_key,
+                agent_id=str(self.agent.id),
+            )
+            selected_ref = None
+            if selected_id:
+                selected_ref = await media_assets.resolve_ref(
+                    str(selected_id), ownership
+                )
+                if self.stop_requested:
+                    raise asyncio.CancelledError
+
+            if staged is not None:
+                promoted = await promote_staged_attachments(staged, ownership)
+                if self.stop_requested:
+                    raise asyncio.CancelledError
+
+            image_refs = list(promoted.image_refs) if promoted else []
+            documents = list(promoted.document_paths) if promoted else []
+            attachments = None
+            if image_refs or documents or selected_ref is not None:
+                attachments = {
+                    'images': [item.model_dump() for item in image_refs],
+                    'files': documents,
+                    'image_selection': (
+                        selected_ref.model_dump() if selected_ref is not None else None
+                    ),
+                }
+            if promoted is not None:
+                await emit({
+                    'type': 'attachments_ingested',
+                    'artifacts': [item.model_dump() for item in image_refs],
+                    'document_count': len(documents),
+                })
+                if self.stop_requested:
+                    raise asyncio.CancelledError
+
+            user_prompt = action['content']
+            bypass = bool(action.get('bypass_permissions'))
+            # Attachment-bearing prompts use Session so their immutable refs
+            # are consumed and persisted instead of being orphaned by a task.
+            if is_multi_step_task(user_prompt) and attachments is None:
+                await emit({
+                    'type': 'status',
+                    'content': 'Planning multi-step task...',
+                })
+
+                async def notify_task(task_id):
+                    await emit({
+                        'type': 'status',
+                        'content': (
+                            'Task created â€” watch it run live on the task page '
+                            f'(/tasks/{task_id}).'
+                        ),
+                        'task_id': task_id,
+                    })
+
+                handed_off = True
+                result = await handle_multi_step_task(
+                    user_prompt,
+                    self.agent,
+                    session,
+                    self.agent.llm,
+                    stream=False,
+                    interface='web',
+                    on_task_created=notify_task,
+                )
+                terminal = {
+                    'type': 'multistep_result',
+                    'content': result,
+                    'session_id': session.id,
+                }
+            else:
+                from cognitrix.safety.approval_gate import web_turn_ctx
+
+                token = web_turn_ctx.set({
+                    'emit': emit,
+                    'session_id': session.id,
+                    'bypass': bypass,
+                    'user_key': self.user_key,
+                })
+                try:
+                    handed_off = True
+                    await session(
+                        user_prompt,
+                        self.agent,
+                        interface='web',
+                        stream=True,
+                        output=emit,
+                        wsquery={'type': 'generate', 'action': 'chat_message'},
+                        attachments=attachments,
+                        tool_context=ToolExecutionContext(user_id=self.user_key),
+                    )
+                finally:
+                    web_turn_ctx.reset(token)
+        except asyncio.CancelledError:
+            terminal = {
+                'type': 'turn_stopped',
+                'content': '',
+                'session_id': session.id if session is not None else requested_sid,
+            }
+        except Exception as exc:
+            logger.exception('SSE chat action failed')
+            await emit({
+                'type': 'error',
+                'content': _ATTACHMENT_UNAVAILABLE if has_media else str(exc),
+            })
+        finally:
+            if promoted is not None and not handed_off and ownership is not None:
+                try:
+                    await rollback_promoted_attachments(promoted, ownership)
+                except BaseException:
+                    logger.exception('Failed to roll back unscheduled attachments')
+            if staged is not None:
+                try:
+                    await staged.cleanup()
+                except BaseException:
+                    logger.exception('Failed to clean staged chat attachments')
+            if self.stop_requested:
+                terminal = {
+                    'type': 'turn_stopped',
+                    'content': '',
+                    'session_id': terminal.get('session_id'),
+                }
+            self._complete_turn_output(
+                asyncio.current_task(),
+                output_queue,
+                terminal_event,
+                terminal,
+            )
+
     async def sse_endpoint(self, request: Request):
         async def event_generator(superseded: asyncio.Event):
             while True:
@@ -355,214 +576,15 @@ class SSEManager:
                         yield {'event': 'message', 'data': json.dumps({'type': 'generate', 'content': response.current_chunk, 'action': 'system_prompt'})}
 
                 elif action['type'] == 'chat_message':
-                    user_prompt = action['content']
-                    requested_sid = action.get('session_id')
-                    if self.stop_requested:
-                        self.finish_turn()
-                        yield {'event': 'message', 'data': json.dumps({
-                            'type': 'turn_stopped', 'content': '',
-                            'session_id': requested_sid,
-                        })}
-                        continue
-                    # Uploaded attachments: images → vision, files → workspace paths.
-                    chat_images = action.get('images') or []
-                    chat_files = action.get('files') or []
-                    chat_attachments = (
-                        {'images': chat_images, 'files': chat_files}
-                        if (chat_images or chat_files) else None
+                    out_queue, out_terminal_event = self._open_turn_output()
+                    self._active_task_started = False
+                    run_task = asyncio.create_task(
+                        self._process_chat_action(
+                            action, out_queue, out_terminal_event
+                        )
                     )
-                    # Bypass = auto-approve risky tools for this turn (approvals only).
-                    chat_bypass = bool(action.get('bypass_permissions'))
-
-                    # Resolve the conversation up front (own try so a DB error
-                    # can't propagate out of this generator and kill the SSE
-                    # stream). Every reply event is tagged with session_id so
-                    # the client can route/drop it against its active thread.
-                    try:
-                        session = await self._resolve_session(requested_sid)
-                    except Exception:
-                        logger.exception("Failed to resolve chat session")
-                        self.finish_turn()
-                        yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': 'Could not load the conversation. Please try again.', 'session_id': requested_sid})}
-                        continue
-                    if session is None:
-                        # Stale id (deleted elsewhere). Tag with the REQUESTED id
-                        # so the client's filter lets it through; never `return`
-                        # here — that would end the stream for this user+agent.
-                        self.finish_turn()
-                        yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': 'This conversation no longer exists — start a new one.', 'session_id': requested_sid})}
-                        continue
-
-                    if self.stop_requested:
-                        self.finish_turn()
-                        yield {'event': 'message', 'data': json.dumps({
-                            'type': 'turn_stopped', 'content': '',
-                            'session_id': session.id,
-                        })}
-                        continue
-
-                    # Check for multi-step tasks
-                    if is_multi_step_task(user_prompt):
-                        # Bridge through a queue so the run link reaches the
-                        # client immediately — the run itself blocks for its
-                        # whole duration, and the user can watch it live on
-                        # the task page meanwhile.
-                        ms_queue, ms_terminal_event = self._open_turn_output()
-                        await ms_queue.put({
-                            'type': 'status',
-                            'content': 'Planning multi-step task...',
-                            'session_id': session.id,
-                        })
-
-                        async def _notify_task(task_id, _q=ms_queue, _sid=session.id):
-                            await _q.put({
-                                'type': 'status',
-                                'content': f'Task created — watch it run live on the task page (/tasks/{task_id}).',
-                                'task_id': task_id,
-                                'session_id': _sid,
-                            })
-
-                        # ponytail: multi-step forwards file paths only (no vision) in v1.
-                        ms_prompt = user_prompt
-                        if chat_files:
-                            _fpaths = '\n'.join(f.get('path', '') for f in chat_files if f.get('path'))
-                            if _fpaths:
-                                ms_prompt = f"{user_prompt}\n\n[User uploaded files, readable with your file tools:]\n{_fpaths}"
-
-                        async def _run_multistep(
-                            _prompt=ms_prompt,
-                            _sess=session,
-                            _q=ms_queue,
-                            _terminal_event=ms_terminal_event,
-                        ):
-                            terminal = {
-                                'type': 'error',
-                                'content': 'Multi-step task failed unexpectedly.',
-                                'session_id': _sess.id,
-                            }
-                            try:
-                                result = await handle_multi_step_task(
-                                    _prompt,
-                                    self.agent,
-                                    _sess,
-                                    self.agent.llm,
-                                    stream=False,
-                                    interface='web',
-                                    on_task_created=_notify_task,
-                                )
-                                terminal = {
-                                    'type': 'multistep_result',
-                                    'content': result,
-                                    'session_id': _sess.id,
-                                }
-                            except asyncio.CancelledError:
-                                terminal = {
-                                    'type': 'turn_stopped',
-                                    'content': '',
-                                    'session_id': _sess.id,
-                                }
-                            except Exception as e:
-                                logger.exception("Multi-step chat task failed")
-                                terminal = {
-                                    'type': 'error',
-                                    'content': f'Multi-step task failed: {str(e)}',
-                                    'session_id': _sess.id,
-                                }
-                            finally:
-                                if self.stop_requested:
-                                    terminal = {
-                                        'type': 'turn_stopped',
-                                        'content': '',
-                                        'session_id': _sess.id,
-                                    }
-                                self._complete_turn_output(
-                                    asyncio.current_task(),
-                                    _q,
-                                    _terminal_event,
-                                    terminal,
-                                )
-
-                        ms_task = asyncio.create_task(_run_multistep())
-                        self.active_task = ms_task
-                        if self.stop_requested:
-                            ms_task.cancel()
-                    else:
-                        # Route through the full session loop so the web path gets
-                        # tools + safety gating + history + persistence (previously it
-                        # called agent.generate() directly, bypassing all of that).
-                        # Bridge the session's callback-based output to this SSE
-                        # generator through a queue.
-                        out_queue, out_terminal_event = self._open_turn_output()
-
-                        async def _emit(payload, _q=out_queue, _sid=session.id):
-                            if isinstance(payload, dict):
-                                payload = {**payload, 'session_id': _sid}
-                            await _q.put(payload)
-
-                        async def _run(
-                            _prompt=user_prompt,
-                            _sess=session,
-                            _q=out_queue,
-                            _terminal_event=out_terminal_event,
-                            _att=chat_attachments,
-                            _bypass=chat_bypass,
-                        ):
-                            # Bind the turn's approval context (emit channel, owner,
-                            # bypass) so a risky tool can prompt the browser.
-                            from cognitrix.safety.approval_gate import web_turn_ctx
-                            token = web_turn_ctx.set({
-                                'emit': _emit,
-                                'session_id': _sess.id,
-                                'bypass': _bypass,
-                                'user_key': self.user_key,
-                            })
-                            terminal_type = 'turn_complete'
-                            try:
-                                await _sess(
-                                    _prompt, self.agent,
-                                    interface='web', stream=True, output=_emit,
-                                    wsquery={'type': 'generate', 'action': 'chat_message'},
-                                    attachments=_att,
-                                    tool_context=ToolExecutionContext(user_id=self.user_key),
-                                )
-                            except asyncio.CancelledError:
-                                terminal_type = 'turn_stopped'
-                                logger.info("Chat turn cancelled for session=%s", _sess.id)
-                            except Exception as e:
-                                logger.exception("SSE session turn failed")
-                                await _q.put({
-                                    'type': 'error',
-                                    'content': str(e),
-                                    'session_id': _sess.id,
-                                })
-                            finally:
-                                try:
-                                    web_turn_ctx.reset(token)
-                                finally:
-                                    if self.stop_requested:
-                                        terminal_type = 'turn_stopped'
-                                    # Completion is control state and must not
-                                    # block behind the bounded streamed data.
-                                    self._complete_turn_output(
-                                        asyncio.current_task(),
-                                        _q,
-                                        _terminal_event,
-                                        {
-                                            'type': terminal_type,
-                                            'content': '',
-                                            'session_id': _sess.id,
-                                        },
-                                    )
-                                    logger.info(
-                                        "Queued %s for session=%s",
-                                        terminal_type,
-                                        _sess.id,
-                                    )
-
-                        run_task = asyncio.create_task(_run())
-                        self.active_task = run_task
-                        if self.stop_requested:
-                            run_task.cancel()
+                    self.active_task = run_task
+                    continue
 
         async def owned_event_generator():
             generation, superseded = self._claim_consumer()

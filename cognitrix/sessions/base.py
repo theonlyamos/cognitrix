@@ -288,19 +288,47 @@ class Session(Model):
             wsquery = {}
         if save_history:
             self.update_history(agent.process_prompt(message))
-            # User uploads ride alongside the text turn: images become vision
-            # messages (kept on disk, encoded at send-time by format_query), and
-            # non-image files are surfaced as paths the agent can open with its
-            # file tools.
+            # User uploads ride alongside the text turn as immutable artifact
+            # references and confined tool-root-relative document paths.
             if attachments:
+                from pathlib import Path
+
+                from cognitrix.tools.utils import ArtifactRef
+
                 extra: list[dict[str, Any]] = []
                 for img in attachments.get('images', []):
-                    path = img.get('path')
-                    if path:
-                        extra.append({'role': 'User', 'type': 'image', 'content': path})
+                    artifact = ArtifactRef.model_validate(img).model_dump()
+                    extra.append({
+                        'role': 'User',
+                        'type': 'image',
+                        'content': f"[Current image artifact: {artifact['id']}]",
+                        'artifact': artifact,
+                    })
+                selected = attachments.get('image_selection')
+                if selected:
+                    artifact = ArtifactRef.model_validate(selected).model_dump()
+                    extra.append({
+                        'role': 'User',
+                        'type': 'image_selection',
+                        'content': f"[Selected source image artifact: {artifact['id']}]",
+                        'artifact': artifact,
+                    })
                 files = attachments.get('files', [])
                 if files:
-                    paths = '\n'.join(f.get('path', '') for f in files if f.get('path'))
+                    safe_paths = []
+                    for item in files:
+                        value = str(item.get('path') or '')
+                        relative = Path(value)
+                        if (
+                            value
+                            and not relative.is_absolute()
+                            and not relative.drive
+                            and '..' not in relative.parts
+                            and len(relative.parts) >= 3
+                            and relative.parts[0] == 'uploads'
+                        ):
+                            safe_paths.append(relative.as_posix())
+                    paths = '\n'.join(safe_paths)
                     if paths:
                         extra.append({
                             'role': 'User', 'type': 'text',

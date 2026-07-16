@@ -122,9 +122,23 @@ async def _read_path(path: Path) -> bytes:
     return await asyncio.to_thread(path.read_bytes)
 
 
+def _has_supported_raster_signature(data: bytes) -> bool:
+    """Recognize supported raster containers without trusting declared MIME."""
+    return (
+        data.startswith(b'\x89PNG\r\n\x1a\n')
+        or data.startswith(b'\xff\xd8\xff')
+        or data.startswith((b'GIF87a', b'GIF89a'))
+        or data.startswith(b'BM')
+        or data.startswith((b'II*\x00', b'MM\x00*'))
+        or (len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP')
+    )
+
+
 def _read_and_process_staged(
     staged: StagedAttachment,
-) -> tuple[int, _ProcessedImage]:
+    *,
+    allow_unrecognized: bool = False,
+) -> tuple[int, _ProcessedImage | None]:
     """Read one bounded upload snapshot and decode that exact snapshot."""
     with staged.path.open('rb') as stream:
         data = stream.read(MAX_IMAGE_BYTES + 1)
@@ -132,6 +146,10 @@ def _read_and_process_staged(
         raise MediaValidationError('Source image exceeds the 10 MiB limit')
     if len(data) != staged.size_bytes:
         raise MediaValidationError('Staged attachment size changed')
+    if not _has_supported_raster_signature(data):
+        if allow_unrecognized:
+            return len(data), None
+        raise MediaValidationError('Attachment is not a supported image')
     return len(data), _process_image(data)
 
 
@@ -246,6 +264,17 @@ class MediaAssetService:
         staged: StagedAttachment,
         ownership: MediaOwnership,
     ) -> ArtifactRef:
+        result = await self.ingest_staged_image_if_recognized(staged, ownership)
+        if result is None:
+            raise MediaValidationError('Attachment is not a valid image')
+        return result
+
+    async def ingest_staged_image_if_recognized(
+        self,
+        staged: StagedAttachment,
+        ownership: MediaOwnership,
+    ) -> ArtifactRef | None:
+        """Ingest a recognized raster; return ``None`` only for other bytes."""
         started = time.perf_counter()
         status = 'failure'
         input_bytes = 0
@@ -257,7 +286,11 @@ class MediaAssetService:
                 input_bytes, processed = await run_media_cpu(
                     _read_and_process_staged,
                     staged,
+                    allow_unrecognized=True,
                 )
+                if processed is None:
+                    status = 'unrecognized'
+                    return None
                 if len(processed.original) > MAX_IMAGE_BYTES:
                     raise MediaValidationError('Sanitized image exceeds the 10 MiB limit')
                 artifact = await _run_transaction_joined(
