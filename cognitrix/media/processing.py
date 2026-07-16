@@ -65,7 +65,28 @@ def _media_processing_limiter() -> asyncio.Semaphore:
 async def run_media_cpu(func: Callable[..., T], *args, **kwargs) -> T:
     """Run CPU-heavy media work off-loop under the process concurrency cap."""
     async with _media_processing_limiter():
-        return await asyncio.to_thread(func, *args, **kwargs)
+        return await _run_thread_joined(func, *args, **kwargs)
+
+
+async def _run_thread_joined(func: Callable[..., T], *args, **kwargs) -> T:
+    """Do not let task cancellation outlive its underlying worker thread."""
+    worker = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        if worker.done() and not worker.cancelled():
+            try:
+                worker.result()
+            except BaseException:
+                pass
+        raise
 
 
 @dataclass(frozen=True)
@@ -203,3 +224,28 @@ def _make_thumbnail(data: bytes) -> bytes:
         raise
     except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
         raise MediaValidationError('Artifact is not a valid image') from exc
+
+
+def _is_valid_thumbnail(data: bytes) -> bool:
+    """Verify that retained thumbnail bytes satisfy the derivative contract."""
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            if (image.format or '').upper() != 'WEBP':
+                return False
+            width, height = image.size
+            if (
+                width <= 0
+                or height <= 0
+                or max(width, height) > THUMBNAIL_MAX_EDGE
+                or getattr(image, 'n_frames', 1) != 1
+            ):
+                return False
+            image.load()
+            if image.getexif():
+                return False
+            metadata_keys = {'exif', 'icc_profile', 'xmp'}
+            if metadata_keys.intersection(image.info):
+                return False
+            return True
+    except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError):
+        return False

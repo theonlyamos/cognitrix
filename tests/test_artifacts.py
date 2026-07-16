@@ -132,6 +132,8 @@ async def test_artifact_session_ids_remain_exact_and_collision_free(monkeypatch,
     saved = []
 
     async def save(self):
+        if self.id is None:
+            object.__setattr__(self, 'id', f'artifact-{len(saved) + 1}')
         saved.append(self)
         return self
 

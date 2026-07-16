@@ -9,7 +9,7 @@ import re
 import time
 import uuid
 import weakref
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +17,10 @@ from cognitrix import artifacts as artifact_store
 from cognitrix.artifacts import Artifact, ref, variant_path
 from cognitrix.media.processing import (
     _ProcessedImage,
+    _is_valid_thumbnail,
     _make_thumbnail,
     _process_image,
+    _run_thread_joined,
     run_media_cpu,
 )
 from cognitrix.media.types import (
@@ -54,11 +56,14 @@ def _shared_lock(cache: weakref.WeakValueDictionary, key: str) -> asyncio.Lock:
 
 def _artifact_variant_paths(artifact: Artifact) -> list[Path]:
     paths = []
-    for variant in _VALID_VARIANTS:
-        try:
-            paths.append(variant_path(artifact, variant))
-        except ValueError:
+    for variant, field in (
+        ('original', 'storage_key'),
+        ('vision', 'vision_storage_key'),
+        ('thumbnail', 'thumbnail_storage_key'),
+    ):
+        if variant != 'original' and not getattr(artifact, field):
             continue
+        paths.append(variant_path(artifact, variant))
     return paths
 
 
@@ -117,6 +122,30 @@ async def _read_path(path: Path) -> bytes:
     return await asyncio.to_thread(path.read_bytes)
 
 
+def _read_and_process_staged(
+    staged: StagedAttachment,
+) -> tuple[int, _ProcessedImage]:
+    """Read one bounded upload snapshot and decode that exact snapshot."""
+    with staged.path.open('rb') as stream:
+        data = stream.read(MAX_IMAGE_BYTES + 1)
+    if len(data) > MAX_IMAGE_BYTES:
+        raise MediaValidationError('Source image exceeds the 10 MiB limit')
+    if len(data) != staged.size_bytes:
+        raise MediaValidationError('Staged attachment size changed')
+    return len(data), _process_image(data)
+
+
+def _read_and_validate_thumbnail(path: Path) -> bool:
+    try:
+        with path.open('rb') as stream:
+            data = stream.read(MAX_IMAGE_BYTES + 1)
+    except OSError:
+        return False
+    if len(data) > MAX_IMAGE_BYTES:
+        return False
+    return _is_valid_thumbnail(data)
+
+
 async def _read_bounded_image_path(path: Path) -> bytes:
     try:
         size = await asyncio.to_thread(lambda: path.stat().st_size)
@@ -130,14 +159,85 @@ async def _read_bounded_image_path(path: Path) -> bytes:
 async def _remove_paths(paths: Sequence[Path]) -> None:
     for path in dict.fromkeys(paths):
         try:
-            await asyncio.to_thread(path.unlink, missing_ok=True)
+            await _run_thread_joined(path.unlink, missing_ok=True)
         except OSError:
             pass
 
 
-async def _delete_paths(paths: Sequence[Path]) -> None:
-    for path in dict.fromkeys(paths):
-        await asyncio.to_thread(path.unlink, missing_ok=True)
+async def _run_transaction_joined(operation: Awaitable[Any]) -> Any:
+    """Cancel a transaction once, then wait for its rollback to finish."""
+    transaction = asyncio.create_task(operation)
+    try:
+        return await asyncio.shield(transaction)
+    except asyncio.CancelledError:
+        transaction.cancel()
+        while not transaction.done():
+            try:
+                await asyncio.shield(transaction)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        if transaction.done() and not transaction.cancelled():
+            try:
+                transaction.result()
+            except BaseException:
+                pass
+        raise
+
+
+async def _settle_operation(operation: Awaitable[Any]) -> Any:
+    """Let a started operation reach a definitive outcome."""
+    mutation = asyncio.create_task(operation)
+    try:
+        return await asyncio.shield(mutation)
+    except asyncio.CancelledError:
+        while not mutation.done():
+            try:
+                await asyncio.shield(mutation)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        return mutation.result()
+
+
+async def _rollback_tombstones(moves: Sequence[tuple[Path, Path]]) -> None:
+    rollback_error: BaseException | None = None
+    for original, tombstone in reversed(moves):
+        try:
+            if await asyncio.to_thread(tombstone.exists):
+                await _run_thread_joined(os.replace, tombstone, original)
+        except BaseException as exc:
+            rollback_error = rollback_error or exc
+            logger.exception('Failed to roll back media deletion tombstone')
+    if rollback_error is not None:
+        raise rollback_error
+
+
+async def _tombstone_delete(
+    paths: Sequence[Path],
+    delete_rows: Callable[[], Awaitable[Any]],
+) -> None:
+    moves: list[tuple[Path, Path]] = []
+    try:
+        for original in dict.fromkeys(paths):
+            if not await asyncio.to_thread(original.exists):
+                continue
+            if not await asyncio.to_thread(original.is_file):
+                raise MediaValidationError('Artifact variant is not a regular file')
+            tombstone = original.with_name(
+                f'.{original.name}.{uuid.uuid4().hex}.tombstone'
+            )
+            moves.append((original, tombstone))
+            await _run_thread_joined(os.replace, original, tombstone)
+        await delete_rows()
+    except BaseException:
+        await _rollback_tombstones(moves)
+        raise
+    await _settle_operation(
+        _remove_paths([tombstone for _, tombstone in moves])
+    )
 
 
 class MediaAssetService:
@@ -147,24 +247,38 @@ class MediaAssetService:
         ownership: MediaOwnership,
     ) -> ArtifactRef:
         started = time.perf_counter()
+        status = 'failure'
+        input_bytes = 0
+        processed: _ProcessedImage | None = None
         try:
-            data = await _read_path(staged.path)
-        except BaseException:
+            if not ownership.session_id:
+                raise MediaValidationError('Media ownership requires a session')
+            async with _shared_lock(_SESSION_LOCKS, ownership.session_id):
+                input_bytes, processed = await run_media_cpu(
+                    _read_and_process_staged,
+                    staged,
+                )
+                if len(processed.original) > MAX_IMAGE_BYTES:
+                    raise MediaValidationError('Sanitized image exceeds the 10 MiB limit')
+                artifact = await _run_transaction_joined(
+                    self._commit_processed(
+                        processed,
+                        origin='uploaded',
+                        ownership=ownership,
+                        filename=staged.filename,
+                        metadata={},
+                    )
+                )
+            status = 'success'
+            return ref(artifact)
+        finally:
             _log_ingest_metric(
-                status='failure',
+                status=status,
                 origin='uploaded',
-                input_bytes=0,
-                processed=None,
+                input_bytes=input_bytes,
+                processed=processed,
                 started=started,
             )
-            raise
-        return await self._store_image(
-            data,
-            origin='uploaded',
-            ownership=ownership,
-            filename=staged.filename,
-            metadata={},
-        )
 
     async def store_generated_image(
         self,
@@ -196,16 +310,19 @@ class MediaAssetService:
         try:
             if not ownership.session_id:
                 raise MediaValidationError('Media ownership requires a session')
-            processed = await run_media_cpu(_process_image, data)
-            if len(processed.original) > MAX_IMAGE_BYTES:
-                raise MediaValidationError('Sanitized image exceeds the 10 MiB limit')
-            artifact = await self._commit_processed(
-                processed,
-                origin=origin,
-                ownership=ownership,
-                filename=filename,
-                metadata=metadata,
-            )
+            async with _shared_lock(_SESSION_LOCKS, ownership.session_id):
+                processed = await run_media_cpu(_process_image, data)
+                if len(processed.original) > MAX_IMAGE_BYTES:
+                    raise MediaValidationError('Sanitized image exceeds the 10 MiB limit')
+                artifact = await _run_transaction_joined(
+                    self._commit_processed(
+                        processed,
+                        origin=origin,
+                        ownership=ownership,
+                        filename=filename,
+                        metadata=metadata,
+                    )
+                )
             status = 'success'
             return ref(artifact)
         finally:
@@ -226,11 +343,11 @@ class MediaAssetService:
         filename: str | None,
         metadata: Mapping[str, Any],
     ) -> Artifact:
-        artifact_id = str(uuid.uuid4())
+        storage_token = str(uuid.uuid4())
         namespace = artifact_store._storage_namespace(ownership.session_id or 'local')
-        original_key = f'{namespace}/{artifact_id}-original{processed.extension}'
-        vision_key = f'{namespace}/{artifact_id}-vision{processed.extension}'
-        thumbnail_key = f'{namespace}/{artifact_id}-thumbnail.webp'
+        original_key = f'{namespace}/{storage_token}-original{processed.extension}'
+        vision_key = f'{namespace}/{storage_token}-vision{processed.extension}'
+        thumbnail_key = f'{namespace}/{storage_token}-thumbnail.webp'
         root = artifact_store._root()
         finals = {
             'original': root / original_key,
@@ -250,11 +367,11 @@ class MediaAssetService:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
 
-            await asyncio.to_thread(write)
+            await _run_thread_joined(write)
             touched.append(path)
 
         async def promote(name: str) -> None:
-            await asyncio.to_thread(os.replace, temps[name], finals[name])
+            await _run_thread_joined(os.replace, temps[name], finals[name])
             touched.append(finals[name])
 
         try:
@@ -269,54 +386,51 @@ class MediaAssetService:
                     thumbnail_retained = False
                     await _remove_paths([temps['thumbnail']])
 
-            session_lock = _shared_lock(_SESSION_LOCKS, ownership.session_id or 'local')
-            async with session_lock:
-                retained_artifacts = await Artifact.find(
-                    {'session_id': ownership.session_id}
-                ) or []
-                if len(retained_artifacts) >= MAX_SESSION_ARTIFACTS:
-                    raise MediaQuotaError('This session has reached its retained image limit')
-                retained_bytes = await asyncio.to_thread(
-                    _retained_physical_bytes,
-                    retained_artifacts,
+            retained_artifacts = await Artifact.find(
+                {'session_id': ownership.session_id}
+            ) or []
+            if len(retained_artifacts) >= MAX_SESSION_ARTIFACTS:
+                raise MediaQuotaError('This session has reached its retained image limit')
+            retained_bytes = await asyncio.to_thread(
+                _retained_physical_bytes,
+                retained_artifacts,
+            )
+            new_bytes = len(processed.original) + len(processed.vision)
+            if thumbnail_retained and processed.thumbnail is not None:
+                new_bytes += len(processed.thumbnail)
+            if retained_bytes + new_bytes > MAX_SESSION_BYTES:
+                raise MediaQuotaError(
+                    'This session has reached its retained image storage limit'
                 )
-                new_bytes = len(processed.original) + len(processed.vision)
-                if thumbnail_retained and processed.thumbnail is not None:
-                    new_bytes += len(processed.thumbnail)
-                if retained_bytes + new_bytes > MAX_SESSION_BYTES:
-                    raise MediaQuotaError(
-                        'This session has reached its retained image storage limit'
-                    )
 
-                await promote('original')
-                await promote('vision')
-                if thumbnail_retained:
-                    try:
-                        await promote('thumbnail')
-                    except Exception:
-                        thumbnail_retained = False
-                        await _remove_paths([temps['thumbnail'], finals['thumbnail']])
+            await promote('original')
+            await promote('vision')
+            if thumbnail_retained:
+                try:
+                    await promote('thumbnail')
+                except Exception:
+                    thumbnail_retained = False
+                    await _remove_paths([temps['thumbnail'], finals['thumbnail']])
 
-                artifact = Artifact(
-                    _id=artifact_id,
-                    session_id=ownership.session_id,
-                    user_id=ownership.user_id,
-                    agent_id=ownership.agent_id,
-                    storage_key=original_key,
-                    vision_storage_key=vision_key,
-                    thumbnail_storage_key=thumbnail_key if thumbnail_retained else None,
-                    origin=origin,
-                    mime_type=processed.mime_type,
-                    filename=_safe_filename(filename, artifact_id, processed.extension),
-                    width=processed.width,
-                    height=processed.height,
-                    size_bytes=len(processed.original),
-                    prompt=str(metadata.get('prompt') or '')[:1000],
-                    source_artifact_id=metadata.get('source_artifact_id'),
-                    model=str(metadata.get('model') or ''),
-                )
-                await artifact.save()
-                return artifact
+            artifact = Artifact(
+                session_id=ownership.session_id,
+                user_id=ownership.user_id,
+                agent_id=ownership.agent_id,
+                storage_key=original_key,
+                vision_storage_key=vision_key,
+                thumbnail_storage_key=thumbnail_key if thumbnail_retained else None,
+                origin=origin,
+                mime_type=processed.mime_type,
+                filename=_safe_filename(filename, storage_token, processed.extension),
+                width=processed.width,
+                height=processed.height,
+                size_bytes=len(processed.original),
+                prompt=str(metadata.get('prompt') or '')[:1000],
+                source_artifact_id=metadata.get('source_artifact_id'),
+                model=str(metadata.get('model') or ''),
+            )
+            await _settle_operation(artifact.save())
+            return artifact
         except BaseException:
             await _remove_paths([*temps.values(), *finals.values(), *touched])
             raise
@@ -357,7 +471,10 @@ class MediaAssetService:
                     existing = variant_path(artifact, 'thumbnail')
                 except ValueError:
                     existing = None
-                if existing is not None and await asyncio.to_thread(existing.is_file):
+                if existing is not None and await run_media_cpu(
+                    _read_and_validate_thumbnail,
+                    existing,
+                ):
                     return artifact
 
             try:
@@ -377,8 +494,31 @@ class MediaAssetService:
                         existing = variant_path(artifact, 'thumbnail')
                     except ValueError:
                         existing = None
-                    if existing is not None and await asyncio.to_thread(existing.is_file):
+                    if existing is not None and await run_media_cpu(
+                        _read_and_validate_thumbnail,
+                        existing,
+                    ):
                         return artifact
+
+                previous_key = artifact.thumbnail_storage_key
+                try:
+                    previous_path = (
+                        variant_path(artifact, 'thumbnail') if previous_key else None
+                    )
+                except ValueError:
+                    previous_path = None
+                replacement_bytes = 0
+                if previous_path is not None:
+                    try:
+                        replacement_bytes = await asyncio.to_thread(
+                            lambda: (
+                                previous_path.stat().st_size
+                                if previous_path.is_file()
+                                else 0
+                            )
+                        )
+                    except OSError:
+                        replacement_bytes = 0
 
                 retained_artifacts = await Artifact.find(
                     {'session_id': artifact.session_id}
@@ -387,33 +527,44 @@ class MediaAssetService:
                     _retained_physical_bytes,
                     retained_artifacts,
                 )
-                if retained_bytes + len(thumbnail) > MAX_SESSION_BYTES:
+                retained_after_replacement = max(
+                    0,
+                    retained_bytes - replacement_bytes,
+                )
+                if retained_after_replacement + len(thumbnail) > MAX_SESSION_BYTES:
                     raise MediaQuotaError(
                         'This session has reached its retained image storage limit'
                     )
 
                 namespace = artifact_store._storage_namespace(artifact.session_id)
-                thumbnail_key = f'{namespace}/{artifact_id}-thumbnail.webp'
+                thumbnail_key = f'{namespace}/{uuid.uuid4().hex}-thumbnail.webp'
                 final = artifact_store._root() / thumbnail_key
                 temp = final.with_name(f'{final.name}.{uuid.uuid4().hex}.tmp')
-                previous_key = artifact.thumbnail_storage_key
 
                 def write_and_promote() -> None:
                     temp.parent.mkdir(parents=True, exist_ok=True)
                     temp.write_bytes(thumbnail)
                     os.replace(temp, final)
 
-                try:
-                    await asyncio.to_thread(write_and_promote)
-                    artifact.thumbnail_storage_key = thumbnail_key
-                    await artifact.save()
-                except BaseException:
-                    artifact.thumbnail_storage_key = previous_key
-                    await _remove_paths([temp, final])
-                    raise
-                finally:
-                    await _remove_paths([temp])
-                return artifact
+                async def persist_thumbnail() -> Artifact:
+                    metadata_saved = False
+                    try:
+                        await _run_thread_joined(write_and_promote)
+                        artifact.thumbnail_storage_key = thumbnail_key
+                        await _settle_operation(artifact.save())
+                        metadata_saved = True
+                        if previous_path is not None and previous_path != final:
+                            await _remove_paths([previous_path])
+                    except BaseException:
+                        if not metadata_saved:
+                            artifact.thumbnail_storage_key = previous_key
+                            await _remove_paths([temp, final])
+                        raise
+                    finally:
+                        await _remove_paths([temp])
+                    return artifact
+
+                return await _run_transaction_joined(persist_thumbnail())
 
     async def resolve_ref(
         self,
@@ -498,22 +649,32 @@ class MediaAssetService:
     ) -> None:
         unique_ids = list(dict.fromkeys(str(value) for value in artifact_ids))
         session_key = ownership.session_id or 'local'
-        async with _shared_lock(_SESSION_LOCKS, session_key):
-            artifacts = []
-            for artifact_id in unique_ids:
-                artifact = await Artifact.get(artifact_id)
-                if artifact is None:
-                    continue
-                self._check_ownership(artifact, ownership)
-                artifacts.append(artifact)
-            paths = [
-                path
-                for artifact in artifacts
-                for path in _artifact_variant_paths(artifact)
-            ]
-            await _delete_paths(paths)
-            for artifact in artifacts:
-                await Artifact.delete_many({'id': str(artifact.id)})
+
+        async def transaction() -> None:
+            async with _shared_lock(_SESSION_LOCKS, session_key):
+                artifacts = []
+                for artifact_id in unique_ids:
+                    artifact = await Artifact.get(artifact_id)
+                    if artifact is None:
+                        continue
+                    self._check_ownership(artifact, ownership)
+                    artifacts.append(artifact)
+                artifact_paths = [
+                    (artifact, _artifact_variant_paths(artifact))
+                    for artifact in artifacts
+                ]
+                for artifact, paths in artifact_paths:
+
+                    async def delete_row() -> None:
+                        deleted = await _settle_operation(
+                            Artifact.delete_many({'id': str(artifact.id)})
+                        )
+                        if deleted == 0:
+                            raise RuntimeError('Artifact metadata deletion did not complete')
+
+                    await _tombstone_delete(paths, delete_row)
+
+        await _run_transaction_joined(transaction())
 
     async def delete_session_media(
         self,
@@ -522,23 +683,37 @@ class MediaAssetService:
     ) -> None:
         if ownership is not None and session_id != ownership.session_id:
             raise MediaAccessError('Session belongs to a different owner')
-        async with _shared_lock(_SESSION_LOCKS, session_id):
-            artifacts = await Artifact.find({'session_id': session_id}) or []
-            if ownership is not None:
-                for artifact in artifacts:
-                    self._check_ownership(artifact, ownership)
-            paths = [
-                path
-                for artifact in artifacts
-                for path in _artifact_variant_paths(artifact)
-            ]
-            await _delete_paths(paths)
-            await Artifact.delete_many({'session_id': session_id})
-            directory = artifact_store._root() / artifact_store._storage_namespace(session_id)
-            try:
-                await asyncio.to_thread(directory.rmdir)
-            except OSError:
-                pass
+
+        async def transaction() -> None:
+            async with _shared_lock(_SESSION_LOCKS, session_id):
+                artifacts = await Artifact.find({'session_id': session_id}) or []
+                if ownership is not None:
+                    for artifact in artifacts:
+                        self._check_ownership(artifact, ownership)
+                paths = [
+                    path
+                    for artifact in artifacts
+                    for path in _artifact_variant_paths(artifact)
+                ]
+
+                async def delete_rows() -> None:
+                    deleted = await _settle_operation(
+                        Artifact.delete_many({'session_id': session_id})
+                    )
+                    if artifacts and deleted == 0:
+                        raise RuntimeError('Session media metadata deletion did not complete')
+
+                await _tombstone_delete(paths, delete_rows)
+                directory = (
+                    artifact_store._root()
+                    / artifact_store._storage_namespace(session_id)
+                )
+                try:
+                    await _run_thread_joined(directory.rmdir)
+                except OSError:
+                    pass
+
+        await _run_transaction_joined(transaction())
 
 
 media_assets = MediaAssetService()
