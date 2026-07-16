@@ -1305,6 +1305,113 @@ async def test_post_mutation_sweep_failure_stays_recovering_and_resumes_after_re
 
 
 @pytest.mark.asyncio
+async def test_restart_proves_quarantined_batch_deleted_before_recovery_journal(
+    staging_workdir,
+    monkeypatch,
+):
+    queued = await staging.stage_upload_files(
+        [FakeUpload('known.txt', b'known')],
+        user_key='user',
+        stream_id='quarantined-recovery-batch',
+    )
+    manifest = staging._parse_staging_manifest(
+        (queued.batch_dir / staging.STAGING_MANIFEST_LEAF).read_bytes()
+    )
+    recovery_leaf = staging._recovery_leaf(queued.batch_dir.name)
+    recovery_path = staging_workdir / recovery_leaf
+    quarantine_leaf = 'q_recovery_batch'
+    quarantine_path = staging_workdir / quarantine_leaf
+    original_delete_directory = (
+        staging.secure_fs.DirectoryCapability.delete_directory
+    )
+    original_delete_file = staging.secure_fs.DirectoryCapability.delete_file
+    attempts = 0
+
+    def quarantine_then_resume(
+        capability,
+        leaf,
+        *,
+        expected_identity,
+    ):
+        nonlocal attempts
+        if leaf != queued.batch_dir.name:
+            return original_delete_directory(
+                capability,
+                leaf,
+                expected_identity=expected_identity,
+            )
+        attempts += 1
+        if attempts == 1:
+            queued.batch_dir.rename(quarantine_path)
+            raise OSError('simulated post-rename recovery batch delete failure')
+        assert not queued.batch_dir.exists()
+        assert quarantine_path.is_dir()
+        return original_delete_directory(
+            capability,
+            quarantine_leaf,
+            expected_identity=expected_identity,
+        )
+
+    def retain_journal_until_batch_is_proven_absent(
+        capability,
+        leaf,
+        *,
+        expected_identity,
+    ):
+        if leaf == recovery_leaf:
+            assert not quarantine_path.exists()
+        return original_delete_file(
+            capability,
+            leaf,
+            expected_identity=expected_identity,
+        )
+
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'delete_directory',
+        quarantine_then_resume,
+    )
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'delete_file',
+        retain_journal_until_batch_is_proven_absent,
+    )
+    _forget_live_batch(queued)
+    try:
+        assert await staging.sweep_stale_staging(
+            now=manifest.expires_at + 1
+        ) == 0
+        assert attempts == 1
+        assert not queued.batch_dir.exists()
+        assert quarantine_path.is_dir()
+        assert recovery_path.is_file()
+
+        _forget_live_batch(queued)
+        assert await staging.sweep_stale_staging(
+            now=manifest.expires_at + 2
+        ) == 0
+        assert attempts == 2
+        assert not quarantine_path.exists()
+        assert not recovery_path.exists()
+    finally:
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            'delete_directory',
+            original_delete_directory,
+        )
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            'delete_file',
+            original_delete_file,
+        )
+        _forget_live_batch(queued)
+        if quarantine_path.exists():
+            quarantine_path.rmdir()
+        if recovery_path.exists():
+            recovery_path.unlink()
+
+
+@pytest.mark.asyncio
 async def test_restart_resumes_existing_journal_before_surviving_manifest(
     staging_workdir,
     monkeypatch,
@@ -1417,6 +1524,99 @@ async def test_restart_removes_valid_journal_when_pinned_batch_is_absent(
 
     assert await staging.sweep_stale_staging(now=manifest.expires_at + 2) == 0
     assert not recovery.exists()
+
+
+@pytest.mark.parametrize('valid_quarantine_name', [True, False])
+@pytest.mark.asyncio
+async def test_restart_sweep_resumes_quarantined_recovery_journal(
+    staging_workdir,
+    monkeypatch,
+    valid_quarantine_name,
+):
+    queued = await staging.stage_upload_files(
+        [FakeUpload('known.txt', b'known')],
+        user_key='user',
+        stream_id='quarantined-recovery-journal',
+    )
+    manifest = staging._parse_staging_manifest(
+        (queued.batch_dir / staging.STAGING_MANIFEST_LEAF).read_bytes()
+    )
+    recovery_leaf = staging._recovery_leaf(queued.batch_dir.name)
+    recovery_path = staging_workdir / recovery_leaf
+    original_delete_file = staging.secure_fs.DirectoryCapability.delete_file
+    quarantine_path = None
+    failed_once = False
+
+    def quarantine_journal_then_resume(
+        capability,
+        leaf,
+        *,
+        expected_identity,
+    ):
+        nonlocal failed_once, quarantine_path
+        if leaf == recovery_leaf and not failed_once:
+            quarantine_identity = expected_identity
+            if not valid_quarantine_name:
+                quarantine_identity = staging.secure_fs.FileIdentity(
+                    volume=expected_identity.volume + 1,
+                    file_id=expected_identity.file_id,
+                    is_directory=False,
+                )
+            quarantine_leaf = staging.secure_fs._posix_quarantine_leaf(
+                recovery_leaf,
+                quarantine_identity,
+                directory=False,
+            )
+            quarantine_path = staging_workdir / quarantine_leaf
+            recovery_path.rename(quarantine_path)
+            failed_once = True
+            raise OSError('simulated unrestorable recovery journal delete')
+        if (
+            leaf == recovery_leaf
+            and quarantine_path is not None
+            and quarantine_path.exists()
+        ):
+            return original_delete_file(
+                capability,
+                quarantine_path.name,
+                expected_identity=expected_identity,
+            )
+        return original_delete_file(
+            capability,
+            leaf,
+            expected_identity=expected_identity,
+        )
+
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'delete_file',
+        quarantine_journal_then_resume,
+    )
+    _forget_live_batch(queued)
+    try:
+        assert await staging.sweep_stale_staging(
+            now=manifest.expires_at + 1
+        ) == 1
+        assert not queued.batch_dir.exists()
+        assert not recovery_path.exists()
+        assert quarantine_path is not None and quarantine_path.is_file()
+
+        _forget_live_batch(queued)
+        assert await staging.sweep_stale_staging(
+            now=manifest.expires_at + 2
+        ) == 0
+        assert quarantine_path.exists() is not valid_quarantine_name
+    finally:
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            'delete_file',
+            original_delete_file,
+        )
+        _forget_live_batch(queued)
+        if quarantine_path is not None and quarantine_path.exists():
+            quarantine_path.unlink()
+        if recovery_path.exists():
+            recovery_path.unlink()
 
 
 @pytest.mark.asyncio
@@ -1565,6 +1765,78 @@ async def test_cleanup_failure_releases_active_ownership_for_ttl_retry(
     monkeypatch.setattr(staging, '_remove_staged_batch_capability', original)
     await staged.cleanup()
     assert not staged.batch_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_quarantined_staged_batch_retry_removes_orphan_before_release(
+    staging_workdir,
+    monkeypatch,
+):
+    baseline_pending = staging.pending_attachment_cleanup_count()
+    baseline_units = staging._attachment_cleanup_obligation_count()
+    staged = await staging.stage_upload_files(
+        [FakeUpload('active.txt', b'active')],
+        user_key='user',
+        stream_id='quarantined-staged-batch',
+    )
+    quarantine_leaf = 'q_staged_retry'
+    quarantine_path = staging_workdir / quarantine_leaf
+    original_delete = staging.secure_fs.DirectoryCapability.delete_directory
+    attempts = 0
+
+    def quarantine_then_resume(
+        capability,
+        leaf,
+        *,
+        expected_identity,
+    ):
+        nonlocal attempts
+        if leaf != staged.batch_dir.name:
+            return original_delete(
+                capability,
+                leaf,
+                expected_identity=expected_identity,
+            )
+        attempts += 1
+        if attempts == 1:
+            staged.batch_dir.rename(quarantine_path)
+            raise OSError('simulated post-rename staged batch delete failure')
+        assert not staged.batch_dir.exists()
+        assert quarantine_path.is_dir()
+        return original_delete(
+            capability,
+            quarantine_leaf,
+            expected_identity=expected_identity,
+        )
+
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'delete_directory',
+        quarantine_then_resume,
+    )
+    try:
+        with pytest.raises(staging.AttachmentCleanupError):
+            await staging.cleanup_staged_attachments(staged)
+        assert attempts == 1
+        assert quarantine_path.is_dir()
+        assert staging.pending_attachment_cleanup_count() == baseline_pending + 1
+        assert staging._attachment_cleanup_obligation_count() == baseline_units + 1
+
+        assert await staging.retry_pending_attachment_cleanups() == baseline_pending
+        assert attempts == 2
+        assert not quarantine_path.exists()
+        assert staging._attachment_cleanup_obligation_count() == baseline_units
+    finally:
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            'delete_directory',
+            original_delete,
+        )
+        if quarantine_path.exists():
+            quarantine_path.rmdir()
+        await staging.retry_pending_attachment_cleanups()
 
 
 @pytest.mark.asyncio

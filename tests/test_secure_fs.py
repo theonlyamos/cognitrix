@@ -414,7 +414,10 @@ def test_posix_quarantine_never_unlinks_swapped_file_replacement() -> None:
             return identity
 
         def name_identity(self, _parent, leaf, *, directory):
-            identity = self.names[leaf]
+            try:
+                identity = self.names[leaf]
+            except KeyError as exc:
+                raise FileNotFoundError(leaf) from exc
             assert identity.is_directory is directory
             return identity
 
@@ -425,6 +428,9 @@ def test_posix_quarantine_never_unlinks_swapped_file_replacement() -> None:
         def delete_name(self, _parent, leaf, *, directory):
             self.deleted.append(leaf)
             del self.names[leaf]
+
+        def flush_directory(self, _parent):
+            pass
 
         def close(self, handle):
             self.handles.pop(handle, None)
@@ -441,6 +447,354 @@ def test_posix_quarantine_never_unlinks_swapped_file_replacement() -> None:
         )
     assert api.deleted == []
     assert replacement in api.names.values()
+
+
+@pytest.mark.parametrize('directory', [False, True])
+@pytest.mark.parametrize('failure_phase', ['open', 'delete'])
+def test_posix_quarantine_failure_keeps_original_leaf_retryable(
+    failure_phase: str,
+    directory: bool,
+) -> None:
+    secure_fs = _secure_fs()
+    expected = secure_fs.FileIdentity(1, b'e' * 16, directory)
+
+    class Api:
+        def __init__(self) -> None:
+            self.names = {'asset_123': expected}
+            self.handles: dict[int, object] = {}
+            self.next_handle = 220
+            self.failure_blocked = True
+
+        def open_child(self, _parent, leaf, **_kwargs):
+            if (
+                self.failure_blocked
+                and failure_phase == 'open'
+                and leaf == 'q_token'
+            ):
+                raise OSError('simulated post-rename quarantine open failure')
+            handle = self.next_handle
+            self.next_handle += 1
+            self.handles[handle] = self.names[leaf]
+            return handle
+
+        def query_identity(self, handle, *, directory):
+            identity = self.handles[handle]
+            assert identity.is_directory is directory
+            return identity
+
+        def name_identity(self, _parent, leaf, *, directory):
+            try:
+                identity = self.names[leaf]
+            except KeyError as exc:
+                raise FileNotFoundError(leaf) from exc
+            assert identity.is_directory is directory
+            return identity
+
+        def rename_child(self, _parent, source, destination):
+            self.names[destination] = self.names.pop(source)
+
+        def delete_name(self, _parent, leaf, *, directory):
+            if self.failure_blocked and failure_phase == 'delete':
+                raise OSError('simulated post-rename quarantine delete failure')
+            del self.names[leaf]
+
+        def flush_directory(self, _parent):
+            pass
+
+        def close(self, handle):
+            self.handles.pop(handle, None)
+
+    api = Api()
+    backend = secure_fs._PosixBackend(api, token_factory=lambda: 'q_token')
+
+    with pytest.raises((OSError, secure_fs.CapabilityError)):
+        backend.delete_child(
+            1,
+            'asset_123',
+            expected_identity=expected,
+            directory=directory,
+        )
+    assert list(api.names.values()) == [expected]
+
+    api.failure_blocked = False
+    backend.delete_child(
+        1,
+        'asset_123',
+        expected_identity=expected,
+        directory=directory,
+    )
+    assert api.names == {}
+
+
+class _QuarantineStateApi:
+    def __init__(self, identity, *, logical: str = 'asset_123') -> None:
+        self.logical = logical
+        self.names = {logical: identity}
+        self.handles: dict[int, object] = {}
+        self.events: list[tuple[object, ...]] = []
+        self.next_handle = 250
+        self.block_quarantine_open = False
+        self.block_delete = False
+        self.block_restore = False
+        self.replace_quarantine_on_open = None
+        self.flush_failures: set[int] = set()
+        self.flush_count = 0
+
+    def open_child(self, _parent, leaf, *, directory, **_kwargs):
+        is_quarantine = leaf != self.logical
+        if self.block_quarantine_open and is_quarantine:
+            raise OSError('simulated quarantine open failure')
+        try:
+            identity = self.names[leaf]
+        except KeyError as exc:
+            raise FileNotFoundError(leaf) from exc
+        assert identity.is_directory is directory
+        handle = self.next_handle
+        self.next_handle += 1
+        self.handles[handle] = identity
+        self.events.append(('open', leaf))
+        if is_quarantine and self.replace_quarantine_on_open is not None:
+            self.names[leaf] = self.replace_quarantine_on_open
+        return handle
+
+    def query_identity(self, handle, *, directory):
+        identity = self.handles[handle]
+        assert identity.is_directory is directory
+        return identity
+
+    def name_identity(self, _parent, leaf, *, directory):
+        try:
+            identity = self.names[leaf]
+        except KeyError as exc:
+            raise FileNotFoundError(leaf) from exc
+        assert identity.is_directory is directory
+        self.events.append(('probe', leaf))
+        return identity
+
+    def rename_child(self, _parent, source, destination):
+        self.events.append(('rename', source, destination))
+        if self.block_restore and destination == self.logical:
+            raise OSError('simulated quarantine restore failure')
+        try:
+            self.names[destination] = self.names.pop(source)
+        except KeyError as exc:
+            raise FileNotFoundError(source) from exc
+
+    def delete_name(self, _parent, leaf, *, directory):
+        identity = self.names[leaf]
+        assert identity.is_directory is directory
+        self.events.append(('delete', leaf))
+        if self.block_delete:
+            raise OSError('simulated quarantine delete failure')
+        del self.names[leaf]
+
+    def flush_directory(self, _parent):
+        self.flush_count += 1
+        self.events.append(('flush', self.flush_count))
+        if self.flush_count in self.flush_failures:
+            raise OSError('simulated parent flush failure')
+
+    def close(self, handle):
+        self.handles.pop(handle, None)
+
+
+@pytest.mark.parametrize('directory', [False, True])
+def test_posix_restore_failure_leaves_deterministic_quarantine_for_retry(
+    directory: bool,
+) -> None:
+    secure_fs = _secure_fs()
+    expected = secure_fs.FileIdentity(1, b'e' * 16, directory)
+    api = _QuarantineStateApi(expected)
+    api.block_quarantine_open = True
+    api.block_restore = True
+    backend = secure_fs._PosixBackend(api, token_factory=lambda: 'q_token')
+
+    with pytest.raises((OSError, secure_fs.CapabilityError)):
+        backend.delete_child(
+            1,
+            api.logical,
+            expected_identity=expected,
+            directory=directory,
+        )
+    assert api.names == {'q_token': expected}
+
+    api.block_quarantine_open = False
+    api.block_restore = False
+    backend.delete_child(
+        1,
+        api.logical,
+        expected_identity=expected,
+        directory=directory,
+    )
+    assert api.names == {}
+
+
+@pytest.mark.parametrize('directory', [False, True])
+def test_posix_fresh_backend_resumes_default_deterministic_quarantine(
+    directory: bool,
+) -> None:
+    secure_fs = _secure_fs()
+    expected = secure_fs.FileIdentity(7, b'i' * 16, directory)
+    api = _QuarantineStateApi(expected)
+    api.block_quarantine_open = True
+    api.block_restore = True
+
+    with pytest.raises((OSError, secure_fs.CapabilityError)):
+        secure_fs._PosixBackend(api).delete_child(
+            1,
+            api.logical,
+            expected_identity=expected,
+            directory=directory,
+        )
+    quarantine = next(iter(api.names))
+    assert quarantine != api.logical
+
+    api.block_quarantine_open = False
+    api.block_restore = False
+    secure_fs._PosixBackend(api).delete_child(
+        1,
+        api.logical,
+        expected_identity=expected,
+        directory=directory,
+    )
+    assert api.names == {}
+
+
+@pytest.mark.parametrize('directory', [False, True])
+def test_posix_wrong_existing_quarantine_fails_closed(directory: bool) -> None:
+    secure_fs = _secure_fs()
+    expected = secure_fs.FileIdentity(1, b'e' * 16, directory)
+    wrong = secure_fs.FileIdentity(1, b'w' * 16, directory)
+    api = _QuarantineStateApi(expected)
+    api.names['q_token'] = wrong
+    backend = secure_fs._PosixBackend(api, token_factory=lambda: 'q_token')
+
+    with pytest.raises(secure_fs.CapabilityError):
+        backend.delete_child(
+            1,
+            api.logical,
+            expected_identity=expected,
+            directory=directory,
+        )
+    assert api.names == {api.logical: expected, 'q_token': wrong}
+    assert not any(event[0] in {'rename', 'delete'} for event in api.events)
+
+
+@pytest.mark.parametrize('directory', [False, True])
+def test_posix_quarantine_name_replacement_fails_closed(directory: bool) -> None:
+    secure_fs = _secure_fs()
+    expected = secure_fs.FileIdentity(1, b'e' * 16, directory)
+    replacement = secure_fs.FileIdentity(1, b'r' * 16, directory)
+    api = _QuarantineStateApi(expected)
+    api.names = {'q_token': expected}
+    api.replace_quarantine_on_open = replacement
+    backend = secure_fs._PosixBackend(api, token_factory=lambda: 'q_token')
+
+    with pytest.raises(secure_fs.CapabilityError):
+        backend.delete_child(
+            1,
+            api.logical,
+            expected_identity=expected,
+            directory=directory,
+        )
+    assert api.names == {'q_token': replacement}
+    assert not any(event[0] == 'delete' for event in api.events)
+
+
+@pytest.mark.parametrize('directory', [False, True])
+@pytest.mark.parametrize('failure_flush', [1, 2])
+def test_posix_parent_flush_failure_is_retryable(
+    failure_flush: int,
+    directory: bool,
+) -> None:
+    secure_fs = _secure_fs()
+    expected = secure_fs.FileIdentity(1, b'e' * 16, directory)
+    api = _QuarantineStateApi(expected)
+    api.flush_failures = {failure_flush}
+    backend = secure_fs._PosixBackend(api, token_factory=lambda: 'q_token')
+
+    with pytest.raises((OSError, secure_fs.CapabilityError)):
+        backend.delete_child(
+            1,
+            api.logical,
+            expected_identity=expected,
+            directory=directory,
+        )
+
+    api.flush_failures.clear()
+    backend.delete_child(
+        1,
+        api.logical,
+        expected_identity=expected,
+        directory=directory,
+    )
+    assert api.names == {}
+
+
+@pytest.mark.parametrize('directory', [False, True])
+def test_posix_both_names_absent_is_idempotent_and_flushes_parent(
+    directory: bool,
+) -> None:
+    secure_fs = _secure_fs()
+    expected = secure_fs.FileIdentity(1, b'e' * 16, directory)
+    api = _QuarantineStateApi(expected)
+    api.names.clear()
+    backend = secure_fs._PosixBackend(api, token_factory=lambda: 'q_token')
+
+    backend.delete_child(
+        1,
+        api.logical,
+        expected_identity=expected,
+        directory=directory,
+    )
+    assert api.names == {}
+    assert api.events == [('flush', 1)]
+
+
+def test_posix_quarantine_leaf_can_be_recomputed_and_recognized() -> None:
+    secure_fs = _secure_fs()
+    file_identity = secure_fs.FileIdentity(7, b'i' * 16, False)
+    directory_identity = replace(file_identity, is_directory=True)
+
+    leaf = secure_fs._posix_quarantine_leaf(
+        'recovery_123',
+        file_identity,
+        directory=False,
+    )
+
+    assert leaf == secure_fs._posix_quarantine_leaf(
+        'recovery_123',
+        file_identity,
+        directory=False,
+    )
+    assert secure_fs._is_posix_quarantine_leaf(leaf) is True
+    assert secure_fs._is_posix_quarantine_leaf(leaf, directory=False) is True
+    assert secure_fs._is_posix_quarantine_leaf(leaf, directory=True) is False
+    assert secure_fs._is_posix_quarantine_leaf('q_token') is False
+    assert leaf != secure_fs._posix_quarantine_leaf(
+        'recovery_456',
+        file_identity,
+        directory=False,
+    )
+    assert leaf != secure_fs._posix_quarantine_leaf(
+        'recovery_123',
+        replace(file_identity, file_id=b'j' * 16),
+        directory=False,
+    )
+    directory_leaf = secure_fs._posix_quarantine_leaf(
+        'recovery_123',
+        directory_identity,
+        directory=True,
+    )
+    assert leaf != directory_leaf
+    assert secure_fs._is_posix_quarantine_leaf(
+        directory_leaf,
+        directory=True,
+    ) is True
+    assert secure_fs._is_posix_quarantine_leaf(
+        directory_leaf,
+        directory=False,
+    ) is False
 
 
 def test_posix_failed_post_mkdir_open_preserves_swapped_directory() -> None:
@@ -495,6 +849,51 @@ def test_posix_failed_post_mkdir_open_preserves_swapped_directory() -> None:
         )
     assert api.deleted == []
     assert api.names['batch_123'] == replacement
+
+
+def test_posix_failed_post_mkdir_cleanup_reports_created_directory_identity() -> None:
+    secure_fs = _secure_fs()
+    created = secure_fs.FileIdentity(1, b'c' * 16, True)
+
+    class Api:
+        def __init__(self) -> None:
+            self.names: dict[str, object] = {}
+
+        def mkdir_child(self, _parent, leaf):
+            self.names[leaf] = created
+
+        def name_identity(self, _parent, leaf, *, directory):
+            try:
+                identity = self.names[leaf]
+            except KeyError as exc:
+                raise FileNotFoundError(leaf) from exc
+            assert identity.is_directory is directory
+            return identity
+
+        def open_child(self, _parent, _leaf, **_kwargs):
+            raise OSError('simulated post-mkdir open failure')
+
+        def flush_directory(self, _parent):
+            pass
+
+        def close(self, _handle):
+            pass
+
+    api = Api()
+    backend = secure_fs._PosixBackend(api, token_factory=lambda: 'q_token')
+
+    with pytest.raises(secure_fs.CreatedChildCleanupError) as exc:
+        backend.open_child(
+            1,
+            'batch_123',
+            directory=True,
+            create=True,
+            writable=True,
+        )
+    assert exc.value.leaf == 'batch_123'
+    assert exc.value.identity == created
+    assert exc.value.is_directory is True
+    assert api.names == {'batch_123': created}
 
 
 def test_directory_flush_delegates_and_revalidates_identity() -> None:

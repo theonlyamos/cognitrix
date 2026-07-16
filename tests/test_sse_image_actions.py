@@ -966,6 +966,239 @@ async def test_document_rollback_retains_work_when_upload_root_is_replaced(
 
 
 @pytest.mark.asyncio
+async def test_document_quarantine_retry_removes_orphan_before_releasing_capacity(
+    tmp_path,
+    monkeypatch,
+):
+    tools_root = tmp_path / 'tools'
+    uploads = tools_root / 'uploads'
+    monkeypatch.setattr(staging.settings, 'workdir', tmp_path)
+    monkeypatch.setattr(staging.settings, 'tools_root', tools_root)
+    baseline_pending = staging.pending_attachment_cleanup_count()
+    baseline_units = staging._attachment_cleanup_obligation_count()
+    staged = await staging.stage_upload_files(
+        [Upload('note.txt', b'note')],
+        user_key='user-1',
+        stream_id='document-quarantine-retry',
+    )
+
+    async def not_image(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        staging.media_assets,
+        'ingest_staged_image_if_recognized',
+        not_image,
+    )
+    ownership = MediaOwnership(
+        'session-document-quarantine', 'user-1', 'agent-1'
+    )
+    promoted = await staging.promote_staged_attachments(staged, ownership)
+    record = promoted._rollback_records[0]
+    quarantine_leaf = 'q_document_retry'
+    quarantine_path = uploads / quarantine_leaf
+    original_delete = staging.secure_fs.DirectoryCapability.delete_directory
+    attempts = 0
+
+    def quarantine_then_resume(
+        capability,
+        leaf,
+        *,
+        expected_identity,
+    ):
+        nonlocal attempts
+        if leaf != record.directory_leaf:
+            return original_delete(
+                capability,
+                leaf,
+                expected_identity=expected_identity,
+            )
+        attempts += 1
+        logical_path = uploads / leaf
+        if attempts == 1:
+            logical_path.rename(quarantine_path)
+            raise OSError('simulated post-rename document delete failure')
+        assert not logical_path.exists()
+        assert quarantine_path.is_dir()
+        return original_delete(
+            capability,
+            quarantine_leaf,
+            expected_identity=expected_identity,
+        )
+
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'delete_directory',
+        quarantine_then_resume,
+    )
+    try:
+        with pytest.raises(staging.AttachmentCleanupError):
+            await staging.rollback_promoted_attachments(promoted, ownership)
+        assert attempts == 1
+        assert quarantine_path.is_dir()
+        assert staging.pending_attachment_cleanup_count() == baseline_pending + 1
+        assert staging._attachment_cleanup_obligation_count() == baseline_units + 1
+
+        assert await staging.retry_pending_attachment_cleanups() == baseline_pending
+        assert attempts == 2
+        assert not quarantine_path.exists()
+        assert staging._attachment_cleanup_obligation_count() == baseline_units
+    finally:
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            'delete_directory',
+            original_delete,
+        )
+        if quarantine_path.exists():
+            quarantine_path.rmdir()
+        await staging.retry_pending_attachment_cleanups()
+
+
+@pytest.mark.parametrize(
+    ('phase', 'flush_number', 'delete_method'),
+    [
+        ('directory', 1, 'delete_directory'),
+        ('file', 2, 'delete_file'),
+    ],
+)
+@pytest.mark.asyncio
+async def test_unsettled_promoted_document_create_retains_exact_rollback(
+    tmp_path,
+    monkeypatch,
+    phase,
+    flush_number,
+    delete_method,
+):
+    tools_root = tmp_path / 'tools'
+    uploads = tools_root / 'uploads'
+    uploads.mkdir(parents=True)
+    monkeypatch.setattr(staging.settings, 'workdir', tmp_path)
+    monkeypatch.setattr(staging.settings, 'tools_root', tools_root)
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+    baseline_pending = staging.pending_attachment_cleanup_count()
+    baseline_units = staging._attachment_cleanup_obligation_count()
+    staged = await staging.stage_upload_files(
+        [Upload('note.txt', b'note')],
+        user_key='user-1',
+        stream_id=f'promoted-{phase}-flush-retained',
+    )
+    ownership = MediaOwnership(
+        f'session-{phase}', 'user-1', 'agent-1'
+    )
+
+    async def not_image(*_args, **_kwargs):
+        return None
+
+    original_flush = staging.secure_fs.DirectoryCapability.flush
+    original_delete = getattr(
+        staging.secure_fs.DirectoryCapability,
+        delete_method,
+    )
+    document_prefix = 'd_' if phase == 'directory' else 'f_'
+    flushes = 0
+    deletion_blocked = True
+    exact_deletes = []
+
+    def fail_selected_parent_flush(capability):
+        nonlocal flushes
+        flushes += 1
+        if flushes == flush_number:
+            raise OSError(f'simulated {phase} parent flush failure')
+        return original_flush(capability)
+
+    def block_exact_delete(capability, leaf, *, expected_identity):
+        if not leaf.startswith(document_prefix):
+            return original_delete(
+                capability,
+                leaf,
+                expected_identity=expected_identity,
+            )
+        exact_deletes.append((leaf, expected_identity))
+        if deletion_blocked:
+            raise OSError(f'simulated persistent {phase} rollback failure')
+        return original_delete(
+            capability,
+            leaf,
+            expected_identity=expected_identity,
+        )
+
+    monkeypatch.setattr(
+        staging.media_assets,
+        'ingest_staged_image_if_recognized',
+        not_image,
+    )
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'flush',
+        fail_selected_parent_flush,
+    )
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        delete_method,
+        block_exact_delete,
+    )
+    promoted = None
+    record = None
+    try:
+        with pytest.raises(staging.AttachmentCleanupError) as exc:
+            await staging.promote_staged_attachments(staged, ownership)
+
+        assert str(exc.value) == 'Attachment cleanup did not complete'
+        with staging._PENDING_CLEANUP_LOCK:
+            retained = [
+                value
+                for value in staging._PENDING_ROLLBACKS.values()
+                if value[1] == ownership
+            ]
+        assert len(retained) == 1
+        promoted = retained[0][0]
+        assert len(promoted._rollback_records) == 1
+        record = promoted._rollback_records[0]
+        assert exact_deletes
+        unsettled_identity = exact_deletes[0][1]
+        assert record.directory_identity is not None
+        if phase == 'directory':
+            assert record.directory_identity == unsettled_identity
+            assert record.file_identity is None
+        else:
+            assert record.file_identity == unsettled_identity
+
+        orphan_directory = uploads / record.directory_leaf
+        assert orphan_directory.is_dir()
+        if phase == 'file':
+            assert (orphan_directory / record.file_leaf).is_file()
+        assert staging.pending_attachment_cleanup_count() == baseline_pending + 1
+        assert staging._attachment_cleanup_obligation_count() == baseline_units + 1
+
+        deletion_blocked = False
+        assert await staging.retry_pending_attachment_cleanups() == baseline_pending
+        assert not orphan_directory.exists()
+        assert staging._attachment_cleanup_obligation_count() == baseline_units
+    finally:
+        deletion_blocked = False
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            'flush',
+            original_flush,
+        )
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            delete_method,
+            original_delete,
+        )
+        if uploads.exists():
+            for child in uploads.iterdir():
+                if child.is_dir():
+                    __import__('shutil').rmtree(child)
+                else:
+                    child.unlink()
+        await staging.retry_pending_attachment_cleanups()
+
+
+@pytest.mark.asyncio
 async def test_document_rollback_does_not_recreate_missing_upload_root(
     tmp_path, monkeypatch
 ):

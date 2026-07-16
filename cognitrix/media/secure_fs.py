@@ -12,13 +12,13 @@ replacement is rejected before use.
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
 import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 
 class CapabilityError(RuntimeError):
@@ -54,6 +54,8 @@ class CreatedChildCleanupError(CapabilityError):
 
 
 _OPAQUE_COMPONENT = re.compile(r'[A-Za-z0-9_-]{1,128}\Z')
+_POSIX_QUARANTINE_PREFIX = 'qv1_'
+_POSIX_QUARANTINE_COMPONENT = re.compile(r'qv1_[fd]_[0-9a-f]{64}\Z')
 _WINDOWS_RESERVED = {
     'CON',
     'PRN',
@@ -81,6 +83,46 @@ def _bounded_size(max_bytes: int) -> int:
     if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 0:
         raise ValueError('max_bytes must be a non-negative integer')
     return max_bytes
+
+
+def _posix_quarantine_leaf(
+    leaf: str,
+    expected_identity: FileIdentity,
+    *,
+    directory: bool,
+) -> str:
+    """Return the stable quarantine name for one logical POSIX child."""
+
+    opaque_leaf = _validate_leaf(leaf)
+    if expected_identity.is_directory is not directory:
+        raise CapabilityError()
+    digest = hashlib.sha256()
+    digest.update(b'cognitrix-posix-quarantine-v1\0')
+    digest.update(opaque_leaf.encode('ascii'))
+    digest.update(b'\0')
+    digest.update(str(expected_identity.volume).encode('ascii'))
+    digest.update(b'\0')
+    digest.update(bytes(expected_identity.file_id))
+    digest.update(b'\0directory' if directory else b'\0file')
+    kind = 'd' if directory else 'f'
+    return _validate_leaf(
+        f'{_POSIX_QUARANTINE_PREFIX}{kind}_{digest.hexdigest()}'
+    )
+
+
+def _is_posix_quarantine_leaf(
+    leaf: object,
+    *,
+    directory: bool | None = None,
+) -> bool:
+    """Return whether ``leaf`` has the versioned production quarantine shape."""
+
+    if not isinstance(leaf, str) or _POSIX_QUARANTINE_COMPONENT.fullmatch(leaf) is None:
+        return False
+    if directory is None:
+        return True
+    kind = 'd' if directory else 'f'
+    return leaf.startswith(f'{_POSIX_QUARANTINE_PREFIX}{kind}_')
 
 
 class _Capability:
@@ -981,15 +1023,192 @@ class _PosixBackend:
     final verified-name unlink. We confine every mutation with ``dir_fd``, move
     candidates to a unique quarantine name, and refuse every detectable
     identity mismatch. Callers must keep the pinned root private from other
-    namespace writers for the capability lifetime.
+    namespace writers for the capability lifetime. Quarantine names are
+    deterministic so an interrupted delete can be resumed from a new backend.
     """
 
     def __init__(self, api: Any | None = None, *, token_factory=None) -> None:
         self._api = api or _PosixApi()
-        self._token_factory = token_factory or (lambda: f'q_{uuid4().hex}')
+        self._token_factory = token_factory
 
     def open_root(self, path: str) -> int:
         return self._api.open_root(path)
+
+    def _quarantine_leaf(
+        self,
+        leaf: str,
+        *,
+        expected_identity: FileIdentity,
+        directory: bool,
+    ) -> str:
+        if self._token_factory is not None:
+            return _validate_leaf(self._token_factory())
+        return _posix_quarantine_leaf(
+            leaf,
+            expected_identity,
+            directory=directory,
+        )
+
+    def _name_identity_or_none(
+        self,
+        parent_handle: int,
+        leaf: str,
+        *,
+        directory: bool,
+    ) -> FileIdentity | None:
+        try:
+            return self._api.name_identity(
+                parent_handle,
+                leaf,
+                directory=directory,
+            )
+        except FileNotFoundError:
+            return None
+
+    def _verify_named_child(
+        self,
+        parent_handle: int,
+        leaf: str,
+        *,
+        expected_identity: FileIdentity,
+        directory: bool,
+    ) -> None:
+        handle = self._api.open_child(
+            parent_handle,
+            leaf,
+            directory=directory,
+            create=False,
+            writable=False,
+        )
+        try:
+            if self.identity(handle, directory=directory) != expected_identity:
+                raise CapabilityError()
+            if (
+                self._name_identity_or_none(
+                    parent_handle,
+                    leaf,
+                    directory=directory,
+                )
+                != expected_identity
+            ):
+                raise CapabilityError()
+        finally:
+            self.close(handle)
+
+    def _delete_verified_quarantine(
+        self,
+        parent_handle: int,
+        quarantine: str,
+        *,
+        expected_identity: FileIdentity,
+        directory: bool,
+    ) -> None:
+        self._verify_named_child(
+            parent_handle,
+            quarantine,
+            expected_identity=expected_identity,
+            directory=directory,
+        )
+        self._api.delete_name(
+            parent_handle,
+            quarantine,
+            directory=directory,
+        )
+        self.flush_directory(parent_handle)
+
+    def _return_restored_child_to_quarantine(
+        self,
+        parent_handle: int,
+        leaf: str,
+        quarantine: str,
+        *,
+        expected_identity: FileIdentity,
+        directory: bool,
+    ) -> None:
+        if (
+            self._name_identity_or_none(
+                parent_handle,
+                leaf,
+                directory=directory,
+            )
+            != expected_identity
+            or self._name_identity_or_none(
+                parent_handle,
+                quarantine,
+                directory=directory,
+            )
+            is not None
+        ):
+            return
+        self._api.rename_child(parent_handle, leaf, quarantine)
+        try:
+            self.flush_directory(parent_handle)
+        except BaseException:
+            pass
+
+    def _restore_quarantine(
+        self,
+        parent_handle: int,
+        leaf: str,
+        quarantine: str,
+        *,
+        expected_identity: FileIdentity,
+        directory: bool,
+    ) -> None:
+        quarantine_identity = self._name_identity_or_none(
+            parent_handle,
+            quarantine,
+            directory=directory,
+        )
+        if quarantine_identity is None:
+            return
+        if quarantine_identity != expected_identity:
+            raise CapabilityError()
+        if (
+            self._name_identity_or_none(
+                parent_handle,
+                leaf,
+                directory=directory,
+            )
+            is not None
+        ):
+            raise CapabilityError()
+        self._verify_named_child(
+            parent_handle,
+            quarantine,
+            expected_identity=expected_identity,
+            directory=directory,
+        )
+        if (
+            self._name_identity_or_none(
+                parent_handle,
+                leaf,
+                directory=directory,
+            )
+            is not None
+            or self._name_identity_or_none(
+                parent_handle,
+                quarantine,
+                directory=directory,
+            )
+            != expected_identity
+        ):
+            raise CapabilityError()
+        self._api.rename_child(parent_handle, quarantine, leaf)
+        try:
+            self.flush_directory(parent_handle)
+        except BaseException:
+            try:
+                self._return_restored_child_to_quarantine(
+                    parent_handle,
+                    leaf,
+                    quarantine,
+                    expected_identity=expected_identity,
+                    directory=directory,
+                )
+            except BaseException:
+                pass
+            raise
 
     def _quarantine_delete(
         self,
@@ -999,48 +1218,84 @@ class _PosixBackend:
         expected_identity: FileIdentity,
         directory: bool,
     ) -> None:
+        _validate_leaf(leaf)
+        if expected_identity.is_directory is not directory:
+            raise CapabilityError()
+        quarantine = self._quarantine_leaf(
+            leaf,
+            expected_identity=expected_identity,
+            directory=directory,
+        )
+        logical_identity = self._name_identity_or_none(
+            parent_handle,
+            leaf,
+            directory=directory,
+        )
+        quarantine_identity = self._name_identity_or_none(
+            parent_handle,
+            quarantine,
+            directory=directory,
+        )
+        if logical_identity not in {None, expected_identity}:
+            raise CapabilityError()
+        if quarantine_identity not in {None, expected_identity}:
+            raise CapabilityError()
+        if logical_identity is None:
+            if quarantine_identity is None:
+                self.flush_directory(parent_handle)
+                return
+            self._delete_verified_quarantine(
+                parent_handle,
+                quarantine,
+                expected_identity=expected_identity,
+                directory=directory,
+            )
+            return
+        if quarantine_identity is not None:
+            raise CapabilityError()
+
+        self._verify_named_child(
+            parent_handle,
+            leaf,
+            expected_identity=expected_identity,
+            directory=directory,
+        )
         if (
-            self._api.name_identity(
+            self._name_identity_or_none(
                 parent_handle,
                 leaf,
                 directory=directory,
             )
             != expected_identity
+            or self._name_identity_or_none(
+                parent_handle,
+                quarantine,
+                directory=directory,
+            )
+            is not None
         ):
             raise CapabilityError()
-        quarantine = _validate_leaf(self._token_factory())
         self._api.rename_child(parent_handle, leaf, quarantine)
-        quarantine_handle = None
         try:
-            quarantine_handle = self._api.open_child(
+            self.flush_directory(parent_handle)
+            self._delete_verified_quarantine(
                 parent_handle,
                 quarantine,
+                expected_identity=expected_identity,
                 directory=directory,
-                create=False,
-                writable=False,
             )
-            if (
-                self.identity(quarantine_handle, directory=directory)
-                != expected_identity
-            ):
-                raise CapabilityError()
-            if (
-                self._api.name_identity(
+        except BaseException:
+            try:
+                self._restore_quarantine(
                     parent_handle,
+                    leaf,
                     quarantine,
+                    expected_identity=expected_identity,
                     directory=directory,
                 )
-                != expected_identity
-            ):
-                raise CapabilityError()
-            self._api.delete_name(
-                parent_handle,
-                quarantine,
-                directory=directory,
-            )
-        finally:
-            if quarantine_handle is not None:
-                self.close(quarantine_handle)
+            except BaseException:
+                pass
+            raise
 
     def open_child(
         self,
@@ -1075,8 +1330,12 @@ class _PosixBackend:
                 raise CapabilityError()
             return handle
         except BaseException:
+            cleanup_error = None
             if handle is not None:
-                self.close(handle)
+                try:
+                    self.close(handle)
+                except BaseException as exc:
+                    cleanup_error = exc
             if created_identity is not None:
                 try:
                     self._quarantine_delete(
@@ -1085,8 +1344,14 @@ class _PosixBackend:
                         expected_identity=created_identity,
                         directory=True,
                     )
-                except BaseException:
-                    pass
+                except BaseException as exc:
+                    cleanup_error = exc
+                if cleanup_error is not None:
+                    raise CreatedChildCleanupError(
+                        leaf=leaf,
+                        identity=created_identity,
+                        is_directory=True,
+                    ) from cleanup_error
             raise
 
     def identity(self, handle: int, *, directory: bool) -> FileIdentity:
@@ -1120,24 +1385,12 @@ class _PosixBackend:
         expected_identity: FileIdentity,
         directory: bool,
     ) -> None:
-        handle = self.open_child(
+        self._quarantine_delete(
             parent_handle,
             leaf,
+            expected_identity=expected_identity,
             directory=directory,
-            create=False,
-            writable=False,
         )
-        try:
-            if self.identity(handle, directory=directory) != expected_identity:
-                raise CapabilityError()
-            self._quarantine_delete(
-                parent_handle,
-                leaf,
-                expected_identity=expected_identity,
-                directory=directory,
-            )
-        finally:
-            self.close(handle)
 
 
 _DEFAULT_BACKEND: Any | None = None

@@ -216,6 +216,13 @@ def _remove_staged_batch_capability(staged: 'StagedAttachmentSet') -> None:
                     expected_identity=staged._batch_identity,
                 )
             except FileNotFoundError:
+                try:
+                    root_capability.delete_directory(
+                        staged.batch_dir.name,
+                        expected_identity=staged._batch_identity,
+                    )
+                except FileNotFoundError:
+                    pass
                 return
             with batch_capability:
                 for leaf, identity in list(staged._entry_identities.items()):
@@ -1249,9 +1256,29 @@ def _create_document_transaction(
                 != destination.uploads_identity
             ):
                 raise secure_fs.CapabilityError()
-            with root_capability.create_directory(
-                directory_leaf
-            ) as directory_capability:
+            try:
+                directory_capability = root_capability.create_directory(
+                    directory_leaf
+                )
+            except secure_fs.CreatedChildCleanupError as exc:
+                directory_identity = _identity_from_unsettled_creation(
+                    exc,
+                    expected_leaf=directory_leaf,
+                    directory=True,
+                )
+                _record_document_rollback(
+                    promoted,
+                    relative_path,
+                    directory_leaf=directory_leaf,
+                    file_leaf=file_leaf,
+                    expected_size=expected_size,
+                    expected_digest=expected_digest,
+                    tools_root_identity=destination.tools_root_identity,
+                    uploads_identity=destination.uploads_identity,
+                    directory_identity=directory_identity,
+                )
+                raise
+            with directory_capability:
                 _record_document_rollback(
                     promoted,
                     relative_path,
@@ -1263,7 +1290,28 @@ def _create_document_transaction(
                     uploads_identity=destination.uploads_identity,
                     directory_identity=directory_capability.identity,
                 )
-                with directory_capability.create_file(file_leaf) as output:
+                try:
+                    output = directory_capability.create_file(file_leaf)
+                except secure_fs.CreatedChildCleanupError as exc:
+                    file_identity = _identity_from_unsettled_creation(
+                        exc,
+                        expected_leaf=file_leaf,
+                        directory=False,
+                    )
+                    _record_document_rollback(
+                        promoted,
+                        relative_path,
+                        directory_leaf=directory_leaf,
+                        file_leaf=file_leaf,
+                        expected_size=expected_size,
+                        expected_digest=expected_digest,
+                        tools_root_identity=destination.tools_root_identity,
+                        uploads_identity=destination.uploads_identity,
+                        directory_identity=directory_capability.identity,
+                        file_identity=file_identity,
+                    )
+                    raise
+                with output:
                     # Record identity before writing so cancellation or a
                     # partial write remains safely rollback-addressable.
                     _record_document_rollback(
@@ -1358,6 +1406,13 @@ def _delete_secure_document(record: _DocumentRollbackRecord) -> None:
                     expected_identity=record.directory_identity,
                 )
             except FileNotFoundError:
+                try:
+                    root_capability.delete_directory(
+                        record.directory_leaf,
+                        expected_identity=record.directory_identity,
+                    )
+                except FileNotFoundError:
+                    pass
                 return
             with directory_capability:
                 if (
@@ -2294,6 +2349,13 @@ def _delete_empty_unmanifested_batch(
                 expected_identity=inspection.batch_identity,
             )
         except FileNotFoundError:
+            try:
+                root_capability.delete_directory(
+                    leaf,
+                    expected_identity=inspection.batch_identity,
+                )
+            except FileNotFoundError:
+                pass
             return True
         with batch_capability:
             if batch_capability.refresh_identity() != inspection.batch_identity:
@@ -2405,6 +2467,8 @@ def _delete_inspected_manifest_batch(
                             expected_identity=record.identity,
                         )
                 except FileNotFoundError:
+                    if record.identity is not None:
+                        deletions.append((child_leaf, record.identity))
                     continue
                 with child:
                     identity = child.identity
@@ -2529,7 +2593,15 @@ def _resume_recovery_batch(
             )
         except FileNotFoundError:
             # The batch deletion completed before the previous process stopped;
-            # only the redundant external journal remains.
+            # resume any deterministic quarantine before treating the external
+            # journal as redundant.
+            try:
+                root_capability.delete_directory(
+                    leaf,
+                    expected_identity=inspection.batch_identity,
+                )
+            except FileNotFoundError:
+                pass
             root_capability.delete_file(
                 recovery_leaf,
                 expected_identity=inspection.recovery_identity,
@@ -2548,6 +2620,13 @@ def _resume_recovery_batch(
                             expected_identity=identity,
                         )
                     except FileNotFoundError:
+                        try:
+                            batch_capability.delete_file(
+                                child_leaf,
+                                expected_identity=identity,
+                            )
+                        except FileNotFoundError:
+                            pass
                         continue
                     with child:
                         record = recovery.manifest.entries[child_leaf]
@@ -2590,6 +2669,14 @@ def _resume_recovery_batch(
                         STAGING_MANIFEST_LEAF,
                         expected_identity=recovery.manifest_identity,
                     )
+                else:
+                    try:
+                        batch_capability.delete_file(
+                            STAGING_MANIFEST_LEAF,
+                            expected_identity=recovery.manifest_identity,
+                        )
+                    except FileNotFoundError:
+                        pass
             except Exception as exc:
                 raise _SweepRecoveryRequired() from exc
         try:
@@ -2611,6 +2698,48 @@ def _resume_recovery_batch(
     return True
 
 
+def _prove_recovery_batch_absent(
+    root_capability: secure_fs.DirectoryCapability,
+    recovery: _ParsedRecoveryJournal,
+) -> bool:
+    """Resume an interrupted batch delete without removing a live batch."""
+    try:
+        batch_capability = root_capability.open_directory(
+            recovery.batch_leaf,
+            expected_identity=recovery.batch_identity,
+        )
+    except FileNotFoundError:
+        try:
+            root_capability.delete_directory(
+                recovery.batch_leaf,
+                expected_identity=recovery.batch_identity,
+            )
+        except FileNotFoundError:
+            pass
+        return True
+    with batch_capability:
+        if batch_capability.refresh_identity() != recovery.batch_identity:
+            raise secure_fs.CapabilityError()
+    return False
+
+
+def _read_valid_recovery_journal(
+    root_capability: secure_fs.DirectoryCapability,
+    leaf: str,
+) -> tuple[
+    secure_fs.FileIdentity,
+    _ParsedRecoveryJournal,
+]:
+    with root_capability.open_file(leaf) as journal_capability:
+        journal_identity = journal_capability.identity
+        journal_bytes = journal_capability.read_bytes(
+            max_bytes=STAGING_RECOVERY_MAX_BYTES
+        )
+        if journal_capability.refresh_identity() != journal_identity:
+            raise secure_fs.CapabilityError()
+    return journal_identity, _parse_recovery_journal(journal_bytes)
+
+
 def _remove_redundant_recovery_journal(
     root: Path,
     recovery_leaf: str,
@@ -2626,36 +2755,57 @@ def _remove_redundant_recovery_journal(
         if root_capability.refresh_identity() != root_identity:
             raise secure_fs.CapabilityError()
         try:
-            journal_capability = root_capability.open_file(recovery_leaf)
+            journal_identity, recovery = _read_valid_recovery_journal(
+                root_capability,
+                recovery_leaf,
+            )
         except FileNotFoundError:
             return False
-        with journal_capability:
-            journal_identity = journal_capability.identity
-            journal_bytes = journal_capability.read_bytes(
-                max_bytes=STAGING_RECOVERY_MAX_BYTES
-            )
-            if journal_capability.refresh_identity() != journal_identity:
-                raise secure_fs.CapabilityError()
-            recovery = _parse_recovery_journal(journal_bytes)
         if (
             _recovery_leaf(recovery.batch_leaf) != recovery_leaf
             or recovery.root_identity != root_identity
         ):
             raise secure_fs.CapabilityError()
+        if not _prove_recovery_batch_absent(root_capability, recovery):
+            return False
+        root_capability.delete_file(
+            recovery_leaf,
+            expected_identity=journal_identity,
+        )
+        root_capability.flush()
+    return True
+
+
+def _remove_quarantined_recovery_journal(
+    root: Path,
+    quarantine_leaf: str,
+) -> bool:
+    """Resume an exact root-level recovery-journal quarantine after restart."""
+    if not secure_fs._is_posix_quarantine_leaf(quarantine_leaf):
+        return False
+    with secure_fs.open_root(root) as root_capability:
+        root_identity = root_capability.identity
+        if root_capability.refresh_identity() != root_identity:
+            raise secure_fs.CapabilityError()
         try:
-            batch_capability = root_capability.open_directory(
-                recovery.batch_leaf,
-                expected_identity=recovery.batch_identity,
+            journal_identity, recovery = _read_valid_recovery_journal(
+                root_capability,
+                quarantine_leaf,
             )
         except FileNotFoundError:
-            batch_capability = None
-        if batch_capability is not None:
-            with batch_capability:
-                if (
-                    batch_capability.refresh_identity()
-                    != recovery.batch_identity
-                ):
-                    raise secure_fs.CapabilityError()
+            return False
+        recovery_leaf = _recovery_leaf(recovery.batch_leaf)
+        expected_quarantine = secure_fs._posix_quarantine_leaf(
+            recovery_leaf,
+            journal_identity,
+            directory=False,
+        )
+        if (
+            quarantine_leaf != expected_quarantine
+            or recovery.root_identity != root_identity
+        ):
+            raise secure_fs.CapabilityError()
+        if not _prove_recovery_batch_absent(root_capability, recovery):
             return False
         root_capability.delete_file(
             recovery_leaf,
@@ -2689,11 +2839,18 @@ async def sweep_stale_staging(now=None, max_age_seconds: float = 3600) -> int:
     # normal recovery path below.
     for candidate in candidates:
         recovery_leaf = candidate.name
-        if not recovery_leaf.startswith(STAGING_RECOVERY_PREFIX):
+        if recovery_leaf.startswith(STAGING_RECOVERY_PREFIX):
+            recovery_cleanup = _remove_redundant_recovery_journal
+        elif secure_fs._is_posix_quarantine_leaf(
+            recovery_leaf,
+            directory=False,
+        ):
+            recovery_cleanup = _remove_quarantined_recovery_journal
+        else:
             continue
         try:
             await _run_thread_joined(
-                _remove_redundant_recovery_journal,
+                recovery_cleanup,
                 root,
                 recovery_leaf,
             )
