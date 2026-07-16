@@ -3,7 +3,7 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from odbms import Model
 from PIL import Image
@@ -68,6 +68,7 @@ class ArtifactRef(BaseModel):
     filename: str | None = None
     width: int | None = None
     height: int | None = None
+    origin: Literal['uploaded', 'generated'] | None = None
 
 
 class EntityRef(BaseModel):

@@ -335,7 +335,9 @@ async def _ensure_schema():
 
     for table, columns in (
         ('sessions', (('run_id', 'TEXT'), ('step_index', 'INTEGER'), ('step_title', 'TEXT'))),
-        ('artifacts', (('user_id', 'TEXT'),)),
+        ('artifacts', (('user_id', 'TEXT'), ('origin', 'TEXT'),
+                       ('vision_storage_key', 'TEXT'), ('thumbnail_storage_key', 'TEXT'),
+                       ('created_at', 'TEXT'))),
         ('tasks', (('callback_url', 'TEXT'), ('callback_key_id', 'TEXT'),
                    ('schedule_at', 'TEXT'), ('schedule_interval', 'INTEGER'),
                    ('schedule_cron', 'TEXT'), ('next_run_at', 'TEXT'),

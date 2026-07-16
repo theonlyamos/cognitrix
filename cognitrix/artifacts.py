@@ -6,9 +6,12 @@ import asyncio
 import contextvars
 import hashlib
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from odbms import Model
+from pydantic import Field
 
 from cognitrix.config import settings
 from cognitrix.tools.utils import ArtifactRef
@@ -42,6 +45,10 @@ class Artifact(Model):
     agent_id: str | None = None
     user_id: str | None = None
     storage_key: str
+    origin: str | None = 'generated'
+    vision_storage_key: str | None = None
+    thumbnail_storage_key: str | None = None
+    created_at: str | None = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     mime_type: str = 'image/png'
     filename: str | None = None
     width: int | None = None
@@ -62,11 +69,43 @@ def _storage_namespace(value: str) -> str:
     return hashlib.sha256(value.encode('utf-8')).hexdigest()
 
 
-def absolute_path(artifact: Artifact) -> Path:
-    path = (_root() / artifact.storage_key).resolve()
-    if _root().resolve() not in path.parents:
+_VARIANT_KEY_FIELDS = {
+    'original': 'storage_key',
+    'vision': 'vision_storage_key',
+    'thumbnail': 'thumbnail_storage_key',
+}
+
+
+def _variant_storage_key(
+    artifact: Artifact, variant: Literal['original', 'vision', 'thumbnail']
+) -> str | None:
+    field = _VARIANT_KEY_FIELDS.get(variant)
+    if field is None:
+        raise ValueError('Invalid artifact variant')
+    return getattr(artifact, field)
+
+
+def _resolve_storage_key(storage_key: str | None) -> Path:
+    if not storage_key:
+        raise ValueError('Invalid artifact storage key')
+    relative = Path(storage_key)
+    if relative.is_absolute() or '..' in relative.parts:
+        raise ValueError('Invalid artifact storage key')
+    root = _root().resolve()
+    path = (root / relative).resolve()
+    if root not in path.parents:
         raise ValueError('Invalid artifact storage key')
     return path
+
+
+def variant_path(
+    artifact: Artifact, variant: Literal['original', 'vision', 'thumbnail']
+) -> Path:
+    return _resolve_storage_key(_variant_storage_key(artifact, variant))
+
+
+def absolute_path(artifact: Artifact) -> Path:
+    return variant_path(artifact, 'original')
 
 
 async def store_png(data: bytes, *, session_id: str | None = None, agent_id: str | None = None,
@@ -123,11 +162,14 @@ async def delete_session_artifacts(session_id: str) -> None:
     """Remove a conversation's retained media when its chat is cleared/deleted."""
     session = session_id
     artifacts = await Artifact.find({'session_id': session}) or []
-    for artifact in artifacts:
-        try:
-            await asyncio.to_thread(absolute_path(artifact).unlink, missing_ok=True)
-        except (OSError, ValueError):
-            pass
+    storage_keys = {
+        key
+        for artifact in artifacts
+        for variant in _VARIANT_KEY_FIELDS
+        if (key := _variant_storage_key(artifact, variant))
+    }
+    for key in storage_keys:
+        await asyncio.to_thread(_resolve_storage_key(key).unlink, missing_ok=True)
     await Artifact.delete_many({'session_id': session})
     directory = _root() / _storage_namespace(session)
     try:
@@ -138,4 +180,5 @@ async def delete_session_artifacts(session_id: str) -> None:
 
 def ref(artifact: Artifact) -> ArtifactRef:
     return ArtifactRef(id=str(artifact.id), mime_type=artifact.mime_type, filename=artifact.filename,
-                       width=artifact.width, height=artifact.height)
+                       width=artifact.width, height=artifact.height,
+                       origin=getattr(artifact, 'origin', None) or 'generated')
