@@ -19,6 +19,7 @@ from cognitrix.common.safe_exec import (
 )
 from cognitrix.config import settings
 from cognitrix.tools.tool import tool
+from cognitrix.tools.utils import current_execution_context
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -711,7 +712,12 @@ async def list_agents():
     """
     from cognitrix.agents import Agent  # noqa: WPS433
 
-    agents = await Agent.list_agents()  # type: ignore[attr-defined]
+    authority = current_execution_context()
+    agents = [
+        agent
+        for agent in await Agent.list_agents()  # type: ignore[attr-defined]
+        if authority.agent_allowed(str(getattr(agent, 'id', '')))
+    ]
     if not agents:
         return "No agents found."
 
@@ -750,6 +756,13 @@ async def call_agent(name: str, task: str, interface: str = 'task'):
     Raises:
         Exception: If the agent is not found or the task fails
     """
+    authority = current_execution_context()
+    # Durable execution is already planned from immutable agent/tool
+    # snapshots. Delegating to a live saved agent here would escape that
+    # snapshot and make resume behavior depend on mutable configuration.
+    if authority.run_id is not None:
+        return 'Error calling agent: delegation is unavailable inside durable task runs'
+
     depth = _CALL_AGENT_DEPTH.get()
     if depth >= MAX_AGENT_CALL_DEPTH:
         return f"Error calling agent: delegation depth limit ({MAX_AGENT_CALL_DEPTH}) reached"
@@ -761,6 +774,9 @@ async def call_agent(name: str, task: str, interface: str = 'task'):
         agent = await Agent.find_one({'name': name})
         if not agent:
             return f"Error calling agent: {name} not found"
+        if not authority.agent_allowed(str(agent.id)):
+            # Keep target existence opaque to restricted credentials.
+            return f"Error calling agent: {name} was not found or is not allowed"
 
         chunks: list[str] = []
 
@@ -769,13 +785,33 @@ async def call_agent(name: str, task: str, interface: str = 'task'):
             if content:
                 chunks.append(content)
 
-        # Run the task through the sub-agent's own session loop so it gets
-        # tools, safety checks, and history like any other turn. 'cli' maps to
-        # 'task' because the cli branch prints instead of awaiting the capture
-        # callback; web/ws pass through so risky tools are denied by policy.
-        session_interface = 'task' if interface in ('cli', 'task') else interface
-        session = await Session.get_by_agent_id(str(agent.id))
-        await session(task, agent, session_interface, True, capture, {})
+        # Delegation is stateless: a shared saved session would leak prompts
+        # across users, API keys, and parent conversations. Authenticated
+        # callers always inherit web safety policy even if the model supplies
+        # a weaker ``interface`` tool argument. Internal CLI callers retain
+        # the compatibility task interface.
+        if authority.user_id is not None or authority.api_key_id is not None:
+            session_interface = 'web'
+        else:
+            session_interface = (
+                interface
+                if interface in ('web', 'ws', 'compat')
+                else 'task'
+            )
+        session = Session(agent_id=str(agent.id), user_id=authority.user_id)
+        await session(
+            task,
+            agent,
+            session_interface,
+            True,
+            capture,
+            {},
+            save_history=False,
+            tool_context=authority,
+            record_history=True,
+            persist_history=False,
+            compact_history=False,
+        )
         return ''.join(chunks).strip() or f"Agent '{name}' returned no output."
     except Exception as e:
         return f"Error calling agent: {str(e)}"

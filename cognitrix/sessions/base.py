@@ -11,6 +11,7 @@ from odbms import Model
 from pydantic import Field
 from rich import print
 
+from cognitrix.errors import ExecutionControlError
 from cognitrix.providers.base import LLMResponse
 from cognitrix.safety.approval_gate import OPERATION_BLOCKED_PREFIX
 
@@ -111,6 +112,9 @@ class Session(Model):
     agent_id: str | None = None
     """The id of the agent that started the session"""
 
+    user_id: str | None = None
+    """Durable owner of an ordinary web/API chat (None for local/internal sessions)"""
+
     task_id: str | None = None
     """The id of the task that started the session"""
 
@@ -186,12 +190,22 @@ class Session(Model):
 
 
     @classmethod
-    async def get_by_agent_id(cls, agent_id: str) -> Self:
-        """Retrieve a session by agent_id"""
+    async def get_by_agent_id(cls, agent_id: str, user_id: str | None = None) -> Self:
+        """Retrieve a session by agent, optionally scoped to a web/API owner.
+
+        Omitting ``user_id`` preserves local CLI behavior. Web callers must
+        always pass it, which deliberately ignores legacy ownerless rows.
+        """
         agent_id_str = str(agent_id)
-        session = await cls.find_one({'agent_id': agent_id_str})
+        query = {'agent_id': agent_id_str}
+        if user_id is not None:
+            query['user_id'] = str(user_id)
+        session = await cls.find_one(query)
         if not session:
-            session = cls(agent_id=agent_id_str)
+            session = cls(
+                agent_id=agent_id_str,
+                user_id=str(user_id) if user_id is not None else None,
+            )
             await session.save()
         return session
 
@@ -266,7 +280,17 @@ class Session(Model):
         await self.save()
         logger.info("Compacted session history: folded %s turns into a summary", len(fold_turns))
 
-    async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws', 'compat'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None, tool_context=None):
+    async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws', 'compat'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None, tool_context=None, record_history: bool | None = None, persist_history: bool | None = None, compact_history: bool | None = None):
+
+        # ``save_history`` remains the compatibility umbrella.  Task execution
+        # records the assistant/tool protocol in memory while independently
+        # disabling database writes and chat compaction.
+        if record_history is None:
+            record_history = save_history
+        if persist_history is None:
+            persist_history = save_history
+        if compact_history is None:
+            compact_history = persist_history
 
         # Add timing for turn duration
         turn_start_time = time.monotonic()
@@ -274,19 +298,20 @@ class Session(Model):
         # Every agent can invoke skills: ensure the load_skill meta-tool is present
         # for this turn. UI/API-created agents only carry their configured tools,
         # so a `/skill` chat message would otherwise have nothing to load it.
-        try:
-            if not any(str(getattr(t, 'name', '')).lower() == 'load skill' for t in agent.tools):
-                from cognitrix.tools.base import ToolManager
-                _skill_tool = ToolManager.get_by_name('load_skill')
-                if _skill_tool:
-                    agent.tools.append(_skill_tool)
-        except Exception:
-            pass
+        if interface != 'task':
+            try:
+                if not any(str(getattr(t, 'name', '')).lower() == 'load skill' for t in agent.tools):
+                    from cognitrix.tools.base import ToolManager
+                    _skill_tool = ToolManager.get_by_name('load_skill')
+                    if _skill_tool:
+                        agent.tools.append(_skill_tool)
+            except Exception:
+                pass
 
         # Add the new message to the history before building the prompt
         if wsquery is None:
             wsquery = {}
-        if save_history:
+        if record_history:
             self.update_history(agent.process_prompt(message))
             # User uploads ride alongside the text turn: images become vision
             # messages (kept on disk, encoded at send-time by format_query), and
@@ -375,13 +400,14 @@ class Session(Model):
                             # OpenAI sequence (assistant.tool_calls -> tool results).
                             # Unconditional (like the tool-results append below): the
                             # loop needs both in history to rebuild the next prompt.
-                            self.update_history({
-                                'role': 'assistant',
-                                'name': agent.name,
-                                'type': 'tool_calls',
-                                'content': response.llm_response or '',
-                                'tool_calls': response.tool_calls,
-                            })
+                            if record_history:
+                                self.update_history({
+                                    'role': 'assistant',
+                                    'name': agent.name,
+                                    'type': 'tool_calls',
+                                    'content': response.llm_response or '',
+                                    'tool_calls': response.tool_calls,
+                                })
                             # Surface tool activity to browser transports so the chat
                             # UI can show what the agent is running: name + params up
                             # front, then the result on completion. The whole batch
@@ -392,7 +418,29 @@ class Session(Model):
                                 (t.get('name'), t.get('tool_call_id'), t.get('arguments') or {})
                                 for t in response.tool_calls
                             ]
-                            if interface in ('web', 'ws'):
+
+                            async def emit_tool_terminal(
+                                name: str | None,
+                                tcid: str | None,
+                                item: dict[str, Any],
+                            ) -> None:
+                                data = item.get('data', '')
+                                outcome = item.get('outcome')
+                                status = 'completed' if (
+                                    outcome.get('status') == 'success'
+                                    if outcome else item.get('success') is True
+                                ) else 'error'
+                                await output({
+                                    'type': 'tool',
+                                    'status': status,
+                                    'tool_name': name or _MALFORMED_TOOL_LABEL,
+                                    'tool_call_id': tcid,
+                                    'result': _tool_preview(data),
+                                    'outcome': outcome,
+                                    'artifacts': (outcome or {}).get('artifacts', []),
+                                })
+
+                            if interface in ('web', 'ws', 'task'):
                                 for name, tcid, args in tool_meta:
                                     if name:
                                         await output({'type': 'tool', 'status': 'started', 'tool_name': name,
@@ -439,8 +487,15 @@ class Session(Model):
                                             terminal_messages.extend(processed)
                                         else:
                                             terminal_messages.append(processed)
-                                    if terminal_messages:
+                                    if terminal_messages and record_history:
                                         self.update_history(terminal_messages)
+                                    if interface in ('web', 'ws', 'task'):
+                                        for i, (name, tcid, _args) in enumerate(tool_meta):
+                                            completed_entry = completed_by_index.get(i)
+                                            if completed_entry is not None:
+                                                await emit_tool_terminal(
+                                                    name, tcid, completed_entry
+                                                )
                                     active_tool_calls = []
                                 else:
                                     # Compatibility fallback for a cancellation
@@ -451,7 +506,8 @@ class Session(Model):
                                         and completed.get('type') == 'tool_calls_result'
                                         and completed.get('result')
                                     ):
-                                        self.update_history(agent.process_prompt(completed))
+                                        if record_history:
+                                            self.update_history(agent.process_prompt(completed))
                                     unresolved = getattr(
                                         exc, 'unresolved_tool_calls', None
                                     )
@@ -471,22 +527,14 @@ class Session(Model):
                                 # Persist protocol results before any awaited UI
                                 # emission, so a transport cancellation cannot
                                 # relabel completed calls as stopped.
-                                self.update_history(agent.process_prompt(result))
+                                if record_history:
+                                    self.update_history(agent.process_prompt(result))
                                 active_tool_calls = []
-                            if interface in ('web', 'ws'):
+                            if interface in ('web', 'ws', 'task'):
                                 result_list = result['result'] if is_tool_result else []
                                 for i, (name, tcid, _args) in enumerate(tool_meta):
                                     item = result_list[i] if i < len(result_list) else {}
-                                    data = item.get('data', '')
-                                    outcome = item.get('outcome')
-                                    status = 'completed' if (
-                                        outcome.get('status') == 'success' if outcome else item.get('success') is True
-                                    ) else 'error'
-                                    tool_name = name or _MALFORMED_TOOL_LABEL
-                                    await output({'type': 'tool', 'status': status, 'tool_name': tool_name,
-                                                  'tool_call_id': tcid, 'result': _tool_preview(data),
-                                                  'outcome': outcome,
-                                                  'artifacts': (outcome or {}).get('artifacts', [])})
+                                    await emit_tool_terminal(name, tcid, item)
 
                             if is_tool_result:
                                 # Deny-loop breaker: if every call in the batch was
@@ -523,7 +571,7 @@ class Session(Model):
                             # Both the WS and SSE transports call the session with
                             # interface='web', so gating on 'ws' alone dropped all
                             # artifacts. Emit to any browser transport (async output).
-                            if interface in ('ws', 'web'):
+                            if interface in ('ws', 'web', 'task'):
                                 await output({'type': wsquery.get('type'), 'content': '', 'action': wsquery.get('action'), 'artifacts': response.artifacts, 'complete': False})
 
                         # Cooperative yield point (no artificial delay): a fixed
@@ -537,12 +585,16 @@ class Session(Model):
                     # Provider/transport error: already surfaced to the user above;
                     # don't persist it as a normal answer or re-prompt the tool loop.
                     if response and getattr(response, 'error', None):
+                        if interface == 'task':
+                            from cognitrix.errors import ProviderExecutionError
+
+                            raise ProviderExecutionError('provider request failed')
                         break
 
                     # Persist the final assistant text only when this response did
                     # NOT issue tool calls (that assistant message was already saved
                     # with its tool_calls above).
-                    if response and save_history and not response.tool_calls:
+                    if response and record_history and not response.tool_calls:
                         response_dict = {
                             'role': 'assistant',
                             'name': agent.name,
@@ -557,7 +609,7 @@ class Session(Model):
                         duration_str = format_duration(turn_duration)
 
                         # Store timing + token usage in history
-                        if save_history:
+                        if record_history:
                             usage = (getattr(response, 'usage', None) or {}) if response else {}
                             self.update_history({
                                 'role': 'system',
@@ -574,6 +626,8 @@ class Session(Model):
 
                         break # Exit loop if no tools were called
 
+                except ExecutionControlError:
+                    raise
                 except Exception as e:
                     logger.exception(e)
                     break # Exit on error
@@ -583,7 +637,7 @@ class Session(Model):
             duration_str = format_duration(turn_duration)
 
             # Store timing in history (only if not already stored in 'not called_tools' block)
-            if save_history and called_tools:
+            if record_history and called_tools:
                 usage = (getattr(response, 'usage', None) or {}) if response else {}
                 self.update_history({
                     'role': 'system',
@@ -598,15 +652,16 @@ class Session(Model):
             if interface == 'cli' and called_tools:
                 print(f"\n[dim]Took {duration_str}[/dim]")
 
-            if save_history:
+            if persist_history:
                 await self.save()
+            if compact_history:
                 try:
                     await self._maybe_compact(agent)
                 except Exception:
                     logger.exception("History compaction failed; keeping history as-is")
 
             # Add to agent's memory
-            if save_history and hasattr(agent, 'context_manager'):
+            if persist_history and hasattr(agent, 'context_manager'):
                 try:
                     await agent.context_manager.add_to_memory({
                         'role': 'user',
@@ -623,16 +678,19 @@ class Session(Model):
                     logger.error(f"Failed to add to memory: {e}")
 
         except asyncio.CancelledError:
-            if save_history:
+            if record_history:
                 stopped_messages = _stopped_tool_messages(active_tool_calls)
                 if stopped_messages:
                     self.update_history(stopped_messages)
+            if persist_history:
                 try:
                     # Preserve the protocol-closing tool results before the
                     # transport reports the stopped turn to the client.
                     await asyncio.shield(self.save())
                 except Exception:
                     logger.exception("Failed to persist stopped tool results")
+            raise
+        except ExecutionControlError:
             raise
         except Exception as e:
             logger.exception(e)
@@ -645,8 +703,13 @@ class SessionManager:
 
     # Provide a convenience creator to match the uniform API requested.
     @staticmethod
-    async def create(agent_id: str | None = None, team_id: str | None = None, task_id: str | None = None) -> 'Session':
-        session = Session(agent_id=agent_id, team_id=team_id, task_id=task_id)
+    async def create(agent_id: str | None = None, team_id: str | None = None, task_id: str | None = None, user_id: str | None = None) -> 'Session':
+        session = Session(
+            agent_id=agent_id,
+            team_id=team_id,
+            task_id=task_id,
+            user_id=user_id,
+        )
         await session.save()
         return session
 

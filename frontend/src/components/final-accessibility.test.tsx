@@ -205,6 +205,11 @@ describe('final accessibility contracts', () => {
     localStorage.setItem('selectedAgentId', 'agent-1');
     localStorage.setItem('chatSession:agent-1', '');
     Element.prototype.scrollIntoView = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:durable-artifact'),
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
   });
 
   it('names every TaskPage step and schedule control while retaining group names', async () => {
@@ -476,6 +481,347 @@ describe('final accessibility contracts', () => {
     expect(screen.getByRole('button', { name: 'More actions' })).toBeInTheDocument();
   });
 
+  it('renders a durable queued run as waiting and cancellable', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'in_progress' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{ id: 'run-queued', status: 'queued', plan: [], queued_at: '2030-01-01 00:00:00' }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    renderTaskDetail();
+
+    expect(await screen.findByText('waiting for a worker to pick up the run…')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel task' })).toBeInTheDocument();
+    expect(screen.getAllByText('queued').length).toBeGreaterThan(0);
+  });
+
+  it('loads older task runs without adding them to the live polling resource', async () => {
+    const firstPage = Array.from({ length: 50 }, (_, index) => ({
+      id: `run-${index + 1}`,
+      status: 'failed',
+      plan: [],
+      started_at: `2030-01-01 00:${String(index).padStart(2, '0')}:00`,
+    }));
+    const olderRun = {
+      id: 'run-51',
+      status: 'failed',
+      plan: Array.from({ length: 51 }, (_, index) => ({
+        index,
+        title: `Step ${index + 1}`,
+        status: 'pending',
+      })),
+      started_at: '2029-12-31 23:00:00',
+    };
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'failed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', { data: firstPage });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/tasks/task-1/runs?limit=50&offset=50') {
+        return Promise.resolve({ data: [olderRun] });
+      }
+      return Promise.resolve({ data: [] });
+    });
+
+    const user = userEvent.setup();
+    renderTaskDetail();
+
+    const loadOlder = await screen.findAllByRole('button', { name: 'Load older runs' });
+    await user.click(loadOlder[0]);
+
+    expect(harness.apiGet).toHaveBeenCalledWith('/tasks/task-1/runs?limit=50&offset=50');
+    expect(await screen.findAllByRole('button', { name: /0\/51 steps/ })).not.toHaveLength(0);
+    // Only the canonical first-page resource participates in background
+    // polling; older pages are fetched explicitly and retained locally.
+    expect(harness.resources.has('/tasks/task-1/runs?limit=50&offset=50')).toBe(false);
+  });
+
+  it('labels structured run failures and summarizes usage against limits', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'failed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-failed',
+        status: 'failed',
+        plan: [],
+        error_code: 'worker_lost',
+        error: 'lease expired',
+        usage: { total_tokens: 1250, llm_calls: 3, tool_calls: 2 },
+        budget: { max_tokens: 2000, max_llm_calls: 5, max_tool_calls: 4 },
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    renderTaskDetail();
+
+    expect(await screen.findByText('Worker lost')).toBeInTheDocument();
+    expect(screen.getByText('lease expired')).toBeInTheDocument();
+    expect(screen.getByText(/1,250 \/ 2,000 tokens/)).toBeInTheDocument();
+    expect(screen.getByText(/3 \/ 5 LLM calls/)).toBeInTheDocument();
+    expect(screen.getByText(/2 \/ 4 tool calls/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ['authority_invalid', 'Run authority invalid'],
+    ['concurrency_exhausted', 'Concurrency capacity exhausted'],
+    ['capability_unavailable', 'Required capability unavailable'],
+    ['persistence_error', 'Task state persistence failed'],
+    ['timeout', 'Run timed out'],
+    ['unknown', 'Run failed'],
+    ['limit_exceeded', 'Run failed'],
+  ])('labels durable error code %s as %s', async (errorCode, label) => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'failed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{ id: `run-${errorCode}`, status: 'failed', plan: [], error_code: errorCode }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+
+    renderTaskDetail();
+
+    expect(await screen.findByText(label)).toBeInTheDocument();
+  });
+
+  it('restores a durable typed run result when no chat session exists', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'completed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-durable',
+        status: 'completed',
+        plan: [{ index: 0, title: 'Research', status: 'done', agent_name: 'Researcher' }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-durable') return Promise.resolve({ data: [] });
+      if (path === '/tasks/task-1/runs/run-durable/result') {
+        return Promise.resolve({
+          data: {
+            text: '# Durable final answer',
+            artifacts: [{ id: 'artifact-1', name: 'report.pdf', mime_type: 'application/pdf' }],
+            citations: [{ url: 'https://example.test/source', title: 'Primary source' }],
+            warnings: ['Verify the final figure.'],
+            usage: {},
+          },
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+
+    renderTaskDetail();
+
+    expect(
+      await screen.findByRole('heading', { name: 'Durable final answer' }, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('report.pdf')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Primary source' })).toHaveAttribute(
+      'href',
+      'https://example.test/source',
+    );
+    expect(screen.getByText('Verify the final figure.')).toBeInTheDocument();
+  });
+
+  it('loads an authoritative durable step result when its selector is chosen', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'failed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-durable',
+        status: 'failed',
+        plan: [{ index: 0, title: 'Research', status: 'done', agent_name: 'Researcher' }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-durable') return Promise.resolve({ data: [] });
+      if (path === '/tasks/task-1/runs/run-durable/steps/0/result') {
+        return Promise.resolve({
+          data: {
+            step_index: 0,
+            status: 'done',
+            result: { text: 'Durable step answer', artifacts: [], citations: [], warnings: [], usage: {} },
+          },
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+
+    renderTaskDetail();
+    const step = await screen.findByRole('button', { name: /Researcher/ });
+    await userEvent.click(step);
+
+    expect(await screen.findByText('Durable step answer')).toBeInTheDocument();
+    expect(harness.apiGet).toHaveBeenCalledWith(
+      '/tasks/task-1/runs/run-durable/steps/0/result',
+    );
+  });
+
+  it('hands an ephemeral live attempt off to its durable typed result', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'in_progress' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-live-durable',
+        status: 'running',
+        plan: [{ index: 0, title: 'Render', status: 'running', agent_name: 'Artist' }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-live-durable') return Promise.resolve({ data: [] });
+      if (path === '/sessions/ephemeral-attempt/chat') return Promise.resolve({ data: [] });
+      if (path === '/tasks/task-1/runs/run-live-durable/steps/0/result') {
+        return Promise.resolve({
+          data: {
+            step_index: 0,
+            status: 'done',
+            result: {
+              text: 'Durable rendered image',
+              artifacts: [{
+                id: 'image-1',
+                name: 'render.png',
+                mime_type: 'image/png',
+                uri: '/tasks/task-1/runs/run-live-durable/artifacts/image-1',
+              }, {
+                id: 'image-2',
+                name: 'unsafe.png',
+                mime_type: 'image/png',
+                uri: '/tasks/start/other-task',
+              }],
+              citations: [],
+              warnings: [],
+              usage: {},
+            },
+          },
+        });
+      }
+      if (path === '/tasks/task-1/runs/run-live-durable/artifacts/image-1') {
+        return Promise.resolve({ data: new Blob(['image'], { type: 'image/png' }) });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    renderTaskDetail();
+    await waitFor(() => expect(harness.taskRunOnEvent).not.toBeNull());
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-live',
+      run_id: 'run-live-durable',
+      session_id: 'ephemeral-attempt',
+      step_index: 0,
+      sequence: 1,
+      kind: 'text_delta',
+      agent_name: 'Artist',
+      data: { turn_id: 'ephemeral-attempt:1', content: 'temporary live text' },
+    }));
+    expect(await screen.findByText('temporary live text')).toBeInTheDocument();
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-done',
+      run_id: 'run-live-durable',
+      session_id: 'ephemeral-attempt',
+      step_index: 0,
+      sequence: 2,
+      kind: 'step_status',
+      agent_name: 'Artist',
+      data: { status: 'done', title: 'Render', attempts: 1 },
+    }));
+
+    expect(await screen.findByText('Durable rendered image')).toBeInTheDocument();
+    expect(await screen.findByRole('img', { name: 'Generated image' })).toHaveAttribute(
+      'src',
+      'blob:durable-artifact',
+    );
+    expect(screen.getByRole('link', { name: 'Download render.png' })).toBeInTheDocument();
+    expect(harness.apiGet.mock.calls.some(
+      ([path]) => path === '/tasks/start/other-task',
+    )).toBe(false);
+  });
+
+  it.each([
+    ['empty', () => Promise.resolve({ data: [] })],
+    ['stale', () => Promise.reject(new Error('session unavailable'))],
+  ])('falls back to a durable typed result when the canonical step session is %s', async (_case, loadCanonicalChat) => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'in_progress' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-canonical-fallback',
+        status: 'running',
+        plan: [{ index: 0, title: 'Research', status: 'running', agent_name: 'Researcher' }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-canonical-fallback') {
+        return Promise.resolve({
+          data: [{ id: 'canonical-step-session', step_index: 0, step_title: 'Research' }],
+        });
+      }
+      if (path === '/sessions/canonical-step-session/chat') return loadCanonicalChat();
+      if (path === '/tasks/task-1/runs/run-canonical-fallback/steps/0/result') {
+        return Promise.resolve({
+          data: {
+            step_index: 0,
+            status: 'done',
+            result: {
+              text: 'Authoritative durable fallback',
+              artifacts: [],
+              citations: [],
+              warnings: [],
+              usage: {},
+            },
+          },
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    renderTaskDetail();
+    await waitFor(() => expect(harness.taskRunOnEvent).not.toBeNull());
+    await waitFor(() => expect(harness.apiGet).toHaveBeenCalledWith('/sessions/canonical-step-session/chat'));
+
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-canonical-done',
+      run_id: 'run-canonical-fallback',
+      session_id: 'canonical-step-session',
+      step_index: 0,
+      sequence: 1,
+      kind: 'step_status',
+      agent_name: 'Researcher',
+      data: { status: 'done', title: 'Research', attempts: 1 },
+    }));
+
+    expect(await screen.findByText('Authoritative durable fallback')).toBeInTheDocument();
+    expect(harness.apiGet).toHaveBeenCalledWith(
+      '/tasks/task-1/runs/run-canonical-fallback/steps/0/result',
+    );
+  });
+
+  it('labels cancelled runs as cancelled rather than failed', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'cancelled' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{ id: 'run-cancelled', status: 'cancelled', plan: [], error_code: 'cancelled' }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+
+    renderTaskDetail();
+
+    expect(await screen.findByText('Cancelled')).toBeInTheDocument();
+    expect(screen.queryByText('Run failed')).not.toBeInTheDocument();
+  });
+
   it('keeps Resume visible and moves fresh runs into TaskDetail page actions', async () => {
     const user = userEvent.setup();
     harness.resources.set('/tasks/task-1', { data: { id: 'task-1', title: 'Task', status: 'failed' } });
@@ -674,6 +1020,72 @@ describe('final accessibility contracts', () => {
     });
     expect(screen.getByText('keep this partial output')).toBeInTheDocument();
     expect(harness.pollingEnabled).toBe(true);
+  });
+
+  it('keeps a usable canonical transcript when a later refresh fails', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'in_progress' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-live',
+        status: 'running',
+        plan: [{
+          index: 0,
+          title: 'Research',
+          status: 'running',
+          agent_name: 'Researcher',
+        }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+
+    let failCanonical = false;
+    let chatLoads = 0;
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-live') {
+        return Promise.resolve({
+          data: [{ id: 'session-1', step_index: 0, step_title: 'Research' }],
+        });
+      }
+      if (path === '/sessions/session-1/chat') {
+        chatLoads += 1;
+        return failCanonical
+          ? Promise.reject(new Error('offline'))
+          : Promise.resolve({
+            data: [{
+              role: 'assistant',
+              type: 'text',
+              name: 'Researcher',
+              content: '# Canonical survives',
+            }],
+          });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    renderTaskDetail();
+
+    expect(await screen.findByText(/Canonical survives/)).toBeInTheDocument();
+
+    failCanonical = true;
+    await act(async () => {
+      harness.taskRunOnEvent?.({
+        type: 'task_run_event',
+        id: 'event-1',
+        run_id: 'run-live',
+        session_id: 'session-1',
+        step_index: 0,
+        sequence: 1,
+        kind: 'turn_completed',
+        agent_name: 'Researcher',
+        data: { turn_id: 'session-1:1', attempt: 1 },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(chatLoads).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/Canonical survives/)).toBeInTheDocument();
   });
 
   it('keeps newer canonical chat when an older load resolves last', async () => {
@@ -1311,12 +1723,30 @@ describe('final accessibility contracts', () => {
       data: { id: 'task-1', title: 'Task', status: 'in_progress' },
     });
     harness.resources.set('/tasks/task-1/runs', {
-      data: [{ id: 'run-1', status: 'cancelling', plan: [] }],
+      data: [{ id: 'run-1', status: 'cancelling', force_cancel_ready: false, plan: [] }],
     });
     harness.resources.set('/sessions/tasks/task-1', { data: [] });
     renderTaskDetail();
 
-    const button = await screen.findByRole('button', { name: 'Cancelling… (click to force)' });
-    expectSiblingLiveStatus(button, 'Cancelling… (click to force)');
+    const buttons = await screen.findAllByRole('button', { name: 'Cancelling…' });
+    expect(buttons).toHaveLength(2);
+    buttons.forEach((button) => expect(button).toBeDisabled());
+    expectSiblingLiveStatus(buttons[0], 'Cancelling…');
+  });
+
+  it('enables force cancellation only when the server marks it ready', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'in_progress' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{ id: 'run-1', status: 'cancelling', force_cancel_ready: true, plan: [] }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    renderTaskDetail();
+
+    const buttons = await screen.findAllByRole('button', { name: 'Force cancel' });
+    expect(buttons).toHaveLength(2);
+    buttons.forEach((button) => expect(button).toBeEnabled());
+    expectSiblingLiveStatus(buttons[0], 'Force cancel');
   });
 });

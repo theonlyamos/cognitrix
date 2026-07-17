@@ -38,11 +38,16 @@ async def run_configuration():
     from cognitrix.models.user import User
     from cognitrix.sessions.base import Session
     from cognitrix.tasks.events import TaskRunEvent
-    from cognitrix.tasks.run import TaskRun
+    from cognitrix.tasks.metrics import TaskRunPhaseMetric
+    from cognitrix.tasks.run import TaskRun, TaskRunHead
+    from cognitrix.tasks.step import TaskRunStep
 
     if DBMS.Database is not None and DBMS.Database.dbms != 'mongodb':
         from cognitrix.artifacts import Artifact
-        for model in (Agent, Task, Team, Session, Tool, User, TaskRun, TaskRunEvent, APIKey, Artifact):
+        for model in (
+            Agent, Task, Team, Session, Tool, User, TaskRun, TaskRunHead, TaskRunStep,
+            TaskRunEvent, TaskRunPhaseMetric, APIKey, Artifact,
+        ):
             # Older odbms releases only ship async create_table(); newer ones
             # rename it to _create_table_async.
             create = getattr(model, '_create_table_async', None) or model.create_table

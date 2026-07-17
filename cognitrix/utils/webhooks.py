@@ -80,9 +80,21 @@ async def notify_completion(task, run) -> bool:
     """POST the run's terminal state to task.callback_url. Returns True on a
     2xx delivery; False (with logging) on anything else. Never raises."""
     try:
-        url = getattr(task, 'callback_url', None)
-        key_id = getattr(task, 'callback_key_id', None)
-        if not url or not key_id or run is None:
+        if run is None:
+            return False
+
+        # Re-read the authoritative run before choosing the callback. Per-run
+        # snapshots prevent later task edits from redirecting older results.
+        run_cls = type(run)
+        fresh = await run_cls.get(run.id) if getattr(run, 'id', None) else None
+        current = fresh or run
+        url = getattr(current, 'callback_url', None) or getattr(
+            task, 'callback_url', None
+        )
+        key_id = getattr(current, 'callback_key_id', None) or getattr(
+            task, 'callback_key_id', None
+        )
+        if not url or not key_id:
             return False
 
         from cognitrix.models.api_key import APIKey
@@ -116,6 +128,8 @@ async def notify_completion(task, run) -> bool:
             'Content-Type': 'application/json',
             'X-Cognitrix-Timestamp': timestamp,
             'X-Cognitrix-Signature': sign(body, key.webhook_secret, timestamp),
+            'Idempotency-Key': f'task-run:{current.id}',
+            'X-Cognitrix-Delivery-Id': str(current.id),
         }
 
         started = time.monotonic()

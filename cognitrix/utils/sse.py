@@ -8,6 +8,11 @@ from sse_starlette.sse import EventSourceResponse
 
 from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.agents.generators import TaskInstructor
+from cognitrix.sessions.access import (
+    browser_authorization,
+    session_access_allowed,
+    visible_sessions,
+)
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 from cognitrix.tools.utils import ToolExecutionContext
@@ -229,13 +234,21 @@ class SSEManager:
         - no id: a fresh conversation; the client adopts its id from the
           tagged reply events.
         """
+        if not self.user_key:
+            return None
+        authorization = browser_authorization(self.user_key)
         if session_id:
             session = await Session.get(session_id)
+            if session is None or not await session_access_allowed(
+                session,
+                authorization,
+            ):
+                return None
             if session is not None and not session.agent_id:
                 session.agent_id = self.agent.id
                 await session.save()
             return session
-        session = Session(agent_id=self.agent.id)
+        session = Session(agent_id=self.agent.id, user_id=self.user_key)
         await session.save()
         return session
 
@@ -290,7 +303,14 @@ class SSEManager:
                     session_id = action['session_id']
 
                     if action['action'] == 'get':
-                        session = await Session.load(session_id)
+                        session = await self._resolve_session(session_id)
+                        if session is None:
+                            yield {'event': 'message', 'data': json.dumps({
+                                'type': 'error',
+                                'content': 'This conversation is unavailable.',
+                                'session_id': session_id,
+                            })}
+                            continue
 
                         if not session.agent_id:
                             session.agent_id = self.agent.id
@@ -299,7 +319,7 @@ class SSEManager:
                         if session.agent_id == self.agent.id:
                             loaded_agent = self.agent
                         else:
-                            loaded_agent: Agent | None = Agent.get(session.agent_id)
+                            loaded_agent: Agent | None = await Agent.get(session.agent_id)
 
                         if loaded_agent:
                             self.agent = loaded_agent
@@ -307,23 +327,37 @@ class SSEManager:
                         yield {'event': 'message', 'data': json.dumps({'type': 'chat_history', 'content': session.chat, 'agent_name': self.agent.name, 'action': 'get'})}
 
                     elif action['action'] == 'delete':
-                        session = await Session.load(session_id)
+                        session = await self._resolve_session(session_id)
+                        if session is None:
+                            yield {'event': 'message', 'data': json.dumps({
+                                'type': 'error',
+                                'content': 'This conversation is unavailable.',
+                                'session_id': session_id,
+                            })}
+                            continue
                         session.chat = []
                         await session.save()
                         yield {'event': 'message', 'data': json.dumps({'type': 'chat_history', 'content': session.chat, 'agent_name': self.agent.name, 'action': 'delete'})}
 
                 elif action['type'] == 'sessions':
                     if action['action'] == 'list':
-                        sessions = [sess.json() for sess in await Session.list_sessions()]
+                        allowed = await visible_sessions(
+                            list(await Session.list_sessions()),
+                            browser_authorization(self.user_key),
+                        )
+                        sessions = [sess.json() for sess in allowed]
                         yield {'event': 'message', 'data': json.dumps({'type': 'sessions', 'content': sessions, 'action': 'list'})}
 
                     elif action['action'] == 'get':
                         agent_id = action['agent_id']
                         if agent_id:
-                            loaded_agent = Agent.get(agent_id)
+                            loaded_agent = await Agent.get(agent_id)
                             if loaded_agent:
                                 self.agent = loaded_agent
-                                session = await Session.get_by_agent_id(loaded_agent.id)
+                                session = await Session.get_by_agent_id(
+                                    loaded_agent.id,
+                                    self.user_key,
+                                )
                                 yield {'event': 'message', 'data': json.dumps({'type': 'sessions', 'agent_name': self.agent.name, 'content': session.dict(), 'action': 'get'})}
 
                 elif action['type'] == 'generate':

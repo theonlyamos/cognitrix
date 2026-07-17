@@ -1,16 +1,7 @@
-"""Multi-step routing detection + planner execution-order contract.
-
-The old handler internals (topological fallback, verify_step, path scanning)
-were replaced by the task orchestrator; their surviving behaviors are covered
-in tests/test_orchestrator.py (_dependency_batches, the evaluator gate) and
-here for the pieces the orchestrator inherited.
-"""
-
-import types
+"""Multi-step routing detection and structured planner ordering contracts."""
 
 from cognitrix.planning.structured_planner import Step, StructuredPlanner, TaskPlan
 from cognitrix.tasks.handler import is_multi_step_task
-from cognitrix.tasks.orchestrator import _summarize_recent_activity
 
 
 def _step(n, deps):
@@ -49,24 +40,3 @@ class TestMultiStepRouting:
         assert is_multi_step_task("find hotels and book catering")
         assert is_multi_step_task("plan a trip then research restaurants")
         assert is_multi_step_task("1. gather data\n2. write the report")
-
-
-def test_step_summary_fallback_for_tool_heavy_step():
-    # No final assistant text -> summarize the tools it invoked.
-    s = types.SimpleNamespace(chat=[
-        {"role": "assistant", "type": "tool_calls", "tool_calls": [{"name": "Write"}, {"name": "Write"}]},
-        {"role": "tool", "content": "ok"},
-        {"role": "assistant", "type": "tool_calls", "tool_calls": [{"name": "Bash"}]},
-        {"role": "system", "type": "turn_timing", "content": "Took 3s"},
-    ])
-    out = _summarize_recent_activity(s)
-    assert "3 tool call" in out and "Write (x2)" in out and "Bash" in out
-
-
-def test_step_summary_prefers_final_text():
-    s = types.SimpleNamespace(chat=[
-        {"role": "assistant", "type": "tool_calls", "tool_calls": [{"name": "Read"}]},
-        {"role": "assistant", "type": "text", "content": "Done: created 4 files."},
-        {"role": "system", "type": "turn_timing", "content": "x"},
-    ])
-    assert _summarize_recent_activity(s) == "Done: created 4 files."

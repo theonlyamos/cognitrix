@@ -56,7 +56,7 @@ async def test_session_roundtrip_and_update(tmp_path):
     explicit.id = 'assigned-id'
     assert explicit.id == 'assigned-id'
 
-    session = Session(agent_id='agent-1')
+    session = Session(agent_id='agent-1', user_id='user-1')
     session.chat = [
         {'role': 'User', 'type': 'text', 'content': 'hi'},
         {'role': 'assistant', 'type': 'tool_calls', 'content': '',
@@ -74,9 +74,30 @@ async def test_session_roundtrip_and_update(tmp_path):
     loaded = await Session.find_one({'agent_id': 'agent-1'})
     assert loaded is not None
     assert loaded.id == session.id
+    assert loaded.user_id == 'user-1'
     assert len(loaded.chat) == 3
     # Nested dicts (tool_calls with typed arguments) must round-trip intact.
     assert loaded.chat[1]['tool_calls'][0]['arguments'] == {'x': 1}
+
+
+@pytest.mark.asyncio
+async def test_every_fresh_sqlite_connection_has_busy_timeout(tmp_path):
+    from odbms import DBMS
+
+    from cognitrix.config import _patch_odbms_sqlite
+
+    await _initialize_sqlite(DBMS, tmp_path / 'busy.db')
+    _patch_odbms_sqlite()
+
+    connections = [DBMS.Database._get_connection() for _ in range(2)]
+    try:
+        assert [
+            connection.execute('PRAGMA busy_timeout').fetchone()[0]
+            for connection in connections
+        ] == [15_000, 15_000]
+    finally:
+        for connection in connections:
+            connection.close()
 
 
 @pytest.mark.asyncio

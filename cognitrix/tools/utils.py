@@ -16,6 +16,8 @@ class ToolExecutionContext:
 
     user_id: str | None = None
     api_key_id: str | None = None
+    task_id: str | None = None
+    run_id: str | None = None
     scopes: frozenset[str] | None = None
     allowed_agents: frozenset[str] | None = None
     allowed_teams: frozenset[str] | None = None

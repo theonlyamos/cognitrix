@@ -384,6 +384,75 @@ async def test_call_tools_propagates_a_child_cancelled_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_execution_control_error_cancels_workers_before_propagating(monkeypatch):
+    from cognitrix.errors import ExecutionControlError
+    import cognitrix.agents.base as agent_base
+
+    sibling = Tool(name="Running Sibling", description="d", parameters={})
+    failing = Tool(name="Control Failure", description="d", parameters={})
+    queued = Tool(name="Queued Side Effect", description="d", parameters={})
+    assigned = [sibling, failing, queued]
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=assigned)
+    monkeypatch.setattr(agent_base, "MAX_CONCURRENT_TOOL_CALLS", 2)
+    monkeypatch.setattr(
+        agent_base.ToolManager,
+        "get_by_name",
+        staticmethod(lambda name: next(tool for tool in assigned if tool.name == name)),
+    )
+    sibling_started = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+    release_sibling = asyncio.Event()
+    queued_side_effects = []
+
+    async def fake_run_tool(self, tool, params, **kwargs):
+        if tool.name == sibling.name:
+            sibling_started.set()
+            try:
+                await release_sibling.wait()
+            except asyncio.CancelledError:
+                sibling_cancelled.set()
+                raise
+            return ToolResult(success=True, data="sibling finished")
+        if tool.name == failing.name:
+            await sibling_started.wait()
+            raise ExecutionControlError("stop the batch")
+        queued_side_effects.append(tool.name)
+        return ToolResult(success=True, data="side effect ran")
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool",
+        fake_run_tool,
+    )
+    calls = [
+        {"name": tool.name, "arguments": {}, "tool_call_id": f"call-{index}"}
+        for index, tool in enumerate(assigned)
+    ]
+    loop = asyncio.get_running_loop()
+    original_create_task = loop.create_task
+    worker_tasks = []
+
+    def recording_create_task(coro, *args, **kwargs):
+        task = original_create_task(coro, *args, **kwargs)
+        worker_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(loop, "create_task", recording_create_task)
+
+    try:
+        with pytest.raises(ExecutionControlError, match="stop the batch"):
+            await agent.call_tools(calls)
+    finally:
+        # On the broken path this releases the orphaned worker, which then
+        # consumes the queued non-idempotent call and makes the regression
+        # observable without leaking a task into the rest of the test suite.
+        release_sibling.set()
+        await asyncio.gather(*worker_tasks, return_exceptions=True)
+
+    assert sibling_cancelled.is_set()
+    assert queued_side_effects == []
+
+
+@pytest.mark.asyncio
 async def test_cancelled_tool_batch_exposes_completed_results_and_unresolved_calls(monkeypatch):
     import cognitrix.agents.base as agent_base
 
@@ -493,6 +562,120 @@ async def test_same_tool_can_run_across_multiple_llm_tool_rounds(monkeypatch):
         if message.get("role") == "tool"
     ] == ["image-1", "image-2"]
     assert session.chat[-2]["content"] == "both images generated"
+
+
+@pytest.mark.asyncio
+async def test_task_turn_records_protocol_history_without_persisting_or_compacting(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    assigned = Tool(name="Echo", description="d", parameters={})
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
+    session = Session(agent_id="ephemeral-task")
+    calls = 0
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        nonlocal calls
+        calls += 1
+        response = LLMResponse()
+        if calls == 1:
+            response.tool_calls = [{
+                "name": "Echo",
+                "arguments": {},
+                "tool_call_id": "echo-1",
+            }]
+        else:
+            response.add_chunk("finished")
+        return response
+
+    async def fake_run_tool(self, tool, params, **kw):
+        return ToolResult(success=True, data="echoed")
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("ephemeral task history must not touch persistence")
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name", staticmethod(lambda _name: assigned)
+    )
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+    monkeypatch.setattr(Session, "save", forbidden)
+    monkeypatch.setattr(Session, "_maybe_compact", forbidden)
+
+    async def sink(*args, **kwargs):
+        return None
+
+    await session(
+        "run",
+        agent,
+        interface="task",
+        stream=False,
+        output=sink,
+        record_history=True,
+        persist_history=False,
+        compact_history=False,
+    )
+
+    assert [(item.get("role"), item.get("type")) for item in session.chat[:4]] == [
+        ("User", "text"),
+        ("assistant", "tool_calls"),
+        ("tool", None),
+        ("assistant", "text"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_task_turn_forwards_provider_artifacts_to_ephemeral_executor(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[])
+    session = Session(agent_id="ephemeral-artifacts")
+    emitted = []
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        response = LLMResponse()
+        response.add_chunk("generated")
+        response.artifacts = [{
+            "id": "artifact-1",
+            "name": "image.png",
+            "mime_type": "image/png",
+        }]
+        return response
+
+    async def sink(payload, *args, **kwargs):
+        emitted.append(payload)
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response",
+        staticmethod(fake_generate),
+    )
+
+    await session(
+        "generate",
+        agent,
+        interface="task",
+        stream=False,
+        output=sink,
+        record_history=True,
+        persist_history=False,
+        compact_history=False,
+    )
+
+    artifact_events = [item for item in emitted if item.get("artifacts")]
+    assert artifact_events == [{
+        "type": None,
+        "content": "",
+        "action": None,
+        "artifacts": [{
+            "id": "artifact-1",
+            "name": "image.png",
+            "mime_type": "image/png",
+        }],
+        "complete": False,
+    }]
 
 
 def test_tool_model_has_no_per_turn_call_limit_metadata():
@@ -659,6 +842,7 @@ async def test_cancelled_turn_preserves_completed_sibling_and_stops_only_unresol
     slow_started = asyncio.Event()
     fast_finished = asyncio.Event()
     saved_histories = []
+    events = []
 
     async def fake_generate(llm, prompt, stream=False, tools=None, **kwargs):
         response = LLMResponse()
@@ -690,7 +874,7 @@ async def test_cancelled_turn_preserves_completed_sibling_and_stops_only_unresol
         saved_histories.append([dict(message) for message in self.chat])
 
     async def sink(payload=None, *args, **kwargs):
-        return None
+        events.append(payload)
 
     monkeypatch.setattr(
         "cognitrix.providers.base.LLMManager.generate_response",
@@ -720,6 +904,19 @@ async def test_cancelled_turn_preserves_completed_sibling_and_stops_only_unresol
     assert tool_messages[1]["outcome"]["status"] == "success"
     assert tool_messages[1]["outcome"]["artifacts"][0]["id"] == "artifact-1"
     assert saved_histories[-1][-2:] == tool_messages
+    terminal_events = {
+        event["tool_call_id"]: event
+        for event in events
+        if (
+            isinstance(event, dict)
+            and event.get("type") == "tool"
+            and event.get("status") != "started"
+        )
+    }
+    assert set(terminal_events) == {"fast-1"}
+    assert terminal_events["fast-1"]["status"] == "completed"
+    assert terminal_events["fast-1"]["result"] == "fast result"
+    assert terminal_events["fast-1"]["artifacts"][0]["id"] == "artifact-1"
 
 
 @pytest.mark.asyncio
@@ -1156,3 +1353,37 @@ async def test_window_anchors_to_last_user_message():
     non_system = [m for m in prompt if m.get("role") != "system"]
     assert non_system, "window must never be empty"
     assert str(non_system[0]["role"]).lower() == "user"
+
+
+@pytest.mark.asyncio
+async def test_task_turn_propagates_provider_error_instead_of_returning_error_text(
+    monkeypatch,
+):
+    from cognitrix.errors import ProviderExecutionError
+    from cognitrix.sessions.base import Session
+
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    session = Session(agent_id="provider-error")
+
+    async def failed_provider(*_args, **_kwargs):
+        return LLMResponse(
+            llm_response="transport details must not become a result",
+            error="transport failure",
+        )
+
+    async def sink(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(LLMManager, "generate_response", failed_provider)
+
+    with pytest.raises(ProviderExecutionError, match="provider request failed"):
+        await session(
+            "do it",
+            agent,
+            interface="task",
+            stream=False,
+            output=sink,
+            record_history=True,
+            persist_history=False,
+            compact_history=False,
+        )

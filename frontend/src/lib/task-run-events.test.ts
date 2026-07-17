@@ -162,6 +162,18 @@ describe('taskRunLiveReducer', () => {
     expect(state.terminalStatus).toBe('completed');
   });
 
+  it('accepts unknown additive events without corrupting live state', () => {
+    const state = taskRunLiveReducer(initialTaskRunLiveState, {
+      type: 'event',
+      event: event(1, 'future_metric', { value: 1 }),
+    });
+
+    expect(state.lastSequence).toBe(1);
+    expect(state.sessions).toEqual({});
+    expect(state.stepStatuses).toEqual({});
+    expect(state.terminalStatus).toBeNull();
+  });
+
   it('pairs id-less same-name completions with running calls in FIFO order', () => {
     let state = taskRunLiveReducer(initialTaskRunLiveState, {
       type: 'event',

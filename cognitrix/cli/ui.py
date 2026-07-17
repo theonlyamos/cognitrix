@@ -77,7 +77,7 @@ async def start_web_ui(agent):
         if token:
             user = await verify_token(token)
             if user:
-                await ws_manager.websocket_endpoint(websocket)  # type: ignore
+                await ws_manager.websocket_endpoint(websocket, str(user.id))  # type: ignore
                 return
         await websocket.close(code=4003, reason="Unauthorized")
 

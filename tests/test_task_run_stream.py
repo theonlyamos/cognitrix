@@ -99,7 +99,13 @@ async def test_stream_route_returns_event_source(monkeypatch):
     import cognitrix.api.routes.tasks as routes
 
     task = SimpleNamespace(id='task-1', team_id=None, assigned_agents=[])
-    run = SimpleNamespace(id='run-1', task_id='task-1')
+    run = SimpleNamespace(
+        id='run-1',
+        task_id='task-1',
+        acl_version=1,
+        acl_team_id=None,
+        acl_agent_ids=[],
+    )
 
     async def task_get(_id):
         return task

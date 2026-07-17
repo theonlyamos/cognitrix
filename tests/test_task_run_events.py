@@ -154,6 +154,24 @@ async def test_event_write_failure_is_non_fatal(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_durable_emitter_propagates_lease_loss(monkeypatch):
+    """A fenced worker must stop instead of silently continuing execution."""
+    from cognitrix.tasks.events import TaskRunEventEmitter
+    from cognitrix.tasks.repository import LeaseClaim, LeaseLost, RunRepository
+
+    claim = LeaseClaim(run_id='run-1', owner='worker-old', generation=1)
+
+    async def lose_lease(self, *args, **kwargs):
+        raise LeaseLost('worker-old was fenced')
+
+    monkeypatch.setattr(RunRepository, 'emit_event', lose_lease)
+    emitter = TaskRunEventEmitter('run-1', claim=claim)
+
+    with pytest.raises(LeaseLost, match='fenced'):
+        await emitter.emit('step_status', data={'status': 'running'})
+
+
+@pytest.mark.asyncio
 async def test_task_run_event_sqlite_round_trip(tmp_path):
     from odbms import DBMS
 
@@ -200,6 +218,83 @@ async def test_task_run_event_sqlite_round_trip(tmp_path):
         ('run-1', 2),
         ('run-1', 3),
     ]
+
+    bounded = await events_after('run-1', 0, limit=2)
+    assert [row.sequence for row in bounded] == [1, 2]
+
+
+@pytest.mark.parametrize('dbms', ['sqlite', 'postgresql', 'mysql'])
+@pytest.mark.asyncio
+async def test_events_after_uses_indexed_ordered_bounded_relational_query(
+    monkeypatch,
+    dbms,
+):
+    from odbms import DBMS
+
+    from cognitrix.tasks.events import events_after
+
+    calls = []
+
+    class Cursor:
+        description = [('id',), ('run_id',), ('sequence',), ('kind',), ('data',)]
+
+        def fetchall(self):
+            return [('event-3', 'run-1', 3, 'status', '{}')]
+
+    class Database:
+        async def query(self, statement, params=None):
+            calls.append((statement, params))
+            return Cursor()
+
+    database = Database()
+    database.dbms = dbms
+    monkeypatch.setattr(DBMS, 'Database', database)
+
+    rows = await events_after('run-1', 2, limit=7)
+
+    assert [row.sequence for row in rows] == [3]
+    statement, params = calls[-1]
+    lowered = statement.lower()
+    assert 'where run_id =' in lowered
+    assert 'sequence >' in lowered
+    assert 'order by sequence asc' in lowered
+    assert 'limit' in lowered
+    assert params['run_id'] == 'run-1'
+    assert params['sequence'] == 2
+    assert params['limit'] == 7
+
+
+@pytest.mark.asyncio
+async def test_events_after_uses_native_mongodb_range_sort_and_limit(monkeypatch):
+    from odbms import DBMS
+
+    from cognitrix.tasks.events import events_after
+
+    calls = []
+
+    class Database:
+        dbms = 'mongodb'
+
+        async def find(self, table, conditions, **options):
+            calls.append((table, conditions, options))
+            return [{
+                'id': 'event-4',
+                'run_id': 'run-1',
+                'sequence': 4,
+                'kind': 'status',
+                'data': {},
+            }]
+
+    monkeypatch.setattr(DBMS, 'Database', Database())
+
+    rows = await events_after('run-1', 3, limit=9)
+
+    assert [row.sequence for row in rows] == [4]
+    assert calls == [(
+        'taskrunevents',
+        {'run_id': 'run-1', 'sequence': {'$gt': 3}},
+        {'limit': 9, 'sort': [('sequence', 1)]},
+    )]
 
 
 def test_task_run_event_is_registered_in_api_and_cli_startup():

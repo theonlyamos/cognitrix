@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Optional, TypeAlias
 
 from rich import print
 
+from cognitrix.errors import ExecutionControlError
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 from cognitrix.models import Agent, Message, Tool
 from cognitrix.models.tool import MCPTool
@@ -357,6 +358,13 @@ class AgentManager:
                 'result': [results_by_index[i] for i in sorted(results_by_index)],
             }
 
+        async def cancel_workers() -> None:
+            for task in worker_tasks:
+                if not task.done():
+                    task.cancel()
+            if worker_tasks:
+                await asyncio.gather(*worker_tasks, return_exceptions=True)
+
         try:
             if not tool_calls:
                 return ''
@@ -424,10 +432,15 @@ class AgentManager:
                     )
 
                     if not approval.approved:
+                        denial_code = (
+                            'approval_required'
+                            if approval.error == 'approval_required'
+                            else 'approval_denied'
+                        )
                         results_by_index[i] = _tool_result_entry(
                             tc_id,
                             ToolOutcome.failure(
-                                'approval_denied',
+                                denial_code,
                                 f"{OPERATION_BLOCKED_PREFIX}: user denied approval for {tool.name}",
                                 denied=True,
                             ),
@@ -489,6 +502,8 @@ class AgentManager:
                             )
                     except asyncio.CancelledError:
                         raise
+                    except ExecutionControlError:
+                        raise
                     except Exception as exc:
                         outcome = ToolOutcome.failure(
                             'tool_execution_error',
@@ -511,11 +526,7 @@ class AgentManager:
             }
 
         except asyncio.CancelledError as exc:
-            for task in worker_tasks:
-                if not task.done():
-                    task.cancel()
-            if worker_tasks:
-                await asyncio.gather(*worker_tasks, return_exceptions=True)
+            await cancel_workers()
             unresolved = [
                 call for i, call in enumerate(agent_tool_calls)
                 if i not in results_by_index
@@ -523,6 +534,9 @@ class AgentManager:
             raise ToolBatchCancelled(
                 completed_result(), unresolved, dict(results_by_index)
             ) from exc
+        except ExecutionControlError:
+            await cancel_workers()
+            raise
         except Exception as e:
             logger.exception("Tool execution error")
             # Preserve the assistant/tool protocol even for an unexpected

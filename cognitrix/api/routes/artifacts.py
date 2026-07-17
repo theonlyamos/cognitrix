@@ -14,6 +14,13 @@ async def get_artifact(artifact_id: str, ctx: AuthContext = Depends(get_auth_con
     artifact = await Artifact.get(artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail='Artifact not found')
+    # A durable TaskRun artifact is a run resource, not a chat-session
+    # resource.  Its owner id and producing agent are insufficient authority:
+    # API keys are also narrowed by the run's immutable team/agent ACL and the
+    # artifact must be present in an authoritative persisted result.  Enforce
+    # both checks exclusively on /tasks/{task}/runs/{run}/artifacts/{artifact}.
+    if artifact.run_id is not None:
+        raise HTTPException(status_code=404, detail='Artifact not found')
     if artifact.user_id != str(ctx.user.id):
         raise HTTPException(status_code=404, detail='Artifact not found')
     if artifact.agent_id and not ctx.agent_allowed(artifact.agent_id):

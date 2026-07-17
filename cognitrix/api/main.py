@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import FRONTEND_BUILD_DIR, initialize_database, settings
+from ..tasks.recovery import recovery_loop, run_recovery_pass
 from ..tasks.scheduler import scheduler_loop
 from .routes import api_router
 from .routes.openai_compat import openai_api
@@ -18,11 +19,22 @@ async def lifespan(app: FastAPI):
     # Idempotent — the CLI already ran it, but a bare
     # `uvicorn cognitrix.api.main:app` must work too.
     await initialize_database()
+    await run_recovery_pass()
     scheduler = asyncio.create_task(scheduler_loop())
-    yield
-    scheduler.cancel()
-    with suppress(asyncio.CancelledError):
-        await scheduler
+    recovery = asyncio.create_task(
+        recovery_loop(
+            interval_seconds=settings.task_recovery_interval_seconds,
+        )
+    )
+    try:
+        yield
+    finally:
+        scheduler.cancel()
+        recovery.cancel()
+        with suppress(asyncio.CancelledError):
+            await scheduler
+        with suppress(asyncio.CancelledError):
+            await recovery
 
 
 app = FastAPI(lifespan=lifespan)

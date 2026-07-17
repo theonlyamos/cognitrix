@@ -220,6 +220,44 @@ class TestApprovalGate:
         assert result.approved is False
         assert result.error is not None
 
+    @pytest.mark.asyncio
+    async def test_durable_task_denies_without_reading_stdin(
+        self,
+        approval_gate,
+        high_risk_tool_call,
+        high_risk_assessment,
+    ):
+        with patch("builtins.input", side_effect=AssertionError("must not read stdin")):
+            result = await approval_gate.check_approval(
+                high_risk_tool_call,
+                high_risk_assessment,
+                interface="task",
+            )
+
+        assert result.approved is False
+        assert result.error == "approval_required"
+
+    @pytest.mark.asyncio
+    async def test_durable_task_ignores_cached_interactive_approval(
+        self,
+        approval_gate,
+        high_risk_tool_call,
+        high_risk_assessment,
+    ):
+        scoped = f"agent-1:{approval_gate._hash_operation(high_risk_tool_call)}"
+        approval_gate.session_cache.add(scoped)
+        approval_gate.permanent_cache.add(scoped)
+
+        result = await approval_gate.check_approval(
+            high_risk_tool_call,
+            high_risk_assessment,
+            interface="task",
+            scope="agent-1",
+        )
+
+        assert result.approved is False
+        assert result.error == "approval_required"
+
     def test_hash_operation_deterministic(self, approval_gate):
         """Test that operation hashing is deterministic."""
         tool_call1 = ToolCall(tool_name="test", params={"a": 1, "b": 2})

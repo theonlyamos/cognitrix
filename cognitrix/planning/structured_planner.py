@@ -74,6 +74,12 @@ class StructuredPlanner:
 
         # Generate with retry for valid JSON
         for attempt in range(3):
+            if attempt:
+                from cognitrix.tasks.accounting import current_task_accounting
+
+                accounting = current_task_accounting()
+                if accounting is not None:
+                    await accounting.consume_retry()
             try:
                 # Generate plan with JSON response format forced
                 response = await self.llm(messages, stream=False, response_format={"type": "json_object"})
@@ -93,12 +99,6 @@ class StructuredPlanner:
                 # Parse JSON from response
                 plan = self._parse_plan_response(response_text)
 
-                # Validate references
-                self._validate_references(plan, available_agents, available_tools)
-
-                logger.info(f"Generated plan with {len(plan.steps)} steps")
-                return plan
-
             except (json.JSONDecodeError, ValidationError, PlanningError) as e:
                 logger.warning(f"Plan parsing failed (attempt {attempt + 1}): {e}")
 
@@ -117,6 +117,14 @@ class StructuredPlanner:
                     'role': 'user',
                     'content': f"The previous response was invalid: {e}. You MUST return ONLY valid JSON starting with {{ and ending with }}. No markdown, no explanations."
                 })
+                continue
+
+            # Capability validation is not a formatting problem.  Retrying the
+            # same planner and eventually returning a tool-free fallback would
+            # silently change the requested task, so surface it immediately.
+            self._validate_references(plan, available_agents, available_tools)
+            logger.info(f"Generated plan with {len(plan.steps)} steps")
+            return plan
 
         # Fallback if loop completes without returning
         return self._create_fallback_plan(task)
@@ -158,29 +166,45 @@ class StructuredPlanner:
         available_tools: list[Tool]
     ):
         """Validate that plan references existing agents and tools."""
-        agent_names = {a.name.lower() for a in available_agents}
-        agent_names.add('auto')
-
-        tool_names = {t.name.lower() for t in available_tools}
+        agents_by_name = {a.name: a for a in available_agents}
+        tool_names = {t.name for t in available_tools}
 
         for step in plan.steps:
             # Validate agent reference
-            if step.assigned_agent.lower() not in agent_names:
+            if step.assigned_agent != "auto" and step.assigned_agent not in agents_by_name:
                 logger.warning(f"Step {step.step_number} references unknown agent: {step.assigned_agent}")
                 step.assigned_agent = "auto"
 
-            # Validate tool references
-            for tool in step.required_tools:
-                if tool.lower() not in tool_names:
-                    logger.warning(f"Step {step.step_number} references unknown tool: {tool}")
+            unknown = [tool for tool in step.required_tools if tool not in tool_names]
+            if unknown:
+                raise PlanningError(
+                    f"Step {step.step_number} requires unavailable exact tool name(s): "
+                    + ", ".join(unknown)
+                )
+
+            if not step.required_tools:
+                continue
+            capable = [
+                agent for agent in available_agents
+                if bool(agent.llm.supports_tool_use)
+                and set(step.required_tools).issubset(
+                    {tool.name for tool in (agent.tools or [])}
+                )
+            ]
+            assigned = agents_by_name.get(step.assigned_agent)
+            if assigned not in capable:
+                if not capable:
+                    raise PlanningError(
+                        f"Step {step.step_number} has no agent capable of exact tool set: "
+                        + ", ".join(step.required_tools)
+                    )
+                step.assigned_agent = capable[0].name
 
     def _create_fallback_plan(self, task: str) -> TaskPlan:
         """Create a simple plan when JSON parsing fails."""
         logger.info(f"Creating fallback plan for task: {task[:50]}...")
 
         return TaskPlan(
-            task_analysis=f"Task requiring research and analysis: {task[:100]}...",
-            estimated_complexity="complex",
             steps=[
                 Step(
                     step_number=1,
@@ -190,12 +214,12 @@ class StructuredPlanner:
                     assigned_agent="auto",
                     required_tools=[],
                     dependencies=[],
-                    estimated_duration="long",
                     verification_criteria="Task completed successfully with all requested information"
                 )
             ],
-            parallel_groups=[],
-            fallback_strategy="Single-step execution - research and complete the task"
+            # Read compatibility only; omitted from TaskPlan's advertised
+            # schema and from every planner request.
+            fallback_strategy="Single-step execution - research and complete the task",
         )
 
     def _format_agents(self, agents: list[Agent]) -> str:
@@ -248,7 +272,7 @@ class StructuredPlanner:
         # Calculate based on execution batches
         batches = self.get_execution_order(plan)
         total_units = sum(
-            max(duration_map.get(s.estimated_duration, 2) for s in batch)
+            max(duration_map.get(getattr(s, "estimated_duration", "medium"), 2) for s in batch)
             for batch in batches
         )
 

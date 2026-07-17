@@ -172,6 +172,12 @@ class ApprovalGate:
         if risk.risk_level == RiskLevel.LOW:
             return ApprovalResult(approved=True, auto=True)
 
+        # Durable workers have no interactive principal at execution time.
+        # Interactive caches are intentionally ignored; a future durable
+        # approval design must carry an explicit run-scoped authorization.
+        if interface == 'task':
+            return ApprovalResult(approved=False, error="approval_required")
+
         # Cache keys are scoped so approvals don't leak across agents/users.
         scoped = f"{scope or 'global'}:{self._hash_operation(tool_call)}"
 
@@ -185,12 +191,11 @@ class ApprovalGate:
         if interface == 'auto':
             return ApprovalResult(
                 approved=False,
-                error="Explicit approval required but auto mode enabled"
+                error="Explicit approval required but auto mode enabled",
             )
 
-        # Request approval through interface. 'task' (planner steps) runs in
-        # the same console as the CLI, so it shares the CLI prompt.
-        if interface in ('cli', 'task'):
+        # Durable task workers are non-interactive and were denied above.
+        if interface == 'cli':
             result = await self._cli_approval(tool_call, risk, timeout)
         elif interface in ('web', 'ws', 'websocket'):
             result = await self._web_approval(tool_call, risk, timeout)
