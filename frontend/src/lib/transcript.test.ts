@@ -77,4 +77,68 @@ describe('parseChatEntries tool results', () => {
       result: 'Stopped by user.',
     }));
   });
+
+  it('restores only valid persisted image artifact descriptors', () => {
+    const messages = toChatMessages(parseChatEntries([
+      {
+        role: 'User',
+        type: 'image',
+        content: '[Current image artifact: attached-1]',
+        artifact: {
+          id: 'attached-1',
+          mime_type: 'image/png',
+          filename: 'reference.png',
+          width: 640,
+          height: 480,
+        },
+      },
+      {
+        role: 'User',
+        type: 'image',
+        content: 'unsafe',
+        artifact: { id: '../bad', mime_type: 42 },
+      },
+    ]));
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toEqual(expect.objectContaining({
+      role: 'user',
+      artifacts: [{
+        id: 'attached-1',
+        mime_type: 'image/png',
+        origin: 'uploaded',
+        filename: 'reference.png',
+        width: 640,
+        height: 480,
+      }],
+    }));
+  });
+
+  it('groups safe uploaded and generated image entries with their preceding user message', () => {
+    const messages = toChatMessages(parseChatEntries([
+      { role: 'user', type: 'text', content: 'Make these work together' },
+      { role: 'user', type: 'image', artifact: { id: 'upload-1', mime_type: 'image/jpeg', origin: 'uploaded', filename: 'source.jpg', width: 400, height: 300, storage_key: 'never expose' } },
+      { role: 'user', type: 'image', artifact: { id: 'generated-1', mime_type: 'image/png', origin: 'generated', filename: 'result.png', width: 800, height: 600 } },
+      { role: 'user', type: 'image_selection', content: 'unsafe selection', artifact: { id: 'must-not-render', mime_type: 'image/png' } },
+      { role: 'user', type: 'image', artifact: { id: '../bad', mime_type: 'image/png' } },
+    ]));
+
+    expect(messages).toEqual([expect.objectContaining({
+      role: 'user',
+      content: 'Make these work together',
+      artifacts: [
+        { id: 'upload-1', mime_type: 'image/jpeg', origin: 'uploaded', filename: 'source.jpg', width: 400, height: 300 },
+        { id: 'generated-1', mime_type: 'image/png', origin: 'generated', filename: 'result.png', width: 800, height: 600 },
+      ],
+    })]);
+  });
+
+  it('drops artifacts with invalid image dimensions', () => {
+    const messages = toChatMessages(parseChatEntries([
+      { role: 'user', type: 'text', content: 'sizes' },
+      ...[0, -1, 1.5, Infinity].map((width, index) => ({ role: 'user', type: 'image', artifact: { id: `bad-size-${index}`, mime_type: 'image/png', width, height: 4 } })),
+      { role: 'user', type: 'image', artifact: { id: 'valid-size', mime_type: 'image/png', width: 8, height: 4 } },
+    ]));
+    expect(messages[0].artifacts).toEqual([{ id: 'valid-size', mime_type: 'image/png', origin: 'uploaded', width: 8, height: 4 }]);
+  });
 });

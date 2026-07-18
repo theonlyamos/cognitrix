@@ -147,4 +147,14 @@ describe('AppLayout', () => {
 
     expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
   });
+
+  it('scopes document scroll locking to the authenticated shell lifetime', () => {
+    const view = renderShell();
+
+    expect(document.documentElement).toHaveClass('app-scroll-locked');
+
+    view.unmount();
+
+    expect(document.documentElement).not.toHaveClass('app-scroll-locked');
+  });
 });

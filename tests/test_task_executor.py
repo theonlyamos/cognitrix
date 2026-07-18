@@ -1,6 +1,7 @@
 """Focused contracts for ephemeral task-step execution and live events."""
 
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
@@ -136,6 +137,9 @@ async def test_executor_emits_live_turn_events_and_returns_typed_artifacts(monke
     ]
     assert result.artifacts[0].name == "research.txt"
     assert result.usage.llm_calls == 0
+    assert len(session_kwargs) == 1
+    attempt_session_id = session_kwargs[0].pop('_id')
+    assert str(UUID(attempt_session_id)) == attempt_session_id
     assert session_kwargs == [{
         "task_id": "task-1",
         "run_id": "run-1",
@@ -185,6 +189,24 @@ async def test_executor_checks_cancellation_before_creating_attempt(monkeypatch)
     with pytest.raises(RuntimeError, match="cancel checkpoint"):
         await executor.execute("do it")
     assert created is False
+
+
+def test_executor_assigns_each_ephemeral_attempt_a_unique_session_id(monkeypatch):
+    from cognitrix.tasks import executor as module
+
+    monkeypatch.setattr(
+        module,
+        "instantiate_runtime",
+        lambda *_args, **_kwargs: SimpleNamespace(),
+    )
+    executor = TaskStepExecutor(_snapshot(), task_id="task-1", run_id="run-1")
+
+    _, first = executor.create_attempt()
+    _, second = executor.create_attempt()
+
+    assert isinstance(first.id, str) and first.id
+    assert isinstance(second.id, str) and second.id
+    assert first.id != second.id
 
 
 @pytest.mark.asyncio

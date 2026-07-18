@@ -118,12 +118,20 @@ async def sessions(
     team_id: str,
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    # Keep this legacy alias aligned with /sessions/teams/{team_id}: TaskRun
-    # transcripts are governed by the immutable enqueue-time ACL and list
-    # responses must not carry full chat bodies.
-    from cognitrix.api.routes.sessions import _session_summary, _visible_sessions
+    if not ctx.team_allowed(team_id):
+        raise HTTPException(
+            status_code=403,
+            detail='API key not allowed for this team',
+        )
 
-    rows = await _visible_sessions(
+    # Keep this alias aligned with /sessions/teams/{team_id}: ordinary rows
+    # require exact ownership, while TaskRun rows use their immutable run ACL.
+    from cognitrix.api.routes.sessions import (
+        _session_summary,
+        _visible_remote_sessions,
+    )
+
+    rows = await _visible_remote_sessions(
         list(await Session.find({'team_id': team_id})),
         ctx,
     )

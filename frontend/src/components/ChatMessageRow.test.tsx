@@ -179,9 +179,14 @@ describe('ChatMessageRow', () => {
       'overscroll-contain',
     );
     expect(transcript.parentElement).toHaveClass('min-h-0', 'overflow-hidden');
+    expect(screen.getByText('no conversations yet').parentElement).toHaveClass(
+      'min-h-0',
+      'overscroll-contain',
+      'overflow-y-auto',
+    );
   });
 
-  it('gives tool summaries a 44px mobile target and compact desktop height', async () => {
+  it('keeps screen-reader tool status inside its scroll container', async () => {
     const modulePath = '@/components/ChatMessageRow';
     const { ChatMessageRow } = await import(modulePath) as {
       ChatMessageRow: ComponentType<{
@@ -200,7 +205,8 @@ describe('ChatMessageRow', () => {
     render(<ChatMessageRow message={toolMessage} isLast streaming={false} />);
 
     const summary = screen.getByText('read file').closest('summary');
-    expect(summary).toHaveClass('min-h-11', 'sm:min-h-0');
+    expect(summary).toHaveClass('relative', 'min-h-11', 'sm:min-h-0');
+    expect(screen.getByText('Completed')).toHaveClass('sr-only');
   });
 
   it('renders a stopped tool as a distinct terminal state', async () => {
@@ -243,7 +249,66 @@ describe('ChatMessageRow', () => {
     expect(image.closest('button')).toBeNull();
     expect(image.closest('details')).toBeNull();
     expect(screen.getByRole('button', { name: 'Expand generated image' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Download result.png' })).toHaveAttribute('download', 'result.png');
+    expect(screen.getByRole('button', { name: 'Download result.png' })).toBeInTheDocument();
+  });
+
+  it('offers restored generated images as exact edit sources', async () => {
+    const user = userEvent.setup();
+    const selectSource = vi.fn();
+    apiGet.mockResolvedValue({ data: new Blob(['image'], { type: 'image/png' }) });
+    vi.mocked(URL.createObjectURL).mockReturnValue('blob:generated');
+    const { ChatMessageRow } = await import('@/components/ChatMessageRow');
+    const historicalTool: ChatMessage = {
+      id: 'tool-history', role: 'tool', content: '',
+      tools: [{
+        id: 'generate-history', name: 'generate_image', status: 'done',
+        artifacts: [{ id: 'artifact-history', mime_type: 'image/png', filename: 'earlier.png' }],
+      }],
+    };
+
+    render(
+      <ChatMessageRow
+        message={historicalTool}
+        isLast={false}
+        streaming={false}
+        onEditSource={selectSource}
+      />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Use earlier.png as edit source' }));
+    expect(selectSource).toHaveBeenCalledWith({
+      id: 'artifact-history',
+      mime_type: 'image/png',
+      filename: 'earlier.png',
+    });
+  });
+
+  it('shows uploaded images with separate Edit, Expand, and Download controls', async () => {
+    const selectSource = vi.fn();
+    apiGet.mockResolvedValue({ data: new Blob(['image'], { type: 'image/png' }) });
+    vi.mocked(URL.createObjectURL).mockReturnValue('blob:uploaded');
+    const { ChatMessageRow } = await import('@/components/ChatMessageRow');
+    const uploaded: ChatMessage = {
+      id: 'user-upload',
+      role: 'user',
+      content: 'Attached source',
+      artifacts: [{ id: 'uploaded-1', mime_type: 'image/png', filename: 'source.png', origin: 'uploaded' }],
+    };
+
+    render(
+      <ChatMessageRow
+        message={uploaded}
+        isLast={false}
+        streaming={false}
+        onEditSource={selectSource}
+      />,
+    );
+
+    const image = await screen.findByRole('img', { name: 'Attached image' });
+    expect(image.closest('button')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Use source.png as edit source' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Expand attached image' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download source.png' })).toBeInTheDocument();
   });
 
   it('opens the generated image in a modal from the expand control', async () => {
@@ -263,7 +328,7 @@ describe('ChatMessageRow', () => {
     const expandButton = await screen.findByRole('button', { name: 'Expand generated image' });
     await user.click(expandButton);
 
-    expect(screen.getByRole('dialog', { name: 'Generated image preview' })).toHaveAttribute('aria-modal', 'true');
+    expect(await screen.findByRole('dialog', { name: 'Generated image preview' })).toHaveAttribute('aria-modal', 'true');
     expect(screen.getByRole('img', { name: 'Generated image, full size' })).toHaveAttribute('src', 'blob:generated');
     expect(screen.getByRole('button', { name: 'Close image preview' })).toHaveFocus();
 

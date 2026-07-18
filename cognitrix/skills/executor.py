@@ -16,12 +16,19 @@ import re
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
+from cognitrix.common.process_security import require_host_process_authority
 from cognitrix.common.safe_exec import run_whitelisted_async
 from cognitrix.skills.models import (
     RiskLevel,
     SkillEvent,
     SkillEventType,
     SkillManifest,
+)
+from cognitrix.tools.utils import (
+    current_execution_context,
+    delegated_execution_context,
+    reset_execution_context,
+    set_execution_context,
 )
 
 if TYPE_CHECKING:
@@ -51,6 +58,7 @@ MAX_DYNAMIC_CONTEXT_SIZE = 100_000  # 100KB
 _ARG_NUM_PATTERN = re.compile(r'\$(\d+)(?!\d)')
 _ARGUMENTS_BRACKET_PATTERN = re.compile(r'\$ARGUMENTS\[(\d+)\]')
 _ARG_PATTERN = re.compile(r'\$\(arg\s+(\w+)\)')
+_DYNAMIC_CONTEXT_PATTERN = re.compile(r'!`([^`]+)`')
 
 # Tool alias map for AgentSkills compatibility
 # Standard Anthropic skill names -> Cognitrix native tool names
@@ -193,8 +201,12 @@ class SkillExecutor:
             # installs packages is at least MEDIUM risk regardless of its declared
             # level. Approve BEFORE executing anything, so an untrusted skill can't
             # run commands / pip-install with no user interaction.
-            has_dynamic = '!`' in manifest.body
+            has_dynamic = bool(self._dynamic_context_matches(rendered))
             has_deps = bool(manifest.dependencies.pip or manifest.dependencies.system)
+            if has_dynamic or manifest.dependencies.pip:
+                require_host_process_authority(
+                    current_execution_context().host_process_mode
+                )
             effective_risk = manifest.safety.risk_level
             if (has_dynamic or has_deps) and effective_risk == RiskLevel.LOW:
                 effective_risk = RiskLevel.MEDIUM
@@ -332,8 +344,7 @@ class SkillExecutor:
 
         Commands run in the user's shell. Output is size-limited.
         """
-        pattern = r'!\`([^`]+)\`'
-        matches = list(re.finditer(pattern, body))
+        matches = self._dynamic_context_matches(body)
 
         if not matches:
             return body
@@ -353,13 +364,21 @@ class SkillExecutor:
 
         return result
 
+    @staticmethod
+    def _dynamic_context_matches(body: str) -> list[re.Match[str]]:
+        """Parse dynamic commands for both gating and execution."""
+        return list(_DYNAMIC_CONTEXT_PATTERN.finditer(body))
+
     async def _run_shell_command(self, cmd: str) -> str:
         """Execute a whitelisted shell command (shell=False) and return stdout.
 
         Validation and argv splitting are centralised in cognitrix.common.safe_exec
         so the bash tool and this dynamic-context feature share one audited boundary.
         """
-        return await run_whitelisted_async(cmd)
+        context = current_execution_context()
+        return await run_whitelisted_async(
+            cmd, host_process_mode=context.host_process_mode
+        )
 
     # ── Safety ──
 
@@ -407,6 +426,9 @@ class SkillExecutor:
     async def _ensure_dependencies(self, manifest: SkillManifest):
         """Check and install missing pip dependencies before execution."""
         if manifest.dependencies.pip:
+            require_host_process_authority(
+                current_execution_context().host_process_mode
+            )
             missing: list[str] = []
             for package in manifest.dependencies.pip:
                 # Normalise: pip package names use hyphens, import names use underscores
@@ -616,6 +638,11 @@ class SkillExecutor:
         from cognitrix.agents.base import AgentManager
         from cognitrix.models import Agent
 
+        parent_context = current_execution_context()
+        child_context = delegated_execution_context(parent_context)
+        parent_tools = list(self.agent_manager.agent.tools)
+        parent_tool_names = {tool.name for tool in parent_tools}
+
         # Create an ephemeral agent for this skill
         agent = Agent(
             name=f"skill:{manifest.name}",
@@ -624,25 +651,43 @@ class SkillExecutor:
                 f"{prompt}"
             ),
             llm=self.llm,
-            tools=self.agent_manager.agent.tools,
+            tools=parent_tools,
         )
 
-        # Filter tools if specified
+        # Resolve restrictions now, then apply them after any selected-agent
+        # lookup so selecting another agent cannot restore filtered tools.
         allowed_set: set[str] = set()
         restriction_map: dict[str, list[str]] = {}
         if manifest.allowed_tools is not None:
             allowed_set, restriction_map = self._resolve_allowed_tools(manifest.allowed_tools)
-            agent.tools = [t for t in agent.tools if t.name in allowed_set]
 
         # Use the specified agent type or default
         if manifest.agent:
             try:
-                found = Agent.find_one({'name': manifest.agent})
+                found = await Agent.find_one({'name': manifest.agent})
                 if found:
+                    if not parent_context.agent_allowed(str(found.id)):
+                        raise SkillExecutionError(
+                            f"Agent '{manifest.agent}' is not authorized"
+                        )
                     agent.system_prompt = found.system_prompt + "\n\n" + prompt
-                    agent.tools = found.tools
+                    agent.tools = [
+                        tool for tool in found.tools
+                        if tool.name in parent_tool_names
+                    ]
+            except SkillExecutionError:
+                raise
             except Exception:
-                pass
+                logger.exception(
+                    "Unable to select agent %r for skill %r",
+                    manifest.agent,
+                    manifest.name,
+                )
+
+        if manifest.allowed_tools is not None:
+            agent.tools = [
+                tool for tool in agent.tools if tool.name in allowed_set
+            ]
 
         sub_manager = AgentManager(agent)
         messages: list[dict[str, Any]] = [
@@ -671,7 +716,11 @@ class SkillExecutor:
                 tool_calls = self._apply_tool_restrictions(tool_calls, restriction_map)
 
             logger.info(f"Skill '{manifest.name}' (forked) executing tools: {[tc.get('name') for tc in tool_calls]}")
-            result = await sub_manager.call_tools(tool_calls)
+            token = set_execution_context(child_context)
+            try:
+                result = await sub_manager.call_tools(tool_calls)
+            finally:
+                reset_execution_context(token)
 
             if isinstance(result, dict) and result.get('type') == 'tool_calls_result':
                 messages.append({

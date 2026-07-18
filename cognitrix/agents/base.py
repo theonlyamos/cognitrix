@@ -115,7 +115,7 @@ def _tool_result_entry(tool_call_id: str | None, outcome: ToolOutcome) -> dict[s
     return {
         'tool_call_id': tool_call_id,
         # `data` remains the compact, provider-compatible model-facing text.
-        'data': outcome.text,
+        'data': outcome.model_content(),
         # Preserve the legacy flag for callers that have not migrated to the
         # richer outcome contract yet.
         'success': outcome.status == 'success',

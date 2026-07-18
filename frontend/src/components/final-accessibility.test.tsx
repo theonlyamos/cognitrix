@@ -24,6 +24,7 @@ const harness = vi.hoisted(() => ({
   login: vi.fn(),
   messages: [] as unknown[],
   addMessage: vi.fn(),
+  addArtifactsToLastUser: vi.fn(),
   appendToLastMessage: vi.fn(),
   setIsStreaming: vi.fn(),
   addToolCall: vi.fn(),
@@ -116,6 +117,7 @@ vi.mock('@/context/SessionContext', () => ({
   useSession: () => ({
     messages: harness.messages,
     addMessage: harness.addMessage,
+    addArtifactsToLastUser: harness.addArtifactsToLastUser,
     appendToLastMessage: harness.appendToLastMessage,
     setIsStreaming: harness.setIsStreaming,
     addToolCall: harness.addToolCall,
@@ -188,6 +190,7 @@ describe('final accessibility contracts', () => {
     harness.apiPost.mockReset().mockResolvedValue({ data: {} });
     harness.apiDelete.mockReset().mockResolvedValue({ data: {} });
     harness.stopRunningTools.mockReset();
+    harness.addArtifactsToLastUser.mockReset();
     harness.failRunningTools.mockReset();
     harness.login.mockReset();
     harness.messages = [];
@@ -296,6 +299,103 @@ describe('final accessibility contracts', () => {
       'min-h-11',
       'md:min-h-0',
     );
+  });
+
+  it('sends selected uploaded images as multipart edit-source descriptors', async () => {
+    const NativeImage = globalThis.Image;
+    class RejectedPreviewImage {
+      onload: null | (() => void) = null;
+      onerror: null | (() => void) = null;
+      set src(_value: string) {
+        queueMicrotask(() => this.onerror?.());
+      }
+    }
+    vi.stubGlobal('Image', RejectedPreviewImage);
+    try {
+      renderRoute(<Home />);
+      const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+      expect(fileInput).not.toBeNull();
+      const image = new File(['raw-image'], 'reference.png', { type: 'image/png' });
+      await userEvent.upload(fileInput!, image);
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Use reference.png as edit source' }));
+      expect(screen.getByRole('button', { name: 'Clear edit source' })).toBeInTheDocument();
+      await userEvent.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Make the sky warmer');
+      await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+      await waitFor(() => expect(harness.apiPost).toHaveBeenCalledWith('/agents/chat', expect.any(FormData)));
+      const body = harness.apiPost.mock.calls.find(([path]) => path === '/agents/chat')?.[1] as FormData;
+      const payloadPart = body.get('payload');
+      expect(payloadPart).toBeInstanceOf(Blob);
+      const rawPayload = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(payloadPart as Blob);
+      });
+      const payload = JSON.parse(rawPayload);
+      expect(payload).toMatchObject({
+        message: 'Make the sky warmer',
+        agent_id: 'agent-1',
+        stream_id: 'browser-stream-1',
+        edit_source_image_index: 0,
+      });
+      expect(payload).not.toHaveProperty('attachments');
+      expect(payload).not.toHaveProperty('edit_source_artifact_id');
+      const files = body.getAll('files');
+      expect(files).toHaveLength(1);
+      expect(files[0]).toBeInstanceOf(File);
+      expect((files[0] as File).name).toBe('reference.png');
+    } finally {
+      vi.stubGlobal('Image', NativeImage);
+    }
+  });
+
+  it('restores attachments and edit selection when multipart queueing fails', async () => {
+    const NativeImage = globalThis.Image;
+    class RejectedPreviewImage {
+      onload: null | (() => void) = null;
+      onerror: null | (() => void) = null;
+      set src(_value: string) {
+        queueMicrotask(() => this.onerror?.());
+      }
+    }
+    vi.stubGlobal('Image', RejectedPreviewImage);
+    harness.apiPost.mockRejectedValueOnce(new Error('offline'));
+    try {
+      renderRoute(<Home />);
+      const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+      const image = new File(['raw-image'], 'retry.png', { type: 'image/png' });
+      await userEvent.upload(fileInput!, image);
+      await userEvent.click(await screen.findByRole('button', { name: 'Use retry.png as edit source' }));
+      await userEvent.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Try this edit');
+      await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+      expect(await screen.findByRole('button', { name: 'Remove retry.png' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Clear edit source' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Use retry.png as edit source' })).toHaveAttribute('aria-pressed', 'true');
+    } finally {
+      vi.stubGlobal('Image', NativeImage);
+    }
+  });
+
+  it('attaches safe ingestion artifacts to the live user turn', () => {
+    renderRoute(<Home />);
+
+    act(() => harness.sseOnMessage?.({
+      type: 'attachments_ingested',
+      artifacts: [
+        { id: 'uploaded-1', mime_type: 'image/png', filename: 'live.png' },
+        { id: '../unsafe', mime_type: 'image/png' },
+      ],
+    }));
+
+    expect(harness.addArtifactsToLastUser).toHaveBeenCalledWith([{
+      id: 'uploaded-1',
+      mime_type: 'image/png',
+      filename: 'live.png',
+      origin: 'uploaded',
+    }]);
   });
 
   it('switches Send to a stream-scoped stop control until the stopped event arrives', async () => {
@@ -466,6 +566,33 @@ describe('final accessibility contracts', () => {
     expect(step).not.toBeNull();
     expect(step).toHaveClass('min-h-11', 'min-w-11', 'md:min-h-0', 'md:min-w-0');
     expect(synthesis).toHaveClass('min-h-11', 'md:min-h-0');
+  });
+
+  it('shows an unverified task step visibly and in its accessible name', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'completed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-1',
+        status: 'completed',
+        plan: [{
+          index: 0,
+          title: 'Generate image',
+          status: 'done',
+          agent_name: 'Image Tool Tester',
+          gate: 'unverified',
+        }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockResolvedValue({ data: [] });
+    renderTaskDetail();
+
+    expect(await screen.findByText('unverified')).toBeVisible();
+    expect(screen.getByRole('button', {
+      name: /Generate image.*Image Tool Tester.*unverified/i,
+    })).toBeInTheDocument();
   });
 
   it('keeps the pending TaskDetail header on one compact mobile row', () => {

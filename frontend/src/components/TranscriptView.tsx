@@ -124,6 +124,12 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
                 <span className="whitespace-pre-wrap break-words">{e.content}</span>
               </div>
             );
+          case 'image':
+            return (
+              <div key={i} className="border-b border-line px-4 py-3">
+                <ArtifactPreview artifact={e.artifact} />
+              </div>
+            );
           case 'system':
           default:
             return (

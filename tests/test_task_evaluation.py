@@ -3,6 +3,7 @@ import json
 import pytest
 
 from cognitrix.tasks.evaluation import evaluate_step
+from cognitrix.tasks.results import ArtifactRef
 from cognitrix.utils.llm_response import LLMResponse
 
 
@@ -50,11 +51,42 @@ async def test_subjective_evaluation_is_stateless_delimited_and_tool_free():
     assert len(llm.calls) == 1
     messages, kwargs, temperature, max_tokens = llm.calls[0]
     assert [message["role"] for message in messages] == ["system", "user"]
+    assert "expected output" in messages[0]["content"].lower()
+    assert "artifact summary" in messages[0]["content"].lower()
     assert injected not in messages[0]["content"]
     assert "<UNTRUSTED_EVALUATION_DATA_JSON>" in messages[1]["content"]
     assert kwargs["tools"] == []
     assert temperature == 0
     assert max_tokens <= 512
+
+
+@pytest.mark.asyncio
+async def test_image_artifact_evaluation_is_structural_and_remains_unverified():
+    llm = RecordingLLM(['{"finalscore": 9, "suggestions": []}'])
+    artifact = ArtifactRef(
+        id="image-1",
+        name="teapot.png",
+        mime_type="image/png",
+        uri="/tasks/task-1/runs/run-1/artifacts/image-1",
+    )
+
+    result = await evaluate_step(
+        llm,
+        "Generate a teapot image",
+        "Image generated.",
+        "One image artifact",
+        expected_output="One PNG teapot image",
+        artifacts=[artifact],
+    )
+
+    messages = llm.calls[0][0]
+    assert "do not reject" in messages[0]["content"].lower()
+    payload = messages[1]["content"]
+    assert '"expected_output":"One PNG teapot image"' in payload
+    assert '"count":1' in payload
+    assert '"mime_type":"image/png"' in payload
+    assert result.passed is True
+    assert result.gate == "unverified"
 
 
 @pytest.mark.asyncio

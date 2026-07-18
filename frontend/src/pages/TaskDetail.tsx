@@ -1038,6 +1038,7 @@ export default function TaskDetail() {
                 key={s.index}
                 type="button"
                 aria-pressed={selected === s.index}
+                aria-label={`${s.title}${s.agent_name ? ` — ${s.agent_name}` : ''}${(s.attempts ?? 0) > 1 ? ` · ${s.attempts} attempts` : ''}${s.gate === 'unverified' ? ' · unverified' : ''}`}
                 onClick={() => pickStep(s)}
                 title={`${s.title}${s.agent_name ? ` — ${s.agent_name}` : ''}${(s.attempts ?? 0) > 1 ? ` · ${s.attempts} attempts` : ''}${s.gate === 'unverified' ? ' · unverified' : ''}`}
                 className={cn(
@@ -1054,6 +1055,11 @@ export default function TaskDetail() {
                 <span className="tnum">{s.index + 1}</span>
                 {s.agent_name && <span className="max-w-32 truncate">{s.agent_name}</span>}
                 {(s.attempts ?? 0) > 1 && <span className="text-fg-dim">×{s.attempts}</span>}
+                {s.gate === 'unverified' && (
+                  <span className="rounded border border-line bg-panel px-1.5 py-0.5 text-[10px] text-fg">
+                    unverified
+                  </span>
+                )}
               </button>
             ))}
             {hasSynthesis && (

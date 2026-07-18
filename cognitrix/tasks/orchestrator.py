@@ -952,6 +952,10 @@ async def _execute_compiled_steps(
                     step_index=row.step_index,
                     attempt=attempt_count,
                 ):
+                    durable_images = bool(last_result.artifacts) and all(
+                        str(artifact.mime_type or '').lower().startswith('image/')
+                        for artifact in last_result.artifacts
+                    )
                     evaluation = await evaluate_step(
                         _evaluation_llm(
                             snapshot,
@@ -962,7 +966,13 @@ async def _execute_compiled_steps(
                         row.verification_criteria,
                         threshold=GATE_THRESHOLD,
                         on_retry=record_evaluation_retry,
+                        expected_output=row.expected_output if durable_images else '',
+                        artifacts=last_result.artifacts if durable_images else (),
                     )
+                    if durable_images and evaluation.passed:
+                        evaluation = evaluation.model_copy(
+                            update={'gate': 'unverified'}
+                        )
             finally:
                 await usage_writer.persist()
             gates[row.step_index] = evaluation.gate
@@ -975,6 +985,13 @@ async def _execute_compiled_steps(
             reviewed_result = last_result.model_copy(
                 update={'warnings': warnings}
             )
+            if durable_images:
+                reason = evaluation.error_code or 'quality gate failed'
+                raise StepFailure(
+                    f"Step #{row.step_index + 1} failed validation: {reason}",
+                    result=reviewed_result,
+                    gate=evaluation.gate,
+                )
             if attempt_number == 2:
                 reason = evaluation.error_code or 'quality gate failed'
                 raise StepFailure(

@@ -1,167 +1,128 @@
-"""Gemini Nano Banana 2 image-generation tool."""
+"""Gemini image-generation and image-editing tool orchestration."""
 
 from __future__ import annotations
 
-import base64
-import io
-import json
-import os
-from typing import Any
-
-import httpx
-from PIL import Image
-
-from cognitrix.artifacts import current_session_id, ref, source_image, store_png
+from cognitrix import artifacts as artifact_context
+from cognitrix.artifacts import current_session_id
+from cognitrix.media.context import current_media_turn_context
+from cognitrix.media.service import media_assets
+from cognitrix.media.types import MediaError, MediaOwnership
+from cognitrix.providers.gemini_image import (
+    MODEL,
+    GeminiImageError,
+    GeminiImageProvider,
+)
 from cognitrix.tools.tool import tool
-from cognitrix.tools.utils import ToolOutcome
+from cognitrix.tools.utils import ToolOutcome, current_execution_context
 
-MODEL = 'gemini-3.1-flash-image'
-URL = 'https://generativelanguage.googleapis.com/v1beta/interactions'
 ASPECT_RATIOS = {
     '1:1', '1:4', '1:8', '2:3', '3:2', '3:4', '4:1', '4:3',
     '4:5', '5:4', '8:1', '9:16', '16:9', '21:9',
 }
-MAX_IMAGE_BYTES = 10 * 1024 * 1024
-MAX_IMAGE_PIXELS = 20_000_000
-MAX_PROVIDER_RESPONSE_BYTES = 15 * 1024 * 1024
+
+image_provider = GeminiImageProvider()
 
 
-def _image_data(value: dict[str, Any]) -> str | None:
-    for key in ('data', 'base64', 'image_data'):
-        if isinstance(value.get(key), str):
-            candidate = value[key].split(',', 1)[-1]
-            try:
-                base64.b64decode(candidate, validate=True)
-                return candidate
-            except ValueError:
-                pass
-    return None
-
-
-def _find_image(value: Any) -> str | None:
-    """Find an image in legacy provider response shapes."""
-    if isinstance(value, dict):
-        candidate = _image_data(value)
-        if candidate:
-            return candidate
-        for child in value.values():
-            found = _find_image(child)
-            if found:
-                return found
-    if isinstance(value, list):
-        for child in value:
-            found = _find_image(child)
-            if found:
-                return found
-    return None
-
-
-def _find_response_image(value: Any) -> str | None:
-    """Select only the final image from a Gemini Interactions response."""
-    if not isinstance(value, dict) or not isinstance(value.get('steps'), list):
-        return _find_image(value)
-
-    last_model_output = next((
-        step for step in reversed(value['steps'])
-        if isinstance(step, dict) and step.get('type') == 'model_output'
-    ), None)
-    if last_model_output is None:
-        return None
-
-    content = last_model_output.get('content')
-    if not isinstance(content, list):
-        return None
-    for block in reversed(content):
-        if isinstance(block, dict) and block.get('type') == 'image':
-            return _image_data(block)
-    return None
-
-
-def _as_png(encoded: str) -> tuple[bytes, int, int]:
-    if len(encoded) > ((MAX_IMAGE_BYTES + 2) // 3) * 4 + 4:
-        raise ValueError('Image provider output exceeds the 10MB limit')
-    raw = base64.b64decode(encoded, validate=True)
-    if len(raw) > MAX_IMAGE_BYTES:
-        raise ValueError('Image provider output exceeds the 10MB limit')
-    with Image.open(io.BytesIO(raw)) as image:
-        width, height = image.size
-        if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
-            raise ValueError('Image provider output exceeds the pixel limit')
-        image.load()
-        converted = image.convert('RGBA' if image.mode in ('RGBA', 'LA', 'P') else 'RGB')
-        output = io.BytesIO()
-        converted.save(output, format='PNG', optimize=True)
-    png = output.getvalue()
-    if len(png) > MAX_IMAGE_BYTES:
-        raise ValueError('PNG output exceeds the 10MB limit')
-    return png, width, height
+def _current_media_ownership() -> MediaOwnership:
+    """Read the authority bound immediately around the current tool call."""
+    execution_context = current_execution_context()
+    # Session currently exposes only the session component publicly. Keep the
+    # private Artifact ContextVar compatibility boundary centralized here until
+    # the artifact context gains a public ownership accessor.
+    artifact_user_id = artifact_context._user_id.get()
+    return MediaOwnership(
+        session_id=current_session_id(),
+        user_id=(
+            execution_context.user_id
+            if execution_context.user_id is not None
+            else artifact_user_id
+        ),
+        agent_id=artifact_context._agent_id.get(),
+        run_id=execution_context.run_id,
+    )
 
 
 @tool(category='media', retryable=False, max_attempts=1,
       approval_mode='assigned_only', supported_interfaces=['web', 'ws', 'cli', 'task', 'tui'])
 async def generate_image(prompt: str, source_artifact_id: str | None = None,
                          aspect_ratio: str | None = None) -> ToolOutcome:
-    """Generate one 1K PNG image, or edit one image from this conversation.
+    """Generate one 1K image, or edit one image from this conversation.
 
     Args:
-        prompt: The desired image or the edit instructions.
-        source_artifact_id: Optional image artifact from this session to edit.
-        aspect_ratio: Optional output ratio such as 1:1, 16:9, or 9:16.
+        prompt (str): The desired image or the edit instructions.
+        source_artifact_id (str | None): Exact artifact ID to edit. Omit it when the UI has selected an image; never use a filename or provider image label.
+        aspect_ratio (str | None): Optional output ratio such as 1:1, 16:9, or 9:16.
     """
-    if not prompt.strip():
-        return ToolOutcome.failure('invalid_prompt', 'An image prompt is required')
-    if aspect_ratio and aspect_ratio not in ASPECT_RATIOS:
-        return ToolOutcome.failure('invalid_aspect_ratio', 'Unsupported aspect ratio')
-    api_key = os.getenv('GOOGLE_API_KEY', '')
-    if not api_key:
-        return ToolOutcome.failure('missing_google_api_key', 'GOOGLE_API_KEY is required for image generation')
     prompt_text = prompt.strip()
-    # The Interactions API accepts direct content blocks rather than an
-    # OpenAI-style {'role': 'user', 'content': ...} message envelope.
-    input_content: list[dict[str, Any]] = [
-        {'type': 'text', 'text': prompt_text},
-    ]
-    source_id = None
-    response_body = bytearray()
+    if not prompt_text:
+        return ToolOutcome.failure(
+            'invalid_prompt',
+            'An image prompt is required',
+        )
+    if aspect_ratio and aspect_ratio not in ASPECT_RATIOS:
+        return ToolOutcome.failure(
+            'invalid_aspect_ratio',
+            'Unsupported aspect ratio',
+        )
+
+    ownership = _current_media_ownership()
     try:
-        if source_artifact_id:
-            source, data = await source_image(source_artifact_id, current_session_id())
-            source_id = str(source.id)
-            input_content = [
-                {'type': 'text', 'text': prompt_text},
-                {'type': 'image', 'mime_type': source.mime_type,
-                 'data': base64.b64encode(data).decode('ascii')},
-            ]
-        payload: dict[str, Any] = {
-            'model': MODEL,
-            'store': False,
-            'input': input_content,
-            'response_format': {
-                'type': 'image', 'image_size': '1K',
-                'aspect_ratio': aspect_ratio or '1:1',
+        source = None
+        parent_artifact_id = None
+        selected_artifact_id = current_execution_context().selected_image_artifact_id
+        media_turn = current_media_turn_context()
+        sole_current_artifact_id = (
+            str(media_turn.current_images[0].id)
+            if (
+                media_turn is not None
+                and media_turn.selected_image is None
+                and len(media_turn.current_images) == 1
+            )
+            else None
+        )
+        if (
+            source_artifact_id
+            and not selected_artifact_id
+            and str(source_artifact_id) != sole_current_artifact_id
+        ):
+            return ToolOutcome.failure(
+                'image_selection_required',
+                'Select exactly one image before requesting an edit',
+                denied=True,
+            )
+        # The UI-selected artifact is trusted turn authority; model arguments are
+        # not. When a selection is bound, always edit it and ignore any stale or
+        # invented source ID supplied by the model.
+        effective_source_id = selected_artifact_id or source_artifact_id
+        if effective_source_id:
+            source = await media_assets.resolve_image(
+                str(effective_source_id),
+                ownership,
+                'original',
+            )
+            parent_artifact_id = source.ref.id
+
+        provider_image = await image_provider.generate(
+            prompt_text,
+            source=source,
+            aspect_ratio=aspect_ratio or '1:1',
+        )
+        artifact = await media_assets.store_generated_image(
+            provider_image.data,
+            {
+                'prompt': prompt_text,
+                'source_artifact_id': parent_artifact_id,
+                'model': MODEL,
             },
-        }
-        async with httpx.AsyncClient(timeout=90) as client:
-            async with client.stream(
-                'POST', URL, headers={'x-goog-api-key': api_key}, json=payload
-            ) as response:
-                async for chunk in response.aiter_bytes():
-                    response_body.extend(chunk)
-                    if len(response_body) > MAX_PROVIDER_RESPONSE_BYTES:
-                        raise ValueError('Image provider response exceeds the 15MB limit')
-                response.raise_for_status()
-        image_data = _find_response_image(json.loads(response_body))
-        if not image_data:
-            return ToolOutcome.failure('invalid_provider_output', 'Image provider returned no image')
-        png, width, height = _as_png(image_data)
-        artifact = await store_png(png, prompt=prompt.strip(), source_artifact_id=source_id,
-                                   model=MODEL, width=width, height=height)
-        return ToolOutcome.success('Image generated.', artifacts=[ref(artifact)])
-    except httpx.HTTPStatusError as exc:
-        detail = bytes(response_body[:1000]).decode('utf-8', errors='replace').strip()
-        suffix = f': {detail}' if detail else ''
-        return ToolOutcome.failure('image_provider_error', f'Image provider request failed: {exc}{suffix}')
-    except httpx.HTTPError as exc:
-        return ToolOutcome.failure('image_provider_error', f'Image provider request failed: {exc}')
-    except (ValueError, OSError) as exc:
+            ownership,
+        )
+        return ToolOutcome.success('Image generated.', artifacts=[artifact])
+    except GeminiImageError as exc:
+        return ToolOutcome.failure(exc.code, str(exc))
+    except MediaError as exc:
         return ToolOutcome.failure('image_generation_error', str(exc))
+    except OSError:
+        return ToolOutcome.failure(
+            'image_generation_error',
+            'Image generation failed',
+        )

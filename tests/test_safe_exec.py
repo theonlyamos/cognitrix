@@ -10,6 +10,10 @@ from cognitrix.common.safe_exec import (
     run_whitelisted,
     run_whitelisted_async,
 )
+from cognitrix.common.process_security import (
+    HostProcessAccessError,
+    HostProcessMode,
+)
 
 
 class TestBuildArgv:
@@ -54,14 +58,38 @@ class TestResolveWithinRoot:
 
 class TestRunners:
     def test_run_whitelisted_executes(self):
-        out = run_whitelisted("echo hello")
+        out = run_whitelisted(
+            "echo hello", host_process_mode=HostProcessMode.TRUSTED_LOCAL
+        )
         assert "hello" in out
 
     def test_run_whitelisted_blocks_injection(self):
         with pytest.raises(CommandNotAllowed):
-            run_whitelisted("echo hi; rm -rf .")
+            run_whitelisted(
+                "echo hi; rm -rf .",
+                host_process_mode=HostProcessMode.TRUSTED_LOCAL,
+            )
+
+    def test_run_whitelisted_defaults_to_a_required_explicit_policy(self):
+        with pytest.raises(TypeError):
+            run_whitelisted("echo denied")
+
+    def test_run_whitelisted_denies_untrusted_policy(self):
+        with pytest.raises(HostProcessAccessError):
+            run_whitelisted(
+                "echo denied", host_process_mode=HostProcessMode.DENY
+            )
 
     @pytest.mark.asyncio
     async def test_run_whitelisted_async_executes(self):
-        out = await run_whitelisted_async("echo hello")
+        out = await run_whitelisted_async(
+            "echo hello", host_process_mode=HostProcessMode.TRUSTED_LOCAL
+        )
         assert "hello" in out
+
+    @pytest.mark.asyncio
+    async def test_run_whitelisted_async_denies_untrusted_policy(self):
+        with pytest.raises(HostProcessAccessError):
+            await run_whitelisted_async(
+                "echo denied", host_process_mode=HostProcessMode.DENY
+            )

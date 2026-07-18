@@ -21,6 +21,11 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from cognitrix.common.process_security import (
+    HostProcessMode,
+    require_host_process_authority,
+)
+
 # Base commands permitted for tool/skill-driven execution. Read-mostly,
 # developer-workflow, and benign filesystem-scaffolding commands only; nothing
 # that mutates the system broadly. Notably absent: rm/del (destructive) — path
@@ -117,11 +122,13 @@ def _format_output(stdout: str, stderr: str, returncode: int) -> str:
 def run_whitelisted(
     command: str,
     *,
+    host_process_mode: HostProcessMode,
     cwd: str | os.PathLike[str] | None = None,
     timeout: int = DEFAULT_TIMEOUT,
     allowed: frozenset[str] | None = None,
 ) -> str:
     """Synchronously run a whitelisted command with ``shell=False``. Returns output text."""
+    require_host_process_authority(host_process_mode)
     argv = build_argv(command, allowed)
     try:
         proc = subprocess.run(
@@ -135,11 +142,13 @@ def run_whitelisted(
 async def run_whitelisted_async(
     command: str,
     *,
+    host_process_mode: HostProcessMode,
     cwd: str | os.PathLike[str] | None = None,
     timeout: int = DEFAULT_TIMEOUT,
     allowed: frozenset[str] | None = None,
 ) -> str:
     """Asynchronously run a whitelisted command with ``shell=False``. Returns output text."""
+    require_host_process_authority(host_process_mode)
     argv = build_argv(command, allowed)
     proc = await asyncio.create_subprocess_exec(
         *argv,

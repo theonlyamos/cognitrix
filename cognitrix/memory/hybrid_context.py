@@ -198,8 +198,10 @@ class HybridContextManager(BaseContextManager):
 
         # 3. Add short-term conversation history
         recent_messages = await self.short_term.build_prompt(agent, session)
-        # Skip the system message from short_term (we built our own)
-        prompt_parts.extend(recent_messages[1:])
+        # Replace only the primary system prompt; the second system message is
+        # turn-local media guidance and must survive the hybrid composition.
+        media_and_history = recent_messages[1:]
+        prompt_parts.extend(media_and_history)
 
         return prompt_parts
 

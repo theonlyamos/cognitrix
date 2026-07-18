@@ -296,8 +296,9 @@ class LLMManager:
                         for i, tc in enumerate(tool_calls)
                     ],
                 })
-            elif msg_type in ('text', 'summary'):
-                # 'summary' is a compaction summary stored as a user message.
+            elif msg_type in ('text', 'summary', 'media_context'):
+                # Summaries and turn-local media instructions are text messages
+                # with distinct internal types so context shaping can preserve them.
                 msg = {'role': role, 'content': content}
                 # Add tool_call_id for tool role messages (OpenAI format)
                 if role == 'tool' and tool_call_id:

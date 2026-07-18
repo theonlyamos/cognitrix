@@ -82,6 +82,13 @@ html.dark {
 @layer base {
   *, ::before, ::after { border-color: var(--line); }
 
+  html.app-scroll-locked,
+  html.app-scroll-locked body,
+  html.app-scroll-locked #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
   html { scroll-behavior: smooth; }
 
   body {

@@ -11,6 +11,7 @@ export interface BackendChatEntry {
   tool_calls?: { name?: string; arguments?: unknown; tool_call_id?: string | null }[];
   tool_call_id?: string | null;
   outcome?: { status?: unknown; artifacts?: unknown };
+  artifact?: unknown;
   duration?: number;
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
@@ -30,6 +31,7 @@ export type TranscriptEntry =
   | { kind: 'assistant'; content: string; name?: string; live?: boolean }
   | { kind: 'tool_calls'; content: string; name?: string; tools: TranscriptTool[] }
   | { kind: 'tool_result'; content: string }
+  | { kind: 'image'; artifact: ToolArtifact }
   | { kind: 'timing'; label: string; tokens?: string }
   | { kind: 'summary'; content: string }
   | { kind: 'system'; content: string };
@@ -48,16 +50,32 @@ const safeArgs = (v: unknown): string => {
 
 const safeArtifacts = (value: unknown): ToolArtifact[] | undefined => {
   if (!Array.isArray(value)) return undefined;
+  const safeDimension = (dimension: unknown) => (
+    dimension === undefined || (
+      typeof dimension === 'number'
+      && Number.isFinite(dimension)
+      && Number.isInteger(dimension)
+      && dimension > 0
+    )
+  );
   const artifacts = value.filter((item): item is ToolArtifact => {
     if (!item || typeof item !== 'object') return false;
     const candidate = item as Record<string, unknown>;
-    return typeof candidate.id === 'string' && candidate.id.length > 0
+    return typeof candidate.id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(candidate.id)
       && typeof candidate.mime_type === 'string' && candidate.mime_type.length > 0
+      && (candidate.origin === undefined || candidate.origin === 'uploaded' || candidate.origin === 'generated')
       && (candidate.filename === undefined || typeof candidate.filename === 'string')
-      && (candidate.width === undefined || typeof candidate.width === 'number')
-      && (candidate.height === undefined || typeof candidate.height === 'number');
+      && safeDimension(candidate.width)
+      && safeDimension(candidate.height);
   });
-  return artifacts.length ? artifacts : undefined;
+  return artifacts.length ? artifacts.map((candidate) => ({
+    id: candidate.id,
+    mime_type: candidate.mime_type,
+    ...(candidate.origin ? { origin: candidate.origin } : {}),
+    ...(candidate.filename !== undefined ? { filename: candidate.filename } : {}),
+    ...(candidate.width !== undefined ? { width: candidate.width } : {}),
+    ...(candidate.height !== undefined ? { height: candidate.height } : {}),
+  })) : undefined;
 };
 
 /** Map raw backend chat entries to render-ready transcript entries. Unknown
@@ -103,8 +121,15 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
 
     if (role === 'user' && type === 'summary') {
       out.push({ kind: 'summary', content });
+    } else if (role === 'user' && type === 'image') {
+      const artifact = safeArtifacts([m.artifact])?.[0];
+      if (artifact?.mime_type.startsWith('image/')) {
+        out.push({ kind: 'image', artifact: { ...artifact, origin: artifact.origin || 'uploaded' } });
+      }
     } else if (role === 'user' && type === 'text') {
       if (content.trim()) out.push({ kind: 'user', content });
+    } else if (role === 'user' && type === 'image_selection') {
+      // Internal selection bookkeeping is never transcript UI state.
     } else if (role === 'assistant' && type === 'tool_calls') {
       out.push({
         kind: 'tool_calls',
@@ -149,6 +174,14 @@ export function toChatMessages(entries: TranscriptEntry[]): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (const e of entries) {
     if (e.kind === 'user') out.push({ id: `hist-${out.length}`, role: 'user', content: e.content });
+    else if (e.kind === 'image') {
+      const last = out[out.length - 1];
+      if (last?.role === 'user') {
+        last.artifacts = [...(last.artifacts || []), e.artifact];
+      } else {
+        out.push({ id: `hist-${out.length}`, role: 'user', content: '', artifacts: [e.artifact] });
+      }
+    }
     else if (e.kind === 'assistant') out.push({ id: `hist-${out.length}`, role: 'assistant', content: e.content });
     else if (e.kind === 'tool_calls') {
       // The assistant's preamble (if any) first, then the tools it invoked as a

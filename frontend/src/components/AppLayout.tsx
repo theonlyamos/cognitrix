@@ -8,6 +8,11 @@ export default function AppLayout() {
   const { pathname } = useLocation();
 
   useEffect(() => {
+    document.documentElement.classList.add('app-scroll-locked');
+    return () => document.documentElement.classList.remove('app-scroll-locked');
+  }, []);
+
+  useEffect(() => {
     setMobileNavOpen(false);
   }, [pathname]);
 

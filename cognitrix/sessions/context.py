@@ -26,15 +26,20 @@ class BaseContextManager(ABC):
 
 
 def partition_turns(chat: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Split chat into turns; each turn starts at a user message.
+    """Split chat into turns; each turn starts at a user text/summary message.
 
-    Messages before the first user message (e.g. a compaction summary) form
-    their own leading group.
+    User image and image-selection records are companions to the preceding
+    request, not independent turns. Messages before the first user request
+    form their own leading group.
     """
     turns: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     for m in chat:
-        if str(m.get('role', '')).lower() == 'user' and current:
+        is_user_request = (
+            str(m.get('role', '')).lower() == 'user'
+            and m.get('type', 'text') in {'text', 'summary'}
+        )
+        if is_user_request and current:
             turns.append(current)
             current = []
         current.append(m)
@@ -54,7 +59,15 @@ def _slim_past_turn(turn: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for m in turn:
         role = str(m.get('role', '')).lower()
         mtype = m.get('type', 'text')
-        if role == 'user' and mtype in ('text', 'summary', 'image'):
+        if role == 'user' and mtype in ('image', 'image_selection'):
+            artifact = m.get('artifact') or {}
+            artifact_id = str(artifact.get('id') or 'unknown')
+            kept.append({
+                'role': m.get('role', 'User'),
+                'type': 'text',
+                'content': f'[Previously supplied image: {artifact_id}]',
+            })
+        elif role == 'user' and mtype in ('text', 'summary'):
             kept.append(m)
         elif role == 'assistant' and mtype == 'text' and not m.get('tool_calls'):
             kept.append(m)
@@ -139,5 +152,13 @@ class SlidingWindowContextManager(BaseContextManager):
         recent_history = shape_history(session.chat, budget, max_past_turns=self.max_messages)
         recent_history = _trim_to_valid_start(recent_history)
 
-        prompt = [system_prompt] + recent_history
+        from cognitrix.media.context import MediaContextBuilder
+
+        media_message, recent_history = await MediaContextBuilder().enrich(
+            session, recent_history
+        )
+        prompt = [system_prompt]
+        if media_message is not None:
+            prompt.append(media_message)
+        prompt.extend(recent_history)
         return prompt

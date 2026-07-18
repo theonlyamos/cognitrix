@@ -30,7 +30,7 @@ const STOP_RECONCILE_DELAY_MS = 4_000;
 // ── Attachments ──
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
-const IMAGE_MAX_DIM = 1568; // downscale ceiling — plenty for vision, keeps payload small
+const MAX_FILES = 20;
 
 // Accepted attachments: images + common document types. Keep DOC_EXT and
 // ACCEPT_ATTR in sync — `accept` filters the file picker; addFiles re-checks so
@@ -43,8 +43,13 @@ interface Attachment {
   kind: 'image' | 'file';
   name: string;
   mime: string;
-  dataUrl: string;
+  file: File;
+  previewUrl?: string;
 }
+
+type EditSource =
+  | { type: 'artifact'; artifact: ToolArtifact }
+  | { type: 'attachment'; attachmentId: string };
 
 interface Skill {
   name: string;
@@ -63,41 +68,9 @@ interface ApprovalRequest {
   details?: string;
 }
 
-const readFileAsDataURL = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-
-// Downscale large images client-side (long edge ≤ IMAGE_MAX_DIM) so uploads and
-// vision-token cost stay small; falls back to the original on any failure.
-const downscaleImage = async (file: File): Promise<string> => {
-  const dataUrl = await readFileAsDataURL(file);
-  return new Promise<string>((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, IMAGE_MAX_DIM / Math.max(img.width, img.height));
-      if (scale >= 1) return resolve(dataUrl);
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(img.width * scale);
-      canvas.height = Math.round(img.height * scale);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return resolve(dataUrl);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL('image/jpeg', 0.9));
-    };
-    img.onerror = () => resolve(dataUrl);
-    img.src = dataUrl;
-  });
-};
-
-// Approximate decoded size of a data URL (base64 payload → bytes).
-const dataUrlBytes = (dataUrl: string) => Math.floor(((dataUrl.split(',')[1] || '').length * 3) / 4);
-
 export default function Home() {
-  const { messages, addMessage, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, stopRunningTools, failRunningTools, clearMessages, setMessages } = useSession();
+  const { messages, addMessage, attachArtifactsToLatestUser: attachArtifactsToLatestUserFromSession, addArtifactsToLastUser, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, stopRunningTools, failRunningTools, clearMessages, setMessages } = useSession();
+  const attachArtifactsToLatestUser = attachArtifactsToLatestUserFromSession ?? addArtifactsToLastUser;
   const [input, setInput] = useState('');
   const [waiting, setWaiting] = useState(false); // sent, before first token
   const [streaming, setStreaming] = useState(false); // actively streaming a reply
@@ -112,10 +85,22 @@ export default function Home() {
 
   // Composer attachments (images → vision, other files → agent workspace).
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [editSource, setEditSource] = useState<EditSource | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const attachmentsRef = useRef(attachments);
+  const ownedPreviewUrlsRef = useRef(new Set<string>());
   attachmentsRef.current = attachments;
+
+  const revokePreviewUrl = useCallback((url?: string) => {
+    if (!url || !ownedPreviewUrlsRef.current.delete(url)) return;
+    URL.revokeObjectURL(url);
+  }, []);
+
+  useEffect(() => () => {
+    for (const url of ownedPreviewUrlsRef.current) URL.revokeObjectURL(url);
+    ownedPreviewUrlsRef.current.clear();
+  }, []);
 
   // Slash-skills menu: typing `/name` shows matching skills to insert. The message
   // is sent as normal text — the agent loads the skill via its load_skill tool.
@@ -262,13 +247,17 @@ export default function Home() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
 
-  const addFiles = useCallback(async (fileList: FileList | File[]) => {
+  const addFiles = useCallback((fileList: FileList | File[]) => {
     const incoming = Array.from(fileList);
     if (incoming.length === 0) return;
     setUploadError(null);
-    let total = attachmentsRef.current.reduce((sum, a) => sum + dataUrlBytes(a.dataUrl), 0);
+    let total = attachmentsRef.current.reduce((sum, a) => sum + a.file.size, 0);
     const next: Attachment[] = [];
     for (const file of incoming) {
+      if (attachmentsRef.current.length + next.length >= MAX_FILES) {
+        setUploadError('You can attach up to 20 files.');
+        break;
+      }
       // Pasted/dropped files often arrive with an empty MIME type — derive it
       // from the extension so images still route to vision (not the workspace),
       // and re-tag the file so the thumbnail + downscale actually work.
@@ -280,14 +269,7 @@ export default function Home() {
         setUploadError('Only images and documents can be attached.');
         continue;
       }
-      const src = isImage && !file.type ? new File([file], file.name, { type: imgMime }) : file;
-      let dataUrl: string;
-      try {
-        dataUrl = isImage ? await downscaleImage(src) : await readFileAsDataURL(file);
-      } catch {
-        continue;
-      }
-      const bytes = dataUrlBytes(dataUrl);
+      const bytes = file.size;
       if (bytes > MAX_FILE_BYTES) {
         setUploadError(`${file.name} is larger than 10 MB.`);
         continue;
@@ -301,16 +283,41 @@ export default function Home() {
         id: crypto.randomUUID(),
         kind: isImage ? 'image' : 'file',
         name: file.name || 'file',
-        mime: imgMime || file.type || 'application/octet-stream',
-        dataUrl,
+        mime: file.type || imgMime || 'application/octet-stream',
+        file,
+        previewUrl: isImage && typeof URL.createObjectURL === 'function'
+          ? URL.createObjectURL(file)
+          : undefined,
       });
     }
+    for (const attachment of next) if (attachment.previewUrl) ownedPreviewUrlsRef.current.add(attachment.previewUrl);
     if (next.length) setAttachments((prev) => [...prev, ...next]);
   }, []);
 
   const removeAttachment = useCallback((id: string) => {
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
+    setAttachments((prev) => {
+      const removed = prev.find((attachment) => attachment.id === id);
+      revokePreviewUrl(removed?.previewUrl);
+      return prev.filter((attachment) => attachment.id !== id);
+    });
+    setEditSource((current) => (
+      current?.type === 'attachment' && current.attachmentId === id ? null : current
+    ));
+  }, [revokePreviewUrl]);
+
+  const selectArtifactEditSource = useCallback((artifact: ToolArtifact) => {
+    setEditSource({ type: 'artifact', artifact });
   }, []);
+
+  const clearComposerMedia = useCallback(() => {
+    setAttachments((current) => {
+      for (const attachment of current) {
+        revokePreviewUrl(attachment.previewUrl);
+      }
+      return [];
+    });
+    setEditSource(null);
+  }, [revokePreviewUrl]);
 
   const resetThreadState = useCallback(() => {
     clearStopFallback();
@@ -323,7 +330,8 @@ export default function Home() {
     setPlanning(null);
     setApprovals([]);
     setIsStreaming(false);
-  }, [clearMessages, clearStopFallback, setIsStreaming]);
+    clearComposerMedia();
+  }, [clearComposerMedia, clearMessages, clearStopFallback, setIsStreaming]);
 
   const adoptSession = useCallback(
     (id: string | null) => {
@@ -345,6 +353,7 @@ export default function Home() {
           expectedGeneration !== undefined
           && turnGenerationRef.current !== expectedGeneration
         ) return false;
+        clearComposerMedia();
         adoptSession(id);
         setMessages(toChatMessages(parseChatEntries(res.data)));
         setWaiting(false);
@@ -365,7 +374,7 @@ export default function Home() {
         return false;
       }
     },
-    [adoptSession, agentId, setIsStreaming, setMessages],
+    [adoptSession, agentId, clearComposerMedia, setIsStreaming, setMessages],
   );
 
   const finishTurn = useCallback((
@@ -472,6 +481,17 @@ export default function Home() {
               resolveToolCall(event.tool_name, event.status === 'error' ? 'error' : 'done', { id: event.tool_call_id, result: event.result, artifacts: event.artifacts });
           }
           break;
+        case 'attachments_ingested': {
+          const artifacts = (event.artifacts || [])
+            .filter((artifact) => artifact
+              && typeof artifact.id === 'string'
+              && typeof artifact.mime_type === 'string'
+              && /^[A-Za-z0-9_-]{1,128}$/.test(artifact.id)
+              && artifact.mime_type.startsWith('image/'))
+            .map((artifact) => ({ ...artifact, origin: 'uploaded' as const }));
+          attachArtifactsToLatestUser(artifacts);
+          break;
+        }
         case 'approval_request': {
           const req = event as unknown as ApprovalRequest;
           if (req.request_id) {
@@ -485,7 +505,7 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, addMessage, addToolCall, resolveToolCall, agentId, finishTurn],
+    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
@@ -502,7 +522,8 @@ export default function Home() {
     async (text: string) => {
       const msg = text.trim();
       const pending = attachmentsRef.current;
-      if (!isConnected || (!msg && pending.length === 0) || busy) return;
+      const pendingEditSource = editSource;
+      if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return;
       clearStopFallback();
       turnGenerationRef.current += 1;
       // Keep a record of what was attached in the visible user message.
@@ -512,6 +533,7 @@ export default function Home() {
       addMessage('user', shown);
       setInput('');
       setAttachments([]);
+      setEditSource(null);
       setUploadError(null);
       setWaiting(true);
       setStreaming(false);
@@ -520,24 +542,45 @@ export default function Home() {
       setPlanning(null);
       setIsStreaming(true);
       try {
-        await api.post('/agents/chat', {
+        const editSourceImageIndex = pendingEditSource?.type === 'attachment'
+          ? pending.filter((attachment) => attachment.kind === 'image')
+            .findIndex((attachment) => attachment.id === pendingEditSource.attachmentId)
+          : -1;
+        const payload = {
           message: msg,
           ...(agentId ? { agent_id: agentId } : {}),
           ...(streamId ? { stream_id: streamId } : {}),
           // No id on a fresh thread: the server creates the session and the
           // client adopts its id from the first tagged SSE event.
           ...(activeSessionId ? { session_id: activeSessionId } : {}),
-          ...(pending.length
-            ? { attachments: pending.map((a) => ({ kind: a.kind, name: a.name, mime: a.mime, dataUrl: a.dataUrl })) }
+          ...(pendingEditSource?.type === 'artifact'
+            ? { edit_source_artifact_id: pendingEditSource.artifact.id }
+            : {}),
+          ...(editSourceImageIndex >= 0
+            ? { edit_source_image_index: editSourceImageIndex }
             : {}),
           ...(bypassRef.current ? { bypass_permissions: true } : {}),
-        });
+        };
+        if (pending.length) {
+          const form = new FormData();
+          form.append('payload', new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+          for (const attachment of pending) form.append('files', attachment.file, attachment.name);
+          await api.post('/agents/chat', form);
+          for (const attachment of pending) {
+            revokePreviewUrl(attachment.previewUrl);
+          }
+        } else {
+          await api.post('/agents/chat', payload);
+        }
       } catch {
+        setInput(text);
+        setAttachments(pending);
+        setEditSource(pendingEditSource);
         addMessage('assistant', 'Unable to reach the agent. Check the connection and try again.');
         finishTurn();
       }
     },
-    [busy, addMessage, clearStopFallback, finishTurn, isConnected, setIsStreaming, agentId, activeSessionId, streamId],
+    [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, agentId, activeSessionId, streamId, revokePreviewUrl, uploadError],
   );
 
   const stop = useCallback(async () => {
@@ -632,7 +675,7 @@ export default function Home() {
           </Button>
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto">
         {convosSorted.length === 0 ? (
           <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no conversations yet</p>
         ) : (
@@ -780,6 +823,8 @@ export default function Home() {
                   message={message}
                   isLast={index === messages.length - 1}
                   streaming={streaming && index === messages.length - 1 && message.role === 'assistant'}
+                  onEditSource={selectArtifactEditSource}
+                  selectedEditSourceId={editSource?.type === 'artifact' ? editSource.artifact.id : undefined}
                 />
               ))}
 
@@ -869,6 +914,31 @@ export default function Home() {
                 dragOver ? 'border-accent' : 'border-line focus-within:border-accent',
               )}
             >
+              {editSource?.type === 'artifact' && (
+                <div className="flex items-center gap-2 border-b border-line bg-panel-2 px-3 py-2 font-mono text-[10.5px]">
+                  <div
+                    data-testid="edit-source-thumbnail"
+                    aria-hidden="true"
+                    className="grid h-8 w-8 flex-none place-items-center overflow-hidden rounded-sm border border-line bg-panel text-accent-ink"
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8" cy="9" r="1.5" /><path d="m4 18 5-5 3 3 3-3 5 5" /></svg>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="block tracking-[0.12em] text-accent-ink">Editing image</span>
+                    <span className="block truncate text-fg" title={editSource.artifact.filename || editSource.artifact.id}>
+                      {editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}`}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}`} edit source`}
+                    className="flex min-h-11 min-w-11 h-11 w-11 flex-none items-center justify-center text-fg-dim transition-colors hover:text-danger-ink md:h-8 md:w-8"
+                    onClick={() => setEditSource(null)}
+                  >
+                    <span aria-hidden="true">×</span>
+                  </button>
+                </div>
+              )}
               {attachments.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 border-b border-line px-3 pb-1 pt-2.5">
                   {attachments.map((a) => (
@@ -877,7 +947,23 @@ export default function Home() {
                       className="group inline-flex max-w-full items-center gap-1.5 rounded border border-line bg-panel-2 py-1 pl-1 pr-1.5 font-mono text-[10.5px]"
                     >
                       {a.kind === 'image' ? (
-                        <img src={a.dataUrl} alt="" className="h-5 w-5 flex-none rounded-sm object-cover" />
+                        <button
+                          type="button"
+                          aria-label={`Use ${a.name} as edit source`}
+                          aria-pressed={editSource?.type === 'attachment' && editSource.attachmentId === a.id}
+                          title="Use as edit source"
+                          className={cn(
+                            'relative h-8 w-8 flex-none overflow-hidden rounded-sm border transition-colors',
+                            editSource?.type === 'attachment' && editSource.attachmentId === a.id
+                              ? 'border-accent ring-1 ring-accent'
+                              : 'border-transparent hover:border-fg-dim',
+                          )}
+                          onClick={() => setEditSource({ type: 'attachment', attachmentId: a.id })}
+                        >
+                          {a.previewUrl
+                            ? <img src={a.previewUrl} alt="" className="h-full w-full object-cover" />
+                            : <span aria-hidden className="text-accent-ink">â—‡</span>}
+                        </button>
                       ) : (
                         <svg className="h-4 w-4 flex-none text-fg-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
                       )}
@@ -891,6 +977,16 @@ export default function Home() {
                       </button>
                     </span>
                   ))}
+                  {editSource?.type === 'attachment' && (
+                    <button
+                      type="button"
+                      aria-label="Clear edit source"
+                      className="min-h-11 px-1 font-mono text-[10.5px] text-fg-dim transition-colors hover:text-danger-ink md:min-h-0"
+                      onClick={() => setEditSource(null)}
+                    >
+                      clear edit
+                    </button>
+                  )}
                 </div>
               )}
               <textarea
@@ -927,7 +1023,7 @@ export default function Home() {
               />
               <button
                 onClick={() => { if (busy) void stop(); else void send(input); }}
-                disabled={busy ? stopping : (!isConnected || (!input.trim() && attachments.length === 0))}
+                disabled={busy ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
                 aria-label={busy ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
                 className={cn(
                   'absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded transition disabled:cursor-not-allowed disabled:opacity-60 hover:brightness-105 md:h-8 md:w-8',

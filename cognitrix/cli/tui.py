@@ -13,6 +13,7 @@ from cognitrix.agents.base import Agent
 from cognitrix.config import VERSION
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
+from cognitrix.tools.utils import trusted_local_execution_context
 
 CSS = """
 CognitrixApp {
@@ -642,6 +643,7 @@ class CognitrixApp(App):
                 await self.app_session(
                     text, self.agent, interface="cli", stream=True,
                     output=tui_stream_output,
+                    tool_context=trusted_local_execution_context(),
                 )
             except Exception as e:
                 self._add_error(str(e))

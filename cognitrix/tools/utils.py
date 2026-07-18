@@ -1,13 +1,32 @@
 import contextvars
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from odbms import Model
 from PIL import Image
 from pydantic import BaseModel, Field
+
+from cognitrix.common.process_security import HostProcessMode
+
+
+@dataclass(frozen=True)
+class DocumentCapability:
+    """Exact immutable authority to read one identity-pinned managed document."""
+
+    document_id: str
+    storage_key: str
+    mime_type: str
+    filename: str | None
+    size_bytes: int
+    sha256: str
+    tools_root_identity: str
+    uploads_identity: str
+    directory_identity: str
+    file_identity: str
 
 
 @dataclass(frozen=True)
@@ -15,12 +34,17 @@ class ToolExecutionContext:
     """Immutable caller authority bound to one agent turn."""
 
     user_id: str | None = None
+    session_id: str | None = None
+    agent_id: str | None = None
     api_key_id: str | None = None
     task_id: str | None = None
     run_id: str | None = None
     scopes: frozenset[str] | None = None
     allowed_agents: frozenset[str] | None = None
     allowed_teams: frozenset[str] | None = None
+    document_capabilities: tuple[DocumentCapability, ...] = ()
+    selected_image_artifact_id: str | None = None
+    host_process_mode: HostProcessMode = HostProcessMode.DENY
 
     @property
     def restricted(self) -> bool:
@@ -53,6 +77,41 @@ def reset_execution_context(token) -> None:
     _execution_context.reset(token)
 
 
+def trusted_local_execution_context() -> ToolExecutionContext:
+    """Build the host-process capability used only by direct local CLI entry points."""
+    return ToolExecutionContext(host_process_mode=HostProcessMode.TRUSTED_LOCAL)
+
+
+def delegated_execution_context(
+    parent: ToolExecutionContext | None = None,
+) -> ToolExecutionContext:
+    """Retain caller/API policy while dropping all turn-scoped capabilities.
+
+    Constructing a fresh context is intentional: any future capability fields
+    default to their non-authorizing value instead of becoming transitively
+    delegated by a broad ``dataclasses.replace``.
+    """
+    source = parent or current_execution_context()
+    return ToolExecutionContext(
+        user_id=source.user_id,
+        api_key_id=source.api_key_id,
+        scopes=source.scopes,
+        allowed_agents=source.allowed_agents,
+        allowed_teams=source.allowed_teams,
+        host_process_mode=HostProcessMode.DENY,
+    )
+
+
+@contextmanager
+def trusted_local_execution():
+    """Bind trusted-local authority around a direct CLI-only operation."""
+    token = set_execution_context(trusted_local_execution_context())
+    try:
+        yield
+    finally:
+        reset_execution_context(token)
+
+
 class ToolResultType(Enum):
     """Enum for different types of tool results"""
     TEXT = "text"
@@ -70,6 +129,7 @@ class ArtifactRef(BaseModel):
     filename: str | None = None
     width: int | None = None
     height: int | None = None
+    origin: Literal['uploaded', 'generated'] | None = None
 
 
 class EntityRef(BaseModel):
@@ -109,6 +169,20 @@ class ToolOutcome(BaseModel):
             text=message,
             error=ToolError(code=code, message=message, retryable=retryable),
         )
+
+    def model_content(self) -> str:
+        """Compact, safe summary sent back to the model after a tool call."""
+        lines = [self.text]
+        lines.extend(
+            f'Artifact: {artifact.id} {artifact.mime_type} {artifact.filename or ""}'.rstrip()
+            for artifact in self.artifacts
+        )
+        lines.extend(
+            f'Entity: {entity.type} {entity.id} {entity.name}'
+            for entity in self.entities
+        )
+        lines.extend(f'Warning: {warning[:500]}' for warning in self.warnings[:3])
+        return '\n'.join(line for line in lines if line)
 
 class ToolCallResult(Model):
     """Class to standardize tool execution results"""

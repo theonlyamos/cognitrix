@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from cognitrix.common.security import AuthContext, crud_scope, get_auth_context, jwt_only
 from cognitrix.models.api_key import APIKey
+from cognitrix.session_ownership import OwnershipNotFound
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.run import TaskRun
 
@@ -51,6 +52,25 @@ def _async_value(value):
     return get_value
 
 
+def _patch_unbound_task_session(monkeypatch, session: Session) -> None:
+    from cognitrix.api.routes import sessions as routes
+
+    async def missing_binding(*_args, **_kwargs):
+        raise OwnershipNotFound()
+
+    monkeypatch.setattr(routes, "require_active_owned", missing_binding)
+    monkeypatch.setattr(
+        routes.SessionOwnership,
+        "find_one",
+        staticmethod(_async_value(None)),
+    )
+    monkeypatch.setattr(
+        Session,
+        "find_one",
+        staticmethod(_async_value(session)),
+    )
+
+
 async def _request(app: FastAPI, method: str, path: str) -> httpx.Response:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -68,7 +88,7 @@ async def test_task_run_chat_rejects_key_outside_immutable_acl(monkeypatch):
         acl_agent_ids=["agent-private"],
     )
 
-    monkeypatch.setattr(Session, "get", staticmethod(_async_value(session)))
+    _patch_unbound_task_session(monkeypatch, session)
     monkeypatch.setattr(TaskRun, "get", staticmethod(_async_value(run)))
 
     response = await _request(_app(_context(allowed_agents=["agent-public"])), "GET", "/sessions/session-1/chat")
@@ -86,12 +106,43 @@ async def test_full_task_run_session_cannot_bypass_chat_acl(monkeypatch):
         acl_agent_ids=["agent-private"],
     )
 
-    monkeypatch.setattr(Session, "get", staticmethod(_async_value(session)))
+    _patch_unbound_task_session(monkeypatch, session)
     monkeypatch.setattr(TaskRun, "get", staticmethod(_async_value(run)))
 
     response = await _request(_app(_context(allowed_agents=["agent-public"])), "GET", "/sessions/session-1")
 
     assert response.status_code == 403
+
+
+async def test_foreign_binding_cannot_fall_through_to_task_run_acl(monkeypatch):
+    from cognitrix.api.routes import sessions as routes
+
+    async def foreign_binding(*_args, **_kwargs):
+        raise OwnershipNotFound()
+
+    async def unexpected_session_lookup(_query):
+        pytest.fail("a foreign durable binding must block Session row access")
+
+    async def unexpected_run_lookup(_run_id):
+        pytest.fail("a foreign durable binding must block TaskRun fallback")
+
+    monkeypatch.setattr(routes, "require_active_owned", foreign_binding)
+    monkeypatch.setattr(
+        routes.SessionOwnership,
+        "find_one",
+        staticmethod(_async_value(SimpleNamespace(session_id="session-1"))),
+    )
+    monkeypatch.setattr(Session, "find_one", staticmethod(unexpected_session_lookup))
+    monkeypatch.setattr(TaskRun, "get", staticmethod(unexpected_run_lookup))
+
+    response = await _request(
+        _app(_context(allowed_agents=["agent-allowed"])),
+        "GET",
+        "/sessions/session-1/chat",
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Session not found"}
 
 
 async def test_run_session_mapping_requires_run_acl_even_when_empty(monkeypatch):
@@ -118,7 +169,13 @@ async def test_run_session_mapping_requires_run_acl_even_when_empty(monkeypatch)
 
 
 async def test_session_list_filters_inaccessible_runs_but_keeps_ordinary_sessions(monkeypatch):
-    ordinary = Session(_id="ordinary", user_id="user-1", chat=[{"content": "ordinary"}])
+    from cognitrix.api.routes import sessions as routes
+
+    ordinary = Session(
+        _id="ordinary",
+        agent_id="agent-public",
+        chat=[{"content": "ordinary"}],
+    )
     protected = Session(_id="protected", run_id="run-1", chat=[{"content": "secret"}])
     run = TaskRun(
         _id="run-1",
@@ -128,6 +185,12 @@ async def test_session_list_filters_inaccessible_runs_but_keeps_ordinary_session
     )
 
     monkeypatch.setattr(Session, "all", staticmethod(_async_value([ordinary, protected])))
+    monkeypatch.setattr(routes, "_owned_sessions", _async_value([ordinary]))
+    monkeypatch.setattr(
+        routes.SessionOwnership,
+        "find_one",
+        staticmethod(_async_value(None)),
+    )
     monkeypatch.setattr(TaskRun, "get", staticmethod(_async_value(run)))
 
     response = await _request(_app(_context(allowed_agents=["agent-public"])), "GET", "/sessions")
@@ -137,8 +200,11 @@ async def test_session_list_filters_inaccessible_runs_but_keeps_ordinary_session
 
 
 async def test_ordinary_session_chat_preserves_existing_crud_behavior(monkeypatch):
+    from cognitrix.api.routes import sessions as routes
+
     session = Session(
         _id="ordinary",
+        agent_id="agent-ordinary",
         user_id="user-1",
         chat=[{"role": "User", "type": "text", "content": "hello"}],
     )
@@ -146,6 +212,12 @@ async def test_ordinary_session_chat_preserves_existing_crud_behavior(monkeypatc
     async def unexpected_run_lookup(_run_id):
         pytest.fail("ordinary sessions must not require a TaskRun lookup")
 
+    binding = SimpleNamespace(
+        session_id="ordinary",
+        user_id="user-1",
+        agent_id="agent-ordinary",
+    )
+    monkeypatch.setattr(routes, "require_active_owned", _async_value(binding))
     monkeypatch.setattr(Session, "get", staticmethod(_async_value(session)))
     monkeypatch.setattr(TaskRun, "get", staticmethod(unexpected_run_lookup))
 
@@ -164,7 +236,7 @@ async def test_task_run_chat_allows_key_inside_immutable_acl(monkeypatch):
         acl_agent_ids=["agent-allowed"],
     )
 
-    monkeypatch.setattr(Session, "get", staticmethod(_async_value(session)))
+    _patch_unbound_task_session(monkeypatch, session)
     monkeypatch.setattr(TaskRun, "get", staticmethod(_async_value(run)))
 
     response = await _request(_app(_context(allowed_agents=["agent-allowed"])), "GET", "/sessions/session-1/chat")
@@ -174,8 +246,11 @@ async def test_task_run_chat_allows_key_inside_immutable_acl(monkeypatch):
 
 
 async def test_legacy_team_session_list_filters_task_run_acl(monkeypatch):
+    from cognitrix.api.routes import sessions as routes
+
     ordinary = Session(
         _id="ordinary",
+        agent_id="agent-public",
         user_id="user-1",
         team_id="team-1",
         chat=[{"content": "ordinary"}],
@@ -194,6 +269,12 @@ async def test_legacy_team_session_list_filters_task_run_acl(monkeypatch):
     )
 
     monkeypatch.setattr(Session, "find", staticmethod(_async_value([ordinary, protected])))
+    monkeypatch.setattr(routes, "_owned_sessions", _async_value([ordinary]))
+    monkeypatch.setattr(
+        routes.SessionOwnership,
+        "find_one",
+        staticmethod(_async_value(None)),
+    )
     monkeypatch.setattr(TaskRun, "get", staticmethod(_async_value(run)))
 
     response = await _request(
