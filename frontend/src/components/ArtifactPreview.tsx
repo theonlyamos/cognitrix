@@ -176,7 +176,18 @@ export function ArtifactPreview({ artifact, sourcePath, onEditSource, selected =
     return <button type="button" className="min-h-11 text-accent-ink underline underline-offset-2 sm:min-h-0" onClick={() => { void downloadOriginal(); }}>Download {filename}</button>;
   }
 
-  const reserveStyle = artifact.width && artifact.height ? { aspectRatio: `${artifact.width} / ${artifact.height}` } : undefined;
+  const hasDimensions = (
+    Number.isFinite(artifact.width) && Number.isFinite(artifact.height)
+    && Number(artifact.width) > 0 && Number(artifact.height) > 0
+  );
+  const reservedHeight = hasDimensions ? Math.min(Number(artifact.height), 320) : 0;
+  const reservedWidth = hasDimensions
+    ? Number(artifact.width) * reservedHeight / Number(artifact.height)
+    : 0;
+  const reserveStyle = hasDimensions ? {
+    aspectRatio: `${artifact.width} / ${artifact.height}`,
+    width: `min(100%, ${reservedWidth}px)`,
+  } : undefined;
   return (
     <>
       <div ref={placeholderRef} data-testid="artifact-placeholder" className="relative w-fit max-w-full" style={reserveStyle}>

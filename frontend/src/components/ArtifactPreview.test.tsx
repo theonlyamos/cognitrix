@@ -25,7 +25,10 @@ describe('ArtifactPreview lazy image delivery', () => {
     render(<ArtifactPreview artifact={artifact} />);
 
     expect(api.get).not.toHaveBeenCalled();
-    expect(screen.getByTestId('artifact-placeholder')).toHaveStyle({ aspectRatio: '1200 / 800' });
+    expect(screen.getByTestId('artifact-placeholder')).toHaveStyle({
+      aspectRatio: '1200 / 800',
+      width: 'min(100%, 480px)',
+    });
     expect(observerOptions()).toContainEqual(expect.objectContaining({ rootMargin: '400px 0px' }));
 
     vi.mocked(api.get).mockResolvedValue({ data: new Blob(['thumbnail']) });
