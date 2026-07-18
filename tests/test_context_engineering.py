@@ -12,6 +12,7 @@ import pytest
 from cognitrix.models import Agent
 from cognitrix.providers.base import LLM, LLMManager
 from cognitrix.sessions.context import partition_turns, shape_history
+from cognitrix.tools.utils import ArtifactRef, EntityRef, ToolOutcome
 from cognitrix.utils.llm_response import LLMResponse
 from cognitrix.utils.tokens import estimate_tokens
 
@@ -130,6 +131,51 @@ def test_current_turn_kept_even_over_budget():
     chat = [_user("q " + "z" * 8000)] + _tool_exchange(1, payload="r" * 8000)
     shaped = shape_history(chat, budget_tokens=100)
     assert len(shaped) == 3  # never drop the current turn
+
+
+def test_past_images_are_safe_text_placeholders():
+    chat = [
+        {"role": "User", "type": "image", "content": "data:image/png;base64,secret", "artifact": {"id": "old"}},
+        _assistant("done"),
+        _user("next"),
+    ]
+    shaped = shape_history(chat, budget_tokens=100_000)
+    assert shaped[0] == {"role": "User", "type": "text", "content": "[Previously supplied image: old]"}
+
+
+def test_tool_outcome_model_content_omits_storage_and_ownership():
+    from cognitrix.agents.base import _tool_result_entry
+
+    outcome = ToolOutcome.success(
+        "Image generated.",
+        artifacts=[ArtifactRef(id="image-1", mime_type="image/png", filename="result.png")],
+        entities=[EntityRef(type="image", id="image-1", name="Result")],
+        warnings=["One warning"],
+    )
+    content = outcome.model_content()
+    assert "Image generated." in content
+    assert "Artifact: image-1 image/png result.png" in content
+    assert "Entity: image image-1 Result" in content
+    assert "storage" not in content.lower()
+    assert _tool_result_entry("call-1", outcome)["data"] == content
+
+
+@pytest.mark.asyncio
+async def test_context_managers_keep_media_system_message(monkeypatch):
+    from cognitrix.memory.hybrid_context import HybridContextManager
+    from cognitrix.sessions.base import Session
+    from cognitrix.sessions.context import SlidingWindowContextManager
+
+    async def enrich(self, session, history):
+        return {"role": "system", "type": "media_context", "content": "media rules"}, history
+
+    monkeypatch.setattr("cognitrix.media.context.MediaContextBuilder.enrich", enrich)
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    session = Session(agent_id="media-context")
+    sliding = await SlidingWindowContextManager().build_prompt(agent, session)
+    hybrid = await HybridContextManager("media-context").build_prompt(agent, session)
+    assert sliding[1]["type"] == "media_context"
+    assert hybrid[1]["type"] == "media_context"
 
 
 # --- CE4 ---

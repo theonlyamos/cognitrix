@@ -481,6 +481,13 @@ class Session(Model):
                             ) -> None:
                                 data = item.get('data', '')
                                 outcome = item.get('outcome')
+                                # The model receives the richer serialized
+                                # outcome in ``data``; the UI preview remains
+                                # the tool's concise user-facing text.
+                                preview = (
+                                    outcome.get('text', data)
+                                    if isinstance(outcome, dict) else data
+                                )
                                 status = 'completed' if (
                                     outcome.get('status') == 'success'
                                     if outcome else item.get('success') is True
@@ -490,7 +497,7 @@ class Session(Model):
                                     'status': status,
                                     'tool_name': name or _MALFORMED_TOOL_LABEL,
                                     'tool_call_id': tcid,
-                                    'result': _tool_preview(data),
+                                    'result': _tool_preview(preview),
                                     'outcome': outcome,
                                     'artifacts': (outcome or {}).get('artifacts', []),
                                 })

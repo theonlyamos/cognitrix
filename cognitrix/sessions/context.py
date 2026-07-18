@@ -54,7 +54,15 @@ def _slim_past_turn(turn: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for m in turn:
         role = str(m.get('role', '')).lower()
         mtype = m.get('type', 'text')
-        if role == 'user' and mtype in ('text', 'summary', 'image'):
+        if role == 'user' and mtype in ('image', 'image_selection'):
+            artifact = m.get('artifact') or {}
+            artifact_id = str(artifact.get('id') or 'unknown')
+            kept.append({
+                'role': m.get('role', 'User'),
+                'type': 'text',
+                'content': f'[Previously supplied image: {artifact_id}]',
+            })
+        elif role == 'user' and mtype in ('text', 'summary'):
             kept.append(m)
         elif role == 'assistant' and mtype == 'text' and not m.get('tool_calls'):
             kept.append(m)
@@ -139,5 +147,13 @@ class SlidingWindowContextManager(BaseContextManager):
         recent_history = shape_history(session.chat, budget, max_past_turns=self.max_messages)
         recent_history = _trim_to_valid_start(recent_history)
 
-        prompt = [system_prompt] + recent_history
+        from cognitrix.media.context import MediaContextBuilder
+
+        media_message, recent_history = await MediaContextBuilder().enrich(
+            session, recent_history
+        )
+        prompt = [system_prompt]
+        if media_message is not None:
+            prompt.append(media_message)
+        prompt.extend(recent_history)
         return prompt

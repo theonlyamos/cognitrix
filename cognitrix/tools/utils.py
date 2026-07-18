@@ -170,6 +170,20 @@ class ToolOutcome(BaseModel):
             error=ToolError(code=code, message=message, retryable=retryable),
         )
 
+    def model_content(self) -> str:
+        """Compact, safe summary sent back to the model after a tool call."""
+        lines = [self.text]
+        lines.extend(
+            f'Artifact: {artifact.id} {artifact.mime_type} {artifact.filename or ""}'.rstrip()
+            for artifact in self.artifacts
+        )
+        lines.extend(
+            f'Entity: {entity.type} {entity.id} {entity.name}'
+            for entity in self.entities
+        )
+        lines.extend(f'Warning: {warning[:500]}' for warning in self.warnings[:3])
+        return '\n'.join(line for line in lines if line)
+
 class ToolCallResult(Model):
     """Class to standardize tool execution results"""
 

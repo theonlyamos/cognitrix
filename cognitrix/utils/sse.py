@@ -697,6 +697,11 @@ class SSEManager:
                 }
             else:
                 from cognitrix.safety.approval_gate import web_turn_ctx
+                from cognitrix.media.context import (
+                    MediaTurnContext,
+                    reset_media_turn_context,
+                    set_media_turn_context,
+                )
 
                 token = web_turn_ctx.set({
                     'emit': emit,
@@ -704,6 +709,12 @@ class SSEManager:
                     'bypass': bypass,
                     'user_key': self.user_key,
                 })
+                media_token = set_media_turn_context(MediaTurnContext(
+                    ownership=ownership,
+                    current_images=image_refs,
+                    selected_image=selected_ref,
+                    vision_data_uri_cache={},
+                ))
                 try:
                     await session(
                         user_prompt,
@@ -730,6 +741,7 @@ class SSEManager:
                             'Session did not durably adopt promoted attachments'
                         )
                 finally:
+                    reset_media_turn_context(media_token)
                     web_turn_ctx.reset(token)
         except asyncio.CancelledError:
             terminal = {
