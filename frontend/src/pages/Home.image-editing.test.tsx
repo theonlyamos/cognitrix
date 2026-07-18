@@ -341,4 +341,28 @@ describe('Home image editing transport', () => {
       { id: 'safe_image_1', mime_type: 'image/png', filename: 'source.png', origin: 'uploaded' },
     ]);
   });
+
+  it('restores uploaded image refs into an editable next request', async () => {
+    harness.conversations = [{ id: 'conversation-1', title: 'Current', message_count: 1 }];
+    localStorage.setItem('chatSession:agent-1', 'conversation-1');
+    apiGet.mockImplementation((path: string) => Promise.resolve({
+      data: path === '/sessions/conversation-1/chat' ? [
+        { role: 'user', type: 'text', content: 'Use this source' },
+        { role: 'user', type: 'image', artifact: { id: 'restored-upload', mime_type: 'image/png', origin: 'uploaded', filename: 'restored.png', width: 16, height: 9 } },
+      ] : new Blob(['preview'], { type: 'image/png' }),
+    }));
+    const view = renderHome();
+    await waitFor(() => expect(harness.setMessages).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ artifacts: [expect.objectContaining({ id: 'restored-upload' })] }),
+    ])));
+    harness.messages = harness.setMessages.mock.calls[harness.setMessages.mock.calls.length - 1]?.[0] as ChatMessage[];
+    view.rerender(<MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}><Home /></MemoryRouter>);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Use restored.png as edit source' }));
+    await userEvent.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'make it brighter');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/agents/chat', expect.objectContaining({
+      message: 'make it brighter', edit_source_artifact_id: 'restored-upload',
+    })));
+  });
 });

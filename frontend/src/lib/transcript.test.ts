@@ -113,4 +113,23 @@ describe('parseChatEntries tool results', () => {
       }],
     }));
   });
+
+  it('groups safe uploaded and generated image entries with their preceding user message', () => {
+    const messages = toChatMessages(parseChatEntries([
+      { role: 'user', type: 'text', content: 'Make these work together' },
+      { role: 'user', type: 'image', artifact: { id: 'upload-1', mime_type: 'image/jpeg', origin: 'uploaded', filename: 'source.jpg', width: 400, height: 300, storage_key: 'never expose' } },
+      { role: 'user', type: 'image', artifact: { id: 'generated-1', mime_type: 'image/png', origin: 'generated', filename: 'result.png', width: 800, height: 600 } },
+      { role: 'user', type: 'image_selection', content: 'unsafe selection', artifact: { id: 'must-not-render', mime_type: 'image/png' } },
+      { role: 'user', type: 'image', artifact: { id: '../bad', mime_type: 'image/png' } },
+    ]));
+
+    expect(messages).toEqual([expect.objectContaining({
+      role: 'user',
+      content: 'Make these work together',
+      artifacts: [
+        { id: 'upload-1', mime_type: 'image/jpeg', origin: 'uploaded', filename: 'source.jpg', width: 400, height: 300 },
+        { id: 'generated-1', mime_type: 'image/png', origin: 'generated', filename: 'result.png', width: 800, height: 600 },
+      ],
+    })]);
+  });
 });

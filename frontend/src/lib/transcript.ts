@@ -60,7 +60,14 @@ const safeArtifacts = (value: unknown): ToolArtifact[] | undefined => {
       && (candidate.width === undefined || typeof candidate.width === 'number')
       && (candidate.height === undefined || typeof candidate.height === 'number');
   });
-  return artifacts.length ? artifacts : undefined;
+  return artifacts.length ? artifacts.map((candidate) => ({
+    id: candidate.id,
+    mime_type: candidate.mime_type,
+    ...(candidate.origin ? { origin: candidate.origin } : {}),
+    ...(candidate.filename !== undefined ? { filename: candidate.filename } : {}),
+    ...(candidate.width !== undefined ? { width: candidate.width } : {}),
+    ...(candidate.height !== undefined ? { height: candidate.height } : {}),
+  })) : undefined;
 };
 
 /** Map raw backend chat entries to render-ready transcript entries. Unknown
@@ -113,6 +120,8 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
       }
     } else if (role === 'user' && type === 'text') {
       if (content.trim()) out.push({ kind: 'user', content });
+    } else if (role === 'user' && type === 'image_selection') {
+      // Internal selection bookkeeping is never transcript UI state.
     } else if (role === 'assistant' && type === 'tool_calls') {
       out.push({
         kind: 'tool_calls',
