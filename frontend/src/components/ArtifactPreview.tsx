@@ -5,14 +5,23 @@ import { api } from '@/lib/api';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function ArtifactPreview({ artifact }: { artifact: ToolArtifact }) {
+interface ArtifactPreviewProps {
+  artifact: ToolArtifact;
+  onEditSource?: (artifact: ToolArtifact) => void;
+  selected?: boolean;
+}
+
+export function ArtifactPreview({ artifact, onEditSource, selected = false }: ArtifactPreviewProps) {
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [url, setUrl] = useState<string | null>(null);
+  const [originalUrl, setOriginalUrl] = useState<string | null>(null);
+  const [originalLoading, setOriginalLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const expandTriggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const isImage = artifact.mime_type.startsWith('image/');
+  const imageLabel = artifact.origin === 'uploaded' ? 'Attached image' : 'Generated image';
 
   useEffect(() => {
     if (!isImage) return;
@@ -21,7 +30,7 @@ export function ArtifactPreview({ artifact }: { artifact: ToolArtifact }) {
     let objectUrl: string | null = null;
     setState('loading');
     setUrl(null);
-    api.get(`/artifacts/${artifact.id}`, { responseType: 'blob', signal: controller.signal })
+    api.get(`/artifacts/${artifact.id}?variant=thumbnail`, { responseType: 'blob', signal: controller.signal })
       .then(({ data }) => {
         objectUrl = URL.createObjectURL(data as Blob);
         if (!active) {
@@ -40,6 +49,44 @@ export function ArtifactPreview({ artifact }: { artifact: ToolArtifact }) {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [artifact.id, attempt, isImage]);
+
+  useEffect(() => () => {
+    if (originalUrl) URL.revokeObjectURL(originalUrl);
+  }, [originalUrl]);
+
+  const loadOriginal = async () => {
+    if (originalUrl) return originalUrl;
+    setOriginalLoading(true);
+    try {
+      const { data } = await api.get(`/artifacts/${artifact.id}`, { responseType: 'blob' });
+      const nextUrl = URL.createObjectURL(data as Blob);
+      setOriginalUrl(nextUrl);
+      return nextUrl;
+    } finally {
+      setOriginalLoading(false);
+    }
+  };
+
+  const expandOriginal = async () => {
+    try {
+      await loadOriginal();
+      setExpanded(true);
+    } catch {
+      setState('error');
+    }
+  };
+
+  const downloadOriginal = async (filename: string) => {
+    try {
+      const downloadUrl = await loadOriginal();
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = filename;
+      link.click();
+    } catch {
+      setState('error');
+    }
+  };
 
   useEffect(() => {
     if (!expanded) return;
@@ -87,41 +134,55 @@ export function ArtifactPreview({ artifact }: { artifact: ToolArtifact }) {
   if (state === 'error') {
     return (
       <div className="flex items-center gap-2 text-sm text-danger-ink">
-        <span>Generated image unavailable.</span>
+        <span>{imageLabel} unavailable.</span>
         <button type="button" className="underline" onClick={() => setAttempt((n) => n + 1)}>Retry image</button>
       </div>
     );
   }
-  if (state !== 'ready' || !url) return <div className="text-sm text-fg-dim">Loading generated image...</div>;
-  const filename = artifact.filename || 'generated-image.png';
+  if (state !== 'ready' || !url) return <div className="text-sm text-fg-dim">Loading {imageLabel.toLowerCase()}...</div>;
+  const filename = artifact.filename || (artifact.origin === 'uploaded' ? 'attached-image.png' : 'generated-image.png');
   return (
     <>
       <div className="relative w-fit max-w-full">
-        <img src={url} alt="Generated image" className="max-h-80 max-w-full rounded border border-line bg-panel object-contain" />
+        <img src={url} alt={imageLabel} className="max-h-80 max-w-full rounded border border-line bg-panel object-contain" />
         <div className="absolute bottom-2 right-2 flex gap-1 rounded border border-line bg-bg/80 p-1 shadow-lg backdrop-blur-sm">
+          {onEditSource && (
+            <button
+              type="button"
+              aria-label={`Use ${filename} as edit source`}
+              aria-pressed={selected}
+              title={selected ? 'Selected as edit source' : 'Use as edit source'}
+              className={`flex h-11 w-11 items-center justify-center rounded border bg-panel-2/95 transition-colors sm:h-9 sm:w-9 ${selected ? 'border-accent text-accent-ink' : 'border-line text-fg hover:border-fg-dim hover:text-accent-ink'}`}
+              onClick={() => onEditSource(artifact)}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h6l11-11-6-6L3 15v6z" /><path d="M12 6l6 6" /></svg>
+            </button>
+          )}
           <button
             ref={expandTriggerRef}
             type="button"
             aria-label="Expand generated image"
             title="Expand image"
             className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9"
-            onClick={() => setExpanded(true)}
+            disabled={originalLoading}
+            onClick={() => { void expandOriginal(); }}
           >
             <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5" />
             </svg>
           </button>
-          <a
-            href={url}
-            download={filename}
+          <button
+            type="button"
             aria-label={`Download ${filename}`}
             title={`Download ${filename}`}
+            disabled={originalLoading}
             className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9"
+            onClick={() => { void downloadOriginal(filename); }}
           >
             <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
             </svg>
-          </a>
+          </button>
         </div>
       </div>
 
@@ -136,7 +197,7 @@ export function ArtifactPreview({ artifact }: { artifact: ToolArtifact }) {
             ref={dialogRef}
             role="dialog"
             aria-modal="true"
-            aria-label="Generated image preview"
+            aria-label={`${imageLabel} preview`}
             tabIndex={-1}
             className="fixed inset-0 z-[71] flex items-center justify-center p-4 sm:p-8"
             onKeyDown={handleDialogKeyDown}
@@ -144,7 +205,7 @@ export function ArtifactPreview({ artifact }: { artifact: ToolArtifact }) {
               if (event.target === event.currentTarget) setExpanded(false);
             }}
           >
-            <img src={url} alt="Generated image, full size" className="max-h-full max-w-full object-contain" />
+            <img src={originalUrl || url} alt={`${imageLabel}, full size`} className="max-h-full max-w-full object-contain" />
             <button
               type="button"
               aria-label="Close image preview"

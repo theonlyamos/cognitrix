@@ -1085,26 +1085,40 @@ async def test_legacy_source_image_wrapper_routes_through_media_assets(
 
 
 @pytest.mark.asyncio
-async def test_legacy_session_delete_wrapper_routes_through_media_assets(
+async def test_legacy_session_delete_wrapper_only_cleans_unbound_image_media(
     monkeypatch, artifact_store
 ):
     from cognitrix import artifacts
+    from cognitrix.media.documents import document_assets
     from cognitrix.media import service as service_module
 
     deleted = []
+    deleted_documents = []
 
     async def delete_session_media(session_id, ownership=None):
         deleted.append((session_id, ownership))
+
+    async def delete_session_documents(session_id):
+        deleted_documents.append(session_id)
 
     monkeypatch.setattr(
         service_module.media_assets,
         'delete_session_media',
         delete_session_media,
     )
+    monkeypatch.setattr(
+        document_assets,
+        'delete_session_documents',
+        delete_session_documents,
+    )
 
     await artifacts.delete_session_artifacts('session')
 
     assert deleted == [('session', None)]
+    # Document cleanup requires exact user/session/agent authority and is
+    # therefore handled by delete_owned_session_artifacts, never this legacy
+    # session-id-only compatibility wrapper.
+    assert deleted_documents == []
 
 
 @pytest.mark.asyncio
@@ -1224,11 +1238,9 @@ async def test_lazy_thumbnail_rejects_oversized_legacy_original_before_read(
 
 
 @pytest.mark.asyncio
-async def test_delete_rolls_back_when_a_later_variant_cannot_be_tombstoned(
+async def test_delete_unlink_failure_retains_row_for_retry(
     monkeypatch, artifact_store
 ):
-    from cognitrix.media import service as service_module
-
     rows, root = artifact_store
     ownership = MediaOwnership('session', 'user', 'agent')
     artifact, paths = _seed_retained(
@@ -1237,19 +1249,66 @@ async def test_delete_rolls_back_when_a_later_variant_cannot_be_tombstoned(
         artifact_id='locked',
         ownership=ownership,
     )
-    original_replace = service_module.os.replace
+    original_unlink = Path.unlink
 
-    def replace(source, destination):
-        if Path(source) == paths[1]:
+    def unlink(path, missing_ok=False):
+        if path == paths[1]:
             raise PermissionError('variant locked')
-        return original_replace(source, destination)
+        return original_unlink(path, missing_ok=missing_ok)
 
-    monkeypatch.setattr(service_module.os, 'replace', replace)
+    monkeypatch.setattr(Path, 'unlink', unlink)
 
     with pytest.raises(PermissionError, match='variant locked'):
         await MediaAssetService().delete_artifacts([str(artifact.id)], ownership)
     assert rows['locked'] is artifact
-    assert all(path.is_file() for path in paths)
+    assert not paths[0].exists()
+    assert paths[1].is_file()
+    assert paths[2].is_file()
+
+
+@pytest.mark.asyncio
+async def test_session_delete_unlink_failure_retains_all_rows_until_retry(
+    monkeypatch, artifact_store
+):
+    rows, root = artifact_store
+    ownership = MediaOwnership('session', 'user', 'agent')
+    first, first_paths = _seed_retained(
+        rows,
+        root,
+        artifact_id='session-first',
+        ownership=ownership,
+    )
+    second, second_paths = _seed_retained(
+        rows,
+        root,
+        artifact_id='session-second',
+        ownership=ownership,
+    )
+    original_unlink = Path.unlink
+    blocked = True
+
+    def unlink(path, missing_ok=False):
+        if blocked and path == first_paths[1]:
+            raise PermissionError('variant locked')
+        return original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, 'unlink', unlink)
+
+    with pytest.raises(PermissionError, match='variant locked'):
+        await MediaAssetService().delete_session_media('session', ownership)
+
+    assert rows == {
+        'session-first': first,
+        'session-second': second,
+    }
+    assert not first_paths[0].exists()
+    assert first_paths[1].is_file()
+    assert all(path.is_file() for path in second_paths)
+
+    blocked = False
+    await MediaAssetService().delete_session_media('session', ownership)
+    assert rows == {}
+    assert not any(path.exists() for path in [*first_paths, *second_paths])
 
 
 @pytest.mark.asyncio
@@ -1273,7 +1332,7 @@ async def test_delete_fails_closed_on_a_corrupt_variant_storage_key(artifact_sto
 
 
 @pytest.mark.asyncio
-async def test_delete_rolls_back_tombstones_when_database_delete_fails(
+async def test_database_delete_failure_retains_row_after_files_are_removed(
     monkeypatch, artifact_store
 ):
     rows, root = artifact_store
@@ -1294,7 +1353,7 @@ async def test_delete_rolls_back_tombstones_when_database_delete_fails(
         await MediaAssetService().delete_artifacts([str(artifact.id)], ownership)
 
     assert rows['database-failure'] is artifact
-    assert all(path.is_file() for path in paths)
+    assert not any(path.exists() for path in paths)
     assert not list(root.rglob('*.tombstone'))
 
 
@@ -1335,16 +1394,14 @@ async def test_multi_delete_keeps_each_artifact_consistent_when_second_row_delet
     assert 'first-delete' not in rows
     assert not any(path.exists() for path in first_paths)
     assert rows['second-delete'] is second
-    assert all(path.is_file() for path in second_paths)
+    assert not any(path.exists() for path in second_paths)
     assert not list(root.rglob('*.tombstone'))
 
 
 @pytest.mark.asyncio
-async def test_cancelled_delete_joins_the_transaction_and_rolls_back(
+async def test_cancelled_delete_retains_row_after_started_unlink_settles(
     monkeypatch, artifact_store
 ):
-    from cognitrix.media import service as service_module
-
     rows, root = artifact_store
     ownership = MediaOwnership('session', 'user', 'agent')
     artifact, paths = _seed_retained(
@@ -1355,16 +1412,16 @@ async def test_cancelled_delete_joins_the_transaction_and_rolls_back(
     )
     started = threading.Event()
     release = threading.Event()
-    original_replace = service_module.os.replace
+    original_unlink = Path.unlink
 
-    def replace(source, destination):
-        result = original_replace(source, destination)
-        if Path(source) == paths[0]:
+    def unlink(path, missing_ok=False):
+        result = original_unlink(path, missing_ok=missing_ok)
+        if path == paths[0]:
             started.set()
             release.wait(timeout=5)
         return result
 
-    monkeypatch.setattr(service_module.os, 'replace', replace)
+    monkeypatch.setattr(Path, 'unlink', unlink)
     task = asyncio.create_task(
         MediaAssetService().delete_artifacts([str(artifact.id)], ownership)
     )
@@ -1380,7 +1437,9 @@ async def test_cancelled_delete_joins_the_transaction_and_rolls_back(
         with pytest.raises(asyncio.CancelledError):
             await task
         assert rows['cancel-delete'] is artifact
-        assert all(path.is_file() for path in paths)
+        assert not paths[0].exists()
+        assert paths[1].is_file()
+        assert paths[2].is_file()
         assert not list(root.rglob('*.tombstone'))
     finally:
         release.set()
@@ -1439,7 +1498,7 @@ async def test_cancellation_after_row_delete_settles_as_a_complete_deletion(
 
 
 @pytest.mark.asyncio
-async def test_cancellation_during_post_delete_purge_finishes_every_tombstone(
+async def test_delete_removes_every_variant_before_deleting_the_row(
     monkeypatch, artifact_store
 ):
     rows, root = artifact_store
@@ -1454,23 +1513,16 @@ async def test_cancellation_during_post_delete_purge_finishes_every_tombstone(
     second_started = threading.Event()
     release_first = threading.Event()
     release_second = threading.Event()
-    tombstone_unlinks = 0
-    unlink_guard = threading.Lock()
     original_unlink = Path.unlink
 
     def unlink(path, missing_ok=False):
-        nonlocal tombstone_unlinks
         result = original_unlink(path, missing_ok=missing_ok)
-        if path.name.endswith('.tombstone'):
-            with unlink_guard:
-                index = tombstone_unlinks
-                tombstone_unlinks += 1
-            if index == 0:
-                first_started.set()
-                release_first.wait(timeout=5)
-            elif index == 1:
-                second_started.set()
-                release_second.wait(timeout=5)
+        if path == paths[0]:
+            first_started.set()
+            release_first.wait(timeout=5)
+        elif path == paths[1]:
+            second_started.set()
+            release_second.wait(timeout=5)
         return result
 
     monkeypatch.setattr(Path, 'unlink', unlink)
@@ -1479,21 +1531,19 @@ async def test_cancellation_during_post_delete_purge_finishes_every_tombstone(
     )
     try:
         assert await asyncio.to_thread(first_started.wait, 1)
-        assert 'purge-after-delete' not in rows
-        task.cancel()
-        await asyncio.sleep(0)
-        task.cancel()
-        await asyncio.sleep(0)
+        assert rows['purge-after-delete'] is artifact
+        assert not paths[0].exists()
         assert not task.done()
 
         release_first.set()
         assert await asyncio.to_thread(second_started.wait, 1)
+        assert rows['purge-after-delete'] is artifact
+        assert not paths[1].exists()
         assert not task.done()
 
         release_second.set()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert tombstone_unlinks == 3
+        await task
+        assert 'purge-after-delete' not in rows
         assert not any(path.exists() for path in paths)
         assert not list(root.rglob('*.tombstone'))
     finally:
@@ -1703,12 +1753,12 @@ async def test_repeated_cancellation_cannot_interrupt_commit_rollback(
 
 
 @pytest.mark.asyncio
-async def test_cancellation_after_artifact_insert_settles_as_a_committed_asset(
+async def test_cancellation_after_artifact_insert_compensates_after_save_settles(
     monkeypatch, artifact_store
 ):
     from cognitrix.media import service as service_module
 
-    rows, _ = artifact_store
+    rows, root = artifact_store
     monkeypatch.setattr(service_module, '_process_image', lambda data: _fake_processed())
     inserted = asyncio.Event()
     release_save = asyncio.Event()
@@ -1745,15 +1795,142 @@ async def test_cancellation_after_artifact_insert_settles_as_a_committed_asset(
         release_save.set()
         with pytest.raises(asyncio.CancelledError):
             await task
-        artifact = next(iter(rows.values()))
-        assert all(
-            variant_path(artifact, variant).is_file()
-            for variant in ('original', 'vision', 'thumbnail')
-        )
+        assert rows == {}
+        assert not root.exists() or not any(path.is_file() for path in root.rglob('*'))
     finally:
         release_save.set()
         if not task.done():
             await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('source', ['generated', 'uploaded'])
+async def test_cancellation_after_commit_return_compensates_the_unreported_asset(
+    monkeypatch, artifact_store, tmp_path, rgba_png_bytes, source
+):
+    from cognitrix.media import service as service_module
+
+    rows, root = artifact_store
+    monkeypatch.setattr(service_module, '_process_image', lambda data: _fake_processed())
+    service = MediaAssetService()
+    original_commit = service._commit_processed
+    outer_task = None
+
+    async def commit_then_cancel_outer(*args, **kwargs):
+        artifact = await original_commit(*args, **kwargs)
+        assert outer_task is not None
+        outer_task.cancel()
+        return artifact
+
+    monkeypatch.setattr(service, '_commit_processed', commit_then_cancel_outer)
+    ownership = MediaOwnership('session', 'user', 'agent')
+    if source == 'generated':
+        operation = service.store_generated_image(
+            b'provider bytes',
+            {},
+            ownership,
+        )
+    else:
+        operation = service.ingest_staged_image(
+            _stage(
+                tmp_path,
+                rgba_png_bytes,
+                filename='upload.png',
+                declared_mime='image/png',
+            ),
+            ownership,
+        )
+    outer_task = asyncio.create_task(operation)
+
+    with pytest.raises(asyncio.CancelledError):
+        await outer_task
+
+    assert rows == {}
+    assert not root.exists() or not any(path.is_file() for path in root.rglob('*'))
+    assert not root.exists() or list(root.rglob('*.tmp')) == []
+    assert not root.exists() or list(root.rglob('*.tombstone')) == []
+
+
+@pytest.mark.asyncio
+async def test_failed_cancelled_commit_compensation_exposes_the_unreported_ref(
+    monkeypatch, artifact_store
+):
+    from cognitrix.media import service as service_module
+
+    rows, _ = artifact_store
+    monkeypatch.setattr(service_module, '_process_image', lambda data: _fake_processed())
+    service = MediaAssetService()
+    original_commit = service._commit_processed
+    outer_task = None
+
+    async def commit_then_cancel_outer(*args, **kwargs):
+        artifact = await original_commit(*args, **kwargs)
+        assert outer_task is not None
+        outer_task.cancel()
+        return artifact
+
+    async def fail_compensating_delete(_query):
+        raise RuntimeError('artifact database is unavailable')
+
+    monkeypatch.setattr(service, '_commit_processed', commit_then_cancel_outer)
+    monkeypatch.setattr(Artifact, 'delete_many', fail_compensating_delete)
+    outer_task = asyncio.create_task(
+        service.store_generated_image(
+            b'provider bytes',
+            {},
+            MediaOwnership('session', 'user', 'agent'),
+        )
+    )
+
+    with pytest.raises(asyncio.CancelledError) as captured:
+        await outer_task
+
+    cleanup_error = captured.value
+    assert cleanup_error.artifact_ref.id in rows
+    assert isinstance(cleanup_error.cleanup_error, RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_commit_unlink_failure_retains_row_for_bounded_retry(
+    monkeypatch, artifact_store
+):
+    from cognitrix.media import service as service_module
+
+    rows, root = artifact_store
+    monkeypatch.setattr(service_module, '_process_image', lambda data: _fake_processed())
+    service = MediaAssetService()
+    original_commit = service._commit_processed
+    original_unlink = Path.unlink
+    outer_task = None
+
+    async def commit_then_cancel_outer(*args, **kwargs):
+        artifact = await original_commit(*args, **kwargs)
+        assert outer_task is not None
+        outer_task.cancel()
+        return artifact
+
+    def fail_vision_unlink(path, missing_ok=False):
+        if '-vision.' in path.name and not path.name.endswith('.tmp'):
+            raise OSError('artifact storage is unavailable')
+        return original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(service, '_commit_processed', commit_then_cancel_outer)
+    monkeypatch.setattr(Path, 'unlink', fail_vision_unlink)
+    outer_task = asyncio.create_task(
+        service.store_generated_image(
+            b'provider bytes',
+            {},
+            MediaOwnership('session', 'user', 'agent'),
+        )
+    )
+
+    with pytest.raises(service_module.CommittedArtifactCleanupError) as captured:
+        await outer_task
+
+    assert captured.value.artifact_ref.id in rows
+    assert isinstance(captured.value.cleanup_error, OSError)
+    assert any(path.is_file() for path in root.rglob('*'))
+    assert list(root.rglob('*.tombstone')) == []
 
 
 @pytest.mark.asyncio

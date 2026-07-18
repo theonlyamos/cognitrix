@@ -5,11 +5,19 @@ import fnmatch
 import logging
 import os
 import re
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import regex as regex_engine
 from rich import print
 
+from cognitrix.common.process_security import (
+    HostProcessAccessError,
+    HostProcessMode,
+    require_host_process_authority,
+)
 from cognitrix.common.safe_exec import (
     DEFAULT_TIMEOUT,
     CommandNotAllowed,
@@ -18,7 +26,15 @@ from cognitrix.common.safe_exec import (
     run_whitelisted,
 )
 from cognitrix.config import settings
+from cognitrix.media import document_storage
+from cognitrix.media.document_capabilities import storage_record
+from cognitrix.media.types import MediaAccessError, MediaValidationError
 from cognitrix.tools.tool import tool
+from cognitrix.tools.utils import (
+    DocumentCapability,
+    current_execution_context,
+    delegated_execution_context,
+)
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -26,6 +42,267 @@ logging.basicConfig(
     level=logging.WARNING
 )
 logger = logging.getLogger('cognitrix.log')
+
+MAX_TOOL_OUTPUT_CHARS = 32_000
+MAX_FILE_LINE_CHARS = 4_000
+MAX_READ_FILE_BYTES = 10 * 1024 * 1024
+DEFAULT_PDF_PAGES = 5
+MAX_PDF_PAGES_PER_READ = 10
+MAX_PAGE_RANGE_CHARS = 256
+MAX_SEARCH_PATTERN_CHARS = 1_000
+MAX_GLOB_PATTERN_CHARS = 1_000
+MAX_SEARCH_RESULTS = 100
+MAX_SEARCH_FILES = 1_000
+MAX_SEARCH_FILE_BYTES = 10 * 1024 * 1024
+MAX_SEARCH_TOTAL_BYTES = 50 * 1024 * 1024
+MAX_SEARCH_ENTRIES = 5_000
+MAX_SEARCH_DIRECTORIES = 1_000
+MAX_SEARCH_SECONDS = 5.0
+MAX_REGEX_MATCH_SECONDS = 0.02
+
+
+def _truncate_output_line(value: str) -> str:
+    text = value.rstrip('\r\n')
+    if len(text) <= MAX_FILE_LINE_CHARS:
+        return text
+    omitted = len(text) - MAX_FILE_LINE_CHARS
+    return (
+        text[:MAX_FILE_LINE_CHARS]
+        + f'... [line truncated; {omitted} chars omitted]'
+    )
+
+
+def _hard_cap_output(value: str, note: str) -> str:
+    if len(value) <= MAX_TOOL_OUTPUT_CHARS:
+        return value
+    marker = f'\n{note}'
+    keep = max(0, MAX_TOOL_OUTPUT_CHARS - len(marker))
+    return value[:keep] + marker[:MAX_TOOL_OUTPUT_CHARS - keep]
+
+
+@dataclass
+class _SearchBudget:
+    deadline: float
+    entries: int = 0
+    directories: int = 0
+    limit_reason: str | None = None
+
+    def within_deadline(self) -> bool:
+        if time.monotonic() < self.deadline:
+            return True
+        self.limit_reason = self.limit_reason or 'search deadline'
+        return False
+
+    def visit_entry(self) -> bool:
+        if not self.within_deadline():
+            return False
+        if self.entries >= MAX_SEARCH_ENTRIES:
+            self.limit_reason = (
+                f'{MAX_SEARCH_ENTRIES}-entry traversal limit'
+            )
+            return False
+        self.entries += 1
+        return True
+
+    def visit_directory(self) -> bool:
+        if not self.within_deadline():
+            return False
+        if self.directories >= MAX_SEARCH_DIRECTORIES:
+            self.limit_reason = (
+                f'{MAX_SEARCH_DIRECTORIES}-directory traversal limit'
+            )
+            return False
+        self.directories += 1
+        return True
+
+
+@dataclass(frozen=True)
+class _SearchEntry:
+    path: Path
+    is_directory: bool
+
+
+def _bounded_search_lines(
+    stream,
+    byte_budget: int,
+    budget: _SearchBudget | None = None,
+):
+    """Yield bounded decoded lines and the bytes consumed for each line."""
+    remaining = max(0, byte_budget)
+    line_number = 0
+    while remaining:
+        if budget is not None and not budget.within_deadline():
+            return
+        read_limit = min(MAX_FILE_LINE_CHARS + 2, remaining)
+        first = stream.readline(read_limit)
+        if not first:
+            break
+
+        remaining -= len(first)
+        line_number += 1
+        line_bytes = len(first)
+        complete = (
+            first.endswith(b'\n')
+            or len(first) < read_limit
+            or remaining == 0
+        )
+        content = first.rstrip(b'\r\n')
+        prefix = content[:MAX_FILE_LINE_CHARS]
+        truncated = len(content) > MAX_FILE_LINE_CHARS or not complete
+
+        while not complete and remaining:
+            if budget is not None and not budget.within_deadline():
+                return
+            discard_limit = min(64 * 1024, remaining)
+            discarded = stream.readline(discard_limit)
+            if not discarded:
+                complete = True
+                break
+            remaining -= len(discarded)
+            line_bytes += len(discarded)
+            complete = (
+                discarded.endswith(b'\n')
+                or len(discarded) < discard_limit
+            )
+
+        search_text = prefix.decode('utf-8', errors='replace')
+        display_text = search_text
+        if truncated:
+            omitted = max(1, line_bytes - len(prefix))
+            display_text += (
+                f'... [line truncated; at least {omitted} bytes omitted]'
+            )
+        yield line_number, search_text, display_text, line_bytes
+
+
+class ManagedUploadAccessError(ValueError):
+    pass
+
+
+def _inside(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _lexical_path(value: str, root: Path) -> Path:
+    candidate = Path(value).expanduser()
+    if candidate.drive and not candidate.is_absolute():
+        raise PathEscapesRoot(f"Path '{value}' is not absolute")
+    joined = candidate if candidate.is_absolute() else root / candidate
+    return Path(os.path.abspath(os.fspath(joined)))
+
+
+def _upload_relative(path: Path, uploads: Path) -> Path | None:
+    try:
+        return path.relative_to(uploads)
+    except ValueError:
+        return None
+
+
+def _managed_document_capability(value: str) -> DocumentCapability | None:
+    """Resolve one exact server-minted grant without trusting a client path."""
+    root = Path(settings.tools_root).expanduser().resolve()
+    lexical = _lexical_path(value, root)
+    uploads = root / 'uploads'
+    relative = _upload_relative(lexical, uploads)
+    if relative is None:
+        return None
+    requested = relative.as_posix()
+    for capability in current_execution_context().document_capabilities:
+        if requested == Path(capability.storage_key).as_posix().removeprefix(
+            'uploads/'
+        ):
+            return capability
+    raise ManagedUploadAccessError('Managed document is not granted to this turn')
+
+
+def _resolve_tool_path(
+    value: str,
+    *,
+    write: bool = False,
+    allow_upload_root: bool = False,
+) -> Path:
+    root = Path(settings.tools_root).expanduser().resolve()
+    lexical = _lexical_path(value, root)
+    if not _inside(lexical, root):
+        raise PathEscapesRoot(
+            f"Path '{value}' resolves outside the permitted root '{root}'"
+        )
+    resolved = resolve_within_root(value, root)
+    lexical_uploads = root / 'uploads'
+    resolved_uploads = lexical_uploads.resolve()
+    lexical_relative = _upload_relative(lexical, lexical_uploads)
+    resolved_relative = _upload_relative(resolved, resolved_uploads)
+    touches_uploads = lexical_relative is not None or resolved_relative is not None
+    if not touches_uploads:
+        return resolved
+    if write:
+        raise ManagedUploadAccessError('Managed uploads are read-only')
+    # Managed documents are never traversed or opened by path. Read dispatches
+    # an exact capability to identity-pinned storage before reaching here.
+    raise ManagedUploadAccessError('Managed uploads are not path-readable')
+
+
+def _collect_search_entries(
+    root: Path,
+    budget: _SearchBudget,
+    *,
+    recursive: bool,
+    exclude_directory: str | None = None,
+) -> list[_SearchEntry]:
+    """Enumerate an authorized tree under explicit time/entry/dir budgets."""
+    collected: list[_SearchEntry] = []
+    pending = [root]
+    while pending:
+        if not budget.visit_directory():
+            break
+        current = pending.pop()
+        entries = []
+        entry_limit_hit = False
+        try:
+            with os.scandir(current) as iterator:
+                for entry in iterator:
+                    if not budget.visit_entry():
+                        entry_limit_hit = True
+                        break
+                    entries.append(entry)
+                entries.sort(key=lambda item: item.name.casefold())
+
+                child_directories: list[Path] = []
+                for entry in entries:
+                    if not budget.within_deadline():
+                        break
+                    candidate = Path(entry.path)
+                    try:
+                        is_directory = entry.is_dir(follow_symlinks=False)
+                        is_file = entry.is_file(follow_symlinks=True)
+                    except OSError:
+                        continue
+                    if not is_directory and not is_file:
+                        continue
+                    try:
+                        authorized = _resolve_tool_path(
+                            os.fspath(candidate),
+                            allow_upload_root=True,
+                        )
+                    except (ManagedUploadAccessError, PathEscapesRoot):
+                        continue
+                    if is_directory:
+                        if (
+                            exclude_directory
+                            and fnmatch.fnmatch(entry.name, exclude_directory)
+                        ):
+                            continue
+                        collected.append(_SearchEntry(authorized, True))
+                        if recursive:
+                            child_directories.append(authorized)
+                    else:
+                        collected.append(_SearchEntry(authorized, False))
+                pending.extend(reversed(child_directories))
+        except OSError:
+            continue
+        if entry_limit_hit or budget.limit_reason:
+            break
+    return collected
 
 
 def _pyautogui():
@@ -55,104 +332,203 @@ def open_file(path: str, filename: str | None = None):
         str: Success or error message
     """
     try:
-        npath = Path(path).expanduser().resolve()
-        if filename and npath.joinpath(filename).exists():
-            os.startfile(npath.joinpath(filename))
-            return 'Successfully opened file'
-        elif os.path.exists(npath):
+        try:
+            context = current_execution_context()
+            require_host_process_authority(context.host_process_mode)
+            target = os.fspath(Path(path) / filename) if filename else path
+            npath = _resolve_tool_path(target)
+        except (HostProcessAccessError, ManagedUploadAccessError, PathEscapesRoot) as e:
+            return f'Error: {e}'
+        if filename and npath.is_file():
             os.startfile(npath)
-            return 'Successfully opened folder'
+            return 'Successfully opened file'
+        elif npath.exists():
+            os.startfile(npath)
+            return 'Successfully opened file' if npath.is_file() else 'Successfully opened folder'
         return 'Unable to open file'
     except Exception as e:
         return str(e)
 
 
+def _bounded_pdf_pages(page_range: str | None, total_pages: int) -> tuple[list[int], bool]:
+    if not page_range:
+        pages = list(range(min(total_pages, DEFAULT_PDF_PAGES)))
+        return pages, total_pages > DEFAULT_PDF_PAGES
+    if len(page_range) > MAX_PAGE_RANGE_CHARS:
+        raise ValueError(f'page_range exceeds {MAX_PAGE_RANGE_CHARS} characters')
+
+    limit = MAX_PDF_PAGES_PER_READ + 1
+    if '-' in page_range:
+        raw_start, raw_end = page_range.split('-', 1)
+        start = max(0, int(raw_start) - 1)
+        end = min(total_pages, int(raw_end), start + limit)
+        requested = list(range(start, end))
+    elif ',' in page_range:
+        requested = []
+        for raw_page in page_range.split(',')[:limit]:
+            raw_page = raw_page.strip()
+            if raw_page.isdigit():
+                page = int(raw_page) - 1
+                if 0 <= page < total_pages:
+                    requested.append(page)
+    elif page_range.isdigit():
+        page = int(page_range) - 1
+        requested = [page] if 0 <= page < total_pages else []
+    else:
+        raise ValueError('Invalid page_range; use forms such as 1-5, 1,3,5, or 3')
+
+    return requested[:MAX_PDF_PAGES_PER_READ], len(requested) > MAX_PDF_PAGES_PER_READ
+
+
+def _render_pdf(doc, display_name: str, page_range: str | None = None) -> str:
+    try:
+        total_pages = len(doc)
+        pages, limited = _bounded_pdf_pages(page_range, total_pages)
+        if not pages:
+            return 'Error: page_range selected no pages'
+
+        if page_range:
+            summary = f'**Pages:** {total_pages} total, {len(pages)} extracted'
+            if limited:
+                summary += (
+                    f'; selection limited to {MAX_PDF_PAGES_PER_READ} pages; '
+                    'request another page_range'
+                )
+        else:
+            summary = f'**Pages:** {total_pages} total; showing first {len(pages)} pages'
+
+        lines = [f'## Document: {display_name}', summary, '']
+        per_page_limit = max(
+            1_000,
+            (MAX_TOOL_OUTPUT_CHARS - 2_000) // max(1, len(pages)),
+        )
+        for page_number in pages:
+            text = (
+                doc[page_number]
+                .get_text('text')
+                .strip()
+                .encode('ascii', 'ignore')
+                .decode('ascii')
+            )
+            lines.append(f'### Page {page_number + 1}')
+            if not text:
+                lines.append('*(no text content; possibly a scanned/image page)*')
+            elif len(text) <= per_page_limit:
+                lines.append(text)
+            else:
+                omitted = len(text) - per_page_limit
+                lines.append(
+                    text[:per_page_limit]
+                    + f'\n[Page text truncated; {omitted} chars omitted]'
+                )
+            lines.append('')
+
+        return _hard_cap_output(
+            '\n'.join(lines),
+            '[Output truncated; request a narrower page_range]',
+        )
+    except Exception as exc:
+        return f'Error reading PDF: {exc}'
+
+
 def _read_pdf(path: Path, page_range: str | None = None) -> str:
-    """Extract text from a PDF file."""
+    """Extract a bounded page selection and cap every returned PDF payload."""
     try:
         import fitz  # pymupdf
     except ImportError:
         return "Error: PyMuPDF is required to read PDF files.\nInstall with: pip install pymupdf"
 
+    doc = None
     try:
         doc = fitz.open(str(path))
-        total_pages = len(doc)
-
-        # Parse page range
-        pages_to_extract = None
-        if page_range:
-            pages_to_extract = _parse_page_range(page_range, total_pages)
-        else:
-            pages_to_extract = list(range(total_pages))
-
-        result = {
-            'file': path.name,
-            'total_pages': total_pages,
-            'extracted_pages': len(pages_to_extract),
-            'pages': [],
-        }
-
-        for page_num in pages_to_extract:
-            if page_num >= total_pages:
-                continue
-            page = doc[page_num]
-            text = page.get_text('text')
-
-            result['pages'].append({
-                'number': page_num + 1,
-                'text': text.strip(),
-                'char_count': len(text.strip()),
-            })
-
-        doc.close()
-
-        # Format output
-        lines = []
-        lines.append(f"## Document: {result['file']}")
-        lines.append(f"**Pages:** {result['total_pages']} total, {result['extracted_pages']} extracted\n")
-
-        for page in result['pages']:
-            lines.append(f"### Page {page['number']}")
-            if page['text']:
-                text = page['text'].encode('ascii', 'ignore').decode('ascii')
-                lines.append(text)
-            else:
-                lines.append("*(no text content — possibly a scanned/image page)*")
-            lines.append("")
-
-        return '\n'.join(lines)
-
-    except Exception as e:
-        return f"Error reading PDF: {str(e)}"
+        return _render_pdf(doc, path.name, page_range)
+    except Exception as exc:
+        return f'Error reading PDF: {exc}'
+    finally:
+        if doc is not None:
+            doc.close()
 
 
-def _parse_page_range(range_str: str, total_pages: int) -> list[int]:
-    """Parse a page range string into a list of 0-indexed page numbers."""
-    pages = []
+def _read_pdf_bytes(
+    content: bytes,
+    display_name: str,
+    page_range: str | None = None,
+) -> str:
+    """Parse exact identity-pinned PDF bytes without reopening a client path."""
+    try:
+        import fitz  # pymupdf
+    except ImportError:
+        return "Error: PyMuPDF is required to read PDF files.\nInstall with: pip install pymupdf"
 
-    if not range_str:
-        return list(range(total_pages))
+    doc = None
+    try:
+        doc = fitz.open(stream=content, filetype='pdf')
+        return _render_pdf(doc, display_name, page_range)
+    except Exception as exc:
+        return f'Error reading PDF: {exc}'
+    finally:
+        if doc is not None:
+            doc.close()
 
-    if '-' in range_str:
-        parts = range_str.split('-', 1)
-        start = max(0, int(parts[0]) - 1)
-        end = min(total_pages, int(parts[1]))
-        pages = list(range(start, end))
-    elif ',' in range_str:
-        for p in range_str.split(','):
-            p = p.strip()
-            if p.isdigit():
-                idx = int(p) - 1
-                if 0 <= idx < total_pages:
-                    pages.append(idx)
-    elif range_str.isdigit():
-        idx = int(range_str) - 1
-        if 0 <= idx < total_pages:
-            pages = [idx]
-    else:
-        pages = list(range(total_pages))
 
-    return pages
+def _read_managed_document(
+    capability: DocumentCapability,
+    *,
+    start_line: int,
+    end_line: int | None,
+    show_line_numbers: bool,
+    page_range: str | None,
+) -> str:
+    try:
+        content = document_storage.read_document_sync(storage_record(capability))
+    except (MediaAccessError, MediaValidationError) as exc:
+        return f'Error: {exc}'
+    if capability.mime_type == 'application/pdf':
+        return _read_pdf_bytes(
+            content,
+            capability.filename or capability.storage_key,
+            page_range,
+        )
+    if start_line < 1:
+        start_line = 1
+    if end_line is not None and start_line > end_line:
+        return f'Error: start_line ({start_line}) > end_line ({end_line})'
+
+    text = content.decode('utf-8', errors='replace')
+    lines = text.splitlines()
+    total_lines = len(lines)
+    if start_line > total_lines:
+        return f'Error: start_line ({start_line}) is past end of file ({total_lines})'
+    stop = min(total_lines, end_line or total_lines)
+    selected: list[str] = []
+    payload_budget = MAX_TOOL_OUTPUT_CHARS - 1_000
+    selected_chars = 0
+    resume_line = None
+    for line_number in range(start_line, stop + 1):
+        rendered = _truncate_output_line(lines[line_number - 1])
+        if show_line_numbers:
+            rendered = f'{line_number:6d}: {rendered}'
+        projected = selected_chars + len(rendered) + (1 if selected else 0)
+        if projected > payload_budget:
+            resume_line = line_number
+            break
+        selected.append(rendered)
+        selected_chars = projected
+    shown_end = start_line + len(selected) - 1
+    value = (
+        f'File: {capability.filename or capability.storage_key}\n'
+        f'Lines: {start_line}-{shown_end} of {total_lines}\n\n'
+        + '\n'.join(selected)
+    )
+    if resume_line is not None:
+        value += (
+            f'\n[Output truncated at {MAX_TOOL_OUTPUT_CHARS} characters; '
+            f'continue with start_line={resume_line}]'
+        )
+    return _hard_cap_output(
+        value,
+        f'[Output truncated; continue with start_line={resume_line or start_line}]',
+    )
 
 
 @tool(category='filesystem')
@@ -177,8 +553,17 @@ def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_
     """
     try:
         try:
-            path = resolve_within_root(file_path, settings.tools_root)
-        except PathEscapesRoot as e:
+            capability = _managed_document_capability(file_path)
+            if capability is not None:
+                return _read_managed_document(
+                    capability,
+                    start_line=start_line,
+                    end_line=end_line,
+                    show_line_numbers=show_line_numbers,
+                    page_range=page_range,
+                )
+            path = _resolve_tool_path(file_path)
+        except (ManagedUploadAccessError, PathEscapesRoot) as e:
             return f"Error: {e}"
 
         if not path.exists():
@@ -187,34 +572,66 @@ def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_
         if not path.is_file():
             return f"Error: Not a file: {file_path}"
 
+        size_bytes = path.stat().st_size
+        if size_bytes > MAX_READ_FILE_BYTES:
+            return (
+                f'Error: File exceeds the {MAX_READ_FILE_BYTES}-byte Read limit: '
+                f'{size_bytes} bytes'
+            )
+
         # Check if file is PDF
         if path.suffix.lower() == '.pdf':
             return _read_pdf(path, page_range)
 
-        # Text file reading - existing logic
-        with open(path, encoding='utf-8', errors='replace') as f:
-            lines = f.readlines()
-
-        total_lines = len(lines)
-
         if start_line < 1:
             start_line = 1
-        if end_line is None or end_line > total_lines:
-            end_line = total_lines
-        if start_line > end_line:
+        if end_line is not None and start_line > end_line:
             return f"Error: start_line ({start_line}) > end_line ({end_line})"
 
-        selected_lines = lines[start_line - 1:end_line]
+        selected: list[str] = []
+        selected_chars = 0
+        total_lines = 0
+        last_selected = start_line - 1
+        resume_line: int | None = None
+        payload_budget = MAX_TOOL_OUTPUT_CHARS - 1_000
+        with open(path, encoding='utf-8', errors='replace') as f:
+            for line_number, line in enumerate(f, 1):
+                total_lines = line_number
+                if line_number < start_line:
+                    continue
+                if end_line is not None and line_number > end_line:
+                    continue
+                if resume_line is not None:
+                    continue
+                rendered = _truncate_output_line(line)
+                if show_line_numbers:
+                    rendered = f'{line_number:6d}: {rendered}'
+                projected = selected_chars + len(rendered) + (1 if selected else 0)
+                if projected > payload_budget:
+                    if resume_line is None:
+                        resume_line = line_number
+                    continue
+                selected.append(rendered)
+                selected_chars = projected
+                last_selected = line_number
 
-        if show_line_numbers:
-            result = []
-            for i, line in enumerate(selected_lines, start=start_line):
-                result.append(f"{i:6d}: {line.rstrip()}")
-            output = '\n'.join(result)
-        else:
-            output = ''.join(selected_lines)
+        if start_line > total_lines:
+            return f"Error: start_line ({start_line}) is past end of file ({total_lines})"
 
-        return f"File: {path}\nLines: {start_line}-{end_line} of {total_lines}\n\n{output}"
+        shown_end = last_selected if selected else min(total_lines, end_line or total_lines)
+        value = (
+            f'File: {path}\nLines: {start_line}-{shown_end} of {total_lines}\n\n'
+            + '\n'.join(selected)
+        )
+        if resume_line is not None:
+            value += (
+                f'\n[Output truncated at {MAX_TOOL_OUTPUT_CHARS} characters; '
+                f'continue with start_line={resume_line}]'
+            )
+        return _hard_cap_output(
+            value,
+            f'[Output truncated; continue with start_line={resume_line or start_line}]',
+        )
 
     except PermissionError:
         return f"Error: Permission denied reading: {file_path}"
@@ -240,8 +657,8 @@ def Write(file_path: str, content: str, append: bool = False):
     """
     try:
         try:
-            path = resolve_within_root(file_path, settings.tools_root)
-        except PathEscapesRoot as e:
+            path = _resolve_tool_path(file_path, write=True)
+        except (ManagedUploadAccessError, PathEscapesRoot) as e:
             return f"Error: {e}"
 
         parent = path.parent
@@ -281,8 +698,8 @@ def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
     """
     try:
         try:
-            path = resolve_within_root(file_path, settings.tools_root)
-        except PathEscapesRoot as e:
+            path = _resolve_tool_path(file_path, write=True)
+        except (ManagedUploadAccessError, PathEscapesRoot) as e:
             return f"Error: {e}"
 
         if not path.exists():
@@ -342,55 +759,115 @@ def Grep(pattern: str, path: str = ".", include: str | None = None, exclude: str
     """
 
     try:
-        search_path = Path(path).expanduser().resolve()
+        max_results = max(1, min(int(max_results), MAX_SEARCH_RESULTS))
+        if len(pattern) > MAX_SEARCH_PATTERN_CHARS:
+            return (
+                f'Error: Pattern exceeds the {MAX_SEARCH_PATTERN_CHARS}-character limit'
+            )
+        try:
+            search_path = _resolve_tool_path(path, allow_upload_root=True)
+        except (ManagedUploadAccessError, PathEscapesRoot) as e:
+            return f"Error: {e}"
 
         if not search_path.exists():
             return f"Error: Path not found: {path}"
 
+        budget = _SearchBudget(time.monotonic() + MAX_SEARCH_SECONDS)
         results = []
-        flags = re.IGNORECASE if ignore_case else 0
+        limits_hit: set[str] = set()
+        flags = regex_engine.IGNORECASE if ignore_case else 0
 
         try:
-            re.compile(pattern)
-        except re.error:
-            pattern = re.escape(pattern)
+            compiled_pattern = regex_engine.compile(pattern, flags)
+        except regex_engine.error:
+            pattern = regex_engine.escape(pattern)
+            compiled_pattern = regex_engine.compile(pattern, flags)
 
         files_to_search = []
 
         if search_path.is_file():
             files_to_search = [search_path]
         else:
-            for root, dirs, files in os.walk(search_path):
-                if exclude:
-                    dirs[:] = [d for d in dirs if not fnmatch.fnmatch(d, exclude)]
+            enumerated_files = 0
+            entries = _collect_search_entries(
+                search_path,
+                budget,
+                recursive=True,
+                exclude_directory=exclude,
+            )
+            for entry in entries:
+                if entry.is_directory:
+                    continue
+                if enumerated_files >= MAX_SEARCH_FILES:
+                    limits_hit.add(
+                        f'{MAX_SEARCH_FILES}-file enumeration limit'
+                    )
+                    break
+                enumerated_files += 1
+                name = entry.path.name
+                if include and not fnmatch.fnmatch(name, include):
+                    continue
+                if exclude and fnmatch.fnmatch(name, exclude):
+                    continue
+                files_to_search.append(entry.path)
 
-                for f in files:
-                    if include and not fnmatch.fnmatch(f, include):
-                        continue
-                    if exclude and fnmatch.fnmatch(f, exclude):
-                        continue
-                    files_to_search.append(Path(root) / f)
-
+        total_scanned_bytes = 0
         for file_path in files_to_search:
+            if not budget.within_deadline():
+                break
             try:
-                with open(file_path, encoding='utf-8', errors='replace') as f:
-                    for line_num, line in enumerate(f, 1):
-                        if re.search(pattern, line, flags):
+                file_size = file_path.stat().st_size
+                if file_size > MAX_SEARCH_FILE_BYTES:
+                    limits_hit.add(
+                        f'{MAX_SEARCH_FILE_BYTES}-byte per-file limit'
+                    )
+                    continue
+                remaining_total = MAX_SEARCH_TOTAL_BYTES - total_scanned_bytes
+                if file_size > remaining_total:
+                    limits_hit.add(
+                        f'{MAX_SEARCH_TOTAL_BYTES}-byte total scan limit'
+                    )
+                    continue
+
+                with open(file_path, 'rb') as f:
+                    for (
+                        line_num,
+                        search_line,
+                        display_line,
+                        line_bytes,
+                    ) in _bounded_search_lines(f, file_size, budget):
+                        total_scanned_bytes += line_bytes
+                        try:
+                            matched = compiled_pattern.search(
+                                search_line,
+                                timeout=MAX_REGEX_MATCH_SECONDS,
+                            )
+                        except TimeoutError:
+                            return (
+                                'Error: regular expression timed out; '
+                                'use a simpler or more specific pattern'
+                            )
+                        if matched:
                             results.append({
                                 'file': str(file_path),
                                 'line': line_num,
-                                'content': line.rstrip()
+                                'content': display_line,
                             })
                             if len(results) >= max_results:
                                 break
-            except (PermissionError, UnicodeDecodeError):
+            except (OSError, UnicodeDecodeError):
                 continue
 
             if len(results) >= max_results:
                 break
 
+        if budget.limit_reason:
+            limits_hit.add(budget.limit_reason)
+        limit_note = ''
+        if limits_hit:
+            limit_note = f"\n[Search limited by {', '.join(sorted(limits_hit))}]"
         if not results:
-            return f"No matches found for: {pattern}"
+            return f"No matches found for: {pattern}{limit_note}"
 
         output = [f"Found {len(results)} match(es) for '{pattern}':\n"]
         for r in results:
@@ -398,7 +875,10 @@ def Grep(pattern: str, path: str = ".", include: str | None = None, exclude: str
                 output.append(f"\n--- {r['file']} (line {r['line']}) ---")
             output.append(f"{r['file']}:{r['line']}: {r['content']}")
 
-        return '\n'.join(output)
+        return _hard_cap_output(
+            '\n'.join(output) + limit_note,
+            '[Output truncated; narrow the path/pattern or lower max_results]',
+        )
 
     except Exception as e:
         return f"Error during search: {str(e)}"
@@ -424,7 +904,16 @@ def Glob(pattern: str, path: str = ".", recursive: bool = True, include_dirs: bo
         - TypeScript in src: Glob("*.ts", path="src")
     """
     try:
-        search_path = Path(path).expanduser().resolve()
+        max_results = max(1, min(int(max_results), MAX_SEARCH_RESULTS))
+        if len(pattern) > MAX_GLOB_PATTERN_CHARS:
+            return (
+                'Error: Pattern exceeds the '
+                f'{MAX_GLOB_PATTERN_CHARS}-character limit'
+            )
+        try:
+            search_path = _resolve_tool_path(path, allow_upload_root=True)
+        except (ManagedUploadAccessError, PathEscapesRoot) as e:
+            return f"Error: {e}"
 
         if not search_path.exists():
             return f"Error: Directory not found: {path}"
@@ -432,48 +921,51 @@ def Glob(pattern: str, path: str = ".", recursive: bool = True, include_dirs: bo
         if not search_path.is_dir():
             return f"Error: Not a directory: {path}"
 
+        budget = _SearchBudget(time.monotonic() + MAX_SEARCH_SECONDS)
         results = []
+        limits_hit: set[str] = set()
 
         if '**' in pattern:
             pattern = pattern.replace('**', '*')
             recursive = True
 
-        if recursive:
-            for root, dirs, files in os.walk(search_path):
-                root_path = Path(root)
+        entries = _collect_search_entries(
+            search_path,
+            budget,
+            recursive=recursive,
+        )
+        enumerated_candidates = 0
+        for entry in entries:
+            if entry.is_directory and not include_dirs:
+                continue
+            if enumerated_candidates >= MAX_SEARCH_FILES:
+                limits_hit.add(
+                    f'{MAX_SEARCH_FILES}-file enumeration limit'
+                )
+                break
+            enumerated_candidates += 1
+            if fnmatch.fnmatch(entry.path.name, pattern):
+                results.append(str(entry.path))
+            if len(results) >= max_results:
+                break
 
-                for f in files:
-                    if fnmatch.fnmatch(f, pattern):
-                        results.append(str(root_path / f))
-                        if len(results) >= max_results:
-                            break
-
-                if include_dirs:
-                    for d in dirs:
-                        if fnmatch.fnmatch(d, pattern):
-                            results.append(str(root_path / d))
-                            if len(results) >= max_results:
-                                break
-
-                if len(results) >= max_results:
-                    break
-        else:
-            for f in search_path.glob(pattern):
-                if f.is_file():
-                    results.append(str(f))
-                elif include_dirs and f.is_dir():
-                    results.append(str(f))
-                if len(results) >= max_results:
-                    break
+        if budget.limit_reason:
+            limits_hit.add(budget.limit_reason)
+        limit_note = ''
+        if limits_hit:
+            limit_note = f"\n[Search limited by {', '.join(sorted(limits_hit))}]"
 
         if not results:
-            return f"No files found matching: {pattern}"
+            return f"No files found matching: {pattern}{limit_note}"
 
         output = [f"Found {len(results)} file(s):\n"]
         for r in results:
             output.append(r)
 
-        return '\n'.join(output)
+        return _hard_cap_output(
+            '\n'.join(output) + limit_note,
+            '[Output truncated; narrow the path/pattern or lower max_results]',
+        )
 
     except Exception as e:
         return f"Error during glob: {str(e)}"
@@ -761,6 +1253,10 @@ async def call_agent(name: str, task: str, interface: str = 'task'):
         agent = await Agent.find_one({'name': name})
         if not agent:
             return f"Error calling agent: {name} not found"
+        parent_context = current_execution_context()
+        if not parent_context.agent_allowed(str(agent.id)):
+            return f"Error calling agent: {name} is not authorized"
+        child_context = delegated_execution_context(parent_context)
 
         chunks: list[str] = []
 
@@ -775,7 +1271,15 @@ async def call_agent(name: str, task: str, interface: str = 'task'):
         # callback; web/ws pass through so risky tools are denied by policy.
         session_interface = 'task' if interface in ('cli', 'task') else interface
         session = await Session.get_by_agent_id(str(agent.id))
-        await session(task, agent, session_interface, True, capture, {})
+        await session(
+            task,
+            agent,
+            session_interface,
+            True,
+            capture,
+            {},
+            tool_context=child_context,
+        )
         return ''.join(chunks).strip() or f"Agent '{name}' returned no output."
     except Exception as e:
         return f"Error calling agent: {str(e)}"
@@ -858,6 +1362,12 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
     Returns:
         str: Command output or error message.
     """
+    context = current_execution_context()
+    try:
+        require_host_process_authority(context.host_process_mode)
+    except HostProcessAccessError as e:
+        return f'Error: {e}'
+
     # Validate and resolve the working directory
     if working_dir:
         try:
@@ -880,11 +1390,21 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
     # containers) where the environment itself is the isolation boundary — never
     # enable on a host you care about. Off by default.
     if os.getenv('COGNITRIX_SANDBOX_SHELL', '').strip().lower() in ('1', 'true', 'yes'):
-        return _run_sandbox_shell(command, cwd=str(work_dir), timeout=timeout_s)
+        return _run_sandbox_shell(
+            command,
+            cwd=str(work_dir),
+            timeout=timeout_s,
+            host_process_mode=context.host_process_mode,
+        )
 
     # Default: the shared safety boundary — whitelist + argv + shell=False.
     try:
-        return run_whitelisted(command, cwd=str(work_dir), timeout=timeout_s)
+        return run_whitelisted(
+            command,
+            cwd=str(work_dir),
+            timeout=timeout_s,
+            host_process_mode=context.host_process_mode,
+        )
     except CommandNotAllowed as e:
         return f"Error: {e}"
     except Exception as e:
@@ -892,10 +1412,17 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
         return f"Error executing command: {e}"
 
 
-def _run_sandbox_shell(command: str, cwd: str, timeout: int) -> str:
+def _run_sandbox_shell(
+    command: str,
+    cwd: str,
+    timeout: int,
+    *,
+    host_process_mode: HostProcessMode,
+) -> str:
     """Run a command through a real shell (no whitelist). Sandbox-only; gated by
     COGNITRIX_SANDBOX_SHELL."""
     import subprocess
+    require_host_process_authority(host_process_mode)
     try:
         proc = subprocess.run(
             command, shell=True, cwd=cwd, timeout=timeout,

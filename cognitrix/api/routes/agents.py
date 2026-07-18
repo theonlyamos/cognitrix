@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from dataclasses import replace
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -24,6 +25,15 @@ from cognitrix.common.security import (
     require,
 )
 from cognitrix.sessions.base import Session
+from cognitrix.session_ownership import (
+    OwnershipConflict,
+    OwnershipNotFound,
+    claim_new,
+    discard_fresh_claim,
+    owned_session_ids,
+    principal_key,
+    require_active_owned,
+)
 from cognitrix.utils.sse import SSEManagerCapacityError, get_sse_manager
 
 from ...media.staging import (
@@ -385,6 +395,8 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'session_id': data.get('session_id'),
                 'staged_attachments': staged,
                 'edit_source_artifact_id': data.get('edit_source_artifact_id'),
+                'edit_source_image_index': data.get('edit_source_image_index'),
+                'document_ids': data.get('document_ids') or (),
                 'bypass_permissions': bool(data.get('bypass_permissions')),
             })
         except BaseException:
@@ -452,15 +464,60 @@ class GenerateRequest(BaseModel):
     stream: bool = False
 
 
-async def _resolve_generate_session(agent: Agent, session_id: str | None) -> Session:
-    if session_id:
-        session = await Session.get(session_id)
-        if session is None or (session.agent_id and session.agent_id != agent.id):
-            raise HTTPException(status_code=404, detail="Session not found for this agent")
-        return session
+def _raise_session_ownership_error(error: Exception) -> None:
+    if isinstance(error, OwnershipNotFound):
+        raise HTTPException(status_code=404, detail='Session not found') from None
+    if isinstance(error, OwnershipConflict):
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    raise error
+
+
+async def _create_owned_agent_session(agent: Agent, ctx: AuthContext):
+    user_id = principal_key(ctx.user)
     session = Session(agent_id=agent.id)
-    await session.save()
-    return session
+    session_id: str | None = None
+    try:
+        await _run_awaitable_joined(session.save())
+        session_id = str(session.id)
+        binding = await claim_new(session_id, user_id, str(agent.id))
+    except BaseException as error:
+        session_id = session_id or (
+            str(session.id) if session.id is not None else None
+        )
+        if session_id is not None:
+            async def compensate() -> None:
+                # Remove the execution row before its fresh authorization
+                # binding, so a partial cleanup always fails closed.
+                await Session.delete_many({'id': session_id})
+                await discard_fresh_claim(session_id, user_id, str(agent.id))
+
+            await _run_awaitable_joined(compensate())
+        if isinstance(error, (OwnershipNotFound, OwnershipConflict)):
+            _raise_session_ownership_error(error)
+        raise
+    return binding, session
+
+
+async def _resolve_generate_session(
+    agent: Agent,
+    session_id: str | None,
+    ctx: AuthContext,
+):
+    if session_id:
+        user_id = principal_key(ctx.user)
+        try:
+            # Authorization intentionally precedes Session.get: a foreign or
+            # legacy unbound id must not become a Session-row oracle.
+            binding = await require_active_owned(
+                str(session_id), user_id, str(agent.id),
+            )
+        except (OwnershipNotFound, OwnershipConflict) as error:
+            _raise_session_ownership_error(error)
+        session = await Session.get(session_id)
+        if session is None or str(session.agent_id or '') != binding.agent_id:
+            raise HTTPException(status_code=404, detail='Session not found')
+        return binding, session
+    return await _create_owned_agent_session(agent, ctx)
 
 
 @agents_invoke_api.post('/{agent_id}/generate')
@@ -476,10 +533,16 @@ async def generate(agent_id: str, body: GenerateRequest,
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
 
-    session = await _resolve_generate_session(agent, body.session_id)
+    binding, session = await _resolve_generate_session(agent, body.session_id, ctx)
+    tool_context = replace(
+        ctx.tool_execution_context(),
+        user_id=binding.user_id,
+        session_id=binding.session_id,
+        agent_id=binding.agent_id,
+    )
 
     if body.stream:
-        return _stream_generate(session, agent, body.message, ctx.tool_execution_context())
+        return _stream_generate(session, agent, body.message, tool_context)
 
     captured = ''
 
@@ -492,7 +555,7 @@ async def generate(agent_id: str, body: GenerateRequest,
     try:
         await asyncio.wait_for(
             session(body.message, agent, interface='web', stream=True, output=capture,
-                    wsquery={}, tool_context=ctx.tool_execution_context()),
+                    wsquery={}, tool_context=tool_context),
             timeout=CHAT_TIMEOUT,
         )
     except asyncio.TimeoutError:
@@ -585,18 +648,31 @@ async def delete_agent(agent_id: str):
     return {"message": "Agent deleted successfully"}
 
 @agents_api.get('/{agent_id}/session')
-async def load_session(agent_id: str):
+async def load_session(
+    agent_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+):
     agent = await Agent.find_one({'id': agent_id})
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    session_id: str = ''
-    if agent:
-        session = await Session.get_by_agent_id(agent_id)
-        if not session:
-            session = Session(agent_id=agent_id)
+    if not ctx.agent_allowed(str(agent.id)):
+        raise HTTPException(
+            status_code=403,
+            detail='API key not allowed for this agent',
+        )
 
-        session_id = session.id
-        await session.save()
+    user_id = principal_key(ctx.user)
+    for session_id in await owned_session_ids(user_id, agent_id=str(agent.id)):
+        try:
+            binding = await require_active_owned(
+                session_id, user_id, str(agent.id),
+            )
+        except (OwnershipNotFound, OwnershipConflict):
+            continue
+        session = await Session.get(session_id)
+        if session is not None and str(session.agent_id or '') == binding.agent_id:
+            return JSONResponse({'session_id': session.id})
 
-    return JSONResponse({'session_id': session_id})
+    _binding, session = await _create_owned_agent_session(agent, ctx)
+    return JSONResponse({'session_id': session.id})
 

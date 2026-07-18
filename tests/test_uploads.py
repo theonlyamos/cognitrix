@@ -292,6 +292,7 @@ async def test_maintenance_sweeps_periodically_and_retries_pending_until_resolve
     now = 0.0
     delays = []
     sweeps = 0
+    document_sweeps = 0
     retries = 0
 
     def clock():
@@ -312,10 +313,20 @@ async def test_maintenance_sweeps_periodically_and_retries_pending_until_resolve
         retries += 1
         return 1
 
+    async def reconcile_documents():
+        nonlocal document_sweeps
+        document_sweeps += 1
+        return 0
+
     monkeypatch.setattr(staging, 'ATTACHMENT_MAINTENANCE_SWEEP_SECONDS', 3, raising=False)
     monkeypatch.setattr(staging, 'ATTACHMENT_MAINTENANCE_RETRY_INITIAL_SECONDS', 1, raising=False)
     monkeypatch.setattr(staging, 'ATTACHMENT_MAINTENANCE_RETRY_MAX_SECONDS', 4, raising=False)
     monkeypatch.setattr(staging, 'sweep_stale_staging', sweep)
+    monkeypatch.setattr(
+        staging.document_assets,
+        'reconcile_expired',
+        reconcile_documents,
+    )
     monkeypatch.setattr(staging, 'retry_pending_attachment_cleanups', retry)
     monkeypatch.setattr(staging, 'pending_attachment_cleanup_count', lambda: 1)
 
@@ -327,8 +338,38 @@ async def test_maintenance_sweeps_periodically_and_retries_pending_until_resolve
 
     assert retries == 7
     assert sweeps >= 2
+    assert document_sweeps == sweeps
     assert delays
     assert max(delays) <= 4
+
+
+@pytest.mark.asyncio
+async def test_document_reconciliation_runs_when_staging_sweep_fails(monkeypatch):
+    calls = []
+
+    async def fail_staging():
+        calls.append('staging')
+        raise OSError('staging root unavailable')
+
+    async def reconcile_documents():
+        calls.append('documents')
+        return 0
+
+    monkeypatch.setattr(staging, 'sweep_stale_staging', fail_staging)
+    monkeypatch.setattr(
+        staging.document_assets,
+        'reconcile_expired',
+        reconcile_documents,
+    )
+    monkeypatch.setattr(staging, 'pending_attachment_cleanup_count', lambda: 0)
+
+    await staging._run_attachment_maintenance(
+        wait=lambda _delay: __import__('asyncio').sleep(0),
+        clock=lambda: 0.0,
+        cycles=1,
+    )
+
+    assert calls == ['staging', 'documents']
 
 
 @pytest.mark.asyncio
@@ -630,6 +671,84 @@ async def test_partial_batch_create_cleanup_failure_retains_reserved_obligation(
         monkeypatch.setattr(staging, '_remove_staged_batch_capability', original_remove)
         await staging.retry_pending_attachment_cleanups()
     assert staging._attachment_cleanup_obligation_count() == baseline
+
+
+@pytest.mark.asyncio
+async def test_unknown_batch_identity_retains_cleanup_until_retry_capture(
+    staging_workdir,
+    monkeypatch,
+):
+    baseline_pending = staging.pending_attachment_cleanup_count()
+    baseline_units = staging._attachment_cleanup_obligation_count()
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+    original_create = staging.secure_fs.DirectoryCapability.create_directory
+    original_open = staging.secure_fs.DirectoryCapability.open_directory
+    created_path = None
+    identity_probe_blocked = True
+
+    def create_then_lose_identity(_capability, leaf):
+        nonlocal created_path
+        created_path = staging_workdir / leaf
+        created_path.mkdir(mode=0o700)
+        raise staging.secure_fs.CreatedChildUnknownIdentityError(
+            leaf=leaf,
+            is_directory=True,
+        )
+
+    def block_first_cleanup_identity(capability, leaf, **kwargs):
+        if (
+            identity_probe_blocked
+            and created_path is not None
+            and leaf == created_path.name
+        ):
+            raise staging.secure_fs.CapabilityError()
+        return original_open(capability, leaf, **kwargs)
+
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'create_directory',
+        create_then_lose_identity,
+    )
+    monkeypatch.setattr(
+        staging.secure_fs.DirectoryCapability,
+        'open_directory',
+        block_first_cleanup_identity,
+    )
+    upload = FakeUpload('never-read.txt', b'never-read')
+    try:
+        with pytest.raises(staging.AttachmentCleanupError):
+            await staging.stage_upload_files(
+                [upload],
+                user_key='user',
+                stream_id='unknown-batch-identity',
+            )
+
+        assert upload.read_sizes == []
+        assert upload.closed is True
+        assert created_path is not None and created_path.is_dir()
+        assert staging.pending_attachment_cleanup_count() == baseline_pending + 1
+        assert staging._attachment_cleanup_obligation_count() == baseline_units + 1
+
+        identity_probe_blocked = False
+        assert await staging.retry_pending_attachment_cleanups() == baseline_pending
+        assert not created_path.exists()
+        assert staging._attachment_cleanup_obligation_count() == baseline_units
+    finally:
+        identity_probe_blocked = False
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            'create_directory',
+            original_create,
+        )
+        monkeypatch.setattr(
+            staging.secure_fs.DirectoryCapability,
+            'open_directory',
+            original_open,
+        )
+        await staging.retry_pending_attachment_cleanups()
+        if created_path is not None and created_path.exists():
+            created_path.rmdir()
 
 
 @pytest.mark.parametrize(
@@ -1174,6 +1293,313 @@ async def test_unknown_extra_retains_external_recovery_journal(
 
     __import__('shutil').rmtree(orphan.batch_dir)
     recovery.unlink()
+
+
+def test_unwritten_recovery_creation_uses_cleanup_identity() -> None:
+    file_identity = staging.secure_fs.FileIdentity(1, b'j' * 16, False)
+    root_identity = staging.secure_fs.FileIdentity(1, b'r' * 16, True)
+    batch_identity = staging.secure_fs.FileIdentity(1, b'b' * 16, True)
+    manifest_identity = staging.secure_fs.FileIdentity(1, b'm' * 16, False)
+    batch_leaf = 'batch_123'
+    recovery_leaf = staging._recovery_leaf(batch_leaf)
+
+    class RootCapability:
+        def __init__(self) -> None:
+            self.deleted: list[tuple[str, object]] = []
+
+        def create_file(self, leaf):
+            assert leaf == recovery_leaf
+            raise staging.secure_fs.CreatedChildCleanupError(
+                leaf=leaf,
+                identity=file_identity,
+                is_directory=False,
+            )
+
+        def delete_file(self, leaf, *, expected_identity):
+            self.deleted.append((leaf, expected_identity))
+
+        def flush(self):
+            pass
+
+    root = RootCapability()
+    inspection = staging._SweepInspection(
+        root_identity=root_identity,
+        batch_identity=batch_identity,
+        manifest_identity=manifest_identity,
+        manifest_bytes=b'manifest\n',
+        manifest=staging._ParsedManifest(1.0, 2.0, {}),
+    )
+
+    with pytest.raises(staging.secure_fs.CreatedChildCleanupError):
+        staging._create_recovery_journal(root, batch_leaf, inspection, [])
+
+    assert root.deleted == [(recovery_leaf, file_identity)]
+
+
+def test_unwritten_recovery_cleanup_failure_retains_exact_identity() -> None:
+    file_identity = staging.secure_fs.FileIdentity(1, b'j' * 16, False)
+    batch_leaf = 'batch_123'
+    recovery_leaf = staging._recovery_leaf(batch_leaf)
+
+    class RootCapability:
+        def create_file(self, leaf):
+            raise staging.secure_fs.CreatedChildCleanupError(
+                leaf=leaf,
+                identity=file_identity,
+                is_directory=False,
+            )
+
+        def delete_file(self, _leaf, *, expected_identity):
+            assert expected_identity == file_identity
+            raise FileNotFoundError(recovery_leaf)
+
+        def flush(self):
+            raise OSError('simulated recovery-directory flush failure')
+
+    inspection = staging._SweepInspection(
+        root_identity=staging.secure_fs.FileIdentity(1, b'r' * 16, True),
+        batch_identity=staging.secure_fs.FileIdentity(1, b'b' * 16, True),
+        manifest_identity=staging.secure_fs.FileIdentity(1, b'm' * 16, False),
+        manifest_bytes=b'manifest\n',
+        manifest=staging._ParsedManifest(1.0, 2.0, {}),
+    )
+
+    with pytest.raises(staging.secure_fs.CreatedChildCleanupError) as exc:
+        staging._create_recovery_journal(
+            RootCapability(),
+            batch_leaf,
+            inspection,
+            [],
+        )
+
+    assert exc.value.leaf == recovery_leaf
+    assert exc.value.identity == file_identity
+    assert exc.value.is_directory is False
+
+
+def test_restart_removes_empty_quarantine_from_unwritten_recovery_journal(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    batch_leaf = 'batch_123'
+    (tmp_path / batch_leaf).mkdir()
+    root_identity = staging.secure_fs.FileIdentity(1, b'r' * 16, True)
+    batch_identity = staging.secure_fs.FileIdentity(1, b'b' * 16, True)
+    manifest_identity = staging.secure_fs.FileIdentity(1, b'm' * 16, False)
+    journal_identity = staging.secure_fs.FileIdentity(1, b'j' * 16, False)
+    manifest_bytes = staging._manifest_line({
+        'created_at': 1.0,
+        'expires_at': 2.0,
+        'version': 1,
+    })
+    inspection = staging._SweepInspection(
+        root_identity=root_identity,
+        batch_identity=batch_identity,
+        manifest_identity=manifest_identity,
+        manifest_bytes=manifest_bytes,
+        manifest=staging._ParsedManifest(1.0, 2.0, {}),
+    )
+    recovery_leaf = staging._recovery_leaf(batch_leaf)
+    quarantine_leaf = staging.secure_fs._posix_quarantine_leaf(
+        recovery_leaf,
+        journal_identity,
+        directory=False,
+    )
+
+    class Capability:
+        def __init__(self, identity, payload=None) -> None:
+            self.identity = identity
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def read_bytes(self, *, max_bytes):
+            assert max_bytes == staging.STAGING_RECOVERY_MAX_BYTES
+            return self.payload
+
+        def refresh_identity(self):
+            return self.identity
+
+    class RootCapability(Capability):
+        def __init__(self) -> None:
+            super().__init__(root_identity)
+            self.deleted: list[tuple[str, object]] = []
+            self.flushes = 0
+
+        def open_file(self, leaf):
+            assert leaf == quarantine_leaf
+            return Capability(journal_identity, b'')
+
+        def open_directory(self, leaf, *, expected_identity=None):
+            assert leaf == batch_leaf
+            assert expected_identity == batch_identity
+            return Capability(batch_identity)
+
+        def delete_file(self, leaf, *, expected_identity):
+            self.deleted.append((leaf, expected_identity))
+
+        def flush(self):
+            self.flushes += 1
+
+    root = RootCapability()
+    monkeypatch.setattr(staging.secure_fs, 'open_root', lambda _path: root)
+    monkeypatch.setattr(
+        staging,
+        '_inspect_manifest_batch',
+        lambda inspected_root, leaf: (
+            inspection
+            if inspected_root == tmp_path and leaf == batch_leaf
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        staging,
+        '_recovery_deletions_for_inspection',
+        lambda root_capability, leaf, inspected: (
+            []
+            if (
+                root_capability is root
+                and leaf == batch_leaf
+                and inspected is inspection
+            )
+            else None
+        ),
+    )
+
+    assert staging._remove_quarantined_recovery_journal(
+        tmp_path,
+        quarantine_leaf,
+    ) is True
+    assert root.deleted == [(recovery_leaf, journal_identity)]
+    assert root.flushes == 1
+
+
+def test_restart_removes_nonempty_strict_prefix_quarantined_recovery_journal(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    batch_leaf = 'batch_123'
+    (tmp_path / batch_leaf).mkdir()
+    root_identity = staging.secure_fs.FileIdentity(1, b'r' * 16, True)
+    batch_identity = staging.secure_fs.FileIdentity(1, b'b' * 16, True)
+    manifest_identity = staging.secure_fs.FileIdentity(1, b'm' * 16, False)
+    child_identity = staging.secure_fs.FileIdentity(1, b'c' * 16, False)
+    journal_identity = staging.secure_fs.FileIdentity(1, b'j' * 16, False)
+    manifest_bytes = staging._manifest_line({
+        'created_at': 1.0,
+        'expires_at': 2.0,
+        'version': 1,
+    })
+    inspection = staging._SweepInspection(
+        root_identity=root_identity,
+        batch_identity=batch_identity,
+        manifest_identity=manifest_identity,
+        manifest_bytes=manifest_bytes,
+        manifest=staging._ParsedManifest(1.0, 2.0, {}),
+    )
+    deletions = [('child_123', child_identity)]
+    expected = staging._recovery_journal_bytes(
+        batch_leaf,
+        inspection,
+        deletions,
+    )
+    journal_prefix = expected[: max(1, len(expected) // 2)]
+    assert journal_prefix and expected.startswith(journal_prefix)
+    assert journal_prefix != expected
+    recovery_leaf = staging._recovery_leaf(batch_leaf)
+    quarantine_leaf = staging.secure_fs._posix_quarantine_leaf(
+        recovery_leaf,
+        journal_identity,
+        directory=False,
+    )
+
+    class Capability:
+        def __init__(self, identity, payload=None) -> None:
+            self.identity = identity
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def read_bytes(self, *, max_bytes):
+            assert max_bytes == staging.STAGING_RECOVERY_MAX_BYTES
+            return self.payload
+
+        def refresh_identity(self):
+            return self.identity
+
+    class RootCapability(Capability):
+        def __init__(self) -> None:
+            super().__init__(root_identity)
+            self.payload = journal_prefix
+            self.deleted: list[tuple[str, object]] = []
+            self.flushes = 0
+
+        def open_file(self, leaf):
+            assert leaf == quarantine_leaf
+            return Capability(journal_identity, self.payload)
+
+        def open_directory(self, leaf, *, expected_identity=None):
+            assert leaf == batch_leaf
+            assert expected_identity == batch_identity
+            return Capability(batch_identity)
+
+        def delete_file(self, leaf, *, expected_identity):
+            self.deleted.append((leaf, expected_identity))
+
+        def flush(self):
+            self.flushes += 1
+
+    root = RootCapability()
+    monkeypatch.setattr(staging.secure_fs, 'open_root', lambda _path: root)
+    monkeypatch.setattr(
+        staging,
+        '_inspect_manifest_batch',
+        lambda inspected_root, leaf: (
+            inspection
+            if inspected_root == tmp_path and leaf == batch_leaf
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        staging,
+        '_recovery_deletions_for_inspection',
+        lambda root_capability, leaf, inspected: (
+            deletions
+            if (
+                root_capability is root
+                and leaf == batch_leaf
+                and inspected is inspection
+            )
+            else []
+        ),
+        raising=False,
+    )
+
+    assert staging._remove_quarantined_recovery_journal(
+        tmp_path,
+        quarantine_leaf,
+    ) is True
+    assert root.deleted == [(recovery_leaf, journal_identity)]
+    assert root.flushes == 1
+
+    root.payload = b'not-an-exact-recovery-prefix'
+    root.deleted.clear()
+    root.flushes = 0
+    with pytest.raises(staging.secure_fs.CapabilityError):
+        staging._remove_quarantined_recovery_journal(
+            tmp_path,
+            quarantine_leaf,
+        )
+    assert root.deleted == []
+    assert root.flushes == 0
 
 
 @pytest.mark.asyncio

@@ -63,6 +63,34 @@ describe('useSSE cleanup', () => {
     }));
   });
 
+  it('forwards attachment ingestion metadata to the chat consumer', async () => {
+    const encoder = new TextEncoder();
+    const event = {
+      type: 'attachments_ingested',
+      artifacts: [{ id: 'uploaded-1', mime_type: 'image/png', origin: 'uploaded' }],
+      session_id: 'session-1',
+    };
+    const reader = {
+      cancel: vi.fn().mockResolvedValue(undefined),
+      read: vi.fn()
+        .mockResolvedValueOnce({
+          done: false,
+          value: encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+        })
+        .mockResolvedValueOnce({ done: true, value: undefined }),
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      body: { getReader: () => reader },
+    }));
+    localStorage.setItem('token', 'test-token');
+    const onMessage = vi.fn();
+
+    renderHook(() => useSSE({ onMessage, autoReconnect: false }));
+
+    await waitFor(() => expect(onMessage).toHaveBeenCalledWith(event));
+  });
+
   it('consumes pending read and cancellation rejections when the connection unmounts', async () => {
     const cancelCatch = vi.fn().mockResolvedValue(undefined);
     const readCatch = vi.fn();

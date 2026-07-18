@@ -8,7 +8,12 @@ from sse_starlette.sse import EventSourceResponse
 
 from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.agents.generators import TaskInstructor
+from cognitrix.artifacts import delete_owned_session_artifacts
 from cognitrix.media import MediaOwnership, MediaValidationError, media_assets
+from cognitrix.media.document_capabilities import (
+    load_turn_document_capabilities,
+)
+from cognitrix.media.documents import document_assets
 from cognitrix.media.staging import (
     AttachmentCleanupError,
     PromotedAttachments,
@@ -18,6 +23,12 @@ from cognitrix.media.staging import (
     rollback_promoted_attachments,
 )
 from cognitrix.sessions.base import Session
+from cognitrix.session_ownership import (
+    OwnershipConflict,
+    OwnershipNotFound,
+    OwnershipState,
+    session_ownerships,
+)
 from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 from cognitrix.tools.utils import ToolExecutionContext
 
@@ -36,6 +47,39 @@ _NO_REPLAY = object()
 _ATTACHMENT_UNAVAILABLE = (
     'Attachments or the selected image are unavailable. Please try again.'
 )
+
+
+async def _settle_mutation(operation):
+    """Join one started database mutation before cancellation escapes."""
+    mutation = asyncio.create_task(operation)
+    try:
+        return await asyncio.shield(mutation)
+    except asyncio.CancelledError as cancelled:
+        while not mutation.done():
+            try:
+                await asyncio.shield(mutation)
+            except asyncio.CancelledError:
+                continue
+        mutation.result()
+        raise cancelled
+
+
+async def _settle_background_task(task: asyncio.Task) -> BaseException | None:
+    """Join a transferred durability task and return its terminal error."""
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+        except BaseException:
+            break
+    if task.cancelled():
+        return asyncio.CancelledError()
+    try:
+        task.result()
+    except BaseException as error:
+        return error
+    return None
 
 
 class SSEManagerCapacityError(RuntimeError):
@@ -249,14 +293,91 @@ class SSEManager:
         - no id: a fresh conversation; the client adopts its id from the
           tagged reply events.
         """
+        user_id = str(self.user_key or '').strip()
+        agent_id = str(getattr(self.agent, 'id', '') or '').strip()
+        if not user_id or not agent_id:
+            raise OwnershipNotFound()
         if session_id:
+            binding = await session_ownerships.require_active_owned(
+                str(session_id), user_id, agent_id
+            )
             session = await Session.get(session_id)
-            if session is not None and not session.agent_id:
-                session.agent_id = self.agent.id
-                await session.save()
+            if (
+                session is None
+                or str(getattr(session, 'agent_id', '') or '')
+                != binding.agent_id
+            ):
+                raise OwnershipNotFound()
             return session
-        session = Session(agent_id=self.agent.id)
-        await session.save()
+
+        session = Session(agent_id=agent_id)
+        created_id: str | None = None
+        try:
+            await _settle_mutation(session.save())
+            created_id = str(session.id)
+            await session_ownerships.claim_new(created_id, user_id, agent_id)
+            return session
+        except BaseException:
+            if created_id is not None:
+                async def compensate() -> None:
+                    await Session.delete_many({'id': created_id})
+                    await session_ownerships.discard_fresh_claim(
+                        created_id, user_id, agent_id
+                    )
+
+                await _settle_mutation(compensate())
+            raise
+
+    async def _load_owned_session(self, session_id: str):
+        user_id = str(self.user_key or '').strip()
+        if not user_id:
+            raise OwnershipNotFound()
+        binding = await session_ownerships.require_active_owned(
+            str(session_id), user_id
+        )
+        session = await Session.get(str(session_id))
+        if (
+            session is None
+            or str(getattr(session, 'agent_id', '') or '') != binding.agent_id
+        ):
+            raise OwnershipNotFound()
+        return binding, session
+
+    async def _clear_owned_history(self, session_id: str):
+        user_id = str(self.user_key or '').strip()
+        if not user_id:
+            raise OwnershipNotFound()
+        binding = await session_ownerships.require_owned(str(session_id), user_id)
+        if binding.state == OwnershipState.ACTIVE:
+            token = await session_ownerships.begin_clear(
+                binding.session_id,
+                binding.user_id,
+                binding.agent_id,
+            )
+        elif binding.state == OwnershipState.CLEARING:
+            token = await session_ownerships.resume_lifecycle(
+                binding.session_id,
+                binding.user_id,
+                binding.agent_id,
+                OwnershipState.CLEARING,
+            )
+        else:
+            raise OwnershipConflict('Session is in a different lifecycle state')
+        session = await Session.get(binding.session_id)
+        if (
+            session is None
+            or str(getattr(session, 'agent_id', '') or '') != binding.agent_id
+        ):
+            raise OwnershipNotFound()
+        session.chat = []
+        await _settle_mutation(session.save())
+        await delete_owned_session_artifacts(
+            session_id=token.session_id,
+            user_id=token.user_id,
+            agent_id=token.agent_id,
+            generation=token.generation,
+        )
+        await session_ownerships.finish_clear(token)
         return session
 
     def _start_chat_action(
@@ -377,11 +498,19 @@ class SSEManager:
         staged = action.get('staged_attachments')
         cleanup_owned = action.get('_staging_cleanup_owned', staged is not None)
         selected_id = action.get('edit_source_artifact_id')
-        has_media = staged is not None or bool(selected_id)
+        selected_image_index = action.get('edit_source_image_index')
+        adopted_document_ids = action.get('document_ids') or ()
+        has_media = (
+            staged is not None
+            or bool(selected_id)
+            or selected_image_index is not None
+            or bool(adopted_document_ids)
+        )
         session = None
         ownership: MediaOwnership | None = None
         promoted: PromotedAttachments | None = None
         adopted = False
+        adoption_task: asyncio.Task | None = None
         ingestion_emitted = False
         terminal = {
             'type': 'turn_complete',
@@ -398,12 +527,28 @@ class SSEManager:
             await output_queue.put(payload)
 
         def mark_adopted() -> None:
-            nonlocal adopted, ingestion_emitted
+            nonlocal adopted, adoption_task, ingestion_emitted
+            if adopted:
+                return
             adopted = True
             if promoted is not None:
                 # Session invokes this only after its history save succeeds;
                 # durable adoption ends the rollback obligation exactly once.
                 release_promoted_attachment_reservation(promoted)
+                document_ids = [
+                    str(item['id'])
+                    for item in promoted.document_paths
+                    if item.get('id')
+                ]
+                if document_ids:
+                    if ownership is None:
+                        raise RuntimeError('Document adoption authority is missing')
+                    adoption_task = asyncio.create_task(
+                        document_assets.mark_documents_adopted(
+                            document_ids,
+                            ownership,
+                        )
+                    )
             if promoted is not None and not ingestion_emitted:
                 output_queue.put_nowait({
                     'type': 'attachments_ingested',
@@ -465,6 +610,8 @@ class SSEManager:
                 agent_id=str(self.agent.id),
             )
             selected_ref = None
+            if selected_id and selected_image_index is not None:
+                raise MediaValidationError('Select exactly one image edit source')
             if selected_id:
                 selected_ref = await media_assets.resolve_ref(
                     str(selected_id), ownership
@@ -479,6 +626,23 @@ class SSEManager:
 
             image_refs = list(promoted.image_refs) if promoted else []
             documents = list(promoted.document_paths) if promoted else []
+            if selected_image_index is not None:
+                if (
+                    isinstance(selected_image_index, bool)
+                    or not isinstance(selected_image_index, int)
+                    or selected_image_index < 0
+                    or selected_image_index >= len(image_refs)
+                ):
+                    raise MediaValidationError('Selected upload image is unavailable')
+                selected_ref = image_refs[selected_image_index]
+            fresh_document_ids = tuple(
+                str(item['id']) for item in documents if item.get('id')
+            )
+            document_capabilities = await load_turn_document_capabilities(
+                ownership,
+                fresh_document_ids=fresh_document_ids,
+                adopted_document_ids=tuple(adopted_document_ids),
+            )
             attachments = None
             if image_refs or documents or selected_ref is not None:
                 attachments = {
@@ -493,7 +657,11 @@ class SSEManager:
             bypass = bool(action.get('bypass_permissions'))
             # Attachment-bearing prompts use Session so their immutable refs
             # are consumed and persisted instead of being orphaned by a task.
-            if is_multi_step_task(user_prompt) and attachments is None:
+            if (
+                is_multi_step_task(user_prompt)
+                and attachments is None
+                and not document_capabilities
+            ):
                 await emit({
                     'type': 'status',
                     'content': 'Planning multi-step task...',
@@ -541,7 +709,15 @@ class SSEManager:
                         output=emit,
                         wsquery={'type': 'generate', 'action': 'chat_message'},
                         attachments=attachments,
-                        tool_context=ToolExecutionContext(user_id=self.user_key),
+                        tool_context=ToolExecutionContext(
+                            session_id=str(session.id),
+                            user_id=self.user_key,
+                            agent_id=str(self.agent.id),
+                            document_capabilities=document_capabilities,
+                            selected_image_artifact_id=(
+                                selected_ref.id if selected_ref is not None else None
+                            ),
+                        ),
                     )
                     if promoted is not None and (
                         promoted.image_refs or promoted.document_paths
@@ -565,6 +741,18 @@ class SSEManager:
             })
         finally:
             cleanup_errors: list[BaseException] = []
+            adoption_error: BaseException | None = None
+            if adoption_task is not None:
+                adoption_error = await _settle_background_task(adoption_task)
+                if adoption_error is not None:
+                    logger.error(
+                        'Document adoption commit failed after Session save',
+                        exc_info=(
+                            type(adoption_error),
+                            adoption_error,
+                            adoption_error.__traceback__,
+                        ),
+                    )
             if promoted is not None and not adopted and ownership is not None:
                 try:
                     await rollback_promoted_attachments(promoted, ownership)
@@ -577,7 +765,7 @@ class SSEManager:
                 except BaseException as exc:
                     cleanup_errors.append(exc)
                     logger.exception('Failed to clean staged chat attachments')
-            if cleanup_errors:
+            if cleanup_errors or adoption_error is not None:
                 terminal = {
                     'type': 'error',
                     'content': _ATTACHMENT_UNAVAILABLE,
@@ -597,6 +785,8 @@ class SSEManager:
             )
             if cleanup_errors:
                 raise AttachmentCleanupError(cleanup_errors)
+            if adoption_error is not None:
+                raise adoption_error
 
     async def sse_endpoint(self, request: Request):
         async def event_generator(superseded: asyncio.Event):
@@ -669,6 +859,7 @@ class SSEManager:
                         session = await Session.load(session_id)
                         session.chat = []
                         await session.save()
+                        await delete_session_artifacts(str(session.id))
                         yield {'event': 'message', 'data': json.dumps({'type': 'chat_history', 'content': session.chat, 'agent_name': self.agent.name, 'action': 'delete'})}
 
                 elif action['type'] == 'sessions':

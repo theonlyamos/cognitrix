@@ -19,8 +19,21 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from cognitrix.artifacts import DocumentArtifact
 from cognitrix.config import settings
-from cognitrix.media.service import media_assets
+from cognitrix.media.documents import (
+    document_file_extension,
+    document_assets,
+    encode_identity,
+    ownership_directory_prefix,
+    sniff_document_mime,
+)
+from cognitrix.media import document_storage
+from cognitrix.media.document_storage import (
+    DocumentStorageDestination as _UploadDestination,
+    DocumentStorageRecord as _DocumentRollbackRecord,
+)
+from cognitrix.media.service import CommittedArtifactCleanupError, media_assets
 from cognitrix.media.types import MediaOwnership, MediaValidationError
 from cognitrix.tools.utils import ArtifactRef
 
@@ -204,22 +217,44 @@ def _path_lexists(path: Path) -> bool:
 
 
 def _remove_staged_batch_capability(staged: 'StagedAttachmentSet') -> None:
-    if staged._root_identity is None or staged._batch_identity is None:
+    if staged._root_identity is None or (
+        staged._batch_identity is None
+        and not staged._batch_identity_unsettled
+    ):
         raise MediaValidationError('Staged cleanup identity is unavailable')
     try:
         with secure_fs.open_root(_staging_root()) as root_capability:
             if root_capability.identity != staged._root_identity:
                 raise secure_fs.CapabilityError()
+            batch_identity = staged._batch_identity
+            if staged._batch_identity_unsettled:
+                try:
+                    batch_capability = root_capability.open_directory(
+                        staged.batch_dir.name,
+                    )
+                except FileNotFoundError:
+                    # A durable parent flush proves that the identityless
+                    # create left no namespace entry to clean up.
+                    root_capability.flush()
+                    return
+                batch_identity = batch_capability.identity
+                staged._batch_identity = batch_identity
+                staged._batch_identity_unsettled = False
+            else:
+                batch_capability = None
+            if batch_identity is None:
+                raise secure_fs.CapabilityError()
             try:
-                batch_capability = root_capability.open_directory(
-                    staged.batch_dir.name,
-                    expected_identity=staged._batch_identity,
-                )
+                if batch_capability is None:
+                    batch_capability = root_capability.open_directory(
+                        staged.batch_dir.name,
+                        expected_identity=batch_identity,
+                    )
             except FileNotFoundError:
                 try:
                     root_capability.delete_directory(
                         staged.batch_dir.name,
-                        expected_identity=staged._batch_identity,
+                        expected_identity=batch_identity,
                     )
                 except FileNotFoundError:
                     pass
@@ -243,7 +278,7 @@ def _remove_staged_batch_capability(staged: 'StagedAttachmentSet') -> None:
                         pass
             root_capability.delete_directory(
                 staged.batch_dir.name,
-                expected_identity=staged._batch_identity,
+                expected_identity=batch_identity,
             )
     except (OSError, secure_fs.CapabilityError, ValueError) as exc:
         raise MediaValidationError('Staged attachment cleanup failed') from exc
@@ -357,7 +392,14 @@ async def _open_capability_joined(func: Callable[..., _T], *args: Any) -> _T:
 def _safe_filename(value: Any) -> str:
     name = str(value or 'file').replace('\\', '/').split('/')[-1]
     name = ''.join(char for char in name if char >= ' ' and char != '\x7f').strip()
-    return name if name not in {'', '.', '..'} else 'file'
+    if name in {'', '.', '..'}:
+        return 'file'
+    if len(name) <= 255:
+        return name
+    suffix = Path(name).suffix
+    if suffix and len(suffix) <= 32:
+        return f'{name[:-len(suffix)][:255 - len(suffix)]}{suffix}'
+    return name[:255]
 
 
 def _declared_mime(value: Any) -> str:
@@ -382,6 +424,9 @@ class StagedAttachmentSet:
     )
     _batch_identity: secure_fs.FileIdentity | None = field(
         default=None, init=False, repr=False
+    )
+    _batch_identity_unsettled: bool = field(
+        default=False, init=False, repr=False
     )
     _entry_identities: dict[str, secure_fs.FileIdentity] = field(
         default_factory=dict, init=False, repr=False
@@ -555,6 +600,16 @@ def _identity_from_unsettled_creation(
     return error.identity
 
 
+def _validate_unknown_creation(
+    error: secure_fs.CreatedChildUnknownIdentityError,
+    *,
+    expected_leaf: str,
+    directory: bool,
+) -> None:
+    if error.leaf != expected_leaf or error.is_directory is not directory:
+        raise secure_fs.CapabilityError() from error
+
+
 def _create_pinned_batch(
     root: Path,
     leaf: str,
@@ -571,6 +626,14 @@ def _create_pinned_batch(
                 expected_leaf=leaf,
                 directory=True,
             )
+            raise
+        except secure_fs.CreatedChildUnknownIdentityError as exc:
+            _validate_unknown_creation(
+                exc,
+                expected_leaf=leaf,
+                directory=True,
+            )
+            created['batch_identity_unsettled'] = True
             raise
         with batch_capability:
             created['batch'] = batch_capability.identity
@@ -638,10 +701,16 @@ async def _create_batch(
         cleanup_error: BaseException | None = None
         root_identity = identities.get('root')
         batch_identity = identities.get('batch')
-        if root_identity is not None and batch_identity is not None:
+        batch_identity_unsettled = (
+            identities.get('batch_identity_unsettled') is True
+        )
+        if root_identity is not None and (
+            batch_identity is not None or batch_identity_unsettled
+        ):
             created = StagedAttachmentSet(batch_dir=batch, entries=[])
             created._root_identity = root_identity
             created._batch_identity = batch_identity
+            created._batch_identity_unsettled = batch_identity_unsettled
             created._manifest_capability = identities.get('manifest')
             created._manifest_identity = identities.get('manifest_identity')
             created._attach_cleanup_reservation(cleanup_reservation)
@@ -1015,13 +1084,6 @@ async def stage_legacy_data_urls(
 
 
 @dataclass(frozen=True)
-class _UploadDestination:
-    path: Path
-    tools_root_identity: secure_fs.FileIdentity
-    uploads_identity: secure_fs.FileIdentity
-
-
-@dataclass(frozen=True)
 class PromotedAttachments:
     image_refs: list[ArtifactRef]
     document_paths: list[dict[str, str]]
@@ -1049,19 +1111,6 @@ def release_promoted_attachment_reservation(
     reservation = promoted._cleanup_reservation
     if reservation is not None:
         reservation.release_rollback()
-
-
-@dataclass(frozen=True)
-class _DocumentRollbackRecord:
-    relative_path: str
-    directory_leaf: str
-    file_leaf: str
-    expected_size: int
-    expected_digest: str
-    tools_root_identity: secure_fs.FileIdentity | None = None
-    uploads_identity: secure_fs.FileIdentity | None = None
-    directory_identity: secure_fs.FileIdentity | None = None
-    file_identity: secure_fs.FileIdentity | None = None
 
 
 @dataclass(frozen=True)
@@ -1107,28 +1156,54 @@ def _record_document_rollback(
     file_leaf: str,
     expected_size: int,
     expected_digest: str,
+    document_id: str | None = None,
     tools_root_identity: secure_fs.FileIdentity | None = None,
     uploads_identity: secure_fs.FileIdentity | None = None,
     directory_identity: secure_fs.FileIdentity | None = None,
     file_identity: secure_fs.FileIdentity | None = None,
 ) -> None:
-    replacement = _DocumentRollbackRecord(
-        relative_path=relative_path,
-        directory_leaf=directory_leaf,
-        file_leaf=file_leaf,
-        expected_size=expected_size,
-        expected_digest=expected_digest,
-        tools_root_identity=tools_root_identity,
-        uploads_identity=uploads_identity,
-        directory_identity=directory_identity,
-        file_identity=file_identity,
-    )
     with promoted._record_lock:
         for index, record in enumerate(promoted._rollback_records):
             if record.relative_path == relative_path:
+                if document_id is None:
+                    document_id = record.document_id
+                replacement = _DocumentRollbackRecord(
+                    relative_path=relative_path,
+                    directory_leaf=directory_leaf,
+                    file_leaf=file_leaf,
+                    expected_size=expected_size,
+                    expected_digest=expected_digest,
+                    document_id=document_id,
+                    tools_root_identity=tools_root_identity,
+                    uploads_identity=uploads_identity,
+                    directory_identity=directory_identity,
+                    file_identity=file_identity,
+                )
                 promoted._rollback_records[index] = replacement
                 return
-        promoted._rollback_records.append(replacement)
+        promoted._rollback_records.append(_DocumentRollbackRecord(
+            relative_path=relative_path,
+            directory_leaf=directory_leaf,
+            file_leaf=file_leaf,
+            expected_size=expected_size,
+            expected_digest=expected_digest,
+            document_id=document_id,
+            tools_root_identity=tools_root_identity,
+            uploads_identity=uploads_identity,
+            directory_identity=directory_identity,
+            file_identity=file_identity,
+        ))
+
+
+def _get_document_rollback(
+    promoted: PromotedAttachments,
+    relative_path: str,
+) -> _DocumentRollbackRecord:
+    with promoted._record_lock:
+        for record in promoted._rollback_records:
+            if record.relative_path == relative_path:
+                return record
+    raise MediaValidationError('Promoted document cleanup identity is missing')
 
 
 def _preflight_staged_entries(staged: StagedAttachmentSet) -> list[_PinnedAttachment]:
@@ -1195,37 +1270,7 @@ def _preflight_staged_entries(staged: StagedAttachmentSet) -> list[_PinnedAttach
 
 
 def _tools_upload_root() -> _UploadDestination:
-    tools_root = _lexical_absolute(settings.tools_root)
-    uploads = _lexical_absolute(tools_root / 'uploads')
-    if uploads.parent != tools_root:
-        raise MediaValidationError('Upload destination is unavailable')
-    tools_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    try:
-        with secure_fs.open_root(tools_root) as tools_capability:
-            tools_root_identity = tools_capability.identity
-            if tools_capability.refresh_identity() != tools_root_identity:
-                raise MediaValidationError('Upload destination changed')
-            try:
-                uploads_capability = tools_capability.open_directory('uploads')
-            except FileNotFoundError:
-                try:
-                    uploads_capability = tools_capability.create_directory('uploads')
-                except FileExistsError:
-                    uploads_capability = tools_capability.open_directory('uploads')
-            with uploads_capability:
-                uploads_identity = uploads_capability.identity
-                if (
-                    uploads_capability.refresh_identity()
-                    != uploads_identity
-                ):
-                    raise MediaValidationError('Upload destination changed')
-    except (OSError, secure_fs.CapabilityError) as exc:
-        raise MediaValidationError('Upload destination is unavailable') from exc
-    return _UploadDestination(
-        path=uploads,
-        tools_root_identity=tools_root_identity,
-        uploads_identity=uploads_identity,
-    )
+    return document_storage.prepare_document_destination()
 
 
 def _before_secure_document_create_hook(
@@ -1246,194 +1291,30 @@ def _create_document_transaction(
     relative_path: str,
     expected_digest: str,
 ) -> None:
-    if len(snapshot) != expected_size or len(snapshot) > MAX_UPLOAD_FILE_BYTES:
-        raise MediaValidationError('Staged attachment changed')
-    try:
-        with secure_fs.open_root(destination.path) as root_capability:
-            if (
-                root_capability.identity != destination.uploads_identity
-                or root_capability.refresh_identity()
-                != destination.uploads_identity
-            ):
-                raise secure_fs.CapabilityError()
-            try:
-                directory_capability = root_capability.create_directory(
-                    directory_leaf
-                )
-            except secure_fs.CreatedChildCleanupError as exc:
-                directory_identity = _identity_from_unsettled_creation(
-                    exc,
-                    expected_leaf=directory_leaf,
-                    directory=True,
-                )
-                _record_document_rollback(
-                    promoted,
-                    relative_path,
-                    directory_leaf=directory_leaf,
-                    file_leaf=file_leaf,
-                    expected_size=expected_size,
-                    expected_digest=expected_digest,
-                    tools_root_identity=destination.tools_root_identity,
-                    uploads_identity=destination.uploads_identity,
-                    directory_identity=directory_identity,
-                )
-                raise
-            with directory_capability:
-                _record_document_rollback(
-                    promoted,
-                    relative_path,
-                    directory_leaf=directory_leaf,
-                    file_leaf=file_leaf,
-                    expected_size=expected_size,
-                    expected_digest=expected_digest,
-                    tools_root_identity=destination.tools_root_identity,
-                    uploads_identity=destination.uploads_identity,
-                    directory_identity=directory_capability.identity,
-                )
-                try:
-                    output = directory_capability.create_file(file_leaf)
-                except secure_fs.CreatedChildCleanupError as exc:
-                    file_identity = _identity_from_unsettled_creation(
-                        exc,
-                        expected_leaf=file_leaf,
-                        directory=False,
-                    )
-                    _record_document_rollback(
-                        promoted,
-                        relative_path,
-                        directory_leaf=directory_leaf,
-                        file_leaf=file_leaf,
-                        expected_size=expected_size,
-                        expected_digest=expected_digest,
-                        tools_root_identity=destination.tools_root_identity,
-                        uploads_identity=destination.uploads_identity,
-                        directory_identity=directory_capability.identity,
-                        file_identity=file_identity,
-                    )
-                    raise
-                with output:
-                    # Record identity before writing so cancellation or a
-                    # partial write remains safely rollback-addressable.
-                    _record_document_rollback(
-                        promoted,
-                        relative_path,
-                        directory_leaf=directory_leaf,
-                        file_leaf=file_leaf,
-                        expected_size=expected_size,
-                        expected_digest=expected_digest,
-                        tools_root_identity=destination.tools_root_identity,
-                        uploads_identity=destination.uploads_identity,
-                        directory_identity=directory_capability.identity,
-                        file_identity=output.identity,
-                    )
-                    output.write_bytes(snapshot, max_bytes=MAX_UPLOAD_FILE_BYTES)
-                    if output.refresh_identity() != output.identity:
-                        raise secure_fs.CapabilityError()
-                if (
-                    directory_capability.refresh_identity()
-                    != directory_capability.identity
-                ):
-                    raise secure_fs.CapabilityError()
-    except (OSError, secure_fs.CapabilityError, ValueError) as exc:
-        raise MediaValidationError('Upload destination is unavailable') from exc
+    record = _get_document_rollback(promoted, relative_path)
 
+    def capture(value: _DocumentRollbackRecord) -> None:
+        _record_document_rollback(
+            promoted,
+            value.relative_path,
+            directory_leaf=value.directory_leaf,
+            file_leaf=value.file_leaf,
+            expected_size=value.expected_size,
+            expected_digest=value.expected_digest,
+            document_id=value.document_id,
+            tools_root_identity=value.tools_root_identity,
+            uploads_identity=value.uploads_identity,
+            directory_identity=value.directory_identity,
+            file_identity=value.file_identity,
+        )
 
-def _resolve_upload_root_for_cleanup(
-    record: _DocumentRollbackRecord,
-) -> Path:
-    """Open the recorded roots without creating or repairing any namespace."""
-    if record.tools_root_identity is None or record.uploads_identity is None:
-        raise MediaValidationError('Promoted document cleanup identity is missing')
-    tools_root = _lexical_absolute(settings.tools_root)
-    uploads = _lexical_absolute(tools_root / 'uploads')
-    if uploads.parent != tools_root:
-        raise MediaValidationError('Promoted document cleanup root changed')
-    try:
-        with secure_fs.open_root(tools_root) as tools_capability:
-            if (
-                tools_capability.identity != record.tools_root_identity
-                or tools_capability.refresh_identity()
-                != record.tools_root_identity
-            ):
-                raise secure_fs.CapabilityError()
-            with tools_capability.open_directory(
-                'uploads',
-                expected_identity=record.uploads_identity,
-            ) as uploads_capability:
-                if (
-                    uploads_capability.refresh_identity()
-                    != record.uploads_identity
-                ):
-                    raise secure_fs.CapabilityError()
-    except (OSError, secure_fs.CapabilityError, ValueError) as exc:
-        raise MediaValidationError(
-            'Promoted document cleanup root changed'
-        ) from exc
-    return uploads
+    document_storage.create_document_sync(
+        snapshot, destination, record, capture
+    )
 
 
 def _delete_secure_document(record: _DocumentRollbackRecord) -> None:
-    expected_path = (
-        Path('uploads') / record.directory_leaf / record.file_leaf
-    ).as_posix()
-    if record.relative_path != expected_path:
-        raise MediaValidationError('Invalid promoted document path')
-    try:
-        uploads = _resolve_upload_root_for_cleanup(record)
-        with secure_fs.open_root(uploads) as root_capability:
-            if (
-                root_capability.identity != record.uploads_identity
-                or root_capability.refresh_identity()
-                != record.uploads_identity
-            ):
-                raise secure_fs.CapabilityError()
-            if record.directory_identity is None:
-                # Creation may fail before the directory identity is journaled.
-                # Absence is a completed rollback; an unexpected directory is
-                # retained because deleting it without identity would be unsafe.
-                try:
-                    unexpected = root_capability.open_directory(
-                        record.directory_leaf
-                    )
-                except FileNotFoundError:
-                    return
-                with unexpected:
-                    pass
-                raise secure_fs.CapabilityError()
-            try:
-                directory_capability = root_capability.open_directory(
-                    record.directory_leaf,
-                    expected_identity=record.directory_identity,
-                )
-            except FileNotFoundError:
-                try:
-                    root_capability.delete_directory(
-                        record.directory_leaf,
-                        expected_identity=record.directory_identity,
-                    )
-                except FileNotFoundError:
-                    pass
-                return
-            with directory_capability:
-                if (
-                    directory_capability.refresh_identity()
-                    != record.directory_identity
-                ):
-                    raise secure_fs.CapabilityError()
-                if record.file_identity is not None:
-                    try:
-                        directory_capability.delete_file(
-                            record.file_leaf,
-                            expected_identity=record.file_identity,
-                        )
-                    except FileNotFoundError:
-                        pass
-            root_capability.delete_directory(
-                record.directory_leaf,
-                expected_identity=record.directory_identity,
-            )
-    except (OSError, secure_fs.CapabilityError, ValueError) as exc:
-        raise MediaValidationError('Promoted document cleanup failed') from exc
+    document_storage.delete_document_sync(record)
 
 
 async def _rollback_promoted_attachments(
@@ -1462,6 +1343,10 @@ async def _rollback_promoted_attachments(
                     'Promoted document cleanup identity is missing'
                 )
             await _run_thread_joined(_delete_secure_document, record)
+            if record.document_id is not None:
+                await document_assets.delete_document_metadata(
+                    record.document_id, ownership
+                )
         except BaseException as exc:
             errors.append(exc)
             logger.exception('Failed to roll back promoted document')
@@ -1690,7 +1575,13 @@ async def _run_attachment_maintenance(
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception('Attachment maintenance sweep failed')
+                logger.exception('Staging maintenance sweep failed')
+            try:
+                await document_assets.reconcile_expired()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception('Document maintenance sweep failed')
             task = asyncio.current_task()
             if task is not None and task.cancelling():
                 raise asyncio.CancelledError
@@ -1866,9 +1757,13 @@ async def promote_staged_attachments(
                 _verify_pinned_source, pinned, staged
             )
             entry = pinned.staged
-            image_ref = await media_assets.ingest_staged_image_if_recognized(
-                entry, ownership, snapshot=pinned.snapshot
-            )
+            try:
+                image_ref = await media_assets.ingest_staged_image_if_recognized(
+                    entry, ownership, snapshot=pinned.snapshot
+                )
+            except CommittedArtifactCleanupError as exc:
+                promoted.image_refs.append(exc.artifact_ref)
+                raise
             if image_ref is None:
                 documents.append(pinned)
             else:
@@ -1883,17 +1778,29 @@ async def promote_staged_attachments(
                     staged,
                 )
                 document = pinned.staged
-                directory_leaf = f'd_{uuid4().hex}'
-                file_leaf = f'f_{uuid4().hex}'
+                directory_leaf = (
+                    f'{ownership_directory_prefix(ownership)}{uuid4().hex}'
+                )
+                document_id = str(uuid4())
                 filename = _safe_filename(document.filename)
+                mime_type = sniff_document_mime(
+                    pinned.snapshot, document.declared_mime
+                )
+                file_leaf = (
+                    f'f_{uuid4().hex}'
+                    f'{document_file_extension(filename, mime_type)}'
+                )
                 relative_value = (
                     Path('uploads') / directory_leaf / file_leaf
                 ).as_posix()
                 # Journal the planned opaque path before cancellation-settled
                 # creation. A missing target is harmless during rollback.
                 promoted.document_paths.append({
+                    'id': document_id,
                     'name': filename,
                     'path': relative_value,
+                    'mime_type': mime_type,
+                    'origin': 'uploaded',
                 })
                 expected_digest = hashlib.sha256(pinned.snapshot).hexdigest()
                 _record_document_rollback(
@@ -1903,8 +1810,33 @@ async def promote_staged_attachments(
                     file_leaf=file_leaf,
                     expected_size=document.size_bytes,
                     expected_digest=expected_digest,
+                    document_id=document_id,
                     tools_root_identity=destination.tools_root_identity,
                     uploads_identity=destination.uploads_identity,
+                )
+                artifact = DocumentArtifact(
+                    id=document_id,
+                    session_id=ownership.session_id or '',
+                    user_id=ownership.user_id,
+                    agent_id=ownership.agent_id,
+                    storage_key=relative_value,
+                    status='intent',
+                    promotion_token=uuid4().hex,
+                    generation=0,
+                    origin='uploaded',
+                    mime_type=mime_type,
+                    filename=filename,
+                    size_bytes=document.size_bytes,
+                    sha256=expected_digest,
+                    tools_root_identity=encode_identity(
+                        destination.tools_root_identity
+                    ),
+                    uploads_identity=encode_identity(
+                        destination.uploads_identity
+                    ),
+                )
+                await document_assets.prepare_document_for_storage(
+                    artifact, ownership
                 )
                 _before_secure_document_create_hook(
                     destination.path, directory_leaf, file_leaf
@@ -1919,6 +1851,21 @@ async def promote_staged_attachments(
                     promoted,
                     relative_value,
                     expected_digest,
+                )
+                rollback_record = _get_document_rollback(
+                    promoted, relative_value
+                )
+                if (
+                    rollback_record.tools_root_identity is None
+                    or rollback_record.uploads_identity is None
+                    or rollback_record.directory_identity is None
+                    or rollback_record.file_identity is None
+                ):
+                    raise MediaValidationError(
+                        'Promoted document storage identity is missing'
+                    )
+                await document_assets.finalize_document_storage(
+                    artifact, rollback_record
                 )
     except BaseException as exc:
         primary_error = exc
@@ -2371,6 +2318,36 @@ def _delete_empty_unmanifested_batch(
     return True
 
 
+def _create_recovery_file(
+    root_capability: secure_fs.DirectoryCapability,
+    recovery_leaf: str,
+) -> secure_fs.FileCapability:
+    try:
+        return root_capability.create_file(recovery_leaf)
+    except secure_fs.CreatedChildCleanupError as exc:
+        identity = _identity_from_unsettled_creation(
+            exc,
+            expected_leaf=recovery_leaf,
+            directory=False,
+        )
+        try:
+            try:
+                root_capability.delete_file(
+                    recovery_leaf,
+                    expected_identity=identity,
+                )
+            except FileNotFoundError:
+                pass
+            root_capability.flush()
+        except BaseException as cleanup_error:
+            raise secure_fs.CreatedChildCleanupError(
+                leaf=recovery_leaf,
+                identity=identity,
+                is_directory=False,
+            ) from cleanup_error
+        raise
+
+
 def _create_recovery_journal(
     root_capability: secure_fs.DirectoryCapability,
     leaf: str,
@@ -2380,7 +2357,7 @@ def _create_recovery_journal(
     recovery_leaf = _recovery_leaf(leaf)
     payload = _recovery_journal_bytes(leaf, inspection, deletions)
     try:
-        journal = root_capability.create_file(recovery_leaf)
+        journal = _create_recovery_file(root_capability, recovery_leaf)
     except FileExistsError:
         with root_capability.open_file(recovery_leaf) as existing:
             existing_identity = existing.identity
@@ -2402,13 +2379,87 @@ def _create_recovery_journal(
             expected_identity=existing_identity,
         )
         root_capability.flush()
-        journal = root_capability.create_file(recovery_leaf)
+        journal = _create_recovery_file(root_capability, recovery_leaf)
     with journal:
         journal.write_bytes(payload, max_bytes=STAGING_RECOVERY_MAX_BYTES)
         journal.flush()
         if journal.refresh_identity() != journal.identity:
             raise secure_fs.CapabilityError()
         return recovery_leaf, journal.identity
+
+
+def _recovery_deletions_for_inspection(
+    root_capability: secure_fs.DirectoryCapability,
+    leaf: str,
+    inspection: _SweepInspection,
+) -> list[tuple[str, secure_fs.FileIdentity]]:
+    """Reproduce exact child identities after revalidating a live manifest."""
+
+    if (
+        inspection.manifest is None
+        or inspection.manifest_identity is None
+        or inspection.manifest_bytes is None
+    ):
+        raise ValueError('Expected a manifested batch')
+    if (
+        root_capability.identity != inspection.root_identity
+        or root_capability.refresh_identity() != inspection.root_identity
+    ):
+        raise secure_fs.CapabilityError()
+    with root_capability.open_directory(
+        leaf,
+        expected_identity=inspection.batch_identity,
+    ) as batch_capability:
+        if batch_capability.refresh_identity() != inspection.batch_identity:
+            raise secure_fs.CapabilityError()
+        with batch_capability.open_file(
+            STAGING_MANIFEST_LEAF,
+            expected_identity=inspection.manifest_identity,
+        ) as manifest_capability:
+            manifest_bytes = manifest_capability.read_bytes(
+                max_bytes=STAGING_MANIFEST_MAX_BYTES
+            )
+            if (
+                manifest_bytes != inspection.manifest_bytes
+                or manifest_capability.refresh_identity()
+                != inspection.manifest_identity
+            ):
+                raise secure_fs.CapabilityError()
+            manifest = _parse_staging_manifest(manifest_bytes)
+        if manifest != inspection.manifest:
+            raise secure_fs.CapabilityError()
+
+        deletions: list[tuple[str, secure_fs.FileIdentity]] = []
+        for child_leaf, record in manifest.entries.items():
+            try:
+                if record.identity is None:
+                    child = batch_capability.open_file(child_leaf)
+                else:
+                    child = batch_capability.open_file(
+                        child_leaf,
+                        expected_identity=record.identity,
+                    )
+            except FileNotFoundError:
+                if record.identity is not None:
+                    deletions.append((child_leaf, record.identity))
+                continue
+            with child:
+                identity = child.identity
+                if record.identity is not None:
+                    content = child.read_bytes(
+                        max_bytes=MAX_UPLOAD_FILE_BYTES
+                    )
+                    if (
+                        len(content) != record.size
+                        or hashlib.sha256(content).hexdigest()
+                        != record.digest
+                        or child.refresh_identity() != record.identity
+                    ):
+                        raise MediaValidationError(
+                            'Staged attachment changed before sweep'
+                        )
+            deletions.append((child_leaf, identity))
+    return deletions
 
 
 def _delete_inspected_manifest_batch(
@@ -2423,6 +2474,8 @@ def _delete_inspected_manifest_batch(
         or inspection.manifest_bytes is None
     ):
         raise ValueError('Expected a manifested batch')
+    if timestamp < inspection.manifest.expires_at:
+        return False
     recovery: tuple[str, secure_fs.FileIdentity] | None = None
     with secure_fs.open_root(root) as root_capability:
         if (
@@ -2430,63 +2483,20 @@ def _delete_inspected_manifest_batch(
             or root_capability.refresh_identity() != inspection.root_identity
         ):
             raise secure_fs.CapabilityError()
+        # Verify every known child before the first destructive mutation.
+        # Do this before pinning the deletion handle because Windows directory
+        # handles intentionally do not share DELETE access with a second open.
+        deletions = _recovery_deletions_for_inspection(
+            root_capability,
+            leaf,
+            inspection,
+        )
         with root_capability.open_directory(
             leaf,
             expected_identity=inspection.batch_identity,
         ) as batch_capability:
             if batch_capability.refresh_identity() != inspection.batch_identity:
                 raise secure_fs.CapabilityError()
-            with batch_capability.open_file(
-                STAGING_MANIFEST_LEAF,
-                expected_identity=inspection.manifest_identity,
-            ) as manifest_capability:
-                manifest_bytes = manifest_capability.read_bytes(
-                    max_bytes=STAGING_MANIFEST_MAX_BYTES
-                )
-                if (
-                    manifest_bytes != inspection.manifest_bytes
-                    or manifest_capability.refresh_identity()
-                    != inspection.manifest_identity
-                ):
-                    raise secure_fs.CapabilityError()
-                manifest = _parse_staging_manifest(manifest_bytes)
-            if manifest != inspection.manifest:
-                raise secure_fs.CapabilityError()
-            if timestamp < manifest.expires_at:
-                return False
-
-            # Verify every known child before the first destructive mutation.
-            deletions: list[tuple[str, secure_fs.FileIdentity]] = []
-            for child_leaf, record in manifest.entries.items():
-                try:
-                    if record.identity is None:
-                        child = batch_capability.open_file(child_leaf)
-                    else:
-                        child = batch_capability.open_file(
-                            child_leaf,
-                            expected_identity=record.identity,
-                        )
-                except FileNotFoundError:
-                    if record.identity is not None:
-                        deletions.append((child_leaf, record.identity))
-                    continue
-                with child:
-                    identity = child.identity
-                    if record.identity is not None:
-                        content = child.read_bytes(
-                            max_bytes=MAX_UPLOAD_FILE_BYTES
-                        )
-                        if (
-                            len(content) != record.size
-                            or hashlib.sha256(content).hexdigest()
-                            != record.digest
-                            or child.refresh_identity() != record.identity
-                        ):
-                            raise MediaValidationError(
-                                'Staged attachment changed before sweep'
-                            )
-                deletions.append((child_leaf, identity))
-
             # Preserve the authoritative identities outside the directory that
             # is about to be mutated. If an unknown extra prevents final removal,
             # operators still have a durable recovery journal.
@@ -2723,13 +2733,10 @@ def _prove_recovery_batch_absent(
     return False
 
 
-def _read_valid_recovery_journal(
+def _read_recovery_journal_bytes(
     root_capability: secure_fs.DirectoryCapability,
     leaf: str,
-) -> tuple[
-    secure_fs.FileIdentity,
-    _ParsedRecoveryJournal,
-]:
+) -> tuple[secure_fs.FileIdentity, bytes]:
     with root_capability.open_file(leaf) as journal_capability:
         journal_identity = journal_capability.identity
         journal_bytes = journal_capability.read_bytes(
@@ -2737,7 +2744,129 @@ def _read_valid_recovery_journal(
         )
         if journal_capability.refresh_identity() != journal_identity:
             raise secure_fs.CapabilityError()
+    return journal_identity, journal_bytes
+
+
+def _read_valid_recovery_journal(
+    root_capability: secure_fs.DirectoryCapability,
+    leaf: str,
+) -> tuple[
+    secure_fs.FileIdentity,
+    _ParsedRecoveryJournal,
+]:
+    journal_identity, journal_bytes = _read_recovery_journal_bytes(
+        root_capability,
+        leaf,
+    )
     return journal_identity, _parse_recovery_journal(journal_bytes)
+
+
+def _matching_live_recovery_batch(
+    root: Path,
+    quarantine_leaf: str,
+    journal_identity: secure_fs.FileIdentity,
+) -> tuple[str, str] | None:
+    """Map a deterministic recovery quarantine to one visible batch name."""
+
+    matches: list[tuple[str, str]] = []
+    try:
+        candidates = list(root.iterdir())
+    except FileNotFoundError:
+        return None
+    for candidate in candidates:
+        batch_leaf = candidate.name
+        if (
+            not _OPAQUE_LEAF.fullmatch(batch_leaf)
+            or batch_leaf == STAGING_MANIFEST_LEAF
+            or batch_leaf.startswith(STAGING_RECOVERY_PREFIX)
+            or secure_fs._is_posix_quarantine_leaf(batch_leaf)
+        ):
+            continue
+        recovery_leaf = _recovery_leaf(batch_leaf)
+        if secure_fs._posix_quarantine_leaf(
+            recovery_leaf,
+            journal_identity,
+            directory=False,
+        ) == quarantine_leaf:
+            matches.append((batch_leaf, recovery_leaf))
+    if len(matches) > 1:
+        raise secure_fs.CapabilityError()
+    return matches[0] if matches else None
+
+
+def _remove_torn_quarantined_recovery_journal(
+    root: Path,
+    root_capability: secure_fs.DirectoryCapability,
+    quarantine_leaf: str,
+    journal_identity: secure_fs.FileIdentity,
+    journal_bytes: bytes,
+) -> bool:
+    """Remove only an exact strict prefix reconstructed from a live batch."""
+
+    match = _matching_live_recovery_batch(
+        root,
+        quarantine_leaf,
+        journal_identity,
+    )
+    if match is None:
+        return False
+    batch_leaf, recovery_leaf = match
+    inspection = _inspect_manifest_batch(root, batch_leaf)
+    if (
+        inspection is None
+        or inspection.manifest is None
+        or inspection.root_identity != root_capability.identity
+    ):
+        raise secure_fs.CapabilityError()
+
+    deletions = _recovery_deletions_for_inspection(
+        root_capability,
+        batch_leaf,
+        inspection,
+    )
+    expected = _recovery_journal_bytes(
+        batch_leaf,
+        inspection,
+        deletions,
+    )
+    if journal_bytes == expected:
+        # A complete journal belongs to the normal recovery parser below.
+        return False
+    if not expected.startswith(journal_bytes):
+        raise secure_fs.CapabilityError()
+
+    # Re-pin the exact proved batch while removing the strict-prefix journal.
+    # Windows does not permit the duplicate DELETE-capable directory open that
+    # would result if the verification helper retained its handle here.
+    with root_capability.open_directory(
+        batch_leaf,
+        expected_identity=inspection.batch_identity,
+    ) as batch_capability:
+        if batch_capability.refresh_identity() != inspection.batch_identity:
+            raise secure_fs.CapabilityError()
+        root_capability.delete_file(
+            recovery_leaf,
+            expected_identity=journal_identity,
+        )
+        root_capability.flush()
+    return True
+
+
+def _remove_unwritten_quarantined_recovery_journal(
+    root: Path,
+    root_capability: secure_fs.DirectoryCapability,
+    quarantine_leaf: str,
+    journal_identity: secure_fs.FileIdentity,
+) -> bool:
+    """Compatibility wrapper for an empty strict-prefix journal."""
+
+    return _remove_torn_quarantined_recovery_journal(
+        root,
+        root_capability,
+        quarantine_leaf,
+        journal_identity,
+        b'',
+    )
 
 
 def _remove_redundant_recovery_journal(
@@ -2788,12 +2917,21 @@ def _remove_quarantined_recovery_journal(
         if root_capability.refresh_identity() != root_identity:
             raise secure_fs.CapabilityError()
         try:
-            journal_identity, recovery = _read_valid_recovery_journal(
+            journal_identity, journal_bytes = _read_recovery_journal_bytes(
                 root_capability,
                 quarantine_leaf,
             )
         except FileNotFoundError:
             return False
+        if _remove_torn_quarantined_recovery_journal(
+            root,
+            root_capability,
+            quarantine_leaf,
+            journal_identity,
+            journal_bytes,
+        ):
+            return True
+        recovery = _parse_recovery_journal(journal_bytes)
         recovery_leaf = _recovery_leaf(recovery.batch_leaf)
         expected_quarantine = secure_fs._posix_quarantine_leaf(
             recovery_leaf,

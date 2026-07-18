@@ -2,6 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from cognitrix.common.security import AuthContext, crud_scope, get_auth_context, require
+from cognitrix.session_ownership import (
+    OwnershipConflict,
+    OwnershipNotFound,
+    owned_session_ids,
+    principal_key,
+    require_active_owned,
+)
 from cognitrix.sessions.base import Session
 from cognitrix.teams.base import Team
 
@@ -99,9 +106,33 @@ async def delete_team(team_id: str):
     return {"message": "Team deleted successfully"}
 
 @teams_api.get("/{team_id}/sessions")
-async def sessions(team_id: str):
-    sessions = await Session.find({'team_id': team_id})
-    return [session.json() for session in sessions]
+async def sessions(
+    team_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    if not ctx.team_allowed(team_id):
+        raise HTTPException(
+            status_code=403,
+            detail='API key not allowed for this team',
+        )
+
+    user_id = principal_key(ctx.user)
+    rows = []
+    for session_id in await owned_session_ids(user_id):
+        try:
+            binding = await require_active_owned(session_id, user_id)
+        except (OwnershipNotFound, OwnershipConflict):
+            continue
+        if not ctx.agent_allowed(binding.agent_id):
+            continue
+        session = await Session.get(session_id)
+        if (
+            session is not None
+            and str(session.agent_id or '') == binding.agent_id
+            and str(session.team_id or '') == team_id
+        ):
+            rows.append(session.json())
+    return rows
 
 
 @teams_api.get("/{team_id}/tasks")

@@ -144,6 +144,59 @@ async def test_generate_image_resolves_uploaded_and_generated_sources_identicall
 
 
 @pytest.mark.asyncio
+async def test_selected_turn_image_is_immutable_default_edit_source(monkeypatch):
+    from cognitrix.tools import image as image_module
+
+    source = _resolved_source('uploaded')
+    service = FakeMediaAssets(resolved={'source-1': source})
+    provider = FakeProvider([ProviderImage(b'edited image')])
+    monkeypatch.setattr(image_module, 'media_assets', service)
+    monkeypatch.setattr(image_module, 'image_provider', provider)
+    token = set_execution_context(ToolExecutionContext(
+        user_id='user-1',
+        selected_image_artifact_id='source-1',
+    ))
+    try:
+        result = await image_module.generate_image.run('Make it blue')
+    finally:
+        reset_execution_context(token)
+
+    assert service.resolve_calls == [(
+        'source-1',
+        MediaOwnership('session-1', 'user-1', 'agent-1'),
+        'original',
+    )]
+    assert provider.calls[0]['source'].data == b'exact sanitized master bytes'
+    assert service.store_calls[0]['metadata']['source_artifact_id'] == 'source-1'
+    assert result.outcome.status == 'success'
+
+
+@pytest.mark.asyncio
+async def test_selected_turn_image_rejects_mismatched_model_source(monkeypatch):
+    from cognitrix.tools import image as image_module
+
+    service = FakeMediaAssets(resolved={'source-1': _resolved_source('uploaded')})
+    provider = FakeProvider([ProviderImage(b'unused')])
+    monkeypatch.setattr(image_module, 'media_assets', service)
+    monkeypatch.setattr(image_module, 'image_provider', provider)
+    token = set_execution_context(ToolExecutionContext(
+        user_id='user-1',
+        selected_image_artifact_id='source-1',
+    ))
+    try:
+        result = await image_module.generate_image.run(
+            'Make it blue', source_artifact_id='other-image'
+        )
+    finally:
+        reset_execution_context(token)
+
+    assert result.outcome.status == 'denied'
+    assert result.outcome.error.code == 'invalid_edit_source'
+    assert service.resolve_calls == []
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
 async def test_generate_image_stores_provider_bytes_without_resolving_a_source(
     monkeypatch,
 ):

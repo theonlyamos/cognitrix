@@ -309,8 +309,9 @@ async def _ensure_schema():
 
     log = _logging.getLogger('cognitrix.log')
 
-    from cognitrix.artifacts import Artifact
+    from cognitrix.artifacts import Artifact, DocumentArtifact
     from cognitrix.models.api_key import APIKey
+    from cognitrix.session_ownership import SessionOwnership
     from cognitrix.tasks.events import TaskRunEvent
     from cognitrix.tasks.run import TaskRun
 
@@ -323,6 +324,19 @@ async def _ensure_schema():
                     await result
         except Exception:
             log.exception("Could not create %s table", model.__name__)
+
+    # These tables are authorization and cleanup journals. Starting without
+    # either would turn fail-closed ownership/recovery into silent data loss.
+    for model in (SessionOwnership, DocumentArtifact):
+        create = (
+            getattr(model, '_create_table_async', None)
+            or getattr(model, 'create_table', None)
+        )
+        if create is None:
+            raise RuntimeError(f'{model.__name__} schema hook is unavailable')
+        result = create()
+        if hasattr(result, '__await__'):
+            await result
 
     if getattr(DBMS.Database, 'dbms', '') != 'sqlite':
         return

@@ -210,11 +210,84 @@ async def test_delete_session_artifacts_removes_all_uploaded_and_generated_varia
     monkeypatch.setattr(artifacts, '_root', lambda: tmp_path)
     monkeypatch.setattr(artifacts.Artifact, 'find', lambda query: _async(rows))
     monkeypatch.setattr(artifacts.Artifact, 'delete_many', delete_many)
-
     await artifacts.delete_session_artifacts(session_id)
 
     assert not any(path.exists() for path in stored_paths)
     assert deleted == [{'session_id': session_id}]
+
+
+@pytest.mark.asyncio
+async def test_owned_cleanup_requires_exact_rotated_lifecycle_authority(monkeypatch):
+    from cognitrix import artifacts
+    from cognitrix.media.documents import document_assets
+    from cognitrix.media.service import media_assets
+    from cognitrix.media.types import MediaOwnership
+    from cognitrix.session_ownership import OwnershipState, session_ownerships
+
+    calls = []
+
+    async def require_owned(session_id, user_id, agent_id):
+        calls.append(('authorize', session_id, user_id, agent_id))
+        return type('Binding', (), {
+            'generation': 4,
+            'state': OwnershipState.CLEARING,
+        })()
+
+    async def delete_media(session_id, ownership):
+        calls.append(('images', session_id, ownership))
+
+    async def delete_documents(ownership):
+        calls.append(('documents', ownership))
+
+    monkeypatch.setattr(session_ownerships, 'require_owned', require_owned)
+    monkeypatch.setattr(media_assets, 'delete_session_media', delete_media)
+    monkeypatch.setattr(document_assets, 'delete_session_documents', delete_documents)
+    ownership = MediaOwnership('session', 'user', 'agent')
+
+    await artifacts.delete_owned_session_artifacts(
+        session_id='session',
+        user_id='user',
+        agent_id='agent',
+        generation=4,
+    )
+
+    assert calls == [
+        ('authorize', 'session', 'user', 'agent'),
+        ('images', 'session', ownership),
+        ('documents', ownership),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_owned_cleanup_rejects_stale_generation_before_mutation(monkeypatch):
+    from cognitrix import artifacts
+    from cognitrix.media.service import media_assets
+    from cognitrix.session_ownership import (
+        OwnershipConflict,
+        OwnershipState,
+        session_ownerships,
+    )
+
+    async def require_owned(*_args):
+        return type('Binding', (), {
+            'generation': 5,
+            'state': OwnershipState.DELETING,
+        })()
+
+    monkeypatch.setattr(session_ownerships, 'require_owned', require_owned)
+    monkeypatch.setattr(
+        media_assets,
+        'delete_session_media',
+        lambda *_args: pytest.fail('stale cleanup must not mutate artifacts'),
+    )
+
+    with pytest.raises(OwnershipConflict, match='stale'):
+        await artifacts.delete_owned_session_artifacts(
+            session_id='session',
+            user_id='user',
+            agent_id='agent',
+            generation=4,
+        )
 
 
 @pytest.mark.asyncio
@@ -254,3 +327,92 @@ async def test_artifact_route_hides_other_users_artifacts(monkeypatch):
     with pytest.raises(HTTPException) as caught:
         await get_artifact('x', AuthContext(user=SimpleNamespace(id='other')))
     assert caught.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_artifact_route_resolves_requested_thumbnail_with_exact_ownership(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    from cognitrix.api.routes import artifacts as route
+    from cognitrix.artifacts import Artifact
+    from cognitrix.common.security import AuthContext
+    from cognitrix.media.types import MediaOwnership, ResolvedMediaFile
+    from cognitrix.tools.utils import ArtifactRef
+
+    artifact = Artifact(
+        id='x',
+        session_id='session-1',
+        user_id='owner',
+        agent_id='agent-1',
+        storage_key='safe/master.png',
+    )
+    thumbnail = tmp_path / 'thumb.webp'
+    thumbnail.write_bytes(b'thumbnail')
+    calls = []
+
+    async def resolve(artifact_id, ownership, variant):
+        calls.append((artifact_id, ownership, variant))
+        return ResolvedMediaFile(
+            ref=ArtifactRef(id='x', mime_type='image/png'),
+            variant='thumbnail',
+            mime_type='image/webp',
+            filename='preview.webp',
+            path=thumbnail,
+        )
+
+    monkeypatch.setattr(Artifact, 'get', lambda _artifact_id: _async(artifact))
+    monkeypatch.setattr(route.media_assets, 'resolve_variant_file', resolve)
+
+    response = await route.get_artifact(
+        'x',
+        variant='thumbnail',
+        ctx=AuthContext(user=SimpleNamespace(id='owner')),
+    )
+
+    assert calls == [(
+        'x',
+        MediaOwnership('session-1', 'owner', 'agent-1'),
+        'thumbnail',
+    )]
+    assert response.path == thumbnail
+    assert response.media_type == 'image/webp'
+    assert response.filename == 'preview.webp'
+
+
+@pytest.mark.asyncio
+async def test_artifact_route_hides_missing_variant_without_path_exposure(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+
+    from cognitrix.api.routes import artifacts as route
+    from cognitrix.artifacts import Artifact
+    from cognitrix.common.security import AuthContext
+    from cognitrix.media.types import MediaNotFoundError
+
+    artifact = Artifact(
+        id='x',
+        session_id='session-1',
+        user_id='owner',
+        agent_id='agent-1',
+        storage_key='private/master.png',
+    )
+    monkeypatch.setattr(Artifact, 'get', lambda _artifact_id: _async(artifact))
+
+    async def missing(*_args):
+        raise MediaNotFoundError('private/master.png is missing')
+
+    monkeypatch.setattr(route.media_assets, 'resolve_variant_file', missing)
+
+    with pytest.raises(HTTPException) as caught:
+        await route.get_artifact(
+            'x',
+            variant='vision',
+            ctx=AuthContext(user=SimpleNamespace(id='owner')),
+        )
+
+    assert caught.value.status_code == 404
+    assert caught.value.detail == 'Artifact not found'

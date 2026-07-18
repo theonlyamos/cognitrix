@@ -896,6 +896,93 @@ def test_posix_failed_post_mkdir_cleanup_reports_created_directory_identity() ->
     assert api.names == {'batch_123': created}
 
 
+def test_posix_unknown_identity_after_mkdir_is_handed_off_without_delete() -> None:
+    secure_fs = _secure_fs()
+    created = secure_fs.FileIdentity(1, b'c' * 16, True)
+
+    class Api:
+        def __init__(self) -> None:
+            self.names: dict[str, object] = {}
+            self.deleted: list[str] = []
+
+        def mkdir_child(self, _parent, leaf):
+            self.names[leaf] = created
+
+        def name_identity(self, _parent, _leaf, *, directory):
+            assert directory is True
+            raise OSError('simulated post-mkdir identity failure')
+
+        def open_child(self, _parent, _leaf, **_kwargs):
+            raise OSError('simulated secure identity probe failure')
+
+        def delete_name(self, _parent, leaf, *, directory):
+            raise AssertionError(
+                f'identityless delete must not run for {leaf!r}/{directory!r}'
+            )
+
+    api = Api()
+    backend = secure_fs._PosixBackend(api)
+
+    with pytest.raises(secure_fs.CreatedChildUnknownIdentityError) as exc:
+        backend.open_child(
+            1,
+            'batch_123',
+            directory=True,
+            create=True,
+            writable=True,
+        )
+
+    assert exc.value.leaf == 'batch_123'
+    assert exc.value.is_directory is True
+    assert api.deleted == []
+    assert api.names == {'batch_123': created}
+
+
+def test_posix_unremovable_directory_after_identity_failure_hands_off_identity() -> None:
+    secure_fs = _secure_fs()
+    created = secure_fs.FileIdentity(1, b'c' * 16, True)
+
+    class Api:
+        def mkdir_child(self, _parent, _leaf):
+            pass
+
+        def name_identity(self, _parent, _leaf, *, directory):
+            assert directory is True
+            raise OSError('simulated post-mkdir identity failure')
+
+        def delete_name(self, _parent, _leaf, *, directory):
+            assert directory is True
+            raise OSError('simulated exact cleanup failure')
+
+        def open_child(self, _parent, _leaf, **kwargs):
+            assert kwargs['directory'] is True
+            assert kwargs['create'] is False
+            return 601
+
+        def query_identity(self, handle, *, directory):
+            assert handle == 601
+            assert directory is True
+            return created
+
+        def close(self, handle):
+            assert handle == 601
+
+    backend = secure_fs._PosixBackend(Api())
+
+    with pytest.raises(secure_fs.CreatedChildCleanupError) as exc:
+        backend.open_child(
+            1,
+            'batch_123',
+            directory=True,
+            create=True,
+            writable=True,
+        )
+
+    assert exc.value.leaf == 'batch_123'
+    assert exc.value.identity == created
+    assert exc.value.is_directory is True
+
+
 def test_directory_flush_delegates_and_revalidates_identity() -> None:
     secure_fs = _secure_fs()
     identity = secure_fs.FileIdentity(1, b'd' * 16, True)

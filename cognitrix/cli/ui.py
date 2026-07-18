@@ -6,6 +6,23 @@ import logging
 logger = logging.getLogger('cognitrix.log')
 
 
+async def dispatch_verified_websocket(manager, websocket, token, verify_token):
+    """Resolve one JWT user and pass only its stable principal to the manager."""
+    if token:
+        user = await verify_token(token)
+        if user is not None:
+            from cognitrix.session_ownership import principal_key
+
+            try:
+                user_key = principal_key(user)
+            except ValueError:
+                user_key = None
+            if user_key is not None:
+                await manager.websocket_endpoint(websocket, user_key)
+                return
+    await websocket.close(code=4003, reason='Unauthorized')
+
+
 async def start_web_ui(agent):
     """Initialize and start the web UI."""
     import uvicorn
@@ -74,12 +91,12 @@ async def start_web_ui(agent):
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: 'WebSocket', token: str = Query(None)):
-        if token:
-            user = await verify_token(token)
-            if user:
-                await ws_manager.websocket_endpoint(websocket)  # type: ignore
-                return
-        await websocket.close(code=4003, reason="Unauthorized")
+        await dispatch_verified_websocket(
+            ws_manager,
+            websocket,
+            token,
+            verify_token,
+        )
 
     # Start the web server
     config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
@@ -90,8 +107,13 @@ async def start_web_ui(agent):
 async def prompt_agent(assistant, prompt):
     """Send a prompt to the agent and get response."""
     from cognitrix.sessions.base import Session
+    from cognitrix.tools.utils import trusted_local_execution_context
     session = await Session.get_by_agent_id(assistant.id)
     if not session:
         session = Session(agent_id=assistant.id)
-    await session(prompt, assistant)
+    await session(
+        prompt,
+        assistant,
+        tool_context=trusted_local_execution_context(),
+    )
     return session

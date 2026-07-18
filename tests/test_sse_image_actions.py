@@ -12,7 +12,9 @@ import pytest
 from PIL import Image
 
 import cognitrix.media.staging as staging
+import cognitrix.media.documents as document_service
 import cognitrix.media.service as media_service
+from cognitrix.artifacts import DocumentArtifact
 from cognitrix.media import (
     MediaAccessError,
     MediaAssetService,
@@ -20,8 +22,80 @@ from cognitrix.media import (
     MediaValidationError,
     StagedAttachment,
 )
-from cognitrix.tools.utils import ArtifactRef
+from cognitrix.tools.utils import ArtifactRef, DocumentCapability
 from cognitrix.utils import sse
+
+
+@pytest.fixture(autouse=True)
+def document_store(monkeypatch):
+    """Give promotion tests the document table their real app startup creates."""
+    rows = {}
+
+    async def save(row):
+        rows[str(row.id)] = row
+        return row
+
+    async def get(document_id):
+        return rows.get(str(document_id))
+
+    async def find(query):
+        return [
+            row for row in rows.values()
+            if all(getattr(row, key) == value for key, value in query.items())
+        ]
+
+    async def delete_many(query):
+        doomed = [
+            document_id for document_id, row in rows.items()
+            if all(getattr(row, key) == value for key, value in query.items())
+        ]
+        for document_id in doomed:
+            rows.pop(document_id)
+        return len(doomed)
+
+    async def update_one(query, values):
+        for row in rows.values():
+            if all(getattr(row, key) == value for key, value in query.items()):
+                for key, value in values.items():
+                    setattr(row, key, value)
+                return 1
+        return 0
+
+    async def all_rows():
+        return list(rows.values())
+
+    class Authority:
+        async def require_active_owned(self, *_args):
+            return type('Binding', (), {'generation': 0})()
+
+        async def require_owned(self, *_args):
+            return type('Binding', (), {'generation': 0})()
+
+        async def reserve_intent(self, *_args, **_kwargs):
+            return None
+
+        async def adopt_reservation(self, *_args, **_kwargs):
+            return None
+
+        async def commit_reservation(self, *_args, **_kwargs):
+            return None
+
+        async def release_reservation(self, *_args, **_kwargs):
+            return None
+
+        async def release_document(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(DocumentArtifact, 'save', save)
+    monkeypatch.setattr(DocumentArtifact, 'get', get)
+    monkeypatch.setattr(DocumentArtifact, 'find', find)
+    monkeypatch.setattr(DocumentArtifact, 'delete_many', delete_many)
+    monkeypatch.setattr(DocumentArtifact, 'update_one', update_one)
+    monkeypatch.setattr(DocumentArtifact, 'all', all_rows)
+    monkeypatch.setattr(
+        document_service, '_session_authority', lambda: Authority()
+    )
+    return rows
 
 
 class Request:
@@ -85,6 +159,60 @@ async def _next_json(events):
 
 
 @pytest.mark.asyncio
+async def test_sse_resolve_authorizes_binding_before_loading_session(monkeypatch):
+    from cognitrix.session_ownership import OwnershipNotFound
+
+    manager = sse.SSEManager(_agent())
+    manager.user_key = 'user-1'
+    calls = []
+
+    async def deny(*args):
+        calls.append(('authorize', args))
+        raise OwnershipNotFound()
+
+    async def forbidden_get(_session_id):
+        pytest.fail('foreign or unbound session must not be loaded')
+
+    monkeypatch.setattr(sse.session_ownerships, 'require_active_owned', deny)
+    monkeypatch.setattr(sse.Session, 'get', forbidden_get)
+
+    with pytest.raises(OwnershipNotFound):
+        await manager._resolve_session('foreign-session')
+
+    assert calls == [(
+        'authorize',
+        ('foreign-session', 'user-1', 'agent-1'),
+    )]
+
+
+@pytest.mark.asyncio
+async def test_sse_new_session_is_claimed_before_it_is_returned(monkeypatch):
+    manager = sse.SSEManager(_agent())
+    manager.user_key = 'user-1'
+    claimed = []
+
+    class FreshSession:
+        id = None
+
+        def __init__(self, *, agent_id):
+            self.agent_id = agent_id
+
+        async def save(self):
+            self.id = 'fresh-session'
+
+    async def claim_new(session_id, user_id, agent_id):
+        claimed.append((session_id, user_id, agent_id))
+
+    monkeypatch.setattr(sse, 'Session', FreshSession)
+    monkeypatch.setattr(sse.session_ownerships, 'claim_new', claim_new)
+
+    session = await manager._resolve_session(None)
+
+    assert session.id == 'fresh-session'
+    assert claimed == [('fresh-session', 'user-1', 'agent-1')]
+
+
+@pytest.mark.asyncio
 async def test_resolves_session_and_selected_source_before_promoting_then_emits_safe_refs(
     monkeypatch,
 ):
@@ -93,17 +221,34 @@ async def test_resolves_session_and_selected_source_before_promoting_then_emits_
     staged = FakeStaged()
     image_ref = _ref()
     selected_ref = _ref('source-1')
+    adoptions = []
+    loaded_grants = []
+    grant = DocumentCapability(
+        document_id='doc-1',
+        storage_key='uploads/d_exact/f_exact.txt',
+        mime_type='text/plain',
+        filename='notes.txt',
+        size_bytes=5,
+        sha256='a' * 64,
+        tools_root_identity='v1:1:d:01',
+        uploads_identity='v1:1:d:02',
+        directory_identity='v1:1:d:03',
+        file_identity='v1:1:f:04',
+    )
 
     class Session:
         id = 'session-1'
         agent_id = 'agent-1'
 
-        async def __call__(self, prompt, _agent, *, attachments, output, **_kwargs):
+        async def __call__(
+            self, prompt, _agent, *, attachments, output, tool_context, **_kwargs
+        ):
             calls.append('session')
             captured['attachments'] = {
                 key: value for key, value in attachments.items()
                 if not key.startswith('_')
             }
+            captured['tool_context'] = tool_context
             attachments['_on_adopted']()
             await output({'type': 'generate', 'content': 'ok'})
 
@@ -123,12 +268,29 @@ async def test_resolves_session_and_selected_source_before_promoting_then_emits_
         calls.append(('promote', value, ownership))
         return staging.PromotedAttachments(
             image_refs=[image_ref],
-            document_paths=[{'name': 'notes.txt', 'path': 'uploads/doc/notes.txt'}],
+            document_paths=[{
+                'id': 'doc-1',
+                'name': 'notes.txt',
+                'path': 'uploads/doc/notes.txt',
+            }],
         )
+
+    async def mark_documents_adopted(document_ids, ownership):
+        adoptions.append((document_ids, ownership))
+
+    async def load_grants(ownership, **kwargs):
+        loaded_grants.append((ownership, kwargs))
+        return (grant,)
 
     manager._resolve_session = resolve_session
     monkeypatch.setattr(sse.media_assets, 'resolve_ref', resolve_ref)
     monkeypatch.setattr(sse, 'promote_staged_attachments', promote)
+    monkeypatch.setattr(
+        sse.document_assets,
+        'mark_documents_adopted',
+        mark_documents_adopted,
+    )
+    monkeypatch.setattr(sse, 'load_turn_document_capabilities', load_grants)
     monkeypatch.setattr(sse, 'is_multi_step_task', lambda _prompt: False)
     await manager.action_queue.put({
         'type': 'chat_message',
@@ -164,11 +326,154 @@ async def test_resolves_session_and_selected_source_before_promoting_then_emits_
     assert (await _next_json(events))['type'] == 'generate'
     assert captured['attachments'] == {
         'images': [image_ref.model_dump()],
-        'files': [{'name': 'notes.txt', 'path': 'uploads/doc/notes.txt'}],
+        'files': [{
+            'id': 'doc-1',
+            'name': 'notes.txt',
+            'path': 'uploads/doc/notes.txt',
+        }],
         'image_selection': selected_ref.model_dump(),
     }
+    assert captured['tool_context'].session_id == 'session-1'
+    assert captured['tool_context'].user_id == 'user-1'
+    assert captured['tool_context'].agent_id == 'agent-1'
+    assert captured['tool_context'].document_capabilities == (grant,)
+    assert captured['tool_context'].selected_image_artifact_id == 'source-1'
+    assert loaded_grants == [(ownership, {
+        'fresh_document_ids': ('doc-1',),
+        'adopted_document_ids': (),
+    })]
+    assert adoptions == [(['doc-1'], ownership)]
     assert staged.cleanup_calls >= 1
     await events.aclose()
+
+
+@pytest.mark.asyncio
+async def test_new_upload_edit_source_is_selected_by_image_index_not_path(
+    monkeypatch,
+):
+    captured = {}
+    staged = FakeStaged()
+    first = _ref('upload-1')
+    second = _ref('upload-2')
+
+    class Session:
+        id = 'session-1'
+        agent_id = 'agent-1'
+
+        async def __call__(
+            self, *_args, attachments, output, tool_context, **_kwargs
+        ):
+            captured.update(attachments)
+            captured['tool_context'] = tool_context
+            attachments['_on_adopted']()
+            await output({'type': 'generate', 'content': 'ok'})
+
+    manager = sse.SSEManager(_agent())
+    manager.user_key = 'user-1'
+    assert manager.begin_turn()
+    manager._resolve_session = lambda _sid: asyncio.sleep(0, result=Session())
+
+    async def promote(_staged, _ownership):
+        return staging.PromotedAttachments([first, second], [])
+
+    monkeypatch.setattr(sse, 'promote_staged_attachments', promote)
+    monkeypatch.setattr(sse, 'is_multi_step_task', lambda _prompt: False)
+    await manager.action_queue.put({
+        'type': 'chat_message',
+        'content': 'edit the second upload',
+        'session_id': 'session-1',
+        'staged_attachments': staged,
+        'edit_source_image_index': 1,
+    })
+
+    response = await manager.sse_endpoint(Request())
+    assert (await _next_json(response.body_iterator))['type'] == 'attachments_ingested'
+    assert (await _next_json(response.body_iterator))['type'] == 'generate'
+    assert captured['image_selection']['id'] == 'upload-2'
+    assert 'path' not in captured['image_selection']
+    assert captured['tool_context'].selected_image_artifact_id == 'upload-2'
+    await response.body_iterator.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('index', [True, -1, 2, '1'])
+async def test_new_upload_edit_source_rejects_invalid_image_index(monkeypatch, index):
+    staged = FakeStaged()
+    rolled_back = []
+
+    class Session:
+        id = 'session-1'
+        agent_id = 'agent-1'
+
+        async def __call__(self, *_args, **_kwargs):
+            pytest.fail('invalid image selection must fail before Session')
+
+    manager = sse.SSEManager(_agent())
+    manager.user_key = 'user-1'
+    assert manager.begin_turn()
+    manager._resolve_session = lambda _sid: asyncio.sleep(0, result=Session())
+    monkeypatch.setattr(
+        sse,
+        'promote_staged_attachments',
+        lambda *_args: asyncio.sleep(
+            0, result=staging.PromotedAttachments([_ref('upload-1')], [])
+        ),
+    )
+    monkeypatch.setattr(
+        sse,
+        'rollback_promoted_attachments',
+        lambda value, ownership: asyncio.sleep(
+            0, result=rolled_back.append((value, ownership))
+        ),
+    )
+    monkeypatch.setattr(sse, 'is_multi_step_task', lambda _prompt: False)
+    await manager.action_queue.put({
+        'type': 'chat_message',
+        'content': 'edit upload',
+        'session_id': 'session-1',
+        'staged_attachments': staged,
+        'edit_source_image_index': index,
+    })
+
+    response = await manager.sse_endpoint(Request())
+    assert (await _next_json(response.body_iterator))['type'] == 'error'
+    assert len(rolled_back) == 1
+    await response.body_iterator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_sse_chat_clear_cleans_session_artifacts_after_save(monkeypatch):
+    order = []
+
+    class Session:
+        id = 'session-1'
+        agent_id = 'agent-1'
+        chat = ['message']
+
+        async def save(self):
+            order.append(('save', list(self.chat)))
+
+    async def cleanup(session_id):
+        order.append(('cleanup', session_id))
+
+    async def load(_session_id):
+        return Session()
+
+    manager = sse.SSEManager(_agent())
+    monkeypatch.setattr(sse.Session, 'load', load)
+    monkeypatch.setattr(sse, 'delete_session_artifacts', cleanup, raising=False)
+    await manager.action_queue.put({
+        'type': 'chat_history',
+        'action': 'delete',
+        'session_id': 'session-1',
+    })
+
+    response = await manager.sse_endpoint(Request())
+    payload = await _next_json(response.body_iterator)
+
+    assert payload['type'] == 'chat_history'
+    assert order == [('save', []), ('cleanup', 'session-1')]
+    await response.body_iterator.aclose()
 
 
 @pytest.mark.asyncio
@@ -473,6 +778,147 @@ async def test_second_image_failure_rolls_back_first_artifact_and_staging(
 
     assert deleted == [(['first-image'], ownership)]
     assert not staged.batch_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_failed_commit_compensation_registers_ref_before_promotion_rollback(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(staging.settings, 'workdir', tmp_path)
+    monkeypatch.setattr(staging.settings, 'tools_root', tmp_path / 'tools')
+    staged = await staging.stage_upload_files(
+        [Upload('one.png', _png())],
+        user_key='user-1',
+        stream_id='browser-1',
+    )
+    unreported_ref = _ref('unreported-image')
+    failure = media_service.CommittedArtifactCleanupError(
+        unreported_ref,
+        RuntimeError('artifact database is unavailable'),
+    )
+    deleted = []
+
+    async def fail_after_commit(_entry, _ownership, **_kwargs):
+        raise failure
+
+    async def delete(ids, ownership):
+        deleted.append((ids, ownership))
+
+    ownership = MediaOwnership('session-1', 'user-1', 'agent-1')
+    monkeypatch.setattr(
+        staging.media_assets,
+        'ingest_staged_image_if_recognized',
+        fail_after_commit,
+    )
+    monkeypatch.setattr(staging.media_assets, 'delete_artifacts', delete)
+
+    with pytest.raises(media_service.CommittedArtifactCleanupError) as captured:
+        await staging.promote_staged_attachments(staged, ownership)
+
+    assert captured.value is failure
+    assert deleted == [(['unreported-image'], ownership)]
+    assert not staged.batch_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_failed_cancel_compensation_rollback_is_retained_until_unlink_recovers(
+    tmp_path, monkeypatch
+):
+    from cognitrix import artifacts as artifact_store
+    from cognitrix.artifacts import Artifact
+
+    rows = {}
+    artifact_root = tmp_path / 'artifacts'
+    monkeypatch.setattr(staging.settings, 'workdir', tmp_path / 'workdir')
+    monkeypatch.setattr(staging.settings, 'tools_root', tmp_path / 'tools')
+    monkeypatch.setattr(artifact_store, '_root', lambda: artifact_root)
+    monkeypatch.setattr(staging, 'ATTACHMENT_CLEANUP_ATTEMPTS', 1)
+    monkeypatch.setattr(staging, '_schedule_pending_cleanup_drain', lambda: None)
+
+    async def save(row):
+        if row.id is None:
+            object.__setattr__(row, 'id', 'cancelled-image')
+        rows[str(row.id)] = row
+        return row
+
+    async def get(artifact_id):
+        return rows.get(str(artifact_id))
+
+    async def find(query):
+        return [
+            row for row in rows.values()
+            if all(getattr(row, key) == value for key, value in query.items())
+        ]
+
+    async def delete_many(query):
+        doomed = [
+            artifact_id for artifact_id, row in rows.items()
+            if all(getattr(row, key) == value for key, value in query.items())
+        ]
+        for artifact_id in doomed:
+            rows.pop(artifact_id)
+        return len(doomed)
+
+    monkeypatch.setattr(Artifact, 'save', save)
+    monkeypatch.setattr(Artifact, 'get', get)
+    monkeypatch.setattr(Artifact, 'find', find)
+    monkeypatch.setattr(Artifact, 'delete_many', delete_many)
+
+    baseline_pending = staging.pending_attachment_cleanup_count()
+    baseline_units = staging._attachment_cleanup_obligation_count()
+    staged = await staging.stage_upload_files(
+        [Upload('one.png', _png())],
+        user_key='user-1',
+        stream_id='cancelled-compensation-retry',
+    )
+    ownership = MediaOwnership('session-1', 'user-1', 'agent-1')
+    original_commit = staging.media_assets._commit_processed
+    original_unlink = Path.unlink
+    promotion_task = None
+    block_unlink = True
+
+    async def commit_then_cancel_outer(*args, **kwargs):
+        artifact = await original_commit(*args, **kwargs)
+        assert promotion_task is not None
+        promotion_task.cancel()
+        return artifact
+
+    def unlink(path, missing_ok=False):
+        if (
+            block_unlink
+            and artifact_root in path.parents
+            and '-vision.' in path.name
+        ):
+            raise OSError('artifact storage is unavailable')
+        return original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(
+        staging.media_assets,
+        '_commit_processed',
+        commit_then_cancel_outer,
+    )
+    monkeypatch.setattr(Path, 'unlink', unlink)
+    promotion_task = asyncio.create_task(
+        staging.promote_staged_attachments(staged, ownership)
+    )
+    try:
+        with pytest.raises(staging.AttachmentCleanupError):
+            await promotion_task
+
+        assert list(rows) == ['cancelled-image']
+        assert staging.pending_attachment_cleanup_count() == baseline_pending + 1
+        assert staging._attachment_cleanup_obligation_count() == baseline_units + 1
+
+        block_unlink = False
+        assert await staging.retry_pending_attachment_cleanups() == baseline_pending
+        assert rows == {}
+        assert not artifact_root.exists() or not any(
+            path.is_file() for path in artifact_root.rglob('*')
+        )
+        assert staging._attachment_cleanup_obligation_count() == baseline_units
+    finally:
+        block_unlink = False
+        await staging.retry_pending_attachment_cleanups()
 
 
 @pytest.mark.asyncio
@@ -1376,6 +1822,80 @@ async def test_session_failure_after_adoption_keeps_persisted_media(monkeypatch)
     assert (await _next_json(response.body_iterator))['type'] == 'error'
     assert rolled_back == []
     await response.body_iterator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancellation_joins_document_adoption_without_rolling_back(monkeypatch):
+    staged = FakeStaged()
+    manager = sse.SSEManager(_agent())
+    manager.user_key = 'user-1'
+    assert manager.begin_turn()
+    adoption_started = asyncio.Event()
+    release_adoption = asyncio.Event()
+    adoption_finished = asyncio.Event()
+    rolled_back = []
+
+    class Session:
+        id = 'session-1'
+        agent_id = 'agent-1'
+
+        async def __call__(self, *_args, attachments, **_kwargs):
+            attachments['_on_adopted']()
+
+    async def mark_documents_adopted(document_ids, ownership):
+        assert document_ids == ['doc-1']
+        assert ownership == MediaOwnership('session-1', 'user-1', 'agent-1')
+        adoption_started.set()
+        await release_adoption.wait()
+        adoption_finished.set()
+
+    manager._resolve_session = lambda _sid: asyncio.sleep(0, result=Session())
+    monkeypatch.setattr(
+        sse,
+        'promote_staged_attachments',
+        lambda *_args: asyncio.sleep(0, result=staging.PromotedAttachments(
+            [],
+            [{
+                'id': 'doc-1',
+                'name': 'notes.txt',
+                'path': 'uploads/doc/notes.txt',
+            }],
+        )),
+    )
+    monkeypatch.setattr(
+        sse.document_assets,
+        'mark_documents_adopted',
+        mark_documents_adopted,
+    )
+    monkeypatch.setattr(
+        sse,
+        'load_turn_document_capabilities',
+        lambda *_args, **_kwargs: asyncio.sleep(0, result=()),
+    )
+    monkeypatch.setattr(
+        sse,
+        'rollback_promoted_attachments',
+        lambda *args: asyncio.sleep(0, result=rolled_back.append(args)),
+    )
+    await manager.action_queue.put({
+        'type': 'chat_message',
+        'content': 'keep this',
+        'session_id': 'session-1',
+        'staged_attachments': staged,
+    })
+
+    response = await manager.sse_endpoint(Request())
+    events = response.body_iterator
+    assert (await _next_json(events))['type'] == 'attachments_ingested'
+    await asyncio.wait_for(adoption_started.wait(), timeout=1)
+    assert manager.stop_current_turn() is True
+    release_adoption.set()
+
+    terminal = await _next_json(events)
+    assert terminal['type'] == 'turn_stopped'
+    assert adoption_finished.is_set()
+    assert rolled_back == []
+    await events.aclose()
 
 
 @pytest.mark.asyncio

@@ -67,9 +67,21 @@ async def generate_image(prompt: str, source_artifact_id: str | None = None,
     try:
         source = None
         parent_artifact_id = None
-        if source_artifact_id:
+        selected_artifact_id = current_execution_context().selected_image_artifact_id
+        if (
+            selected_artifact_id
+            and source_artifact_id
+            and str(source_artifact_id) != str(selected_artifact_id)
+        ):
+            return ToolOutcome.failure(
+                'invalid_edit_source',
+                'The selected image is the only available edit source for this turn',
+                denied=True,
+            )
+        effective_source_id = source_artifact_id or selected_artifact_id
+        if effective_source_id:
             source = await media_assets.resolve_image(
-                source_artifact_id,
+                str(effective_source_id),
                 ownership,
                 'original',
             )

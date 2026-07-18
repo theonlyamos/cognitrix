@@ -50,6 +50,20 @@ _VALID_VARIANTS = {'original', 'vision', 'thumbnail'}
 _SESSION_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 _ARTIFACT_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
+
+class CommittedArtifactCleanupError(asyncio.CancelledError):
+    """Cancellation whose committed artifact still requires rollback."""
+
+    def __init__(
+        self,
+        artifact_ref: ArtifactRef,
+        cleanup_error: BaseException,
+    ) -> None:
+        super().__init__('Committed artifact cleanup did not complete')
+        self.artifact_ref = artifact_ref
+        self.cleanup_error = cleanup_error
+
+
 Image.init()
 _PILLOW_ACCEPTORS = tuple(
     (image_format.upper(), plugin[1])
@@ -248,8 +262,12 @@ async def _remove_paths(paths: Sequence[Path]) -> None:
             pass
 
 
-async def _run_transaction_joined(operation: Awaitable[Any]) -> Any:
-    """Cancel a transaction once, then wait for its rollback to finish."""
+async def _run_transaction_joined(
+    operation: Awaitable[Any],
+    *,
+    on_cancelled_success: Callable[[Any], Awaitable[None]] | None = None,
+) -> Any:
+    """Cancel a transaction once, then settle any successful side effect."""
     transaction = asyncio.create_task(operation)
     try:
         return await asyncio.shield(transaction)
@@ -264,9 +282,12 @@ async def _run_transaction_joined(operation: Awaitable[Any]) -> Any:
                 break
         if transaction.done() and not transaction.cancelled():
             try:
-                transaction.result()
+                result = transaction.result()
             except BaseException:
                 pass
+            else:
+                if on_cancelled_success is not None:
+                    await _settle_operation(on_cancelled_success(result))
         raise
 
 
@@ -286,42 +307,33 @@ async def _settle_operation(operation: Awaitable[Any]) -> Any:
         return mutation.result()
 
 
-async def _rollback_tombstones(moves: Sequence[tuple[Path, Path]]) -> None:
-    rollback_error: BaseException | None = None
-    for original, tombstone in reversed(moves):
-        try:
-            if await asyncio.to_thread(tombstone.exists):
-                await _run_thread_joined(os.replace, tombstone, original)
-        except BaseException as exc:
-            rollback_error = rollback_error or exc
-            logger.exception('Failed to roll back media deletion tombstone')
-    if rollback_error is not None:
-        raise rollback_error
-
-
-async def _tombstone_delete(
+async def _delete_files_then_rows(
     paths: Sequence[Path],
     delete_rows: Callable[[], Awaitable[Any]],
 ) -> None:
-    moves: list[tuple[Path, Path]] = []
+    """Remove exact variants before dropping their durable retry metadata."""
+    for path in dict.fromkeys(paths):
+        await _run_thread_joined(path.unlink, missing_ok=True)
+    await delete_rows()
+
+
+async def _discard_committed_artifact(artifact: Artifact) -> None:
+    """Remove a committed create whose reference cannot reach its caller."""
+    artifact_ref = ref(artifact)
     try:
-        for original in dict.fromkeys(paths):
-            if not await asyncio.to_thread(original.exists):
-                continue
-            if not await asyncio.to_thread(original.is_file):
-                raise MediaValidationError('Artifact variant is not a regular file')
-            tombstone = original.with_name(
-                f'.{original.name}.{uuid.uuid4().hex}.tombstone'
+        if artifact.id is None:
+            raise RuntimeError('Committed artifact is missing its identifier')
+
+        async def delete_row() -> None:
+            deleted = await _settle_operation(
+                Artifact.delete_many({'id': str(artifact.id)})
             )
-            moves.append((original, tombstone))
-            await _run_thread_joined(os.replace, original, tombstone)
-        await delete_rows()
-    except BaseException:
-        await _rollback_tombstones(moves)
-        raise
-    await _settle_operation(
-        _remove_paths([tombstone for _, tombstone in moves])
-    )
+            if deleted == 0:
+                raise RuntimeError('Artifact metadata deletion did not complete')
+
+        await _delete_files_then_rows(_artifact_variant_paths(artifact), delete_row)
+    except (Exception, asyncio.CancelledError) as exc:
+        raise CommittedArtifactCleanupError(artifact_ref, exc) from exc
 
 
 class MediaAssetService:
@@ -376,7 +388,8 @@ class MediaAssetService:
                         ownership=ownership,
                         filename=staged.filename,
                         metadata={},
-                    )
+                    ),
+                    on_cancelled_success=_discard_committed_artifact,
                 )
             status = 'success'
             return ref(artifact)
@@ -430,7 +443,8 @@ class MediaAssetService:
                         ownership=ownership,
                         filename=filename,
                         metadata=metadata,
-                    )
+                    ),
+                    on_cancelled_success=_discard_committed_artifact,
                 )
             status = 'success'
             return ref(artifact)
@@ -781,7 +795,7 @@ class MediaAssetService:
                         if deleted == 0:
                             raise RuntimeError('Artifact metadata deletion did not complete')
 
-                    await _tombstone_delete(paths, delete_row)
+                    await _delete_files_then_rows(paths, delete_row)
 
         await _run_transaction_joined(transaction())
 
@@ -812,7 +826,7 @@ class MediaAssetService:
                     if artifacts and deleted == 0:
                         raise RuntimeError('Session media metadata deletion did not complete')
 
-                await _tombstone_delete(paths, delete_rows)
+                await _delete_files_then_rows(paths, delete_rows)
                 directory = (
                     artifact_store._root()
                     / artifact_store._storage_namespace(session_id)

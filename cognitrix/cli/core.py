@@ -8,6 +8,7 @@ from typing import Any
 
 from cognitrix.agents import Agent
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
+from cognitrix.artifacts import delete_session_artifacts
 from cognitrix.models.tool import Tool
 from cognitrix.providers import LLM
 from cognitrix.sessions.base import Session
@@ -15,6 +16,7 @@ from cognitrix.tasks.base import Task
 from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import ToolManager
+from cognitrix.tools.utils import trusted_local_execution_context
 
 from .handlers import list_agents, list_sessions, list_tasks, list_teams
 from .shell import initialize_shell
@@ -22,6 +24,12 @@ from .tui import CognitrixApp
 from .ui import start_web_ui
 
 logger = logging.getLogger('cognitrix.log')
+
+
+async def _clear_session_history(session: Session) -> None:
+    session.chat = []
+    await session.save()
+    await delete_session_artifacts(str(session.id))
 
 async def run_configuration():
     """Run the configuration for the CLI"""
@@ -36,13 +44,17 @@ async def run_configuration():
     from cognitrix.agents import Agent
     from cognitrix.models.api_key import APIKey
     from cognitrix.models.user import User
+    from cognitrix.session_ownership import SessionOwnership
     from cognitrix.sessions.base import Session
     from cognitrix.tasks.events import TaskRunEvent
     from cognitrix.tasks.run import TaskRun
 
     if DBMS.Database is not None and DBMS.Database.dbms != 'mongodb':
-        from cognitrix.artifacts import Artifact
-        for model in (Agent, Task, Team, Session, Tool, User, TaskRun, TaskRunEvent, APIKey, Artifact):
+        from cognitrix.artifacts import Artifact, DocumentArtifact
+        for model in (
+            Agent, Task, Team, Session, Tool, User, TaskRun, TaskRunEvent,
+            APIKey, Artifact, SessionOwnership, DocumentArtifact,
+        ):
             # Older odbms releases only ship async create_table(); newer ones
             # rename it to _create_table_async.
             create = getattr(model, '_create_table_async', None) or model.create_table
@@ -146,8 +158,7 @@ async def start(args: Namespace):
 
         # Clear history if requested
         if args.clear_history:
-            session.chat = []
-            await session.save()
+            await _clear_session_history(session)
 
         # Set verbose mode
         assistant.verbose = args.verbose
@@ -178,7 +189,12 @@ async def start(args: Namespace):
                 )
                 print(result)
             else:
-                await session(prompt, assistant, stream=args.stream)
+                await session(
+                    prompt,
+                    assistant,
+                    stream=args.stream,
+                    tool_context=trusted_local_execution_context(),
+                )
         elif args.ui.lower() == 'web':
             # Web UI mode
             await start_web_ui(assistant)

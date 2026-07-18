@@ -53,7 +53,19 @@ class CreatedChildCleanupError(CapabilityError):
         self.is_directory = is_directory
 
 
+class CreatedChildUnknownIdentityError(CapabilityError):
+    """A created child may remain, but no safe identity could be captured."""
+
+    def __init__(self, *, leaf: str, is_directory: bool) -> None:
+        super().__init__()
+        self.leaf = leaf
+        self.is_directory = is_directory
+
+
 _OPAQUE_COMPONENT = re.compile(r'[A-Za-z0-9_-]{1,128}\Z')
+_DOCUMENT_FILE_COMPONENT = re.compile(
+    r'f_[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?\Z'
+)
 _POSIX_QUARANTINE_PREFIX = 'qv1_'
 _POSIX_QUARANTINE_COMPONENT = re.compile(r'qv1_[fd]_[0-9a-f]{64}\Z')
 _WINDOWS_RESERVED = {
@@ -66,10 +78,23 @@ _WINDOWS_RESERVED = {
 }
 
 
+class _DocumentFileLeaf(str):
+    """Proof that a file leaf passed the stricter document-name grammar."""
+
+
+def _document_file_leaf(leaf: str) -> _DocumentFileLeaf:
+    if not isinstance(leaf, str) or not _DOCUMENT_FILE_COMPONENT.fullmatch(leaf):
+        raise ValueError('Document storage leaf is invalid')
+    return _DocumentFileLeaf(leaf)
+
+
 def _validate_leaf(leaf: str) -> str:
+    valid_component = bool(_OPAQUE_COMPONENT.fullmatch(leaf)) if isinstance(leaf, str) else False
+    if isinstance(leaf, _DocumentFileLeaf):
+        valid_component = bool(_DOCUMENT_FILE_COMPONENT.fullmatch(leaf))
     if (
         not isinstance(leaf, str)
-        or not _OPAQUE_COMPONENT.fullmatch(leaf)
+        or not valid_component
         or leaf in {'.', '..'}
         or leaf.upper() in _WINDOWS_RESERVED
         or leaf.rstrip(' .') != leaf
@@ -247,9 +272,29 @@ class _DirectoryCapability(_Capability):
             expected_identity=expected_identity,
         )
 
+    def open_document_file(
+        self,
+        leaf: str,
+        *,
+        expected_identity: FileIdentity | None = None,
+    ) -> _FileCapability:
+        return self._open_child(
+            _document_file_leaf(leaf),
+            directory=False,
+            create=False,
+            writable=False,
+            expected_identity=expected_identity,
+        )
+
     def create_file(self, leaf: str) -> _FileCapability:
         return self._create_child(
             leaf,
+            directory=False,
+        )
+
+    def create_document_file(self, leaf: str) -> _FileCapability:
+        return self._create_child(
+            _document_file_leaf(leaf),
             directory=False,
         )
 
@@ -306,6 +351,17 @@ class _DirectoryCapability(_Capability):
             _validate_leaf(leaf),
             expected_identity=expected_identity,
             directory=False,
+        )
+
+    def delete_document_file(
+        self,
+        leaf: str,
+        *,
+        expected_identity: FileIdentity,
+    ) -> None:
+        self.delete_file(
+            _document_file_leaf(leaf),
+            expected_identity=expected_identity,
         )
 
     def delete_directory(
@@ -1297,6 +1353,58 @@ class _PosixBackend:
                 pass
             raise
 
+    def _settle_directory_created_before_identity(
+        self,
+        parent_handle: int,
+        leaf: str,
+        primary_error: BaseException,
+    ) -> None:
+        """Remove a post-mkdir child or hand off cleanup ownership."""
+
+        handle = None
+        created_identity = None
+        try:
+            handle = self._api.open_child(
+                parent_handle,
+                leaf,
+                directory=True,
+                create=False,
+                writable=False,
+            )
+            created_identity = self.identity(handle, directory=True)
+        except BaseException:
+            # Identityless namespace mutation is not safe: even a relative
+            # rmdir can remove a replacement directory after the mkdir result
+            # was lost. Let the caller retain capacity and retry an exact open.
+            pass
+        finally:
+            if handle is not None:
+                try:
+                    self.close(handle)
+                except BaseException:
+                    pass
+
+        if created_identity is not None:
+            try:
+                self._quarantine_delete(
+                    parent_handle,
+                    leaf,
+                    expected_identity=created_identity,
+                    directory=True,
+                )
+            except BaseException as cleanup_error:
+                raise CreatedChildCleanupError(
+                    leaf=leaf,
+                    identity=created_identity,
+                    is_directory=True,
+                ) from cleanup_error
+            raise primary_error
+
+        raise CreatedChildUnknownIdentityError(
+            leaf=leaf,
+            is_directory=True,
+        ) from primary_error
+
     def open_child(
         self,
         parent_handle: int,
@@ -1310,11 +1418,18 @@ class _PosixBackend:
         created_identity = None
         if directory and create:
             self._api.mkdir_child(parent_handle, leaf)
-            created_identity = self._api.name_identity(
-                parent_handle,
-                leaf,
-                directory=True,
-            )
+            try:
+                created_identity = self._api.name_identity(
+                    parent_handle,
+                    leaf,
+                    directory=True,
+                )
+            except BaseException as exc:
+                self._settle_directory_created_before_identity(
+                    parent_handle,
+                    leaf,
+                    exc,
+                )
         handle = None
         try:
             handle = self._api.open_child(
@@ -1416,6 +1531,7 @@ def open_root(path: str | os.PathLike[str]) -> DirectoryCapability:
 __all__ = [
     'CapabilityError',
     'CreatedChildCleanupError',
+    'CreatedChildUnknownIdentityError',
     'DirectoryCapability',
     'FileCapability',
     'FileIdentity',
