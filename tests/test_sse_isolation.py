@@ -132,7 +132,13 @@ async def test_new_connection_supersedes_old_consumer_for_same_stream(monkeypatc
     async def list_sessions():
         return []
 
+    async def owned_session_ids(*_args, **_kwargs):
+        return set()
+
     monkeypatch.setattr(sse.Session, "list_sessions", list_sessions)
+    monkeypatch.setattr(
+        sse.session_ownerships, "owned_session_ids", owned_session_ids
+    )
     manager = get_sse_manager(
         "userA", "agent1", _agent("agent1"), stream_id="browser-a"
     )
