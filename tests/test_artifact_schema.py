@@ -195,7 +195,7 @@ async def test_document_schema_creates_mongodb_indexes(monkeypatch):
         def __getitem__(self, _table):
             return Collection()
 
-    async def create_base(_cls):
+    def create_base(_cls):
         return None
 
     monkeypatch.setattr(Model, 'create_table', classmethod(create_base))

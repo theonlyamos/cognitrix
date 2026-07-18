@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import hashlib
+import inspect
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -86,7 +87,9 @@ class DocumentArtifact(Model):
     @classmethod
     async def create_table(cls):
         """Create durable document metadata and its recovery-critical indexes."""
-        await Model.create_table.__func__(cls)
+        base_create = Model.create_table.__func__(cls)
+        if inspect.isawaitable(base_create):
+            await base_create
         database = DBMS.Database
         if database is None:
             raise RuntimeError('Database not initialized')

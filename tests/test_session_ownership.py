@@ -746,6 +746,36 @@ async def test_mongodb_startup_creates_all_ownership_indexes():
     ]
 
 
+async def test_ownership_schema_accepts_synchronous_odbms_base(monkeypatch):
+    from odbms import DBMS, Model
+
+    from cognitrix.session_ownership import SessionOwnership
+
+    base_calls = []
+    statements = []
+
+    def create_base(cls):
+        base_calls.append(cls)
+
+    async def query(statement):
+        statements.append(statement)
+
+    monkeypatch.setattr(Model, 'create_table', classmethod(create_base))
+    monkeypatch.setattr(
+        DBMS,
+        'Database',
+        SimpleNamespace(dbms='sqlite', query=query),
+    )
+
+    await SessionOwnership.create_table()
+
+    assert base_calls == [SessionOwnership]
+    assert any(
+        statement.startswith('CREATE UNIQUE INDEX IF NOT EXISTS')
+        for statement in statements
+    )
+
+
 async def test_mysql_startup_creates_indexes_once_after_information_schema_checks():
     from cognitrix.session_ownership import _ensure_critical_indexes
 

@@ -13,6 +13,7 @@ cannot clobber lifecycle state or quota reservations.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 import weakref
 from dataclasses import dataclass
@@ -263,7 +264,9 @@ class SessionOwnership(Model):
         cross-process claim boundary; the in-process lock below is only a
         contention optimization.
         """
-        await Model.create_table.__func__(cls)
+        base_create = Model.create_table.__func__(cls)
+        if inspect.isawaitable(base_create):
+            await base_create
         database = DBMS.Database
         if database is None:
             raise RuntimeError('Database not initialized')
