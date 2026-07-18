@@ -2315,7 +2315,7 @@ async def test_source_replacement_after_preflight_is_rejected(
     # The identity replacement is intentionally quarantined fail-closed. Model
     # operator removal of that unknown replacement, then resolve the retained
     # cleanup obligation so this process-level test does not leak capacity.
-    staged.entries[0].path.unlink()
+    staged.entries[0].path.unlink(missing_ok=True)
     await staging.cleanup_staged_attachments(staged)
     assert staging._attachment_cleanup_obligation_count() == cleanup_baseline
 
