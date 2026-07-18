@@ -62,6 +62,10 @@ function fileInput() {
   return document.querySelector('input[type="file"]') as HTMLInputElement;
 }
 
+function localPreviewRevocations(url: string) {
+  return vi.mocked(URL.revokeObjectURL).mock.calls.filter(([revoked]) => revoked === url);
+}
+
 async function selectArtifact(artifact: ToolArtifact) {
   harness.messages = [{ id: `message-${artifact.id}`, role: 'user', content: 'source', artifacts: [artifact] }];
   const view = renderHome();
@@ -85,7 +89,8 @@ describe('Home image editing transport', () => {
     localStorage.clear();
     localStorage.setItem('selectedAgentId', 'agent-1');
     localStorage.setItem('chatSession:agent-1', '');
-    vi.stubGlobal('crypto', { randomUUID: () => 'attachment-1' });
+    let attachmentId = 0;
+    vi.stubGlobal('crypto', { randomUUID: () => `attachment-${++attachmentId}` });
     let attachmentPreview = 0;
     let artifactPreview = 0;
     Object.defineProperty(URL, 'createObjectURL', {
@@ -105,7 +110,7 @@ describe('Home image editing transport', () => {
 
   it('keeps an original File and posts it as multipart without preview data in JSON', async () => {
     const user = userEvent.setup();
-    renderHome();
+    const view = renderHome();
     const file = new File(['original image bytes'], 'source.png', { type: 'image/png' });
     fireEvent.change(fileInput(), { target: { files: [file] } });
 
@@ -120,7 +125,9 @@ describe('Home image editing transport', () => {
     expect(payload).toMatchObject({ message: 'make it brighter', agent_id: 'agent-1', stream_id: 'stream-1' });
     expect(JSON.stringify(payload)).not.toMatch(/dataUrl|blob:|original image bytes/i);
     expect(URL.createObjectURL).toHaveBeenCalledWith(file);
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:local-preview-1');
+    expect(localPreviewRevocations('blob:local-preview-1')).toHaveLength(1);
+    view.unmount();
+    expect(localPreviewRevocations('blob:local-preview-1')).toHaveLength(1);
   });
 
   it('keeps a selected Artifact file-free request JSON-only and sends only its id', async () => {
@@ -207,24 +214,29 @@ describe('Home image editing transport', () => {
     expect(screen.queryByText('Editing image')).not.toBeInTheDocument();
   });
 
-  it('revokes each owned attachment preview exactly once on removal and unmount', async () => {
+  it('revokes removed and replacement attachment previews exactly once', async () => {
     const view = renderHome();
-    const first = new File(['one'], 'one.png', { type: 'image/png' });
-    const second = new File(['two'], 'two.png', { type: 'image/png' });
-    fireEvent.change(fileInput(), { target: { files: [first, second] } });
-    await userEvent.click(await screen.findByRole('button', { name: 'Remove one.png' }));
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:local-preview-1');
-    expect(vi.mocked(URL.revokeObjectURL).mock.calls.filter(([url]) => url === 'blob:local-preview-1')).toHaveLength(1);
+    const original = new File(['one'], 'original.png', { type: 'image/png' });
+    fireEvent.change(fileInput(), { target: { files: [original] } });
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove original.png' }));
+    expect(localPreviewRevocations('blob:local-preview-1')).toHaveLength(1);
+
+    const replacement = new File(['two'], 'replacement.png', { type: 'image/png' });
+    fireEvent.change(fileInput(), { target: { files: [replacement] } });
+    expect(await screen.findByRole('button', { name: 'Remove replacement.png' })).toBeInTheDocument();
+    expect(localPreviewRevocations('blob:local-preview-2')).toHaveLength(0);
+
     view.unmount();
-    expect(vi.mocked(URL.revokeObjectURL).mock.calls.filter(([url]) => url === 'blob:local-preview-1')).toHaveLength(1);
-    expect(vi.mocked(URL.revokeObjectURL).mock.calls.filter(([url]) => url === 'blob:local-preview-2')).toHaveLength(1);
+    expect(localPreviewRevocations('blob:local-preview-1')).toHaveLength(1);
+    expect(localPreviewRevocations('blob:local-preview-2')).toHaveLength(1);
   });
 
-  it('restores attachments, selection, and the live preview without revoking it after failed send', async () => {
+  it('restores live previews after failed send and later revokes them once on removal and unmount', async () => {
     apiPost.mockRejectedValueOnce(new Error('offline'));
-    renderHome();
-    const file = new File(['one'], 'retry.png', { type: 'image/png' });
-    fireEvent.change(fileInput(), { target: { files: [file] } });
+    const view = renderHome();
+    const retry = new File(['one'], 'retry.png', { type: 'image/png' });
+    const retained = new File(['two'], 'retained.png', { type: 'image/png' });
+    fireEvent.change(fileInput(), { target: { files: [retry, retained] } });
     await userEvent.click(await screen.findByRole('button', { name: 'Use retry.png as edit source' }));
     await userEvent.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'retry edit');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -232,7 +244,49 @@ describe('Home image editing transport', () => {
     expect(await screen.findByRole('button', { name: 'Remove retry.png' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Use retry.png as edit source' })).toHaveAttribute('aria-pressed', 'true');
     expect(document.querySelector('img[alt=""]')).toHaveAttribute('src', 'blob:local-preview-1');
-    expect(vi.mocked(URL.revokeObjectURL).mock.calls.filter(([url]) => url === 'blob:local-preview-1')).toHaveLength(0);
+    expect(localPreviewRevocations('blob:local-preview-1')).toHaveLength(0);
+    expect(localPreviewRevocations('blob:local-preview-2')).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove retry.png' }));
+    expect(localPreviewRevocations('blob:local-preview-1')).toHaveLength(1);
+    expect(localPreviewRevocations('blob:local-preview-2')).toHaveLength(0);
+    view.unmount();
+    expect(localPreviewRevocations('blob:local-preview-1')).toHaveLength(1);
+    expect(localPreviewRevocations('blob:local-preview-2')).toHaveLength(1);
+  });
+
+  it.each([
+    ['conversation switch', async () => {
+      await userEvent.click(screen.getByRole('button', { name: 'Second' }));
+    }],
+    ['agent switch', async () => {
+      await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Active agent' }), 'agent-2');
+    }],
+    ['new conversation', async () => {
+      await userEvent.click(screen.getByRole('button', { name: '+ new' }));
+    }],
+    ['active conversation deletion', async () => {
+      await userEvent.click(screen.getByRole('button', { name: 'Delete conversation Current' }));
+    }],
+  ])('revokes a pending preview exactly once on %s', async (_scenario, runLifecycle) => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    harness.agents = [{ id: 'agent-1', name: 'Agent One' }, { id: 'agent-2', name: 'Agent Two' }];
+    harness.conversations = [
+      { id: 'conversation-1', title: 'Current', message_count: 1 },
+      { id: 'conversation-2', title: 'Second', message_count: 1 },
+    ];
+    localStorage.setItem('chatSession:agent-1', 'conversation-1');
+    const view = renderHome();
+    await waitFor(() => expect(apiGet).toHaveBeenCalledWith('/sessions/conversation-1/chat'));
+
+    const file = new File(['preview'], 'pending.png', { type: 'image/png' });
+    fireEvent.change(fileInput(), { target: { files: [file] } });
+    expect(await screen.findByRole('button', { name: 'Remove pending.png' })).toBeInTheDocument();
+    await runLifecycle();
+
+    await waitFor(() => expect(localPreviewRevocations('blob:local-preview-1')).toHaveLength(1));
+    view.unmount();
+    expect(localPreviewRevocations('blob:local-preview-1')).toHaveLength(1);
   });
 
   it('clears selected Artifact on conversation and agent switches and on new conversation', async () => {
