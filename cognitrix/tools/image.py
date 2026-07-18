@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from cognitrix import artifacts as artifact_context
 from cognitrix.artifacts import current_session_id
+from cognitrix.media.context import current_media_turn_context
 from cognitrix.media.service import media_assets
 from cognitrix.media.types import MediaError, MediaOwnership
 from cognitrix.providers.gemini_image import (
@@ -68,7 +69,21 @@ async def generate_image(prompt: str, source_artifact_id: str | None = None,
         source = None
         parent_artifact_id = None
         selected_artifact_id = current_execution_context().selected_image_artifact_id
-        if source_artifact_id and not selected_artifact_id:
+        media_turn = current_media_turn_context()
+        sole_current_artifact_id = (
+            str(media_turn.current_images[0].id)
+            if (
+                media_turn is not None
+                and media_turn.selected_image is None
+                and len(media_turn.current_images) == 1
+            )
+            else None
+        )
+        if (
+            source_artifact_id
+            and not selected_artifact_id
+            and str(source_artifact_id) != sole_current_artifact_id
+        ):
             return ToolOutcome.failure(
                 'image_selection_required',
                 'Select exactly one image before requesting an edit',

@@ -221,6 +221,89 @@ async def test_generate_image_denies_unselected_model_source(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generate_image_allows_the_sole_current_turn_upload(monkeypatch):
+    from cognitrix.media.context import (
+        MediaTurnContext,
+        reset_media_turn_context,
+        set_media_turn_context,
+    )
+    from cognitrix.tools import image as image_module
+
+    source = _resolved_source('uploaded')
+    service = FakeMediaAssets(resolved={'source-1': source})
+    provider = FakeProvider([ProviderImage(b'edited image')])
+    monkeypatch.setattr(image_module, 'media_assets', service)
+    monkeypatch.setattr(image_module, 'image_provider', provider)
+    media_token = set_media_turn_context(MediaTurnContext(
+        ownership=MediaOwnership('session-1', 'user-1', 'agent-1'),
+        current_images=[ArtifactRef(
+            id='source-1', mime_type='image/png', filename='source.png', origin='uploaded'
+        )],
+        selected_image=None,
+        vision_data_uri_cache={},
+    ))
+    try:
+        result = await image_module.generate_image.run(
+            'Make the sole upload blue', source_artifact_id='source-1'
+        )
+    finally:
+        reset_media_turn_context(media_token)
+
+    assert result.outcome.status == 'success'
+    assert service.resolve_calls == [(
+        'source-1', MediaOwnership('session-1', 'user-1', 'agent-1'), 'original'
+    )]
+    assert provider.calls[0]['source'] == source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('current_ids', 'source_artifact_id'),
+    [
+        ([], 'old-image'),
+        (['first', 'second'], 'first'),
+        (['current'], 'old-image'),
+    ],
+)
+async def test_generate_image_denies_nonunique_or_mismatched_current_source(
+    monkeypatch, current_ids, source_artifact_id
+):
+    from cognitrix.media.context import (
+        MediaTurnContext,
+        reset_media_turn_context,
+        set_media_turn_context,
+    )
+    from cognitrix.tools import image as image_module
+
+    service = FakeMediaAssets()
+    provider = FakeProvider([ProviderImage(b'unused')])
+    monkeypatch.setattr(image_module, 'media_assets', service)
+    monkeypatch.setattr(image_module, 'image_provider', provider)
+    media_token = set_media_turn_context(MediaTurnContext(
+        ownership=MediaOwnership('session-1', 'user-1', 'agent-1'),
+        current_images=[ArtifactRef(
+            id=artifact_id,
+            mime_type='image/png',
+            filename=f'{artifact_id}.png',
+            origin='uploaded',
+        ) for artifact_id in current_ids],
+        selected_image=None,
+        vision_data_uri_cache={},
+    ))
+    try:
+        result = await image_module.generate_image.run(
+            'Edit an image', source_artifact_id=source_artifact_id
+        )
+    finally:
+        reset_media_turn_context(media_token)
+
+    assert result.outcome.status == 'denied'
+    assert result.outcome.error.code == 'image_selection_required'
+    assert service.resolve_calls == []
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
 async def test_generate_image_stores_provider_bytes_without_resolving_a_source(
     monkeypatch,
 ):
