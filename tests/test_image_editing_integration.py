@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import importlib
 import io
 import json
 import types
@@ -15,7 +16,6 @@ import pytest
 from PIL import Image
 from starlette.requests import Request
 
-import cognitrix.api.routes.agents as agent_routes
 import cognitrix.artifacts as artifact_store
 import cognitrix.media.staging as staging
 from cognitrix.artifacts import Artifact
@@ -27,6 +27,11 @@ from cognitrix.sessions.context import SlidingWindowContextManager
 from cognitrix.tools.base import ToolManager
 from cognitrix.utils import sse
 from cognitrix.utils.llm_response import LLMResponse
+
+
+_PUBLIC_ARTIFACT_FIELDS = {
+    "id", "mime_type", "filename", "width", "height", "origin",
+}
 
 
 class _JsonRequest:
@@ -98,6 +103,36 @@ def _provider_response(data: bytes) -> dict:
     }
 
 
+def _assert_public_artifacts_are_safe(events, artifacts: list[Artifact]):
+    public = json.dumps(events)
+    public_refs = []
+    for event in events:
+        public_refs.extend(event.get("artifacts") or [])
+        outcome = event.get("outcome")
+        if isinstance(outcome, dict):
+            public_refs.extend(outcome.get("artifacts") or [])
+    for reference in public_refs:
+        assert set(reference) == _PUBLIC_ARTIFACT_FIELDS
+
+    for artifact in artifacts:
+        for key in (
+            artifact.storage_key,
+            artifact.vision_storage_key,
+            artifact.thumbnail_storage_key,
+        ):
+            if key:
+                assert key not in public
+        for variant in ("original", "vision", "thumbnail"):
+            try:
+                path = artifact_store.variant_path(artifact, variant)
+            except ValueError:
+                continue
+            assert path.as_posix() not in public
+            assert json.dumps(str(path))[1:-1] not in public
+            if path.is_file():
+                assert base64.b64encode(path.read_bytes()).decode("ascii") not in public
+
+
 class _ConversationProvider:
     """Script the external conversational model and retain its real prompts."""
 
@@ -135,7 +170,16 @@ class _ConversationProvider:
 @pytest.fixture
 def integration_harness(tmp_path, monkeypatch):
     rows: dict[str, Artifact] = {}
+    session_rows: dict[str, Session] = {}
     root = tmp_path / "artifact-root"
+
+    # Importing the routes package initializes the worker database. Point that
+    # import-time side effect at pytest's isolated directory before importing.
+    from cognitrix.config import settings
+
+    monkeypatch.setattr(settings, "db_type", "sqlite")
+    monkeypatch.setattr(settings, "db_name", str(tmp_path / "routes.db"))
+    agent_routes = importlib.import_module("cognitrix.api.routes.agents")
 
     async def save_artifact(row):
         if row.id is None:
@@ -171,9 +215,15 @@ def integration_harness(tmp_path, monkeypatch):
     monkeypatch.setenv("DISABLE_VECTOR_STORE", "true")
 
     async def save_session(_session):
+        session_rows[str(_session.id)] = _session.model_copy(deep=True)
         return _session
 
+    async def get_session(session_id):
+        stored = session_rows.get(str(session_id))
+        return stored.model_copy(deep=True) if stored is not None else None
+
     monkeypatch.setattr(Session, "save", save_session)
+    monkeypatch.setattr(Session, "get", get_session)
     monkeypatch.setattr(sse, "is_multi_step_task", lambda _prompt: False)
 
     from cognitrix.providers import gemini_image
@@ -229,12 +279,13 @@ def integration_harness(tmp_path, monkeypatch):
     agent.__dict__["_ctx_mgr"] = SlidingWindowContextManager()
     agent.__dict__["_ctx_mgr_config"] = {"agent_id": "agent-1"}
     session = Session(id="session-1", agent_id="agent-1", user_id="user-1")
+    session_rows["session-1"] = session.model_copy(deep=True)
     manager = sse.SSEManager(agent)
     manager.user_key = "user-1"
 
     async def resolve_session(session_id):
         assert session_id == "session-1"
-        return session
+        return await get_session(session_id)
 
     async def resolve_agent(agent_id, _request):
         assert agent_id == "agent-1"
@@ -286,7 +337,7 @@ def integration_harness(tmp_path, monkeypatch):
     return types.SimpleNamespace(
         rows=rows,
         root=root,
-        session=session,
+        reload_session=get_session,
         conversation=conversation,
         provider_outputs=provider_outputs,
         gemini_payloads=gemini_payloads,
@@ -348,7 +399,7 @@ async def test_multipart_upload_is_promoted_current_vision_and_generate_image_so
     )
 
     assert request_bytes > len(uploaded_pixels)
-    assert "storage_key" not in json.dumps(ingested)
+    assert set(uploaded) == _PUBLIC_ARTIFACT_FIELDS
     assert base64.b64encode(resolved_vision.data).decode() in initial_prompt
     assert base64.b64decode(harness.gemini_payloads[0]["input"][1]["data"]) == (
         await media_assets.resolve_image(
@@ -356,10 +407,17 @@ async def test_multipart_upload_is_promoted_current_vision_and_generate_image_so
         )
     ).data
     assert harness.rows[child["id"]].source_artifact_id == uploaded["id"]
+    reloaded = await harness.reload_session("session-1")
+    assert reloaded is not None
     assert any(
         item.get("type") == "image" and item.get("artifact", {}).get("id") == uploaded["id"]
-        for item in harness.session.chat
+        for item in reloaded.chat
     )
+    _assert_public_artifacts_are_safe(
+        events,
+        [harness.rows[uploaded["id"]], harness.rows[child["id"]]],
+    )
+    assert base64.b64encode(uploaded_pixels).decode("ascii") not in json.dumps(events)
 
 
 @pytest.mark.asyncio
@@ -373,6 +431,7 @@ async def test_foreign_user_session_and_agent_ids_have_one_generic_public_denial
         MediaOwnership("session-1", "user-1", "other-agent"),
     ]
     identifiers = []
+    denial_events = []
     for index, ownership in enumerate(foreign):
         ref = await media_assets.store_generated_image(
             _png((30 + index, 40, 50)), {"filename": f"private-{index}.png"}, ownership
@@ -385,6 +444,7 @@ async def test_foreign_user_session_and_agent_ids_have_one_generic_public_denial
             {"prompt": "must never run", "source_artifact_id": identifier},
             selected_id=identifier,
         )
+        denial_events.extend(events)
         error = next(item for item in events if item.get("type") == "error")
         public = json.dumps(error)
         assert error["content"] == "Attachments or the selected image are unavailable. Please try again."
@@ -393,6 +453,11 @@ async def test_foreign_user_session_and_agent_ids_have_one_generic_public_denial
         assert "other-session" not in public
         assert "other-agent" not in public
         assert "private-" not in public
+
+    _assert_public_artifacts_are_safe(
+        denial_events,
+        [harness.rows[identifier] for identifier in identifiers],
+    )
 
     assert harness.gemini_payloads == []
 
