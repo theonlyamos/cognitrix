@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { TranscriptView } from '@/components/TranscriptView';
+import { toChatMessages, type TranscriptTool } from '@/lib/transcript';
 
 describe('TranscriptView live and Markdown output', () => {
   it('renders completed assistant output as Markdown', async () => {
@@ -63,6 +64,30 @@ describe('TranscriptView live and Markdown output', () => {
       }],
     }]} />);
     expect(await screen.findByText('contents')).toBeInTheDocument();
+  });
+
+  it('renders serialized null tool ids and results from the durable API', () => {
+    const tool: TranscriptTool = {
+      id: null,
+      name: 'Search',
+      args: '{"query":"OpenAI"}',
+      status: 'done',
+      result: null,
+    };
+
+    render(<TranscriptView entries={[{
+      kind: 'tool_calls',
+      content: '',
+      tools: [tool],
+    }]} />);
+
+    fireEvent.click(screen.getByText('Search'));
+    expect(screen.getByText('(no output)')).toBeInTheDocument();
+    expect(toChatMessages([{
+      kind: 'tool_calls',
+      content: '',
+      tools: [tool],
+    }])[0].tools?.[0].result).toBeUndefined();
   });
 
   it('announces completed and failed tool statuses while retaining their visible icons', () => {

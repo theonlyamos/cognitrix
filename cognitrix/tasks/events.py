@@ -1,7 +1,9 @@
 import asyncio
 import inspect
+import json
 import logging
 import time
+from collections import defaultdict, deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -129,6 +131,86 @@ async def events_after(
             f'Indexed task event paging is unsupported for database {dbms!r}'
         )
     return [TaskRunEvent(**TaskRunEvent.normalise(row)) for row in rows]
+
+
+def _event_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ''
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def project_step_tool_calls(
+    events: list[TaskRunEvent],
+    step_index: int,
+) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    pending_by_id: dict[str, int] = {}
+    pending_by_name: dict[str, deque[int]] = defaultdict(deque)
+
+    for event in events:
+        if event.step_index != step_index or event.kind not in {
+            'tool_started', 'tool_completed',
+        }:
+            continue
+        data = event.data or {}
+        call_id = _event_text(data.get('tool_call_id')).strip() or None
+        name = _event_text(data.get('tool_name')).strip() or 'tool'
+
+        if event.kind == 'tool_started':
+            index = len(calls)
+            calls.append({
+                'id': call_id,
+                'name': name,
+                'args': _event_text(data.get('params')),
+                'status': 'running',
+                'result': None,
+            })
+            if call_id:
+                pending_by_id[call_id] = index
+            pending_by_name[name].append(index)
+            continue
+
+        index = pending_by_id.pop(call_id, None) if call_id else None
+        if index is None and call_id is None:
+            queue = pending_by_name[name]
+            while queue and calls[queue[0]]['status'] != 'running':
+                queue.popleft()
+            index = queue.popleft() if queue else None
+
+        status = 'error' if _event_text(data.get('status')) == 'error' else 'done'
+        result = _event_text(data.get('result'))
+        if index is None:
+            calls.append({
+                'id': call_id,
+                'name': name,
+                'args': '',
+                'status': status,
+                'result': result,
+            })
+        else:
+            calls[index] = {**calls[index], 'status': status, 'result': result}
+
+    return calls
+
+
+async def step_tool_calls(run_id: str, step_index: int) -> list[dict[str, Any]]:
+    sequence = 0
+    tool_events: list[TaskRunEvent] = []
+    while True:
+        page = await events_after(run_id, sequence)
+        if not page:
+            break
+        sequence = page[-1].sequence
+        tool_events.extend(
+            event for event in page
+            if event.step_index == step_index
+            and event.kind in {'tool_started', 'tool_completed'}
+        )
+        if len(page) < EVENT_PAGE_SIZE:
+            break
+    return project_step_tool_calls(tool_events, step_index)
 
 
 class TaskRunEventEmitter:

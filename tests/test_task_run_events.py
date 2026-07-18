@@ -306,3 +306,158 @@ def test_task_run_event_is_registered_in_api_and_cli_startup():
     assert 'TaskRunEvent' in config_source.split('for model in (', 1)[1]
     assert 'from cognitrix.tasks.events import TaskRunEvent' in cli_source
     assert 'TaskRunEvent' in cli_source.split('for model in (', 1)[1]
+
+
+def _tool_event(sequence, kind, data, *, step_index=0):
+    from cognitrix.tasks.events import TaskRunEvent
+
+    return TaskRunEvent(
+        run_id='run-1',
+        session_id='session-1',
+        step_index=step_index,
+        sequence=sequence,
+        kind=kind,
+        agent_name='Researcher',
+        data=data,
+    )
+
+
+def test_project_step_tool_calls_pairs_ids_and_keeps_event_order():
+    from cognitrix.tasks.events import project_step_tool_calls
+
+    calls = project_step_tool_calls([
+        _tool_event(1, 'tool_started', {
+            'tool_call_id': 'call-1',
+            'tool_name': 'Search',
+            'params': {'query': 'OpenAI'},
+        }),
+        _tool_event(2, 'text_delta', {'content': 'ignored'}),
+        _tool_event(3, 'tool_completed', {
+            'tool_call_id': 'call-1',
+            'tool_name': 'Search',
+            'status': 'done',
+            'result': 'https://openai.com/news/',
+        }),
+        _tool_event(4, 'tool_completed', {
+            'tool_call_id': 'call-missed',
+            'tool_name': 'Read',
+            'status': 'error',
+            'result': 'missing file',
+        }),
+        _tool_event(5, 'tool_started', {
+            'tool_call_id': 'other-step',
+            'tool_name': 'Write',
+            'params': '{}',
+        }, step_index=1),
+    ], 0)
+
+    assert calls == [{
+        'id': 'call-1',
+        'name': 'Search',
+        'args': '{"query": "OpenAI"}',
+        'status': 'done',
+        'result': 'https://openai.com/news/',
+    }, {
+        'id': 'call-missed',
+        'name': 'Read',
+        'args': '',
+        'status': 'error',
+        'result': 'missing file',
+    }]
+
+
+def test_project_step_tool_calls_pairs_idless_same_name_calls_fifo():
+    from cognitrix.tasks.events import project_step_tool_calls
+
+    calls = project_step_tool_calls([
+        _tool_event(1, 'tool_started', {'tool_name': 'Read', 'params': 'first'}),
+        _tool_event(2, 'tool_started', {'tool_name': 'Read', 'params': 'second'}),
+        _tool_event(3, 'tool_completed', {
+            'tool_name': 'Read', 'status': 'done', 'result': 'one',
+        }),
+        _tool_event(4, 'tool_completed', {
+            'tool_name': 'Read', 'status': 'error', 'result': 'two',
+        }),
+    ], 0)
+
+    assert [(call['args'], call['status'], call['result']) for call in calls] == [
+        ('first', 'done', 'one'),
+        ('second', 'error', 'two'),
+    ]
+
+
+def test_project_step_tool_calls_does_not_pair_unmatched_explicit_id_by_name():
+    from cognitrix.tasks.events import project_step_tool_calls
+
+    calls = project_step_tool_calls([
+        _tool_event(1, 'tool_started', {
+            'tool_call_id': 'call-A',
+            'tool_name': 'Search',
+            'params': 'first',
+        }),
+        _tool_event(2, 'tool_completed', {
+            'tool_call_id': 'call-B',
+            'tool_name': 'Search',
+            'status': 'done',
+            'result': 'second result',
+        }),
+        _tool_event(3, 'tool_completed', {
+            'tool_call_id': 'call-A',
+            'tool_name': 'Search',
+            'status': 'done',
+            'result': 'first result',
+        }),
+    ], 0)
+
+    assert calls == [{
+        'id': 'call-A',
+        'name': 'Search',
+        'args': 'first',
+        'status': 'done',
+        'result': 'first result',
+    }, {
+        'id': 'call-B',
+        'name': 'Search',
+        'args': '',
+        'status': 'done',
+        'result': 'second result',
+    }]
+
+
+@pytest.mark.asyncio
+async def test_step_tool_calls_pages_until_short_page(monkeypatch):
+    import cognitrix.tasks.events as events
+    from cognitrix.tasks.events import step_tool_calls
+
+    cursors = []
+    first_page = [
+        _tool_event(1, 'text_delta', {'content': 'ignored'}),
+        _tool_event(2, 'tool_started', {
+            'tool_call_id': 'call-1',
+            'tool_name': 'Search',
+            'params': {'query': 'OpenAI'},
+        }),
+    ]
+    second_page = [_tool_event(3, 'tool_completed', {
+        'tool_call_id': 'call-1',
+        'tool_name': 'Search',
+        'status': 'done',
+        'result': 'https://openai.com/news/',
+    })]
+
+    async def fake_events_after(run_id, sequence, *, limit=256):
+        assert run_id == 'run-1'
+        cursors.append(sequence)
+        return {0: first_page, 2: second_page}[sequence]
+
+    monkeypatch.setattr(events, 'EVENT_PAGE_SIZE', 2)
+    monkeypatch.setattr(events, 'events_after', fake_events_after)
+
+    assert await step_tool_calls('run-1', 0) == [{
+        'id': 'call-1',
+        'name': 'Search',
+        'args': '{"query": "OpenAI"}',
+        'status': 'done',
+        'result': 'https://openai.com/news/',
+    }]
+    assert cursors == [0, 2]

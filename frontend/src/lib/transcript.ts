@@ -18,10 +18,10 @@ export interface BackendChatEntry {
 }
 
 export type TranscriptTool = {
-  id?: string;
+  id?: string | null;
   name: string;
   args: string;
-  result?: string;
+  result?: string | null;
   status?: 'running' | 'done' | 'error' | 'stopped';
   artifacts?: ToolArtifact[];
 };
@@ -196,7 +196,7 @@ export function toChatMessages(entries: TranscriptEntry[]): ChatMessage[] {
             name: t.name,
             status: t.status ?? 'error',
             params: t.args,
-            result: t.result,
+            result: t.result ?? undefined,
             artifacts: t.artifacts,
           })),
         });

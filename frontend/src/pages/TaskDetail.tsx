@@ -18,6 +18,7 @@ import {
   fmtRelative,
   type BackendChatEntry,
   type TranscriptEntry,
+  type TranscriptTool,
 } from '@/lib/transcript';
 import { cn } from '@/lib/utils';
 import {
@@ -94,6 +95,12 @@ interface DurableStepResult {
   step_index: number;
   status: string;
   result: TypedTaskResult | null;
+  tool_calls?: TranscriptTool[];
+}
+
+interface DurableViewData {
+  result: TypedTaskResult | null;
+  toolCalls: TranscriptTool[];
 }
 
 interface RunSession {
@@ -215,11 +222,13 @@ const formatUsage = (run: TaskRunRecord): string[] => {
 
 function DurableResultView({
   result,
+  tools,
   agentName,
   taskId,
   runId,
 }: {
   result: TypedTaskResult;
+  tools: TranscriptTool[];
   agentName?: string;
   taskId?: string;
   runId?: string;
@@ -229,6 +238,7 @@ function DurableResultView({
     : [];
   return (
     <div>
+      <DurableToolCalls tools={tools} agentName={agentName} />
       {entries.length > 0 && <TranscriptView entries={entries} />}
       {(result.artifacts || []).length > 0 && (
         <div className="border-b border-line px-4 py-3 sm:pl-[116px]" aria-label="Result artifacts">
@@ -300,6 +310,24 @@ function DurableResultView({
   );
 }
 
+function DurableToolCalls({
+  tools,
+  agentName,
+}: {
+  tools: TranscriptTool[];
+  agentName?: string;
+}) {
+  if (!tools.length) return null;
+  return (
+    <TranscriptView entries={[{
+      kind: 'tool_calls',
+      content: '',
+      name: agentName,
+      tools,
+    }]} />
+  );
+}
+
 /** Task details: TaskRun history in the sidebar, the selected run's steps
  *  panel + per-step transcript on the right. The active run is polled live
  *  (task status, plan step statuses, the watched step's transcript). */
@@ -325,7 +353,7 @@ export default function TaskDetail() {
   const [stepSessions, setStepSessions] = useState<Record<string, Record<string, string>>>({});
   const [liveStepSessions, setLiveStepSessions] = useState<Record<string, Record<string, string>>>({});
   const [chats, setChats] = useState<Record<string, BackendChatEntry[]>>({});
-  const [durableResults, setDurableResults] = useState<Record<string, TypedTaskResult | null>>({});
+  const [durableResults, setDurableResults] = useState<Record<string, DurableViewData>>({});
   const [durableResultLoading, setDurableResultLoading] = useState<Record<string, boolean>>({});
   const [durableResultErrors, setDurableResultErrors] = useState<Record<string, boolean>>({});
   const chatRequestGenerationRef = useRef(0);
@@ -429,15 +457,28 @@ export default function TaskDetail() {
       const path = target === 'synthesis'
         ? `/tasks/${taskId}/runs/${runId}/result`
         : `/tasks/${taskId}/runs/${runId}/steps/${target}/result`;
-      const response = target === 'synthesis'
-        ? await api.get<TypedTaskResult>(path)
-        : await api.get<DurableStepResult>(path);
-      const result = target === 'synthesis'
-        ? response.data as TypedTaskResult
-        : (response.data as DurableStepResult).result;
-      setDurableResults((previous) => ({ ...previous, [key]: result || null }));
+      if (target === 'synthesis') {
+        const response = await api.get<TypedTaskResult>(path);
+        setDurableResults((previous) => ({
+          ...previous,
+          [key]: { result: response.data, toolCalls: [] },
+        }));
+      } else {
+        const response = await api.get<DurableStepResult>(path);
+        setDurableResults((previous) => ({
+          ...previous,
+          [key]: {
+            result: response.data.result,
+            toolCalls: response.data.tool_calls || [],
+          },
+        }));
+      }
     } catch {
-      setDurableResults((previous) => ({ ...previous, [key]: null }));
+      setDurableResults((previous) => (
+        Object.prototype.hasOwnProperty.call(previous, key)
+          ? previous
+          : { ...previous, [key]: { result: null, toolCalls: [] } }
+      ));
       setDurableResultErrors((previous) => ({ ...previous, [key]: true }));
     } finally {
       setDurableResultLoading((previous) => ({ ...previous, [key]: false }));
@@ -598,9 +639,15 @@ export default function TaskDetail() {
   const durableResultEligible = selectedDurableTarget === 'synthesis'
     ? selectedRun?.status === 'completed'
     : !!selectedPlanStep && !!selectedStepStatus && !['pending', 'running'].includes(selectedStepStatus);
-  const selectedDurableResult = selectedDurableKey
+  const selectedDurableData = selectedDurableKey
     ? durableResults[selectedDurableKey]
     : undefined;
+  const selectedDurableResult = selectedDurableData?.result;
+  const selectedDurableToolCalls = selectedDurableData
+    ? selectedDurableData.toolCalls
+    : [];
+  const selectedDurableLoaded = !!selectedDurableKey
+    && Object.prototype.hasOwnProperty.call(durableResults, selectedDurableKey);
   const selectedDurableLoading = selectedDurableKey
     ? !!durableResultLoading[selectedDurableKey]
     : false;
@@ -622,7 +669,8 @@ export default function TaskDetail() {
     && selectedCanonicalEntries.length === 0
     && (
       liveEntries.length === 0
-      || (selectedDurableResult !== null && selectedDurableResult !== undefined)
+      || selectedDurableLoaded
+      || selectedDurableError
     );
 
   useEffect(() => {
@@ -1129,6 +1177,7 @@ export default function TaskDetail() {
           ) : preferDurableResult && selectedDurableResult ? (
             <DurableResultView
               result={selectedDurableResult}
+              tools={selectedDurableToolCalls}
               agentName={selectedDurableTarget === 'synthesis' ? 'Final result' : selectedPlanStep?.agent_name}
               taskId={taskId}
               runId={selectedRunId || undefined}
@@ -1144,8 +1193,11 @@ export default function TaskDetail() {
                 retry result
               </button>
             </div>
-          ) : preferDurableResult && selectedDurableKey && Object.prototype.hasOwnProperty.call(durableResults, selectedDurableKey) ? (
-            <div className="px-6 py-4 font-mono text-[11px] text-fg-dim">this step has no persisted result</div>
+          ) : preferDurableResult && selectedDurableLoaded ? (
+            <div>
+              <DurableToolCalls tools={selectedDurableToolCalls} agentName={selectedPlanStep?.agent_name} />
+              <div className="px-6 py-4 font-mono text-[11px] text-fg-dim">this step has no persisted result</div>
+            </div>
           ) : selectedSessionId ? (
             chats[selectedSessionId] || liveEntries.length > 0 ? (
               <TranscriptView
@@ -1164,6 +1216,7 @@ export default function TaskDetail() {
           ) : selectedDurableResult ? (
             <DurableResultView
               result={selectedDurableResult}
+              tools={selectedDurableToolCalls}
               agentName={selectedDurableTarget === 'synthesis' ? 'Final result' : selectedPlanStep?.agent_name}
               taskId={taskId}
               runId={selectedRunId || undefined}
@@ -1179,8 +1232,11 @@ export default function TaskDetail() {
                 retry result
               </button>
             </div>
-          ) : selectedDurableKey && Object.prototype.hasOwnProperty.call(durableResults, selectedDurableKey) ? (
-            <div className="px-6 py-4 font-mono text-[11px] text-fg-dim">this step has no persisted result</div>
+          ) : selectedDurableLoaded ? (
+            <div>
+              <DurableToolCalls tools={selectedDurableToolCalls} agentName={selectedPlanStep?.agent_name} />
+              <div className="px-6 py-4 font-mono text-[11px] text-fg-dim">this step has no persisted result</div>
+            </div>
           ) : selectedRun ? (
             <div className="px-6 py-4 font-mono text-[11px] text-fg-dim">
               {plan.length === 0 ? 'this run failed before a plan was made' : 'select a step to view its transcript'}
