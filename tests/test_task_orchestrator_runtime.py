@@ -499,6 +499,130 @@ async def test_failed_quality_retry_persists_last_typed_attempt_for_reload(
 
 
 @pytest.mark.asyncio
+async def test_durable_image_artifact_is_evaluated_without_quality_retry(
+    orchestration_db,
+    monkeypatch,
+):
+    agent = _agent()
+    task = _task(agent, steps={
+        "0": {
+            "step": "Generate a teapot image",
+            "expected_output": "One PNG teapot image",
+            "verification_criteria": "must_contain: Image generated.",
+            "required_tools": [],
+        }
+    })
+    queued = await _queued(task.id)
+    _common_stubs(monkeypatch)
+    executions = 0
+
+    class Executor:
+        def __init__(self, _snapshot, **_kwargs):
+            pass
+
+        async def execute(self, _prompt, *, tool_context=None, attempt=1):
+            nonlocal executions
+            executions += 1
+            return StepResult(
+                text="Image generated.",
+                artifacts=[{
+                    "id": "image-1",
+                    "name": "teapot.png",
+                    "mime_type": "image/png",
+                    "uri": "/tasks/task-1/runs/run-1/artifacts/image-1",
+                }],
+            )
+
+    evaluations = []
+
+    async def approve_evaluation(*args, **kwargs):
+        evaluations.append((args, kwargs))
+        return StepEvaluation(passed=True, gate="passed", finalscore=9)
+
+    monkeypatch.setattr(orchestrator, "TaskStepExecutor", Executor)
+    monkeypatch.setattr(orchestrator, "evaluate_step", approve_evaluation)
+
+    result = await orchestrator.run(task, run_record=queued)
+
+    rows = await _steps(queued.id)
+    assert result is not None and result.status == TaskRunStatus.COMPLETED
+    assert executions == 1
+    assert len(evaluations) == 1
+    args, kwargs = evaluations[0]
+    assert args[1:] == (
+        "Generate a teapot image",
+        "Image generated.",
+        "must_contain: Image generated.",
+    )
+    assert kwargs["expected_output"] == "One PNG teapot image"
+    assert [artifact.model_dump() for artifact in kwargs["artifacts"]] == [
+        {
+            "id": "image-1",
+            "name": "teapot.png",
+            "mime_type": "image/png",
+            "uri": "/tasks/task-1/runs/run-1/artifacts/image-1",
+        }
+    ]
+    assert rows[0].status == TaskRunStepStatus.DONE
+    assert rows[0].gate == "unverified"
+    assert [artifact.id for artifact in rows[0].result.artifacts] == ["image-1"]
+
+
+@pytest.mark.asyncio
+async def test_durable_image_artifact_rejection_is_terminal_and_preserves_artifact(
+    orchestration_db,
+    monkeypatch,
+):
+    task = _task(_agent())
+    queued = await _queued(task.id)
+    _common_stubs(monkeypatch)
+    executions = 0
+
+    class Executor:
+        def __init__(self, _snapshot, **_kwargs):
+            pass
+
+        async def execute(self, _prompt, *, tool_context=None, attempt=1):
+            nonlocal executions
+            executions += 1
+            return StepResult(
+                text="Image generated.",
+                artifacts=[{
+                    "id": "image-1",
+                    "name": "teapot.png",
+                    "mime_type": "image/png",
+                    "uri": "/tasks/task-1/runs/run-1/artifacts/image-1",
+                }],
+            )
+
+    async def reject_evaluation(*_args, **_kwargs):
+        return StepEvaluation(
+            passed=False,
+            gate="failed",
+            finalscore=3,
+            suggestions=["image does not satisfy the requested subject"],
+            error_code="quality_gate_failed",
+        )
+
+    monkeypatch.setattr(orchestrator, "TaskStepExecutor", Executor)
+    monkeypatch.setattr(orchestrator, "evaluate_step", reject_evaluation)
+
+    with pytest.raises(Exception, match="failed validation"):
+        await orchestrator.run(task, run_record=queued)
+
+    row = (await _steps(queued.id))[0]
+    assert executions == 1
+    assert row.status == TaskRunStepStatus.FAILED
+    assert row.attempts == 1
+    assert row.gate == "failed"
+    assert row.result is not None
+    assert row.result.warnings == [
+        "Reviewer: image does not satisfy the requested subject"
+    ]
+    assert [artifact.id for artifact in row.result.artifacts] == ["image-1"]
+
+
+@pytest.mark.asyncio
 async def test_synthesis_delimits_untrusted_step_outputs(monkeypatch):
     captured = []
 

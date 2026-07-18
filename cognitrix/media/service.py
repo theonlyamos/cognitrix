@@ -539,6 +539,7 @@ class MediaAssetService:
                 session_id=ownership.session_id,
                 user_id=ownership.user_id,
                 agent_id=ownership.agent_id,
+                run_id=ownership.run_id,
                 storage_key=original_key,
                 vision_storage_key=vision_key,
                 thumbnail_storage_key=thumbnail_key if thumbnail_retained else None,

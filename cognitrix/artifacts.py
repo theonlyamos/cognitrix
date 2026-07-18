@@ -329,6 +329,7 @@ async def store_png(data: bytes, *, session_id: str | None = None, agent_id: str
         session_id=session_id or current_session_id(),
         agent_id=agent_id if agent_id is not None else _agent_id.get(),
         user_id=artifact_user_id,
+        run_id=artifact_run_id,
     )
     artifact_ref = await media_assets.store_generated_image(
         data,

@@ -340,6 +340,28 @@ async def test_generate_image_stores_provider_bytes_without_resolving_a_source(
 
 
 @pytest.mark.asyncio
+async def test_generate_image_forwards_task_run_provenance(monkeypatch):
+    from cognitrix.tools import image as image_module
+
+    service = FakeMediaAssets()
+    provider = FakeProvider([ProviderImage(b'task image')])
+    monkeypatch.setattr(image_module, 'media_assets', service)
+    monkeypatch.setattr(image_module, 'image_provider', provider)
+    token = set_execution_context(ToolExecutionContext(
+        user_id='user-1',
+        task_id='task-1',
+        run_id='run-1',
+    ))
+    try:
+        result = await image_module.generate_image.run('A task image')
+    finally:
+        reset_execution_context(token)
+
+    assert result.outcome.status == 'success'
+    assert service.store_calls[0]['ownership'].run_id == 'run-1'
+
+
+@pytest.mark.asyncio
 async def test_three_call_edit_chain_uses_each_child_as_the_next_parent(monkeypatch):
     from cognitrix.tools import image as image_module
 

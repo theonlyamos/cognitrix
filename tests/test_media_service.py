@@ -126,6 +126,29 @@ async def _ingest(service, tmp_path, data, *, filename, declared_mime):
 
 
 @pytest.mark.asyncio
+async def test_generated_image_persists_task_run_provenance_atomically(
+    artifact_store,
+    rgba_png_bytes,
+):
+    ownership = MediaOwnership(
+        session_id='attempt-1',
+        user_id='user-1',
+        agent_id='agent-1',
+        run_id='run-1',
+    )
+
+    stored = await MediaAssetService().store_generated_image(
+        rgba_png_bytes,
+        {'prompt': 'A blue teapot'},
+        ownership,
+    )
+
+    artifact = await Artifact.get(stored.id)
+    assert artifact is not None
+    assert artifact.run_id == 'run-1'
+
+
+@pytest.mark.asyncio
 async def test_ingest_sniffs_content_and_chooses_sanitized_master_format(
     artifact_store, tmp_path, rgb_jpeg_bytes, rgba_png_bytes, gif_bytes
 ):

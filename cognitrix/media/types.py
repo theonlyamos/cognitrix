@@ -36,6 +36,7 @@ class MediaOwnership:
     session_id: str | None
     user_id: str | None
     agent_id: str | None
+    run_id: str | None = None
 
 
 @dataclass(frozen=True)

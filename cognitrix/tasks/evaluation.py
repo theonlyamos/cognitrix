@@ -2,7 +2,7 @@
 
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -20,8 +20,13 @@ class StepEvaluation(BaseModel):
     error_code: str | None = None
 
 
-def _mechanical_failure(answer: str, criteria: str) -> str | None:
-    if not answer.strip():
+def _mechanical_failure(
+    answer: str,
+    criteria: str,
+    *,
+    allow_empty_answer: bool = False,
+) -> str | None:
+    if not answer.strip() and not allow_empty_answer:
         return "empty_output"
 
     # Explicit machine-readable clauses are deterministic.  Natural-language
@@ -34,6 +39,26 @@ def _mechanical_failure(answer: str, criteria: str) -> str | None:
         if len(answer) < int(match.group(1)):
             return "minimum_length_not_met"
     return None
+
+
+def _artifact_summary(artifacts: Sequence[Any]) -> dict[str, Any]:
+    """Return the bounded, durable artifact evidence available to the reviewer."""
+    return {
+        "count": len(artifacts),
+        "items": [
+            {
+                field: value
+                for field, value in (
+                    ("id", getattr(artifact, "id", None)),
+                    ("name", getattr(artifact, "name", None)),
+                    ("mime_type", getattr(artifact, "mime_type", None)),
+                    ("uri", getattr(artifact, "uri", None)),
+                )
+                if value is not None
+            }
+            for artifact in artifacts
+        ],
+    }
 
 
 def _response_text(response: Any) -> str:
@@ -62,17 +87,31 @@ async def evaluate_step(
     *,
     threshold: float = 7.0,
     on_retry: Callable[[], Awaitable[None]] | None = None,
+    expected_output: str = "",
+    artifacts: Sequence[Any] = (),
 ) -> StepEvaluation:
     """Validate once mechanically, then at most twice with a fresh bounded LLM."""
-    failure = _mechanical_failure(answer, criteria)
+    failure = _mechanical_failure(
+        answer,
+        criteria,
+        allow_empty_answer=bool(artifacts),
+    )
     if failure:
         return StepEvaluation(passed=False, gate="failed", error_code=failure)
 
     evaluator = llm.model_copy(deep=False)
     evaluator.temperature = 0
     evaluator.max_tokens = min(int(getattr(evaluator, "max_tokens", 512) or 512), 512)
+    evidence: dict[str, Any] = {
+        "task": task,
+        "criteria": criteria,
+        "answer": answer,
+    }
+    if artifacts:
+        evidence["expected_output"] = expected_output
+        evidence["artifacts"] = _artifact_summary(artifacts)
     untrusted = json.dumps(
-        {"task": task, "criteria": criteria, "answer": answer},
+        evidence,
         ensure_ascii=False,
         separators=(",", ":"),
     ).replace("<", "\\u003c").replace(">", "\\u003e")
@@ -108,7 +147,7 @@ async def evaluate_step(
             passed = finalscore >= threshold
             return StepEvaluation(
                 passed=passed,
-                gate="passed" if passed else "failed",
+                gate=("unverified" if artifacts else "passed") if passed else "failed",
                 finalscore=finalscore,
                 suggestions=parsed.suggestions,
             )

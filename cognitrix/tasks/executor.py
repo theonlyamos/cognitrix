@@ -1,5 +1,6 @@
 """Task-specific turn execution, separate from persisted chat sessions."""
 
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -103,6 +104,7 @@ class TaskStepExecutor:
     def create_attempt(self) -> tuple[Any, Session]:
         agent = instantiate_runtime(self.snapshot, tool_resolver=self.tool_resolver)
         return agent, Session(
+            _id=str(uuid.uuid4()),
             task_id=self.task_id,
             run_id=self.run_id,
             step_index=self.step_index,

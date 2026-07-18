@@ -38,6 +38,7 @@ def _current_media_ownership() -> MediaOwnership:
             else artifact_user_id
         ),
         agent_id=artifact_context._agent_id.get(),
+        run_id=execution_context.run_id,
     )
 
 

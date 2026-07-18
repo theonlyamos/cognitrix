@@ -568,6 +568,33 @@ describe('final accessibility contracts', () => {
     expect(synthesis).toHaveClass('min-h-11', 'md:min-h-0');
   });
 
+  it('shows an unverified task step visibly and in its accessible name', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'completed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-1',
+        status: 'completed',
+        plan: [{
+          index: 0,
+          title: 'Generate image',
+          status: 'done',
+          agent_name: 'Image Tool Tester',
+          gate: 'unverified',
+        }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockResolvedValue({ data: [] });
+    renderTaskDetail();
+
+    expect(await screen.findByText('unverified')).toBeVisible();
+    expect(screen.getByRole('button', {
+      name: /Generate image.*Image Tool Tester.*unverified/i,
+    })).toBeInTheDocument();
+  });
+
   it('keeps the pending TaskDetail header on one compact mobile row', () => {
     harness.resources.set('/tasks/task-1', { data: { id: 'task-1', title: 'Task', status: 'pending' } });
     harness.resources.set('/tasks/task-1/runs', { data: [] });
