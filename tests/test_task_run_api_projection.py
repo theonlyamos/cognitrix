@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -513,10 +514,20 @@ async def test_explicit_step_result_endpoint_returns_only_requested_run_step(mon
     async def get_artifact(_artifact_id):
         return artifact
 
+    async def load_tool_calls(_run_id, _step_index):
+        return [{
+            'id': 'call-1',
+            'name': 'Search',
+            'args': '{"query":"OpenAI"}',
+            'status': 'done',
+            'result': 'https://openai.com/news/',
+        }]
+
     monkeypatch.setattr(Task, "get", staticmethod(get_task))
     monkeypatch.setattr(TaskRun, "get", staticmethod(get_run))
     monkeypatch.setattr(TaskRunStep, "find_one", staticmethod(find_step))
     monkeypatch.setattr(Artifact, "get", staticmethod(get_artifact))
+    monkeypatch.setattr(routes, 'step_tool_calls', load_tool_calls)
     ctx = AuthContext(user=SimpleNamespace(id="user-1"), api_key=None)
 
     response = await routes.load_task_run_step_result(task.id, run.id, 0, ctx)
@@ -527,6 +538,116 @@ async def test_explicit_step_result_endpoint_returns_only_requested_run_step(mon
     assert response["result"]["artifacts"][0]["uri"] == (
         "/tasks/task-1/runs/run-1/artifacts/artifact-1"
     )
+    assert response['tool_calls'] == [{
+        'id': 'call-1',
+        'name': 'Search',
+        'args': '{"query":"OpenAI"}',
+        'status': 'done',
+        'result': 'https://openai.com/news/',
+    }]
+
+
+async def test_explicit_step_result_endpoint_projects_tool_calls_for_historical_plan(monkeypatch):
+    import cognitrix.api.routes.tasks as routes
+
+    task = Task(_id='task-1', title='Task', description='Work')
+    run = _run(
+        TaskRunStatus.COMPLETED,
+        '2030-01-02 00:00:00',
+        run_id='run-1',
+    )
+    run.requested_by = 'user-1'
+    run.plan = [{
+        'index': 0,
+        'status': 'completed',
+        'result': 'historical step output',
+    }]
+    expected_tool_calls = [{
+        'id': 'call-1',
+        'name': 'Search',
+        'args': '{"query":"OpenAI"}',
+        'status': 'done',
+        'result': 'https://openai.com/news/',
+    }]
+
+    async def get_task(_task_id):
+        return task
+
+    async def get_run(_run_id):
+        return run
+
+    async def no_step(_query):
+        return None
+
+    async def load_tool_calls(_run_id, _step_index):
+        return expected_tool_calls
+
+    monkeypatch.setattr(Task, 'get', staticmethod(get_task))
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(get_run))
+    monkeypatch.setattr(TaskRunStep, 'find_one', staticmethod(no_step))
+    monkeypatch.setattr(routes, 'step_tool_calls', load_tool_calls)
+
+    response = await routes.load_task_run_step_result(
+        task.id,
+        run.id,
+        0,
+        AuthContext(user=SimpleNamespace(id='user-1'), api_key=None),
+    )
+
+    assert response['result']['text'] == 'historical step output'
+    assert response['tool_calls'] == expected_tool_calls
+
+
+async def test_explicit_step_result_endpoint_omits_tool_calls_when_projection_fails(
+    monkeypatch,
+    caplog,
+):
+    import cognitrix.api.routes.tasks as routes
+
+    task = Task(_id='task-1', title='Task', description='Work')
+    run = _run(
+        TaskRunStatus.COMPLETED,
+        '2030-01-02 00:00:00',
+        run_id='run-1',
+    )
+    run.requested_by = 'user-1'
+    step = TaskRunStep(
+        run_id=run.id,
+        task_id=task.id,
+        step_index=0,
+        title='Research',
+        status=TaskRunStepStatus.DONE,
+        result=StepResult(text='durable step output'),
+    )
+
+    async def get_task(_task_id):
+        return task
+
+    async def get_run(_run_id):
+        return run
+
+    async def find_step(_query):
+        return step
+
+    async def unavailable_tool_calls(_run_id, _step_index):
+        raise RuntimeError('event table unavailable')
+
+    monkeypatch.setattr(Task, 'get', staticmethod(get_task))
+    monkeypatch.setattr(TaskRun, 'get', staticmethod(get_run))
+    monkeypatch.setattr(TaskRunStep, 'find_one', staticmethod(find_step))
+    monkeypatch.setattr(routes, 'step_tool_calls', unavailable_tool_calls)
+
+    with caplog.at_level(logging.ERROR, logger='cognitrix.log'):
+        response = await routes.load_task_run_step_result(
+            task.id,
+            run.id,
+            0,
+            AuthContext(user=SimpleNamespace(id='user-1'), api_key=None),
+        )
+
+    assert response['result']['text'] == 'durable step output'
+    assert 'tool_calls' not in response
+    assert 'Could not project tool calls for run run-1 step 0' in caplog.text
 
 
 async def test_run_artifact_requires_run_provenance_and_a_persisted_reference(

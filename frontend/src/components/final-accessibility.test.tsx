@@ -37,6 +37,7 @@ const harness = vi.hoisted(() => ({
   sseError: null as Error | null,
   sseOnMessage: null as null | ((event: Record<string, unknown>) => void),
   taskRunOnEvent: null as null | ((event: Record<string, unknown>) => void),
+  taskRunId: undefined as string | null | undefined,
   taskRunConnected: true,
   taskRunError: null as Error | null,
   taskRunReconnect: vi.fn(),
@@ -68,10 +69,13 @@ vi.mock('@/hooks/useResource', () => ({
 
 vi.mock('@/hooks/useTaskRunEvents', () => ({
   useTaskRunEvents: ({
+    runId,
     onEvent,
   }: {
+    runId?: string | null;
     onEvent: (event: Record<string, unknown>) => void;
   }) => {
+    harness.taskRunId = runId;
     harness.taskRunOnEvent = onEvent;
     return {
       isConnected: harness.taskRunConnected,
@@ -198,6 +202,7 @@ describe('final accessibility contracts', () => {
     harness.sseError = null;
     harness.sseOnMessage = null;
     harness.taskRunOnEvent = null;
+    harness.taskRunId = undefined;
     harness.taskRunConnected = true;
     harness.taskRunError = null;
     harness.taskRunReconnect.mockReset();
@@ -787,6 +792,171 @@ describe('final accessibility contracts', () => {
     expect(harness.apiGet).toHaveBeenCalledWith(
       '/tasks/task-1/runs/run-durable/steps/0/result',
     );
+  });
+
+  it('renders projected tool calls before a completed durable step result', async () => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'completed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-projected-calls',
+        status: 'completed',
+        plan: [{ index: 0, title: 'Create brief', status: 'done', agent_name: 'Researcher' }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-projected-calls') return Promise.resolve({ data: [] });
+      if (path === '/tasks/task-1/runs/run-projected-calls/steps/0/result') {
+        return Promise.resolve({
+          data: {
+            step_index: 0,
+            status: 'done',
+            result: {
+              text: 'Authoritative durable answer',
+              artifacts: [],
+              citations: [],
+              warnings: [],
+              usage: {},
+            },
+            tool_calls: [{
+              id: 'image-call',
+              name: 'generate_image',
+              args: '{"prompt":"a lighthouse"}',
+              status: 'done',
+              result: 'artifact image-1',
+            }, {
+              id: 'search-call',
+              name: 'Search',
+              args: '{"query":"lighthouses"}',
+              status: 'done',
+              result: 'one result',
+            }],
+          },
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+
+    renderTaskDetail();
+    await waitFor(() => expect(harness.taskRunOnEvent).not.toBeNull());
+    act(() => harness.taskRunOnEvent?.({
+      type: 'task_run_event',
+      id: 'event-stale-live-text',
+      run_id: 'run-projected-calls',
+      session_id: 'ephemeral-completed-attempt',
+      step_index: 0,
+      sequence: 1,
+      kind: 'text_delta',
+      agent_name: 'Researcher',
+      data: { turn_id: 'ephemeral-completed-attempt:1', content: 'temporary live text' },
+    }));
+    const step = await screen.findByRole('button', { name: /Create brief.*Researcher/ });
+    await userEvent.click(step);
+
+    expect(await screen.findAllByText('Authoritative durable answer')).toHaveLength(1);
+    const imageSummary = screen.getByText('generate image').closest('summary');
+    const searchSummary = screen.getByText('Search').closest('summary');
+    expect(imageSummary).not.toBeNull();
+    expect(searchSummary).not.toBeNull();
+    expect(imageSummary!.closest('details')).toHaveAttribute('open');
+    expect(searchSummary!.closest('details')).not.toHaveAttribute('open');
+    expect(imageSummary!.compareDocumentPosition(
+      screen.getByText('Authoritative durable answer'),
+    ) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(harness.taskRunId).toBeNull();
+    expect(screen.queryByText('temporary live text')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      caseName: 'an empty successful response',
+      loadResult: () => Promise.resolve({
+        data: { step_index: 0, status: 'failed', result: null, tool_calls: [] },
+      }),
+      expected: 'empty',
+    },
+    {
+      caseName: 'a call-only successful response',
+      loadResult: () => Promise.resolve({
+        data: {
+          step_index: 0,
+          status: 'failed',
+          result: null,
+          tool_calls: [{
+            id: 'late-search-call',
+            name: 'Search',
+            args: '{"query":"durable trace"}',
+            status: 'done',
+            result: 'durable search result',
+          }],
+        },
+      }),
+      expected: 'calls',
+    },
+    {
+      caseName: 'a rejected response',
+      loadResult: () => Promise.reject(new Error('durable endpoint unavailable')),
+      expected: 'error',
+    },
+  ])('keeps terminal durable state authoritative over late live output for $caseName', async ({
+    loadResult,
+    expected,
+  }) => {
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'failed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-terminal-durable',
+        status: 'failed',
+        plan: [{ index: 0, title: 'Terminal step', status: 'failed', agent_name: 'Researcher' }],
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockImplementation((path: string) => {
+      if (path === '/sessions/runs/run-terminal-durable') return Promise.resolve({ data: [] });
+      if (path === '/tasks/task-1/runs/run-terminal-durable/steps/0/result') return loadResult();
+      return Promise.resolve({ data: [] });
+    });
+
+    renderTaskDetail();
+    await waitFor(() => expect(harness.taskRunOnEvent).not.toBeNull());
+    if (expected === 'error') {
+      expect(await screen.findByText('Could not load the durable result.')).toBeInTheDocument();
+    } else {
+      expect(await screen.findByText('this step has no persisted result')).toBeInTheDocument();
+    }
+
+    await act(async () => {
+      harness.taskRunOnEvent?.({
+        type: 'task_run_event',
+        id: `event-late-${expected}`,
+        run_id: 'run-terminal-durable',
+        session_id: 'late-terminal-attempt',
+        step_index: 0,
+        sequence: 1,
+        kind: 'text_delta',
+        agent_name: 'Researcher',
+        data: { turn_id: 'late-terminal-attempt:1', content: 'late terminal live output' },
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText('late terminal live output')).not.toBeInTheDocument();
+    if (expected === 'error') {
+      expect(screen.getByText('Could not load the durable result.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'retry result' })).toBeInTheDocument();
+    } else {
+      expect(screen.getByText('this step has no persisted result')).toBeInTheDocument();
+      if (expected === 'calls') {
+        expect(screen.getByText('Search')).toBeInTheDocument();
+        expect(screen.getByText('durable search result')).toBeInTheDocument();
+      } else {
+        expect(screen.queryByText('Search')).not.toBeInTheDocument();
+      }
+    }
   });
 
   it('hands an ephemeral live attempt off to its durable typed result', async () => {
@@ -1502,12 +1672,12 @@ describe('final accessibility contracts', () => {
         {
           id: 'run-a',
           status: 'failed',
-          plan: [{ index: 0, title: 'Run A step', status: 'failed' }],
+          plan: [{ index: 0, title: 'Run A step', status: 'running' }],
         },
         {
           id: 'run-b',
           status: 'failed',
-          plan: [{ index: 0, title: 'Run B step', status: 'failed' }],
+          plan: [{ index: 0, title: 'Run B step', status: 'running' }],
         },
       ],
     });

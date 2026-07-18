@@ -12,6 +12,10 @@ const GUTTER = 'pt-0.5 font-mono text-[11px] tracking-[0.06em] break-words';
 
 const speaker = (name?: string) => (name ? name.toUpperCase() : 'AGENT');
 
+const isImageGenerationTool = (name: string) => (
+  name.replace(/_/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase() === 'generate image'
+);
+
 /** Renders a parsed session transcript (chat turns, tool activity, timing
  * rows). Shared by task run history and live monitoring. */
 export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; live?: boolean }) {
@@ -61,7 +65,10 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
                   )}
                   {e.tools.map((tool, toolIndex) => (
                     <div key={tool.id || toolIndex} className="space-y-2">
-                      <details className="w-full max-w-2xl font-mono text-[11px]">
+                      <details
+                        className="w-full max-w-2xl font-mono text-[11px]"
+                        open={isImageGenerationTool(tool.name)}
+                      >
                         <summary className={cn(
                           'inline-flex min-h-11 cursor-pointer items-center gap-1.5 sm:min-h-0',
                           tool.status === 'error' ? 'text-danger-ink' : 'text-accent-ink',

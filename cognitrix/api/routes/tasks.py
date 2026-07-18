@@ -16,7 +16,7 @@ from cognitrix.common.security import AuthContext, crud_scope, get_auth_context,
 from cognitrix.tasks import Task
 from cognitrix.tasks.base import TaskStatus
 from cognitrix.tasks.budget import TaskBudget, stable_actor_key
-from cognitrix.tasks.events import event_payload, events_after
+from cognitrix.tasks.events import event_payload, events_after, step_tool_calls
 from cognitrix.tasks.repository import (
     ActiveRunExists,
     RunRepository,
@@ -577,6 +577,18 @@ async def _task_run_event_stream(
 
 logger = logging.getLogger('cognitrix.log')
 
+
+async def _step_tool_call_projection(run_id: str, step_index: int):
+    try:
+        return await step_tool_calls(run_id, step_index)
+    except Exception:
+        logger.exception(
+            'Could not project tool calls for run %s step %s',
+            run_id,
+            step_index,
+        )
+        return None
+
 tasks_api = APIRouter(
     prefix='/tasks',
     dependencies=[Depends(crud_scope)]
@@ -1111,7 +1123,7 @@ async def load_task_run_step_result(
         'step_index': step_index,
     })
     if row is not None:
-        return {
+        payload = {
             'step_index': row.step_index,
             'status': row.status,
             'result': (
@@ -1121,6 +1133,10 @@ async def load_task_run_step_result(
             ),
             'error': row.error,
         }
+        tool_calls = await _step_tool_call_projection(run_id, step_index)
+        if isinstance(tool_calls, list):
+            payload['tool_calls'] = tool_calls
+        return payload
 
     # Historical runs may only have the legacy plan projection. Preserve
     # their bare-string result without pretending it is a new step row.
@@ -1129,7 +1145,7 @@ async def load_task_run_step_result(
         if index != step_index:
             continue
         stored_result = entry.get('result')
-        return {
+        payload = {
             'step_index': index,
             'status': entry.get('status', 'pending'),
             'result': (
@@ -1143,6 +1159,10 @@ async def load_task_run_step_result(
             ),
             'error': entry.get('error'),
         }
+        tool_calls = await _step_tool_call_projection(run_id, step_index)
+        if isinstance(tool_calls, list):
+            payload['tool_calls'] = tool_calls
+        return payload
     raise HTTPException(status_code=404, detail='Task run step not found')
 
 

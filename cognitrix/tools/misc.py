@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextvars
 import fnmatch
+import html
 import logging
 import os
 import re
@@ -34,6 +35,7 @@ from cognitrix.tools.utils import (
     DocumentCapability,
     current_execution_context,
     delegated_execution_context,
+    ToolOutcome,
 )
 
 logging.basicConfig(
@@ -971,8 +973,78 @@ def Glob(pattern: str, path: str = ".", recursive: bool = True, include_dirs: bo
         return f"Error during glob: {str(e)}"
 
 
-@tool(category='web')
+def _clean_search_text(value: Any) -> str:
+    """Convert provider snippets to plain, Unicode-preserving text."""
+    return html.unescape(re.sub(r'<[^>]+>', '', str(value or ''))).strip()
+
+
+@tool(category='web', retryable=False, max_attempts=1)
 def Search(query: str, max_results: int = 10):
+    """Search the web for current information using the Brave Search API.
+
+    Args:
+        query (str): The search query.
+        max_results (int): Maximum number of results, from 1 to 20.
+
+    Returns:
+        str: Search results with titles, descriptions, and URLs.
+    """
+    import requests
+
+    api_key = settings.brave_search_api_key
+    if not api_key:
+        return ToolOutcome.failure(
+            'brave_search_not_configured',
+            'Brave Search is not configured. Set BRAVE_SEARCH_API_KEY.',
+        )
+
+    result_count = max(1, min(max_results, 20))
+    try:
+        response = requests.get(
+            'https://api.search.brave.com/res/v1/web/search',
+            params={'q': query, 'count': result_count},
+            headers={
+                'Accept': 'application/json',
+                'X-Subscription-Token': api_key,
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        results = response.json().get('web', {}).get('results', [])
+    except requests.exceptions.HTTPError as exc:
+        status = getattr(exc.response, 'status_code', None)
+        suffix = f' (HTTP {status})' if status is not None else ''
+        return ToolOutcome.failure(
+            'brave_search_http_error',
+            f'Brave Search request failed{suffix}.',
+        )
+    except requests.exceptions.RequestException:
+        return ToolOutcome.failure(
+            'brave_search_request_error',
+            'Brave Search request failed due to a network error.',
+        )
+    except (TypeError, ValueError):
+        return ToolOutcome.failure(
+            'brave_search_response_error',
+            'Brave Search returned an invalid response.',
+        )
+
+    if not results:
+        return f'No results found for: {query}'
+
+    output = [f"Search results for '{query}':\n"]
+    for index, result in enumerate(results[:result_count], 1):
+        output.append(f"{index}. {_clean_search_text(result.get('title')) or 'No title'}")
+        output.append(
+            f"   {_clean_search_text(result.get('description')) or 'No description'}"
+        )
+        output.append(f"   URL: {result.get('url', 'No URL')}")
+        output.append('')
+    return '\n'.join(output)
+
+
+@tool(category='web', retryable=False, max_attempts=1)
+def Tavily_Search(query: str, max_results: int = 10):
     """Search the web for information using Tavily API.
 
     Args:
@@ -993,7 +1065,10 @@ def Search(query: str, max_results: int = 10):
             api_key = os.getenv('TAVILY_API_KEY')
 
         if not api_key:
-            return "Error: Tavily API key not configured. Set TAVILY_API_KEY environment variable."
+            return ToolOutcome.failure(
+                'tavily_search_not_configured',
+                'Tavily Search is not configured. Set TAVILY_API_KEY.',
+            )
 
         client = TavilyClient(api_key=api_key)
         results = client.search(query=query, max_results=max_results)
@@ -1011,8 +1086,13 @@ def Search(query: str, max_results: int = 10):
 
         return '\n'.join(output)
 
-    except Exception as e:
-        return f"Error during search: {str(e)}"
+    except Exception as exc:
+        status = getattr(getattr(exc, 'response', None), 'status_code', None)
+        suffix = f' (HTTP {status})' if status is not None else ''
+        return ToolOutcome.failure(
+            'tavily_search_error',
+            f'Tavily Search request failed{suffix}.',
+        )
 
 
 @tool(category='web')
@@ -1359,7 +1439,6 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
 # REMOVED - Replaced by skills:
 # - internet_search -> internet-search skill
 # - web_scraper -> web-scraper skill
-# - brave_search -> brave-search skill
 # - wikipedia -> wikipedia skill
 
 
