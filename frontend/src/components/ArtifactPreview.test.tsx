@@ -134,6 +134,28 @@ describe('ArtifactPreview lazy image delivery', () => {
     click.mockRestore();
   });
 
+  it.each([
+    ['Expand→Download', ['expand', 'download']],
+    ['Download→Expand', ['download', 'expand']],
+  ] as const)('keeps both action errors visible when one shared original request rejects (%s)', async (_label, order) => {
+    let rejectOriginal!: (error: Error) => void;
+    vi.mocked(api.get).mockResolvedValueOnce({ data: new Blob(['thumbnail']) }).mockImplementationOnce(() => new Promise((_, reject) => { rejectOriginal = reject; }) as never);
+    render(<ArtifactPreview artifact={artifact} />);
+    act(() => intersect());
+    await screen.findByRole('button', { name: 'Expand generated image' });
+    for (const action of order) {
+      await userEvent.click(screen.getByRole('button', {
+        name: action === 'expand' ? 'Expand generated image' : 'Download image.png',
+      }));
+    }
+    expect(api.get).toHaveBeenCalledTimes(2);
+    await act(async () => rejectOriginal(new Error('offline')));
+    expect((await screen.findByText('Full image unavailable.', { exact: false })).closest('[role="alert"]')).not.toBeNull();
+    expect(screen.getByText('Download image.png failed.', { exact: false }).closest('[role="alert"]')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Retry full image' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry download image.png' })).toBeInTheDocument();
+  });
+
   it('keeps original actions functional after StrictMode effect replay', async () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     vi.mocked(api.get).mockResolvedValue({ data: new Blob(['image']) });
