@@ -217,7 +217,7 @@ export function ArtifactPreview({
           <button
             ref={expandTriggerRef}
             type="button"
-            aria-label="Expand generated image"
+            aria-label={`Expand ${imageLabel.toLowerCase()}`}
             title="Expand image"
             className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9"
             disabled={originalLoading}

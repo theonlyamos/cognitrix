@@ -30,6 +30,7 @@ const STOP_RECONCILE_DELAY_MS = 4_000;
 // ── Attachments ──
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+const MAX_FILES = 20;
 
 // Accepted attachments: images + common document types. Keep DOC_EXT and
 // ACCEPT_ATTR in sync — `accept` filters the file picker; addFiles re-checks so
@@ -253,6 +254,10 @@ export default function Home() {
     let total = attachmentsRef.current.reduce((sum, a) => sum + a.file.size, 0);
     const next: Attachment[] = [];
     for (const file of incoming) {
+      if (attachmentsRef.current.length + next.length >= MAX_FILES) {
+        setUploadError('You can attach up to 20 files.');
+        break;
+      }
       // Pasted/dropped files often arrive with an empty MIME type — derive it
       // from the extension so images still route to vision (not the workspace),
       // and re-tag the file so the thumbnail + downscale actually work.
@@ -479,6 +484,8 @@ export default function Home() {
         case 'attachments_ingested': {
           const artifacts = (event.artifacts || [])
             .filter((artifact) => artifact
+              && typeof artifact.id === 'string'
+              && typeof artifact.mime_type === 'string'
               && /^[A-Za-z0-9_-]{1,128}$/.test(artifact.id)
               && artifact.mime_type.startsWith('image/'))
             .map((artifact) => ({ ...artifact, origin: 'uploaded' as const }));
@@ -516,7 +523,7 @@ export default function Home() {
       const msg = text.trim();
       const pending = attachmentsRef.current;
       const pendingEditSource = editSource;
-      if (!isConnected || (!msg && pending.length === 0) || busy) return;
+      if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return;
       clearStopFallback();
       turnGenerationRef.current += 1;
       // Keep a record of what was attached in the visible user message.
@@ -573,7 +580,7 @@ export default function Home() {
         finishTurn();
       }
     },
-    [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, agentId, activeSessionId, streamId, revokePreviewUrl],
+    [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, agentId, activeSessionId, streamId, revokePreviewUrl, uploadError],
   );
 
   const stop = useCallback(async () => {
@@ -909,17 +916,26 @@ export default function Home() {
             >
               {editSource?.type === 'artifact' && (
                 <div className="flex items-center gap-2 border-b border-line bg-panel-2 px-3 py-2 font-mono text-[10.5px]">
-                  <span className="tracking-[0.12em] text-accent-ink">EDIT SOURCE</span>
-                  <span className="min-w-0 flex-1 truncate text-fg" title={editSource.artifact.filename || editSource.artifact.id}>
-                    {editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}`}
-                  </span>
+                  <div
+                    data-testid="edit-source-thumbnail"
+                    aria-hidden="true"
+                    className="grid h-8 w-8 flex-none place-items-center overflow-hidden rounded-sm border border-line bg-panel text-accent-ink"
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8" cy="9" r="1.5" /><path d="m4 18 5-5 3 3 3-3 5 5" /></svg>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="block tracking-[0.12em] text-accent-ink">Editing image</span>
+                    <span className="block truncate text-fg" title={editSource.artifact.filename || editSource.artifact.id}>
+                      {editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}`}
+                    </span>
+                  </div>
                   <button
                     type="button"
-                    aria-label="Clear edit source"
-                    className="min-h-11 flex-none text-fg-dim transition-colors hover:text-danger-ink md:min-h-0"
+                    aria-label={`Remove ${editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}`} edit source`}
+                    className="flex min-h-11 min-w-11 h-11 w-11 flex-none items-center justify-center text-fg-dim transition-colors hover:text-danger-ink md:h-8 md:w-8"
                     onClick={() => setEditSource(null)}
                   >
-                    clear
+                    <span aria-hidden="true">×</span>
                   </button>
                 </div>
               )}
@@ -1007,7 +1023,7 @@ export default function Home() {
               />
               <button
                 onClick={() => { if (busy) void stop(); else void send(input); }}
-                disabled={busy ? stopping : (!isConnected || (!input.trim() && attachments.length === 0))}
+                disabled={busy ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
                 aria-label={busy ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
                 className={cn(
                   'absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded transition disabled:cursor-not-allowed disabled:opacity-60 hover:brightness-105 md:h-8 md:w-8',

@@ -277,6 +277,34 @@ describe('ChatMessageRow', () => {
     });
   });
 
+  it('shows uploaded images with separate Edit, Expand, and Download controls', async () => {
+    const selectSource = vi.fn();
+    apiGet.mockResolvedValue({ data: new Blob(['image'], { type: 'image/png' }) });
+    vi.mocked(URL.createObjectURL).mockReturnValue('blob:uploaded');
+    const { ChatMessageRow } = await import('@/components/ChatMessageRow');
+    const uploaded: ChatMessage = {
+      id: 'user-upload',
+      role: 'user',
+      content: 'Attached source',
+      artifacts: [{ id: 'uploaded-1', mime_type: 'image/png', filename: 'source.png', origin: 'uploaded' }],
+    };
+
+    render(
+      <ChatMessageRow
+        message={uploaded}
+        isLast={false}
+        streaming={false}
+        onEditSource={selectSource}
+      />,
+    );
+
+    const image = await screen.findByRole('img', { name: 'Attached image' });
+    expect(image.closest('button')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Use source.png as edit source' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Expand attached image' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download source.png' })).toBeInTheDocument();
+  });
+
   it('opens the generated image in a modal from the expand control', async () => {
     const user = userEvent.setup();
     apiGet.mockResolvedValue({ data: new Blob(['image'], { type: 'image/png' }) });
