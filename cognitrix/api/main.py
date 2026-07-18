@@ -2,11 +2,12 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import aiofiles
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..celery_worker import broker_available
 from ..config import FRONTEND_BUILD_DIR, initialize_database, settings
 from ..media.staging import (
     start_attachment_maintenance,
@@ -80,6 +81,8 @@ app.mount('/fonts', StaticFiles(directory=FRONTEND_BUILD_DIR / 'fonts'),  name='
 
 @app.get('/health')
 async def healthcheck():
+    if not await asyncio.to_thread(broker_available):
+        raise HTTPException(status_code=503, detail='Task runtime unavailable')
     return {'status': True}
 
 
