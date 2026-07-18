@@ -36,6 +36,28 @@ describe('ArtifactPreview lazy image delivery', () => {
     await waitFor(() => expect(api.get).toHaveBeenCalledWith('/artifacts/image-1?variant=thumbnail', expect.objectContaining({ responseType: 'blob', signal: expect.any(AbortSignal) })));
   });
 
+  it('sizes a ready landscape preview from the loaded thumbnail instead of its reservation', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: new Blob(['thumbnail']) });
+    render(<ArtifactPreview artifact={artifact} onEditSource={vi.fn()} />);
+    const placeholder = screen.getByTestId('artifact-placeholder');
+
+    expect(placeholder).toHaveStyle({
+      aspectRatio: '1200 / 800',
+      width: 'min(100%, 480px)',
+    });
+
+    act(() => intersect(placeholder));
+    const image = await screen.findByRole('img', { name: 'Generated image' });
+
+    expect(placeholder.style.aspectRatio).toBe('');
+    expect(placeholder.style.width).toBe('');
+    expect(image).toHaveClass('block');
+    expect(screen.getByRole('button', { name: 'Use image.png as edit source' }).closest('.absolute')).toHaveClass(
+      'bottom-2',
+      'right-2',
+    );
+  });
+
   it('retries the thumbnail after a failed viewport request', async () => {
     vi.mocked(api.get).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ data: new Blob(['thumbnail']) });
     render(<ArtifactPreview artifact={artifact} />);
@@ -184,6 +206,27 @@ describe('ArtifactPreview lazy image delivery', () => {
     expect(expand).toHaveFocus();
   });
 
+  it('uses compact Lucide icons for image actions and the dialog close control', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: new Blob(['image']) });
+    render(<ArtifactPreview artifact={artifact} onEditSource={vi.fn()} />);
+    act(() => intersect());
+
+    const edit = await screen.findByRole('button', { name: 'Use image.png as edit source' });
+    const expand = screen.getByRole('button', { name: 'Expand generated image' });
+    const download = screen.getByRole('button', { name: 'Download image.png' });
+    expect(edit.querySelector('.lucide-pencil')).not.toBeNull();
+    expect(expand.querySelector('.lucide-maximize-2')).not.toBeNull();
+    expect(download.querySelector('.lucide-download')).not.toBeNull();
+    expect(edit).toHaveTextContent('');
+    expect(expand).toHaveTextContent('');
+    expect(download).toHaveTextContent('');
+
+    await userEvent.click(expand);
+    const close = await screen.findByRole('button', { name: 'Close image preview' });
+    expect(close.querySelector('.lucide-x')).not.toBeNull();
+    expect(close).toHaveTextContent('');
+  });
+
   it('traps tab focus and closes the expanded dialog from its backdrop', async () => {
     vi.mocked(api.get).mockResolvedValue({ data: new Blob(['image']) });
     render(<ArtifactPreview artifact={artifact} />);
@@ -194,7 +237,7 @@ describe('ArtifactPreview lazy image delivery', () => {
     const close = screen.getByRole('button', { name: 'Close image preview' });
     fireEvent.keyDown(dialog, { key: 'Tab' });
     expect(close).toHaveFocus();
-    fireEvent.click(document.querySelector('[aria-hidden="true"]')!);
+    fireEvent.click(document.querySelector('div.fixed[aria-hidden="true"]')!);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(expand).toHaveFocus();
   });

@@ -127,10 +127,36 @@ def test_summary_message_is_kept_and_formatted():
     assert "facts" in formatted[0]["content"]
 
 
+def test_media_context_is_formatted_as_a_system_message():
+    formatted = LLMManager.format_query(_llm(), [{
+        "role": "system",
+        "type": "media_context",
+        "content": "Selected edit source: image-1",
+    }])
+    assert formatted == [{
+        "role": "system",
+        "content": "Selected edit source: image-1",
+    }]
+
+
 def test_current_turn_kept_even_over_budget():
     chat = [_user("q " + "z" * 8000)] + _tool_exchange(1, payload="r" * 8000)
     shaped = shape_history(chat, budget_tokens=100)
     assert len(shaped) == 3  # never drop the current turn
+
+
+def test_media_companions_stay_in_their_user_turn():
+    chat = [
+        _user("edit these"),
+        {"role": "User", "type": "image", "content": "pixels", "artifact": {"id": "a"}},
+        {
+            "role": "User", "type": "image_selection", "content": "selected",
+            "artifact": {"id": "a"},
+        },
+        *_tool_exchange(1),
+    ]
+    turns = partition_turns(chat)
+    assert turns == [chat]
 
 
 def test_past_images_are_safe_text_placeholders():

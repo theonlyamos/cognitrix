@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { Download, Maximize2, Pencil, X } from 'lucide-react';
 import type { ToolArtifact } from '@/context/SessionContext';
 import { useArtifactBlob } from '@/hooks/useArtifactBlob';
 import { api } from '@/lib/api';
@@ -190,21 +191,26 @@ export function ArtifactPreview({ artifact, sourcePath, onEditSource, selected =
   } : undefined;
   return (
     <>
-      <div ref={placeholderRef} data-testid="artifact-placeholder" className="relative w-fit max-w-full" style={reserveStyle}>
+      <div
+        ref={placeholderRef}
+        data-testid="artifact-placeholder"
+        className="relative w-fit max-w-full"
+        style={thumbnailState === 'idle' || thumbnailState === 'loading' ? reserveStyle : undefined}
+      >
         {thumbnailState === 'error' ? (
           <div className="flex items-center gap-2 text-sm text-danger-ink"><span>{imageLabel} unavailable.</span><button type="button" className="underline" onClick={retry}>Retry image</button></div>
         ) : thumbnailState !== 'ready' || !thumbnailUrl ? (
           <div className="text-sm text-fg-dim">Loading {imageLabel.toLowerCase()}...</div>
         ) : (
           <>
-            <img src={thumbnailUrl} alt={imageLabel} className="max-h-80 max-w-full rounded border border-line bg-panel object-contain" />
+            <img src={thumbnailUrl} alt={imageLabel} className="block max-h-80 max-w-full rounded border border-line bg-panel object-contain" />
             <div className="absolute bottom-2 right-2 flex gap-1 rounded border border-line bg-bg/80 p-1 shadow-lg backdrop-blur-sm">
-              {onEditSource && <button type="button" aria-label={`Use ${filename} as edit source`} aria-pressed={selected} title={selected ? 'Selected as edit source' : 'Use as edit source'} className={`flex h-11 w-11 items-center justify-center rounded border bg-panel-2/95 transition-colors sm:h-9 sm:w-9 ${selected ? 'border-accent text-accent-ink' : 'border-line text-fg hover:border-fg-dim hover:text-accent-ink'}`} onClick={() => onEditSource(artifact)}>Edit</button>}
-              <button ref={expandTriggerRef} type="button" aria-label={`Expand ${imageLabel.toLowerCase()}`} title="Expand image" className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9" onClick={openExpanded}>Expand</button>
+              {onEditSource && <button type="button" aria-label={`Use ${filename} as edit source`} aria-pressed={selected} title={selected ? 'Selected as edit source' : 'Use as edit source'} className={`flex h-11 w-11 items-center justify-center rounded border bg-panel-2/95 transition-colors sm:h-9 sm:w-9 ${selected ? 'border-accent text-accent-ink' : 'border-line text-fg hover:border-fg-dim hover:text-accent-ink'}`} onClick={() => onEditSource(artifact)}><Pencil aria-hidden="true" className="h-4 w-4" /></button>}
+              <button ref={expandTriggerRef} type="button" aria-label={`Expand ${imageLabel.toLowerCase()}`} title="Expand image" className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9" onClick={openExpanded}><Maximize2 aria-hidden="true" className="h-4 w-4" /></button>
               {taskArtifactPath ? (
-                <a href={thumbnailUrl} download={filename} aria-label={`Download ${filename}`} title={`Download ${filename}`} className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9">Download</a>
+                <a href={thumbnailUrl} download={filename} aria-label={`Download ${filename}`} title={`Download ${filename}`} className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9"><Download aria-hidden="true" className="h-4 w-4" /></a>
               ) : (
-                <button type="button" aria-label={`Download ${filename}`} title={`Download ${filename}`} className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9" onClick={() => { void downloadOriginal(); }}>Download</button>
+                <button type="button" aria-label={`Download ${filename}`} title={`Download ${filename}`} className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9" onClick={() => { void downloadOriginal(); }}><Download aria-hidden="true" className="h-4 w-4" /></button>
               )}
             </div>
           </>
@@ -223,7 +229,7 @@ export function ArtifactPreview({ artifact, sourcePath, onEditSource, selected =
             {originalUrl ? <img src={originalUrl} alt={`${imageLabel}, full size`} className="max-h-full max-w-full object-contain" /> : dialogError ? (
               <div role="alert" className="text-danger-ink">Full image unavailable. <button type="button" className="underline" onClick={() => { void requestOriginal('dialog').catch(() => undefined); }}>Retry full image</button></div>
             ) : <span className="text-fg-dim">Loading full image...</span>}
-            <button type="button" aria-label="Close image preview" title="Close image preview" className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg shadow-lg transition-colors hover:border-fg-dim hover:text-accent-ink sm:right-6 sm:top-6 sm:h-9 sm:w-9" onClick={() => setExpanded(false)}>Close</button>
+            <button type="button" aria-label="Close image preview" title="Close image preview" className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg shadow-lg transition-colors hover:border-fg-dim hover:text-accent-ink sm:right-6 sm:top-6 sm:h-9 sm:w-9" onClick={() => setExpanded(false)}><X aria-hidden="true" className="h-4 w-4" /></button>
           </div>
         </>, document.body,
       )}

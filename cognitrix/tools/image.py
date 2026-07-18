@@ -48,9 +48,9 @@ async def generate_image(prompt: str, source_artifact_id: str | None = None,
     """Generate one 1K image, or edit one image from this conversation.
 
     Args:
-        prompt: The desired image or the edit instructions.
-        source_artifact_id: Optional image artifact from this session to edit.
-        aspect_ratio: Optional output ratio such as 1:1, 16:9, or 9:16.
+        prompt (str): The desired image or the edit instructions.
+        source_artifact_id (str | None): Exact artifact ID to edit. Omit it when the UI has selected an image; never use a filename or provider image label.
+        aspect_ratio (str | None): Optional output ratio such as 1:1, 16:9, or 9:16.
     """
     prompt_text = prompt.strip()
     if not prompt_text:
@@ -89,17 +89,10 @@ async def generate_image(prompt: str, source_artifact_id: str | None = None,
                 'Select exactly one image before requesting an edit',
                 denied=True,
             )
-        if (
-            selected_artifact_id
-            and source_artifact_id
-            and str(source_artifact_id) != str(selected_artifact_id)
-        ):
-            return ToolOutcome.failure(
-                'invalid_edit_source',
-                'The selected image is the only available edit source for this turn',
-                denied=True,
-            )
-        effective_source_id = source_artifact_id or selected_artifact_id
+        # The UI-selected artifact is trusted turn authority; model arguments are
+        # not. When a selection is bound, always edit it and ignore any stale or
+        # invented source ID supplied by the model.
+        effective_source_id = selected_artifact_id or source_artifact_id
         if effective_source_id:
             source = await media_assets.resolve_image(
                 str(effective_source_id),

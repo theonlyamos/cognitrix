@@ -42,7 +42,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
           {message.tools.map((tool, index) => (
             <div key={tool.id || index} className="w-full max-w-2xl space-y-2">
               <details className="group w-full">
-              <summary className="inline-flex min-h-11 list-none cursor-pointer select-none items-center gap-1.5 rounded border border-line bg-panel-2 px-2 py-1 font-mono text-[11px] transition-colors hover:border-fg-dim sm:min-h-0 [&::-webkit-details-marker]:hidden">
+              <summary className="relative inline-flex min-h-11 list-none cursor-pointer select-none items-center gap-1.5 rounded border border-line bg-panel-2 px-2 py-1 font-mono text-[11px] transition-colors hover:border-fg-dim sm:min-h-0 [&::-webkit-details-marker]:hidden">
                 {tool.status === 'running' ? (
                   <span className="think-bars"><i /><i /><i /></span>
                 ) : tool.status === 'error' ? (

@@ -99,6 +99,18 @@ def _resolved_source(origin: str) -> ResolvedImage:
     )
 
 
+def test_generate_image_schema_explains_ui_selected_source_binding():
+    from cognitrix.tools import image as image_module
+
+    schema = image_module.generate_image.to_dict_format()
+    description = schema["function"]["parameters"]["properties"][
+        "source_artifact_id"
+    ]["description"].lower()
+    assert "omit" in description
+    assert "selected" in description
+    assert "filename" in description
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('origin', ['uploaded', 'generated'])
 async def test_generate_image_resolves_uploaded_and_generated_sources_identically(
@@ -177,11 +189,12 @@ async def test_selected_turn_image_is_immutable_default_edit_source(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_selected_turn_image_rejects_mismatched_model_source(monkeypatch):
+async def test_selected_turn_image_overrides_mismatched_model_source(monkeypatch):
     from cognitrix.tools import image as image_module
 
-    service = FakeMediaAssets(resolved={'source-1': _resolved_source('uploaded')})
-    provider = FakeProvider([ProviderImage(b'unused')])
+    source = _resolved_source('uploaded')
+    service = FakeMediaAssets(resolved={'source-1': source})
+    provider = FakeProvider([ProviderImage(b'edited image')])
     monkeypatch.setattr(image_module, 'media_assets', service)
     monkeypatch.setattr(image_module, 'image_provider', provider)
     token = set_execution_context(ToolExecutionContext(
@@ -195,10 +208,12 @@ async def test_selected_turn_image_rejects_mismatched_model_source(monkeypatch):
     finally:
         reset_execution_context(token)
 
-    assert result.outcome.status == 'denied'
-    assert result.outcome.error.code == 'invalid_edit_source'
-    assert service.resolve_calls == []
-    assert provider.calls == []
+    assert result.outcome.status == 'success'
+    assert service.resolve_calls == [(
+        'source-1', MediaOwnership('session-1', 'user-1', 'agent-1'), 'original'
+    )]
+    assert provider.calls[0]['source'] == source
+    assert service.store_calls[0]['metadata']['source_artifact_id'] == 'source-1'
 
 
 @pytest.mark.asyncio

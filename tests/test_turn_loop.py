@@ -1331,6 +1331,72 @@ async def test_denied_tool_retry_loop_is_broken(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_structured_denied_tool_retry_loop_is_broken(monkeypatch):
+    """Structured policy denials must use the same identical-retry breaker."""
+    from cognitrix.sessions import base as session_base
+    from cognitrix.sessions.base import Session
+
+    assigned = Tool(name="Generate Image", description="d", parameters={})
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
+    session = Session(agent_id="structured-denial")
+    calls = {"n": 0}
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        calls["n"] += 1
+        response = LLMResponse()
+        response.tool_calls = [{
+            "name": "Generate Image",
+            "arguments": {
+                "prompt": "make it coral",
+                "source_artifact_id": "input_file_0.png",
+            },
+            "tool_call_id": str(calls["n"]),
+        }]
+        return response
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name", staticmethod(lambda name: assigned)
+    )
+    monkeypatch.setattr(session_base, "MAX_TOOL_ROUNDS", 4)
+
+    async def fake_run_tool(self, tool, params, **kw):
+        outcome = ToolOutcome.failure(
+            "invalid_edit_source",
+            "The selected image is the only available edit source for this turn",
+            denied=True,
+        )
+        return ToolResult(
+            success=True,
+            data=ToolCallResult(tool_name=tool.name, content=outcome.text, outcome=outcome),
+        )
+
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+
+    async def fake_save(self):
+        return None
+
+    monkeypatch.setattr(Session, "save", fake_save)
+    outputs = []
+
+    async def sink(payload=None, *a, **k):
+        outputs.append(payload)
+
+    await session("edit it", agent, "web", False, sink, None, True)
+
+    assert calls["n"] == 2, f"expected 2 rounds (deny, identical retry), got {calls['n']}"
+    assert any(
+        isinstance(item, dict)
+        and item.get("content") == "Stopped: the requested operation was denied and will not be retried."
+        for item in outputs
+    )
+
+
+@pytest.mark.asyncio
 async def test_window_anchors_to_last_user_message():
     # A long tool loop can push the user message out of the sliding window;
     # the window must then anchor at the last user message instead of going

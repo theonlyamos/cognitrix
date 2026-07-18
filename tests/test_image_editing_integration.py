@@ -140,12 +140,14 @@ class _ConversationProvider:
         self.next_arguments: dict | None = None
         self.awaiting_tool = False
         self.initial_prompts: list[list[dict]] = []
+        self.prompts: list[list[dict]] = []
 
     def script_turn(self, arguments: dict):
         self.next_arguments = arguments
         self.awaiting_tool = True
 
     async def generate(self, _llm, prompt, stream=False, tools=None, **_kwargs):
+        self.prompts.append(deepcopy(prompt))
         response = LLMResponse()
         if self.awaiting_tool:
             self.initial_prompts.append(deepcopy(prompt))
@@ -369,14 +371,32 @@ async def test_generated_parent_edit_sends_stored_bytes_and_records_child_lineag
     )
     edited, _ = await harness.run_turn(
         "Make it blue",
-        {"prompt": "Make it blue", "source_artifact_id": parent["id"]},
+        {"prompt": "Make it blue", "source_artifact_id": "stale-model-reference"},
         selected_id=parent["id"],
     )
     child = _completed_artifact(edited)
 
+    post_edit_prompt = harness.conversation.prompts[-1]
+    selected_image_index = max(
+        index for index, message in enumerate(post_edit_prompt)
+        if message.get("type") == "image"
+        and message.get("artifact", {}).get("id") == parent["id"]
+    )
+    tool_call_index = max(
+        index for index, message in enumerate(post_edit_prompt)
+        if message.get("tool_calls")
+    )
+    tool_result_index = max(
+        index for index, message in enumerate(post_edit_prompt)
+        if str(message.get("role", "")).lower() == "tool"
+    )
+
     assert base64.b64decode(harness.gemini_payloads[1]["input"][1]["data"]) == stored_parent.data
     assert harness.rows[child["id"]].source_artifact_id == parent["id"]
     assert child["origin"] == "generated"
+    assert selected_image_index < tool_call_index < tool_result_index
+    assert tool_result_index == len(post_edit_prompt) - 1
+    assert len(harness.gemini_payloads) == 2
 
 
 @pytest.mark.asyncio

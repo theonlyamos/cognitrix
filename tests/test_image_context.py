@@ -95,6 +95,97 @@ async def test_media_context_deduplicates_pixels_and_keeps_only_recent_text_refs
 
 
 @pytest.mark.asyncio
+async def test_selected_image_is_hydrated_at_latest_selection_marker(monkeypatch):
+    from cognitrix.media.context import (
+        MediaContextBuilder,
+        MediaTurnContext,
+        reset_media_turn_context,
+        set_media_turn_context,
+    )
+
+    selected = _ref("selected")
+
+    async def resolve_image(identifier, ownership, variant="original"):
+        return ResolvedImage(_ref(identifier), variant, "image/png", b"pixels")
+
+    async def list_recent_refs(session_id, ownership, limit=3):
+        return []
+
+    monkeypatch.setattr("cognitrix.media.context.media_assets.resolve_image", resolve_image)
+    monkeypatch.setattr("cognitrix.media.context.media_assets.list_recent_refs", list_recent_refs)
+    token = set_media_turn_context(MediaTurnContext(
+        ownership=MediaOwnership("session", "user", "agent"),
+        current_images=[], selected_image=selected, vision_data_uri_cache={},
+    ))
+    try:
+        _, history = await MediaContextBuilder().enrich(object(), [
+            {
+                "role": "User", "type": "image_selection",
+                "content": "[Selected source image artifact: selected]",
+                "artifact": selected.model_dump(),
+            },
+            {"role": "Assistant", "type": "text", "content": "Earlier edit complete."},
+            {"role": "User", "type": "text", "content": "Edit this image once."},
+            {
+                "role": "User", "type": "image_selection",
+                "content": "[Selected source image artifact: selected]",
+                "artifact": selected.model_dump(),
+            },
+            {"role": "Assistant", "type": "tool_calls", "content": "generate_image"},
+            {"role": "Tool", "type": "tool_result", "content": "Image generated"},
+        ])
+    finally:
+        reset_media_turn_context(token)
+
+    image_indexes = [
+        index for index, message in enumerate(history) if message.get("type") == "image"
+    ]
+    assert image_indexes == [3]
+    assert history[0]["type"] == "text"
+    assert history[-1] == {
+        "role": "Tool", "type": "tool_result", "content": "Image generated"
+    }
+
+
+@pytest.mark.asyncio
+async def test_selected_image_fallback_precedes_existing_tool_exchange(monkeypatch):
+    from cognitrix.media.context import (
+        MediaContextBuilder,
+        MediaTurnContext,
+        reset_media_turn_context,
+        set_media_turn_context,
+    )
+
+    selected = _ref("selected")
+
+    async def resolve_image(identifier, ownership, variant="original"):
+        return ResolvedImage(_ref(identifier), variant, "image/png", b"pixels")
+
+    async def list_recent_refs(session_id, ownership, limit=3):
+        return []
+
+    monkeypatch.setattr("cognitrix.media.context.media_assets.resolve_image", resolve_image)
+    monkeypatch.setattr("cognitrix.media.context.media_assets.list_recent_refs", list_recent_refs)
+    token = set_media_turn_context(MediaTurnContext(
+        ownership=MediaOwnership("session", "user", "agent"),
+        current_images=[], selected_image=selected, vision_data_uri_cache={},
+    ))
+    try:
+        _, history = await MediaContextBuilder().enrich(object(), [
+            {"role": "User", "type": "text", "content": "Edit this image once."},
+            {"role": "Assistant", "type": "tool_calls", "content": "generate_image"},
+            {"role": "Tool", "type": "tool_result", "content": "Image generated"},
+        ])
+    finally:
+        reset_media_turn_context(token)
+
+    assert [message.get("type") for message in history] == [
+        "text", "image", "tool_calls", "tool_result"
+    ]
+    assert history[-1]["role"] == "Tool"
+
+
+@pytest.mark.asyncio
 async def test_later_turn_without_selection_contains_no_old_image_pixels(monkeypatch):
     from cognitrix.media.context import (
         MediaContextBuilder,

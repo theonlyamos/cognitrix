@@ -26,15 +26,20 @@ class BaseContextManager(ABC):
 
 
 def partition_turns(chat: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Split chat into turns; each turn starts at a user message.
+    """Split chat into turns; each turn starts at a user text/summary message.
 
-    Messages before the first user message (e.g. a compaction summary) form
-    their own leading group.
+    User image and image-selection records are companions to the preceding
+    request, not independent turns. Messages before the first user request
+    form their own leading group.
     """
     turns: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     for m in chat:
-        if str(m.get('role', '')).lower() == 'user' and current:
+        is_user_request = (
+            str(m.get('role', '')).lower() == 'user'
+            and m.get('type', 'text') in {'text', 'summary'}
+        )
+        if is_user_request and current:
             turns.append(current)
             current = []
         current.append(m)

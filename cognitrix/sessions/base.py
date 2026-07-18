@@ -599,11 +599,16 @@ class Session(Model):
 
                             if is_tool_result:
                                 # Deny-loop breaker: if every call in the batch was
-                                # blocked and the model re-issues the exact same
-                                # batch, stop instead of re-prompting for approval
-                                # round after round.
+                                # denied and the model re-issues the exact same
+                                # batch, stop instead of re-prompting round after
+                                # round. Structured tool-policy denials supersede
+                                # the legacy approval-prefix representation.
                                 all_blocked = all(
-                                    str(r.get('data', '')).startswith(OPERATION_BLOCKED_PREFIX)
+                                    (
+                                        isinstance(r.get('outcome'), dict)
+                                        and r['outcome'].get('status') == 'denied'
+                                    )
+                                    or str(r.get('data', '')).startswith(OPERATION_BLOCKED_PREFIX)
                                     for r in result['result']
                                 )
                                 sig = json.dumps(

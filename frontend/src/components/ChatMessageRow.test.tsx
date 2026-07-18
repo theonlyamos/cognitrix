@@ -179,9 +179,14 @@ describe('ChatMessageRow', () => {
       'overscroll-contain',
     );
     expect(transcript.parentElement).toHaveClass('min-h-0', 'overflow-hidden');
+    expect(screen.getByText('no conversations yet').parentElement).toHaveClass(
+      'min-h-0',
+      'overscroll-contain',
+      'overflow-y-auto',
+    );
   });
 
-  it('gives tool summaries a 44px mobile target and compact desktop height', async () => {
+  it('keeps screen-reader tool status inside its scroll container', async () => {
     const modulePath = '@/components/ChatMessageRow';
     const { ChatMessageRow } = await import(modulePath) as {
       ChatMessageRow: ComponentType<{
@@ -200,7 +205,8 @@ describe('ChatMessageRow', () => {
     render(<ChatMessageRow message={toolMessage} isLast streaming={false} />);
 
     const summary = screen.getByText('read file').closest('summary');
-    expect(summary).toHaveClass('min-h-11', 'sm:min-h-0');
+    expect(summary).toHaveClass('relative', 'min-h-11', 'sm:min-h-0');
+    expect(screen.getByText('Completed')).toHaveClass('sr-only');
   });
 
   it('renders a stopped tool as a distinct terminal state', async () => {

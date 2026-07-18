@@ -675,7 +675,7 @@ export default function Home() {
           </Button>
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto">
         {convosSorted.length === 0 ? (
           <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no conversations yet</p>
         ) : (
