@@ -10,10 +10,29 @@ from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.agents.generators import TaskInstructor
 from cognitrix.sessions.access import (
     browser_authorization,
-    session_access_allowed,
     visible_sessions,
 )
+from cognitrix.artifacts import delete_owned_session_artifacts
+from cognitrix.media import MediaOwnership, MediaValidationError, media_assets
+from cognitrix.media.document_capabilities import (
+    load_turn_document_capabilities,
+)
+from cognitrix.media.documents import document_assets
+from cognitrix.media.staging import (
+    AttachmentCleanupError,
+    PromotedAttachments,
+    cleanup_staged_attachments,
+    promote_staged_attachments,
+    release_promoted_attachment_reservation,
+    rollback_promoted_attachments,
+)
 from cognitrix.sessions.base import Session
+from cognitrix.session_ownership import (
+    OwnershipConflict,
+    OwnershipNotFound,
+    OwnershipState,
+    session_ownerships,
+)
 from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
 from cognitrix.tools.utils import ToolExecutionContext
 
@@ -29,6 +48,42 @@ _QUEUE_TIMEOUT = object()
 _CONSUMER_GONE = object()
 _TURN_TERMINAL = object()
 _NO_REPLAY = object()
+_ATTACHMENT_UNAVAILABLE = (
+    'Attachments or the selected image are unavailable. Please try again.'
+)
+
+
+async def _settle_mutation(operation):
+    """Join one started database mutation before cancellation escapes."""
+    mutation = asyncio.create_task(operation)
+    try:
+        return await asyncio.shield(mutation)
+    except asyncio.CancelledError as cancelled:
+        while not mutation.done():
+            try:
+                await asyncio.shield(mutation)
+            except asyncio.CancelledError:
+                continue
+        mutation.result()
+        raise cancelled
+
+
+async def _settle_background_task(task: asyncio.Task) -> BaseException | None:
+    """Join a transferred durability task and return its terminal error."""
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+        except BaseException:
+            break
+    if task.cancelled():
+        return asyncio.CancelledError()
+    try:
+        task.result()
+    except BaseException as error:
+        return error
+    return None
 
 
 class SSEManagerCapacityError(RuntimeError):
@@ -50,6 +105,9 @@ class SSEManager:
         self.turn_terminal: dict | None = None
         self.completed_output_at: float | None = None
         self.active_task: asyncio.Task | None = None
+        self._active_task_started = True
+        self._fallback_tasks: set[asyncio.Task] = set()
+        self.last_action_error: BaseException | None = None
         self.turn_pending = False
         self.stop_requested = False
         # A superseded consumer may already have dequeued one item. Preserve it
@@ -84,7 +142,11 @@ class SSEManager:
             self.active_task is not None,
             self.active_task.done() if self.active_task is not None else None,
         )
-        if self.active_task is not None and not self.active_task.done():
+        if (
+            self.active_task is not None
+            and not self.active_task.done()
+            and self._active_task_started
+        ):
             self.active_task.cancel()
         return True
 
@@ -93,6 +155,7 @@ class SSEManager:
         if task is not None and self.active_task is not task:
             return
         self.active_task = None
+        self._active_task_started = True
         self.turn_pending = False
         self.stop_requested = False
 
@@ -234,23 +297,500 @@ class SSEManager:
         - no id: a fresh conversation; the client adopts its id from the
           tagged reply events.
         """
-        if not self.user_key:
-            return None
-        authorization = browser_authorization(self.user_key)
+        user_id = str(self.user_key or '').strip()
+        agent_id = str(getattr(self.agent, 'id', '') or '').strip()
+        if not user_id or not agent_id:
+            raise OwnershipNotFound()
         if session_id:
+            binding = await session_ownerships.require_active_owned(
+                str(session_id), user_id, agent_id
+            )
             session = await Session.get(session_id)
-            if session is None or not await session_access_allowed(
-                session,
-                authorization,
+            if (
+                session is None
+                or str(getattr(session, 'agent_id', '') or '')
+                != binding.agent_id
             ):
-                return None
-            if session is not None and not session.agent_id:
-                session.agent_id = self.agent.id
-                await session.save()
+                raise OwnershipNotFound()
             return session
-        session = Session(agent_id=self.agent.id, user_id=self.user_key)
-        await session.save()
+
+        session = Session(agent_id=agent_id)
+        created_id: str | None = None
+        try:
+            await _settle_mutation(session.save())
+            created_id = str(session.id)
+            await session_ownerships.claim_new(created_id, user_id, agent_id)
+            return session
+        except BaseException:
+            if created_id is not None:
+                async def compensate() -> None:
+                    await Session.delete_many({'id': created_id})
+                    await session_ownerships.discard_fresh_claim(
+                        created_id, user_id, agent_id
+                    )
+
+                await _settle_mutation(compensate())
+            raise
+
+    async def _load_owned_session(self, session_id: str):
+        user_id = str(self.user_key or '').strip()
+        if not user_id:
+            raise OwnershipNotFound()
+        binding = await session_ownerships.require_active_owned(
+            str(session_id), user_id
+        )
+        session = await Session.get(str(session_id))
+        if (
+            session is None
+            or str(getattr(session, 'agent_id', '') or '') != binding.agent_id
+        ):
+            raise OwnershipNotFound()
+        return binding, session
+
+    async def _clear_owned_history(self, session_id: str):
+        user_id = str(self.user_key or '').strip()
+        if not user_id:
+            raise OwnershipNotFound()
+        binding = await session_ownerships.require_owned(str(session_id), user_id)
+        if binding.state == OwnershipState.ACTIVE:
+            token = await session_ownerships.begin_clear(
+                binding.session_id,
+                binding.user_id,
+                binding.agent_id,
+            )
+        elif binding.state == OwnershipState.CLEARING:
+            token = await session_ownerships.resume_lifecycle(
+                binding.session_id,
+                binding.user_id,
+                binding.agent_id,
+                OwnershipState.CLEARING,
+            )
+        else:
+            raise OwnershipConflict('Session is in a different lifecycle state')
+        session = await Session.get(binding.session_id)
+        if (
+            session is None
+            or str(getattr(session, 'agent_id', '') or '') != binding.agent_id
+        ):
+            raise OwnershipNotFound()
+        session.chat = []
+        await _settle_mutation(session.save())
+        await delete_owned_session_artifacts(
+            session_id=token.session_id,
+            user_id=token.user_id,
+            agent_id=token.agent_id,
+            generation=token.generation,
+        )
+        await session_ownerships.finish_clear(token)
         return session
+
+    def _start_chat_action(
+        self,
+        action: dict,
+        output_queue: asyncio.Queue,
+        terminal_event: asyncio.Event,
+    ) -> asyncio.Task:
+        """Claim staging and launch a supervised manager-owned action task."""
+        claimed_action = action
+        staged = action.get('staged_attachments')
+        claim_now = getattr(staged, 'claim_now', None)
+        if callable(claim_now):
+            try:
+                claim_now()
+                claimed_action = {
+                    **action,
+                    '_staging_cleanup_owned': True,
+                }
+            except BaseException:
+                logger.exception('Failed to claim staged chat attachments')
+                # A failed claim may mean another consumer already owns this
+                # batch. Never let the losing action delete another owner's
+                # staging directory.
+                claimed_action = {
+                    **action,
+                    '_staging_claim_failed': True,
+                    '_staging_cleanup_owned': False,
+                }
+
+        started = {'value': False}
+        self._active_task_started = False
+        task = asyncio.create_task(
+            self._process_chat_action(
+                claimed_action,
+                output_queue,
+                terminal_event,
+                _started=started,
+            )
+        )
+        self.active_task = task
+
+        def done(completed: asyncio.Task) -> None:
+            if not started['value']:
+                fallback = asyncio.create_task(
+                    self._finalize_unstarted_chat_action(
+                        completed,
+                        claimed_action,
+                        output_queue,
+                        terminal_event,
+                    )
+                )
+                self._fallback_tasks.add(fallback)
+
+                def fallback_done(finished: asyncio.Task) -> None:
+                    self._fallback_tasks.discard(finished)
+                    try:
+                        error = finished.exception()
+                    except asyncio.CancelledError as exc:
+                        error = exc
+                    if error is not None:
+                        self.last_action_error = error
+                        logger.error('Pre-start attachment cleanup task failed')
+
+                fallback.add_done_callback(fallback_done)
+                return
+            try:
+                error = completed.exception()
+            except asyncio.CancelledError as exc:
+                error = exc
+            if error is not None:
+                self.last_action_error = error
+                logger.error('Manager-owned chat action failed internally')
+
+        task.add_done_callback(done)
+        return task
+
+    async def _finalize_unstarted_chat_action(
+        self,
+        task: asyncio.Task,
+        action: dict,
+        output_queue: asyncio.Queue,
+        terminal_event: asyncio.Event,
+    ) -> None:
+        cleanup_error: BaseException | None = None
+        staged = action.get('staged_attachments')
+        cleanup_owned = action.get('_staging_cleanup_owned', staged is not None)
+        if staged is not None and cleanup_owned:
+            try:
+                await cleanup_staged_attachments(staged)
+            except BaseException as exc:
+                cleanup_error = exc
+                logger.exception('Pre-start staged attachment cleanup failed')
+        terminal = {
+            'type': 'turn_stopped' if cleanup_error is None else 'error',
+            'content': '' if cleanup_error is None else _ATTACHMENT_UNAVAILABLE,
+            'session_id': action.get('session_id'),
+        }
+        self._complete_turn_output(task, output_queue, terminal_event, terminal)
+        if cleanup_error is not None:
+            raise AttachmentCleanupError([cleanup_error]) from cleanup_error
+
+    async def _process_chat_action(
+        self,
+        action: dict,
+        output_queue: asyncio.Queue,
+        terminal_event: asyncio.Event,
+        *,
+        _started: dict[str, bool] | None = None,
+    ) -> None:
+        """Own a dequeued chat action independently of one HTTP consumer."""
+        # This assignment happens before the coroutine's first await. Stops
+        # recorded before it starts therefore do not cancel away its cleanup.
+        if _started is not None:
+            _started['value'] = True
+        self._active_task_started = True
+        requested_sid = action.get('session_id')
+        staged = action.get('staged_attachments')
+        cleanup_owned = action.get('_staging_cleanup_owned', staged is not None)
+        selected_id = action.get('edit_source_artifact_id')
+        selected_image_index = action.get('edit_source_image_index')
+        adopted_document_ids = action.get('document_ids') or ()
+        has_media = (
+            staged is not None
+            or bool(selected_id)
+            or selected_image_index is not None
+            or bool(adopted_document_ids)
+        )
+        session = None
+        ownership: MediaOwnership | None = None
+        promoted: PromotedAttachments | None = None
+        adopted = False
+        adoption_task: asyncio.Task | None = None
+        ingestion_emitted = False
+        terminal = {
+            'type': 'turn_complete',
+            'content': '',
+            'session_id': requested_sid,
+        }
+
+        async def emit(payload):
+            if isinstance(payload, dict):
+                payload = {
+                    **payload,
+                    'session_id': session.id if session is not None else requested_sid,
+                }
+            await output_queue.put(payload)
+
+        def mark_adopted() -> None:
+            nonlocal adopted, adoption_task, ingestion_emitted
+            if adopted:
+                return
+            adopted = True
+            if promoted is not None:
+                # Session invokes this only after its history save succeeds;
+                # durable adoption ends the rollback obligation exactly once.
+                release_promoted_attachment_reservation(promoted)
+                document_ids = [
+                    str(item['id'])
+                    for item in promoted.document_paths
+                    if item.get('id')
+                ]
+                if document_ids:
+                    if ownership is None:
+                        raise RuntimeError('Document adoption authority is missing')
+                    adoption_task = asyncio.create_task(
+                        document_assets.mark_documents_adopted(
+                            document_ids,
+                            ownership,
+                        )
+                    )
+            if promoted is not None and not ingestion_emitted:
+                output_queue.put_nowait({
+                    'type': 'attachments_ingested',
+                    'artifacts': [
+                        item.model_dump() for item in promoted.image_refs
+                    ],
+                    'document_count': len(promoted.document_paths),
+                    'session_id': session.id,
+                })
+                ingestion_emitted = True
+
+        try:
+            if self.stop_requested:
+                raise asyncio.CancelledError
+            if action.get('_staging_claim_failed'):
+                raise MediaValidationError('Staged attachments are unavailable')
+
+            try:
+                session = await self._resolve_session(requested_sid)
+            except Exception:
+                logger.exception('Failed to resolve chat session')
+                await emit({
+                    'type': 'error',
+                    'content': (
+                        _ATTACHMENT_UNAVAILABLE if has_media else
+                        'Could not load the conversation. Please try again.'
+                    ),
+                })
+                return
+            if self.stop_requested:
+                raise asyncio.CancelledError
+            if session is None:
+                await emit({
+                    'type': 'error',
+                    'content': (
+                        _ATTACHMENT_UNAVAILABLE if has_media else
+                        'This conversation no longer exists â€” start a new one.'
+                    ),
+                })
+                return
+            terminal['session_id'] = session.id
+            session_agent_id = getattr(session, 'agent_id', None)
+            if session_agent_id and str(session_agent_id) != str(self.agent.id):
+                logger.warning(
+                    'Rejected chat session with wrong agent session=%s', session.id
+                )
+                await emit({
+                    'type': 'error',
+                    'content': (
+                        _ATTACHMENT_UNAVAILABLE if has_media else
+                        'Could not load the conversation. Please try again.'
+                    ),
+                })
+                return
+
+            ownership = MediaOwnership(
+                session_id=str(session.id),
+                user_id=self.user_key,
+                agent_id=str(self.agent.id),
+            )
+            selected_ref = None
+            if selected_id and selected_image_index is not None:
+                raise MediaValidationError('Select exactly one image edit source')
+            if selected_id:
+                selected_ref = await media_assets.resolve_ref(
+                    str(selected_id), ownership
+                )
+                if self.stop_requested:
+                    raise asyncio.CancelledError
+
+            if staged is not None:
+                promoted = await promote_staged_attachments(staged, ownership)
+                if self.stop_requested:
+                    raise asyncio.CancelledError
+
+            image_refs = list(promoted.image_refs) if promoted else []
+            documents = list(promoted.document_paths) if promoted else []
+            if selected_image_index is not None:
+                if (
+                    isinstance(selected_image_index, bool)
+                    or not isinstance(selected_image_index, int)
+                    or selected_image_index < 0
+                    or selected_image_index >= len(image_refs)
+                ):
+                    raise MediaValidationError('Selected upload image is unavailable')
+                selected_ref = image_refs[selected_image_index]
+            fresh_document_ids = tuple(
+                str(item['id']) for item in documents if item.get('id')
+            )
+            document_capabilities = await load_turn_document_capabilities(
+                ownership,
+                fresh_document_ids=fresh_document_ids,
+                adopted_document_ids=tuple(adopted_document_ids),
+            )
+            attachments = None
+            if image_refs or documents or selected_ref is not None:
+                attachments = {
+                    'images': [item.model_dump() for item in image_refs],
+                    'files': documents,
+                    'image_selection': (
+                        selected_ref.model_dump() if selected_ref is not None else None
+                    ),
+                    '_on_adopted': mark_adopted,
+                }
+            user_prompt = action['content']
+            bypass = bool(action.get('bypass_permissions'))
+            # Attachment-bearing prompts use Session so their immutable refs
+            # are consumed and persisted instead of being orphaned by a task.
+            if (
+                is_multi_step_task(user_prompt)
+                and attachments is None
+                and not document_capabilities
+            ):
+                await emit({
+                    'type': 'status',
+                    'content': 'Planning multi-step task...',
+                })
+
+                async def notify_task(task_id):
+                    await emit({
+                        'type': 'status',
+                        'content': (
+                            'Task created â€” watch it run live on the task page '
+                            f'(/tasks/{task_id}).'
+                        ),
+                        'task_id': task_id,
+                    })
+
+                result = await handle_multi_step_task(
+                    user_prompt,
+                    self.agent,
+                    session,
+                    self.agent.llm,
+                    stream=False,
+                    interface='web',
+                    on_task_created=notify_task,
+                )
+                terminal = {
+                    'type': 'multistep_result',
+                    'content': result,
+                    'session_id': session.id,
+                }
+            else:
+                from cognitrix.safety.approval_gate import web_turn_ctx
+
+                token = web_turn_ctx.set({
+                    'emit': emit,
+                    'session_id': session.id,
+                    'bypass': bypass,
+                    'user_key': self.user_key,
+                })
+                try:
+                    await session(
+                        user_prompt,
+                        self.agent,
+                        interface='web',
+                        stream=True,
+                        output=emit,
+                        wsquery={'type': 'generate', 'action': 'chat_message'},
+                        attachments=attachments,
+                        tool_context=ToolExecutionContext(
+                            session_id=str(session.id),
+                            user_id=self.user_key,
+                            agent_id=str(self.agent.id),
+                            document_capabilities=document_capabilities,
+                            selected_image_artifact_id=(
+                                selected_ref.id if selected_ref is not None else None
+                            ),
+                        ),
+                    )
+                    if promoted is not None and (
+                        promoted.image_refs or promoted.document_paths
+                    ) and not adopted:
+                        raise MediaValidationError(
+                            'Session did not durably adopt promoted attachments'
+                        )
+                finally:
+                    web_turn_ctx.reset(token)
+        except asyncio.CancelledError:
+            terminal = {
+                'type': 'turn_stopped',
+                'content': '',
+                'session_id': session.id if session is not None else requested_sid,
+            }
+        except Exception as exc:
+            logger.exception('SSE chat action failed')
+            await emit({
+                'type': 'error',
+                'content': _ATTACHMENT_UNAVAILABLE if has_media else str(exc),
+            })
+        finally:
+            cleanup_errors: list[BaseException] = []
+            adoption_error: BaseException | None = None
+            if adoption_task is not None:
+                adoption_error = await _settle_background_task(adoption_task)
+                if adoption_error is not None:
+                    logger.error(
+                        'Document adoption commit failed after Session save',
+                        exc_info=(
+                            type(adoption_error),
+                            adoption_error,
+                            adoption_error.__traceback__,
+                        ),
+                    )
+            if promoted is not None and not adopted and ownership is not None:
+                try:
+                    await rollback_promoted_attachments(promoted, ownership)
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
+                    logger.exception('Failed to roll back unscheduled attachments')
+            if staged is not None and cleanup_owned:
+                try:
+                    await cleanup_staged_attachments(staged)
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
+                    logger.exception('Failed to clean staged chat attachments')
+            if cleanup_errors or adoption_error is not None:
+                terminal = {
+                    'type': 'error',
+                    'content': _ATTACHMENT_UNAVAILABLE,
+                    'session_id': terminal.get('session_id'),
+                }
+            elif self.stop_requested:
+                terminal = {
+                    'type': 'turn_stopped',
+                    'content': '',
+                    'session_id': terminal.get('session_id'),
+                }
+            self._complete_turn_output(
+                asyncio.current_task(),
+                output_queue,
+                terminal_event,
+                terminal,
+            )
+            if cleanup_errors:
+                raise AttachmentCleanupError(cleanup_errors)
+            if adoption_error is not None:
+                raise adoption_error
 
     async def sse_endpoint(self, request: Request):
         async def event_generator(superseded: asyncio.Event):
@@ -327,24 +867,31 @@ class SSEManager:
                         yield {'event': 'message', 'data': json.dumps({'type': 'chat_history', 'content': session.chat, 'agent_name': self.agent.name, 'action': 'get'})}
 
                     elif action['action'] == 'delete':
-                        session = await self._resolve_session(session_id)
-                        if session is None:
+                        try:
+                            session = await self._clear_owned_history(session_id)
+                        except (OwnershipConflict, OwnershipNotFound):
                             yield {'event': 'message', 'data': json.dumps({
                                 'type': 'error',
                                 'content': 'This conversation is unavailable.',
                                 'session_id': session_id,
                             })}
                             continue
-                        session.chat = []
-                        await session.save()
                         yield {'event': 'message', 'data': json.dumps({'type': 'chat_history', 'content': session.chat, 'agent_name': self.agent.name, 'action': 'delete'})}
 
                 elif action['type'] == 'sessions':
                     if action['action'] == 'list':
-                        allowed = await visible_sessions(
-                            list(await Session.list_sessions()),
-                            browser_authorization(self.user_key),
+                        all_sessions = list(await Session.list_sessions())
+                        owned_ids = set(await session_ownerships.owned_session_ids(
+                            str(self.user_key or '')
+                        ))
+                        durable = await visible_sessions(
+                            all_sessions, browser_authorization(self.user_key)
                         )
+                        durable_ids = {str(item.id) for item in durable}
+                        allowed = [
+                            item for item in all_sessions
+                            if str(item.id) in owned_ids or str(item.id) in durable_ids
+                        ]
                         sessions = [sess.json() for sess in allowed]
                         yield {'event': 'message', 'data': json.dumps({'type': 'sessions', 'content': sessions, 'action': 'list'})}
 
@@ -389,214 +936,11 @@ class SSEManager:
                         yield {'event': 'message', 'data': json.dumps({'type': 'generate', 'content': response.current_chunk, 'action': 'system_prompt'})}
 
                 elif action['type'] == 'chat_message':
-                    user_prompt = action['content']
-                    requested_sid = action.get('session_id')
-                    if self.stop_requested:
-                        self.finish_turn()
-                        yield {'event': 'message', 'data': json.dumps({
-                            'type': 'turn_stopped', 'content': '',
-                            'session_id': requested_sid,
-                        })}
-                        continue
-                    # Uploaded attachments: images → vision, files → workspace paths.
-                    chat_images = action.get('images') or []
-                    chat_files = action.get('files') or []
-                    chat_attachments = (
-                        {'images': chat_images, 'files': chat_files}
-                        if (chat_images or chat_files) else None
+                    out_queue, out_terminal_event = self._open_turn_output()
+                    self._start_chat_action(
+                        action, out_queue, out_terminal_event
                     )
-                    # Bypass = auto-approve risky tools for this turn (approvals only).
-                    chat_bypass = bool(action.get('bypass_permissions'))
-
-                    # Resolve the conversation up front (own try so a DB error
-                    # can't propagate out of this generator and kill the SSE
-                    # stream). Every reply event is tagged with session_id so
-                    # the client can route/drop it against its active thread.
-                    try:
-                        session = await self._resolve_session(requested_sid)
-                    except Exception:
-                        logger.exception("Failed to resolve chat session")
-                        self.finish_turn()
-                        yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': 'Could not load the conversation. Please try again.', 'session_id': requested_sid})}
-                        continue
-                    if session is None:
-                        # Stale id (deleted elsewhere). Tag with the REQUESTED id
-                        # so the client's filter lets it through; never `return`
-                        # here — that would end the stream for this user+agent.
-                        self.finish_turn()
-                        yield {'event': 'message', 'data': json.dumps({'type': 'error', 'content': 'This conversation no longer exists — start a new one.', 'session_id': requested_sid})}
-                        continue
-
-                    if self.stop_requested:
-                        self.finish_turn()
-                        yield {'event': 'message', 'data': json.dumps({
-                            'type': 'turn_stopped', 'content': '',
-                            'session_id': session.id,
-                        })}
-                        continue
-
-                    # Check for multi-step tasks
-                    if is_multi_step_task(user_prompt):
-                        # Bridge through a queue so the run link reaches the
-                        # client immediately — the run itself blocks for its
-                        # whole duration, and the user can watch it live on
-                        # the task page meanwhile.
-                        ms_queue, ms_terminal_event = self._open_turn_output()
-                        await ms_queue.put({
-                            'type': 'status',
-                            'content': 'Planning multi-step task...',
-                            'session_id': session.id,
-                        })
-
-                        async def _notify_task(task_id, _q=ms_queue, _sid=session.id):
-                            await _q.put({
-                                'type': 'status',
-                                'content': f'Task created — watch it run live on the task page (/tasks/{task_id}).',
-                                'task_id': task_id,
-                                'session_id': _sid,
-                            })
-
-                        # ponytail: multi-step forwards file paths only (no vision) in v1.
-                        ms_prompt = user_prompt
-                        if chat_files:
-                            _fpaths = '\n'.join(f.get('path', '') for f in chat_files if f.get('path'))
-                            if _fpaths:
-                                ms_prompt = f"{user_prompt}\n\n[User uploaded files, readable with your file tools:]\n{_fpaths}"
-
-                        async def _run_multistep(
-                            _prompt=ms_prompt,
-                            _sess=session,
-                            _q=ms_queue,
-                            _terminal_event=ms_terminal_event,
-                        ):
-                            terminal = {
-                                'type': 'error',
-                                'content': 'Multi-step task failed unexpectedly.',
-                                'session_id': _sess.id,
-                            }
-                            try:
-                                result = await handle_multi_step_task(
-                                    _prompt,
-                                    self.agent,
-                                    _sess,
-                                    self.agent.llm,
-                                    stream=False,
-                                    interface='web',
-                                    on_task_created=_notify_task,
-                                )
-                                terminal = {
-                                    'type': 'multistep_result',
-                                    'content': result,
-                                    'session_id': _sess.id,
-                                }
-                            except asyncio.CancelledError:
-                                terminal = {
-                                    'type': 'turn_stopped',
-                                    'content': '',
-                                    'session_id': _sess.id,
-                                }
-                            except Exception as e:
-                                logger.exception("Multi-step chat task failed")
-                                terminal = {
-                                    'type': 'error',
-                                    'content': f'Multi-step task failed: {str(e)}',
-                                    'session_id': _sess.id,
-                                }
-                            finally:
-                                if self.stop_requested:
-                                    terminal = {
-                                        'type': 'turn_stopped',
-                                        'content': '',
-                                        'session_id': _sess.id,
-                                    }
-                                self._complete_turn_output(
-                                    asyncio.current_task(),
-                                    _q,
-                                    _terminal_event,
-                                    terminal,
-                                )
-
-                        ms_task = asyncio.create_task(_run_multistep())
-                        self.active_task = ms_task
-                        if self.stop_requested:
-                            ms_task.cancel()
-                    else:
-                        # Route through the full session loop so the web path gets
-                        # tools + safety gating + history + persistence (previously it
-                        # called agent.generate() directly, bypassing all of that).
-                        # Bridge the session's callback-based output to this SSE
-                        # generator through a queue.
-                        out_queue, out_terminal_event = self._open_turn_output()
-
-                        async def _emit(payload, _q=out_queue, _sid=session.id):
-                            if isinstance(payload, dict):
-                                payload = {**payload, 'session_id': _sid}
-                            await _q.put(payload)
-
-                        async def _run(
-                            _prompt=user_prompt,
-                            _sess=session,
-                            _q=out_queue,
-                            _terminal_event=out_terminal_event,
-                            _att=chat_attachments,
-                            _bypass=chat_bypass,
-                        ):
-                            # Bind the turn's approval context (emit channel, owner,
-                            # bypass) so a risky tool can prompt the browser.
-                            from cognitrix.safety.approval_gate import web_turn_ctx
-                            token = web_turn_ctx.set({
-                                'emit': _emit,
-                                'session_id': _sess.id,
-                                'bypass': _bypass,
-                                'user_key': self.user_key,
-                            })
-                            terminal_type = 'turn_complete'
-                            try:
-                                await _sess(
-                                    _prompt, self.agent,
-                                    interface='web', stream=True, output=_emit,
-                                    wsquery={'type': 'generate', 'action': 'chat_message'},
-                                    attachments=_att,
-                                    tool_context=ToolExecutionContext(user_id=self.user_key),
-                                )
-                            except asyncio.CancelledError:
-                                terminal_type = 'turn_stopped'
-                                logger.info("Chat turn cancelled for session=%s", _sess.id)
-                            except Exception as e:
-                                logger.exception("SSE session turn failed")
-                                await _q.put({
-                                    'type': 'error',
-                                    'content': str(e),
-                                    'session_id': _sess.id,
-                                })
-                            finally:
-                                try:
-                                    web_turn_ctx.reset(token)
-                                finally:
-                                    if self.stop_requested:
-                                        terminal_type = 'turn_stopped'
-                                    # Completion is control state and must not
-                                    # block behind the bounded streamed data.
-                                    self._complete_turn_output(
-                                        asyncio.current_task(),
-                                        _q,
-                                        _terminal_event,
-                                        {
-                                            'type': terminal_type,
-                                            'content': '',
-                                            'session_id': _sess.id,
-                                        },
-                                    )
-                                    logger.info(
-                                        "Queued %s for session=%s",
-                                        terminal_type,
-                                        _sess.id,
-                                    )
-
-                        run_task = asyncio.create_task(_run())
-                        self.active_task = run_task
-                        if self.stop_requested:
-                            run_task.cancel()
+                    continue
 
         async def owned_event_generator():
             generation, superseded = self._claim_consumer()

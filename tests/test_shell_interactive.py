@@ -11,6 +11,7 @@ import asyncio
 import pytest
 
 from cognitrix.cli import shell
+from cognitrix.common.process_security import HostProcessMode
 
 
 @pytest.mark.asyncio
@@ -26,6 +27,19 @@ async def test_read_query_uses_prompt_session():
             return "from prompt_toolkit"
 
     assert await shell._read_query(PS(), "rich", "plain$ ") == "from prompt_toolkit"
+
+
+@pytest.mark.asyncio
+async def test_ai_turn_injects_trusted_local_host_process_context():
+    captured = {}
+
+    class FakeSession:
+        async def __call__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    await shell._run_ai_turn(FakeSession(), 'question', object(), False)
+
+    assert captured['tool_context'].host_process_mode is HostProcessMode.TRUSTED_LOCAL
 
 
 @pytest.mark.asyncio

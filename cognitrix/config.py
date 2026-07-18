@@ -352,6 +352,8 @@ _TASK_MIGRATION_COLUMNS = (
 
 _ARTIFACT_MIGRATION_COLUMNS = (
     ('user_id', 'TEXT'), ('run_id', 'TEXT'),
+    ('origin', 'TEXT'), ('vision_storage_key', 'TEXT'),
+    ('thumbnail_storage_key', 'TEXT'), ('created_at', 'TEXT'),
 )
 
 _SESSION_MIGRATION_COLUMNS = (
@@ -655,8 +657,9 @@ async def _ensure_schema():
 
     log = _logging.getLogger('cognitrix.log')
 
-    from cognitrix.artifacts import Artifact
+    from cognitrix.artifacts import Artifact, DocumentArtifact
     from cognitrix.models.api_key import APIKey
+    from cognitrix.session_ownership import SessionOwnership
     from cognitrix.tasks.events import TaskRunEvent
     from cognitrix.tasks.metrics import TaskRunPhaseMetric
     from cognitrix.tasks.run import TaskRun, TaskRunHead
@@ -685,6 +688,19 @@ async def _ensure_schema():
                 )
 
     dbms = getattr(DBMS.Database, 'dbms', '')
+    # These tables are authorization and cleanup journals. Starting without
+    # either would turn fail-closed ownership/recovery into silent data loss.
+    for model in (SessionOwnership, DocumentArtifact):
+        create = (
+            getattr(model, '_create_table_async', None)
+            or getattr(model, 'create_table', None)
+        )
+        if create is None:
+            raise RuntimeError(f'{model.__name__} schema hook is unavailable')
+        result = create()
+        if hasattr(result, '__await__'):
+            await result
+
     if dbms in ('postgresql', 'mysql'):
         await _migrate_relational_task_schema(DBMS.Database)
         return

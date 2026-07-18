@@ -24,6 +24,10 @@ from cognitrix.skills.executor import SkillExecutor
 from cognitrix.skills.manager import get_skill_manager
 from cognitrix.skills.models import SkillEventType
 from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
+from cognitrix.tools.utils import (
+    trusted_local_execution,
+    trusted_local_execution_context,
+)
 
 from .handlers import list_agents, list_tasks, list_teams
 
@@ -32,6 +36,15 @@ logger = logging.getLogger('cognitrix.log')
 
 # Module-level skill command cache for fast lookups
 _skill_command_cache: dict[str, Any] = {}
+
+
+async def _trusted_cli_skill_events(executor, manifest, arguments, session=None):
+    """Execute a skill under authority granted only by this local CLI module."""
+    with trusted_local_execution():
+        async for event in executor.execute(
+            manifest, arguments, session, interface='cli'
+        ):
+            yield event
 
 
 class CognitrixCompleter(Completer):
@@ -99,7 +112,13 @@ async def _run_ai_turn(session, query: str, agent, stream: bool) -> None:
         rich_print(*args, **kwargs)
 
     try:
-        await session(query, agent, stream=stream, output=output)
+        await session(
+            query,
+            agent,
+            stream=stream,
+            output=output,
+            tool_context=trusted_local_execution_context(),
+        )
     finally:
         if active['v']:
             status.stop()
@@ -202,7 +221,12 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
                 return True
             old_system_prompt = agent.system_prompt
             agent.system_prompt = agent_generator
-            await session(description, agent, stream=False)
+            await session(
+                description,
+                agent,
+                stream=False,
+                tool_context=trusted_local_execution_context(),
+            )
             agent.system_prompt = old_system_prompt
         else:
             console.print(Panel(f"[bold red]Unknown entity type:[/bold red] [yellow]{entity}[/yellow]",
@@ -358,7 +382,9 @@ async def handle_slash_command(query: str, agent, session) -> bool | tuple:
 
         arguments = " ".join(args)
         divider = "─" * 40
-        async for event in executor.execute(skill_manifest, arguments, session):
+        async for event in _trusted_cli_skill_events(
+            executor, skill_manifest, arguments, session
+        ):
             if event.type == SkillEventType.SKILL_PROGRESS and event.data:
                 print(event.data, end="", flush=True)
             elif event.type == SkillEventType.SKILL_COMPLETE:

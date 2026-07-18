@@ -12,6 +12,7 @@ const CHAT_EVENT_TYPES = new Set([
   'tool',
   'turn_complete',
   'turn_stopped',
+  'attachments_ingested',
 ]);
 
 export interface SSEEvent {

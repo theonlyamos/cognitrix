@@ -12,8 +12,17 @@ from rich.table import Table
 from cognitrix.skills.manager import get_skill_manager
 from cognitrix.skills.models import SkillEventType
 from cognitrix.skills.parser import SkillParseError, SkillParser
+from cognitrix.tools.utils import trusted_local_execution
 
 console = Console()
+
+
+async def _trusted_cli_skill_events(executor, manifest, arguments):
+    with trusted_local_execution():
+        async for event in executor.execute(
+            manifest, arguments, interface='cli'
+        ):
+            yield event
 
 
 def manage_skills(args):
@@ -220,7 +229,7 @@ async def _run_skill(manager, name: str, arguments: str | list | dict):
     rprint(f"\n[bold cyan]Executing skill: {manifest.name}[/bold cyan]")
     rprint("-" * 40)
 
-    async for event in executor.execute(manifest, arguments):
+    async for event in _trusted_cli_skill_events(executor, manifest, arguments):
         if event.type == SkillEventType.SKILL_START:
             pass
         elif event.type == SkillEventType.SKILL_CONTEXT_INJECTED:

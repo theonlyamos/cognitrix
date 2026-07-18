@@ -5,6 +5,7 @@ export type ToolStatus = 'running' | 'done' | 'error' | 'stopped';
 export interface ToolArtifact {
   id: string;
   mime_type: string;
+  origin?: 'uploaded' | 'generated';
   filename?: string;
   width?: number;
   height?: number;
@@ -27,6 +28,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   timestamp?: string;
+  /** Session-owned images attached to this user turn. */
+  artifacts?: ToolArtifact[];
   /** Tool chips for a `role: 'tool'` row (the agent's tool activity). */
   tools?: ToolUse[];
 }
@@ -36,6 +39,7 @@ interface SessionContextType {
   currentAgentId: string | null;
   isStreaming: boolean;
   addMessage: (role: ChatMessage['role'], content: string) => void;
+  addArtifactsToLastUser: (artifacts: ToolArtifact[]) => void;
   appendToLastMessage: (content: string) => void;
   /** A tool started: append a running chip to the current tool row, or open one. */
   addToolCall: (name: string, opts?: { id?: string; params?: string }) => void;
@@ -91,6 +95,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         content: last.content + content,
       };
       return updated;
+    });
+  }, []);
+
+  const addArtifactsToLastUser = useCallback((artifacts: ToolArtifact[]) => {
+    if (!artifacts.length) return;
+    setMessagesState((previous) => {
+      for (let index = previous.length - 1; index >= 0; index -= 1) {
+        const message = previous[index];
+        if (message.role !== 'user') continue;
+        const byId = new Map((message.artifacts || []).map((artifact) => [artifact.id, artifact]));
+        for (const artifact of artifacts) byId.set(artifact.id, artifact);
+        const updated = [...previous];
+        updated[index] = { ...message, artifacts: [...byId.values()] };
+        return updated;
+      }
+      return previous;
     });
   }, []);
 
@@ -199,6 +219,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       currentAgentId,
       isStreaming,
       addMessage,
+      addArtifactsToLastUser,
       appendToLastMessage,
       addToolCall,
       resolveToolCall,

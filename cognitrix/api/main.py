@@ -1,5 +1,5 @@
 import asyncio
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 
 import aiofiles
 from fastapi import FastAPI, Request
@@ -8,6 +8,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import FRONTEND_BUILD_DIR, initialize_database, settings
+from ..media.staging import (
+    start_attachment_maintenance,
+    stop_attachment_maintenance,
+)
 from ..tasks.recovery import recovery_loop, run_recovery_pass
 from ..tasks.scheduler import scheduler_loop
 from .routes import api_router
@@ -20,21 +24,38 @@ async def lifespan(app: FastAPI):
     # `uvicorn cognitrix.api.main:app` must work too.
     await initialize_database()
     await run_recovery_pass()
-    scheduler = asyncio.create_task(scheduler_loop())
-    recovery = asyncio.create_task(
-        recovery_loop(
-            interval_seconds=settings.task_recovery_interval_seconds,
-        )
-    )
+    scheduler = None
+    recovery = None
+    maintenance_started = False
     try:
+        scheduler = asyncio.create_task(scheduler_loop())
+        recovery = asyncio.create_task(
+            recovery_loop(
+                interval_seconds=settings.task_recovery_interval_seconds,
+            )
+        )
+        start_attachment_maintenance()
+        maintenance_started = True
         yield
     finally:
-        scheduler.cancel()
-        recovery.cancel()
-        with suppress(asyncio.CancelledError):
-            await scheduler
-        with suppress(asyncio.CancelledError):
-            await recovery
+        cleanup_errors = []
+        tasks = tuple(task for task in (scheduler, recovery) if task is not None)
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+        try:
+            if maintenance_started:
+                await stop_attachment_maintenance()
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+        if cleanup_errors:
+            raise cleanup_errors[0]
 
 
 app = FastAPI(lifespan=lifespan)

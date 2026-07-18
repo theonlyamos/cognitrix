@@ -77,4 +77,40 @@ describe('parseChatEntries tool results', () => {
       result: 'Stopped by user.',
     }));
   });
+
+  it('restores only valid persisted image artifact descriptors', () => {
+    const messages = toChatMessages(parseChatEntries([
+      {
+        role: 'User',
+        type: 'image',
+        content: '[Current image artifact: attached-1]',
+        artifact: {
+          id: 'attached-1',
+          mime_type: 'image/png',
+          filename: 'reference.png',
+          width: 640,
+          height: 480,
+        },
+      },
+      {
+        role: 'User',
+        type: 'image',
+        content: 'unsafe',
+        artifact: { id: '../bad', mime_type: 42 },
+      },
+    ]));
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toEqual(expect.objectContaining({
+      role: 'user',
+      artifacts: [{
+        id: 'attached-1',
+        mime_type: 'image/png',
+        origin: 'uploaded',
+        filename: 'reference.png',
+        width: 640,
+        height: 480,
+      }],
+    }));
+  });
 });
