@@ -30,7 +30,6 @@ const STOP_RECONCILE_DELAY_MS = 4_000;
 // ── Attachments ──
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
-const IMAGE_MAX_DIM = 1568; // downscale ceiling — plenty for vision, keeps payload small
 
 // Accepted attachments: images + common document types. Keep DOC_EXT and
 // ACCEPT_ATTR in sync — `accept` filters the file picker; addFiles re-checks so
@@ -68,45 +67,9 @@ interface ApprovalRequest {
   details?: string;
 }
 
-const readFileAsDataURL = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-
-// Downscale large images client-side (long edge ≤ IMAGE_MAX_DIM) so uploads and
-// vision-token cost stay small; falls back to the original on any failure.
-const downscaleImage = async (file: File): Promise<File> => {
-  const dataUrl = await readFileAsDataURL(file);
-  return new Promise<File>((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, IMAGE_MAX_DIM / Math.max(img.width, img.height));
-      if (scale >= 1) return resolve(file);
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(img.width * scale);
-      canvas.height = Math.round(img.height * scale);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return resolve(file);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob(
-        (blob) => resolve(blob
-          ? new File([blob], file.name, { type: blob.type || 'image/jpeg', lastModified: file.lastModified })
-          : file),
-        'image/jpeg',
-        0.9,
-      );
-    };
-    img.onerror = () => resolve(file);
-    img.src = dataUrl;
-  });
-};
-
-// Approximate decoded size of a data URL (base64 payload → bytes).
 export default function Home() {
-  const { messages, addMessage, addArtifactsToLastUser, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, stopRunningTools, failRunningTools, clearMessages, setMessages } = useSession();
+  const { messages, addMessage, attachArtifactsToLatestUser: attachArtifactsToLatestUserFromSession, addArtifactsToLastUser, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, stopRunningTools, failRunningTools, clearMessages, setMessages } = useSession();
+  const attachArtifactsToLatestUser = attachArtifactsToLatestUserFromSession ?? addArtifactsToLastUser;
   const [input, setInput] = useState('');
   const [waiting, setWaiting] = useState(false); // sent, before first token
   const [streaming, setStreaming] = useState(false); // actively streaming a reply
@@ -125,12 +88,17 @@ export default function Home() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const attachmentsRef = useRef(attachments);
+  const ownedPreviewUrlsRef = useRef(new Set<string>());
   attachmentsRef.current = attachments;
 
+  const revokePreviewUrl = useCallback((url?: string) => {
+    if (!url || !ownedPreviewUrlsRef.current.delete(url)) return;
+    URL.revokeObjectURL(url);
+  }, []);
+
   useEffect(() => () => {
-    for (const attachment of attachmentsRef.current) {
-      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-    }
+    for (const url of ownedPreviewUrlsRef.current) URL.revokeObjectURL(url);
+    ownedPreviewUrlsRef.current.clear();
   }, []);
 
   // Slash-skills menu: typing `/name` shows matching skills to insert. The message
@@ -278,7 +246,7 @@ export default function Home() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
 
-  const addFiles = useCallback(async (fileList: FileList | File[]) => {
+  const addFiles = useCallback((fileList: FileList | File[]) => {
     const incoming = Array.from(fileList);
     if (incoming.length === 0) return;
     setUploadError(null);
@@ -296,14 +264,7 @@ export default function Home() {
         setUploadError('Only images and documents can be attached.');
         continue;
       }
-      const src = isImage && !file.type ? new File([file], file.name, { type: imgMime }) : file;
-      let upload: File;
-      try {
-        upload = isImage ? await downscaleImage(src) : file;
-      } catch {
-        continue;
-      }
-      const bytes = upload.size;
+      const bytes = file.size;
       if (bytes > MAX_FILE_BYTES) {
         setUploadError(`${file.name} is larger than 10 MB.`);
         continue;
@@ -317,26 +278,27 @@ export default function Home() {
         id: crypto.randomUUID(),
         kind: isImage ? 'image' : 'file',
         name: file.name || 'file',
-        mime: upload.type || imgMime || file.type || 'application/octet-stream',
-        file: upload,
+        mime: file.type || imgMime || 'application/octet-stream',
+        file,
         previewUrl: isImage && typeof URL.createObjectURL === 'function'
-          ? URL.createObjectURL(upload)
+          ? URL.createObjectURL(file)
           : undefined,
       });
     }
+    for (const attachment of next) if (attachment.previewUrl) ownedPreviewUrlsRef.current.add(attachment.previewUrl);
     if (next.length) setAttachments((prev) => [...prev, ...next]);
   }, []);
 
   const removeAttachment = useCallback((id: string) => {
     setAttachments((prev) => {
       const removed = prev.find((attachment) => attachment.id === id);
-      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      revokePreviewUrl(removed?.previewUrl);
       return prev.filter((attachment) => attachment.id !== id);
     });
     setEditSource((current) => (
       current?.type === 'attachment' && current.attachmentId === id ? null : current
     ));
-  }, []);
+  }, [revokePreviewUrl]);
 
   const selectArtifactEditSource = useCallback((artifact: ToolArtifact) => {
     setEditSource({ type: 'artifact', artifact });
@@ -345,12 +307,12 @@ export default function Home() {
   const clearComposerMedia = useCallback(() => {
     setAttachments((current) => {
       for (const attachment of current) {
-        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        revokePreviewUrl(attachment.previewUrl);
       }
       return [];
     });
     setEditSource(null);
-  }, []);
+  }, [revokePreviewUrl]);
 
   const resetThreadState = useCallback(() => {
     clearStopFallback();
@@ -520,7 +482,7 @@ export default function Home() {
               && /^[A-Za-z0-9_-]{1,128}$/.test(artifact.id)
               && artifact.mime_type.startsWith('image/'))
             .map((artifact) => ({ ...artifact, origin: 'uploaded' as const }));
-          addArtifactsToLastUser(artifacts);
+          attachArtifactsToLatestUser(artifacts);
           break;
         }
         case 'approval_request': {
@@ -536,7 +498,7 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, addArtifactsToLastUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn],
+    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
@@ -598,7 +560,7 @@ export default function Home() {
           for (const attachment of pending) form.append('files', attachment.file, attachment.name);
           await api.post('/agents/chat', form);
           for (const attachment of pending) {
-            if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+            revokePreviewUrl(attachment.previewUrl);
           }
         } else {
           await api.post('/agents/chat', payload);
@@ -611,7 +573,7 @@ export default function Home() {
         finishTurn();
       }
     },
-    [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, agentId, activeSessionId, streamId],
+    [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, agentId, activeSessionId, streamId, revokePreviewUrl],
   );
 
   const stop = useCallback(async () => {

@@ -39,6 +39,8 @@ interface SessionContextType {
   currentAgentId: string | null;
   isStreaming: boolean;
   addMessage: (role: ChatMessage['role'], content: string) => void;
+  attachArtifactsToLatestUser: (artifacts: ToolArtifact[]) => void;
+  /** @deprecated Use attachArtifactsToLatestUser. */
   addArtifactsToLastUser: (artifacts: ToolArtifact[]) => void;
   appendToLastMessage: (content: string) => void;
   /** A tool started: append a running chip to the current tool row, or open one. */
@@ -98,7 +100,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const addArtifactsToLastUser = useCallback((artifacts: ToolArtifact[]) => {
+  const attachArtifactsToLatestUser = useCallback((artifacts: ToolArtifact[]) => {
     if (!artifacts.length) return;
     setMessagesState((previous) => {
       for (let index = previous.length - 1; index >= 0; index -= 1) {
@@ -219,7 +221,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       currentAgentId,
       isStreaming,
       addMessage,
-      addArtifactsToLastUser,
+      attachArtifactsToLatestUser,
+      addArtifactsToLastUser: attachArtifactsToLatestUser,
       appendToLastMessage,
       addToolCall,
       resolveToolCall,

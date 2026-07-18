@@ -9,6 +9,23 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe('SessionContext tool calls', () => {
+  it('attaches reconciled upload artifacts to the latest user message', () => {
+    const { result } = renderHook(() => useSession(), { wrapper });
+
+    act(() => {
+      result.current.addMessage('user', 'Please edit this image.');
+      result.current.addMessage('assistant', 'Working on it.');
+      result.current.attachArtifactsToLatestUser([
+        { id: 'uploaded-image-1', mime_type: 'image/png', filename: 'source.png', origin: 'uploaded' },
+      ]);
+    });
+
+    expect(result.current.messages[0].artifacts).toEqual([
+      { id: 'uploaded-image-1', mime_type: 'image/png', filename: 'source.png', origin: 'uploaded' },
+    ]);
+    expect(result.current.messages[1].artifacts).toBeUndefined();
+  });
+
   it('renders a terminal error when the matching start event is absent', () => {
     const { result } = renderHook(() => useSession(), { wrapper });
 
