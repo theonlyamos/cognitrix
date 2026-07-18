@@ -13,25 +13,25 @@ tags: [search, web, tavily]
 category: web
 version: "1.0.0"
 author: cognitrix
-allowed-tools: [Search]
+allowed-tools: [Tavily Search]
 safety:
   risk-level: low
 ---
 
 # Internet Search
 
-Search the web for current information using the Search tool.
+Search the web for current information using the Tavily Search tool.
 
 ## Usage
 
 ### Basic search
 ```
-Search query="Python async await best practices"
+Tavily Search query="Python async await best practices"
 ```
 
 ### More results
 ```
-Search query="AI news 2026" max_results=20
+Tavily Search query="AI news 2026" max_results=20
 ```
 
 ## Notes
