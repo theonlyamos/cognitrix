@@ -50,4 +50,8 @@ async def get_artifact(
         resolved.path,
         media_type=resolved.mime_type,
         filename=resolved.filename,
+        headers={
+            'Cache-Control': 'private, max-age=86400, immutable',
+            'Vary': 'Authorization',
+        },
     )
