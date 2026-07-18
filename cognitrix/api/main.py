@@ -2,12 +2,11 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import aiofiles
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..celery_worker import broker_available
 from ..config import FRONTEND_BUILD_DIR, initialize_database, settings
 from ..media.staging import (
     start_attachment_maintenance,
@@ -15,6 +14,7 @@ from ..media.staging import (
 )
 from ..tasks.recovery import recovery_loop, run_recovery_pass
 from ..tasks.scheduler import scheduler_loop
+from .health import task_runtime_health
 from .routes import api_router
 from .routes.openai_compat import openai_api
 
@@ -81,9 +81,7 @@ app.mount('/fonts', StaticFiles(directory=FRONTEND_BUILD_DIR / 'fonts'),  name='
 
 @app.get('/health')
 async def healthcheck():
-    if not await asyncio.to_thread(broker_available):
-        raise HTTPException(status_code=503, detail='Task runtime unavailable')
-    return {'status': True}
+    return await task_runtime_health()
 
 
 # SPA fallback — MUST be registered last so real routes (api, /health, the

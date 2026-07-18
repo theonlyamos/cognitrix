@@ -66,13 +66,11 @@ def test_supervisor_runs_redis_web_and_solo_worker_and_waits_for_redis():
 
 
 @pytest.mark.asyncio
-async def test_healthcheck_reports_an_unavailable_task_broker(monkeypatch):
-    from cognitrix.api import main
-
-    monkeypatch.setattr(main, "broker_available", lambda: False, raising=False)
+async def test_healthcheck_reports_an_unavailable_task_broker():
+    from cognitrix.api.health import task_runtime_health
 
     with pytest.raises(HTTPException) as exc_info:
-        await main.healthcheck()
+        await task_runtime_health(lambda: False)
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == "Task runtime unavailable"
