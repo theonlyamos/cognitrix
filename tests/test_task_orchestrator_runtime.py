@@ -186,6 +186,11 @@ def _common_stubs(monkeypatch):
 
     monkeypatch.setattr(orchestrator, "deliver_completion_notification", no_notify)
     monkeypatch.setattr(orchestrator, "evaluate_step", pass_evaluation)
+    monkeypatch.setattr(
+        LLM,
+        "load_llm",
+        staticmethod(lambda provider: _llm() if provider == "openai" else None),
+    )
 
 
 @pytest.mark.asyncio

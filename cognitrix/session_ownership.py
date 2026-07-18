@@ -264,13 +264,14 @@ class SessionOwnership(Model):
         cross-process claim boundary; the in-process lock below is only a
         contention optimization.
         """
-        base_create_async = getattr(Model, '_create_table_async', None)
-        if base_create_async is not None:
-            await base_create_async.__func__(cls)
+        base_create = Model.create_table.__func__
+        if inspect.iscoroutinefunction(base_create):
+            await base_create(cls)
         else:
-            base_create = Model.create_table.__func__(cls)
-            if inspect.isawaitable(base_create):
-                await base_create
+            base_create_async = getattr(Model, '_create_table_async', None)
+            if base_create_async is None:
+                raise RuntimeError('ODBMS does not expose an awaitable schema hook')
+            await base_create_async.__func__(cls)
         database = DBMS.Database
         if database is None:
             raise RuntimeError('Database not initialized')

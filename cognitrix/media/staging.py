@@ -1138,7 +1138,13 @@ def _verify_pinned_source(
                     pinned.staged.path.name,
                     expected_identity=pinned.identity,
                 ) as file_capability:
-                    if file_capability.refresh_identity() != pinned.identity:
+                    current = file_capability.read_bytes(
+                        max_bytes=len(pinned.snapshot)
+                    )
+                    if (
+                        current != pinned.snapshot
+                        or file_capability.refresh_identity() != pinned.identity
+                    ):
                         raise MediaValidationError('Staged attachment changed')
     except (OSError, secure_fs.CapabilityError) as exc:
         raise MediaValidationError('Staged attachment changed') from exc

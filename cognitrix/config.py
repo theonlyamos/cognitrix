@@ -802,6 +802,7 @@ def _patch_odbms_sqlite():
        startup does not propagate. Shim the connection factory to apply the
        configured busy timeout to each connection before it is used.
     """
+    import inspect
     import json
     import types
     import uuid
@@ -839,6 +840,22 @@ def _patch_odbms_sqlite():
             existing_connection.execute(
                 f'PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}'
             )
+
+    # odbms 0.5.2 changed Model.create_table() from an awaitable operation to
+    # a synchronous wrapper that merely schedules _create_table_async().  The
+    # rest of Cognitrix intentionally awaits schema creation before using a
+    # table, so restore that ordering contract instead of allowing startup and
+    # tests to race a background CREATE TABLE task.
+    base_create_table = Model.create_table.__func__
+    if not inspect.iscoroutinefunction(base_create_table):
+        base_create_table_async = getattr(Model, '_create_table_async', None)
+        if base_create_table_async is None:
+            raise RuntimeError('ODBMS does not expose an awaitable schema hook')
+
+        async def _create_table(cls):
+            await base_create_table_async.__func__(cls)
+
+        Model.create_table = classmethod(_create_table)
 
     if getattr(Model, '_cognitrix_sqlite_patch', False):
         return

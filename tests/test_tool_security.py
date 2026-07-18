@@ -178,7 +178,9 @@ async def test_open_file_denies_foreign_managed_upload(
     target = foreign / 'f_foreign'
     target.write_text('foreign secret')
     started = []
-    monkeypatch.setattr(os, 'startfile', lambda value: started.append(value))
+    monkeypatch.setattr(
+        os, 'startfile', lambda value: started.append(value), raising=False
+    )
     token = _set_upload_context()
     try:
         result = await open_file.run(path=os.fspath(target))
@@ -199,7 +201,9 @@ async def test_open_file_denies_managed_upload_even_for_trusted_local(
     target = owned / 'f_owned'
     target.write_text('owned content')
     started = []
-    monkeypatch.setattr(os, 'startfile', lambda value: started.append(value))
+    monkeypatch.setattr(
+        os, 'startfile', lambda value: started.append(value), raising=False
+    )
     token = _set_upload_context(
         host_process_mode=HostProcessMode.TRUSTED_LOCAL
     )
