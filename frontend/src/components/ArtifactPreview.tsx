@@ -25,9 +25,11 @@ interface ArtifactPreviewProps {
   selected?: boolean;
 }
 
-const fileNameFor = (artifact: ToolArtifact) => (
+const fileNameFor = (artifact: ToolArtifact) => Array.from((
   artifact.filename || (artifact.origin === 'uploaded' ? 'attached-image.png' : 'generated-image.png')
-).replace(/[\\/:*?"<>|\u0000-\u001F]/g, '_');
+).replace(/[\\/:*?"<>|]/g, '_'), (character) => (
+  character.charCodeAt(0) < 32 ? '_' : character
+)).join('');
 
 export function ArtifactPreview({ artifact, sourcePath, onEditSource, selected = false }: ArtifactPreviewProps) {
   const isImage = artifact.mime_type.startsWith('image/');
