@@ -87,9 +87,13 @@ class DocumentArtifact(Model):
     @classmethod
     async def create_table(cls):
         """Create durable document metadata and its recovery-critical indexes."""
-        base_create = Model.create_table.__func__(cls)
-        if inspect.isawaitable(base_create):
-            await base_create
+        base_create_async = getattr(Model, '_create_table_async', None)
+        if base_create_async is not None:
+            await base_create_async.__func__(cls)
+        else:
+            base_create = Model.create_table.__func__(cls)
+            if inspect.isawaitable(base_create):
+                await base_create
         database = DBMS.Database
         if database is None:
             raise RuntimeError('Database not initialized')

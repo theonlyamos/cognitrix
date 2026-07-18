@@ -195,9 +195,18 @@ async def test_document_schema_creates_mongodb_indexes(monkeypatch):
         def __getitem__(self, _table):
             return Collection()
 
-    def create_base(_cls):
-        return None
+    async def create_base_async(cls):
+        created.append(('base', cls))
 
+    def create_base(_cls):
+        raise AssertionError('ODBMS sync scheduling wrapper must be bypassed')
+
+    monkeypatch.setattr(
+        Model,
+        '_create_table_async',
+        classmethod(create_base_async),
+        raising=False,
+    )
     monkeypatch.setattr(Model, 'create_table', classmethod(create_base))
     monkeypatch.setattr(
         DBMS,
@@ -209,6 +218,7 @@ async def test_document_schema_creates_mongodb_indexes(monkeypatch):
 
     table = DocumentArtifact.table_name()
     assert created == [
+        ('base', DocumentArtifact),
         ([('storage_key', 1)], {
             'name': f'ux_{table}_storage_key',
             'unique': True,

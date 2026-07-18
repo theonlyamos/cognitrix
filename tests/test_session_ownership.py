@@ -754,12 +754,21 @@ async def test_ownership_schema_accepts_synchronous_odbms_base(monkeypatch):
     base_calls = []
     statements = []
 
-    def create_base(cls):
+    async def create_base_async(cls):
         base_calls.append(cls)
+
+    def create_base(_cls):
+        raise AssertionError('ODBMS sync scheduling wrapper must be bypassed')
 
     async def query(statement):
         statements.append(statement)
 
+    monkeypatch.setattr(
+        Model,
+        '_create_table_async',
+        classmethod(create_base_async),
+        raising=False,
+    )
     monkeypatch.setattr(Model, 'create_table', classmethod(create_base))
     monkeypatch.setattr(
         DBMS,
