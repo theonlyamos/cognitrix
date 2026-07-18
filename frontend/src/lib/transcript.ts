@@ -50,6 +50,14 @@ const safeArgs = (v: unknown): string => {
 
 const safeArtifacts = (value: unknown): ToolArtifact[] | undefined => {
   if (!Array.isArray(value)) return undefined;
+  const safeDimension = (dimension: unknown) => (
+    dimension === undefined || (
+      typeof dimension === 'number'
+      && Number.isFinite(dimension)
+      && Number.isInteger(dimension)
+      && dimension > 0
+    )
+  );
   const artifacts = value.filter((item): item is ToolArtifact => {
     if (!item || typeof item !== 'object') return false;
     const candidate = item as Record<string, unknown>;
@@ -57,8 +65,8 @@ const safeArtifacts = (value: unknown): ToolArtifact[] | undefined => {
       && typeof candidate.mime_type === 'string' && candidate.mime_type.length > 0
       && (candidate.origin === undefined || candidate.origin === 'uploaded' || candidate.origin === 'generated')
       && (candidate.filename === undefined || typeof candidate.filename === 'string')
-      && (candidate.width === undefined || typeof candidate.width === 'number')
-      && (candidate.height === undefined || typeof candidate.height === 'number');
+      && safeDimension(candidate.width)
+      && safeDimension(candidate.height);
   });
   return artifacts.length ? artifacts.map((candidate) => ({
     id: candidate.id,

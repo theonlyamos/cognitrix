@@ -132,4 +132,13 @@ describe('parseChatEntries tool results', () => {
       ],
     })]);
   });
+
+  it('drops artifacts with invalid image dimensions', () => {
+    const messages = toChatMessages(parseChatEntries([
+      { role: 'user', type: 'text', content: 'sizes' },
+      ...[0, -1, 1.5, Infinity].map((width, index) => ({ role: 'user', type: 'image', artifact: { id: `bad-size-${index}`, mime_type: 'image/png', width, height: 4 } })),
+      { role: 'user', type: 'image', artifact: { id: 'valid-size', mime_type: 'image/png', width: 8, height: 4 } },
+    ]));
+    expect(messages[0].artifacts).toEqual([{ id: 'valid-size', mime_type: 'image/png', origin: 'uploaded', width: 8, height: 4 }]);
+  });
 });
