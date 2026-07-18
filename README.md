@@ -206,7 +206,7 @@ The UI is then at `http://localhost:8000`.
 
 ### Fly.io
 
-`fly.toml` deploys the single-container shape to [Fly.io](https://fly.io): one always-warm machine (web + scheduler + auto-spawned worker) with SQLite on a volume, built by Fly's own remote builder. The setup steps (`fly volumes create`, `fly secrets set`, `fly deploy`) are in the file's header comment. Keep it to one machine — the schedule loop is per-process.
+`fly.toml` deploys the single-container shape to [Fly.io](https://fly.io): one always-warm machine running a Supervisor-managed web process, solo Celery worker, and localhost-only Redis. SQLite and Redis persistence live on the mounted volume. The image uses Redis database 0 for Celery and database 1 for provider/actor concurrency leases. Keep this deployment to one machine — the volume and bundled Redis are not shared across machines, and the schedule loop is per-process.
 
 ## API Access
 

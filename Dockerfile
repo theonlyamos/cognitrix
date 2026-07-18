@@ -27,9 +27,11 @@ ENV PYTHONUNBUFFERED=1 \
 # lazily (only when such a tool is actually invoked), so no X server is needed to
 # start the web app or the worker. libgl1/libglib2.0-0 cover shared-lib loads
 # from the pillow/vision deps; curl is used by the compose/fly health check.
+# Redis and Supervisor provide the self-contained, single-machine Fly runtime.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libgl1 libglib2.0-0 curl ca-certificates \
+        redis-server redis-tools supervisor \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -42,7 +44,15 @@ COPY --from=frontend /frontend/dist /app/frontend/dist
 # ../frontend/dist resolves at runtime (a site-packages install would not).
 RUN pip install -e .
 
+COPY deploy/redis.conf /etc/redis/cognitrix.conf
+COPY deploy/supervisord.conf /etc/supervisor/cognitrix.conf
+RUN chmod 0755 \
+        /app/deploy/docker-entrypoint.sh \
+        /app/deploy/wait-for-redis.sh
+
 EXPOSE 8000
 
-# Web server by default; the worker service overrides this command in compose.
-CMD ["cognitrix", "--ui", "web"]
+# Fly uses the supervised Redis + web + worker stack. Compose overrides CMD for
+# its web/worker services and supplies its own Redis container.
+ENTRYPOINT ["/app/deploy/docker-entrypoint.sh"]
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/cognitrix.conf"]

@@ -14,6 +14,7 @@ from ..media.staging import (
 )
 from ..tasks.recovery import recovery_loop, run_recovery_pass
 from ..tasks.scheduler import scheduler_loop
+from .health import task_runtime_health
 from .routes import api_router
 from .routes.openai_compat import openai_api
 
@@ -80,7 +81,7 @@ app.mount('/fonts', StaticFiles(directory=FRONTEND_BUILD_DIR / 'fonts'),  name='
 
 @app.get('/health')
 async def healthcheck():
-    return {'status': True}
+    return await task_runtime_health()
 
 
 # SPA fallback — MUST be registered last so real routes (api, /health, the
