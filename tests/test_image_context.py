@@ -92,3 +92,95 @@ async def test_media_context_deduplicates_pixels_and_keeps_only_recent_text_refs
     assert hydrated.count("data:image/png;base64,cGl4ZWxz") == 1
     assert "one, two, three" in media["content"]
     assert "four" not in media["content"]
+
+
+@pytest.mark.asyncio
+async def test_later_turn_without_selection_contains_no_old_image_pixels(monkeypatch):
+    from cognitrix.media.context import (
+        MediaContextBuilder,
+        MediaTurnContext,
+        reset_media_turn_context,
+        set_media_turn_context,
+    )
+
+    async def list_recent_refs(session_id, ownership, limit=3):
+        return [_ref("old")]
+
+    monkeypatch.setattr("cognitrix.media.context.media_assets.list_recent_refs", list_recent_refs)
+    token = set_media_turn_context(MediaTurnContext(
+        ownership=MediaOwnership("session", "user", "agent"),
+        current_images=[], selected_image=None, vision_data_uri_cache={},
+    ))
+    try:
+        media, history = await MediaContextBuilder().enrich(object(), [{
+            "role": "User", "type": "image", "content": "data:image/png;base64,old-pixels",
+            "artifact": {"id": "old"},
+        }])
+    finally:
+        reset_media_turn_context(token)
+
+    assert media is not None
+    assert all(item.get("type") != "image" for item in history)
+    assert all("data:image" not in item.get("content", "") for item in history)
+
+
+@pytest.mark.asyncio
+async def test_multiple_current_images_require_user_clarification(monkeypatch):
+    from cognitrix.media.context import (
+        MediaContextBuilder,
+        MediaTurnContext,
+        reset_media_turn_context,
+        set_media_turn_context,
+    )
+
+    async def resolve_image(identifier, ownership, variant="original"):
+        return ResolvedImage(_ref(identifier), variant, "image/png", b"pixels")
+
+    async def list_recent_refs(session_id, ownership, limit=3):
+        return []
+
+    monkeypatch.setattr("cognitrix.media.context.media_assets.resolve_image", resolve_image)
+    monkeypatch.setattr("cognitrix.media.context.media_assets.list_recent_refs", list_recent_refs)
+    token = set_media_turn_context(MediaTurnContext(
+        ownership=MediaOwnership("session", "user", "agent"),
+        current_images=[_ref("first"), _ref("second")], selected_image=None,
+        vision_data_uri_cache={},
+    ))
+    try:
+        media, _ = await MediaContextBuilder().enrich(object(), [])
+    finally:
+        reset_media_turn_context(token)
+
+    assert media is not None
+    assert "ask the user which image to use" in media["content"]
+    assert "Selected edit source: none" in media["content"]
+
+
+@pytest.mark.asyncio
+async def test_recent_refs_are_loaded_from_persistence_after_history_compaction(monkeypatch):
+    from cognitrix.media.context import (
+        MediaContextBuilder,
+        MediaTurnContext,
+        reset_media_turn_context,
+        set_media_turn_context,
+    )
+
+    calls = []
+
+    async def list_recent_refs(session_id, ownership, limit=3):
+        calls.append((session_id, ownership, limit))
+        return [_ref("persisted")]
+
+    monkeypatch.setattr("cognitrix.media.context.media_assets.list_recent_refs", list_recent_refs)
+    ownership = MediaOwnership("session", "user", "agent")
+    token = set_media_turn_context(MediaTurnContext(
+        ownership=ownership, current_images=[], selected_image=None, vision_data_uri_cache={},
+    ))
+    try:
+        media, history = await MediaContextBuilder().enrich(object(), [])
+    finally:
+        reset_media_turn_context(token)
+
+    assert history == []
+    assert calls == [("session", ownership, 3)]
+    assert "Recent image refs: persisted" in media["content"]

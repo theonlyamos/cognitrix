@@ -481,9 +481,8 @@ class Session(Model):
                             ) -> None:
                                 data = item.get('data', '')
                                 outcome = item.get('outcome')
-                                # The model receives the richer serialized
-                                # outcome in ``data``; the UI preview remains
-                                # the tool's concise user-facing text.
+                                # ``data`` is model-facing; the UI keeps the
+                                # compact outcome text it has always displayed.
                                 preview = (
                                     outcome.get('text', data)
                                     if isinstance(outcome, dict) else data

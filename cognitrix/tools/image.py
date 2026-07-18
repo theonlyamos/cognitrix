@@ -68,6 +68,12 @@ async def generate_image(prompt: str, source_artifact_id: str | None = None,
         source = None
         parent_artifact_id = None
         selected_artifact_id = current_execution_context().selected_image_artifact_id
+        if source_artifact_id and not selected_artifact_id:
+            return ToolOutcome.failure(
+                'image_selection_required',
+                'Select exactly one image before requesting an edit',
+                denied=True,
+            )
         if (
             selected_artifact_id
             and source_artifact_id

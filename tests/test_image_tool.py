@@ -112,12 +112,17 @@ async def test_generate_image_resolves_uploaded_and_generated_sources_identicall
     provider = FakeProvider([ProviderImage(b'provider bytes', 'image/webp')])
     monkeypatch.setattr(image_module, 'media_assets', service)
     monkeypatch.setattr(image_module, 'image_provider', provider)
-
-    result = await image_module.generate_image.run(
-        '  Make it blue  ',
-        source_artifact_id='source-1',
-        aspect_ratio='16:9',
-    )
+    token = set_execution_context(ToolExecutionContext(
+        user_id='user-1', selected_image_artifact_id='source-1'
+    ))
+    try:
+        result = await image_module.generate_image.run(
+            '  Make it blue  ',
+            source_artifact_id='source-1',
+            aspect_ratio='16:9',
+        )
+    finally:
+        reset_execution_context(token)
 
     ownership = MediaOwnership('session-1', 'user-1', 'agent-1')
     assert service.resolve_calls == [('source-1', ownership, 'original')]
@@ -197,6 +202,25 @@ async def test_selected_turn_image_rejects_mismatched_model_source(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generate_image_denies_unselected_model_source(monkeypatch):
+    from cognitrix.tools import image as image_module
+
+    service = FakeMediaAssets(resolved={'current-1': _resolved_source('uploaded')})
+    provider = FakeProvider([ProviderImage(b'unused')])
+    monkeypatch.setattr(image_module, 'media_assets', service)
+    monkeypatch.setattr(image_module, 'image_provider', provider)
+
+    result = await image_module.generate_image.run(
+        'Make the current image blue', source_artifact_id='current-1'
+    )
+
+    assert result.outcome.status == 'denied'
+    assert result.outcome.error.code == 'image_selection_required'
+    assert service.resolve_calls == []
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
 async def test_generate_image_stores_provider_bytes_without_resolving_a_source(
     monkeypatch,
 ):
@@ -231,12 +255,24 @@ async def test_three_call_edit_chain_uses_each_child_as_the_next_parent(monkeypa
     monkeypatch.setattr(image_module, 'image_provider', provider)
 
     first = await image_module.generate_image.run('Create the base')
-    second = await image_module.generate_image.run(
-        'First edit', source_artifact_id=first.outcome.artifacts[0].id
-    )
-    third = await image_module.generate_image.run(
-        'Second edit', source_artifact_id=second.outcome.artifacts[0].id
-    )
+    second_token = set_execution_context(ToolExecutionContext(
+        user_id='user-1', selected_image_artifact_id=first.outcome.artifacts[0].id
+    ))
+    try:
+        second = await image_module.generate_image.run(
+            'First edit', source_artifact_id=first.outcome.artifacts[0].id
+        )
+    finally:
+        reset_execution_context(second_token)
+    third_token = set_execution_context(ToolExecutionContext(
+        user_id='user-1', selected_image_artifact_id=second.outcome.artifacts[0].id
+    ))
+    try:
+        third = await image_module.generate_image.run(
+            'Second edit', source_artifact_id=second.outcome.artifacts[0].id
+        )
+    finally:
+        reset_execution_context(third_token)
 
     assert [call['source'].ref.id if call['source'] else None for call in provider.calls] == [
         None,
@@ -338,9 +374,15 @@ async def test_generate_image_maps_typed_media_error_without_calling_provider(
     monkeypatch.setattr(image_module, 'media_assets', MissingMedia())
     monkeypatch.setattr(image_module, 'image_provider', provider)
 
-    result = await image_module.generate_image.run(
-        'edit', source_artifact_id='missing'
-    )
+    token = set_execution_context(ToolExecutionContext(
+        user_id='user-1', selected_image_artifact_id='missing'
+    ))
+    try:
+        result = await image_module.generate_image.run(
+            'edit', source_artifact_id='missing'
+        )
+    finally:
+        reset_execution_context(token)
 
     assert result.outcome.status == 'error'
     assert result.outcome.error.code == 'image_generation_error'

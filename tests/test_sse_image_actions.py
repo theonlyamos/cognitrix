@@ -396,6 +396,43 @@ async def test_new_upload_edit_source_is_selected_by_image_index_not_path(
 
 
 @pytest.mark.asyncio
+async def test_media_turn_context_is_reset_after_session_cancellation(monkeypatch):
+    from cognitrix.media import context as media_context
+
+    resets = []
+    original_reset = media_context.reset_media_turn_context
+
+    def reset(token):
+        original_reset(token)
+        resets.append(media_context.current_media_turn_context())
+
+    class Session:
+        id = 'session-1'
+        agent_id = 'agent-1'
+
+        async def __call__(self, *_args, **_kwargs):
+            assert media_context.current_media_turn_context() is not None
+            raise asyncio.CancelledError
+
+    manager = sse.SSEManager(_agent())
+    manager.user_key = 'user-1'
+    assert manager.begin_turn()
+    manager._resolve_session = lambda _sid: asyncio.sleep(0, result=Session())
+    monkeypatch.setattr(media_context, 'reset_media_turn_context', reset)
+    monkeypatch.setattr(sse, 'is_multi_step_task', lambda _prompt: False)
+    await manager.action_queue.put({
+        'type': 'chat_message',
+        'content': 'stop',
+        'session_id': 'session-1',
+    })
+
+    response = await manager.sse_endpoint(Request())
+    assert (await _next_json(response.body_iterator))['type'] == 'turn_stopped'
+    assert resets == [None]
+    await response.body_iterator.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('index', [True, -1, 2, '1'])
 async def test_new_upload_edit_source_rejects_invalid_image_index(monkeypatch, index):
     staged = FakeStaged()
