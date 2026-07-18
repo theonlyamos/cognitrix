@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { TranscriptView } from '@/components/TranscriptView';
@@ -118,6 +118,40 @@ describe('TranscriptView live and Markdown output', () => {
 
     expect(screen.getByText('error')).toHaveClass('sr-only');
     expect(await screen.findByText('permission denied')).toBeInTheDocument();
+  });
+
+  it('opens normalized image generation tools by default while other tools remain toggleable', () => {
+    const { rerender } = render(<TranscriptView entries={[{
+      kind: 'tool_calls',
+      content: '',
+      tools: [
+        { name: ' Generate   Image ', args: '{}', result: 'image created' },
+        { name: 'Search', args: '{}', result: 'results' },
+      ],
+    }]} />);
+
+    const imageDetails = screen.getByText('Generate Image').closest('details');
+    const searchDetails = screen.getByText('Search').closest('details');
+
+    expect(imageDetails).toHaveAttribute('open');
+    expect(searchDetails).not.toHaveAttribute('open');
+
+    fireEvent.click(imageDetails!.querySelector('summary')!);
+    fireEvent.click(searchDetails!.querySelector('summary')!);
+
+    expect(imageDetails).not.toHaveAttribute('open');
+    expect(searchDetails).toHaveAttribute('open');
+
+    rerender(<TranscriptView entries={[{
+      kind: 'tool_calls',
+      content: 'stream update',
+      tools: [
+        { name: ' Generate   Image ', args: '{}', result: 'image created' },
+        { name: 'Search', args: '{}', result: 'results' },
+      ],
+    }]} />);
+
+    expect(imageDetails).not.toHaveAttribute('open');
   });
 
   it('does not materialize raw HTML from completed Markdown as DOM', async () => {
