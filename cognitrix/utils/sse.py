@@ -33,7 +33,7 @@ from cognitrix.session_ownership import (
     OwnershipState,
     session_ownerships,
 )
-from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
+from cognitrix.tasks.handler import handle_multi_step_task
 from cognitrix.tools.utils import ToolExecutionContext
 
 logger = logging.getLogger('cognitrix.log')
@@ -659,13 +659,8 @@ class SSEManager:
                 }
             user_prompt = action['content']
             bypass = bool(action.get('bypass_permissions'))
-            # Attachment-bearing prompts use Session so their immutable refs
-            # are consumed and persisted instead of being orphaned by a task.
-            if (
-                is_multi_step_task(user_prompt)
-                and attachments is None
-                and not document_capabilities
-            ):
+            execution_mode = action.get('execution_mode', 'chat')
+            if execution_mode == 'task':
                 await emit({
                     'type': 'status',
                     'content': 'Planning multi-step task...',

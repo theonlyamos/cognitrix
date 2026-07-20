@@ -291,7 +291,6 @@ async def test_resolves_session_and_selected_source_before_promoting_then_emits_
         mark_documents_adopted,
     )
     monkeypatch.setattr(sse, 'load_turn_document_capabilities', load_grants)
-    monkeypatch.setattr(sse, 'is_multi_step_task', lambda _prompt: False)
     await manager.action_queue.put({
         'type': 'chat_message',
         'content': 'edit it',
@@ -377,7 +376,6 @@ async def test_new_upload_edit_source_is_selected_by_image_index_not_path(
         return staging.PromotedAttachments([first, second], [])
 
     monkeypatch.setattr(sse, 'promote_staged_attachments', promote)
-    monkeypatch.setattr(sse, 'is_multi_step_task', lambda _prompt: False)
     await manager.action_queue.put({
         'type': 'chat_message',
         'content': 'edit the second upload',
@@ -419,7 +417,6 @@ async def test_media_turn_context_is_reset_after_session_cancellation(monkeypatc
     assert manager.begin_turn()
     manager._resolve_session = lambda _sid: asyncio.sleep(0, result=Session())
     monkeypatch.setattr(media_context, 'reset_media_turn_context', reset)
-    monkeypatch.setattr(sse, 'is_multi_step_task', lambda _prompt: False)
     await manager.action_queue.put({
         'type': 'chat_message',
         'content': 'stop',
@@ -463,7 +460,6 @@ async def test_new_upload_edit_source_rejects_invalid_image_index(monkeypatch, i
             0, result=rolled_back.append((value, ownership))
         ),
     )
-    monkeypatch.setattr(sse, 'is_multi_step_task', lambda _prompt: False)
     await manager.action_queue.put({
         'type': 'chat_message',
         'content': 'edit upload',
@@ -1091,7 +1087,6 @@ async def test_reconnect_after_dequeue_replays_ingestion_before_turn_output(monk
 
     manager._resolve_session = resolve
     monkeypatch.setattr(sse, 'promote_staged_attachments', promote)
-    monkeypatch.setattr(sse, 'is_multi_step_task', lambda _prompt: False)
     await manager.action_queue.put({
         'type': 'chat_message',
         'content': 'hello',
@@ -1117,7 +1112,7 @@ async def test_reconnect_after_dequeue_replays_ingestion_before_turn_output(monk
 
 
 @pytest.mark.asyncio
-async def test_attachment_multistep_prompt_uses_session_persistence(monkeypatch):
+async def test_attachment_prompt_in_chat_mode_uses_session_persistence(monkeypatch):
     staged = FakeStaged()
     manager = sse.SSEManager(_agent())
     manager.user_key = 'user-1'
@@ -1146,19 +1141,58 @@ async def test_attachment_multistep_prompt_uses_session_persistence(monkeypatch)
 
     manager._resolve_session = resolve
     monkeypatch.setattr(sse, 'promote_staged_attachments', promote)
-    monkeypatch.setattr(sse, 'is_multi_step_task', lambda _prompt: True)
     monkeypatch.setattr(sse, 'handle_multi_step_task', forbidden_multistep)
     await manager.action_queue.put({
         'type': 'chat_message',
         'content': 'first do this, then do that',
         'session_id': 'session-1',
         'staged_attachments': staged,
+        'execution_mode': 'chat',
     })
 
     response = await manager.sse_endpoint(Request())
     assert (await _next_json(response.body_iterator))['type'] == 'attachments_ingested'
     assert (await _next_json(response.body_iterator))['type'] == 'turn_complete'
     assert called and called[0]['images'][0]['id'] == 'image-1'
+    await response.body_iterator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_explicit_task_mode_uses_orchestrator_without_prompt_classification(monkeypatch):
+    manager = sse.SSEManager(_agent())
+    manager.user_key = 'user-1'
+    assert manager.begin_turn()
+    calls = []
+
+    class Session:
+        id = 'session-1'
+        agent_id = 'agent-1'
+
+        async def __call__(self, *_args, **_kwargs):
+            pytest.fail('Task mode must not invoke the direct Session path')
+
+    async def resolve(_sid):
+        return Session()
+
+    async def handle(prompt, *_args, **_kwargs):
+        calls.append(prompt)
+        return 'task result'
+
+    manager._resolve_session = resolve
+    monkeypatch.setattr(sse, 'handle_multi_step_task', handle)
+    await manager.action_queue.put({
+        'type': 'chat_message',
+        'content': 'hello',
+        'session_id': 'session-1',
+        'execution_mode': 'task',
+    })
+
+    response = await manager.sse_endpoint(Request())
+    assert (await _next_json(response.body_iterator))['type'] == 'status'
+    terminal = await _next_json(response.body_iterator)
+    assert terminal['type'] == 'multistep_result'
+    assert terminal['content'] == 'task result'
+    assert calls == ['hello']
     await response.body_iterator.aclose()
 
 
@@ -1307,7 +1341,6 @@ async def test_http_generator_cancellation_does_not_orphan_dequeued_staging(
 
     manager._resolve_session = resolve
     monkeypatch.setattr(sse, 'promote_staged_attachments', promote)
-    monkeypatch.setattr(sse, 'is_multi_step_task', lambda _prompt: False)
     await manager.action_queue.put({
         'type': 'chat_message',
         'content': 'hello',

@@ -203,7 +203,67 @@ async def test_text_only_json_chat_behavior_and_queue_metadata_are_preserved(mon
         'edit_source_image_index': None,
         'document_ids': (),
         'bypass_permissions': True,
+        'execution_mode': 'chat',
     }]
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_preserves_explicit_task_mode(monkeypatch):
+    manager = FakeManager()
+    agent = _install_route_fakes(monkeypatch, manager)
+
+    await agent_routes.chat_endpoint(
+        JsonRequest({
+            'agent_id': agent.id,
+            'stream_id': 'browser-a',
+            'message': 'prepare the report',
+            'execution_mode': 'task',
+        }),
+        user=types.SimpleNamespace(id='user-a'),
+    )
+
+    assert manager.action_queue.actions[0]['execution_mode'] == 'task'
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_rejects_invalid_execution_mode_before_turn(monkeypatch):
+    manager = FakeManager()
+    agent = _install_route_fakes(monkeypatch, manager)
+
+    with pytest.raises(HTTPException) as exc:
+        await agent_routes.chat_endpoint(
+            JsonRequest({
+                'agent_id': agent.id,
+                'stream_id': 'browser-a',
+                'message': 'hello',
+                'execution_mode': 'auto',
+            }),
+            user=types.SimpleNamespace(id='user-a'),
+        )
+
+    assert exc.value.status_code == 400
+    assert manager.begin_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_rejects_task_attachments_before_turn(monkeypatch):
+    manager = FakeManager()
+    agent = _install_route_fakes(monkeypatch, manager)
+
+    with pytest.raises(HTTPException) as exc:
+        await agent_routes.chat_endpoint(
+            JsonRequest({
+                'agent_id': agent.id,
+                'stream_id': 'browser-a',
+                'message': 'inspect this',
+                'execution_mode': 'task',
+                'attachments': [{'data': 'data:text/plain;base64,eA=='}],
+            }),
+            user=types.SimpleNamespace(id='user-a'),
+        )
+
+    assert exc.value.status_code == 400
+    assert manager.begin_calls == 0
 
 
 @pytest.mark.asyncio

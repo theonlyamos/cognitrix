@@ -35,6 +35,7 @@ from cognitrix.session_ownership import (
     require_active_owned,
 )
 from cognitrix.utils.sse import SSEManagerCapacityError, get_sse_manager
+from cognitrix.tasks.execution_mode import ExecutionMode, parse_execution_mode
 
 from ...media.staging import (
     MAX_UPLOAD_COUNT,
@@ -351,6 +352,24 @@ async def sse_endpoint(request: Request, agent_id: str | None = None,
 @agents_api.post('/chat', dependencies=[Depends(jwt_only)])
 async def chat_endpoint(request: Request, user=Depends(get_current_user)):
     async with _chat_request_parts(request) as (data, upload_files):
+        try:
+            execution_mode = parse_execution_mode(data.get('execution_mode'))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        has_task_incompatible_input = bool(
+            upload_files
+            or data.get('attachments')
+            or data.get('document_ids')
+            or data.get('edit_source_artifact_id') is not None
+            or data.get('edit_source_image_index') is not None
+        )
+        if execution_mode is ExecutionMode.TASK and has_task_incompatible_input:
+            raise HTTPException(
+                status_code=400,
+                detail='Task execution mode does not support attachments or document capabilities',
+            )
+
         agent = await _resolve_agent(data.get('agent_id'), request)
         if agent is None:
             raise HTTPException(status_code=404, detail='Agent not found')
@@ -398,6 +417,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'edit_source_image_index': data.get('edit_source_image_index'),
                 'document_ids': data.get('document_ids') or (),
                 'bypass_permissions': bool(data.get('bypass_permissions')),
+                'execution_mode': execution_mode.value,
             })
         except BaseException:
             try:
