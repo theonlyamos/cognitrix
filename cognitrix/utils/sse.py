@@ -26,6 +26,12 @@ from cognitrix.media.staging import (
     release_promoted_attachment_reservation,
     rollback_promoted_attachments,
 )
+from cognitrix.questions.broker import (
+    QuestionTurnContext,
+    cancel_questions_for_stream,
+    pending_question,
+    question_turn_ctx,
+)
 from cognitrix.sessions.base import Session
 from cognitrix.session_ownership import (
     OwnershipConflict,
@@ -94,6 +100,7 @@ class SSEManager:
     def __init__(self, agent):
         self.agent = agent
         self.user_key: str | None = None
+        self.stream_id: str | None = None
         self.action_queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAXSIZE)
         # Turn output belongs to the browser stream, not to one transient HTTP
         # response. A reconnect can therefore resume draining the same turn.
@@ -136,6 +143,9 @@ class SSEManager:
             logger.info("Stop ignored: no pending turn for user=%s", self.user_key)
             return False
         self.stop_requested = True
+        cancel_questions_for_stream(
+            str(self.user_key or ''), str(self.stream_id or 'default'),
+        )
         logger.info(
             "Stop requested: user=%s active=%s done=%s",
             self.user_key,
@@ -704,6 +714,12 @@ class SSEManager:
                     'bypass': bypass,
                     'user_key': self.user_key,
                 })
+                question_token = question_turn_ctx.set(QuestionTurnContext(
+                    emit=emit,
+                    session_id=str(session.id),
+                    stream_id=str(self.stream_id or 'default'),
+                    user_key=str(self.user_key or ''),
+                ))
                 media_token = set_media_turn_context(MediaTurnContext(
                     ownership=ownership,
                     current_images=image_refs,
@@ -737,6 +753,7 @@ class SSEManager:
                         )
                 finally:
                     reset_media_turn_context(media_token)
+                    question_turn_ctx.reset(question_token)
                     web_turn_ctx.reset(token)
         except asyncio.CancelledError:
             terminal = {
@@ -801,6 +818,11 @@ class SSEManager:
 
     async def sse_endpoint(self, request: Request):
         async def event_generator(superseded: asyncio.Event):
+            snapshot = pending_question(
+                str(self.user_key or ''), str(self.stream_id or 'default'),
+            )
+            if snapshot is not None:
+                yield {'event': 'message', 'data': json.dumps(snapshot)}
             while True:
                 # A turn may outlive the HTTP response that started it. Drain
                 # its manager-owned output before accepting another action.
@@ -1030,4 +1052,5 @@ def get_sse_manager(user_id: str, agent_id: str, agent,
         # Refresh the bound agent (it may have been edited/reloaded).
         mgr.agent = agent
     mgr.user_key = user_key
+    mgr.stream_id = str(stream_id or 'default')
     return mgr

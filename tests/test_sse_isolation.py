@@ -222,7 +222,6 @@ async def test_active_sse_turn_emits_stopped_without_closing_the_stream(monkeypa
         return session
 
     manager._resolve_session = resolve_session
-    monkeypatch.setattr(sse, "is_multi_step_task", lambda _prompt: False)
     await manager.action_queue.put({
         "type": "chat_message",
         "content": "hello",
@@ -281,7 +280,6 @@ async def test_reconnect_keeps_active_task_stoppable_after_disconnect(monkeypatc
         return session
 
     manager._resolve_session = resolve_session
-    monkeypatch.setattr(sse, "is_multi_step_task", lambda _prompt: False)
     await manager.action_queue.put({
         "type": "chat_message",
         "content": "hello",
@@ -319,7 +317,6 @@ async def test_late_stop_cannot_wedge_completed_turn_with_full_output_queue(monk
 
     _SSE_MANAGERS.clear()
     monkeypatch.setattr(sse, "_SSE_QUEUE_MAXSIZE", 1)
-    monkeypatch.setattr(sse, "is_multi_step_task", lambda _prompt: False)
 
     class Request:
         async def is_disconnected(self):
@@ -403,7 +400,6 @@ async def test_completed_output_gets_bounded_reconnect_grace(monkeypatch):
     _SSE_MANAGERS.clear()
     monkeypatch.setattr(sse, "_MAX_SSE_MANAGERS", 1)
     monkeypatch.setattr(sse, "_SSE_RECONNECT_GRACE_SECONDS", 30.0, raising=False)
-    monkeypatch.setattr(sse, "is_multi_step_task", lambda _prompt: False)
 
     class Request:
         async def is_disconnected(self):

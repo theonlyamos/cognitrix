@@ -25,6 +25,8 @@ from cognitrix.common.security import (
     require,
 )
 from cognitrix.sessions.base import Session
+from cognitrix.questions.broker import resolve_question
+from cognitrix.questions.models import QuestionAction
 from cognitrix.session_ownership import (
     OwnershipConflict,
     OwnershipNotFound,
@@ -476,6 +478,61 @@ async def approval_endpoint(request: Request, user=Depends(get_current_user)):
     if not ok:
         raise HTTPException(status_code=404, detail="Approval request not found or already resolved.")
     return {"status": "resolved"}
+
+
+@agents_api.post('/question', dependencies=[Depends(jwt_only)])
+async def question_endpoint(request: Request, user=Depends(get_current_user)):
+    """Resolve one pending interactive question for the authenticated owner."""
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail='Invalid question action')
+    allowed = {'request_id', 'action', 'option_id', 'text'}
+    if set(data) - allowed:
+        raise HTTPException(status_code=400, detail='Invalid question action fields')
+
+    request_id = data.get('request_id')
+    if (
+        not isinstance(request_id, str)
+        or not request_id.strip()
+        or len(request_id) > 128
+    ):
+        raise HTTPException(status_code=400, detail='request_id is required')
+    try:
+        action = QuestionAction(data.get('action'))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail='Invalid question action') from None
+
+    option_id = data.get('option_id')
+    text = data.get('text')
+    if option_id is not None and not isinstance(option_id, str):
+        raise HTTPException(status_code=400, detail='Invalid option_id')
+    if text is not None and not isinstance(text, str):
+        raise HTTPException(status_code=400, detail='Invalid answer text')
+    if action is QuestionAction.ANSWER:
+        if (option_id is None) == (text is None):
+            raise HTTPException(
+                status_code=400,
+                detail='Answer requires exactly one of option_id or text',
+            )
+    elif option_id is not None or text is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f'{action.value} does not accept an answer',
+        )
+
+    resolved = await resolve_question(
+        request_id,
+        _user_key(user),
+        action,
+        option_id=option_id,
+        text=text,
+    )
+    if not resolved:
+        raise HTTPException(
+            status_code=404,
+            detail='Question request not found, invalid, or already resolved.',
+        )
+    return {'status': 'resolved'}
 
 
 class GenerateRequest(BaseModel):
