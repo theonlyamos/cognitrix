@@ -226,7 +226,6 @@ def integration_harness(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Session, "save", save_session)
     monkeypatch.setattr(Session, "get", get_session)
-    monkeypatch.setattr(sse, "is_multi_step_task", lambda _prompt: False)
 
     from cognitrix.providers import gemini_image
     from cognitrix.tools import image as image_tool
