@@ -1,42 +1,50 @@
-# Explicit Task Intent Routing
+# Explicit Chat Execution Mode
 
 ## Goal
 
-Keep ordinary chat requests in the interactive agent loop. A chat message becomes a persisted, orchestrated task only when the user explicitly asks for task creation or task execution. Requests to create or manage other resources, such as teams and agents, must remain ordinary chat tool calls.
+Make the caller, rather than keyword inference, choose whether a web chat submission is an ordinary agent turn or a persisted orchestrated task. Team, agent, and other resource-management requests sent normally must remain direct chat tool calls.
 
-## Routing contract
+## Transport contract
 
-Replace the current verb-count heuristic in `cognitrix/tasks/handler.py` with a strict explicit-intent predicate. The predicate returns true only when the message clearly requests the task abstraction, using phrases such as:
+`POST /agents/chat` accepts an `execution_mode` field with exactly two values:
 
-- `create a task`, `make a task`, or `add a task`;
-- `run this as a task` or `turn this into a task`;
-- `start a background task` or `schedule a task`;
-- an equivalent command where `task` is the requested persisted object.
+- `chat`: run the prompt through the current interactive Session and its direct tool loop;
+- `task`: persist the prompt as a Task and run it through the task orchestrator.
 
-Numbered steps, sequencing words, complexity, or multiple action verbs are not sufficient. For example, `research vendors, then write a report` stays in chat, while `create a task to research vendors and write a report` enters the task orchestrator.
+The field defaults to `chat` when omitted so existing clients remain safe and backward compatible. Any other value returns HTTP 400 before beginning a turn or staging uploads. The normalized mode is copied into the SSE action queue; the consumer branches only on that value and never examines prompt wording.
 
-The predicate remains centralized so SSE, WebSocket, TUI, and shell callers share one policy. Attachments and document capabilities retain their existing direct-chat behavior.
+Task mode does not support attachments, edit-source descriptors, or document capability ids because the orchestrator does not currently adopt those session-scoped capabilities. The API returns HTTP 400 for those combinations instead of silently changing modes or orphaning uploaded data.
+
+The existing WebSocket message types already express the same choice: `generate` means chat and `multistep` means task. Remove the secondary keyword check from the `multistep` branch so the selected message type is authoritative. The blocking `/{agent_id}/generate` endpoint remains direct chat. CLI and TUI keyword routing remain unchanged and are outside this web UI/API change.
+
+## UI behavior
+
+Normal Send, the send-arrow button, and Enter always submit `execution_mode: "chat"`. Add a separate `Run as task` action near the composer controls that submits the same prompt with `execution_mode: "task"`.
+
+The task action is non-sticky: each click applies only to that submission, eliminating accidental task creation on later messages. It uses the same busy and connection guards as Send and is disabled when attachments or an edit source are present. Its title explains why it is unavailable. To protect the compact mobile composer, the footer may wrap and keyboard-hint text is hidden at narrow widths.
 
 ## Assistant behavior
 
-Add a defense-in-depth instruction to the default Assistant template: complete requests directly with ordinary tools, and create a persisted task only when the user explicitly asks for one. Routing remains authoritative because it executes before the model receives the prompt.
+Add a defense-in-depth instruction to the default Assistant template: complete requests directly with ordinary tools, and create a persisted task through management tools only when the user explicitly requests that object. This rule controls the Assistant's own `create_task` tool use; it does not select the transport execution mode.
 
-Changing the template affects newly created default assistants. Existing persisted assistants must not be silently overwritten because users may have customized their prompts. Updating an existing Assistant is a separate, explicit data operation.
+Changing the template affects newly created default assistants. Existing persisted assistants must not be silently overwritten because users may have customized their prompts.
 
 ## Authorization and errors
 
-Direct chat tool calls continue under the authenticated turn's tool execution context. This allows management tools such as `Create New Team` to enforce their existing `write` scope and agent/team allowlists without passing through least-privilege durable task authority.
+Direct chat retains the authenticated turn's `write` scope and allowlists, allowing management tools such as `Create New Team` to work without durable task authority. Task mode retains the existing orchestrator authority behavior; management tools inside a durable task may still fail without `write`, which is a separate authority-propagation concern.
 
-If a user explicitly requests a task that contains management operations, the task may still fail when its durable authority lacks `write`; that is a separate authority-propagation concern and is not broadened by this change.
+The API rejects invalid modes and unsupported task inputs before `begin_turn()`. Frontend submission failures restore the draft and attachments using the existing recovery behavior.
 
 ## Verification
 
-Add focused routing tests covering:
+Automated coverage must prove:
 
-- ordinary multi-action prompts remain chat;
-- resource-management requests containing words such as `create` and `research` remain chat;
-- explicit task-creation and task-execution phrases route to the orchestrator;
-- case and surrounding punctuation do not change the result;
-- the Assistant template contains the matching explicit-task rule.
+- omitted mode normalizes to `chat` in JSON and multipart requests;
+- explicit `task` reaches the queue unchanged;
+- invalid modes and task-plus-attachment combinations return HTTP 400 without beginning a turn;
+- SSE chooses direct Session or orchestrator solely from `execution_mode`;
+- WebSocket `generate` and `multistep` types are authoritative;
+- Send/Enter posts `chat`, while `Run as task` posts `task` and remains accessible on mobile;
+- the default Assistant template contains the matching management-tool rule.
 
-Run the focused planning/routing and context-engineering tests, then perform an in-app browser check: ask chat to create a team and verify that the conversation shows `Create New Team` directly, no task is created, and the team appears on the Teams page.
+Browser acceptance on `http://localhost:8000` must show that creating a team with normal Send calls `Create New Team` directly and creates no task. A separate prompt submitted with `Run as task` must surface a task-page link. The task action must remain usable at 320px without hiding or covering the composer.
