@@ -349,7 +349,7 @@ class AgentManager:
         """Execute tool calls with safety checks and retry logic."""
         agent_tool_calls = tool_calls if isinstance(tool_calls, list) else [tool_calls]
         results_by_index: dict[int, dict[str, Any]] = {}
-        jobs: list[tuple[int, Tool, dict[str, Any], int, bool]] = []
+        jobs: list[tuple[int, Tool, dict[str, Any], int, bool, bool]] = []
         worker_tasks: list[asyncio.Task] = []
 
         def completed_result() -> dict[str, Any]:
@@ -469,22 +469,27 @@ class AgentManager:
                         args,
                         assigned_tool.max_attempts,
                         assigned_tool.retryable,
+                        assigned_tool.occupies_execution_slot,
                     )
                 )
 
             # A fixed worker pool avoids creating one asyncio.Task per model-
-            # supplied call. All batches share the same execution limiter.
+            # supplied ordinary call. Interactive wait tools are deliberately
+            # detached so parked questions consume neither a worker nor one of
+            # the process-wide execution slots.
+            slot_jobs = [job for job in jobs if job[5]]
+            detached_jobs = [job for job in jobs if not job[5]]
             next_job = 0
             execution_slots = _tool_execution_limiter()
 
-            async def worker() -> None:
-                nonlocal next_job
-                while next_job < len(jobs):
-                    job_index = next_job
-                    next_job += 1
-                    i, tool, params, max_retries, attempt_recovery = jobs[job_index]
-                    tc_id = agent_tool_calls[i].get('tool_call_id')
-                    try:
+            async def run_job(
+                job: tuple[int, Tool, dict[str, Any], int, bool, bool],
+                *, constrained: bool,
+            ) -> None:
+                i, tool, params, max_retries, attempt_recovery, _ = job
+                tc_id = agent_tool_calls[i].get('tool_call_id')
+                try:
+                    if constrained:
                         async with execution_slots:
                             result = await resilient_manager.run_tool(
                                 tool=tool,
@@ -492,30 +497,48 @@ class AgentManager:
                                 max_retries=max_retries,
                                 attempt_recovery=attempt_recovery,
                             )
-                        if result.success:
-                            outcome = _tool_outcome(result.data)
-                        else:
-                            outcome = ToolOutcome.failure(
-                                'tool_execution_error',
-                                f"Error: {result.error} (attempted {result.attempts} times)",
-                                retryable=False,
-                            )
-                    except asyncio.CancelledError:
-                        raise
-                    except ExecutionControlError:
-                        raise
-                    except Exception as exc:
+                    else:
+                        result = await resilient_manager.run_tool(
+                            tool=tool,
+                            params=params,
+                            max_retries=max_retries,
+                            attempt_recovery=attempt_recovery,
+                        )
+                    if result.success:
+                        outcome = _tool_outcome(result.data)
+                    else:
                         outcome = ToolOutcome.failure(
                             'tool_execution_error',
-                            f"Error: {exc}",
+                            f"Error: {result.error} (attempted {result.attempts} times)",
                             retryable=False,
                         )
-                    results_by_index[i] = _tool_result_entry(tc_id, outcome)
+                except asyncio.CancelledError:
+                    raise
+                except ExecutionControlError:
+                    raise
+                except Exception as exc:
+                    outcome = ToolOutcome.failure(
+                        'tool_execution_error',
+                        f"Error: {exc}",
+                        retryable=False,
+                    )
+                results_by_index[i] = _tool_result_entry(tc_id, outcome)
 
-            worker_count = min(MAX_CONCURRENT_TOOL_CALLS, len(jobs))
+            async def worker() -> None:
+                nonlocal next_job
+                while next_job < len(slot_jobs):
+                    job_index = next_job
+                    next_job += 1
+                    await run_job(slot_jobs[job_index], constrained=True)
+
+            worker_count = min(MAX_CONCURRENT_TOOL_CALLS, len(slot_jobs))
             worker_tasks = [
                 asyncio.create_task(worker()) for _ in range(worker_count)
             ]
+            worker_tasks.extend(
+                asyncio.create_task(run_job(job, constrained=False))
+                for job in detached_jobs
+            )
             if worker_tasks:
                 await asyncio.gather(*worker_tasks)
 

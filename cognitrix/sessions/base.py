@@ -308,6 +308,19 @@ class Session(Model):
             except Exception:
                 pass
 
+        # Ask User is a transport capability, not persisted agent
+        # configuration. Attach it lazily to every direct web-chat turn so
+        # existing Assistants gain the capability without a database migration.
+        if interface == 'web':
+            try:
+                if not any(str(getattr(t, 'name', '')).lower() == 'ask user' for t in agent.tools):
+                    from cognitrix.tools.base import ToolManager
+                    question_tool = ToolManager.get_by_name('ask_user')
+                    if question_tool:
+                        agent.tools.append(question_tool)
+            except Exception:
+                pass
+
         # Add the new message to the history before building the prompt
         if wsquery is None:
             wsquery = {}
@@ -392,7 +405,10 @@ class Session(Model):
         # Build the context-aware prompt using the manager
         prompt = await agent.get_context_manager().build_prompt(agent, self)
 
-        formatted_tools = [tool.to_dict_format() for tool in agent.tools]
+        formatted_tools = [
+            tool.to_dict_format() for tool in agent.tools
+            if not tool.supported_interfaces or interface in tool.supported_interfaces
+        ]
         # Only advertise tools to models with native tool-use; otherwise the tool
         # list is embedded in the system prompt (AgentManager.formatted_system_prompt).
         active_tools = formatted_tools if agent.llm.supports_tool_use else None
