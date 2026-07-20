@@ -850,7 +850,65 @@ export default function TaskDetail() {
     ...(canResume ? [{ key: 'run-from-start', label: 'Run from beginning', disabled: starting, onSelect: () => start(false) }] : []),
   ];
 
-  const runsPanel = (
+  const runStepSelectors = (mobile = false) => (
+    <div className={cn(
+      'flex flex-wrap gap-1.5 border-b border-line px-4 py-2.5',
+      mobile ? 'md:hidden' : 'hidden flex-none md:flex md:px-6',
+    )}>
+      {plan.map((s) => (
+        <button
+          key={s.index}
+          type="button"
+          aria-pressed={selected === s.index}
+          aria-label={`${s.title}${s.agent_name ? ` — ${s.agent_name}` : ''}${(s.attempts ?? 0) > 1 ? ` · ${s.attempts} attempts` : ''}${s.gate === 'unverified' ? ' · unverified' : ''}`}
+          onClick={() => {
+            if (s.status === 'pending') return;
+            pickStep(s);
+            if (mobile) setMobileRunsOpen(false);
+          }}
+          title={`${s.title}${s.agent_name ? ` — ${s.agent_name}` : ''}${(s.attempts ?? 0) > 1 ? ` · ${s.attempts} attempts` : ''}${s.gate === 'unverified' ? ' · unverified' : ''}`}
+          className={cn(
+            'flex min-h-11 min-w-11 items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors md:min-h-0 md:min-w-0',
+            selected === s.index ? 'border-accent bg-panel-2 text-fg' : 'border-line text-fg-dim hover:border-fg-dim',
+            s.status === 'pending' && 'cursor-default opacity-50',
+          )}
+        >
+          <span className={cn(
+            s.status === 'done' && 'text-ok',
+            s.status === 'failed' && 'text-danger-ink',
+            s.status === 'running' && 'text-accent-ink',
+          )}>{STEP_ICON[s.status] || '·'}</span>
+          <span className="tnum">{s.index + 1}</span>
+          {s.agent_name && <span className="max-w-32 truncate">{s.agent_name}</span>}
+          {(s.attempts ?? 0) > 1 && <span className="text-fg-dim">×{s.attempts}</span>}
+          {s.gate === 'unverified' && (
+            <span className="rounded border border-line bg-panel px-1.5 py-0.5 text-[10px] text-fg">
+              unverified
+            </span>
+          )}
+        </button>
+      ))}
+      {hasSynthesis && (
+        <button
+          type="button"
+          aria-pressed={selected === 'synthesis'}
+          onClick={() => {
+            manualPickRef.current = true;
+            setSelected('synthesis');
+            if (mobile) setMobileRunsOpen(false);
+          }}
+          className={cn(
+            'flex min-h-11 items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors md:min-h-0',
+            selected === 'synthesis' ? 'border-accent bg-panel-2 text-fg' : 'border-line text-fg-dim hover:border-fg-dim',
+          )}
+        >
+          Σ synthesis
+        </button>
+      )}
+    </div>
+  );
+
+  const runsPanel = (mobile = false) => (
     <>
       <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
         <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">
@@ -869,7 +927,7 @@ export default function TaskDetail() {
             variant="ghost"
             size="icon"
             onClick={() => setMobileRunsOpen(false)}
-            aria-label="Close runs"
+            aria-label="Close run details"
             className="md:hidden"
           >
             <span aria-hidden>×</span>
@@ -877,6 +935,19 @@ export default function TaskDetail() {
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
+        {mobile && selectedRun && (
+          <div className="border-b border-line md:hidden">
+            <div className="px-4 pb-1 pt-3 font-mono text-[10px] tracking-[0.14em] text-fg-dim">
+              SELECTED RUN · {selectedRun.status}
+            </div>
+            {runStepSelectors(true)}
+            {selectedRunUsage.length > 0 && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 py-3 font-mono text-[10.5px] text-fg-dim" aria-label="Run usage">
+                {selectedRunUsage.map((item) => <span key={item}>{item}</span>)}
+              </div>
+            )}
+          </div>
+        )}
         {runsLoading && !runs ? (
           <div role="status" className="flex items-center gap-2 px-4 py-6 font-mono text-[11px] text-fg-dim"><Spinner className="h-3.5 w-3.5" /> loading…</div>
         ) : visibleRuns.length === 0 && legacy.length === 0 ? (
@@ -973,18 +1044,18 @@ export default function TaskDetail() {
   return (
     <div className="flex-1 flex h-screen min-w-0 bg-bg text-fg">
       <MobileSheet
-        id="mobile-runs"
-        label="Runs"
+        id="mobile-run-details"
+        label="Run details"
         open={mobileRunsOpen}
         onClose={() => setMobileRunsOpen(false)}
         triggerRef={mobileRunsTriggerRef}
       >
-        {runsPanel}
+        {mobileRunsOpen ? runsPanel(true) : null}
       </MobileSheet>
 
       {/* Runs sidebar */}
       <aside className="hidden w-60 flex-none flex-col border-r border-line bg-panel md:flex">
-        {runsPanel}
+        {runsPanel()}
       </aside>
 
       {/* Main pane */}
@@ -1013,18 +1084,20 @@ export default function TaskDetail() {
             </span>
           )}
           <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-2">
-            <Button
-              ref={mobileRunsTriggerRef}
-              variant="outline"
-              size="icon"
-              className="md:hidden"
-              aria-label="Open runs"
-              aria-controls="mobile-runs"
-              aria-expanded={mobileRunsOpen}
-              onClick={() => setMobileRunsOpen(true)}
-            >
-              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16v11H7l-3 3V5z" /></svg>
-            </Button>
+            {!selectedRun && (
+              <Button
+                ref={mobileRunsTriggerRef}
+                variant="outline"
+                size="icon"
+                className="md:hidden"
+                aria-label="Open runs"
+                aria-controls="mobile-run-details"
+                aria-expanded={mobileRunsOpen}
+                onClick={() => setMobileRunsOpen(true)}
+              >
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16v11H7l-3 3V5z" /></svg>
+              </Button>
+            )}
             {hasSchedule && (
               <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={toggleSchedule} disabled={togglingSchedule}>
                 {task?.schedule_enabled ? 'Pause schedule' : 'Resume schedule'}
@@ -1078,56 +1151,26 @@ export default function TaskDetail() {
           <p role="alert" className="mx-6 mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
         )}
 
-        {/* Steps panel for the selected run */}
-        {selectedRun && plan.length > 0 && (
-          <div className="flex flex-none flex-wrap gap-1.5 border-b border-line px-6 py-2.5">
-            {plan.map((s) => (
-              <button
-                key={s.index}
-                type="button"
-                aria-pressed={selected === s.index}
-                aria-label={`${s.title}${s.agent_name ? ` — ${s.agent_name}` : ''}${(s.attempts ?? 0) > 1 ? ` · ${s.attempts} attempts` : ''}${s.gate === 'unverified' ? ' · unverified' : ''}`}
-                onClick={() => pickStep(s)}
-                title={`${s.title}${s.agent_name ? ` — ${s.agent_name}` : ''}${(s.attempts ?? 0) > 1 ? ` · ${s.attempts} attempts` : ''}${s.gate === 'unverified' ? ' · unverified' : ''}`}
-                className={cn(
-                  'flex min-h-11 min-w-11 items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors md:min-h-0 md:min-w-0',
-                  selected === s.index ? 'border-accent bg-panel-2 text-fg' : 'border-line text-fg-dim hover:border-fg-dim',
-                  s.status === 'pending' && 'opacity-50 cursor-default',
-                )}
-              >
-                <span className={cn(
-                  s.status === 'done' && 'text-ok',
-                  s.status === 'failed' && 'text-danger-ink',
-                  s.status === 'running' && 'text-accent-ink',
-                )}>{STEP_ICON[s.status] || '·'}</span>
-                <span className="tnum">{s.index + 1}</span>
-                {s.agent_name && <span className="max-w-32 truncate">{s.agent_name}</span>}
-                {(s.attempts ?? 0) > 1 && <span className="text-fg-dim">×{s.attempts}</span>}
-                {s.gate === 'unverified' && (
-                  <span className="rounded border border-line bg-panel px-1.5 py-0.5 text-[10px] text-fg">
-                    unverified
-                  </span>
-                )}
-              </button>
-            ))}
-            {hasSynthesis && (
-              <button
-                type="button"
-                aria-pressed={selected === 'synthesis'}
-                onClick={() => {
-                  manualPickRef.current = true;
-                  setSelected('synthesis');
-                }}
-                className={cn(
-                  'flex min-h-11 items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition-colors md:min-h-0',
-                  selected === 'synthesis' ? 'border-accent bg-panel-2 text-fg' : 'border-line text-fg-dim hover:border-fg-dim',
-                )}
-              >
-                Σ synthesis
-              </button>
-            )}
-          </div>
+        {selectedRun && (
+          <button
+            ref={mobileRunsTriggerRef}
+            type="button"
+            className="flex min-h-11 w-full flex-none items-center gap-2 border-b border-line px-4 text-left font-mono text-[10.5px] text-fg-dim transition-colors hover:bg-panel-2 md:hidden"
+            aria-label={`Open run details: ${selectedRun.status}, ${stepsDone} of ${plan.length} steps`}
+            aria-controls="mobile-run-details"
+            aria-expanded={mobileRunsOpen}
+            onClick={() => setMobileRunsOpen(true)}
+          >
+            <span className={cn('flex-none', RUN_BADGE[selectedRun.status] || 'text-fg-dim')}>
+              {selectedRun.status}
+            </span>
+            <span className="flex-none tnum">· {stepsDone}/{plan.length} steps</span>
+            <span aria-hidden className="ml-auto flex-none text-fg">›</span>
+          </button>
         )}
+
+        {/* Steps panel for the selected run */}
+        {selectedRun && plan.length > 0 && runStepSelectors()}
 
         {(selectedRun?.error || selectedRunFailureLabel) && (
           <div role="alert" className="mx-6 mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
@@ -1137,7 +1180,7 @@ export default function TaskDetail() {
         )}
 
         {selectedRunUsage.length > 0 && (
-          <div className="mx-6 mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim" aria-label="Run usage">
+          <div className="mx-6 mt-2 hidden flex-wrap gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim md:flex" aria-label="Run usage">
             {selectedRunUsage.map((item) => <span key={item}>{item}</span>)}
           </div>
         )}

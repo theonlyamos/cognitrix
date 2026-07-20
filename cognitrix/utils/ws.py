@@ -31,7 +31,7 @@ from cognitrix.session_ownership import (
     resume_lifecycle,
 )
 from cognitrix.sessions.base import Session
-from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
+from cognitrix.tasks.handler import handle_multi_step_task
 from cognitrix.tools.base import Tool
 from cognitrix.tools.utils import (
     ToolExecutionContext,
@@ -434,7 +434,7 @@ class WebSocketManager:
                             query, user_key, session, web_agent,
                         )
                         prompt = str(query.get('prompt') or '')
-                        if is_multi_step_task(prompt):
+                        if query_type == 'multistep':
                             await websocket.send_json({
                                 'type': 'status',
                                 'content': 'Planning multi-step task...',
@@ -467,18 +467,6 @@ class WebSocketManager:
                                 'type': 'multistep_result',
                                 'content': result,
                             })
-                        else:
-                            await session(
-                                prompt,
-                                web_agent,
-                                interface='web',
-                                stream=True,
-                                output=websocket.send_json,
-                                wsquery=query,
-                                save_history=False,
-                                tool_context=tool_context,
-                            )
-
                     else:
                         binding, session, tool_context = await _authorize_turn(
                             query, user_key, session, web_agent,

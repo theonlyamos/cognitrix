@@ -142,6 +142,40 @@ async def test_ws_turn_binds_exact_tool_context_and_rejects_target_spoof(tmp_pat
     assert socket.sent[-1]['content'] == 'Session not found'
 
 
+async def test_ws_multistep_message_type_is_authoritative(tmp_path, monkeypatch):
+    from cognitrix.sessions.base import Session
+    from cognitrix.utils import ws
+
+    await _initialize_ws_db(tmp_path)
+    own = await _owned_session('user-1', 'agent-1')
+    calls = []
+
+    async def forbidden_session(self, *_args, **_kwargs):
+        pytest.fail('A multistep message must not fall back to direct chat')
+
+    async def handle(prompt, *_args, **_kwargs):
+        calls.append(prompt)
+        return 'task result'
+
+    def forbidden_classifier(_prompt):
+        raise AssertionError('WebSocket routing must not inspect prompt wording')
+
+    monkeypatch.setattr(Session, '__call__', forbidden_session)
+    monkeypatch.setattr(ws, 'handle_multi_step_task', handle)
+    monkeypatch.setattr(ws, 'is_multi_step_task', forbidden_classifier, raising=False)
+    socket = FakeWebSocket({
+        'type': 'multistep',
+        'prompt': 'hello',
+        'session_id': str(own.id),
+        'agent_id': 'agent-1',
+    })
+
+    await _manager().websocket_endpoint(socket, 'user-1')
+
+    assert calls == ['hello']
+    assert socket.sent[-1] == {'type': 'multistep_result', 'content': 'task result'}
+
+
 async def test_ws_clear_and_delete_use_lifecycle_and_exact_cleanup(tmp_path, monkeypatch):
     from cognitrix.session_ownership import OwnershipNotFound, OwnershipState, require_owned
     from cognitrix.sessions.base import Session

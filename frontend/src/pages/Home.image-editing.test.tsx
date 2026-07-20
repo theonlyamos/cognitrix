@@ -122,7 +122,7 @@ describe('Home image editing transport', () => {
     const form = apiPost.mock.calls[0][1] as FormData;
     expect(form.getAll('files')).toEqual([file]);
     const payload = await readJsonBlob(form.get('payload') as Blob);
-    expect(payload).toMatchObject({ message: 'make it brighter', agent_id: 'agent-1', stream_id: 'stream-1' });
+    expect(payload).toMatchObject({ message: 'make it brighter', agent_id: 'agent-1', stream_id: 'stream-1', execution_mode: 'chat' });
     expect(JSON.stringify(payload)).not.toMatch(/dataUrl|blob:|original image bytes/i);
     expect(URL.createObjectURL).toHaveBeenCalledWith(file);
     expect(localPreviewRevocations('blob:local-preview-1')).toHaveLength(1);
@@ -147,6 +147,7 @@ describe('Home image editing transport', () => {
       agent_id: 'agent-1',
       stream_id: 'stream-1',
       edit_source_artifact_id: 'artifact-source',
+      execution_mode: 'chat',
     }));
     const body = apiPost.mock.calls[0][1];
     expect(body).not.toBeInstanceOf(FormData);
@@ -176,6 +177,7 @@ describe('Home image editing transport', () => {
       stream_id: 'stream-1',
       session_id: 'conversation-1',
       bypass_permissions: true,
+      execution_mode: 'chat',
     });
   });
 

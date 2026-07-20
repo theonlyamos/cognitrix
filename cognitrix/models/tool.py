@@ -41,6 +41,9 @@ class Tool(Model):
     supported_interfaces: list[str] | None = None
     """Runtime interfaces allowed to execute this capability, or all when None."""
 
+    occupies_execution_slot: bool = True
+    """Whether execution consumes one slot from the shared tool concurrency cap."""
+
     approval_mode: str = 'risk_based'
     """risk_based, assigned_only, or always."""
 

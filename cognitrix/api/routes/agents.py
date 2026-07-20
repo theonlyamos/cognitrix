@@ -25,6 +25,8 @@ from cognitrix.common.security import (
     require,
 )
 from cognitrix.sessions.base import Session
+from cognitrix.questions.broker import resolve_question
+from cognitrix.questions.models import QuestionAction
 from cognitrix.session_ownership import (
     OwnershipConflict,
     OwnershipNotFound,
@@ -35,6 +37,7 @@ from cognitrix.session_ownership import (
     require_active_owned,
 )
 from cognitrix.utils.sse import SSEManagerCapacityError, get_sse_manager
+from cognitrix.tasks.execution_mode import ExecutionMode, parse_execution_mode
 
 from ...media.staging import (
     MAX_UPLOAD_COUNT,
@@ -351,6 +354,24 @@ async def sse_endpoint(request: Request, agent_id: str | None = None,
 @agents_api.post('/chat', dependencies=[Depends(jwt_only)])
 async def chat_endpoint(request: Request, user=Depends(get_current_user)):
     async with _chat_request_parts(request) as (data, upload_files):
+        try:
+            execution_mode = parse_execution_mode(data.get('execution_mode'))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        has_task_incompatible_input = bool(
+            upload_files
+            or data.get('attachments')
+            or data.get('document_ids')
+            or data.get('edit_source_artifact_id') is not None
+            or data.get('edit_source_image_index') is not None
+        )
+        if execution_mode is ExecutionMode.TASK and has_task_incompatible_input:
+            raise HTTPException(
+                status_code=400,
+                detail='Task execution mode does not support attachments or document capabilities',
+            )
+
         agent = await _resolve_agent(data.get('agent_id'), request)
         if agent is None:
             raise HTTPException(status_code=404, detail='Agent not found')
@@ -398,6 +419,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'edit_source_image_index': data.get('edit_source_image_index'),
                 'document_ids': data.get('document_ids') or (),
                 'bypass_permissions': bool(data.get('bypass_permissions')),
+                'execution_mode': execution_mode.value,
             })
         except BaseException:
             try:
@@ -456,6 +478,61 @@ async def approval_endpoint(request: Request, user=Depends(get_current_user)):
     if not ok:
         raise HTTPException(status_code=404, detail="Approval request not found or already resolved.")
     return {"status": "resolved"}
+
+
+@agents_api.post('/question', dependencies=[Depends(jwt_only)])
+async def question_endpoint(request: Request, user=Depends(get_current_user)):
+    """Resolve one pending interactive question for the authenticated owner."""
+    data = await request.json()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail='Invalid question action')
+    allowed = {'request_id', 'action', 'option_id', 'text'}
+    if set(data) - allowed:
+        raise HTTPException(status_code=400, detail='Invalid question action fields')
+
+    request_id = data.get('request_id')
+    if (
+        not isinstance(request_id, str)
+        or not request_id.strip()
+        or len(request_id) > 128
+    ):
+        raise HTTPException(status_code=400, detail='request_id is required')
+    try:
+        action = QuestionAction(data.get('action'))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail='Invalid question action') from None
+
+    option_id = data.get('option_id')
+    text = data.get('text')
+    if option_id is not None and not isinstance(option_id, str):
+        raise HTTPException(status_code=400, detail='Invalid option_id')
+    if text is not None and not isinstance(text, str):
+        raise HTTPException(status_code=400, detail='Invalid answer text')
+    if action is QuestionAction.ANSWER:
+        if (option_id is None) == (text is None):
+            raise HTTPException(
+                status_code=400,
+                detail='Answer requires exactly one of option_id or text',
+            )
+    elif option_id is not None or text is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f'{action.value} does not accept an answer',
+        )
+
+    resolved = await resolve_question(
+        request_id,
+        _user_key(user),
+        action,
+        option_id=option_id,
+        text=text,
+    )
+    if not resolved:
+        raise HTTPException(
+            status_code=404,
+            detail='Question request not found, invalid, or already resolved.',
+        )
+    return {'status': 'resolved'}
 
 
 class GenerateRequest(BaseModel):

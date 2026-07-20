@@ -9,6 +9,7 @@ import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
+import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
@@ -166,6 +167,7 @@ export default function Home() {
 
   // Web tool-approval prompts + a per-browser bypass (auto-approve) toggle.
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [question, setQuestion] = useState<QuestionRequest | null>(null);
   const [bypass, setBypass] = useState(() => localStorage.getItem('bypassPermissions') === '1');
   const bypassRef = useRef(bypass);
   bypassRef.current = bypass;
@@ -176,6 +178,36 @@ export default function Home() {
       await api.post('/agents/approval', { request_id: requestId, approved, remember });
     } catch {
       /* best-effort — the turn times out server-side if this never lands */
+    }
+  }, []);
+
+  const postQuestionAction = useCallback(async (
+    current: QuestionRequest,
+    action: 'answer' | 'cancel' | 'stop_timer',
+    answer?: { option_id: string } | { text: string },
+  ) => {
+    try {
+      await api.post('/agents/question', {
+        request_id: current.request_id,
+        action,
+        ...answer,
+      });
+      if (action === 'stop_timer') {
+        setQuestion((pending) => pending?.request_id === current.request_id
+          ? { ...pending, auto_submit_seconds: null, auto_submit_at: null }
+          : pending);
+      } else {
+        setQuestion((pending) => pending?.request_id === current.request_id ? null : pending);
+        setWaiting(true);
+      }
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 404) {
+        setQuestion((pending) => pending?.request_id === current.request_id ? null : pending);
+        setWaiting(true);
+        return;
+      }
+      throw error;
     }
   }, []);
 
@@ -210,7 +242,7 @@ export default function Home() {
   const waitingRef = useRef(false);
   waitingRef.current = waiting;
 
-  const busy = waiting || streaming;
+  const busy = waiting || streaming || question !== null;
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const turnGenerationRef = useRef(0);
@@ -329,6 +361,7 @@ export default function Home() {
     setStopError(null);
     setPlanning(null);
     setApprovals([]);
+    setQuestion(null);
     setIsStreaming(false);
     clearComposerMedia();
   }, [clearComposerMedia, clearMessages, clearStopFallback, setIsStreaming]);
@@ -362,6 +395,7 @@ export default function Home() {
         setStopError(null);
         setPlanning(null);
         setApprovals([]);
+        setQuestion(null);
         setIsStreaming(false);
         return true;
       } catch {
@@ -390,6 +424,7 @@ export default function Home() {
     setIsStreaming(false);
     setPlanning(null);
     setApprovals([]);
+    setQuestion(null);
     if (reason === 'stopped') stopRunningTools();
     else if (reason === 'error') failRunningTools(errorResult);
     void refetchConvos({ silent: true });
@@ -501,6 +536,20 @@ export default function Home() {
           }
           break;
         }
+        case 'question_request': {
+          const req = event as unknown as QuestionRequest;
+          if (
+            req.request_id
+            && req.prompt
+            && Array.isArray(req.options)
+            && typeof req.allow_free_text === 'boolean'
+          ) {
+            setQuestion(req);
+            setWaiting(false);
+            setStreaming(false);
+          }
+          break;
+        }
         default:
           break;
       }
@@ -518,12 +567,15 @@ export default function Home() {
     enabled: sseReady,
   });
 
+  type ExecutionMode = 'chat' | 'task';
+
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, executionMode: ExecutionMode = 'chat') => {
       const msg = text.trim();
       const pending = attachmentsRef.current;
       const pendingEditSource = editSource;
       if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return;
+      if (executionMode === 'task' && (pending.length > 0 || pendingEditSource !== null)) return;
       clearStopFallback();
       turnGenerationRef.current += 1;
       // Keep a record of what was attached in the visible user message.
@@ -548,6 +600,7 @@ export default function Home() {
           : -1;
         const payload = {
           message: msg,
+          execution_mode: executionMode,
           ...(agentId ? { agent_id: agentId } : {}),
           ...(streamId ? { stream_id: streamId } : {}),
           // No id on a fresh thread: the server creates the session and the
@@ -849,6 +902,15 @@ export default function Home() {
             </div>
           )}
 
+          {question && (
+            <QuestionCard
+              question={question}
+              onAnswer={(answer) => postQuestionAction(question, 'answer', answer)}
+              onCancel={() => postQuestionAction(question, 'cancel')}
+              onStopTimer={() => postQuestionAction(question, 'stop_timer')}
+            />
+          )}
+
           {approvals.map((a) => (
             <div key={a.request_id} role="alert" className="animate-rise mx-6 my-4 border-l-2 border-danger bg-danger/5 px-3 py-3 font-mono text-[12px]">
               <div className="flex items-center gap-2">
@@ -1053,7 +1115,7 @@ export default function Home() {
             {stopError && (
               <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
             )}
-            <div className="mt-2 flex items-center gap-4 font-mono text-[10.5px] text-fg-dim">
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -1072,8 +1134,20 @@ export default function Home() {
               >
                 <span>[{bypass ? '✓' : 'x'}]</span> auto-approve
               </button>
-              <span className="ml-auto"><kbd className="rounded border border-line px-1">⏎</kbd> send</span>
-              <span><kbd className="rounded border border-line px-1">⇧⏎</kbd> newline</span>
+              <button
+                type="button"
+                onClick={() => void send(input, 'task')}
+                disabled={busy || !!uploadError || !isConnected || !input.trim() || attachments.length > 0 || editSource !== null}
+                aria-label="Run as task"
+                title={attachments.length > 0 || editSource !== null
+                  ? 'Task mode does not support attachments or edit sources yet.'
+                  : 'Create a persisted task and run it with step tracking.'}
+                className="flex min-h-11 items-center gap-1 transition-colors hover:text-accent disabled:cursor-not-allowed disabled:opacity-50 md:min-h-0"
+              >
+                <span aria-hidden>[ ]</span> run as task
+              </button>
+              <span className="ml-auto hidden sm:inline"><kbd className="rounded border border-line px-1">⏎</kbd> send</span>
+              <span className="hidden sm:inline"><kbd className="rounded border border-line px-1">⇧⏎</kbd> newline</span>
             </div>
           </div>
         </div>

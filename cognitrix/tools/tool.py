@@ -69,6 +69,7 @@ def tool(*args: Any, **kwargs: Any):
             retryable=kwargs.get('retryable', True),
             max_attempts=kwargs.get('max_attempts', 3),
             supported_interfaces=kwargs.get('supported_interfaces'),
+            occupies_execution_slot=kwargs.get('occupies_execution_slot', True),
             approval_mode=kwargs.get('approval_mode', 'risk_based'),
         )
 
