@@ -573,6 +573,43 @@ describe('final accessibility contracts', () => {
     expect(synthesis).toHaveClass('min-h-11', 'md:min-h-0');
   });
 
+  it('moves completed run details into a compact mobile disclosure', async () => {
+    const user = userEvent.setup();
+    harness.resources.set('/tasks/task-1', {
+      data: { id: 'task-1', title: 'Task', status: 'completed' },
+    });
+    harness.resources.set('/tasks/task-1/runs', {
+      data: [{
+        id: 'run-1',
+        status: 'completed',
+        plan: [{ index: 0, title: 'Research', status: 'done', agent_name: 'Agent One' }],
+        usage: { total_tokens: 1234, llm_calls: 2, tool_calls: 3 },
+      }],
+    });
+    harness.resources.set('/sessions/tasks/task-1', { data: [] });
+    harness.apiGet.mockImplementation((path: string) => Promise.resolve({
+      data: path === '/sessions/runs/run-1'
+        ? [
+            { id: 'step-session', step_index: 0 },
+            { id: 'synthesis-session', step_index: null },
+          ]
+        : [],
+    }));
+    renderTaskDetail();
+
+    const trigger = await screen.findByRole('button', {
+      name: 'Open run details: completed, 1 of 1 steps',
+    });
+    expect(trigger).toHaveClass('min-h-11', 'md:hidden');
+
+    await user.click(trigger);
+    const dialog = screen.getByRole('dialog', { name: 'Run details' });
+    expect(within(dialog).getByText('1,234 tokens')).toBeVisible();
+
+    await user.click(within(dialog).getByRole('button', { name: /Research.*Agent One/ }));
+    expect(screen.queryByRole('dialog', { name: 'Run details' })).not.toBeInTheDocument();
+  });
+
   it('shows an unverified task step visibly and in its accessible name', async () => {
     harness.resources.set('/tasks/task-1', {
       data: { id: 'task-1', title: 'Task', status: 'completed' },
