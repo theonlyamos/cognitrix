@@ -9,6 +9,7 @@ const CHAT_EVENT_TYPES = new Set([
   'status',
   'error',
   'approval_request',
+  'question_request',
   'tool',
   'turn_complete',
   'turn_stopped',

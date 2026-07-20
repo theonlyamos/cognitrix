@@ -9,6 +9,7 @@ import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
+import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
@@ -166,6 +167,7 @@ export default function Home() {
 
   // Web tool-approval prompts + a per-browser bypass (auto-approve) toggle.
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [question, setQuestion] = useState<QuestionRequest | null>(null);
   const [bypass, setBypass] = useState(() => localStorage.getItem('bypassPermissions') === '1');
   const bypassRef = useRef(bypass);
   bypassRef.current = bypass;
@@ -176,6 +178,36 @@ export default function Home() {
       await api.post('/agents/approval', { request_id: requestId, approved, remember });
     } catch {
       /* best-effort — the turn times out server-side if this never lands */
+    }
+  }, []);
+
+  const postQuestionAction = useCallback(async (
+    current: QuestionRequest,
+    action: 'answer' | 'cancel' | 'stop_timer',
+    answer?: { option_id: string } | { text: string },
+  ) => {
+    try {
+      await api.post('/agents/question', {
+        request_id: current.request_id,
+        action,
+        ...answer,
+      });
+      if (action === 'stop_timer') {
+        setQuestion((pending) => pending?.request_id === current.request_id
+          ? { ...pending, auto_submit_seconds: null, auto_submit_at: null }
+          : pending);
+      } else {
+        setQuestion((pending) => pending?.request_id === current.request_id ? null : pending);
+        setWaiting(true);
+      }
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 404) {
+        setQuestion((pending) => pending?.request_id === current.request_id ? null : pending);
+        setWaiting(true);
+        return;
+      }
+      throw error;
     }
   }, []);
 
@@ -210,7 +242,7 @@ export default function Home() {
   const waitingRef = useRef(false);
   waitingRef.current = waiting;
 
-  const busy = waiting || streaming;
+  const busy = waiting || streaming || question !== null;
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const turnGenerationRef = useRef(0);
@@ -329,6 +361,7 @@ export default function Home() {
     setStopError(null);
     setPlanning(null);
     setApprovals([]);
+    setQuestion(null);
     setIsStreaming(false);
     clearComposerMedia();
   }, [clearComposerMedia, clearMessages, clearStopFallback, setIsStreaming]);
@@ -362,6 +395,7 @@ export default function Home() {
         setStopError(null);
         setPlanning(null);
         setApprovals([]);
+        setQuestion(null);
         setIsStreaming(false);
         return true;
       } catch {
@@ -390,6 +424,7 @@ export default function Home() {
     setIsStreaming(false);
     setPlanning(null);
     setApprovals([]);
+    setQuestion(null);
     if (reason === 'stopped') stopRunningTools();
     else if (reason === 'error') failRunningTools(errorResult);
     void refetchConvos({ silent: true });
@@ -498,6 +533,20 @@ export default function Home() {
             setApprovals((prev) =>
               prev.some((a) => a.request_id === req.request_id) ? prev : [...prev, req],
             );
+          }
+          break;
+        }
+        case 'question_request': {
+          const req = event as unknown as QuestionRequest;
+          if (
+            req.request_id
+            && req.prompt
+            && Array.isArray(req.options)
+            && typeof req.allow_free_text === 'boolean'
+          ) {
+            setQuestion(req);
+            setWaiting(false);
+            setStreaming(false);
           }
           break;
         }
@@ -851,6 +900,15 @@ export default function Home() {
                 ↻ retry
               </button>
             </div>
+          )}
+
+          {question && (
+            <QuestionCard
+              question={question}
+              onAnswer={(answer) => postQuestionAction(question, 'answer', answer)}
+              onCancel={() => postQuestionAction(question, 'cancel')}
+              onStopTimer={() => postQuestionAction(question, 'stop_timer')}
+            />
           )}
 
           {approvals.map((a) => (

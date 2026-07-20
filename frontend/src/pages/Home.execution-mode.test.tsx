@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +7,7 @@ import Home from './Home';
 
 const harness = vi.hoisted(() => ({
   messages: [] as ChatMessage[],
-  onMessage: null as null | ((event: { type: string; artifacts?: ToolArtifact[] }) => void),
+  onMessage: null as null | ((event: Record<string, unknown> & { type: string; artifacts?: ToolArtifact[] }) => void),
   addMessage: vi.fn(),
   appendToLastMessage: vi.fn(),
   attachArtifactsToLatestUser: vi.fn(),
@@ -87,5 +87,36 @@ describe('Home explicit execution mode', () => {
     });
 
     expect(await screen.findByRole('button', { name: 'Run as task' })).toBeDisabled();
+  });
+
+  it('renders and resolves an interactive question from the chat stream', async () => {
+    const user = userEvent.setup();
+    renderHome();
+    await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Help me choose');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    act(() => harness.onMessage?.({
+      type: 'question_request',
+      request_id: 'question-1',
+      session_id: 'session-1',
+      prompt: 'Run this in the background?',
+      details: 'You can keep chatting while it runs.',
+      options: [
+        { id: 'background', label: 'Run in background' },
+        { id: 'chat', label: 'Keep in chat' },
+      ],
+      allow_free_text: false,
+      recommended_option_id: 'background',
+      auto_submit_seconds: null,
+      auto_submit_at: null,
+    }));
+
+    await user.click(screen.getByRole('button', { name: /Run in background/i }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/agents/question', {
+      request_id: 'question-1',
+      action: 'answer',
+      option_id: 'background',
+    }));
+    expect(screen.queryByRole('group', { name: 'Run this in the background?' })).not.toBeInTheDocument();
   });
 });
