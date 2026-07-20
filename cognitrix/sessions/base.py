@@ -317,7 +317,9 @@ class Session(Model):
                     from cognitrix.tools.base import ToolManager
                     question_tool = ToolManager.get_by_name('ask_user')
                     if question_tool:
-                        agent.tools.append(question_tool)
+                        agent = agent.model_copy(update={
+                            'tools': [*agent.tools, question_tool],
+                        })
             except Exception:
                 pass
 

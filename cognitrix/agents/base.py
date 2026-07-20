@@ -469,7 +469,7 @@ class AgentManager:
                         args,
                         assigned_tool.max_attempts,
                         assigned_tool.retryable,
-                        assigned_tool.occupies_execution_slot,
+                        tool.occupies_execution_slot,
                     )
                 )
 

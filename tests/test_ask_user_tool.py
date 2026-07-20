@@ -163,6 +163,7 @@ async def test_session_advertises_ask_user_only_to_direct_web_chat(monkeypatch):
     monkeypatch.setattr(Session, 'save', fake_save)
 
     await session('web turn', agent, 'web', False, sink, None, True)
+    assert all(tool.name != 'Ask User' for tool in agent.tools)
     await session('cli turn', agent, 'cli', False, lambda *args, **kwargs: None, None, True)
 
     assert 'Ask_User' in advertised[0]
