@@ -206,7 +206,7 @@ The UI is then at `http://localhost:8000`.
 
 ### Fly.io
 
-`fly.toml` deploys the single-container shape to [Fly.io](https://fly.io): one always-warm machine running a Supervisor-managed web process, solo Celery worker, and localhost-only Redis. SQLite and Redis persistence live on the mounted volume. The image uses Redis database 0 for Celery and database 1 for provider/actor concurrency leases. Keep this deployment to one machine — the volume and bundled Redis are not shared across machines, and the schedule loop is per-process.
+`fly.toml` deploys the single-container shape to [Fly.io](https://fly.io): one always-warm machine running a Supervisor-managed web process and solo Celery worker. Configure the external Redis connection with the `CELERY_BROKER_URL` and `TASK_LIMIT_REDIS_URL` Fly secrets. SQLite persistence lives on the mounted volume. Keep the web process to one machine while using SQLite because the volume is not shared and the schedule loop is per-process.
 
 ## API Access
 
