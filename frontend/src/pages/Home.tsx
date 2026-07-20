@@ -518,12 +518,15 @@ export default function Home() {
     enabled: sseReady,
   });
 
+  type ExecutionMode = 'chat' | 'task';
+
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, executionMode: ExecutionMode = 'chat') => {
       const msg = text.trim();
       const pending = attachmentsRef.current;
       const pendingEditSource = editSource;
       if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return;
+      if (executionMode === 'task' && (pending.length > 0 || pendingEditSource !== null)) return;
       clearStopFallback();
       turnGenerationRef.current += 1;
       // Keep a record of what was attached in the visible user message.
@@ -548,6 +551,7 @@ export default function Home() {
           : -1;
         const payload = {
           message: msg,
+          execution_mode: executionMode,
           ...(agentId ? { agent_id: agentId } : {}),
           ...(streamId ? { stream_id: streamId } : {}),
           // No id on a fresh thread: the server creates the session and the
@@ -1053,7 +1057,7 @@ export default function Home() {
             {stopError && (
               <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
             )}
-            <div className="mt-2 flex items-center gap-4 font-mono text-[10.5px] text-fg-dim">
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -1072,8 +1076,20 @@ export default function Home() {
               >
                 <span>[{bypass ? '✓' : 'x'}]</span> auto-approve
               </button>
-              <span className="ml-auto"><kbd className="rounded border border-line px-1">⏎</kbd> send</span>
-              <span><kbd className="rounded border border-line px-1">⇧⏎</kbd> newline</span>
+              <button
+                type="button"
+                onClick={() => void send(input, 'task')}
+                disabled={busy || !!uploadError || !isConnected || !input.trim() || attachments.length > 0 || editSource !== null}
+                aria-label="Run as task"
+                title={attachments.length > 0 || editSource !== null
+                  ? 'Task mode does not support attachments or edit sources yet.'
+                  : 'Create a persisted task and run it with step tracking.'}
+                className="flex min-h-11 items-center gap-1 transition-colors hover:text-accent disabled:cursor-not-allowed disabled:opacity-50 md:min-h-0"
+              >
+                <span aria-hidden>[ ]</span> run as task
+              </button>
+              <span className="ml-auto hidden sm:inline"><kbd className="rounded border border-line px-1">⏎</kbd> send</span>
+              <span className="hidden sm:inline"><kbd className="rounded border border-line px-1">⇧⏎</kbd> newline</span>
             </div>
           </div>
         </div>

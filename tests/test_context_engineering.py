@@ -64,6 +64,14 @@ def test_system_prompt_has_no_scratchpad_boilerplate():
     assert "<todo>" not in ASSISTANT_SYSTEM_PROMPT.lower()
 
 
+def test_system_prompt_requires_explicit_persisted_task_request():
+    from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
+
+    prompt = ASSISTANT_SYSTEM_PROMPT.lower()
+    assert "complete requests directly with ordinary tools" in prompt
+    assert "create a persisted task only when the user explicitly asks" in prompt
+
+
 # --- CE2 ---
 
 def test_oversized_tool_result_is_truncated():
