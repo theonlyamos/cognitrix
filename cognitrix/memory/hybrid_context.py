@@ -127,8 +127,8 @@ class HybridContextManager(BaseContextManager):
     async def _ensure_long_term(self) -> ChromaMemoryStore | None:
         """Async-safe long-term store accessor.
 
-        First use constructs ChromaMemoryStore, which loads sentence-transformers
-        + PyTorch (multiple seconds, or a model download on cold cache). Doing
+        First use constructs ChromaMemoryStore, which loads the ONNX embedding model
+        (a second or two, or a model download on cold cache). Doing
         that on the event loop froze the whole server on the first turn; build it
         in a thread under a lock so concurrent first turns don't construct twice.
         """

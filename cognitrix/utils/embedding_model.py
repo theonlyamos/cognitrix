@@ -1,37 +1,58 @@
-"""Shared embedding model utilities."""
+"""Shared embedding model utilities.
+
+Embeddings come from ChromaDB's built-in all-MiniLM-L6-v2 model, which runs on
+onnxruntime. This avoids pulling in sentence-transformers and PyTorch (hundreds
+of MB to GBs) for the same model. The ONNX weights (~80 MB) are downloaded to
+ChromaDB's cache on first use.
+"""
 
 import logging
-from typing import Optional
+import threading
+from typing import Any
 
 logger = logging.getLogger('cognitrix.log')
 
-_embedding_model_cache: Optional['SentenceTransformer'] = None
+DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 
-def get_embedding_model(model_name: str = "all-MiniLM-L6-v2"):
-    """
-    Get or create singleton embedding model.
-    
-    Uses module-level caching to ensure only one instance
-    of the embedding model is loaded across all components.
-    
-    Args:
-        model_name: Name of the sentence transformer model
-        
-    Returns:
-        SentenceTransformer instance
+class EmbeddingModel:
+    """Small wrapper exposing ``encode(text)`` over a ChromaDB embedding function."""
+
+    def __init__(self, embedding_function: Any, model_name: str = DEFAULT_EMBEDDING_MODEL):
+        self._fn = embedding_function
+        self.model_name = model_name
+
+    def encode(self, text: str):
+        """Return the embedding for one string as a numpy array."""
+        import numpy as np
+
+        return np.asarray(self._fn([text])[0], dtype=np.float32)
+
+
+_embedding_model_cache: EmbeddingModel | None = None
+_cache_lock = threading.Lock()
+
+
+def get_embedding_model(model_name: str = DEFAULT_EMBEDDING_MODEL) -> EmbeddingModel:
+    """Get or create the shared embedding model.
+
+    Only all-MiniLM-L6-v2 is bundled; other names fall back to it with a warning.
     """
     global _embedding_model_cache
 
     if _embedding_model_cache is None:
-        logger.info(f"Loading embedding model: {model_name}")
-        try:
-            from sentence_transformers import SentenceTransformer
-            _embedding_model_cache = SentenceTransformer(model_name)
-            logger.info(f"Embedding model loaded: {model_name}")
-        except Exception as e:
-            logger.error(f"Failed to load embedding model: {e}")
-            raise
+        with _cache_lock:
+            if _embedding_model_cache is None:
+                if model_name != DEFAULT_EMBEDDING_MODEL:
+                    logger.warning(
+                        f"Embedding model '{model_name}' is not available; "
+                        f"using {DEFAULT_EMBEDDING_MODEL}"
+                    )
+                logger.info(f"Loading embedding model: {DEFAULT_EMBEDDING_MODEL}")
+                from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+
+                _embedding_model_cache = EmbeddingModel(DefaultEmbeddingFunction())
+                logger.info(f"Embedding model loaded: {DEFAULT_EMBEDDING_MODEL}")
 
     return _embedding_model_cache
 

@@ -40,7 +40,6 @@ httpx = "^0.28.1"
 
 # Vector Memory & Embeddings
 chromadb = "^1.5.0"
-sentence-transformers = "^5.2.0"
 numpy = "^2.0.0"
 
 # Web Framework
@@ -55,7 +54,6 @@ pyautogui = "^0.9.54"
 beautifulsoup4 = "^4.12.3"
 wikipedia = "^1.4.0"
 tavily-python = "^0.3.3"
-xmltodict = "^0.13.0"
 pymupdf = "^1.27.2"
 
 # Database & Auth
@@ -72,7 +70,7 @@ pywin32 = {version = ">=310", markers = "sys_platform == 'win32'"}
 pyyaml = "^6.0"
 
 # MCP (Model Context Protocol)
-mcp = {extras = ["cli"], version = "^2.3.0"}
+mcp = "^2.3.0"
 textual = "^8.0.1"
 croniter = "^6.2.3"
 
