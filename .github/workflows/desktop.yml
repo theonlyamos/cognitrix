@@ -1,7 +1,8 @@
 name: desktop
 
 # Builds the Windows installer: React UI -> PyInstaller engine -> Tauri app.
-# The installers are uploaded as the "cognitrix-windows" artifact of each run.
+# The installers are uploaded as the "cognitrix-windows" artifact of each run,
+# and attached to the GitHub release when a release is published.
 on:
   workflow_dispatch:
   pull_request:
@@ -10,11 +11,11 @@ on:
       - 'cognitrix/desktop.py'
       - 'cognitrix/celery_worker.py'
       - '.github/workflows/desktop.yml'
-  push:
-    tags: ['v*']
+  release:
+    types: [published]
 
 permissions:
-  contents: read
+  contents: write  # attach installers to a release; other events only read
 
 jobs:
   windows:
@@ -76,3 +77,12 @@ jobs:
             desktop/src-tauri/target/release/bundle/nsis/*.exe
             desktop/src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
+
+      - name: Attach installers to the release
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = @(Get-ChildItem desktop/src-tauri/target/release/bundle/nsis/*.exe, desktop/src-tauri/target/release/bundle/msi/*.msi | ForEach-Object FullName)
+          gh release upload "${{ github.event.release.tag_name }}" @files --clobber --repo "${{ github.repository }}"
