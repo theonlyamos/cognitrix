@@ -422,3 +422,30 @@ def test_shell_output_keeps_stderr():
     assert _format_output('out', 'warning', 0) == 'out\n\n[stderr: warning]'
     assert _format_output('', 'warning', 0) == '[stderr: warning]'
     assert 'boom' in _format_output('', 'boom', 1)
+
+
+# --- Logout ---------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_logout_revokes_earlier_session_tokens(monkeypatch):
+    import time
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from cognitrix.common import security
+
+    user = SimpleNamespace(id='u1', email='a@example.com', tokens_valid_after=None)
+
+    async def get_user(email=None, **_kw):
+        return user if email == user.email else None
+
+    monkeypatch.setattr(security, 'get_user', get_user)
+    token = security.create_access_token({'sub': user.email})
+    assert (await security._resolve_jwt(token)).user is user
+
+    user.tokens_valid_after = int(time.time()) + 1  # logged out after issue
+    with pytest.raises(HTTPException) as exc:
+        await security._resolve_jwt(token)
+    assert exc.value.status_code == 401
+    assert await security.verify_token(token) is None

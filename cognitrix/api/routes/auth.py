@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import timedelta
 from typing import Annotated
 
@@ -92,5 +93,7 @@ async def get_user(user: Annotated[User, Depends(get_current_user)]):
 
 @auth_api.post("/logout")
 async def logout(current_user: User = Depends(get_current_user)):
-    # In a real application, you might want to invalidate the token here
+    """End every session token issued so far for this user (all devices).
+    API keys are separate and stay valid until revoked."""
+    await User.update_one({'id': current_user.id}, {'tokens_valid_after': int(time.time())})
     return {"message": "Logged out successfully"}

@@ -350,6 +350,10 @@ _TASK_MIGRATION_COLUMNS = (
     ('deleted_at', 'TEXT'), ('owner_id', 'TEXT'),
 )
 
+_USER_MIGRATION_COLUMNS = (
+    ('tokens_valid_after', 'INTEGER'),
+)
+
 _TEAM_MIGRATION_COLUMNS = (
     ('owner_id', 'TEXT'),
 )
@@ -600,6 +604,7 @@ async def _migrate_relational_task_schema(database) -> None:
         ('sessions', _SESSION_MIGRATION_COLUMNS),
         ('agents', _AGENT_MIGRATION_COLUMNS),
         ('teams', _TEAM_MIGRATION_COLUMNS),
+        ('users', _USER_MIGRATION_COLUMNS),
     ):
         for column, ctype in columns:
             clause = (
@@ -756,6 +761,7 @@ async def _ensure_schema():
         ('taskruns', _TASKRUN_MIGRATION_COLUMNS),
         ('taskrunheads', _TASKRUN_HEAD_MIGRATION_COLUMNS),
         ('teams', _TEAM_MIGRATION_COLUMNS),
+        ('users', _USER_MIGRATION_COLUMNS),
     ):
         try:
             cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')
