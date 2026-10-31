@@ -356,6 +356,10 @@ _ARTIFACT_MIGRATION_COLUMNS = (
     ('thumbnail_storage_key', 'TEXT'), ('created_at', 'TEXT'),
 )
 
+_AGENT_MIGRATION_COLUMNS = (
+    ('owner_id', 'TEXT'),
+)
+
 _SESSION_MIGRATION_COLUMNS = (
     ('user_id', 'TEXT'), ('run_id', 'TEXT'),
     ('step_index', 'INTEGER'), ('step_title', 'TEXT'),
@@ -590,6 +594,7 @@ async def _migrate_relational_task_schema(database) -> None:
         ('tasks', _TASK_MIGRATION_COLUMNS),
         ('artifacts', _ARTIFACT_MIGRATION_COLUMNS),
         ('sessions', _SESSION_MIGRATION_COLUMNS),
+        ('agents', _AGENT_MIGRATION_COLUMNS),
     ):
         for column, ctype in columns:
             clause = (
@@ -665,6 +670,26 @@ async def _ensure_schema():
     from cognitrix.tasks.run import TaskRun, TaskRunHead
     from cognitrix.tasks.step import TaskRunStep
 
+    if getattr(DBMS.Database, 'dbms', '') != 'mongodb':
+        # Core tables. Without these a fresh database started with plain
+        # `uvicorn cognitrix.api.main:app` (no CLI run first) had no users
+        # table, so signup failed with a 500. create_table is a no-op for a
+        # table that already exists.
+        from cognitrix.agents import Agent
+        from cognitrix.models.tool import Tool
+        from cognitrix.models.user import User
+        from cognitrix.sessions.base import Session
+        from cognitrix.tasks.base import Task
+        from cognitrix.teams.base import Team
+
+        for model in (User, Agent, Session, Task, Team, Tool):
+            create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)
+            if create is None:
+                raise RuntimeError(f'{model.__name__} schema hook is unavailable')
+            result = create()
+            if hasattr(result, '__await__'):
+                await result
+
     for model in (
         TaskRun,
         TaskRunHead,
@@ -717,6 +742,7 @@ async def _ensure_schema():
 
     for table, columns in (
         ('sessions', _SESSION_MIGRATION_COLUMNS),
+        ('agents', _AGENT_MIGRATION_COLUMNS),
         ('artifacts', _ARTIFACT_MIGRATION_COLUMNS),
         ('tasks', _TASK_MIGRATION_COLUMNS),
         ('taskruns', _TASKRUN_MIGRATION_COLUMNS),

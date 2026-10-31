@@ -2,7 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import aiofiles
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +17,33 @@ from ..tasks.scheduler import scheduler_loop
 from .health import task_runtime_health
 from .routes import api_router
 from .routes.openai_compat import openai_api
+
+
+def _patch_odbms_json_schema() -> None:
+    """odbms' PyObjectId has a pydantic-v1 style __get_pydantic_json_schema__
+    (one argument), which made /openapi.json return 500 and /docs unusable.
+    ponytail: remove once odbms ships the two-argument signature."""
+    try:
+        from odbms import model as odbms_model
+    except Exception:
+        return
+    py_object_id = getattr(odbms_model, 'PyObjectId', None)
+    if py_object_id is None:
+        return
+
+    def _json_schema(cls, _core_schema=None, _handler=None):
+        return {'type': 'string'}
+
+    # Models built at import time already hold a reference to the original
+    # function, so swap its code in place rather than rebinding the name.
+    original = py_object_id.__dict__.get('__get_pydantic_json_schema__')
+    func = getattr(original, '__func__', None)
+    if func is not None and func.__code__.co_argcount == 2:
+        func.__code__ = _json_schema.__code__
+        func.__defaults__ = _json_schema.__defaults__
+
+
+_patch_odbms_json_schema()
 
 
 @asynccontextmanager
@@ -73,10 +100,16 @@ app.include_router(api_router)
 # OpenAI-compatible shim at the app root (/v1). MUST be registered before the
 # SPA catch-all below, or GET /v1/models would be served index.html with 200.
 app.include_router(openai_api)
-app.mount('/css', StaticFiles(directory=FRONTEND_BUILD_DIR / 'css', html=True),  name='static')
-app.mount('/assets', StaticFiles(directory=FRONTEND_BUILD_DIR / 'assets', html=True),  name='static')
-app.mount('/webfonts', StaticFiles(directory=FRONTEND_BUILD_DIR / 'webfonts', html=True),  name='static')
-app.mount('/fonts', StaticFiles(directory=FRONTEND_BUILD_DIR / 'fonts'),  name='fonts')
+# Static mounts are optional so the API also runs without a built frontend
+# (API-only deploys, tests, a fresh clone before `npm run build`).
+for _route, _subdir, _html in (
+    ('/css', 'css', True),
+    ('/assets', 'assets', True),
+    ('/webfonts', 'webfonts', True),
+    ('/fonts', 'fonts', False),
+):
+    if (FRONTEND_BUILD_DIR / _subdir).is_dir():
+        app.mount(_route, StaticFiles(directory=FRONTEND_BUILD_DIR / _subdir, html=_html), name=_subdir)
 
 
 @app.get('/health')
@@ -88,7 +121,12 @@ async def healthcheck():
 # static mounts) aren't shadowed by this catch-all.
 @app.get("/{path:path}")
 async def index(request: Request, path: str):
+    # Unknown API paths are real 404s, not the SPA's index.html with a 200.
+    if path == 'api' or path.startswith(('api/', 'v1/')) or path == 'v1':
+        raise HTTPException(status_code=404, detail='Not Found')
     index_file = FRONTEND_BUILD_DIR / 'index.html'
+    if not index_file.is_file():
+        raise HTTPException(status_code=404, detail='Frontend is not built (run `npm run build` in frontend/)')
     async with aiofiles.open(index_file) as file:
         content = await file.read()
 
