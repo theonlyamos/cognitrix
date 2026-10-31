@@ -84,6 +84,15 @@ jobs:
       - name: Smoke-test the engine
         run: python desktop/scripts/smoke_engine.py
 
+      - name: Let the AppImage bundler find the engine's libraries
+        if: runner.os == 'Linux'
+        # linuxdeploy checks every ELF file in the bundle, including the
+        # engine's own vendored .so files (pillow.libs, numpy.libs, ...),
+        # and fails if it can't resolve them from the system paths.
+        run: |
+          dirs=$(find "$PWD/desktop/src-tauri/engine" -name '*.so*' -printf '%h\n' | sort -u | paste -sd:)
+          echo "LD_LIBRARY_PATH=$dirs" >> "$GITHUB_ENV"
+
       - name: Build installers
         working-directory: desktop
         run: |

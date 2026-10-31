@@ -31,7 +31,8 @@ npx tauri build --bundles deb,rpm,appimage  # Linux   -> bundle/{deb,rpm,appimag
 npx tauri build --bundles app,dmg           # macOS   -> bundle/{macos,dmg}/
 ```
 
-Linux also needs the WebKitGTK build libraries:
+For the AppImage, put the engine's library folders on `LD_LIBRARY_PATH` first
+(see the workflow's "AppImage bundler" step). Linux also needs the WebKitGTK build libraries:
 `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev`.
 
 The `desktop` GitHub Actions workflow builds all three (Windows, Ubuntu 22.04,
