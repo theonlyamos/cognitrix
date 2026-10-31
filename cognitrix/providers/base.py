@@ -5,6 +5,7 @@ Runtime config (provider, base_url, api_key, model) from env or CLI.
 Groq and Ollama: direct. Others: route through Helicone.
 """
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
@@ -362,14 +363,33 @@ def _retry_delay(error: Exception, attempt: int) -> float:
 _NO_REASONING_WITH_TOOLS: set[str] = set()
 
 
+REASONING_EFFORTS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')
+
+# A per-turn override from the chat window; wins over the agent's setting.
+turn_reasoning_effort: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    'turn_reasoning_effort', default=None
+)
+
+
+def normalize_reasoning_effort(value: Any) -> str:
+    """'' for unset or unknown values, else one of REASONING_EFFORTS."""
+    text = str(value or '').strip().lower()
+    return text if text in REASONING_EFFORTS else ''
+
+
 def _rejects_tools_with_reasoning(err: BaseException) -> bool:
     text = str(err).lower()
     return 'reasoning_effort' in text and 'function tools' in text
 
 
-def _reasoning_effort_set(params: dict[str, Any]) -> bool:
+def _reasoning_effort_pinned(params: dict[str, Any]) -> bool:
+    """True when extra_body sets reasoning_effort by hand: that is left alone.
+
+    The agent's or chat's reasoning level is not pinned. A model that can't
+    reason while using tools falls back to 'none' rather than failing the turn.
+    """
     extra = params.get('extra_body') or {}
-    return 'reasoning_effort' in params or (isinstance(extra, dict) and 'reasoning_effort' in extra)
+    return isinstance(extra, dict) and 'reasoning_effort' in extra
 
 
 async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
@@ -383,7 +403,7 @@ async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
 
     accounting = current_task_accounting()
     model = str(params.get('model') or '')
-    if params.get('tools') and model in _NO_REASONING_WITH_TOOLS and not _reasoning_effort_set(params):
+    if params.get('tools') and model in _NO_REASONING_WITH_TOOLS and not _reasoning_effort_pinned(params):
         params = {**params, 'reasoning_effort': 'none'}
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         if attempt > 1 and accounting is not None:
@@ -398,9 +418,12 @@ async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
         except openai.BadRequestError as e:
             # Some OpenAI models only take function tools on /chat/completions
             # with reasoning turned off. Retry once that way rather than fail
-            # every chat with tools. A reasoning_effort the agent sets itself
-            # is left alone.
-            if not (params.get('tools') and _rejects_tools_with_reasoning(e)) or _reasoning_effort_set(params):
+            # every chat with tools.
+            if (
+                not (params.get('tools') and _rejects_tools_with_reasoning(e))
+                or params.get('reasoning_effort') == 'none'
+                or _reasoning_effort_pinned(params)
+            ):
                 raise
             logger.info("%s refuses tools while reasoning; retrying with reasoning_effort='none'", model)
             _NO_REASONING_WITH_TOOLS.add(model)
@@ -459,6 +482,9 @@ class LLM(Model):
     extra_headers: dict[str, str] = Field(default_factory=dict)
     extra_body: dict[str, Any] = Field(default_factory=dict)
     response_format: dict[str, Any] | None = None
+    reasoning_effort: str = ''
+    """How hard the model thinks: none, minimal, low, medium, high or xhigh.
+    Empty = the provider's default. Sent as the OpenAI `reasoning_effort` param."""
 
     def __init__(self, provider: str | None = None, **data: Any):
         if provider is not None or any(k in data for k in ('base_url', 'api_key', 'model')):
@@ -707,6 +733,9 @@ class LLMManager:
                 completion_params['response_format'] = response_format
             if llm.extra_body:
                 completion_params['extra_body'] = llm.extra_body
+            effort = normalize_reasoning_effort(turn_reasoning_effort.get() or llm.reasoning_effort)
+            if effort:
+                completion_params['reasoning_effort'] = effort
             completion_params = _apply_provider_param_rules(llm, completion_params)
 
             if stream:

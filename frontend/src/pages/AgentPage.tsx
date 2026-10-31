@@ -9,6 +9,7 @@ import { Select } from '@/lib/components/ui/select';
 import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm } from '@/components/form';
 import { cn } from '@/lib/utils';
+import { REASONING_LEVELS } from '@/lib/reasoning';
 
 const PROVIDERS = ['openrouter', 'openai', 'google', 'groq', 'cerebras', 'ollama'];
 const MODELS: Record<string, string[]> = {
@@ -35,7 +36,7 @@ interface AgentData {
   id?: string;
   name?: string;
   system_prompt?: string;
-  llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number };
+  llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number; reasoning_effort?: string };
   tools?: Tool[];
 }
 
@@ -53,6 +54,7 @@ export default function AgentPage() {
   const [provider, setProvider] = useState('google');
   const [model, setModel] = useState('gemini-3.5-flash');
   const [temperature, setTemperature] = useState(0.4);
+  const [reasoning, setReasoning] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [maxTokens, setMaxTokens] = useState('');
@@ -67,6 +69,7 @@ export default function AgentPage() {
     setProvider(existing.llm?.provider || 'google');
     setModel(existing.llm?.model || '');
     setTemperature(existing.llm?.temperature ?? 0.4);
+    setReasoning(existing.llm?.reasoning_effort || '');
     setSystemPrompt(existing.system_prompt || '');
     setSelected(new Set((existing.tools || []).map((t) => t.name)));
     setMaxTokens(existing.llm?.max_tokens ? String(existing.llm.max_tokens) : '');
@@ -110,6 +113,7 @@ export default function AgentPage() {
           provider,
           model: model.trim(),
           temperature,
+          reasoning_effort: reasoning,
           ...(baseUrl ? { base_url: baseUrl } : {}),
           ...(maxTokens ? { max_tokens: Number(maxTokens) } : {}),
         },
@@ -167,6 +171,16 @@ export default function AgentPage() {
           onChange={(e) => setTemperature(Number(e.target.value))}
           className="h-2 w-full cursor-pointer appearance-none rounded-full bg-panel-2 accent-[var(--accent)]"
         />
+      </Field>
+
+      <Field label="REASONING" hint="sent as reasoning_effort">
+        <Select aria-label="Reasoning level" value={reasoning} onChange={(e) => setReasoning(e.target.value)}>
+          <option value="">Provider default</option>
+          {REASONING_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+        </Select>
+        <p className="mt-1.5 text-[12px] text-fg-dim">
+          How hard the model thinks before answering. Works with models that support reasoning levels (OpenAI, Gemini, Grok and others through their OpenAI-compatible APIs). You can change it per chat under the message box.
+        </p>
       </Field>
 
       <Field label="SYSTEM PROMPT">

@@ -203,6 +203,7 @@ async def test_text_only_json_chat_behavior_and_queue_metadata_are_preserved(mon
         'edit_source_image_index': None,
         'document_ids': (),
         'bypass_permissions': True,
+        'reasoning_effort': '',
         'execution_mode': 'chat',
     }]
 

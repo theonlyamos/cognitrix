@@ -6,6 +6,7 @@ import { SelectionRow } from '@/components/SelectionRow';
 import { useSSE } from '@/hooks/useSSE';
 import { useResource } from '@/hooks/useResource';
 import { api } from '@/lib/api';
+import { REASONING_LEVELS } from '@/lib/reasoning';
 import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
@@ -171,6 +172,16 @@ export default function Home() {
   const [bypass, setBypass] = useState(() => localStorage.getItem('bypassPermissions') === '1');
   const bypassRef = useRef(bypass);
   bypassRef.current = bypass;
+  // Reasoning level for this chat; '' keeps the agent's own setting.
+  const [reasoning, setReasoning] = useState(() => {
+    try { return localStorage.getItem('chatReasoningEffort') ?? ''; } catch { return ''; }
+  });
+  const reasoningRef = useRef(reasoning);
+  reasoningRef.current = reasoning;
+  const changeReasoning = (value: string) => {
+    setReasoning(value);
+    try { localStorage.setItem('chatReasoningEffort', value); } catch { /* not persisted */ }
+  };
 
   const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false) => {
     setApprovals((prev) => prev.filter((a) => a.request_id !== requestId));
@@ -613,6 +624,7 @@ export default function Home() {
             ? { edit_source_image_index: editSourceImageIndex }
             : {}),
           ...(bypassRef.current ? { bypass_permissions: true } : {}),
+          ...(reasoningRef.current ? { reasoning_effort: reasoningRef.current } : {}),
         };
         if (pending.length) {
           const form = new FormData();
@@ -1134,6 +1146,23 @@ export default function Home() {
               >
                 <span>[{bypass ? '✓' : 'x'}]</span> auto-approve
               </button>
+              <label
+                title="How hard the model thinks before answering. Agent default uses the level set on the agent."
+                className="flex min-h-11 items-center gap-1 md:min-h-0"
+              >
+                <span>reasoning:</span>
+                <select
+                  aria-label="Reasoning level"
+                  value={reasoning}
+                  onChange={(e) => changeReasoning(e.target.value)}
+                  className={cn('cursor-pointer appearance-none rounded border-none bg-transparent p-0 font-mono text-[10.5px] outline-none hover:text-fg focus-visible:ring-1 focus-visible:ring-accent', reasoning && 'text-accent-ink')}
+                >
+                  <option value="">agent default</option>
+                  {REASONING_LEVELS.map((l) => (
+                    <option key={l.value} value={l.value}>{l.label.toLowerCase()}</option>
+                  ))}
+                </select>
+              </label>
               <button
                 type="button"
                 onClick={() => void send(input, 'task')}

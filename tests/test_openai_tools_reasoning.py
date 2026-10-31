@@ -68,3 +68,51 @@ def test_gpt6_counts_as_a_reasoning_model():
     assert base._is_openai_reasoning_model('gpt-6.1-sol')
     assert base._is_openai_reasoning_model('gpt-5.4')
     assert not base._is_openai_reasoning_model('gpt-4.1')
+
+
+@pytest.mark.asyncio
+async def test_agent_reasoning_level_falls_back_to_none_when_tools_are_refused(monkeypatch):
+    monkeypatch.setattr(base, '_NO_REASONING_WITH_TOOLS', set())
+    completions = _Completions(fail_with=_bad_request(REFUSAL))
+
+    async def create(**params):
+        completions.calls.append(params)
+        if params.get('reasoning_effort') != 'none':
+            raise _bad_request(REFUSAL)
+        return 'ok'
+
+    completions.create = create
+    params = {'model': 'gpt-6.1-sol', 'messages': [], 'tools': [{}], 'reasoning_effort': 'high'}
+    assert await base._create_with_retry(_Client(completions), params) == 'ok'
+    assert [c['reasoning_effort'] for c in completions.calls] == ['high', 'none']
+
+
+@pytest.mark.asyncio
+async def test_reasoning_level_is_sent_and_the_chat_choice_wins(monkeypatch):
+    from cognitrix.config import settings
+
+    seen = []
+
+    async def capture(_client, params):
+        seen.append(params)
+        return 'done'
+
+    monkeypatch.setattr(settings, 'has_api_key', lambda name: False)
+    monkeypatch.setattr(base, 'assert_key_destination_allowed', lambda *a, **k: None)
+    monkeypatch.setattr(base, '_get_or_create_client', lambda *a, **k: object())
+    monkeypatch.setattr(base.LLMManager, '_handle_non_streaming_response', staticmethod(capture))
+
+    llm = base.LLM(provider='openai', model='gpt-6.1-sol', api_key='k', base_url='https://api.openai.com/v1',
+                   reasoning_effort='low')
+    await base.LLMManager.generate_response(llm, [{'role': 'user', 'content': 'hi'}])
+    token = base.turn_reasoning_effort.set('high')
+    try:
+        await base.LLMManager.generate_response(llm, [{'role': 'user', 'content': 'hi'}])
+    finally:
+        base.turn_reasoning_effort.reset(token)
+    llm.reasoning_effort = ''
+    await base.LLMManager.generate_response(llm, [{'role': 'user', 'content': 'hi'}])
+
+    assert [p.get('reasoning_effort') for p in seen] == ['low', 'high', None]
+    assert base.normalize_reasoning_effort('HIGH ') == 'high'
+    assert base.normalize_reasoning_effort('turbo') == ''
