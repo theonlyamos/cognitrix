@@ -16,6 +16,10 @@ vi.mock('@/lib/api', () => ({
   errorMessage: (_err: unknown, fallback: string) => fallback,
 }));
 
+vi.mock('@/context/AppContext', () => ({
+  useUser: () => ({ user: { id: 'u1', name: 'Amos', email: 'a@example.com' }, isLoading: false, login: vi.fn(), logout: vi.fn(), checkAuth: vi.fn() }),
+}));
+
 const approval = {
   kind: 'approval',
   id: 'ap-1',

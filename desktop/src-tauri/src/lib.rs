@@ -130,6 +130,15 @@ pub(crate) fn toggle_quick_ask(app: &AppHandle) {
     if quick.is_visible().unwrap_or(false) {
         let _ = quick.hide();
     } else {
+        // It may have been sent to the sign-in page (or on to /home after
+        // signing in there); always open on quick ask.
+        if let Ok(mut url) = quick.url() {
+            if url.path() != "/quick" {
+                url.set_path("/quick");
+                url.set_query(None);
+                let _ = quick.navigate(url);
+            }
+        }
         let _ = quick.center();
         let _ = quick.show();
         let _ = quick.set_focus();

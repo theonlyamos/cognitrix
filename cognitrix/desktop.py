@@ -179,8 +179,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _ensure_std_streams() -> None:
+    """A windowed (no-console) frozen build has sys.stdout/stderr = None,
+    and uvicorn's log formatter calls isatty() on them. Give them a sink."""
+    for name in ('stdout', 'stderr'):
+        if getattr(sys, name) is None:
+            setattr(sys, name, open(os.devnull, 'w', encoding='utf-8'))
+
+
 def main(argv: list[str] | None = None) -> int:
     multiprocessing.freeze_support()
+    _ensure_std_streams()
     argv = list(sys.argv[1:] if argv is None else argv)
     # `worker` passes everything after it straight to Celery, flags included.
     if argv and argv[0] == 'worker':

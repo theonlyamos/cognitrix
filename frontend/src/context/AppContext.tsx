@@ -58,6 +58,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     checkAuth();
   }, [checkAuth]);
 
+  // Another window of the app (the desktop quick ask, a second tab) signed
+  // in or out: follow it.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'token' || event.key === null) void checkAuth();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [checkAuth]);
+
   return (
     <UserContext.Provider value={{ user, isLoading, login, logout, checkAuth }}>
       {children}

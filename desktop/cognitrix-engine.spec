@@ -56,7 +56,10 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='cognitrix-engine',
-    console=False,
+    # Console build: the app starts it with CREATE_NO_WINDOW, so no window
+    # shows, and stdout/stderr stay real streams that reach the engine log
+    # (a windowed build sets them to None, which breaks uvicorn's logging).
+    console=True,
     disable_windowed_traceback=False,
     upx=False,
 )

@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { api } from '@/lib/api';
 import { desktop, isDesktop, onDesktopEvent, systemNotify, type EngineStatus } from '@/lib/desktop';
 import { usePolling } from '@/hooks/usePolling';
+import { useUser } from '@/context/AppContext';
 
 /** Events the app can notify about. Matches the rows on the Notifications screen. */
 export type NotificationEvent =
@@ -130,8 +131,14 @@ function writeJson(key: string, value: unknown) {
 }
 
 export function NotificationsProvider({ children }: { children: React.ReactNode }) {
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => readJson(STORE_KEY, []));
-  const [prefs, setPrefs] = useState<NotificationPrefs>(() => ({ ...DEFAULT_PREFS, ...readJson(PREFS_KEY, {}) }));
+  // History holds task titles and agent questions, so it is kept per account:
+  // a different sign-in on the same machine never sees someone else's.
+  const { user } = useUser();
+  const account = user?.id || user?.email || 'anonymous';
+  const storeKey = `${STORE_KEY}:${account}`;
+  const prefsKey = `${PREFS_KEY}:${account}`;
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => readJson(storeKey, []));
+  const [prefs, setPrefs] = useState<NotificationPrefs>(() => ({ ...DEFAULT_PREFS, ...readJson(prefsKey, {}) }));
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [inboxLoaded, setInboxLoaded] = useState(false);
   const [toasts, setToasts] = useState<AppNotification[]>([]);
@@ -142,8 +149,23 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const seenInbox = useRef<Set<string> | null>(null);
   const taskStatus = useRef<Map<string, string> | null>(null);
 
-  useEffect(() => writeJson(STORE_KEY, notifications.slice(0, MAX_KEPT)), [notifications]);
-  useEffect(() => writeJson(PREFS_KEY, prefs), [prefs]);
+  // Switch to the new account's history when the sign-in changes.
+  const loadedKey = useRef(storeKey);
+  useEffect(() => {
+    if (loadedKey.current === storeKey) return;
+    loadedKey.current = storeKey;
+    setNotifications(readJson(storeKey, []));
+    setPrefs({ ...DEFAULT_PREFS, ...readJson(prefsKey, {}) });
+    setToasts([]);
+    seenInbox.current = null;
+    taskStatus.current = null;
+  }, [storeKey, prefsKey]);
+  useEffect(() => {
+    if (loadedKey.current === storeKey) writeJson(storeKey, notifications.slice(0, MAX_KEPT));
+  }, [notifications, storeKey]);
+  useEffect(() => {
+    if (loadedKey.current === storeKey) writeJson(prefsKey, prefs);
+  }, [prefs, prefsKey, storeKey]);
 
   const push = useCallback((n: Omit<AppNotification, 'id' | 'createdAt' | 'read'>) => {
     const item: AppNotification = {
