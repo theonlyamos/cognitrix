@@ -31,7 +31,7 @@ class ChromaMemoryStore(BaseMemory):
         Args:
             collection_name: Name of the ChromaDB collection
             persist_directory: Where to persist DB (default: COGNITRIX_WORKDIR/chroma_db)
-            embedding_model: Sentence transformer model name (kept for API compatibility)
+            embedding_model: Embedding model name (only all-MiniLM-L6-v2 is bundled)
         """
         self.collection_name = collection_name
 
