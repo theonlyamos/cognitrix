@@ -235,7 +235,7 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
     return config
 
 
-_OPENAI_REASONING_MODEL = re.compile(r'^(gpt-5|o\d)')
+_OPENAI_REASONING_MODEL = re.compile(r'^(gpt-(?:[5-9]|\d{2,})|o\d)')
 
 
 def _is_openai_reasoning_model(model: str) -> bool:
@@ -357,6 +357,21 @@ def _retry_delay(error: Exception, attempt: int) -> float:
     return base + random.uniform(0, base / 2)
 
 
+# Models that refused function tools while reasoning on /chat/completions
+# (e.g. gpt-6.x). Later calls send reasoning_effort='none' up front.
+_NO_REASONING_WITH_TOOLS: set[str] = set()
+
+
+def _rejects_tools_with_reasoning(err: BaseException) -> bool:
+    text = str(err).lower()
+    return 'reasoning_effort' in text and 'function tools' in text
+
+
+def _reasoning_effort_set(params: dict[str, Any]) -> bool:
+    extra = params.get('extra_body') or {}
+    return 'reasoning_effort' in params or (isinstance(extra, dict) and 'reasoning_effort' in extra)
+
+
 async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
     """chat.completions.create with retries on 429/5xx/timeouts.
 
@@ -367,6 +382,9 @@ async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
     from cognitrix.tasks.accounting import current_task_accounting
 
     accounting = current_task_accounting()
+    model = str(params.get('model') or '')
+    if params.get('tools') and model in _NO_REASONING_WITH_TOOLS and not _reasoning_effort_set(params):
+        params = {**params, 'reasoning_effort': 'none'}
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         if attempt > 1 and accounting is not None:
             retry_output_tokens = await accounting.begin_provider_retry()
@@ -376,6 +394,17 @@ async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
                 token_key = 'max_completion_tokens' if 'max_completion_tokens' in params else 'max_tokens'
                 params = {**params, token_key: retry_output_tokens}
         try:
+            return await client.chat.completions.create(**params)
+        except openai.BadRequestError as e:
+            # Some OpenAI models only take function tools on /chat/completions
+            # with reasoning turned off. Retry once that way rather than fail
+            # every chat with tools. A reasoning_effort the agent sets itself
+            # is left alone.
+            if not (params.get('tools') and _rejects_tools_with_reasoning(e)) or _reasoning_effort_set(params):
+                raise
+            logger.info("%s refuses tools while reasoning; retrying with reasoning_effort='none'", model)
+            _NO_REASONING_WITH_TOOLS.add(model)
+            params = {**params, 'reasoning_effort': 'none'}
             return await client.chat.completions.create(**params)
         except _transient_errors() as e:
             if accounting is not None:
