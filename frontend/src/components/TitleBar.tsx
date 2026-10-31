@@ -29,6 +29,24 @@ export function BellIcon({ className = 'h-[17px] w-[17px]' }: { className?: stri
   );
 }
 
+/** Minimize, maximize and close for the frameless desktop window. */
+export function WindowControls({ height = 42 }: { height?: number }) {
+  const cell = 'grid w-[46px] place-items-center text-fg-dim hover:text-fg';
+  return (
+    <div className="flex items-center" style={{ height }}>
+      <button type="button" aria-label="Minimize" onClick={() => windowAction('minimize')} className={cn(cell, 'h-full hover:bg-panel-2')}>
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" /></svg>
+      </button>
+      <button type="button" aria-label="Maximize" onClick={() => windowAction('toggleMaximize')} className={cn(cell, 'h-full hover:bg-panel-2')}>
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor" /></svg>
+      </button>
+      <button type="button" aria-label="Close" onClick={() => windowAction('close')} className={cn(cell, 'h-full hover:bg-[#c42b1c] hover:text-white')}>
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0 0 10" stroke="currentColor" /></svg>
+      </button>
+    </div>
+  );
+}
+
 /**
  * Top bar: brand and breadcrumb, the command palette search, the notification
  * bell and, in the desktop app, the window controls. The desktop window has no
@@ -99,19 +117,7 @@ export default function TitleBar({ onOpenPalette }: { onOpenPalette: () => void 
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></svg>
           </Link>
         )}
-        {desktopApp && (
-          <>
-            <button type="button" aria-label="Minimize" onClick={() => windowAction('minimize')} className="grid h-[42px] w-[46px] place-items-center text-fg-dim hover:bg-panel-2 hover:text-fg">
-              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" /></svg>
-            </button>
-            <button type="button" aria-label="Maximize" onClick={() => windowAction('toggleMaximize')} className="grid h-[42px] w-[46px] place-items-center text-fg-dim hover:bg-panel-2 hover:text-fg">
-              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor" /></svg>
-            </button>
-            <button type="button" aria-label="Close" onClick={() => windowAction('close')} className="grid h-[42px] w-[46px] place-items-center text-fg-dim hover:bg-[#c42b1c] hover:text-white">
-              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0 0 10" stroke="currentColor" /></svg>
-            </button>
-          </>
-        )}
+        {desktopApp && <WindowControls />}
       </div>
     </header>
   );

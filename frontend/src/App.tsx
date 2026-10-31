@@ -4,6 +4,7 @@ import { UserProvider, useUser } from '@/context/AppContext';
 import { SessionProvider } from '@/context/SessionContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import AppLayout from '@/components/AppLayout';
+import DesktopFrame from '@/components/DesktopFrame';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
 import '@/app.css';
@@ -41,16 +42,16 @@ function LoadingScreen() {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useUser();
-  if (isLoading) return <LoadingScreen />;
+  if (isLoading) return <DesktopFrame><LoadingScreen /></DesktopFrame>;
   if (!user) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useUser();
-  if (isLoading) return <LoadingScreen />;
+  if (isLoading) return <DesktopFrame><LoadingScreen /></DesktopFrame>;
   if (user) return <Navigate to="/home" replace />;
-  return <>{children}</>;
+  return <DesktopFrame>{children}</DesktopFrame>;
 }
 
 function AppRoutes() {

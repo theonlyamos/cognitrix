@@ -7,6 +7,7 @@ import CommandPalette from './CommandPalette';
 import Inbox from '@/pages/Inbox';
 import { NotificationsProvider } from '@/context/NotificationsContext';
 import { isDesktop } from '@/lib/desktop';
+import DesktopFrame from './DesktopFrame';
 
 const apiGet = vi.hoisted(() => vi.fn());
 const apiPost = vi.hoisted(() => vi.fn().mockResolvedValue({ data: {} }));
@@ -96,5 +97,22 @@ describe('desktop shell', () => {
     await waitFor(() =>
       expect(apiPost).toHaveBeenCalledWith('/tasks/task-1/runs/run-1/approvals/ap-1', { approved: true }),
     );
+  });
+
+  it('gives pages outside the app shell window controls in the desktop app', () => {
+    const { unmount } = render(<DesktopFrame><p>Sign in</p></DesktopFrame>);
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+    unmount();
+
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    try {
+      render(<DesktopFrame><p>Sign in</p></DesktopFrame>);
+      for (const name of ['Minimize', 'Maximize', 'Close']) {
+        expect(screen.getByRole('button', { name })).toBeInTheDocument();
+      }
+      expect(screen.getByText('Sign in')).toBeInTheDocument();
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    }
   });
 });
