@@ -176,7 +176,17 @@ class ApprovalGate:
         # Interactive caches are intentionally ignored; a future durable
         # approval design must carry an explicit run-scoped authorization.
         if interface == 'task':
-            return ApprovalResult(approved=False, error="approval_required")
+            # A run started by a person parks the call and asks them in the
+            # web UI. Runs with nobody to ask (system/scheduler) are denied.
+            from cognitrix.tasks.approvals import request_task_approval, task_turn_ctx
+
+            ctx = task_turn_ctx.get(None)
+            if not ctx or not ctx.get('user_id') or not ctx.get('run_id'):
+                return ApprovalResult(approved=False, error="approval_required")
+            approved, error = await request_task_approval(
+                ctx, tool_call.tool_name, tool_call.params, risk
+            )
+            return ApprovalResult(approved=approved, error=error)
 
         # Cache keys are scoped so approvals don't leak across agents/users.
         scoped = f"{scope or 'global'}:{self._hash_operation(tool_call)}"

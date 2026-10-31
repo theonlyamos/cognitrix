@@ -1219,3 +1219,42 @@ async def delete_task(task_id: str):
         },
     )
     return {'message': 'Task deleted successfully'}
+
+
+class ApprovalDecision(BaseModel):
+    approved: bool
+
+
+@tasks_run_api.get('/{task_id}/runs/{run_id}/approvals')
+async def list_run_approvals(task_id: str, run_id: str, status: str | None = None,
+                             ctx: AuthContext = Depends(get_auth_context)):
+    """Tool calls a running task is waiting on (or has had answered)."""
+    from cognitrix.session_ownership import principal_key
+    from cognitrix.tasks import approvals
+
+    _task, _run = await _authorized_task_run(task_id, run_id, ctx)
+    user_key = principal_key(ctx.user)
+    rows = await approvals.list_for_run(run_id, status)
+    return [
+        {**approvals.approval_payload(row), 'can_decide': str(row.user_id) == user_key}
+        for row in rows
+    ]
+
+
+@tasks_run_api.post('/{task_id}/runs/{run_id}/approvals/{approval_id}')
+async def decide_run_approval(task_id: str, run_id: str, approval_id: str, body: ApprovalDecision,
+                              ctx: AuthContext = Depends(get_auth_context)):
+    """Approve or deny a parked tool call. Only the person who started the run may answer."""
+    from cognitrix.session_ownership import principal_key
+    from cognitrix.tasks import approvals
+
+    _task, _run = await _authorized_task_run(task_id, run_id, ctx)
+    row = await approvals.TaskApproval.get(approval_id)
+    if row is None or row.run_id != run_id:
+        raise HTTPException(status_code=404, detail='Approval not found')
+    if str(row.user_id) != principal_key(ctx.user):
+        raise HTTPException(status_code=403, detail='Only the person who started this run can answer')
+    decided = await approvals.decide(approval_id, run_id, body.approved)
+    if decided is None:
+        raise HTTPException(status_code=409, detail='This approval was already answered or has expired')
+    return approvals.approval_payload(decided)

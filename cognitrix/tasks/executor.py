@@ -7,6 +7,7 @@ from typing import Any
 from cognitrix.artifacts import bound_task_run_artifact
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.accounting import capture_task_usage
+from cognitrix.tasks.approvals import task_turn_ctx
 from cognitrix.tasks.events import TaskRunEventEmitter
 from cognitrix.tasks.results import (
     ArtifactRef,
@@ -100,6 +101,10 @@ class TaskStepExecutor:
         self.step_title = step_title
         self.emitter = emitter
         self.cancel_check = cancel_check
+        # Tool outcomes from the latest attempt, so the orchestrator can tell
+        # a step that was blocked from one that did its work.
+        self.denied_tools: list[str] = []
+        self.succeeded_tools: list[str] = []
 
     def create_attempt(self) -> tuple[Any, Session]:
         agent = instantiate_runtime(self.snapshot, tool_resolver=self.tool_resolver)
@@ -124,6 +129,8 @@ class TaskStepExecutor:
         attempt: int = 1,
     ) -> StepResult:
         await self._checkpoint()
+        self.denied_tools = []
+        self.succeeded_tools = []
         agent, session = self.create_attempt()
         chunks: list[str] = []
         artifacts: list[ArtifactRef] = []
@@ -165,6 +172,14 @@ class TaskStepExecutor:
                         run_id=self.run_id,
                     ))
             if payload.get("type") == "tool":
+                outcome = payload.get("outcome")
+                status = str(payload.get("status") or "")
+                if status != "started":
+                    name = str(payload.get("tool_name") or "tool")
+                    if isinstance(outcome, dict) and outcome.get("status") == "denied":
+                        self.denied_tools.append(name)
+                    elif status == "completed":
+                        self.succeeded_tools.append(name)
                 if self.emitter is not None:
                     await self.emitter.flush_text(
                         session_id=session.id,
@@ -207,6 +222,24 @@ class TaskStepExecutor:
                         content=text,
                     )
 
+        async def emit_approval_event(kind: str, data: dict) -> None:
+            if self.emitter is not None:
+                await self.emitter.emit(
+                    kind,
+                    session_id=session.id,
+                    step_index=self.step_index,
+                    agent_name=self.snapshot.name,
+                    data=data,
+                )
+
+        # Lets the approval gate park a risky call and ask the run's owner.
+        approval_token = task_turn_ctx.set({
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "step_index": self.step_index,
+            "user_id": getattr(tool_context, "user_id", None),
+            "emit": emit_approval_event,
+        })
         async with capture_task_usage() as usage:
             try:
                 await session(
@@ -222,6 +255,7 @@ class TaskStepExecutor:
                     tool_context=tool_context,
                 )
             finally:
+                task_turn_ctx.reset(approval_token)
                 if self.emitter is not None:
                     await self.emitter.flush_text(
                         session_id=session.id,

@@ -690,6 +690,8 @@ async def _ensure_schema():
             if hasattr(result, '__await__'):
                 await result
 
+    from cognitrix.tasks.approvals import TaskApproval
+
     for model in (
         TaskRun,
         TaskRunHead,
@@ -698,6 +700,7 @@ async def _ensure_schema():
         TaskRunPhaseMetric,
         APIKey,
         Artifact,
+        TaskApproval,
     ):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)
