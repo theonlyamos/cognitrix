@@ -34,6 +34,13 @@ def tool(*args: Any, **kwargs: Any):
             # still degrade safely to string schemas.
             type_hints = {}
         func_signatures = inspect.signature(func)
+        # Keyword-only parameters (after a bare `*`) are filled in by the
+        # runtime, such as `parent` (the calling agent). They are hidden from
+        # the model's schema and never type-checked: they hold live objects.
+        internal = [
+            name for name, p in func_signatures.parameters.items()
+            if p.kind is inspect.Parameter.KEYWORD_ONLY
+        ]
 
         class GenericTool(Tool):
             def validate_parameters(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -42,6 +49,8 @@ def tool(*args: Any, **kwargs: Any):
                     raise ValueError(f"Unknown parameter(s): {', '.join(sorted(unknown))}")
                 validated = dict(params)
                 for name, parameter in func_signatures.parameters.items():
+                    if name in internal:
+                        continue
                     if name not in validated:
                         if parameter.default is inspect.Parameter.empty:
                             raise ValueError(f"Missing required parameter: {name}")
@@ -71,6 +80,7 @@ def tool(*args: Any, **kwargs: Any):
             supported_interfaces=kwargs.get('supported_interfaces'),
             occupies_execution_slot=kwargs.get('occupies_execution_slot', True),
             approval_mode=kwargs.get('approval_mode', 'risk_based'),
+            internal_params=internal,
         )
 
         func_parameters = func_signatures.parameters
@@ -99,11 +109,12 @@ def tool(*args: Any, **kwargs: Any):
         new_tool.parameters = {
             key: get_type_name(type_hints.get(key, value.annotation))
             for key, value in func_parameters.items()
+            if key not in internal
         }
         # Params without a default are required; optional ones must not be forced.
         new_tool.required_params = [
             key for key, value in func_parameters.items()
-            if value.default is inspect.Parameter.empty
+            if value.default is inspect.Parameter.empty and key not in internal
         ]
 
         return new_tool

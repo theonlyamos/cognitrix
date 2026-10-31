@@ -430,6 +430,12 @@ class AgentManager:
                     continue
 
                 # Safety check
+                # Work on a copy: `args` is the dict stored in the assistant
+                # message, and runtime-only values (like the agent object)
+                # must never end up in history, where they break JSON
+                # serialisation on the next model call.
+                internal_params = set(getattr(tool, 'internal_params', None) or [])
+                args = {k: v for k, v in dict(args).items() if k not in internal_params}
                 tool_call = ToolCall(tool_name=assigned_tool.name, params=args)
                 risk = self.detector.analyze(assigned_tool.name, args)
 
@@ -467,14 +473,12 @@ class AgentManager:
 
                 print(f"\nRunning tool '{tool.name.title()}' with parameters: {args}")
 
-                # Add parent reference for sub-agent tools
-                if 'sub agent' in tool.name.lower() or tool.name.lower() == 'create sub agent' or tool.category == 'mcp':
+                # Runtime-filled parameters. Delegation inherits the caller's
+                # interface so a sub-agent's risky tools are gated by the same
+                # channel (never a model-supplied value).
+                if 'parent' in internal_params:
                     args['parent'] = self.agent
-
-                # Delegation inherits the caller's interface so a sub-agent's
-                # risky tools are gated by the same channel (never a model-
-                # supplied value).
-                if tool.name.lower() == 'call agent':
+                if 'interface' in internal_params:
                     args['interface'] = interface
 
                 jobs.append(
