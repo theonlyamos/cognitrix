@@ -379,3 +379,46 @@ async def test_unexpected_turn_error_is_shown_and_recorded(monkeypatch):
                   None, False)
     assert session.last_turn_error and 'kaput' in session.last_turn_error
     assert any('kaput' in s for s in shown)
+
+
+# --- Shell allowlist ------------------------------------------------------------
+
+def test_shell_refuses_paths_outside_the_working_directory(tmp_path):
+    from cognitrix.common.safe_exec import CommandNotAllowed, build_argv
+
+    assert build_argv(f'cat {tmp_path}/notes.txt', root=tmp_path)[1].endswith('notes.txt')
+    for bad in ('cat /etc/passwd', 'cat ~/.ssh/id_rsa', 'ls /', 'grep --file=/etc/shadow x'):
+        with pytest.raises(CommandNotAllowed):
+            build_argv(bad, root=tmp_path)
+
+
+def test_shell_refuses_git_options_that_run_programs(tmp_path):
+    from cognitrix.common.safe_exec import CommandNotAllowed, build_argv
+
+    assert build_argv('git log -c', root=tmp_path) == ['git', 'log', '-c']
+    for bad in ('git -c core.pager=id log', 'git clone --upload-pack=id x', 'git --exec-path=/x status'):
+        with pytest.raises(CommandNotAllowed):
+            build_argv(bad, root=tmp_path)
+
+
+def test_sed_cannot_execute_or_write(monkeypatch, tmp_path):
+    from cognitrix.common import safe_exec
+
+    # GNU sed: --sandbox makes sed itself refuse e/r/w.
+    monkeypatch.setattr(safe_exec, '_gnu_sed', lambda: True)
+    assert safe_exec.build_argv('sed s/a/b/ f', root=tmp_path)[:2] == ['sed', '--sandbox']
+
+    # Other seds: the script is checked instead.
+    monkeypatch.setattr(safe_exec, '_gnu_sed', lambda: False)
+    assert safe_exec.build_argv('sed -n 2p where.txt', root=tmp_path)
+    for bad in ('sed s/a/id/e f', 'sed 1e\\ id f', 'sed w/tmp/x f', "sed 'r secrets' f", 'sed -f s.sed f'):
+        with pytest.raises(safe_exec.CommandNotAllowed):
+            safe_exec.build_argv(bad, root=tmp_path)
+
+
+def test_shell_output_keeps_stderr():
+    from cognitrix.common.safe_exec import _format_output
+
+    assert _format_output('out', 'warning', 0) == 'out\n\n[stderr: warning]'
+    assert _format_output('', 'warning', 0) == '[stderr: warning]'
+    assert 'boom' in _format_output('', 'boom', 1)

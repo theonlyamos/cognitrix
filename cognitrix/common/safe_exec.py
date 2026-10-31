@@ -15,6 +15,7 @@ place to audit and a single place to fix:
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import re
 import shlex
@@ -59,7 +60,78 @@ _DANGEROUS_ARG_TOKENS: dict[str, frozenset[str]] = {
     'sed': frozenset({'-i', '--in-place'}),
 }
 
+# git options that run arbitrary programs (config overrides can set
+# core.pager/core.sshCommand/alias.*; pack options name a helper to execute).
+_GIT_GLOBAL_DANGEROUS = frozenset({'-c', '--config-env', '--exec-path'})
+_GIT_ANYWHERE_DANGEROUS = ('--upload-pack', '--receive-pack', '--exec=', '--config-env')
+
+# Without GNU sed's --sandbox, refuse scripts that could use the e (execute),
+# w/W (write file) or r/R (read file) commands, or the s///e and s///w flags.
+# Conservative: after removing s/// and y/// bodies, any of those letters left
+# in the script blocks it.
+_SED_SUBST = re.compile(r"([sy])(.)(?:\\.|(?!\2).)*\2(?:\\.|(?!\2).)*\2([a-zA-Z0-9]*)")
+
+
+def _sed_scripts(args: list[str]) -> list[str]:
+    """The script parts of a sed argv: -e values, else the first operand."""
+    scripts, first_operand, take_next = [], None, False
+    for tok in args:
+        if take_next:
+            scripts.append(tok)
+            take_next = False
+        elif tok in ('-e', '--expression'):
+            take_next = True
+        elif tok.startswith('--expression='):
+            scripts.append(tok.split('=', 1)[1])
+        elif tok.startswith('-e') and len(tok) > 2:
+            scripts.append(tok[2:])
+        elif not tok.startswith('-') and first_operand is None:
+            first_operand = tok
+    return scripts or ([first_operand] if first_operand is not None else [])
+
+
+def _sed_script_unsafe(script: str) -> bool:
+    flags_hit = False
+
+    def strip(match: re.Match) -> str:
+        nonlocal flags_hit
+        if match.group(1) == 's' and re.search(r'[ew]', match.group(3)):
+            flags_hit = True
+        return ' '
+
+    rest = _SED_SUBST.sub(strip, script)
+    return flags_hit or bool(re.search(r'[eEwWrR]', rest))
+
+
 DEFAULT_TIMEOUT = 30
+
+
+@functools.lru_cache(maxsize=1)
+def _gnu_sed() -> bool:
+    try:
+        proc = subprocess.run(['sed', '--sandbox', '-n', 'p', os.devnull],
+                              capture_output=True, timeout=5)
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def _check_paths_within(argv: list[str], root: str | os.PathLike[str]) -> None:
+    """Absolute and home-relative paths must stay inside ``root``."""
+    root_path = Path(root).resolve()
+    for tok in argv[1:]:
+        values = [tok]
+        if tok.startswith('-') and '=' in tok:
+            values.append(tok.split('=', 1)[1])
+        for value in values:
+            if not (value.startswith(('/', '~', '\\')) or re.match(r'^[A-Za-z]:[\\/]', value)):
+                continue
+            try:
+                resolved = Path(os.path.expanduser(value)).resolve()
+            except (OSError, RuntimeError):
+                raise CommandNotAllowed(f"Path '{value}' could not be resolved")
+            if resolved != root_path and root_path not in resolved.parents:
+                raise CommandNotAllowed(f"Path '{value}' is outside the working directory")
 
 
 class CommandNotAllowed(Exception):
@@ -70,12 +142,18 @@ class PathEscapesRoot(Exception):
     """Raised when a resolved path falls outside the permitted root directory."""
 
 
-def build_argv(command: str, allowed: frozenset[str] | None = None) -> list[str]:
+def build_argv(
+    command: str,
+    allowed: frozenset[str] | None = None,
+    *,
+    root: str | os.PathLike[str] | None = None,
+) -> list[str]:
     """Validate ``command`` and return its argv, or raise ``CommandNotAllowed``.
 
     Rejects empty input, shell metacharacters (``; & | ` $ > < .. newline``), and
     any base command not present in ``allowed``. Splits with ``shlex`` so the caller
-    can execute with ``shell=False``.
+    can execute with ``shell=False``. With ``root``, absolute or ``~`` paths in
+    the arguments must resolve inside it.
     """
     allowed = allowed if allowed is not None else DEFAULT_ALLOWED_COMMANDS
 
@@ -106,16 +184,47 @@ def build_argv(command: str, allowed: frozenset[str] | None = None) -> list[str]
     if base in ('awk', 'gawk', 'mawk') and any('system(' in tok for tok in argv[1:]):
         raise CommandNotAllowed("awk 'system(...)' is not allowed (arbitrary code execution)")
 
+    if base == 'git':
+        for tok in argv[1:]:
+            if not tok.startswith('-'):
+                break  # global options end at the subcommand
+            if tok.split('=', 1)[0] in _GIT_GLOBAL_DANGEROUS:
+                raise CommandNotAllowed(f"git option '{tok}' is not allowed (it can run programs)")
+        for tok in argv[1:]:
+            if tok.startswith(_GIT_ANYWHERE_DANGEROUS):
+                raise CommandNotAllowed(f"git option '{tok}' is not allowed (it can run programs)")
+
+    if base == 'sed':
+        if _gnu_sed():
+            # GNU sed refuses e/r/w commands in sandbox mode.
+            argv = [argv[0], '--sandbox', *argv[1:]]
+        elif any(_sed_script_unsafe(script) for script in _sed_scripts(argv[1:])):
+            raise CommandNotAllowed("sed e/r/w commands are not allowed")
+        elif any(tok in ('-f', '--file') or tok.startswith('--file=') for tok in argv[1:]):
+            raise CommandNotAllowed("sed script files are not allowed without GNU sed")
+
+    if root is not None:
+        _check_paths_within(argv, root)
+
     return argv
 
 
 def _format_output(stdout: str, stderr: str, returncode: int) -> str:
     out = (stdout or "").strip()
     err = (stderr or "").strip()
-    if out:
-        return f"{out}\n\n[stderr: {err}]" if err and returncode != 0 else out
     if returncode != 0:
-        return f"Command failed (exit code {returncode}): {err}" if err else f"Command failed (exit code {returncode})"
+        head = f"Command failed (exit code {returncode})"
+        parts = [head + (f": {err}" if err and not out else "")]
+        if out:
+            parts.append(out)
+            if err:
+                parts.append(f"[stderr: {err}]")
+        return "\n\n".join(parts)
+    # Successful commands still report warnings written to stderr.
+    if out:
+        return f"{out}\n\n[stderr: {err}]" if err else out
+    if err:
+        return f"[stderr: {err}]"
     return "Command executed successfully (no output)"
 
 
@@ -129,7 +238,7 @@ def run_whitelisted(
 ) -> str:
     """Synchronously run a whitelisted command with ``shell=False``. Returns output text."""
     require_host_process_authority(host_process_mode)
-    argv = build_argv(command, allowed)
+    argv = build_argv(command, allowed, root=cwd if cwd is not None else os.getcwd())
     try:
         proc = subprocess.run(
             argv, capture_output=True, text=True, cwd=cwd, timeout=timeout,
@@ -149,7 +258,7 @@ async def run_whitelisted_async(
 ) -> str:
     """Asynchronously run a whitelisted command with ``shell=False``. Returns output text."""
     require_host_process_authority(host_process_mode)
-    argv = build_argv(command, allowed)
+    argv = build_argv(command, allowed, root=cwd if cwd is not None else os.getcwd())
     proc = await asyncio.create_subprocess_exec(
         *argv,
         stdout=asyncio.subprocess.PIPE,
