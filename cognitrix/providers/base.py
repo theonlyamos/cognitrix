@@ -46,6 +46,7 @@ _DEFAULT_BASE_URLS: dict[str, str] = {
     'openai': 'https://api.openai.com/v1',
     'cerebras': 'https://api.cerebras.com/v1',
     'google': 'https://generativelanguage.googleapis.com/v1beta/openai/v1',
+    'anthropic': 'https://api.anthropic.com/v1/',
 }
 
 # Conservative per-provider context windows (tokens) used for prompt budgeting

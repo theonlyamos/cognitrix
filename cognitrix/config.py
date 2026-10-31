@@ -188,7 +188,7 @@ class CognitrixSettings:
         model_mapping = {
             'openai': 'gpt-4o',
             'openrouter': 'google/gemini-3.5-flash-preview',
-            'anthropic': 'claude-4-5-sonnet',
+            'anthropic': 'claude-sonnet-5-5',
             'google': 'gemini-3.5-flash',
             'groq': 'llama-3.3-70b-versatile',
             'cohere': 'command-r-plus',
