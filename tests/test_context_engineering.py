@@ -290,3 +290,20 @@ async def test_compaction_noop_under_threshold(monkeypatch):
     )
     await session._maybe_compact(agent)
     assert session.chat == before
+
+
+@pytest.mark.parametrize("text", [
+    'What is "city" in this JSON? {"city": "Accra", "temp": 31}',
+    'Step 2\n\nReviewer feedback:\n{"reviewer_suggestions": ["fix"], "previous_attempt": "x"}',
+    '{"city": "Accra"}',
+])
+def test_user_text_containing_json_is_kept_verbatim(text):
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    msg = agent.process_prompt(text)
+    assert msg["content"] == text
+
+
+def test_structured_result_string_is_still_unpacked():
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    msg = agent.process_prompt('{"result": "done"}')
+    assert msg["content"] == "done"

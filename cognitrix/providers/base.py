@@ -146,13 +146,42 @@ def _is_openai_reasoning_model(model: str) -> bool:
     return bool(_OPENAI_REASONING_MODEL.match(name)) and '-chat' not in name
 
 
+_CLAUDE_VERSION = re.compile(r'^claude-(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?!\d)')
+
+
+def _anthropic_rejects_temperature(model: str) -> bool:
+    """Claude Opus 4.7 and every later model reject `temperature` with a 400.
+
+    Older names (claude-3-*, Sonnet/Haiku 4.5, Opus 4.6 and earlier) still
+    accept it. Names we can't parse keep it, so behaviour is unchanged.
+    """
+    name = (model or '').lower().rsplit('/', 1)[-1]
+    m = _CLAUDE_VERSION.match(name)
+    if not m:
+        return False
+    major, minor = int(m.group(1)), int(m.group(2) or 0)
+    return (major, minor) >= (4, 7)
+
+
 def _apply_provider_param_rules(llm: 'LLM', params: dict[str, Any]) -> dict[str, Any]:
     """Adapt request params to what the provider's API accepts.
 
     OpenAI deprecated `max_tokens` in favour of `max_completion_tokens`, and
     GPT-5.x / o-series models reject `max_tokens` outright. They also only
-    accept the default temperature, so it is left out for them.
+    accept the default temperature, so it is left out for them. Newer Claude
+    models reject `temperature` too, and Anthropic rejects `json_object`.
     """
+    if llm.provider == 'anthropic':
+        if _anthropic_rejects_temperature(llm.model):
+            params.pop('temperature', None)
+        # Anthropic's OpenAI-compatible endpoint only accepts strict
+        # `json_schema` formats and rejects `json_object` with a 400. Callers
+        # that ask for json_object already parse JSON out of the text, so
+        # leaving it out is safe.
+        fmt = params.get('response_format')
+        if isinstance(fmt, dict) and fmt.get('type') == 'json_object':
+            params.pop('response_format')
+        return params
     if llm.provider != 'openai':
         return params
     if 'max_tokens' in params:

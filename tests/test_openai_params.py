@@ -34,3 +34,30 @@ def test_openai_non_reasoning_models_keep_temperature(model):
 def test_other_providers_unchanged(provider):
     out = _apply_provider_param_rules(_llm(provider, 'gpt-5'), _params())
     assert out == _params()
+
+
+@pytest.mark.parametrize('model', ['claude-opus-4-7', 'claude-opus-4-8', 'claude-sonnet-5', 'claude-sonnet-5-5',
+                                   'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1', 'anthropic/claude-opus-5'])
+def test_new_claude_models_drop_temperature(model):
+    out = _apply_provider_param_rules(_llm('anthropic', model), _params())
+    assert 'temperature' not in out
+    assert out['max_tokens'] == 8192
+
+
+@pytest.mark.parametrize('model', ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-sonnet-4-5-20250929',
+                                   'claude-haiku-4-5-20251001', 'claude-opus-4-20250514', 'claude-3-5-sonnet-latest'])
+def test_older_claude_models_keep_temperature(model):
+    out = _apply_provider_param_rules(_llm('anthropic', model), _params())
+    assert out == _params()
+
+
+def test_anthropic_drops_json_object_response_format():
+    params = {**_params(), 'response_format': {'type': 'json_object'}}
+    out = _apply_provider_param_rules(_llm('anthropic', 'claude-sonnet-4-6'), params)
+    assert 'response_format' not in out
+
+
+def test_anthropic_keeps_json_schema_response_format():
+    fmt = {'type': 'json_schema', 'json_schema': {'name': 'x', 'strict': True, 'schema': {'type': 'object'}}}
+    out = _apply_provider_param_rules(_llm('anthropic', 'claude-sonnet-4-6'), {**_params(), 'response_format': fmt})
+    assert out['response_format'] == fmt
