@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cognitrix</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0c0e; --panel:#111315; --line:rgba(255,255,255,.08); --fg:#f4f4f2; --dim:#8b8f8b; --accent:#c6f24e; --danger:#ff8a80; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  .titlebar { height: 42px; flex: none; display: flex; align-items: center; background: #0f1113; border-bottom: 1px solid var(--line); user-select: none; }
+  .brand { display: flex; align-items: center; gap: 9px; padding-left: 14px; flex: 1; height: 100%; }
+  .logo { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: var(--bg); display: grid; place-items: center; }
+  .mono { font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace; }
+  .word { font-size: 12px; font-weight: 600; letter-spacing: .12em; }
+  .controls button { width: 46px; height: 42px; border: 0; background: transparent; color: #c9ccc9; display: inline-grid; place-items: center; cursor: default; }
+  .controls button:hover { background: rgba(255,255,255,.08); }
+  .controls button.close:hover { background: #c42b1c; color: #fff; }
+  main { flex: 1; display: grid; place-items: center; padding: 24px; }
+  .card { width: min(460px, 100%); text-align: center; }
+  .mark { width: 56px; height: 56px; border-radius: 16px; background: var(--accent); color: var(--bg); display: grid; place-items: center; margin: 0 auto 22px; }
+  h1 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
+  p { margin: 0; color: var(--dim); line-height: 1.55; }
+  .bar { height: 4px; border-radius: 2px; background: #23272b; margin: 22px auto 0; width: 220px; overflow: hidden; }
+  .bar span { display: block; height: 100%; width: 40%; background: var(--accent); animation: slide 1.2s ease-in-out infinite; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+  @media (prefers-reduced-motion: reduce) { .bar span { animation: none; width: 100%; opacity: .5; } }
+  .error { display: none; margin-top: 22px; padding: 14px; border-radius: 12px; background: var(--panel); border: 1px solid rgba(255,107,94,.35); text-align: left; }
+  .error strong { color: var(--danger); display: block; margin-bottom: 6px; }
+  .error p { font-size: 13px; word-break: break-word; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; }
+  .actions button { height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line); background: #1c1f23; color: var(--fg); font: inherit; font-size: 13px; cursor: pointer; }
+  .actions button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  body.failed .bar { display: none; }
+  body.failed .error { display: block; }
+</style>
+</head>
+<body>
+  <div class="titlebar" data-tauri-drag-region>
+    <div class="brand" data-tauri-drag-region>
+      <span class="logo" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span>
+      <span class="mono word" data-tauri-drag-region>COGNITRIX</span>
+    </div>
+    <div class="controls">
+      <button type="button" aria-label="Minimize" data-window="minimize"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor"/></svg></button>
+      <button type="button" aria-label="Maximize" data-window="toggleMaximize"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor"/></svg></button>
+      <button type="button" aria-label="Close" class="close" data-window="close"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0 0 10" stroke="currentColor"/></svg></button>
+    </div>
+  </div>
+  <main>
+    <div class="card" role="status" aria-live="polite">
+      <div class="mark" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></div>
+      <h1 id="title">Starting the local engine</h1>
+      <p id="detail">Cognitrix runs its agents on this PC. The first start can take a minute.</p>
+      <div class="bar" aria-hidden="true"><span></span></div>
+      <div class="error">
+        <strong>The engine didn't start</strong>
+        <p id="error"></p>
+        <div class="actions">
+          <button type="button" class="primary" id="retry">Try again</button>
+          <button type="button" id="logs">Open engine log</button>
+        </div>
+      </div>
+    </div>
+  </main>
+<script>
+  const tauri = window.__TAURI_INTERNALS__;
+  const invoke = (cmd, args) => tauri ? tauri.invoke(cmd, args) : Promise.resolve(null);
+  const win = (action) => invoke('plugin:window|' + ({ minimize: 'minimize', toggleMaximize: 'toggle_maximize', close: 'close' })[action], { label: 'main' });
+
+  document.querySelectorAll('[data-window]').forEach((button) =>
+    button.addEventListener('click', () => win(button.dataset.window)));
+  document.getElementById('retry').addEventListener('click', () => {
+    document.body.classList.remove('failed');
+    document.getElementById('title').textContent = 'Starting the local engine';
+    invoke('restart_engine');
+  });
+  document.getElementById('logs').addEventListener('click', () => invoke('open_folder', { kind: 'logs' }));
+
+  function render(state) {
+    if (!state) return;
+    if (state.status === 'failed' || state.status === 'stopped') {
+      document.body.classList.add('failed');
+      document.getElementById('title').textContent = 'Cognitrix needs a hand';
+      document.getElementById('error').textContent = state.error || 'Unknown error.';
+    } else if (state.status === 'running' && state.url) {
+      document.getElementById('title').textContent = 'Opening Cognitrix';
+    }
+  }
+
+  if (tauri) {
+    // Status pushed by the shell, plus a poll in case an event was missed
+    // before this page loaded.
+    const handler = tauri.transformCallback((event) => render(event.payload));
+    invoke('plugin:event|listen', { event: 'engine-status', target: { kind: 'Any' }, handler });
+    const poll = () => invoke('engine_status').then(render);
+    poll();
+    setInterval(poll, 1500);
+  }
+</script>
+</body>
+</html>

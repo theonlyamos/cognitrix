@@ -154,7 +154,7 @@ export default function ApiKeys() {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden bg-bg text-fg">
+    <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
       <PageHeader title="API Keys" subtitle={`programmatic access · ${keys.length}`}>
         <Button size="sm" onClick={() => { setShowForm((s) => !s); setCreated(null); }}>
           {showForm ? 'Close' : '+ New key'}

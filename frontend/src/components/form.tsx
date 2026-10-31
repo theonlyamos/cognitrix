@@ -105,7 +105,7 @@ export function PageForm({
   ];
 
   return (
-    <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden bg-bg text-fg">
+    <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
       <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <Link

@@ -1,12 +1,21 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
+import { useOptionalNotifications } from '@/context/NotificationsContext';
+import { isDesktop } from '@/lib/desktop';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { cn } from '@/lib/utils';
 
 type IconProps = { className?: string };
 
 const NAV = [
+  {
+    path: '/inbox',
+    label: 'Inbox',
+    icon: (p: IconProps) => (
+      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z" /></svg>
+    ),
+  },
   {
     path: '/home',
     label: 'Chat',
@@ -36,6 +45,13 @@ const NAV = [
     ),
   },
   {
+    path: '/settings',
+    label: 'Settings',
+    icon: (p: IconProps) => (
+      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></svg>
+    ),
+  },
+  {
     path: '/api-keys',
     label: 'API Keys',
     icon: (p: IconProps) => (
@@ -52,7 +68,13 @@ interface SidebarProps {
 export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps) {
   const location = useLocation();
   const { user, logout } = useUser();
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
+  const waiting = useOptionalNotifications()?.inbox.length ?? 0;
+  // The desktop app opens with the slim icon rail from the designs; the web
+  // keeps the full sidebar until someone collapses it.
+  const [collapsed, setCollapsed] = useState(() => {
+    const stored = localStorage.getItem('sidebarCollapsed');
+    return stored === null ? isDesktop() : stored === '1';
+  });
 
   const toggle = () =>
     setCollapsed((c) => {
@@ -70,15 +92,15 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
       aria-label="Primary navigation"
       data-mobile-open={mobileOpen}
       className={cn(
-        'fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(88vw,280px)] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 md:visible md:static md:z-auto md:h-screen md:translate-x-0 md:transition-[width]',
+        'fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(88vw,280px)] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 md:visible md:static md:z-auto md:h-full md:translate-x-0 md:transition-[width]',
         mobileOpen ? 'visible translate-x-0' : 'invisible -translate-x-full',
         collapsed ? 'md:w-[58px]' : 'md:w-[232px]',
       )}
     >
-      {/* Brand */}
+      {/* Brand (the title bar shows it on wider screens) */}
       <div
         className={cn(
-          'flex items-center gap-2.5 border-b border-line px-4 py-4',
+          'flex items-center gap-2.5 border-b border-line px-4 py-4 md:hidden',
           collapsed && 'md:justify-center md:gap-0 md:px-0',
         )}
       >
@@ -109,8 +131,21 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
               )}
             >
               {active && <span className={cn('absolute -left-2.5 bottom-1.5 top-1.5 w-[3px] rounded-r bg-accent', collapsed && 'md:left-0')} />}
-              <item.icon className="h-[17px] w-[17px] flex-none" />
-              <span className={cn(collapsed && 'md:hidden')}>{item.label}</span>
+              <span className="relative flex-none">
+                <item.icon className="h-[17px] w-[17px] flex-none" />
+                {item.path === '/inbox' && waiting > 0 && collapsed && (
+                  <span aria-hidden="true" className="absolute -right-2 -top-2 hidden h-[15px] min-w-[15px] place-items-center rounded-full bg-[#ffb86b] px-0.5 font-mono text-[9.5px] font-medium text-[#0b0c0e] md:grid">
+                    {waiting}
+                  </span>
+                )}
+              </span>
+              <span className={cn('flex-1', collapsed && 'md:hidden')}>{item.label}</span>
+              {item.path === '/inbox' && waiting > 0 && (
+                <span className={cn('rounded-full bg-[#ffb86b]/15 px-1.5 font-mono text-[10.5px] text-[#c77a26] dark:text-[#ffb86b]', collapsed && 'md:hidden')}>
+                  {waiting}
+                  <span className="sr-only"> waiting</span>
+                </span>
+              )}
             </Link>
           );
         })}

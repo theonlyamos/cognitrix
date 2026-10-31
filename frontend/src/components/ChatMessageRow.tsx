@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
+import { BlockedEndpointNotice, RefusedNotice, blockedEndpoint, isRefusal } from '@/components/SafetyNotices';
 import { cn } from '@/lib/utils';
 
 const MarkdownMessage = lazy(() => import('@/components/MarkdownMessage'));
@@ -78,6 +79,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
                 </div>
               </div>
               </details>
+              {tool.status !== 'running' && isRefusal(tool.result) && <RefusedNotice />}
               {tool.artifacts?.map((artifact) => (
                 <ArtifactPreview
                   key={artifact.id}
@@ -96,12 +98,14 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   if (message.role === 'assistant' && !message.content.trim() && !(isLast && streaming)) return null;
 
   const isUser = message.role === 'user';
+  const blockedUrl = isUser ? null : blockedEndpoint(message.content);
   return (
     <div className="grid grid-cols-1 gap-2 border-b border-line px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
       <div className={cn('pt-0.5 font-mono text-[11px] tracking-[0.06em]', isUser ? 'text-accent-ink' : 'text-fg-dim')}>
         {isUser ? 'YOU' : 'AGENT'}
       </div>
       <div className="min-w-0" aria-live={!isUser && isLast && streaming ? 'off' : undefined}>
+        {blockedUrl && <BlockedEndpointNotice url={blockedUrl} />}
         {isUser ? (
           <div className="whitespace-pre-wrap break-words leading-relaxed">{message.content}</div>
         ) : isLast && streaming ? (

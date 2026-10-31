@@ -1475,7 +1475,7 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
 
 
 @tool(category='system')
-def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(Path.cwd())) -> str:
+def bash(command: str, timeout: int | None = 180, working_dir: str | None = None) -> str:
     """Execute a single whitelisted terminal command.
 
     Only one command runs per call — command chaining and shell operators
@@ -1491,7 +1491,9 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
         command (str): The single command to execute (no chaining).
         timeout (int, optional): Maximum execution time in seconds.
         working_dir (str, optional): Directory to run the command in. Use this
-            instead of `cd` to operate in a subfolder. Defaults to current dir.
+            instead of `cd` to operate in a subfolder. Relative paths start at
+            the working folder, and the directory must stay inside it.
+            Defaults to the working folder.
 
     Returns:
         str: Command output or error message.
@@ -1503,15 +1505,24 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = str(
         return f'Error: {e}'
 
     # Validate and resolve the working directory
+    # Commands run inside the working folder (settings.tools_root, the same
+    # root the file tools use), never elsewhere on the machine.
+    root = Path(settings.tools_root).expanduser().resolve()
     if working_dir:
         try:
-            work_dir = Path(working_dir).resolve()
-            if not work_dir.exists() or not work_dir.is_dir():
-                return f"Error: Invalid working directory - {working_dir}"
+            candidate = Path(working_dir).expanduser()
+            work_dir = (candidate if candidate.is_absolute() else root / candidate).resolve()
         except Exception as e:
             return f"Error: Working directory validation failed - {str(e)}"
+        if not _inside(work_dir, root):
+            return (
+                f"Error: Command refused - '{working_dir}' is outside the working folder "
+                f"'{root}'. Commands can only run inside the working folder."
+            )
+        if not work_dir.exists() or not work_dir.is_dir():
+            return f"Error: Invalid working directory - {working_dir}"
     else:
-        work_dir = Path.cwd()
+        work_dir = root
 
     # Normalise timeout (the LLM may pass it as a string)
     try:

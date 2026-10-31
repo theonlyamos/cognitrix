@@ -127,7 +127,9 @@ def _pid_alive(pid: int) -> bool:
             size = wintypes.DWORD(len(buf))
             if k32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
                 image = Path(buf.value).name.lower()
-                return 'python' in image or 'celery' in image
+                # 'cognitrix' covers the desktop app's frozen engine, which
+                # runs its worker as `cognitrix-engine.exe worker`.
+                return any(name in image for name in ('python', 'celery', 'cognitrix'))
             return True
         finally:
             k32.CloseHandle(handle)
@@ -141,6 +143,44 @@ def _pid_alive(pid: int) -> bool:
 
 
 _worker_proc: subprocess.Popen | None = None
+
+
+def worker_command() -> list[str]:
+    """Command line for the local fallback worker.
+
+    A PyInstaller build (the desktop app's engine) has no interpreter to run
+    `-m celery` with, so it re-runs its own executable in worker mode; see
+    cognitrix/desktop.py."""
+    worker_args = ['--pool=solo', '--loglevel=info', f'--pidfile={WORKER_PIDFILE}']
+    if getattr(sys, 'frozen', False):
+        return [sys.executable, 'worker', *worker_args]
+    return [sys.executable, '-m', 'celery', '-A', 'cognitrix.celery_worker', 'worker', *worker_args]
+
+
+def local_worker_running() -> bool:
+    """True when a fallback worker started by this or an earlier engine is up."""
+    if _worker_proc is not None and _worker_proc.poll() is None:
+        return True
+    try:
+        return _pid_alive(int(WORKER_PIDFILE.read_text().strip()))
+    except (OSError, ValueError):
+        return False
+
+
+def stop_local_worker(timeout: float = 5.0) -> None:
+    """Stop the fallback worker this process started, if any. The desktop
+    engine calls this on exit so quitting the app doesn't leave a worker
+    behind. Workers started by someone else are left alone."""
+    global _worker_proc
+    proc, _worker_proc = _worker_proc, None
+    if proc is None or proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    WORKER_PIDFILE.unlink(missing_ok=True)
 
 
 def ensure_local_worker() -> bool:
@@ -174,11 +214,12 @@ def ensure_local_worker() -> bool:
         WORKER_PIDFILE.unlink(missing_ok=True)
 
         env = {**os.environ, 'CELERY_WORKER_MODE': '1', 'CELERY_FORCE_FILESYSTEM': '1'}
-        # Pin the child's imports to this process's package set: celery's
-        # re-exec on Windows can land on the venv's base interpreter (billiard
-        # uses sys.executable with no venv fix-up), and PYTHONPATH wins over
-        # whatever site-packages that interpreter has.
-        env['PYTHONPATH'] = os.pathsep.join(p for p in sys.path if p)
+        if not getattr(sys, 'frozen', False):
+            # Pin the child's imports to this process's package set: celery's
+            # re-exec on Windows can land on the venv's base interpreter
+            # (billiard uses sys.executable with no venv fix-up), and
+            # PYTHONPATH wins over whatever site-packages that interpreter has.
+            env['PYTHONPATH'] = os.pathsep.join(p for p in sys.path if p)
         kwargs: dict = {}
         if sys.platform == 'win32':
             kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
@@ -186,9 +227,7 @@ def ensure_local_worker() -> bool:
             kwargs['start_new_session'] = True
         with open(WORKER_LOGFILE, 'ab') as log:
             proc = subprocess.Popen(
-                [sys.executable, '-m', 'celery', '-A', 'cognitrix.celery_worker', 'worker',
-                 '--pool=solo', '--loglevel=info', f'--pidfile={WORKER_PIDFILE}'],
-                stdout=log, stderr=log, env=env, **kwargs,
+                worker_command(), stdout=log, stderr=log, env=env, **kwargs,
             )
         # Catch instant deaths (missing deps, bad CLI) so the route can 503
         # instead of enqueueing to nobody. Runs off the event loop (to_thread).

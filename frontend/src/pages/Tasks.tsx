@@ -30,8 +30,8 @@ export default function Tasks() {
   const tasks = data ?? [];
 
   return (
-    <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden bg-bg text-fg">
-      <PageHeader title="Tasks" subtitle={`delegate work to agents · ${tasks.length}`}>
+    <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
+      <PageHeader title="Tasks" subtitle={`owner: you · private · ${tasks.length} task${tasks.length === 1 ? "" : "s"} only you can see and run`}>
         <Button asChild size="sm">
           <Link to="/tasks/new">+ New task</Link>
         </Button>

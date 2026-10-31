@@ -77,7 +77,7 @@ export default function TeamPage() {
   };
 
   if (editing && loadingTeam) {
-    return <div className="flex-1 flex flex-col h-screen min-w-0 bg-bg"><LoadingState label="loading team…" /></div>;
+    return <div className="flex-1 flex flex-col h-full min-w-0 bg-bg"><LoadingState label="loading team…" /></div>;
   }
 
   return (
