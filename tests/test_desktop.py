@@ -136,3 +136,45 @@ async def test_bash_refuses_a_working_dir_outside_the_working_folder(tmp_path, m
     assert 'Command refused' in refused.content and 'outside the working folder' in refused.content
     assert 'Command refused' in escaped.content
     assert 'marker.txt' in allowed.content
+
+
+def test_signed_in_chats_get_the_shell_only_in_the_desktop_app(monkeypatch):
+    from cognitrix.common.process_security import HostProcessMode
+    from cognitrix.common.security import AuthContext
+    from cognitrix.tools.utils import delegated_execution_context
+
+    user = SimpleNamespace(id='me')
+    signed_in = AuthContext(user=user, api_key=None)
+    with_key = AuthContext(user=user, api_key=SimpleNamespace(
+        id='k1', scopes=['run'], allowed_agents=None, allowed_teams=None))
+
+    monkeypatch.delenv('COGNITRIX_DESKTOP', raising=False)
+    assert signed_in.tool_execution_context().host_process_mode is HostProcessMode.DENY
+
+    monkeypatch.setenv('COGNITRIX_DESKTOP', '1')
+    ctx = signed_in.tool_execution_context()
+    assert ctx.host_process_mode is HostProcessMode.TRUSTED_LOCAL
+    # API keys and delegated sub-agents never get it.
+    assert with_key.tool_execution_context().host_process_mode is HostProcessMode.DENY
+    assert delegated_execution_context(ctx).host_process_mode is HostProcessMode.DENY
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_runs_get_the_shell(db, monkeypatch):
+    from cognitrix.common.process_security import HostProcessMode
+    from cognitrix.models import User
+    from cognitrix.tasks.authority import reconstruct_tool_context
+
+    user = User(name='Amos', email='amos@example.com', password='x')
+    await user.save()
+    task = SimpleNamespace(id='t1')
+    run = SimpleNamespace(id='r1', task_id='t1', authority_kind='jwt', authority_id=str(user.id),
+                          requested_by=str(user.id))
+    sched = SimpleNamespace(id='r2', task_id='t1', authority_kind='scheduler', authority_id=None,
+                            requested_by=None, acl_agent_ids=[], acl_team_id=None)
+
+    monkeypatch.delenv('COGNITRIX_DESKTOP', raising=False)
+    assert (await reconstruct_tool_context(run, task)).host_process_mode is HostProcessMode.DENY
+    monkeypatch.setenv('COGNITRIX_DESKTOP', '1')
+    assert (await reconstruct_tool_context(run, task)).host_process_mode is HostProcessMode.TRUSTED_LOCAL
+    assert (await reconstruct_tool_context(sched, task)).host_process_mode is HostProcessMode.DENY

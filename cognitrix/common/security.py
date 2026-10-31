@@ -147,10 +147,13 @@ class AuthContext:
         return self.api_key is None or self.api_key.team_allowed(team_id)
 
     def tool_execution_context(self):
-        from cognitrix.tools.utils import ToolExecutionContext
+        from cognitrix.tools.utils import ToolExecutionContext, signed_in_host_process_mode
 
         if self.api_key is None:
-            return ToolExecutionContext(user_id=str(self.user.id))
+            return ToolExecutionContext(
+                user_id=str(self.user.id),
+                host_process_mode=signed_in_host_process_mode(),
+            )
         return ToolExecutionContext(
             user_id=str(self.user.id),
             api_key_id=str(self.api_key.id),

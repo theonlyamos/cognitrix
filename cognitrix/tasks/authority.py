@@ -3,7 +3,7 @@
 from cognitrix.errors import ExecutionControlError
 from cognitrix.models import User
 from cognitrix.models.api_key import APIKey
-from cognitrix.tools.utils import ToolExecutionContext
+from cognitrix.tools.utils import ToolExecutionContext, signed_in_host_process_mode
 
 
 class TaskAuthorityError(ExecutionControlError):
@@ -67,6 +67,7 @@ async def reconstruct_tool_context(run, task) -> ToolExecutionContext:
             user_id=user_id,
             task_id=task_id,
             run_id=str(run.id),
+            host_process_mode=signed_in_host_process_mode(),
         )
 
     if kind not in {"system", "scheduler"}:

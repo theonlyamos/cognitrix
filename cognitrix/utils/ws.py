@@ -35,6 +35,7 @@ from cognitrix.tasks.handler import handle_multi_step_task
 from cognitrix.tools.base import Tool
 from cognitrix.tools.utils import (
     ToolExecutionContext,
+    signed_in_host_process_mode,
     reset_execution_context,
     set_execution_context,
 )
@@ -260,6 +261,7 @@ async def _authorize_turn(query: dict, user_key: str, session: Session, web_agen
         user_id=user_key,
         session_id=binding.session_id,
         agent_id=binding.agent_id,
+        host_process_mode=signed_in_host_process_mode(),
     )
     return binding, persisted, context
 

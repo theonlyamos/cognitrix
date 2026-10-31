@@ -40,7 +40,7 @@ from cognitrix.session_ownership import (
     session_ownerships,
 )
 from cognitrix.tasks.handler import handle_multi_step_task
-from cognitrix.tools.utils import ToolExecutionContext
+from cognitrix.tools.utils import ToolExecutionContext, signed_in_host_process_mode
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -743,6 +743,7 @@ class SSEManager:
                             selected_image_artifact_id=(
                                 selected_ref.id if selected_ref is not None else None
                             ),
+                            host_process_mode=signed_in_host_process_mode(),
                         ),
                     )
                     if promoted is not None and (
