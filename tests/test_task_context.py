@@ -131,3 +131,39 @@ def test_dependency_context_exposes_complete_artifact_identity():
         '"uri":"/tasks/task-1/runs/run-1/artifacts/artifact-1"'
         in rendered
     )
+
+
+def _chain_step(index, deps):
+    from cognitrix.tasks.step import TaskRunStep
+    return TaskRunStep(
+        run_id="r", task_id="t", step_index=index,
+        title=f"Step {index}", description=f"Do {index}", dependencies=deps,
+    )
+
+
+def test_step_prompt_includes_results_of_indirect_dependencies():
+    from types import SimpleNamespace
+    from cognitrix.tasks.orchestrator import _durable_step_prompt
+
+    steps = {0: _chain_step(0, []), 1: _chain_step(1, [0]), 2: _chain_step(2, [1])}
+    completed = {0: StepResult(text="ENGLISH POEM"), 1: StepResult(text="FRENCH POEM")}
+    task = SimpleNamespace(title="Haiku", description="Write and translate")
+
+    prompt = _durable_step_prompt(task, steps[2], completed, steps)
+    assert "FRENCH POEM" in prompt
+    assert "ENGLISH POEM" in prompt
+    assert prompt.index("FRENCH POEM") < prompt.index("ENGLISH POEM")
+
+    # Without the step map, only direct dependencies are rendered (old behaviour).
+    assert "ENGLISH POEM" not in _durable_step_prompt(task, steps[2], completed)
+
+
+def test_ancestor_steps_handles_diamonds_and_cycles():
+    from cognitrix.tasks.orchestrator import _ancestor_steps
+
+    steps = {
+        0: _chain_step(0, []), 1: _chain_step(1, [0]), 2: _chain_step(2, [0]),
+        3: _chain_step(3, [1, 2]), 4: _chain_step(4, [3, 4]),
+    }
+    assert _ancestor_steps(steps[3], steps) == [0]
+    assert _ancestor_steps(steps[4], steps) == [0, 1, 2]

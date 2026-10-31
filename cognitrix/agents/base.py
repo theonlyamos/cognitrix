@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import weakref
@@ -321,14 +322,28 @@ class AgentManager:
                 else:
                     prompt['content'] = result
             else:
-                print(processed_query)
+                prompt['content'] = query if isinstance(query, str) else json.dumps(processed_query)
         else:
             prompt['content'] = processed_query
 
         return prompt
 
     def _process_query(self, query: str | dict) -> str | dict:
-        return extract_json(query) if isinstance(query, str) else query
+        if not isinstance(query, str):
+            return query
+        # Only a message that is itself a structured result is unpacked. Text
+        # that merely contains JSON (a pasted payload, a task retry prompt with
+        # reviewer feedback) must reach the model unchanged; unpacking it used
+        # to drop the whole message and send an empty user turn.
+        stripped = query.strip()
+        if not (stripped.startswith('{') and stripped.endswith('}')):
+            return query
+        parsed = extract_json(stripped)
+        if isinstance(parsed, dict) and (
+            'result' in parsed or parsed.get('type') == 'tool_calls_result'
+        ):
+            return parsed
+        return query
 
     def add_sub_agent(self, agent: Agent):
         self.agent.sub_agents.append(agent)

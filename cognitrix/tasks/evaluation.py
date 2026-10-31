@@ -62,9 +62,11 @@ def _artifact_summary(artifacts: Sequence[Any]) -> dict[str, Any]:
 
 
 def _response_text(response: Any) -> str:
-    if isinstance(response, str):
-        return response
-    return str(getattr(response, "llm_response", "") or "")
+    text = response if isinstance(response, str) else str(getattr(response, "llm_response", "") or "")
+    # Providers without a JSON mode (e.g. Anthropic) may wrap the object in a
+    # ```json fence.
+    fenced = re.fullmatch(r"\s*```(?:json)?\s*(.*?)\s*```\s*", text, re.DOTALL)
+    return fenced.group(1) if fenced else text
 
 
 def _score(value: str | float | int | None) -> float | None:

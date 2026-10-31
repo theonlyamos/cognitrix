@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import uuid
 from typing import Any, TypeAlias
 
@@ -24,7 +25,7 @@ from cognitrix.utils.llm_response import LLMResponse
 # Cache async OpenAI clients by effective config to avoid per-request overhead.
 # Async clients keep the server event loop free during the (long) provider call
 # instead of blocking it for every socket read.
-_client_cache: dict[str, AsyncOpenAI] = {}
+_client_cache: dict[str, tuple[asyncio.AbstractEventLoop | None, AsyncOpenAI]] = {}
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -45,6 +46,7 @@ _DEFAULT_BASE_URLS: dict[str, str] = {
     'openai': 'https://api.openai.com/v1',
     'cerebras': 'https://api.cerebras.com/v1',
     'google': 'https://generativelanguage.googleapis.com/v1beta/openai/v1',
+    'anthropic': 'https://api.anthropic.com/v1/',
 }
 
 # Conservative per-provider context windows (tokens) used for prompt budgeting
@@ -135,6 +137,60 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
     return config
 
 
+_OPENAI_REASONING_MODEL = re.compile(r'^(gpt-5|o\d)')
+
+
+def _is_openai_reasoning_model(model: str) -> bool:
+    """GPT-5.x and o-series models reject a custom temperature."""
+    name = (model or '').lower().rsplit('/', 1)[-1]
+    return bool(_OPENAI_REASONING_MODEL.match(name)) and '-chat' not in name
+
+
+_CLAUDE_VERSION = re.compile(r'^claude-(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?!\d)')
+
+
+def _anthropic_rejects_temperature(model: str) -> bool:
+    """Claude Opus 4.7 and every later model reject `temperature` with a 400.
+
+    Older names (claude-3-*, Sonnet/Haiku 4.5, Opus 4.6 and earlier) still
+    accept it. Names we can't parse keep it, so behaviour is unchanged.
+    """
+    name = (model or '').lower().rsplit('/', 1)[-1]
+    m = _CLAUDE_VERSION.match(name)
+    if not m:
+        return False
+    major, minor = int(m.group(1)), int(m.group(2) or 0)
+    return (major, minor) >= (4, 7)
+
+
+def _apply_provider_param_rules(llm: 'LLM', params: dict[str, Any]) -> dict[str, Any]:
+    """Adapt request params to what the provider's API accepts.
+
+    OpenAI deprecated `max_tokens` in favour of `max_completion_tokens`, and
+    GPT-5.x / o-series models reject `max_tokens` outright. They also only
+    accept the default temperature, so it is left out for them. Newer Claude
+    models reject `temperature` too, and Anthropic rejects `json_object`.
+    """
+    if llm.provider == 'anthropic':
+        if _anthropic_rejects_temperature(llm.model):
+            params.pop('temperature', None)
+        # Anthropic's OpenAI-compatible endpoint only accepts strict
+        # `json_schema` formats and rejects `json_object` with a 400. Callers
+        # that ask for json_object already parse JSON out of the text, so
+        # leaving it out is safe.
+        fmt = params.get('response_format')
+        if isinstance(fmt, dict) and fmt.get('type') == 'json_object':
+            params.pop('response_format')
+        return params
+    if llm.provider != 'openai':
+        return params
+    if 'max_tokens' in params:
+        params['max_completion_tokens'] = params.pop('max_tokens')
+    if _is_openai_reasoning_model(llm.model):
+        params.pop('temperature', None)
+    return params
+
+
 def _client_cache_key(base_url: str, api_key: str, headers: dict[str, str] | None) -> str:
     """Stable cache key for OpenAI client config."""
     payload = {'base_url': base_url, 'api_key': api_key, 'headers': headers or {}}
@@ -144,9 +200,19 @@ def _client_cache_key(base_url: str, api_key: str, headers: dict[str, str] | Non
 def _get_or_create_client(
     base_url: str, api_key: str, default_headers: dict[str, str] | None = None
 ) -> AsyncOpenAI:
-    """Reuse an async OpenAI client per effective config."""
+    """Reuse an async OpenAI client per effective config and event loop.
+
+    An async client's connection pool is bound to the loop that first used it;
+    openai 3.x fails with "Event loop is closed" if it is reused after that
+    loop ends (CLI helpers and tests run separate asyncio.run() calls).
+    """
     key = _client_cache_key(base_url, api_key, default_headers)
-    if key not in _client_cache:
+    try:
+        loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    cached = _client_cache.get(key)
+    if cached is None or cached[0] is not loop:
         # The explicit, budget-accounted retry loop owns provider retries.
         kwargs: dict[str, Any] = {
             'api_key': api_key,
@@ -155,8 +221,8 @@ def _get_or_create_client(
         }
         if default_headers:
             kwargs['default_headers'] = default_headers
-        _client_cache[key] = AsyncOpenAI(**kwargs)
-    return _client_cache[key]
+        _client_cache[key] = (loop, AsyncOpenAI(**kwargs))
+    return _client_cache[key][1]
 
 
 class LLM(Model):
@@ -423,6 +489,7 @@ class LLMManager:
                 completion_params['response_format'] = response_format
             if llm.extra_body:
                 completion_params['extra_body'] = llm.extra_body
+            completion_params = _apply_provider_param_rules(llm, completion_params)
 
             if stream:
                 return LLMManager._handle_streaming_response(client, completion_params)
@@ -615,7 +682,8 @@ class LLMManager:
                     if retry_output_tokens is not None:
                         # Re-apply the live token clamp after the failed attempt
                         # has consumed budget. Keep all other provider params.
-                        params = {**params, 'max_tokens': retry_output_tokens}
+                        token_key = 'max_completion_tokens' if 'max_completion_tokens' in params else 'max_tokens'
+                        params = {**params, token_key: retry_output_tokens}
                 try:
                     response = await client.chat.completions.create(**params)
                     break

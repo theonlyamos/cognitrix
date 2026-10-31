@@ -12,7 +12,7 @@ import logging
 import os
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from cognitrix.agents.base import Agent
@@ -29,7 +29,11 @@ from cognitrix.tasks.budget import (
     configured_model_pricing,
 )
 from cognitrix.tasks.authority import TaskAuthorityError, reconstruct_tool_context
-from cognitrix.tasks.context import dependency_context, untrusted_text_block
+from cognitrix.tasks.context import (
+    DEFAULT_DEPENDENCY_CONTEXT_CHARS,
+    dependency_context,
+    untrusted_text_block,
+)
 from cognitrix.tasks.completion import deliver_completion_notification
 from cognitrix.tasks.dag import (
     DagExecutionCancelled,
@@ -595,10 +599,30 @@ async def _ensure_resumed_snapshots(
     return prepared
 
 
+def _ancestor_steps(
+    step: TaskRunStep,
+    steps_by_index: Mapping[int, TaskRunStep],
+) -> list[int]:
+    """Indexes of every step `step` depends on indirectly (not direct deps)."""
+    direct = set(step.dependencies)
+    seen: set[int] = set()
+    stack = list(direct)
+    while stack:
+        index = stack.pop()
+        if index in seen:
+            continue
+        seen.add(index)
+        parent = steps_by_index.get(index)
+        if parent is not None:
+            stack.extend(parent.dependencies)
+    return sorted(seen - direct - {step.step_index})
+
+
 def _durable_step_prompt(
     task: 'Task',
     step: TaskRunStep,
     completed: dict[int, StepResult],
+    steps_by_index: Mapping[int, TaskRunStep] | None = None,
 ) -> str:
     parts = [
         f"You are completing one step of the task: {task.title}",
@@ -615,6 +639,20 @@ def _durable_step_prompt(
     rendered = dependency_context(dependencies)
     if rendered:
         parts.append("\nResults of prerequisite steps:\n" + rendered)
+    # Planners often chain steps (write -> translate -> combine) and list only
+    # the previous step, so a final step would never see the first output.
+    # Earlier results go in a separate section with whatever budget the
+    # direct dependencies left, so they can never crowd those out.
+    if steps_by_index:
+        earlier = {
+            index: completed[index]
+            for index in _ancestor_steps(step, steps_by_index)
+            if index in completed
+        }
+        remaining = DEFAULT_DEPENDENCY_CONTEXT_CHARS - len(rendered)
+        rendered_earlier = dependency_context(earlier, max_chars=remaining) if earlier else ''
+        if rendered_earlier:
+            parts.append("\nResults of earlier steps they build on:\n" + rendered_earlier)
     parts.append("\nComplete ONLY your step and reply with its result.")
     return '\n'.join(parts)
 
@@ -878,7 +916,7 @@ async def _execute_compiled_steps(
         finally:
             await usage_writer.persist()
 
-        base_prompt = _durable_step_prompt(task, row, completed)
+        base_prompt = _durable_step_prompt(task, row, completed, by_index)
         prompt = base_prompt
         last_result = StepResult()
         for attempt_number in range(1, 3):

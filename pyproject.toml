@@ -32,10 +32,10 @@ aiohttp = "^3.9.3"
 aiofiles = "^23.2.1"
 requests = "^2.31.0"
 python-dotenv = "^1.0.1"
-pydantic = "^2.6.2"
+pydantic = "^2.14.2"
 
 # LLM Providers (OpenAI-compatible SDK for all providers)
-openai = "^2.24.0"
+openai = "^3.42.0"
 httpx = "^0.28.1"
 
 # Vector Memory & Embeddings
@@ -44,9 +44,9 @@ sentence-transformers = "^5.2.0"
 numpy = "^2.0.0"
 
 # Web Framework
-fastapi = "^0.112.0"
-uvicorn = "^0.30.1"
-sse-starlette = "^2.1.2"
+fastapi = "^0.162.0"
+uvicorn = "^0.54.0"
+sse-starlette = "^3.6.0"
 python-multipart = "^0.0.9"
 
 # Tools & Automation
@@ -72,7 +72,7 @@ pywin32 = {version = ">=310", markers = "sys_platform == 'win32'"}
 pyyaml = "^6.0"
 
 # MCP (Model Context Protocol)
-mcp = {extras = ["cli"], version = "^1.9.1"}
+mcp = {extras = ["cli"], version = "^2.3.0"}
 textual = "^8.0.1"
 croniter = "^6.2.3"
 
