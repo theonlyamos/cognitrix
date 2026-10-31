@@ -74,6 +74,52 @@ def _slim_past_turn(turn: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return kept
 
 
+# The newest past turns keep their tool exchanges (results truncated). Without
+# them the model sees answers it can't account for, and stricter models then
+# retract correct answers as unsupported. Older turns are slimmed as before.
+RECENT_TOOL_TURNS = 3
+PAST_TOOL_RESULT_CHARS = 2000
+
+
+def _compact_past_turn(turn: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A past turn with its tool exchange kept and tool results truncated.
+
+    Falls back to the slim form when any tool call lacks a result, so the
+    window always stays protocol-valid.
+    """
+    call_ids = {
+        str(tc.get('tool_call_id'))
+        for m in turn for tc in (m.get('tool_calls') or []) if isinstance(tc, dict)
+    }
+    if not call_ids:
+        return _slim_past_turn(turn)
+    result_ids = {
+        str(m.get('tool_call_id')) for m in turn
+        if str(m.get('role', '')).lower() == 'tool'
+    }
+    if not call_ids <= result_ids:
+        return _slim_past_turn(turn)
+
+    kept = []
+    for m in turn:
+        role = str(m.get('role', '')).lower()
+        if m.get('type') == 'turn_timing':
+            continue
+        if role == 'tool':
+            if str(m.get('tool_call_id')) not in call_ids:
+                continue
+            content = m.get('content')
+            if isinstance(content, str) and len(content) > PAST_TOOL_RESULT_CHARS:
+                m = {**m, 'content': content[:PAST_TOOL_RESULT_CHARS]
+                     + f"\n[... truncated {len(content) - PAST_TOOL_RESULT_CHARS} chars]"}
+            kept.append(m)
+        elif role == 'assistant' and m.get('tool_calls'):
+            kept.append(m)
+        else:
+            kept.extend(_slim_past_turn([m]))
+    return kept
+
+
 def shape_history(
     chat: list[dict[str, Any]],
     budget_tokens: int,
@@ -82,8 +128,9 @@ def shape_history(
     """Select history for the prompt under a token budget.
 
     The current (last) turn is kept whole — the tool-call protocol needs its
-    assistant tool_calls + tool results. Older turns are slimmed to plain
-    dialogue and added newest-first until the budget or turn cap is hit.
+    assistant tool_calls + tool results. The newest past turns keep their tool
+    exchanges with truncated results; older ones are slimmed to plain
+    dialogue. Turns are added newest-first until the budget or turn cap is hit.
     """
     turns = partition_turns(chat)
     if not turns:
@@ -94,10 +141,16 @@ def shape_history(
 
     past_added = 0
     for turn in reversed(turns[:-1]):
-        slim = _slim_past_turn(turn)
+        if past_added < RECENT_TOOL_TURNS:
+            slim = _compact_past_turn(turn)
+        else:
+            slim = _slim_past_turn(turn)
         if not slim:
             continue
         cost = estimate_tokens(slim)
+        if used + cost > budget_tokens and past_added < RECENT_TOOL_TURNS:
+            slim = _slim_past_turn(turn)
+            cost = estimate_tokens(slim)
         if used + cost > budget_tokens or past_added >= max_past_turns:
             break
         selected = slim + selected

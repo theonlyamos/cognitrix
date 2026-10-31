@@ -90,22 +90,42 @@ def test_oversized_tool_result_is_truncated():
 
 # --- CE3 ---
 
-def test_past_tool_exchanges_are_dropped_from_prompt():
-    chat = (
-        [_user("q1")] + _tool_exchange(1) + [_assistant("a1"), _timing()]
-        + [_user("q2")] + _tool_exchange(2) + [_assistant("a2"), _timing()]
-        + [_user("q3")] + _tool_exchange(3)
-    )
+def test_recent_past_turns_keep_tool_exchanges_and_older_ones_drop_them():
+    chat = []
+    for i in range(1, 6):
+        chat += [_user(f"q{i}")] + _tool_exchange(i, payload="r" * 5000) + [_assistant(f"a{i}"), _timing()]
+    chat += [_user("q6")] + _tool_exchange(6)
     shaped = shape_history(chat, budget_tokens=100_000)
-    # Past turns keep only dialogue; current turn keeps its tool exchange.
-    roles = [(m["role"], m.get("type")) for m in shaped]
-    assert ("User", "text") == roles[0]
+    assert ("User", "text") == (shaped[0]["role"], shaped[0].get("type"))
     assert all(m.get("type") != "turn_timing" for m in shaped)
-    past = shaped[: roles.index(("User", "text")) + 1]
-    tool_msgs = [m for m in shaped if m["role"] == "tool"]
-    assert len(tool_msgs) == 1 and tool_msgs[0]["tool_call_id"] == "3"
-    assert {"a1", "a2"} <= {m.get("content") for m in shaped}
-    assert past is not None
+    tool_ids = [m["tool_call_id"] for m in shaped if m["role"] == "tool"]
+    # Current turn plus the 3 newest past turns keep their tool exchanges.
+    assert tool_ids == ["3", "4", "5", "6"]
+    # Past tool results are truncated; the current turn's is untouched.
+    past_results = [m["content"] for m in shaped if m["role"] == "tool" and m["tool_call_id"] != "6"]
+    assert all(len(r) < 2100 and "[... truncated" in r for r in past_results)
+    assert {"a1", "a2", "a3", "a4", "a5"} <= {m.get("content") for m in shaped}
+    # Every kept tool call has its result.
+    calls = {tc["tool_call_id"] for m in shaped for tc in (m.get("tool_calls") or [])}
+    assert calls == set(tool_ids)
+
+
+def test_past_turn_with_unanswered_tool_call_is_slimmed():
+    chat = [
+        _user("q1"),
+        {"role": "assistant", "type": "tool_calls", "content": "",
+         "tool_calls": [{"name": "t", "arguments": {}, "tool_call_id": "x"}]},
+        _assistant("a1"),
+        _user("q2"),
+    ]
+    shaped = shape_history(chat, budget_tokens=100_000)
+    assert not any(m.get("tool_calls") for m in shaped)
+    assert [m["content"] for m in shaped] == ["q1", "a1", "q2"]
+
+
+def test_past_turn_without_tools_is_unchanged():
+    shaped = shape_history([_user("q1"), _assistant("a1"), _user("q2")], budget_tokens=100_000)
+    assert shaped[1]["content"] == "a1"
 
 
 def test_budget_limits_past_turns():
