@@ -778,7 +778,7 @@ async def test_run_list_filters_each_historical_run_by_its_immutable_acl(monkeyp
     async def get_task(_task_id):
         return task
 
-    async def authorized_page(task_id, ctx, *, limit, offset):
+    async def authorized_page(task_id, ctx, *, limit, offset, **_kwargs):
         assert task_id == task.id
         assert limit == 50
         assert offset == 0

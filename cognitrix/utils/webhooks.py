@@ -37,26 +37,29 @@ def _allow_private() -> bool:
     return os.getenv('COGNITRIX_WEBHOOK_ALLOW_PRIVATE', '').strip().lower() in ('1', 'true', 'yes')
 
 
-def check_callback_url(url: str) -> str | None:
+def check_public_url(url: str, *, label: str = 'url', allow_private: bool = False,
+                     allow_env: str = 'COGNITRIX_WEBHOOK_ALLOW_PRIVATE') -> str | None:
     """SSRF guard. Returns a rejection reason, or None when the URL is OK.
 
+    Rejects non-http(s) schemes and hosts that resolve to loopback, private,
+    link-local, reserved, multicast or carrier-grade NAT addresses.
+
     Blocking (does DNS) — call via asyncio.to_thread from async code. Residual
-    gap: the host is re-resolved by httpx at send time, so a DNS-rebinding
-    attacker can still swap the record between check and send (documented in
-    the spec; acceptable for v1).
+    gap: the host is re-resolved by the HTTP client at send time, so a
+    DNS-rebinding attacker can still swap the record between check and send.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ('http', 'https'):
-        return 'callback_url must be http or https'
+        return f'{label} must be http or https'
     host = parsed.hostname
     if not host:
-        return 'callback_url has no host'
-    if _allow_private():
+        return f'{label} has no host'
+    if allow_private:
         return None
     try:
         infos = socket.getaddrinfo(host, None)
     except OSError:
-        return 'callback_url host does not resolve'
+        return f'{label} host does not resolve'
     for info in infos:
         try:
             ip = ipaddress.ip_address(info[4][0])
@@ -66,9 +69,14 @@ def check_callback_url(url: str) -> str | None:
         # or multicast, both of which can reach internal fabrics — block them too.
         if (ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved
                 or ip.is_unspecified or ip.is_multicast or ip in _CGNAT):
-            return ('callback_url resolves to a private/loopback address '
-                    '(set COGNITRIX_WEBHOOK_ALLOW_PRIVATE=1 to allow)')
+            return (f'{label} resolves to a private/loopback address '
+                    f'(set {allow_env}=1 to allow)')
     return None
+
+
+def check_callback_url(url: str) -> str | None:
+    """SSRF guard for task completion webhooks."""
+    return check_public_url(url, label='callback_url', allow_private=_allow_private())
 
 
 def sign(body: str, secret: str, timestamp: str) -> str:

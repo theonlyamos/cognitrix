@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from cognitrix.memory.chroma_store import ChromaMemoryStore
@@ -23,6 +24,16 @@ class ImportanceScorer:
         'remember', 'note', 'save', 'permanent'
     ]
 
+    # Things people say about themselves or ask to be kept: "my name is",
+    # "I prefer", "call me", "remember that". Plain facts like these scored
+    # 0.3-0.4 before and were never kept.
+    PERSONAL_FACT_PATTERNS = re.compile(
+        r"\b(remember|don't forget|do not forget|keep in mind|note that|"
+        r"my (?:name|codename|email|role|job|team|project|preference|favou?rite)|"
+        r"call me|i am|i'm|i prefer|i like|i use|i work|i live|we use|our )",
+        re.IGNORECASE,
+    )
+
     def __init__(self):
         self.min_importance = 0.3  # Always remember something
         self.max_importance = 1.0
@@ -37,6 +48,9 @@ class ImportanceScorer:
         role = message.get('role', '').lower()
 
         score = self.min_importance
+
+        if role == 'user' and self.PERSONAL_FACT_PATTERNS.search(content):
+            score += 0.4
 
         # Boost for important keywords
         for keyword in self.HIGH_IMPORTANCE_KEYWORDS:
@@ -171,8 +185,10 @@ class HybridContextManager(BaseContextManager):
                     query = m.get('content', '') or ''
                     break
 
+            user_scope = str(getattr(session, 'user_id', None) or '')
+            cache_key = f"{user_scope}\x00{query}"
             if query:
-                if self._retrieval_cache and self._retrieval_cache[0] == query:
+                if self._retrieval_cache and self._retrieval_cache[0] == cache_key:
                     # Same query as last build (e.g. another tool round in this
                     # turn) — reuse instead of re-embedding + re-querying Chroma.
                     memory_context = self._retrieval_cache[1]
@@ -182,9 +198,15 @@ class HybridContextManager(BaseContextManager):
                     try:
                         lt = await self._ensure_long_term()
                         if lt is not None:
-                            memories = await lt.retrieve(query, k=self.max_long_term)
+                            # Memories are per user: on a shared agent, one
+                            # user's facts must never reach another's prompt.
+                            memories = await lt.retrieve(
+                                query,
+                                k=self.max_long_term,
+                                filter_metadata={'user_id': user_scope},
+                            )
                             memory_context = self._format_memories(memories) if memories else ''
-                            self._retrieval_cache = (query, memory_context)
+                            self._retrieval_cache = (cache_key, memory_context)
                             if memory_context:
                                 system_content += f"\n\n## Relevant Past Context\n{memory_context}"
                     except Exception as e:
@@ -214,12 +236,13 @@ class HybridContextManager(BaseContextManager):
 
         return "\n".join(formatted)
 
-    async def add_to_memory(self, message: dict[str, Any]):
+    async def add_to_memory(self, message: dict[str, Any], user_id: str | None = None):
         """
         Add message to appropriate memory store.
 
         All messages go to short-term (via session).
-        High-importance messages also go to long-term.
+        High-importance messages also go to long-term, tagged with the user
+        they came from so retrieval stays per user.
         """
         # Score importance
         importance = self.importance_scorer.score(message)
@@ -235,10 +258,12 @@ class HybridContextManager(BaseContextManager):
                     metadata={
                         'role': message.get('role', 'unknown'),
                         'type': message.get('type', 'text'),
-                        'importance_score': importance
+                        'importance_score': importance,
+                        'user_id': str(user_id or ''),
                     },
                     importance=importance
                 )
+                self._retrieval_cache = None
                 logger.debug(f"Stored important message (score: {importance:.2f})")
             except Exception as e:
                 logger.error(f"Failed to store in long-term memory: {e}")

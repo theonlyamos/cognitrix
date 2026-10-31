@@ -288,7 +288,7 @@ def integration_harness(tmp_path, monkeypatch):
         assert session_id == "session-1"
         return await get_session(session_id)
 
-    async def resolve_agent(agent_id, _request):
+    async def resolve_agent(agent_id, _request, _user=None):
         assert agent_id == "agent-1"
         return agent
 

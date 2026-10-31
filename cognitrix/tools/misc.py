@@ -1115,10 +1115,31 @@ def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
         import requests
         from bs4 import BeautifulSoup
 
+        from urllib.parse import urljoin
+
+        from cognitrix.utils.webhooks import check_public_url
+
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
-        response = requests.get(url, timeout=15, headers=headers)
+        # Block internal addresses (the app itself, cloud metadata, the LAN),
+        # re-checking every redirect hop so a public URL can't bounce there.
+        allow_private = os.getenv('COGNITRIX_WEBFETCH_ALLOW_PRIVATE', '').strip().lower() in ('1', 'true', 'yes')
+        current = url
+        for _hop in range(6):
+            reason = check_public_url(
+                current, label='URL', allow_private=allow_private,
+                allow_env='COGNITRIX_WEBFETCH_ALLOW_PRIVATE',
+            )
+            if reason:
+                return f"Error fetching URL: {reason}"
+            response = requests.get(current, timeout=15, headers=headers, allow_redirects=False)
+            if response.is_redirect and response.headers.get('location'):
+                current = urljoin(current, response.headers['location'])
+                continue
+            break
+        else:
+            return "Error fetching URL: too many redirects"
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -1237,7 +1258,7 @@ def mouse_right_click(x: int, y: int):
     return 'Mouse double-click completed.'
 
 @tool(category='system')
-async def create_agent(name: str, provider: str, description: str, tools: list[str], model: str | None = None, temperature: float | None = None, parent: Any | None = None):
+async def create_agent(name: str, provider: str, description: str, tools: list[str], model: str | None = None, temperature: float | None = None, *, parent: Any | None = None):
     """Use this tool to create sub agents for specific tasks.
 
     Args:
@@ -1268,6 +1289,8 @@ async def create_agent(name: str, provider: str, description: str, tools: list[s
 
     if agent:
         agent.system_prompt = description
+        # A web user's agents are theirs; CLI-created agents stay shared.
+        agent.owner_id = current_execution_context().user_id
         await agent.save()
         return {'status': 'success', 'message': f'Agent "{name}" created successfully'}
 
@@ -1282,12 +1305,14 @@ async def list_agents():
         str: Each agent's name, provider/model, and a short description.
     """
     from cognitrix.agents import Agent  # noqa: WPS433
+    from cognitrix.agents.access import can_view  # noqa: WPS433
 
     authority = current_execution_context()
     agents = [
         agent
         for agent in await Agent.list_agents()  # type: ignore[attr-defined]
         if authority.agent_allowed(str(getattr(agent, 'id', '')))
+        and can_view(agent, authority.user_id)
     ]
     if not agents:
         return "No agents found."
@@ -1313,13 +1338,12 @@ MAX_AGENT_CALL_DEPTH = 3
 
 
 @tool(category='system')
-async def call_agent(name: str, task: str, interface: str = 'task'):
+async def call_agent(name: str, task: str, *, interface: str = 'task'):
     """Run a task with a sub agent
 
     Args:
         name (str): Name of the agent to call
         task (str): The task|query to perform|answer
-        interface (str): Filled in by the runtime; leave at its default.
 
     Returns:
         str: The result of the task
@@ -1342,7 +1366,11 @@ async def call_agent(name: str, task: str, interface: str = 'task'):
         from cognitrix.agents import Agent  # noqa: WPS433
         from cognitrix.sessions.base import Session  # noqa: WPS433
 
-        agent = await Agent.find_one({'name': name})
+        from cognitrix.agents.access import find_visible_agent  # noqa: WPS433
+
+        # Only agents the calling user may see: another user's agent (and
+        # whatever key it carries) is not reachable by name.
+        agent = await find_visible_agent(authority.user_id, name=name)
         if not agent:
             return f"Error calling agent: {name} not found"
         if not authority.agent_allowed(str(agent.id)):

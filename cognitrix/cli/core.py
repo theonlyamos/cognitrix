@@ -13,7 +13,7 @@ from cognitrix.models.tool import Tool
 from cognitrix.providers import LLM
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.base import Task
-from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
+from cognitrix.tasks.handler import handle_multi_step_task, parse_task_request
 from cognitrix.teams.base import Team
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.utils import trusted_local_execution_context
@@ -154,8 +154,12 @@ async def start(args: Namespace):
 
             assistant.tools = tools
 
-        # Initialize or get session
-        session = await Session.get_by_agent_id(assistant.id)
+        # Initialize or get session. A one-shot prompt starts a fresh session
+        # unless --continue is given, like other agent CLIs.
+        one_shot = bool(args.prompt or getattr(args, 'prompt_file', ''))
+        session = None
+        if not one_shot or getattr(args, 'continue_session', False):
+            session = await Session.get_by_agent_id(assistant.id)
         if not session:
             session = Session(agent_id=assistant.id)
 
@@ -180,11 +184,12 @@ async def start(args: Namespace):
 
         # Handle different execution modes
         if prompt:
-            # Single generation mode - check for multi-step tasks
-            if is_multi_step_task(prompt):
-                logger.info("Multi-step task detected, creating execution plan...")
+            # Multi-step task runs are explicit: --task, or a "/task ..." prompt.
+            task_prompt = parse_task_request(prompt) or (prompt if getattr(args, 'task', False) else None)
+            if task_prompt:
+                logger.info("Task run requested, creating execution plan...")
                 result = await handle_multi_step_task(
-                    prompt,
+                    task_prompt,
                     assistant,
                     session,
                     assistant.llm,
@@ -198,6 +203,9 @@ async def start(args: Namespace):
                     stream=args.stream,
                     tool_context=trusted_local_execution_context(),
                 )
+                if session.last_turn_error:
+                    # One-shot mode is used from scripts: report failure.
+                    sys.exit(1)
         elif args.ui.lower() == 'web':
             # Web UI mode
             await start_web_ui(assistant)

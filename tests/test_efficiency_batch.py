@@ -153,7 +153,7 @@ async def test_retrieval_cache_reuses_same_query(monkeypatch):
     calls = {'n': 0}
 
     class FakeStore:
-        async def retrieve(self, query, k):
+        async def retrieve(self, query, k, filter_metadata=None):
             calls['n'] += 1
             return []
 

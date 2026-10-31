@@ -29,6 +29,8 @@ class LLMResponse(Model):
     """Set when the response represents a provider/transport error, not a real answer."""
     usage: dict[str, int] | None = None
     """Real token usage from the provider: {'prompt_tokens': N, 'completion_tokens': N}."""
+    finish_reason: str | None = None
+    """Why the model stopped: stop, tool_calls, length (output cut off), ..."""
     tool_calls: list[dict[str, Any]] = []
     artifacts: dict[str, Any] | list[dict[str, Any]] | None = None
     observation: str | None = None

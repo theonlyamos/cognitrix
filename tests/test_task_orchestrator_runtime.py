@@ -943,3 +943,42 @@ async def test_orchestrator_rebinds_snapshot_tools_from_actor_scoped_assignments
 
     assert result is not None and result.status == TaskRunStatus.COMPLETED
     assert resolved == [remote, private]
+
+
+@pytest.mark.asyncio
+async def test_step_whose_tool_calls_were_all_denied_fails_instead_of_completing(
+    orchestration_db,
+    monkeypatch,
+):
+    agent = _agent()
+    task = _task(agent)
+    queued = await _queued(task.id)
+    _common_stubs(monkeypatch)
+
+    class Executor:
+        def __init__(self, snapshot, **_kwargs):
+            self.denied_tools = []
+            self.succeeded_tools = []
+
+        async def execute(self, prompt, *, tool_context=None, attempt=1):
+            self.denied_tools = ["Write"]
+            return StepResult(text="May I proceed with writing the file?")
+
+    async def no_synthesis(*_args, **_kwargs):
+        raise AssertionError("a blocked single step must not synthesize")
+
+    async def record_status(_task, _status, **_kwargs):
+        return None
+
+    monkeypatch.setattr(orchestrator, "TaskStepExecutor", Executor)
+    monkeypatch.setattr(orchestrator, "_synthesize_step_results", no_synthesis)
+    monkeypatch.setattr(orchestrator, "_set_task_status", record_status)
+
+    with pytest.raises(Exception, match="was blocked: Write was not approved"):
+        await orchestrator.run(task, run_record=queued)
+
+    stored = await TaskRun.get(queued.id)
+    rows = await _steps(queued.id)
+    assert stored is not None and stored.status != TaskRunStatus.COMPLETED
+    assert rows[0].status == TaskRunStepStatus.FAILED
+    assert rows[0].gate == "blocked"

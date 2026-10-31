@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import httpx
 from fastapi import FastAPI
 
-from cognitrix.common.security import AuthContext, crud_scope
+from cognitrix.common.security import AuthContext, crud_scope, get_auth_context
 from cognitrix.tasks.base import Task
 from cognitrix.teams.base import Team
 
@@ -17,6 +17,7 @@ def _app() -> FastAPI:
     app.include_router(teams_api)
     ctx = AuthContext(user=SimpleNamespace(id="user-1"), api_key=None)
     app.dependency_overrides[crud_scope] = lambda: ctx
+    app.dependency_overrides[get_auth_context] = lambda: ctx
     return app
 
 

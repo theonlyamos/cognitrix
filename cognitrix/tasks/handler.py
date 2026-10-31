@@ -22,6 +22,23 @@ console = Console()
 logger = logging.getLogger('cognitrix.log')
 
 
+TASK_PREFIX = '/task'
+
+
+def parse_task_request(query: str) -> str | None:
+    """Return the task text when the user explicitly asked for a task run.
+
+    Durable multi-step runs are opt-in: start the message with `/task`
+    (or pass --task to the CLI, or pick Task mode in the web UI). Guessing
+    from keywords like "then" or two verbs hijacked ordinary chat requests.
+    """
+    text = (query or '').lstrip()
+    if text == TASK_PREFIX or text.startswith(TASK_PREFIX + ' ') or text.startswith(TASK_PREFIX + '\n'):
+        rest = text[len(TASK_PREFIX):].strip()
+        return rest or None
+    return None
+
+
 def is_multi_step_task(query: str) -> bool:
     """Detect if a query genuinely requires multi-step planning.
 

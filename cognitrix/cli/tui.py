@@ -12,7 +12,7 @@ from textual.widgets import Footer, Header, Input, Markdown, Static
 from cognitrix.agents.base import Agent
 from cognitrix.config import VERSION
 from cognitrix.sessions.base import Session
-from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
+from cognitrix.tasks.handler import handle_multi_step_task, parse_task_request
 from cognitrix.tools.utils import trusted_local_execution_context
 
 CSS = """
@@ -597,9 +597,10 @@ class CognitrixApp(App):
             self.add_system_message("_Still responding — please wait for the current reply to finish._")
             return
 
-        # Check for multi-step tasks
-        if is_multi_step_task(text):
-            await self._handle_multistep_task(text)
+        # Multi-step task runs are explicit: "/task <what to do>".
+        task_text = parse_task_request(text)
+        if task_text:
+            await self._handle_multistep_task(task_text)
             return
 
         # Hide welcome splash on first message

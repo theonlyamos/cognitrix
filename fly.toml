@@ -13,7 +13,9 @@ primary_region = 'lhr'
   strategy = 'immediate'
 
 [env]
-  COGNITRIX_ENV = 'development'
+  # production makes the app refuse to start without JWT_SECRET_KEY.
+  # Set it once with: fly secrets set JWT_SECRET_KEY=$(openssl rand -hex 32)
+  COGNITRIX_ENV = 'production'
   DISABLE_VECTOR_STORE = 'true'
 
 [[mounts]]

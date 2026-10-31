@@ -47,6 +47,9 @@ class Tool(Model):
     approval_mode: str = 'risk_based'
     """risk_based, assigned_only, or always."""
 
+    internal_params: list[str] = Field(default_factory=list)
+    """Parameters the runtime fills in (e.g. `parent`). Hidden from the model."""
+
     class Config:
         arbitrary_types_allowed = True
 
@@ -102,8 +105,23 @@ class Tool(Model):
         for m in re.finditer(r'^\s+(\w+)\s*\([^)]*\)\s*:\s*(.+)$', desc, re.MULTILINE):
             param_descs.setdefault(m.group(1), m.group(2).strip())
 
+        # Runtime-filled parameters never reach the model. Agents saved before
+        # internal_params existed carry stale copies of built-in tools, so
+        # fall back to the registered tool's list.
+        hidden = set(self.internal_params or [])
+        if not hidden and type(self).__name__ != 'MCPTool':
+            try:
+                from cognitrix.tools.base import ToolManager
+                registered = ToolManager.get_by_name(self.name)
+                if registered is not None and registered is not self:
+                    hidden = set(getattr(registered, 'internal_params', None) or [])
+            except Exception:
+                hidden = set()
+
         properties = {}
         for name, param_type in parameters.items():
+            if name in hidden:
+                continue
             vtype = python_type_to_json_type(param_type)
             prop = {"type": vtype, "description": param_descs.get(name, "")}
             if vtype == 'array':

@@ -23,7 +23,7 @@ from cognitrix.agents.base import AgentManager
 from cognitrix.skills.executor import SkillExecutor
 from cognitrix.skills.manager import get_skill_manager
 from cognitrix.skills.models import SkillEventType
-from cognitrix.tasks.handler import handle_multi_step_task, is_multi_step_task
+from cognitrix.tasks.handler import handle_multi_step_task, parse_task_request
 from cognitrix.tools.utils import (
     trusted_local_execution,
     trusted_local_execution_context,
@@ -744,8 +744,10 @@ async def initialize_shell(session, agent, stream: bool = True):
                 run_shell_command(query[1:].strip())
                 continue
 
-            # Check if this is a multi-step task that needs planning
-            if is_multi_step_task(query):
+            # Multi-step task runs are explicit: "/task <what to do>".
+            task_query = parse_task_request(query)
+            if task_query:
+                query = task_query
                 console.print(Panel(
                     "[bold cyan]📋 Multi-step task detected![/bold cyan]\n"
                     "[dim]Breaking down into executable steps with verification...[/dim]",

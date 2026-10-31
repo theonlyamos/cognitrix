@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
@@ -56,7 +56,8 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
+    # iat lets logout revoke every token issued before it.
+    to_encode.update({"exp": expire, "iat": int(datetime.now(timezone.utc).timestamp())})
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
     return encoded_jwt
 
@@ -87,6 +88,18 @@ def redact_secrets(data):
     return data
 
 
+def token_revoked(payload: dict, user) -> bool:
+    """True when the user logged out after this token was issued."""
+    cutoff = getattr(user, 'tokens_valid_after', None)
+    if not cutoff:
+        return False
+    issued = payload.get('iat')
+    try:
+        return issued is None or int(issued) < int(cutoff)
+    except (TypeError, ValueError):
+        return True
+
+
 def identity(payload):
     user_id = payload['identity']
     return User.get(user_id)
@@ -100,7 +113,7 @@ async def verify_token(token: str) -> User | None:
         if email is None:
             return None
         user = await get_user(email=email)
-        if user is None:
+        if user is None or token_revoked(payload, user):
             return None
         return user
     except jwt.PyJWTError:
@@ -195,7 +208,7 @@ async def _resolve_jwt(token: str) -> AuthContext:
     if not isinstance(email, str):
         raise _credentials_401
     user = await get_user(email=email)
-    if user is None:
+    if user is None or token_revoked(payload, user):
         raise _credentials_401
     if getattr(user, 'password', None):
         del user.password

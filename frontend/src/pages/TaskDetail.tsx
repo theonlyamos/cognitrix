@@ -11,6 +11,7 @@ import { MobileHeaderActions, type MobileHeaderAction } from '@/components/mobil
 import { SelectionRow } from '@/components/SelectionRow';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { TranscriptView } from '@/components/TranscriptView';
+import { TaskApprovals } from '@/components/TaskApprovals';
 import {
   parseChatEntries,
   parseSessionDate,
@@ -1177,6 +1178,10 @@ export default function TaskDetail() {
             {selectedRunFailureLabel && <p className="font-semibold">{selectedRunFailureLabel}</p>}
             {selectedRun?.error && <p className="whitespace-pre-wrap">{selectedRun.error}</p>}
           </div>
+        )}
+
+        {taskId && selectedRun && selectedRunIsLive && (
+          <TaskApprovals taskId={taskId} runId={selectedRun.id} live={selectedRunIsLive} />
         )}
 
         {selectedRunUsage.length > 0 && (

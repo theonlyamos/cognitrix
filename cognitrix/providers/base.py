@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import uuid
+from contextvars import ContextVar
 from typing import Any, TypeAlias
 
 import openai
@@ -44,7 +45,7 @@ _DEFAULT_BASE_URLS: dict[str, str] = {
     'ollama': 'http://localhost:11434/v1',
     'openrouter': 'https://openrouter.ai/api/v1',
     'openai': 'https://api.openai.com/v1',
-    'cerebras': 'https://api.cerebras.com/v1',
+    'cerebras': 'https://api.cerebras.ai/v1',
     'google': 'https://generativelanguage.googleapis.com/v1beta/openai/v1',
     'anthropic': 'https://api.anthropic.com/v1/',
 }
@@ -65,6 +66,101 @@ _PROVIDER_CONTEXT_WINDOWS: dict[str, int] = {
 def _env_key(provider: str, suffix: str) -> str:
     """Derive env key from provider: e.g. OPENROUTER_BASE_URL."""
     return f"{provider.upper()}_{suffix}"
+
+
+# Optional per-request token tally, set by callers that report usage (the
+# OpenAI-compatible /v1 endpoint). None means nobody is counting.
+usage_sink: ContextVar[dict | None] = ContextVar('cognitrix_usage_sink', default=None)
+
+
+def record_usage(usage: dict | None) -> None:
+    sink = usage_sink.get()
+    if sink is None or not usage:
+        return
+    for key in ('prompt_tokens', 'completion_tokens'):
+        try:
+            sink[key] = sink.get(key, 0) + int(usage.get(key) or 0)
+        except (TypeError, ValueError):
+            pass
+
+
+class ProviderKeyDestinationError(ValueError):
+    """A server-held provider key would be sent to a base URL the server does not trust."""
+
+
+def _normalize_base_url(url: str | None) -> str:
+    return (url or '').strip().rstrip('/').lower()
+
+
+_KEY_ENV_SUFFIXES = ('_API_KEY', '_ACCESS_TOKEN', '_TOKEN')
+
+
+def _server_held_keys() -> dict[str, set[str]]:
+    """Map every provider key the server holds to the providers it belongs to.
+
+    Covers <PROVIDER>_API_KEY style env vars and the keys known to settings,
+    so a key is recognised however it was configured.
+    """
+    from cognitrix.config import settings
+
+    held: dict[str, set[str]] = {}
+    for name, value in os.environ.items():
+        if not value or len(value) < 8:
+            continue
+        for suffix in _KEY_ENV_SUFFIXES:
+            if name.endswith(suffix):
+                provider = name[: -len(suffix)].lower()
+                held.setdefault(value, set()).add(provider)
+                break
+    for provider in set(_DEFAULT_BASE_URLS) | {'together', 'cohere', 'groq', 'cerebras'}:
+        try:
+            value = settings.get_api_key(provider)
+        except Exception:
+            value = ''
+        if value:
+            held.setdefault(value, set()).add(provider)
+    return held
+
+
+def _trusted_base_urls(providers: set[str]) -> set[str]:
+    """Base URLs a server-held key may be sent to.
+
+    That is the operator's <PROVIDER>_BASE_URL (or the built-in default) for
+    the key's own provider, plus any extra URLs listed in
+    COGNITRIX_TRUSTED_BASE_URLS (comma-separated).
+    """
+    trusted: set[str] = set()
+    for provider in providers:
+        for candidate in (
+            os.getenv(_env_key(provider, 'BASE_URL')),
+            _DEFAULT_BASE_URLS.get(provider),
+        ):
+            if candidate:
+                trusted.add(_normalize_base_url(candidate))
+    extra = os.getenv('COGNITRIX_TRUSTED_BASE_URLS', '')
+    trusted.update(_normalize_base_url(u) for u in extra.split(',') if u.strip())
+    return trusted
+
+
+def assert_key_destination_allowed(base_url: str, api_key: str) -> None:
+    """Refuse to send a server-held provider key to an untrusted base URL.
+
+    Agents can be created by any logged-in user with their own `base_url`.
+    Without this check the server would attach its own provider key to a
+    request to whatever host the user picked.
+    """
+    if not api_key:
+        return
+    owners = _server_held_keys().get(api_key)
+    if not owners:
+        return  # caller-supplied key: theirs to send wherever they like
+    if _normalize_base_url(base_url) in _trusted_base_urls(owners):
+        return
+    raise ProviderKeyDestinationError(
+        f"base_url '{base_url}' is not a trusted endpoint for the server's "
+        f"{'/'.join(sorted(owners))} key. Supply your own api_key for a custom "
+        "base_url, or ask the operator to add it to COGNITRIX_TRUSTED_BASE_URLS."
+    )
 
 
 def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -122,6 +218,8 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
             f"Missing model for provider '{effective_provider}'. "
             f"Set {_env_key(effective_provider, 'MODEL')} or pass model."
         )
+
+    assert_key_destination_allowed(base_url, api_key)
 
     config: dict[str, Any] = {
         'provider': effective_provider,
@@ -223,6 +321,92 @@ def _get_or_create_client(
             kwargs['default_headers'] = default_headers
         _client_cache[key] = (loop, AsyncOpenAI(**kwargs))
     return _client_cache[key][1]
+
+
+def _transient_errors() -> tuple[type[BaseException], ...]:
+    # Looked up per call so tests (and SDK upgrades) can swap the classes.
+    return (
+        openai.RateLimitError, openai.APITimeoutError,
+        openai.APIConnectionError, openai.InternalServerError,
+    )
+
+_MAX_ATTEMPTS = 3
+_MAX_RETRY_AFTER_SECONDS = 30.0
+
+
+def _retry_delay(error: Exception, attempt: int) -> float:
+    """Seconds to wait before the next attempt.
+
+    Honours the provider's Retry-After header (capped), otherwise uses
+    jittered exponential backoff.
+    """
+    import random
+
+    response = getattr(error, 'response', None)
+    headers = getattr(response, 'headers', None) or {}
+    try:
+        retry_after = headers.get('retry-after')
+    except Exception:
+        retry_after = None
+    if retry_after:
+        try:
+            return min(max(float(retry_after), 0.0), _MAX_RETRY_AFTER_SECONDS)
+        except (TypeError, ValueError):
+            pass
+    base = 2 ** (attempt - 1)
+    return base + random.uniform(0, base / 2)
+
+
+async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
+    """chat.completions.create with retries on 429/5xx/timeouts.
+
+    Used by both paths. For streaming this covers failures before the first
+    chunk, which is where rate limits and overload errors surface; a stream
+    that breaks midway is not replayed.
+    """
+    from cognitrix.tasks.accounting import current_task_accounting
+
+    accounting = current_task_accounting()
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        if attempt > 1 and accounting is not None:
+            retry_output_tokens = await accounting.begin_provider_retry()
+            if retry_output_tokens is not None:
+                # Re-apply the live token clamp after the failed attempt
+                # has consumed budget. Keep all other provider params.
+                token_key = 'max_completion_tokens' if 'max_completion_tokens' in params else 'max_tokens'
+                params = {**params, token_key: retry_output_tokens}
+        try:
+            return await client.chat.completions.create(**params)
+        except _transient_errors() as e:
+            if accounting is not None:
+                # The request may be billable even when it failed before
+                # returning usage. Close this attempt conservatively
+                # before reserving any subsequent request.
+                await accounting.finish_failed_provider_attempt()
+            if attempt == _MAX_ATTEMPTS:
+                raise
+            delay = _retry_delay(e, attempt)
+            logger.warning("Transient LLM error (attempt %s, retrying in %.1fs): %s", attempt, delay, e)
+            if accounting is not None:
+                await accounting.wait_within_wall(asyncio.sleep(delay))
+            else:
+                await asyncio.sleep(delay)
+    raise RuntimeError('unreachable')
+
+
+def _malformed_arguments_error(name: str, raw: Any, truncated: bool) -> str:
+    snippet = str(raw)
+    if len(snippet) > 200:
+        snippet = snippet[:200] + '...'
+    reason = (
+        'the response hit the output token limit, so the arguments were cut off'
+        if truncated else 'the arguments were not valid JSON'
+    )
+    return (
+        f"Error: tool call '{name}' was not run because {reason}. "
+        f"Received: {snippet}. Send the call again with complete, valid JSON arguments"
+        + (' (split large content into smaller calls).' if truncated else '.')
+    )
 
 
 class LLM(Model):
@@ -430,6 +614,7 @@ class LLMManager:
     def get_supported_models(llm: LLM):
         if llm.provider == 'openrouter':
             return _openrouter_list_models(llm.api_key)
+        assert_key_destination_allowed(llm.base_url, llm.api_key)
         client = OpenAI(api_key=llm.api_key, base_url=llm.base_url)
         return client.models.list()
 
@@ -455,6 +640,10 @@ class LLMManager:
 
             if llm.provider in ('google', 'gemini'):
                 helicone_base = helicone_base + 'beta/openai/v1'
+
+            # Re-checked here because an LLM's fields can change after it
+            # was constructed (and stored agents predate the check).
+            assert_key_destination_allowed(llm.base_url, llm.api_key)
 
             if use_helicone:
                 headers: dict[str, str] = {
@@ -522,7 +711,7 @@ class LLMManager:
         return None
 
     @staticmethod
-    def _parse_native_tool_calls(tool_calls: list[Any] | None) -> list[dict[str, Any]]:
+    def _parse_native_tool_calls(tool_calls: list[Any] | None, truncated: bool = False) -> list[dict[str, Any]]:
         """
         Map OpenAI-style message.tool_calls to [{name, arguments, tool_call_id}] for agent.call_tools.
         arguments is parsed from JSON string to dict.
@@ -540,13 +729,21 @@ class LLMManager:
             if not name:
                 continue
             args: dict[str, Any] = {}
+            args_error = None
             if args_raw:
                 try:
                     args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
                 except json.JSONDecodeError:
-                    logger.warning("Tool call '%s' had malformed JSON arguments; running with empty args. Raw: %r", name, args_raw)
-                    args = {}
-            parsed = {'name': name, 'arguments': args, 'tool_call_id': tool_call_id}
+                    logger.warning("Tool call '%s' had malformed JSON arguments. Raw: %r", name, args_raw)
+                    args_error = _malformed_arguments_error(name, args_raw, truncated)
+            if not isinstance(args, dict) and args_error is None:
+                args_error = _malformed_arguments_error(name, args_raw, truncated)
+                args = {}
+            parsed = {'name': name, 'arguments': args if args_error is None else {}, 'tool_call_id': tool_call_id}
+            if args_error:
+                # The tool is not run; the model gets this error instead of a
+                # misleading "Missing required parameter" from empty args.
+                parsed['arguments_error'] = args_error
             # Gemini's OpenAI-compat layer attaches a thought_signature under
             # extra_content that MUST be echoed back on the re-prompt.
             extra = getattr(tc, 'extra_content', None) or (tc.get('extra_content') if isinstance(tc, dict) else None)
@@ -558,9 +755,10 @@ class LLMManager:
     @staticmethod
     async def _handle_streaming_response(client: AsyncOpenAI, params: dict[str, Any]):
         try:
-            stream = await client.chat.completions.create(**params)
+            stream = await _create_with_retry(client, params)
             response = LLMResponse()
             in_reasoning = False
+            finish_reason = None
             # Accumulate partial tool calls by index for streaming
             tool_call_accum: dict[int, dict[str, Any]] = {}
             async for chunk in stream:
@@ -572,6 +770,7 @@ class LLMManager:
                     }
                 if not chunk.choices:
                     continue
+                finish_reason = getattr(chunk.choices[0], 'finish_reason', None) or finish_reason
                 delta = chunk.choices[0].delta
                 reasoning = LLMManager._get_reasoning_from_delta(delta)
                 content = delta.content if hasattr(delta, 'content') else None
@@ -625,18 +824,27 @@ class LLMManager:
                 for _idx, acc in sorted_items:
                     name = (acc.get('name') or '').strip()
                     args_raw = acc.get('arguments') or '{}'
+                    args_error = None
                     try:
                         args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
                     except json.JSONDecodeError:
+                        args = {}
                         if name:
-                            logger.warning("Streamed tool call '%s' had malformed JSON arguments; running with empty args. Raw: %r", name, args_raw)
+                            logger.warning("Streamed tool call '%s' had malformed JSON arguments. Raw: %r", name, args_raw)
+                            args_error = _malformed_arguments_error(name, args_raw, finish_reason == 'length')
+                    if not isinstance(args, dict):
+                        args_error = _malformed_arguments_error(name, args_raw, finish_reason == 'length')
                         args = {}
                     if name:
                         item = {'name': name, 'arguments': args, 'tool_call_id': acc.get('tool_call_id')}
+                        if args_error:
+                            item['arguments_error'] = args_error
                         if acc.get('extra_content'):
                             item['extra_content'] = acc['extra_content']
                         parsed.append(item)
                 response.tool_calls = parsed
+            response.finish_reason = finish_reason
+            record_usage(getattr(response, 'usage', None))
             # Final yield delivers tool_calls/finalization only — clear
             # current_chunk so consumers don't print the last chunk twice.
             response.current_chunk = '\n</think>\n' if in_reasoning else ''
@@ -668,44 +876,16 @@ class LLMManager:
         try:
             # Retry transient errors (rate limit / timeout / connection / 5xx) with
             # backoff; other errors (e.g. 400 invalid request) fail fast.
-            transient = (
-                openai.RateLimitError, openai.APITimeoutError,
-                openai.APIConnectionError, openai.InternalServerError,
-            )
-            from cognitrix.tasks.accounting import current_task_accounting
-
-            accounting = current_task_accounting()
-            response = None
-            for attempt in range(1, 4):
-                if attempt > 1 and accounting is not None:
-                    retry_output_tokens = await accounting.begin_provider_retry()
-                    if retry_output_tokens is not None:
-                        # Re-apply the live token clamp after the failed attempt
-                        # has consumed budget. Keep all other provider params.
-                        token_key = 'max_completion_tokens' if 'max_completion_tokens' in params else 'max_tokens'
-                        params = {**params, token_key: retry_output_tokens}
-                try:
-                    response = await client.chat.completions.create(**params)
-                    break
-                except transient as e:
-                    if accounting is not None:
-                        # The request may be billable even when it failed before
-                        # returning usage. Close this attempt conservatively
-                        # before reserving any subsequent request.
-                        await accounting.finish_failed_provider_attempt()
-                    if attempt == 3:
-                        raise
-                    logger.warning("Transient LLM error (attempt %s): %s", attempt, e)
-                    delay = 2 ** (attempt - 1)
-                    if accounting is not None:
-                        await accounting.wait_within_wall(asyncio.sleep(delay))
-                    else:
-                        await asyncio.sleep(delay)
+            response = await _create_with_retry(client, params)
             msg = response.choices[0].message
+            finish_reason = getattr(response.choices[0], 'finish_reason', None)
             content = msg.content or ""
             reasoning = LLMManager._get_reasoning_from_message(msg)
-            native_tool_calls = LLMManager._parse_native_tool_calls(getattr(msg, 'tool_calls', None))
+            native_tool_calls = LLMManager._parse_native_tool_calls(
+                getattr(msg, 'tool_calls', None), truncated=finish_reason == 'length'
+            )
             llm_resp = LLMResponse()
+            llm_resp.finish_reason = finish_reason
             if reasoning:
                 llm_resp.add_reasoning_chunk(reasoning)
                 llm_resp.add_chunk(f'<think>{reasoning}</think>\n\n{content}')
@@ -719,6 +899,7 @@ class LLMManager:
                     'prompt_tokens': resp_usage.prompt_tokens or 0,
                     'completion_tokens': resp_usage.completion_tokens or 0,
                 }
+                record_usage(llm_resp.usage)
             return llm_resp
         except ExecutionControlError:
             raise

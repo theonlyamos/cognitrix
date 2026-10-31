@@ -1215,9 +1215,14 @@ async def test_provider_error_not_persisted_as_answer(monkeypatch):
     monkeypatch.setattr(Session, "save", fake_save)
 
     # Must terminate (no infinite loop) and not persist the error as an answer.
+    # The failed turn is closed with a marked placeholder so retries don't
+    # stack unanswered user messages.
     await session("hi", agent, "cli", False, lambda *a, **k: None, None, True)
-    assert len(session.chat) == 1
+    assert len(session.chat) == 2
     assert session.chat[0]["role"] == "User"
+    assert session.chat[1]["turn_error"] is True
+    assert "Error: boom" not in session.chat[1]["content"].split("failed.")[0]
+    assert session.last_turn_error == "Error: boom"
 
 
 @pytest.mark.asyncio

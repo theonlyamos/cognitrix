@@ -420,6 +420,23 @@ async def _set_task_status(task: 'Task', status, *, append_result: str | None = 
 
 # ------------------------------------------------------------------- entry
 
+def _check_roster_ownership(task, run_rec, roster) -> None:
+    """Re-check agent ownership in the worker, not only at the API.
+
+    A private agent runs only for its owner: the person who started this run,
+    or, for runs nobody started directly, the task's owner. Shared agents
+    (no owner) run for anyone.
+    """
+    requester = str(getattr(run_rec, 'requested_by', None) or '')
+    principal = requester or str(getattr(task, 'owner_id', None) or '')
+    for agent in roster:
+        owner = str(getattr(agent, 'owner_id', None) or '')
+        if owner and owner != principal:
+            raise TaskAuthorityError(
+                f"agent {getattr(agent, 'name', agent.id)!r} belongs to another user"
+            )
+
+
 async def _resolve_leader(task: 'Task', roster: list[Agent]) -> Agent:
     """Team leader when set — loaded via Agent.get, NOT the Team.leader
     property (which silently replaces the agent's LLM with the provider
@@ -654,6 +671,11 @@ def _durable_step_prompt(
         if rendered_earlier:
             parts.append("\nResults of earlier steps they build on:\n" + rendered_earlier)
     parts.append("\nComplete ONLY your step and reply with its result.")
+    parts.append(
+        "You are running unattended: do the work with your tools instead of asking "
+        "for permission or confirmation. Risky tool calls are sent to the user for "
+        "approval automatically."
+    )
     return '\n'.join(parts)
 
 
@@ -973,6 +995,18 @@ async def _execute_compiled_steps(
             finally:
                 await usage_writer.persist()
 
+            # A step whose tool calls were all denied did not do its work,
+            # whatever its text says. It used to be marked done.
+            denied_tools = list(getattr(executor, 'denied_tools', None) or [])
+            if denied_tools and not getattr(executor, 'succeeded_tools', None):
+                denied = ', '.join(sorted(set(denied_tools)))
+                raise StepFailure(
+                    f"Step #{row.step_index + 1} was blocked: {denied} was not "
+                    "approved, so the step's work was not done",
+                    result=last_result,
+                    gate='blocked',
+                )
+
             await check_cancelled()
             await _budget_checkpoint(ledger, usage_writer)
             try:
@@ -1269,6 +1303,7 @@ async def run(
         roster = await task.team()
         if not roster:
             raise RuntimeError(f"Task {task.id} has no agents assigned")
+        _check_roster_ownership(task, run_rec, roster)
         if (
             run_rec.acl_version != 1
             or run_rec.acl_team_id != (str(task.team_id) if task.team_id else None)
