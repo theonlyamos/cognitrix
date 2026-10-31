@@ -59,7 +59,15 @@ _results: dict[str, dict[str, Any]] = {}  # desktop poll key -> outcome
 
 
 class OAuthError(Exception):
-    """A sign-in failure whose message is safe to show the user."""
+    """A sign-in failure with a message written for the user.
+
+    Only `user_message` is ever shown; nothing from a provider error or a
+    traceback reaches the page.
+    """
+
+    def __init__(self, user_message: str):
+        super().__init__(user_message)
+        self.user_message = user_message
 
 
 def _credentials(provider: str) -> tuple[str, str] | None:
@@ -220,7 +228,7 @@ async def callback(provider: str, request: Request, code: str | None = None, sta
         user = await sign_in_with(provider, email, name)
         return _finish(user, None, poll)
     except OAuthError as exc:
-        return _finish(None, str(exc), poll)
+        return _finish(None, exc.user_message, poll)
     except (httpx.HTTPError, ValueError, KeyError):
         label = PROVIDERS.get(provider, {}).get('label', provider)
         return _finish(None, f"Couldn't reach {label}. Please try again.", poll)
