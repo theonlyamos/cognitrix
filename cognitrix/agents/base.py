@@ -69,6 +69,43 @@ MAX_CONCURRENT_TOOL_CALLS = _parse_max_concurrent_tool_calls(
 _TOOL_EXECUTION_LIMITERS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
+_PATH_ARGUMENT_NAMES = ('file_path', 'path', 'filepath', 'filename', 'target_file')
+_PATH_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def _path_lock_for(params: dict[str, Any]) -> asyncio.Lock | None:
+    """One lock per file path, so calls on the same file run one at a time.
+
+    Parallel Edit calls on one file each read the old content and wrote back
+    their own version, so all but the last edit were lost while every call
+    reported success. Calls on different files still run concurrently.
+    """
+    raw = next(
+        (params[name] for name in _PATH_ARGUMENT_NAMES
+         if isinstance(params.get(name), str) and params[name].strip()),
+        None,
+    )
+    if raw is None:
+        return None
+    # File tools resolve relative paths against the tools root.
+    try:
+        from cognitrix.config import settings
+        base = os.path.expanduser(str(settings.tools_root))
+    except Exception:
+        base = os.getcwd()
+    key = os.path.normcase(os.path.abspath(os.path.join(base, os.path.expanduser(raw.strip()))))
+    loop = asyncio.get_running_loop()
+    locks = _PATH_LOCKS.get(loop)
+    if locks is None:
+        locks = weakref.WeakValueDictionary()
+        _PATH_LOCKS[loop] = locks
+    lock = locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        locks[key] = lock
+    return lock
+
+
 def _tool_execution_limiter() -> asyncio.Semaphore:
     """Return the shared limiter for the running loop and current config."""
     loop = asyncio.get_running_loop()
@@ -400,6 +437,12 @@ class AgentManager:
                     )
                     continue
 
+                if t.get('arguments_error'):
+                    results_by_index[i] = _tool_result_entry(
+                        tc_id, ToolOutcome.failure('malformed_arguments', str(t['arguments_error']))
+                    )
+                    continue
+
                 # A tool being registered makes it discoverable to the app, not
                 # automatically available to every agent.  Resolve exclusively
                 # from the agent's assigned allowlist before doing any safety
@@ -507,7 +550,12 @@ class AgentManager:
             ) -> None:
                 i, tool, params, max_retries, attempt_recovery, _ = job
                 tc_id = agent_tool_calls[i].get('tool_call_id')
+                path_lock = _path_lock_for(params)
+                lock_held = False
                 try:
+                    if path_lock is not None:
+                        await path_lock.acquire()
+                        lock_held = True
                     if constrained:
                         async with execution_slots:
                             result = await resilient_manager.run_tool(
@@ -541,6 +589,9 @@ class AgentManager:
                         f"Error: {exc}",
                         retryable=False,
                     )
+                finally:
+                    if lock_held:
+                        path_lock.release()
                 results_by_index[i] = _tool_result_entry(tc_id, outcome)
 
             async def worker() -> None:
