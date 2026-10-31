@@ -25,7 +25,7 @@ from cognitrix.utils.llm_response import LLMResponse
 # Cache async OpenAI clients by effective config to avoid per-request overhead.
 # Async clients keep the server event loop free during the (long) provider call
 # instead of blocking it for every socket read.
-_client_cache: dict[str, AsyncOpenAI] = {}
+_client_cache: dict[str, tuple[asyncio.AbstractEventLoop | None, AsyncOpenAI]] = {}
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -171,9 +171,19 @@ def _client_cache_key(base_url: str, api_key: str, headers: dict[str, str] | Non
 def _get_or_create_client(
     base_url: str, api_key: str, default_headers: dict[str, str] | None = None
 ) -> AsyncOpenAI:
-    """Reuse an async OpenAI client per effective config."""
+    """Reuse an async OpenAI client per effective config and event loop.
+
+    An async client's connection pool is bound to the loop that first used it;
+    openai 3.x fails with "Event loop is closed" if it is reused after that
+    loop ends (CLI helpers and tests run separate asyncio.run() calls).
+    """
     key = _client_cache_key(base_url, api_key, default_headers)
-    if key not in _client_cache:
+    try:
+        loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    cached = _client_cache.get(key)
+    if cached is None or cached[0] is not loop:
         # The explicit, budget-accounted retry loop owns provider retries.
         kwargs: dict[str, Any] = {
             'api_key': api_key,
@@ -182,8 +192,8 @@ def _get_or_create_client(
         }
         if default_headers:
             kwargs['default_headers'] = default_headers
-        _client_cache[key] = AsyncOpenAI(**kwargs)
-    return _client_cache[key]
+        _client_cache[key] = (loop, AsyncOpenAI(**kwargs))
+    return _client_cache[key][1]
 
 
 class LLM(Model):

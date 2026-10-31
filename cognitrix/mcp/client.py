@@ -14,7 +14,8 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
 # Import the server manager and status tracking
 from cognitrix.mcp.server_manager import MCPServerConfig, MCPTransportType
@@ -210,10 +211,14 @@ class DynamicMCPClient:
             # anyio context managers are closed on the same task they're entered
             # (see the STDIO path for the full rationale).
             async with asyncio.timeout(DEFAULT_MCP_TIMEOUT):
-                http_transport = await exit_stack.enter_async_context(
-                    streamablehttp_client(server_config.url, headers=headers)
+                # mcp 2.x takes headers via a pre-built client; the transport
+                # owns its lifecycle only when it creates the client itself.
+                http_client = await exit_stack.enter_async_context(
+                    create_mcp_http_client(headers=headers)
                 )
-                read_stream, write_stream, _ = http_transport
+                read_stream, write_stream = await exit_stack.enter_async_context(
+                    streamable_http_client(server_config.url, http_client=http_client)
+                )
                 session = await exit_stack.enter_async_context(
                     ClientSession(read_stream, write_stream)
                 )
@@ -288,7 +293,7 @@ class DynamicMCPClient:
                 {
                     'name': tool.name,
                     'description': tool.description,
-                    'input_schema': dict(tool.inputSchema) if tool.inputSchema else {}
+                    'input_schema': dict(tool.input_schema) if tool.input_schema else {}
                 }
                 for tool in response.tools
             ]
