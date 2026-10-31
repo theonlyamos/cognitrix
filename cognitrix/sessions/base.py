@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import logging
 import os
 import time
@@ -745,19 +746,32 @@ class Session(Model):
                     logger.exception("History compaction failed; keeping history as-is")
 
             # Add to agent's memory
-            if persist_history and hasattr(agent, 'context_manager'):
+            # (This used to check hasattr(agent, 'context_manager'), which is
+            # never set, so nothing was ever written to long-term memory.)
+            context_manager = None
+            if persist_history and hasattr(agent, 'get_context_manager'):
                 try:
-                    await agent.context_manager.add_to_memory({
-                        'role': 'user',
-                        'type': 'text',
-                        'content': message if isinstance(message, str) else str(message)
-                    })
-                    if response:
-                        await agent.context_manager.add_to_memory({
+                    context_manager = agent.get_context_manager()
+                except Exception:
+                    logger.exception("Could not load the agent's memory")
+            if context_manager is not None and hasattr(context_manager, 'add_to_memory'):
+                try:
+                    if isinstance(message, str) and message:
+                        await context_manager.add_to_memory({
+                            'role': 'user',
+                            'type': 'text',
+                            'content': message,
+                        }, user_id=self.user_id)
+                    reply = getattr(response, 'llm_response', None) if response else None
+                    if isinstance(reply, str):
+                        # Reasoning is scratch work, not something to recall later.
+                        reply = re.sub(r'<think>.*?</think>', '', reply, flags=re.DOTALL).strip()
+                    if isinstance(reply, str) and reply and not getattr(response, 'error', None):
+                        await context_manager.add_to_memory({
                             'role': 'assistant',
                             'type': 'text',
-                            'content': response.llm_response
-                        })
+                            'content': reply,
+                        }, user_id=self.user_id)
                 except Exception as e:
                     logger.error(f"Failed to add to memory: {e}")
 

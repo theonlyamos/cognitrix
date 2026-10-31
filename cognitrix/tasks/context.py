@@ -80,6 +80,6 @@ class TaskContextManager(BaseContextManager):
             *history,
         ]
 
-    async def add_to_memory(self, message: dict[str, Any]) -> None:
+    async def add_to_memory(self, message: dict[str, Any], user_id: str | None = None) -> None:
         # Satisfy the context-manager protocol while intentionally doing nothing.
         return None
