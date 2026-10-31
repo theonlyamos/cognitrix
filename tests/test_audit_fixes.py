@@ -236,3 +236,146 @@ def test_openapi_schema_builds_and_unknown_api_paths_404():
     client = TestClient(app)  # no lifespan: schema generation only
     assert client.get('/openapi.json').status_code == 200
     assert client.get('/api/v1/does-not-exist').status_code == 404
+
+
+# --- Provider retries and malformed tool arguments ---------------------------
+
+def test_retry_delay_honours_retry_after():
+    from cognitrix.providers.base import _retry_delay
+
+    class Resp:
+        headers = {'retry-after': '6.6'}
+
+    class Err(Exception):
+        response = Resp()
+
+    assert _retry_delay(Err(), 1) == 6.6
+    Resp.headers = {'retry-after': '999'}
+    assert _retry_delay(Err(), 1) == 30.0
+    Resp.headers = {}
+    assert 1.0 <= _retry_delay(Err(), 1) <= 1.5
+
+
+@pytest.mark.asyncio
+async def test_streaming_retries_a_429_before_the_first_chunk(monkeypatch):
+    from cognitrix.providers import base
+
+    class RateLimited(Exception):
+        response = None
+
+    monkeypatch.setattr(base.openai, 'RateLimitError', RateLimited)
+    monkeypatch.setattr(base.asyncio, 'sleep', _no_sleep)
+    calls = {'n': 0}
+
+    class Chunk:
+        def __init__(self, content, finish=None):
+            self.usage = None
+            delta = type('D', (), {'content': content, 'tool_calls': None})()
+            self.choices = [type('C', (), {'delta': delta, 'finish_reason': finish})()]
+
+    async def stream():
+        yield Chunk('hello', 'stop')
+
+    class Completions:
+        async def create(self, **_params):
+            calls['n'] += 1
+            if calls['n'] == 1:
+                raise RateLimited('429')
+            return stream()
+
+    client = type('Client', (), {'chat': type('Chat', (), {'completions': Completions()})()})()
+    chunks = [r async for r in base.LLMManager._handle_streaming_response(client, {})]
+    assert calls['n'] == 2
+    assert not chunks[-1].error
+    assert chunks[-1].finish_reason == 'stop'
+
+
+async def _no_sleep(*_a, **_k):
+    return None
+
+
+def test_malformed_tool_arguments_become_an_error_not_empty_args():
+    from cognitrix.providers.base import LLMManager
+
+    fn = type('F', (), {'name': 'Write', 'arguments': '{"file_path": "a.txt", "content": "unterminated'})()
+    tc = type('T', (), {'function': fn, 'id': 'c1'})()
+    parsed = LLMManager._parse_native_tool_calls([tc], truncated=True)
+    assert parsed[0]['arguments'] == {}
+    assert 'output token limit' in parsed[0]['arguments_error']
+
+
+# --- Explicit task routing -----------------------------------------------------
+
+def test_tasks_are_explicit_opt_in():
+    from cognitrix.tasks.handler import parse_task_request
+
+    assert parse_task_request('Create foo.py, then run it') is None
+    assert parse_task_request('/task Create foo.py, then run it') == 'Create foo.py, then run it'
+    assert parse_task_request('/taskforce rocks') is None
+
+
+# --- Parallel edits to one file --------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_same_path_tool_calls_share_a_lock_and_others_do_not():
+    from cognitrix.agents.base import _path_lock_for
+
+    a = _path_lock_for({'file_path': 'notes.txt'})
+    b = _path_lock_for({'file_path': './notes.txt'})
+    c = _path_lock_for({'file_path': 'other.txt'})
+    assert a is b
+    assert a is not c
+    assert _path_lock_for({'query': 'x'}) is None
+
+
+@pytest.mark.asyncio
+async def test_parallel_edits_on_one_file_all_land(tmp_path, monkeypatch):
+    from cognitrix.agents.base import AgentManager
+    from cognitrix.models.agent import Agent
+    from cognitrix.providers.base import LLM
+    from cognitrix.tools.base import ToolManager
+
+    from cognitrix.config import settings
+
+    monkeypatch.setattr(settings, 'tools_root', str(tmp_path))
+    target = tmp_path / 'f.txt'
+    target.write_text('a\nb\nc\nd\n')
+    edit = ToolManager.get_by_name('Edit')
+    agent = Agent(name='e', llm=LLM(provider='openai', api_key='k-1234567890', model='m'),
+                  tools=[edit], system_prompt='s')
+    calls = [
+        {'name': 'Edit', 'tool_call_id': f'c{i}',
+         'arguments': {'file_path': str(target), 'old_string': f'{ch}\n', 'new_string': f'{ch.upper()}\n'}}
+        for i, ch in enumerate('abcd')
+    ]
+    manager = AgentManager(agent)
+
+    async def approve(**_kwargs):
+        return type('A', (), {'approved': True, 'cached': True, 'error': None})()
+
+    monkeypatch.setattr(manager.approval_gate, 'check_approval', approve)
+    await manager.call_tools(calls, interface='cli')
+    assert target.read_text() == 'A\nB\nC\nD\n'
+
+
+# --- Failed turns ----------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_unexpected_turn_error_is_shown_and_recorded(monkeypatch):
+    from cognitrix.models.agent import Agent
+    from cognitrix.providers.base import LLM
+    from cognitrix.sessions.base import Session
+
+    agent = Agent(name='x', llm=LLM(provider='openai', api_key='k-1234567890', model='m'),
+                  tools=[], system_prompt='s')
+
+    async def boom(*_a, **_k):
+        raise RuntimeError('kaput')
+
+    monkeypatch.setattr('cognitrix.providers.base.LLMManager.generate_response', staticmethod(boom))
+    shown = []
+    session = Session(agent_id='x')
+    await session('hi', agent, 'cli', False, lambda *a, **k: shown.append(' '.join(map(str, a))),
+                  None, False)
+    assert session.last_turn_error and 'kaput' in session.last_turn_error
+    assert any('kaput' in s for s in shown)

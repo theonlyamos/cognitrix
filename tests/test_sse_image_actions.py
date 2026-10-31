@@ -549,7 +549,7 @@ async def test_session_persists_only_safe_image_and_selection_history(monkeypatc
     from cognitrix.sessions.base import Session
 
     session = Session(agent_id='agent-1')
-    monkeypatch.setattr(session, 'save', lambda: asyncio.sleep(0))
+    monkeypatch.setattr(type(session), 'save', lambda _self: asyncio.sleep(0))
 
     class Context:
         async def build_prompt(self, _agent, current):

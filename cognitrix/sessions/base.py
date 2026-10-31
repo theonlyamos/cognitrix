@@ -168,6 +168,11 @@ class Session(Model):
         return True
 
 
+    @property
+    def last_turn_error(self) -> str | None:
+        """Why the most recent turn failed, or None if it produced an answer."""
+        return self.__dict__.get('_last_turn_error')
+
     def update_history(self, message: dict[str, Any] | list[dict[str, Any]]):
         if isinstance(message, list):
             self.chat.extend(message)
@@ -295,6 +300,7 @@ class Session(Model):
 
         # Add timing for turn duration
         turn_start_time = time.monotonic()
+        self.__dict__['_last_turn_error'] = None
 
         # Every agent can invoke skills: ensure the load_skill meta-tool is present
         # for this turn. UI/API-created agents only carry their configured tools,
@@ -420,9 +426,27 @@ class Session(Model):
         active_tool_calls: list[dict[str, Any]] = []
         last_denied_sig = None
         stop_turn = False
+        wrap_up_requested = False
         try:
             while True:  # The loop now primarily handles tool calls, not initial message processing
-                if tool_rounds >= MAX_TOOL_ROUNDS:
+                if tool_rounds >= MAX_TOOL_ROUNDS and not wrap_up_requested and agent.llm.supports_tool_use:
+                    # One last call without tools, so the user gets a summary
+                    # of the work so far instead of a bare "stopped" notice.
+                    logger.warning("Reached max tool rounds (%s); asking for a final answer", MAX_TOOL_ROUNDS)
+                    wrap_up_requested = True
+                    # Tools stay declared: some providers reject a history
+                    # with tool calls when no tools are defined. If the
+                    # model calls one anyway, the next check stops the turn.
+                    prompt = [*prompt, {
+                        'role': 'user',
+                        'type': 'text',
+                        'content': (
+                            f"[System: the tool-call limit ({MAX_TOOL_ROUNDS} rounds) for this turn "
+                            "has been reached. Do not call any tools. Reply now with what you did, "
+                            "what you found, and what is left to do.]"
+                        ),
+                    }]
+                elif tool_rounds >= MAX_TOOL_ROUNDS:
                     logger.warning("Exceeded max tool rounds (%s); stopping turn", MAX_TOOL_ROUNDS)
                     stop_msg = f"[Stopped after {MAX_TOOL_ROUNDS} tool rounds]"
                     if interface == 'cli':
@@ -674,6 +698,7 @@ class Session(Model):
                             from cognitrix.errors import ProviderExecutionError
 
                             raise ProviderExecutionError('provider request failed')
+                        self.__dict__['_last_turn_error'] = str(response.error)
                         break
 
                     # Persist the final assistant text only when this response did
@@ -715,7 +740,29 @@ class Session(Model):
                     raise
                 except Exception as e:
                     logger.exception(e)
+                    # Tell the user instead of ending the turn silently.
+                    error_text = f"Error: the turn failed ({type(e).__name__}: {e})"
+                    self.__dict__['_last_turn_error'] = error_text
+                    try:
+                        if interface == 'cli':
+                            output(f"\n{error_text}")
+                        else:
+                            await output({'type': wsquery.get('type'), 'content': error_text, 'action': wsquery.get('action'), 'complete': False})
+                    except Exception:
+                        logger.exception("Could not report the turn error")
                     break # Exit on error
+
+            if self.last_turn_error and record_history:
+                # Close the failed turn in history. Without this the user's
+                # message stayed unanswered, and each retry stacked another
+                # identical user message in front of the model.
+                self.update_history({
+                    'role': 'assistant',
+                    'name': agent.name,
+                    'type': 'text',
+                    'content': f"[No answer: this request failed. {self.last_turn_error[:300]}]",
+                    'turn_error': True,
+                })
 
             # Calculate turn duration for all exit paths
             turn_duration = time.monotonic() - turn_start_time

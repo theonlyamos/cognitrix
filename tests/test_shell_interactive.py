@@ -65,7 +65,6 @@ async def test_only_bang_prefixed_input_runs_shell(monkeypatch):
         return False
 
     monkeypatch.setattr(shell, "handle_slash_command", no_slash)
-    monkeypatch.setattr(shell, "is_multi_step_task", lambda q: False)
 
     class StubMgr:
         _cache = {"x": 1}
@@ -155,7 +154,6 @@ async def test_loop_survives_ai_turn_error(monkeypatch):
         return False
 
     monkeypatch.setattr(shell, "handle_slash_command", no_slash)
-    monkeypatch.setattr(shell, "is_multi_step_task", lambda q: False)
 
     seen = []
 
