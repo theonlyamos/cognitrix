@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import uuid
+from contextvars import ContextVar
 from typing import Any, TypeAlias
 
 import openai
@@ -44,7 +45,7 @@ _DEFAULT_BASE_URLS: dict[str, str] = {
     'ollama': 'http://localhost:11434/v1',
     'openrouter': 'https://openrouter.ai/api/v1',
     'openai': 'https://api.openai.com/v1',
-    'cerebras': 'https://api.cerebras.com/v1',
+    'cerebras': 'https://api.cerebras.ai/v1',
     'google': 'https://generativelanguage.googleapis.com/v1beta/openai/v1',
     'anthropic': 'https://api.anthropic.com/v1/',
 }
@@ -65,6 +66,22 @@ _PROVIDER_CONTEXT_WINDOWS: dict[str, int] = {
 def _env_key(provider: str, suffix: str) -> str:
     """Derive env key from provider: e.g. OPENROUTER_BASE_URL."""
     return f"{provider.upper()}_{suffix}"
+
+
+# Optional per-request token tally, set by callers that report usage (the
+# OpenAI-compatible /v1 endpoint). None means nobody is counting.
+usage_sink: ContextVar[dict | None] = ContextVar('cognitrix_usage_sink', default=None)
+
+
+def record_usage(usage: dict | None) -> None:
+    sink = usage_sink.get()
+    if sink is None or not usage:
+        return
+    for key in ('prompt_tokens', 'completion_tokens'):
+        try:
+            sink[key] = sink.get(key, 0) + int(usage.get(key) or 0)
+        except (TypeError, ValueError):
+            pass
 
 
 class ProviderKeyDestinationError(ValueError):
@@ -827,6 +844,7 @@ class LLMManager:
                         parsed.append(item)
                 response.tool_calls = parsed
             response.finish_reason = finish_reason
+            record_usage(getattr(response, 'usage', None))
             # Final yield delivers tool_calls/finalization only — clear
             # current_chunk so consumers don't print the last chunk twice.
             response.current_chunk = '\n</think>\n' if in_reasoning else ''
@@ -881,6 +899,7 @@ class LLMManager:
                     'prompt_tokens': resp_usage.prompt_tokens or 0,
                     'completion_tokens': resp_usage.completion_tokens or 0,
                 }
+                record_usage(llm_resp.usage)
             return llm_resp
         except ExecutionControlError:
             raise

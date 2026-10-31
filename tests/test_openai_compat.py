@@ -86,3 +86,34 @@ def _async(value):
     async def _coro():
         return value
     return _coro()
+
+
+@pytest.mark.asyncio
+async def test_completion_reports_a_real_id_and_token_usage(monkeypatch):
+    from cognitrix.providers.base import record_usage
+
+    agent = SimpleNamespace(id='a1', name='bot', owner_id=None)
+
+    async def resolve(_model, _ctx):
+        return agent
+
+    class _AnsweringSession(_FakeSession):
+        def __init__(self, agent_id=None, **kw):
+            super().__init__(agent_id, **kw)
+            self.id = None  # never saved, like the real seeded session
+
+        async def __call__(self, *_a, output=None, **_k):
+            record_usage({'prompt_tokens': 7, 'completion_tokens': 3})
+            record_usage({'prompt_tokens': 5, 'completion_tokens': 2})
+            await output({'content': 'hello'})
+
+    monkeypatch.setattr(shim, '_resolve_agent', resolve)
+    monkeypatch.setattr(shim, 'Session', _AnsweringSession)
+    body = shim.ChatCompletionRequest(model='bot', messages=[_msg('user', 'hi')])
+    ctx = AuthContext(user=SimpleNamespace(id='u'), api_key=None)
+
+    out = await shim.chat_completions(body, ctx)
+
+    assert out['id'].startswith('chatcmpl-') and 'None' not in out['id']
+    assert out['choices'][0]['message']['content'] == 'hello'
+    assert out['usage'] == {'prompt_tokens': 12, 'completion_tokens': 5, 'total_tokens': 17}

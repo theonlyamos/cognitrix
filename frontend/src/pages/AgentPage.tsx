@@ -11,10 +11,10 @@ import { cn } from '@/lib/utils';
 
 const PROVIDERS = ['openrouter', 'openai', 'google', 'groq', 'cerebras', 'ollama'];
 const MODELS: Record<string, string[]> = {
-  openrouter: ['google/gemini-3.5-flash', 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet'],
+  openrouter: ['google/gemini-3.5-flash', 'openai/gpt-5.5', 'anthropic/claude-sonnet-5.5'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
   google: ['gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-3.1-flash'],
-  groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+  groq: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'],
   cerebras: ['llama-3.3-70b', 'llama3.1-8b'],
   ollama: ['llama3.2', 'qwen2.5', 'mistral'],
 };
@@ -25,7 +25,7 @@ const BASE_URLS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
   google: 'https://generativelanguage.googleapis.com/v1beta/openai/v1',
   groq: 'https://api.groq.com/openai/v1',
-  cerebras: 'https://api.cerebras.com/v1',
+  cerebras: 'https://api.cerebras.ai/v1',
   ollama: 'http://localhost:11434/v1',
 };
 

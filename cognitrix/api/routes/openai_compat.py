@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import time
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -20,6 +21,7 @@ from pydantic import BaseModel
 from cognitrix.agents import Agent
 from cognitrix.agents import access as agent_access
 from cognitrix.common.security import AuthContext, get_auth_context, require
+from cognitrix.providers.base import usage_sink
 from cognitrix.sessions.base import Session
 
 logger = logging.getLogger('cognitrix.log')
@@ -90,7 +92,8 @@ async def chat_completions(body: ChatCompletionRequest, ctx: AuthContext = Depen
         raise HTTPException(status_code=400, detail="messages is required")
     agent = await _resolve_agent(body.model, ctx)
     session = _seed_session(agent, body.messages)
-    completion_id = f"chatcmpl-{session.id}"
+    # The seeded session is never saved, so it has no id of its own.
+    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
 
     if body.stream:
@@ -99,6 +102,8 @@ async def chat_completions(body: ChatCompletionRequest, ctx: AuthContext = Depen
         )
 
     captured = ''
+    usage: dict = {'prompt_tokens': 0, 'completion_tokens': 0}
+    sink_token = usage_sink.set(usage)
 
     async def capture(payload=None, *args, **kwargs):
         nonlocal captured
@@ -116,6 +121,8 @@ async def chat_completions(body: ChatCompletionRequest, ctx: AuthContext = Depen
         )
     except TimeoutError:
         raise HTTPException(status_code=504, detail="Generation timed out")
+    finally:
+        usage_sink.reset(sink_token)
 
     answer = captured.strip()
     if 'Streaming error:' in answer:
@@ -131,7 +138,7 @@ async def chat_completions(body: ChatCompletionRequest, ctx: AuthContext = Depen
             'message': {'role': 'assistant', 'content': answer},
             'finish_reason': 'stop',
         }],
-        'usage': {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0},
+        'usage': {**usage, 'total_tokens': usage['prompt_tokens'] + usage['completion_tokens']},
     }
 
 
