@@ -5,6 +5,7 @@ import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import OAuthButtons from '@/components/OAuthButtons';
 
 const GRID = {
   backgroundImage:
@@ -78,6 +79,7 @@ export default function Login() {
             <h1 className="mt-2 text-3xl font-bold tracking-tight">Welcome back</h1>
             <p className="mt-2 text-fg-dim">Sign in to continue to your workspace.</p>
 
+            <OAuthButtons mode="signin" />
             <form onSubmit={handleLogin} className="mt-8 space-y-5">
               <div className="space-y-1.5">
                 <label htmlFor="email" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">EMAIL</label>

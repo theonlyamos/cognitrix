@@ -160,6 +160,20 @@ pub(crate) fn open_engine_log(app: &AppHandle) {
 
 // ---------- Commands the UI calls (window.__TAURI_INTERNALS__.invoke) ----------
 
+/// Open a page in the default browser: Google/GitHub sign-in can't run inside
+/// the app window. Only https pages and the local engine are allowed.
+#[tauri::command]
+fn open_external(app: AppHandle, url: String) -> Result<(), String> {
+    let parsed = Url::parse(&url).map_err(|e| e.to_string())?;
+    let engine = parsed.scheme() == "http" && parsed.host_str() == Some("127.0.0.1");
+    if parsed.scheme() != "https" && !engine {
+        return Err("Only https pages can be opened".into());
+    }
+    app.opener()
+        .open_url(parsed.as_str(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn engine_status(app: AppHandle) -> engine::EngineStatus {
     app.state::<engine::Engine>().status()
@@ -330,6 +344,7 @@ pub fn run() {
             engine_status,
             restart_engine,
             open_folder,
+            open_external,
             get_desktop_settings,
             set_desktop_settings,
             pick_working_folder,

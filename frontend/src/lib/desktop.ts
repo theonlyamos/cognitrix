@@ -60,6 +60,7 @@ export const desktop = {
   engineStatus: () => invokeDesktop<EngineStatus>('engine_status'),
   restartEngine: () => invokeDesktop<void>('restart_engine'),
   openFolder: (kind: 'logs' | 'data' | 'working') => invokeDesktop<void>('open_folder', { kind }),
+  openExternal: (url: string) => invokeDesktop<void>('open_external', { url }),
   getSettings: () => invokeDesktop<DesktopSettings>('get_desktop_settings'),
   setSettings: (patch: Partial<Pick<DesktopSettings, 'close_to_tray' | 'notify_desktop' | 'start_with_windows'>>) =>
     invokeDesktop<DesktopSettings>('set_desktop_settings', { patch }),

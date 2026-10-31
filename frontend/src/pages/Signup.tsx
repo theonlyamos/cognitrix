@@ -5,6 +5,7 @@ import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { Field } from '@/components/form';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import OAuthButtons from '@/components/OAuthButtons';
 
 const GRID = {
   backgroundImage:
@@ -79,6 +80,7 @@ export default function Signup() {
             <h1 className="mt-2 text-3xl font-bold tracking-tight">Get started</h1>
             <p className="mt-2 text-fg-dim">Set up your workspace in a few seconds.</p>
 
+            <OAuthButtons mode="signup" />
             <form onSubmit={handleSignup} className="mt-8 space-y-4">
               <Field label="NAME"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ada Lovelace" required autoComplete="name" autoFocus /></Field>
               <Field label="EMAIL"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required autoComplete="email" /></Field>

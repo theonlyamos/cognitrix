@@ -7,6 +7,7 @@ import AppLayout from '@/components/AppLayout';
 import DesktopFrame from '@/components/DesktopFrame';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
+import OAuthComplete from '@/pages/OAuthComplete';
 import '@/app.css';
 
 // Code-split the authenticated app; auth pages + shell stay eager for first paint.
@@ -60,6 +61,7 @@ function AppRoutes() {
       <Routes>
         <Route path="/" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
+        <Route path="/oauth/complete" element={<OAuthComplete />} />
         {/* The desktop app's Alt+Space window: no app shell around it. */}
         <Route path="/quick" element={<ProtectedRoute><QuickAsk /></ProtectedRoute>} />
 

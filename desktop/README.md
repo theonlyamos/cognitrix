@@ -44,3 +44,28 @@ Actions tab, or it runs on PRs that touch the desktop code).
 - Agents' working folder (shell + file tools are confined to it): `%USERPROFILE%\Cognitrix` by default, changeable in Settings
 - Engine log: `%LOCALAPPDATA%\com.theonlyamos.cognitrix\logs\engine.log`
 - Desktop preferences: `%APPDATA%\com.theonlyamos.cognitrix\desktop.json`
+
+## Google and GitHub sign-in
+
+The sign-in and sign-up pages show "Continue with Google/GitHub" once the
+provider's OAuth app is set up. Put the credentials in `~/.cognitrix/.env`
+(desktop) or the server environment (web), then restart the engine:
+
+```
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+```
+
+Register this redirect / callback URL with each provider:
+
+- Desktop app: `http://127.0.0.1:48210/api/v1/auth/oauth/google/callback`
+  (and `.../github/callback`). Google: create a "Web application" OAuth client.
+- Web server: `https://<your-host>/api/v1/auth/oauth/<provider>/callback`. Set
+  `COGNITRIX_PUBLIC_URL=https://<your-host>` when the server sits behind a proxy.
+
+In the desktop app, sign-in opens in your browser and the app picks up the
+result when you finish. A verified email that matches an existing account
+signs into it. A new email creates an account only when signup is open (the
+first account, or `COGNITRIX_ALLOW_SIGNUP=true`).
