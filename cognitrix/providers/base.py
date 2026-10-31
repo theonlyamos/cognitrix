@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import uuid
 from typing import Any, TypeAlias
 
@@ -133,6 +134,31 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
         if k in overrides and overrides[k] is not None:
             config[k] = overrides[k]
     return config
+
+
+_OPENAI_REASONING_MODEL = re.compile(r'^(gpt-5|o\d)')
+
+
+def _is_openai_reasoning_model(model: str) -> bool:
+    """GPT-5.x and o-series models reject a custom temperature."""
+    name = (model or '').lower().rsplit('/', 1)[-1]
+    return bool(_OPENAI_REASONING_MODEL.match(name)) and '-chat' not in name
+
+
+def _apply_provider_param_rules(llm: 'LLM', params: dict[str, Any]) -> dict[str, Any]:
+    """Adapt request params to what the provider's API accepts.
+
+    OpenAI deprecated `max_tokens` in favour of `max_completion_tokens`, and
+    GPT-5.x / o-series models reject `max_tokens` outright. They also only
+    accept the default temperature, so it is left out for them.
+    """
+    if llm.provider != 'openai':
+        return params
+    if 'max_tokens' in params:
+        params['max_completion_tokens'] = params.pop('max_tokens')
+    if _is_openai_reasoning_model(llm.model):
+        params.pop('temperature', None)
+    return params
 
 
 def _client_cache_key(base_url: str, api_key: str, headers: dict[str, str] | None) -> str:
@@ -423,6 +449,7 @@ class LLMManager:
                 completion_params['response_format'] = response_format
             if llm.extra_body:
                 completion_params['extra_body'] = llm.extra_body
+            completion_params = _apply_provider_param_rules(llm, completion_params)
 
             if stream:
                 return LLMManager._handle_streaming_response(client, completion_params)
@@ -615,7 +642,8 @@ class LLMManager:
                     if retry_output_tokens is not None:
                         # Re-apply the live token clamp after the failed attempt
                         # has consumed budget. Keep all other provider params.
-                        params = {**params, 'max_tokens': retry_output_tokens}
+                        token_key = 'max_completion_tokens' if 'max_completion_tokens' in params else 'max_tokens'
+                        params = {**params, token_key: retry_output_tokens}
                 try:
                     response = await client.chat.completions.create(**params)
                     break
