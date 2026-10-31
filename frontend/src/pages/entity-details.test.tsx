@@ -347,6 +347,30 @@ describe('entity detail routes', () => {
     expect(screen.getByText('Agent details destination')).toBeInTheDocument();
   });
 
+  it('offers Anthropic with its endpoint and models, and greys out temperature for new Claude models', async () => {
+    renderAgentEdit();
+
+    const providerSelect = screen.getAllByRole('combobox').find((el) =>
+      Array.from((el as HTMLSelectElement).options).some((o) => o.value === 'anthropic'),
+    ) as HTMLSelectElement;
+    expect(providerSelect).toBeDefined();
+    await userEvent.selectOptions(providerSelect, 'anthropic');
+
+    expect(screen.getByPlaceholderText('model name')).toHaveValue('claude-sonnet-5-5');
+    expect(document.querySelector('#model-suggestions option[value="claude-opus-5-5"]')).not.toBeNull();
+    expect(screen.getByLabelText('Temperature')).toBeDisabled();
+
+    const modelInput = screen.getByPlaceholderText('model name');
+    await userEvent.clear(modelInput);
+    await userEvent.type(modelInput, 'claude-haiku-4-5');
+    expect(screen.getByLabelText('Temperature')).toBeEnabled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(harness.apiPost).toHaveBeenCalledWith('/agents', expect.objectContaining({
+      llm: expect.objectContaining({ provider: 'anthropic', model: 'claude-haiku-4-5', base_url: 'https://api.anthropic.com/v1' }),
+    })));
+  });
+
   it('returns team edits to the canonical detail page', async () => {
     renderTeamEdit();
 
