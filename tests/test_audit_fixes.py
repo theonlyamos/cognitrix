@@ -449,3 +449,13 @@ async def test_logout_revokes_earlier_session_tokens(monkeypatch):
         await security._resolve_jwt(token)
     assert exc.value.status_code == 401
     assert await security.verify_token(token) is None
+
+
+def test_sed_script_check_is_linear_time():
+    import time
+
+    from cognitrix.common.safe_exec import _sed_script_unsafe
+
+    start = time.monotonic()
+    _sed_script_unsafe('sa' + '\\a' * 100_000)
+    assert time.monotonic() - start < 1.0

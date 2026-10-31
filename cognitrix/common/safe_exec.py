@@ -67,11 +67,6 @@ _GIT_ANYWHERE_DANGEROUS = ('--upload-pack', '--receive-pack', '--exec=', '--conf
 
 # Without GNU sed's --sandbox, refuse scripts that could use the e (execute),
 # w/W (write file) or r/R (read file) commands, or the s///e and s///w flags.
-# Conservative: after removing s/// and y/// bodies, any of those letters left
-# in the script blocks it.
-_SED_SUBST = re.compile(r"([sy])(.)(?:\\.|(?!\2).)*\2(?:\\.|(?!\2).)*\2([a-zA-Z0-9]*)")
-
-
 def _sed_scripts(args: list[str]) -> list[str]:
     """The script parts of a sed argv: -e values, else the first operand."""
     scripts, first_operand, take_next = [], None, False
@@ -91,16 +86,30 @@ def _sed_scripts(args: list[str]) -> list[str]:
 
 
 def _sed_script_unsafe(script: str) -> bool:
-    flags_hit = False
-
-    def strip(match: re.Match) -> str:
-        nonlocal flags_hit
-        if match.group(1) == 's' and re.search(r'[ew]', match.group(3)):
-            flags_hit = True
-        return ' '
-
-    rest = _SED_SUBST.sub(strip, script)
-    return flags_hit or bool(re.search(r'[eEwWrR]', rest))
+    """Scan once (no backtracking regex): skip s/// and y/// bodies, flag
+    s///e or s///w, and flag any e/E/w/W/r/R left elsewhere in the script."""
+    i, n = 0, len(script)
+    while i < n:
+        ch = script[i]
+        if ch in 'sy' and i + 1 < n and script[i + 1] not in ' \t\n;\\':
+            delim, i, parts = script[i + 1], i + 2, 0
+            while i < n and parts < 2:
+                if script[i] == '\\':
+                    i += 2
+                    continue
+                if script[i] == delim:
+                    parts += 1
+                i += 1
+            flags_start = i
+            while i < n and script[i].isalnum():
+                i += 1
+            if ch == 's' and any(f in 'ew' for f in script[flags_start:i]):
+                return True
+            continue
+        if ch in 'eEwWrR':
+            return True
+        i += 1
+    return False
 
 
 DEFAULT_TIMEOUT = 30
