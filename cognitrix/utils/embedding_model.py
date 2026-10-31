@@ -49,9 +49,12 @@ def get_embedding_model(model_name: str = DEFAULT_EMBEDDING_MODEL) -> EmbeddingM
                         f"using {DEFAULT_EMBEDDING_MODEL}"
                     )
                 logger.info(f"Loading embedding model: {DEFAULT_EMBEDDING_MODEL}")
-                from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+                # Hold one ONNXMiniLM_L6_V2 instance: it caches its tokenizer and
+                # inference session. DefaultEmbeddingFunction builds a new one
+                # on every call, which would reload the model each time.
+                from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
-                _embedding_model_cache = EmbeddingModel(DefaultEmbeddingFunction())
+                _embedding_model_cache = EmbeddingModel(ONNXMiniLM_L6_V2())
                 logger.info(f"Embedding model loaded: {DEFAULT_EMBEDDING_MODEL}")
 
     return _embedding_model_cache

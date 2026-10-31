@@ -15,10 +15,10 @@ def test_encode_returns_float32_vector():
     assert vec.tolist() == np.asarray([0.1, 0.2, 0.3], dtype=np.float32).tolist()
 
 
-def test_get_embedding_model_is_cached_and_uses_chroma_default():
+def test_get_embedding_model_is_cached_and_uses_chroma_onnx():
     em.clear_embedding_model_cache()
     with patch(
-        "chromadb.utils.embedding_functions.DefaultEmbeddingFunction",
+        "chromadb.utils.embedding_functions.ONNXMiniLM_L6_V2",
         return_value=lambda texts: [[1.0] for _ in texts],
     ) as factory:
         first = em.get_embedding_model()
