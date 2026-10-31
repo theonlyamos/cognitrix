@@ -39,6 +39,8 @@ function SwitchRow({ label, detail, checked, onChange }: { label: string; detail
   );
 }
 
+const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
+
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
 export default function Settings() {
@@ -152,9 +154,9 @@ export default function Settings() {
 
           {desktopApp && prefs && (
             <Card title="Desktop">
-              <SwitchRow label="Start with Windows" detail="Opens in the tray when you sign in" checked={prefs.start_with_windows} onChange={(v) => updatePrefs({ start_with_windows: v })} />
+              <SwitchRow label={onWindows ? 'Start with Windows' : 'Start at login'} detail="Opens in the tray when you sign in" checked={prefs.start_with_windows} onChange={(v) => updatePrefs({ start_with_windows: v })} />
               <SwitchRow label="Keep running in the tray when closed" detail="Tasks keep running while the window is closed" checked={prefs.close_to_tray} onChange={(v) => updatePrefs({ close_to_tray: v })} />
-              <SwitchRow label="Windows notifications" detail="Fine-tune each event under Notifications" checked={prefs.notify_desktop} onChange={(v) => updatePrefs({ notify_desktop: v })} />
+              <SwitchRow label={onWindows ? 'Windows notifications' : 'System notifications'} detail="Fine-tune each event under Notifications" checked={prefs.notify_desktop} onChange={(v) => updatePrefs({ notify_desktop: v })} />
               <div className="flex items-center justify-between py-2 text-[13.5px]">
                 <span>Quick ask hotkey</span>
                 <kbd className="rounded border border-line px-2 py-0.5 font-mono text-[11.5px]">{prefs.quick_ask_shortcut.replace('+', ' ')}</kbd>

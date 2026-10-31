@@ -1,8 +1,9 @@
 name: desktop
 
-# Builds the Windows installer: React UI -> PyInstaller engine -> Tauri app.
-# The installers are uploaded as the "cognitrix-windows" artifact of each run,
-# and attached to the GitHub release when a release is published.
+# Builds the desktop app for Windows, Linux and macOS:
+# React UI -> PyInstaller engine -> Tauri app.
+# Each OS uploads its installers as a "cognitrix-<os>" artifact, and attaches
+# them to the GitHub release when a release is published.
 on:
   workflow_dispatch:
   pull_request:
@@ -18,11 +19,43 @@ permissions:
   contents: write  # attach installers to a release; other events only read
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            runner: windows-latest
+            bundles: nsis,msi
+            files: |
+              desktop/src-tauri/target/release/bundle/nsis/*.exe
+              desktop/src-tauri/target/release/bundle/msi/*.msi
+          - name: linux
+            # The oldest supported Ubuntu, so the app runs on older glibc too.
+            runner: ubuntu-22.04
+            bundles: deb,rpm,appimage
+            files: |
+              desktop/src-tauri/target/release/bundle/deb/*.deb
+              desktop/src-tauri/target/release/bundle/rpm/*.rpm
+              desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+          - name: macos
+            # Apple silicon. PyInstaller can't cross-build, so Intel Macs
+            # would need an Intel runner.
+            runner: macos-latest
+            bundles: app,dmg
+            files: |
+              desktop/src-tauri/target/release/bundle/dmg/*.dmg
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux build libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev rpm
 
       - uses: pnpm/action-setup@v4
         with:
@@ -49,40 +82,28 @@ jobs:
         run: python desktop/scripts/build_engine.py
 
       - name: Smoke-test the engine
-        shell: pwsh
-        run: |
-          $engine = Start-Process -FilePath desktop/src-tauri/engine/cognitrix-engine.exe `
-            -ArgumentList 'engine','--port','48299' -PassThru
-          $ok = $false
-          for ($i = 0; $i -lt 90; $i++) {
-            Start-Sleep -Seconds 2
-            try {
-              $r = Invoke-WebRequest -Uri http://127.0.0.1:48299/home -UseBasicParsing -TimeoutSec 5
-              if ($r.StatusCode -eq 200) { $ok = $true; break }
-            } catch {}
-          }
-          Stop-Process -Id $engine.Id -Force -ErrorAction SilentlyContinue
-          if (-not $ok) { Get-Content "$env:USERPROFILE/.cognitrix/celery-queue/worker.log" -ErrorAction SilentlyContinue; throw 'engine did not serve the UI' }
+        run: python desktop/scripts/smoke_engine.py
 
-      - name: Build installer
+      - name: Build installers
         working-directory: desktop
         run: |
           npm ci --no-audit --no-fund
-          npx tauri build
+          npx tauri build --bundles ${{ matrix.bundles }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cognitrix-windows
-          path: |
-            desktop/src-tauri/target/release/bundle/nsis/*.exe
-            desktop/src-tauri/target/release/bundle/msi/*.msi
+          name: cognitrix-${{ matrix.name }}
+          path: ${{ matrix.files }}
           if-no-files-found: error
 
       - name: Attach installers to the release
         if: github.event_name == 'release'
-        shell: pwsh
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          FILES: ${{ matrix.files }}
         run: |
-          $files = @(Get-ChildItem desktop/src-tauri/target/release/bundle/nsis/*.exe, desktop/src-tauri/target/release/bundle/msi/*.msi | ForEach-Object FullName)
-          gh release upload "${{ github.event.release.tag_name }}" @files --clobber --repo "${{ github.repository }}"
+          shopt -s nullglob
+          files=()
+          for pattern in $FILES; do files+=($pattern); done
+          gh release upload "${{ github.event.release.tag_name }}" "${files[@]}" --clobber --repo "${{ github.repository }}"
