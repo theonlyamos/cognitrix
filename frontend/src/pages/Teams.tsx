@@ -15,8 +15,8 @@ export default function Teams() {
   const teams = data ?? [];
 
   return (
-    <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden bg-bg text-fg">
-      <PageHeader title="Teams" subtitle={`coordinate multiple agents · ${teams.length}`}>
+    <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
+      <PageHeader title="Teams" subtitle={`owner: you · private · ${teams.length} team${teams.length === 1 ? "" : "s"} only you can see and run`}>
         <Button asChild size="sm">
           <Link to="/teams/new">+ New team</Link>
         </Button>

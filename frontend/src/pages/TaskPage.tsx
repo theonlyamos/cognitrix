@@ -204,7 +204,7 @@ export default function TaskPage() {
   };
 
   if (editing && loadingTask) {
-    return <div className="flex-1 flex flex-col h-screen min-w-0 bg-bg"><LoadingState label="loading task…" /></div>;
+    return <div className="flex-1 flex flex-col h-full min-w-0 bg-bg"><LoadingState label="loading task…" /></div>;
   }
 
   return (

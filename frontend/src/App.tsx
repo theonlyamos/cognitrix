@@ -4,8 +4,10 @@ import { UserProvider, useUser } from '@/context/AppContext';
 import { SessionProvider } from '@/context/SessionContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import AppLayout from '@/components/AppLayout';
+import DesktopFrame from '@/components/DesktopFrame';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
+import OAuthComplete from '@/pages/OAuthComplete';
 import '@/app.css';
 
 // Code-split the authenticated app; auth pages + shell stay eager for first paint.
@@ -20,6 +22,10 @@ const Teams = lazy(() => import('@/pages/Teams'));
 const TeamDetail = lazy(() => import('@/pages/TeamDetail'));
 const TeamPage = lazy(() => import('@/pages/TeamPage'));
 const ApiKeys = lazy(() => import('@/pages/ApiKeys'));
+const Inbox = lazy(() => import('@/pages/Inbox'));
+const Notifications = lazy(() => import('@/pages/Notifications'));
+const Settings = lazy(() => import('@/pages/Settings'));
+const QuickAsk = lazy(() => import('@/pages/QuickAsk'));
 
 function LoadingScreen() {
   return (
@@ -37,16 +43,16 @@ function LoadingScreen() {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useUser();
-  if (isLoading) return <LoadingScreen />;
+  if (isLoading) return <DesktopFrame><LoadingScreen /></DesktopFrame>;
   if (!user) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useUser();
-  if (isLoading) return <LoadingScreen />;
+  if (isLoading) return <DesktopFrame><LoadingScreen /></DesktopFrame>;
   if (user) return <Navigate to="/home" replace />;
-  return <>{children}</>;
+  return <DesktopFrame>{children}</DesktopFrame>;
 }
 
 function AppRoutes() {
@@ -55,6 +61,9 @@ function AppRoutes() {
       <Routes>
         <Route path="/" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
+        <Route path="/oauth/complete" element={<OAuthComplete />} />
+        {/* The desktop app's Alt+Space window: no app shell around it. */}
+        <Route path="/quick" element={<ProtectedRoute><QuickAsk /></ProtectedRoute>} />
 
         {/* Persistent shell: Sidebar mounts once, pages render in the Outlet. */}
         <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
@@ -72,6 +81,9 @@ function AppRoutes() {
           <Route path="/teams/:teamId" element={<TeamDetail />} />
           <Route path="/teams/:teamId/edit" element={<TeamPage />} />
           <Route path="/api-keys" element={<ApiKeys />} />
+          <Route path="/inbox" element={<Inbox />} />
+          <Route path="/notifications" element={<Notifications />} />
+          <Route path="/settings" element={<Settings />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

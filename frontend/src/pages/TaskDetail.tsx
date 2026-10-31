@@ -1039,11 +1039,11 @@ export default function TaskDetail() {
   );
 
   if (taskLoading && !task) {
-    return <div className="flex-1 flex flex-col h-screen min-w-0 bg-bg"><LoadingState label="loading task…" /></div>;
+    return <div className="flex-1 flex flex-col h-full min-w-0 bg-bg"><LoadingState label="loading task…" /></div>;
   }
 
   return (
-    <div className="flex-1 flex h-screen min-w-0 bg-bg text-fg">
+    <div className="flex-1 flex h-full min-w-0 bg-bg text-fg">
       <MobileSheet
         id="mobile-run-details"
         label="Run details"

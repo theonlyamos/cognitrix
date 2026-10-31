@@ -52,15 +52,15 @@ export default function TeamDetail() {
     }
   };
 
-  if (loading) return <div className="flex h-screen min-w-0 flex-1 flex-col bg-bg"><LoadingState label="loading team…" /></div>;
-  if (error || !team) return <div className="flex h-screen min-w-0 flex-1 flex-col bg-bg"><ErrorState message={error || 'Team not found.'} onRetry={refetch} /></div>;
+  if (loading) return <div className="flex h-full min-w-0 flex-1 flex-col bg-bg"><LoadingState label="loading team…" /></div>;
+  if (error || !team) return <div className="flex h-full min-w-0 flex-1 flex-col bg-bg"><ErrorState message={error || 'Team not found.'} onRetry={refetch} /></div>;
 
   const mobileActions: MobileHeaderAction[] = [
     { key: 'delete', label: 'Delete team', destructive: true, onSelect: remove },
   ];
 
   return (
-    <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
+    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
       <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
           <Link to="/teams" aria-label="Back to teams" className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">

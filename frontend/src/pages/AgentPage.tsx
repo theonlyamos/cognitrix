@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
+import { useSystemInfo } from '@/hooks/useSystemInfo';
 import { Input } from '@/lib/components/ui/input';
 import { Textarea } from '@/lib/components/ui/textarea';
 import { Select } from '@/lib/components/ui/select';
 import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm } from '@/components/form';
 import { cn } from '@/lib/utils';
+import { REASONING_LEVELS } from '@/lib/reasoning';
 
 const PROVIDERS = ['openrouter', 'openai', 'google', 'groq', 'cerebras', 'ollama'];
 const MODELS: Record<string, string[]> = {
@@ -34,7 +36,7 @@ interface AgentData {
   id?: string;
   name?: string;
   system_prompt?: string;
-  llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number };
+  llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number; reasoning_effort?: string };
   tools?: Tool[];
 }
 
@@ -46,11 +48,13 @@ export default function AgentPage() {
 
   const { data: existing, loading: loadingAgent } = useResource<AgentData>(agentId ? `/agents/${agentId}` : null);
   const { data: toolList } = useResource<Tool[]>('/tools');
+  const { info: systemInfo } = useSystemInfo();
 
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('google');
   const [model, setModel] = useState('gemini-3.5-flash');
   const [temperature, setTemperature] = useState(0.4);
+  const [reasoning, setReasoning] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [maxTokens, setMaxTokens] = useState('');
@@ -65,6 +69,7 @@ export default function AgentPage() {
     setProvider(existing.llm?.provider || 'google');
     setModel(existing.llm?.model || '');
     setTemperature(existing.llm?.temperature ?? 0.4);
+    setReasoning(existing.llm?.reasoning_effort || '');
     setSystemPrompt(existing.system_prompt || '');
     setSelected(new Set((existing.tools || []).map((t) => t.name)));
     setMaxTokens(existing.llm?.max_tokens ? String(existing.llm.max_tokens) : '');
@@ -108,6 +113,7 @@ export default function AgentPage() {
           provider,
           model: model.trim(),
           temperature,
+          reasoning_effort: reasoning,
           ...(baseUrl ? { base_url: baseUrl } : {}),
           ...(maxTokens ? { max_tokens: Number(maxTokens) } : {}),
         },
@@ -126,7 +132,7 @@ export default function AgentPage() {
 
   if (editing && loadingAgent) {
     return (
-      <div className="flex-1 flex flex-col h-screen min-w-0 bg-bg">
+      <div className="flex-1 flex flex-col h-full min-w-0 bg-bg">
         <LoadingState label="loading agent…" />
       </div>
     );
@@ -167,10 +173,28 @@ export default function AgentPage() {
         />
       </Field>
 
+      <Field label="REASONING" hint="sent as reasoning_effort">
+        <Select aria-label="Reasoning level" value={reasoning} onChange={(e) => setReasoning(e.target.value)}>
+          <option value="">Provider default</option>
+          {REASONING_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+        </Select>
+        <p className="mt-1.5 text-[12px] text-fg-dim">
+          How hard the model thinks before answering. Works with models that support reasoning levels (OpenAI, Gemini, Grok and others through their OpenAI-compatible APIs). You can change it per chat under the message box.
+        </p>
+      </Field>
+
       <Field label="SYSTEM PROMPT">
         <Textarea rows={6} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder="You are a helpful assistant that…" />
       </Field>
 
+      {selected.has('Bash') && (
+        <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
+          Shell commands can only run inside the working folder
+          {systemInfo?.working_folder ? <> <span className="font-mono text-[12px] text-fg">{systemInfo.working_folder}</span></> : null}, and risky ones wait for your approval.{' '}
+          {systemInfo && !systemInfo.desktop && 'On a shared server, the shell is off in chats and tasks; it works in the desktop app and the CLI. '}
+          <Link to="/settings" className="text-accent-ink hover:underline">Change</Link>
+        </p>
+      )}
       <Field label={`TOOLS · ${selected.size} selected`} composite>
         <div role="group" className="max-h-72 overflow-y-auto rounded border border-line">
           {toolsByCategory.length === 0 ? (
@@ -209,6 +233,12 @@ export default function AgentPage() {
           </Field>
           <Field label="BASE URL" hint="override endpoint (e.g. local Ollama)">
             <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://…" />
+            {baseUrl.trim() && (
+              <p className="mt-1.5 text-[12px] leading-relaxed text-fg-dim">
+                Your stored provider key is only sent to the provider's own address or to addresses listed in
+                COGNITRIX_TRUSTED_BASE_URLS. Any other address is blocked from receiving it.
+              </p>
+            )}
           </Field>
         </div>
       )}

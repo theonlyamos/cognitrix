@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import secrets
+import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -261,7 +262,19 @@ settings = CognitrixSettings()
 # Legacy compatibility - maintain existing constants and functions
 COGNITRIX_WORKDIR = settings.workdir
 BASE_DIR = Path(__file__).parent
-FRONTEND_BUILD_DIR = BASE_DIR.joinpath('..', 'frontend', 'dist')
+def _frontend_build_dir() -> Path:
+    override = os.getenv('COGNITRIX_FRONTEND_DIR')
+    if override:
+        return Path(override)
+    # A PyInstaller build (the desktop app's engine) unpacks bundled data
+    # files under sys._MEIPASS; the spec copies frontend/dist to frontend/dist.
+    bundle = getattr(sys, '_MEIPASS', None)
+    if bundle:
+        return Path(bundle) / 'frontend' / 'dist'
+    return BASE_DIR.joinpath('..', 'frontend', 'dist')
+
+
+FRONTEND_BUILD_DIR = _frontend_build_dir()
 FRONTEND_STATIC_DIR = FRONTEND_BUILD_DIR.joinpath('assets')
 COGNITRIX_HOME = settings.workdir
 MCP_CONFIG_FILE = settings.mcp_config_file

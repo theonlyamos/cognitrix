@@ -2,11 +2,13 @@ from ...api.routes.agents import agents_api, agents_invoke_api
 from ...api.routes.api_keys import api_keys_api
 from ...api.routes.artifacts import artifacts_api
 from ...api.routes.auth import auth_api
+from ...api.routes.oauth import oauth_api
 from ...api.routes.base import api_router
 from ...api.routes.providers import providers_api
 from ...api.routes.public import public_api
 from ...api.routes.sessions import sessions_api
 from ...api.routes.skills import skills_api
+from ...api.routes.system import system_api
 from ...api.routes.tasks import tasks_api, tasks_run_api
 from ...api.routes.teams import teams_api, teams_run_api
 from ...api.routes.tools import tools_api
@@ -27,4 +29,6 @@ api_router.include_router(teams_run_api)
 api_router.include_router(teams_api)
 api_router.include_router(sessions_api)
 api_router.include_router(auth_api)
+api_router.include_router(oauth_api)
 api_router.include_router(api_keys_api)
+api_router.include_router(system_api)

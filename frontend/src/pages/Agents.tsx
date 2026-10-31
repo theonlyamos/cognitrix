@@ -16,8 +16,8 @@ export default function Agents() {
   const agents = (data ?? []).filter((a) => a.id);
 
   return (
-    <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden bg-bg text-fg">
-      <PageHeader title="Agents" subtitle={`configure and run agents · ${agents.length}`}>
+    <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
+      <PageHeader title="Agents" subtitle={`owner: you · private · ${agents.length} agent${agents.length === 1 ? "" : "s"} only you can see and run`}>
         <Button asChild size="sm">
           <Link to="/agents/new">+ New agent</Link>
         </Button>

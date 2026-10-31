@@ -1,3 +1,4 @@
+import os
 import contextvars
 import json
 from contextlib import contextmanager
@@ -80,6 +81,19 @@ def reset_execution_context(token) -> None:
 def trusted_local_execution_context() -> ToolExecutionContext:
     """Build the host-process capability used only by direct local CLI entry points."""
     return ToolExecutionContext(host_process_mode=HostProcessMode.TRUSTED_LOCAL)
+
+
+def signed_in_host_process_mode() -> HostProcessMode:
+    """Shell access for a signed-in person's own chats and task runs.
+
+    Only the desktop app's local engine (COGNITRIX_DESKTOP=1, bound to
+    127.0.0.1) grants it: there the person is the machine's owner, and Bash
+    stays confined to the working folder with risky commands still needing
+    approval. A shared web server keeps the categorical denial.
+    """
+    if os.environ.get('COGNITRIX_DESKTOP') == '1':
+        return HostProcessMode.TRUSTED_LOCAL
+    return HostProcessMode.DENY
 
 
 def delegated_execution_context(

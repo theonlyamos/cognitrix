@@ -40,7 +40,7 @@ from cognitrix.session_ownership import (
     session_ownerships,
 )
 from cognitrix.tasks.handler import handle_multi_step_task
-from cognitrix.tools.utils import ToolExecutionContext
+from cognitrix.tools.utils import ToolExecutionContext, signed_in_host_process_mode
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -720,6 +720,11 @@ class SSEManager:
                     stream_id=str(self.stream_id or 'default'),
                     user_key=str(self.user_key or ''),
                 ))
+                from cognitrix.providers.base import normalize_reasoning_effort, turn_reasoning_effort
+
+                effort_token = turn_reasoning_effort.set(
+                    normalize_reasoning_effort(action.get('reasoning_effort')) or None
+                )
                 media_token = set_media_turn_context(MediaTurnContext(
                     ownership=ownership,
                     current_images=image_refs,
@@ -743,6 +748,7 @@ class SSEManager:
                             selected_image_artifact_id=(
                                 selected_ref.id if selected_ref is not None else None
                             ),
+                            host_process_mode=signed_in_host_process_mode(),
                         ),
                     )
                     if promoted is not None and (
@@ -755,6 +761,7 @@ class SSEManager:
                     reset_media_turn_context(media_token)
                     question_turn_ctx.reset(question_token)
                     web_turn_ctx.reset(token)
+                    turn_reasoning_effort.reset(effort_token)
         except asyncio.CancelledError:
             terminal = {
                 'type': 'turn_stopped',

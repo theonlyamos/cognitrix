@@ -1,11 +1,54 @@
 import { useEffect, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from '@/components/Sidebar';
+import TitleBar from '@/components/TitleBar';
+import CommandPalette from '@/components/CommandPalette';
+import AppAlerts from '@/components/AppAlerts';
+import { NotificationsProvider } from '@/context/NotificationsContext';
+import { isDesktop, onDesktopEvent } from '@/lib/desktop';
 
-/** Persistent shell: the Sidebar mounts once; pages swap through the Outlet. */
+/** Persistent shell: title bar, Sidebar and alerts mount once; pages swap
+ *  through the Outlet. */
 export default function AppLayout() {
+  return (
+    <NotificationsProvider>
+      <AppShell />
+    </NotificationsProvider>
+  );
+}
+
+function AppShell() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+
+  // Ctrl K opens the command palette everywhere; Ctrl N starts a new chat.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 'k') {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      } else if (key === 'n' && isDesktop()) {
+        event.preventDefault();
+        navigate('/home');
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [navigate]);
+
+  // The tray menu and quick ask ask the main window to open a page.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void onDesktopEvent<string>('navigate', (path) => {
+      if (path === '/home' && window.location.pathname === '/home') window.location.reload();
+      else navigate(path);
+    }).then((fn) => (stop = fn));
+    return () => stop?.();
+  }, [navigate]);
 
   useEffect(() => {
     document.documentElement.classList.add('app-scroll-locked');
@@ -28,7 +71,11 @@ export default function AppLayout() {
   }, [mobileNavOpen]);
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-bg text-fg">
+    <div className="flex h-dvh flex-col overflow-hidden bg-bg text-fg">
+      <TitleBar onOpenPalette={() => setPaletteOpen(true)} />
+      <AppAlerts />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <div className="flex min-h-0 flex-1 overflow-hidden">
       <button
         type="button"
         aria-label="Open navigation"
@@ -61,6 +108,7 @@ export default function AppLayout() {
       <main id="main-content" className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Outlet />
       </main>
+      </div>
     </div>
   );
 }

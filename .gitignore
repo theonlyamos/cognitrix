@@ -173,3 +173,11 @@ docs/superpowers/
 
 # Local Git worktrees
 .worktrees/
+
+# Desktop app: keep the engine spec, ignore build output
+!desktop/cognitrix-engine.spec
+desktop/build/
+desktop/src-tauri/engine/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/node_modules/

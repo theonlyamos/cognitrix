@@ -5,6 +5,7 @@ Runtime config (provider, base_url, api_key, model) from env or CLI.
 Groq and Ollama: direct. Others: route through Helicone.
 """
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
@@ -235,7 +236,7 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
     return config
 
 
-_OPENAI_REASONING_MODEL = re.compile(r'^(gpt-5|o\d)')
+_OPENAI_REASONING_MODEL = re.compile(r'^(gpt-(?:[5-9]|\d{2,})|o\d)')
 
 
 def _is_openai_reasoning_model(model: str) -> bool:
@@ -357,6 +358,40 @@ def _retry_delay(error: Exception, attempt: int) -> float:
     return base + random.uniform(0, base / 2)
 
 
+# Models that refused function tools while reasoning on /chat/completions
+# (e.g. gpt-6.x). Later calls send reasoning_effort='none' up front.
+_NO_REASONING_WITH_TOOLS: set[str] = set()
+
+
+REASONING_EFFORTS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')
+
+# A per-turn override from the chat window; wins over the agent's setting.
+turn_reasoning_effort: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    'turn_reasoning_effort', default=None
+)
+
+
+def normalize_reasoning_effort(value: Any) -> str:
+    """'' for unset or unknown values, else one of REASONING_EFFORTS."""
+    text = str(value or '').strip().lower()
+    return text if text in REASONING_EFFORTS else ''
+
+
+def _rejects_tools_with_reasoning(err: BaseException) -> bool:
+    text = str(err).lower()
+    return 'reasoning_effort' in text and 'function tools' in text
+
+
+def _reasoning_effort_pinned(params: dict[str, Any]) -> bool:
+    """True when extra_body sets reasoning_effort by hand: that is left alone.
+
+    The agent's or chat's reasoning level is not pinned. A model that can't
+    reason while using tools falls back to 'none' rather than failing the turn.
+    """
+    extra = params.get('extra_body') or {}
+    return isinstance(extra, dict) and 'reasoning_effort' in extra
+
+
 async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
     """chat.completions.create with retries on 429/5xx/timeouts.
 
@@ -367,6 +402,9 @@ async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
     from cognitrix.tasks.accounting import current_task_accounting
 
     accounting = current_task_accounting()
+    model = str(params.get('model') or '')
+    if params.get('tools') and model in _NO_REASONING_WITH_TOOLS and not _reasoning_effort_pinned(params):
+        params = {**params, 'reasoning_effort': 'none'}
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         if attempt > 1 and accounting is not None:
             retry_output_tokens = await accounting.begin_provider_retry()
@@ -376,6 +414,20 @@ async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
                 token_key = 'max_completion_tokens' if 'max_completion_tokens' in params else 'max_tokens'
                 params = {**params, token_key: retry_output_tokens}
         try:
+            return await client.chat.completions.create(**params)
+        except openai.BadRequestError as e:
+            # Some OpenAI models only take function tools on /chat/completions
+            # with reasoning turned off. Retry once that way rather than fail
+            # every chat with tools.
+            if (
+                not (params.get('tools') and _rejects_tools_with_reasoning(e))
+                or params.get('reasoning_effort') == 'none'
+                or _reasoning_effort_pinned(params)
+            ):
+                raise
+            logger.info("%s refuses tools while reasoning; retrying with reasoning_effort='none'", model)
+            _NO_REASONING_WITH_TOOLS.add(model)
+            params = {**params, 'reasoning_effort': 'none'}
             return await client.chat.completions.create(**params)
         except _transient_errors() as e:
             if accounting is not None:
@@ -430,6 +482,9 @@ class LLM(Model):
     extra_headers: dict[str, str] = Field(default_factory=dict)
     extra_body: dict[str, Any] = Field(default_factory=dict)
     response_format: dict[str, Any] | None = None
+    reasoning_effort: str = ''
+    """How hard the model thinks: none, minimal, low, medium, high or xhigh.
+    Empty = the provider's default. Sent as the OpenAI `reasoning_effort` param."""
 
     def __init__(self, provider: str | None = None, **data: Any):
         if provider is not None or any(k in data for k in ('base_url', 'api_key', 'model')):
@@ -678,6 +733,9 @@ class LLMManager:
                 completion_params['response_format'] = response_format
             if llm.extra_body:
                 completion_params['extra_body'] = llm.extra_body
+            effort = normalize_reasoning_effort(turn_reasoning_effort.get() or llm.reasoning_effort)
+            if effort:
+                completion_params['reasoning_effort'] = effort
             completion_params = _apply_provider_param_rules(llm, completion_params)
 
             if stream:

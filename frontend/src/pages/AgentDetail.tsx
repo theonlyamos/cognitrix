@@ -59,11 +59,11 @@ export default function AgentDetail() {
   };
 
   if (loading) {
-    return <div className="flex h-screen min-w-0 flex-1 flex-col bg-bg"><LoadingState label="loading agent…" /></div>;
+    return <div className="flex h-full min-w-0 flex-1 flex-col bg-bg"><LoadingState label="loading agent…" /></div>;
   }
   if (loadError || !agent) {
     return (
-      <div className="flex h-screen min-w-0 flex-1 flex-col bg-bg">
+      <div className="flex h-full min-w-0 flex-1 flex-col bg-bg">
         <ErrorState message={loadError || 'Agent not found.'} onRetry={refetch} />
       </div>
     );
@@ -79,7 +79,7 @@ export default function AgentDetail() {
   ];
 
   return (
-    <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
+    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
       <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
           <Link to="/agents" aria-label="Back to agents" className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">

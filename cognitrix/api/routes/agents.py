@@ -52,6 +52,7 @@ from ...media.staging import (
 )
 
 from ...providers import LLM
+from ...providers.base import normalize_reasoning_effort
 from ...providers.base import ProviderKeyDestinationError
 
 logger = logging.getLogger('cognitrix.log')
@@ -360,6 +361,8 @@ async def save_agent(request: Request, agent: Agent,
         ):
             llm_data['api_key'] = existing.llm.api_key
     try:
+        if 'reasoning_effort' in llm_data:
+            llm_data['reasoning_effort'] = normalize_reasoning_effort(llm_data['reasoning_effort'])
         llm = LLM(**llm_data)
     except ProviderKeyDestinationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -469,6 +472,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'edit_source_image_index': data.get('edit_source_image_index'),
                 'document_ids': data.get('document_ids') or (),
                 'bypass_permissions': bool(data.get('bypass_permissions')),
+                'reasoning_effort': normalize_reasoning_effort(data.get('reasoning_effort')),
                 'execution_mode': execution_mode.value,
             })
         except BaseException:
