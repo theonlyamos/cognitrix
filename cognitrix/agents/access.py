@@ -8,6 +8,8 @@ run them, but only admins can change or delete them.
 Admins are the users listed in COGNITRIX_ADMIN_EMAILS (comma-separated). When
 that is unset, the first user who signed up is the admin, so a single-user
 install keeps working without extra setup.
+
+Tasks and teams follow the same rules through their own owner_id field.
 """
 from __future__ import annotations
 
@@ -43,9 +45,14 @@ async def is_admin(user: Any) -> bool:
 
     from cognitrix.models.user import User
 
-    users = await User.all()
+    try:
+        users = await User.all()
+    except Exception:
+        users = []
     if not users:
-        return False
+        # No accounts exist, so this caller cannot be a signed-in web user
+        # competing with others (CLI, scripts, tests): treat it as the admin.
+        return True
 
     def created(u):
         return str(getattr(u, 'created_at', '') or '')

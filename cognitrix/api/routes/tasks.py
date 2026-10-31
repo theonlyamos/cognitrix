@@ -11,8 +11,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from cognitrix.agents.access import can_edit, can_view, is_admin
 from cognitrix.artifacts import absolute_path, bound_task_run_artifact
 from cognitrix.common.security import AuthContext, crud_scope, get_auth_context, require
+from cognitrix.session_ownership import principal_key
 from cognitrix.tasks import Task
 from cognitrix.tasks.base import TaskStatus
 from cognitrix.tasks.budget import TaskBudget, stable_actor_key
@@ -55,6 +57,65 @@ _TASK_RUN_MAX_OFFSET = 1_000
 _TASK_RUN_MAX_SCAN_ROWS = 5_000
 
 
+def _user_key(ctx: AuthContext) -> str | None:
+    user = getattr(ctx, 'user', None)
+    return principal_key(user) if user is not None else None
+
+
+def _require_task_view(task: Task | None, ctx: AuthContext) -> Task:
+    """404 unless the caller may see this task (theirs, or shared)."""
+    if task is None or not can_view(task, _user_key(ctx)):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+async def _require_task_edit(task: Task | None, ctx: AuthContext) -> Task:
+    """Owners change their own tasks; only admins change shared ones."""
+    task = _require_task_view(task, ctx)
+    if not await can_edit(task, ctx.user):
+        raise HTTPException(status_code=403, detail="Only the task's owner can change it")
+    return task
+
+
+async def _existing(lookup):
+    """Run a lookup; a table that was never created holds nothing to protect."""
+    try:
+        return await lookup
+    except Exception as exc:
+        if 'no such table' in str(exc).lower():
+            return None
+        raise
+
+
+async def _check_task_references(ctx: AuthContext, task: Task) -> None:
+    """A task may only point at agents and a team its owner can see."""
+    from cognitrix.agents import Agent
+    from cognitrix.teams.base import Team
+
+    user_key = _user_key(ctx)
+    for agent_id in task.assigned_agents or []:
+        agent = await _existing(Agent.find_one({'id': agent_id}))
+        if agent is not None and not can_view(agent, user_key):
+            raise HTTPException(status_code=403, detail="Not allowed to use this agent")
+    if task.team_id:
+        team = await _existing(Team.get(task.team_id))
+        if team is not None and not can_view(team, user_key):
+            raise HTTPException(status_code=403, detail="Not allowed to use this team")
+
+
+async def _run_visible(task: Task, run: TaskRun, ctx: AuthContext, admin: bool | None = None) -> bool:
+    """On a private task the owner sees every run. On a shared task each
+    person sees the runs they started (plus unattributed ones); admins see all."""
+    if not can_view(task, _user_key(ctx)):
+        return False
+    if getattr(task, 'owner_id', None) or not getattr(run, 'requested_by', None):
+        return True
+    user = getattr(ctx, 'user', None)
+    if user is not None and str(getattr(user, 'id', '')) == str(run.requested_by):
+        return True
+    return admin if admin is not None else await is_admin(user)
+
+
 def _check_task_allowlists(ctx: AuthContext, task: Task) -> None:
     """Invoke-path allowlist enforcement: a key restricted to certain
     teams/agents may only execute tasks within them. JWT passes everything."""
@@ -83,9 +144,13 @@ def _task_is_deleted(task: Task | None) -> bool:
     return task is None or bool(task.deleted_at)
 
 
-async def _visible_task(task_id: str) -> Task | None:
+async def _visible_task(task_id: str, ctx: AuthContext | None = None) -> Task | None:
     task = await Task.get(task_id)
-    return None if _task_is_deleted(task) else task
+    if _task_is_deleted(task):
+        return None
+    if ctx is not None and not can_view(task, _user_key(ctx)):
+        return None
+    return task
 
 
 async def _update_existing_task_if_live(task: Task) -> int:
@@ -339,6 +404,7 @@ async def _authorized_task_run_page(
     *,
     limit: int,
     offset: int,
+    task: Task | None = None,
 ) -> list[TaskRun]:
     """Page the ACL-visible sequence without ever loading all task runs.
 
@@ -350,6 +416,7 @@ async def _authorized_task_run_page(
     selected: list[TaskRun] = []
     visible_seen = 0
     database_offset = 0
+    admin = await is_admin(ctx.user) if task is not None and not getattr(task, 'owner_id', None) else False
     while (
         len(selected) < limit
         and database_offset < _TASK_RUN_MAX_SCAN_ROWS
@@ -368,6 +435,8 @@ async def _authorized_task_run_page(
         database_offset += len(batch)
         for run in batch:
             if not run_acl_allowed(run, ctx):
+                continue
+            if task is not None and not await _run_visible(task, run, ctx, admin):
                 continue
             if visible_seen < offset:
                 visible_seen += 1
@@ -528,7 +597,9 @@ async def _authorized_task_run(
     task, run = await asyncio.gather(Task.get(task_id), TaskRun.get(run_id))
     if task is None or run is None or run.task_id != task_id:
         raise HTTPException(status_code=404, detail='Task run not found')
-    if not run_acl_allowed(run, ctx):
+    if not can_view(task, _user_key(ctx)):
+        raise HTTPException(status_code=404, detail='Task run not found')
+    if not run_acl_allowed(run, ctx) or not await _run_visible(task, run, ctx):
         raise HTTPException(status_code=403, detail='Not allowed to access this task run')
     return task, run
 
@@ -605,9 +676,10 @@ tasks_run_api = APIRouter(
 )
 
 @tasks_api.get('')
-async def list_tasks():
+async def list_tasks(ctx: AuthContext = Depends(get_auth_context)):
     tasks = await Task.all()
-    tasks = [task for task in tasks if not task.deleted_at]
+    user_key = _user_key(ctx)
+    tasks = [task for task in tasks if not task.deleted_at and can_view(task, user_key)]
     return await asyncio.gather(*[_task_projection(task) for task in tasks])
 
 @tasks_api.post('')
@@ -623,6 +695,13 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
     stored = await Task.get(task.id) if task.id else None
     if stored is not None and stored.deleted_at:
         raise HTTPException(status_code=404, detail="Task not found")
+    if stored is not None:
+        await _require_task_edit(stored, ctx)
+        task.owner_id = stored.owner_id
+    else:
+        # Ownership is server-owned: a new web task belongs to its creator.
+        task.owner_id = _user_key(ctx)
+    await _check_task_references(ctx, task)
     # Tombstones are server-owned. Full-row creates/edits cannot hide or
     # resurrect a task by supplying this field themselves.
     task.deleted_at = None
@@ -721,13 +800,12 @@ class TaskAssignment(BaseModel):
 async def assign_task(task_id: str, body: TaskAssignment,
                       ctx: AuthContext = Depends(get_auth_context)):
     """Update task ownership without touching execution or schedule state."""
-    task = await _visible_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = await _require_task_edit(await _visible_task(task_id), ctx)
 
     task.assigned_agents = list(dict.fromkeys(body.assigned_agents))
     task.team_id = body.team_id
     _check_task_allowlists(ctx, task)
+    await _check_task_references(ctx, task)
     await Task.update_one(
         {'id': task_id},
         {'assigned_agents': task.assigned_agents, 'team_id': task.team_id},
@@ -887,7 +965,7 @@ async def update_task_status(request: Request, task_id: str, resume: bool = Fals
     """Legacy UI start route. Deliberately takes no callback_url — capability-
     bearing URLs don't belong in query strings/access logs; API callers use
     POST /tasks/{id}/run."""
-    task = await _visible_task(task_id)
+    task = await _visible_task(task_id, ctx)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     _check_task_allowlists(ctx, task)
@@ -916,9 +994,7 @@ async def start_task_run(task_id: str, body: TaskRunRequest | None = None,
     """API-first start/resume for a pre-created task, with optional completion
     webhook. Async — poll GET /tasks/{id} + /tasks/{id}/runs."""
     body = body or TaskRunRequest()
-    task = await Task.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = _require_task_view(await Task.get(task_id), ctx)
     _check_task_allowlists(ctx, task)
     await _set_callback(task, body.callback_url, ctx)
     requested_by, actor_key = _run_identity(ctx)
@@ -942,12 +1018,12 @@ async def start_task_run(task_id: str, body: TaskRunRequest | None = None,
 
 @tasks_run_api.post('/{task_id}/cancel')
 async def cancel_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)):
-    task = await _visible_task(task_id)
+    task = await _visible_task(task_id, ctx)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     run = await _active_run(task_id)
     if run is not None:
-        if not run_acl_allowed(run, ctx):
+        if not run_acl_allowed(run, ctx) or not await _run_visible(task, run, ctx):
             raise HTTPException(
                 status_code=403,
                 detail='Not allowed to access this task run',
@@ -991,9 +1067,7 @@ async def toggle_schedule(task_id: str, body: ScheduleToggle,
                           ctx: AuthContext = Depends(get_auth_context)):
     """Pause/resume a task's schedule. Resume recomputes next_run_at so a
     long-paused schedule doesn't fire from a stale instant."""
-    task = await _visible_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = await _require_task_edit(await _visible_task(task_id), ctx)
 
     if not body.enabled:
         updates = {'schedule_enabled': False, 'next_run_at': None}
@@ -1033,14 +1107,13 @@ async def list_task_runs(
 ):
     # The Task row is retained specifically so authorized historical runs
     # remain addressable after the authoring task is hidden.
-    task = await Task.get(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail='Task not found')
+    task = _require_task_view(await Task.get(task_id), ctx)
     page = await _authorized_task_run_page(
         task_id,
         ctx,
         limit=limit,
         offset=offset,
+        task=task,
     )
     if not page:
         return []
@@ -1183,17 +1256,15 @@ async def stream_task_run_events(
 
 
 @tasks_api.get('/{task_id}')
-async def load_task(task_id: str):
-    task = await _visible_task(task_id)
+async def load_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)):
+    task = await _visible_task(task_id, ctx)
     return await _task_projection(task) if task else {}
 
 @tasks_api.delete('/{task_id}')
-async def delete_task(task_id: str):
+async def delete_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)):
     # Read the retained row directly so repeating DELETE can repair a crash
     # between the authoritative head tombstone and this projection update.
-    task = await Task.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = await _require_task_edit(await Task.get(task_id), ctx)
     requested_deleted_at = task.deleted_at or datetime.now(timezone.utc).replace(
         tzinfo=None
     ).strftime('%Y-%m-%d %H:%M:%S')

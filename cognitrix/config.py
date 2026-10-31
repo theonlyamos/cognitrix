@@ -187,10 +187,10 @@ class CognitrixSettings:
         """Get default model for a provider"""
         model_mapping = {
             'openai': 'gpt-4o',
-            'openrouter': 'google/gemini-3.5-flash-preview',
+            'openrouter': 'google/gemini-3.5-flash',
             'anthropic': 'claude-sonnet-5-5',
             'google': 'gemini-3.5-flash',
-            'groq': 'llama-3.3-70b-versatile',
+            'groq': 'openai/gpt-oss-120b',
             'cohere': 'command-r-plus',
             'together': 'meta-llama/llama-3.3-70b-instruct',
             'huggingface': 'meta-llama/llama-3.3-70b-instruct',
@@ -347,7 +347,11 @@ _TASK_MIGRATION_COLUMNS = (
     ('schedule_cron', 'TEXT'), ('next_run_at', 'TEXT'),
     ('schedule_enabled', 'BOOLEAN'), ('schedule_requested_by', 'TEXT'),
     ('schedule_authority_kind', 'TEXT'), ('schedule_authority_id', 'TEXT'),
-    ('deleted_at', 'TEXT'),
+    ('deleted_at', 'TEXT'), ('owner_id', 'TEXT'),
+)
+
+_TEAM_MIGRATION_COLUMNS = (
+    ('owner_id', 'TEXT'),
 )
 
 _ARTIFACT_MIGRATION_COLUMNS = (
@@ -595,6 +599,7 @@ async def _migrate_relational_task_schema(database) -> None:
         ('artifacts', _ARTIFACT_MIGRATION_COLUMNS),
         ('sessions', _SESSION_MIGRATION_COLUMNS),
         ('agents', _AGENT_MIGRATION_COLUMNS),
+        ('teams', _TEAM_MIGRATION_COLUMNS),
     ):
         for column, ctype in columns:
             clause = (
@@ -750,6 +755,7 @@ async def _ensure_schema():
         ('tasks', _TASK_MIGRATION_COLUMNS),
         ('taskruns', _TASKRUN_MIGRATION_COLUMNS),
         ('taskrunheads', _TASKRUN_HEAD_MIGRATION_COLUMNS),
+        ('teams', _TEAM_MIGRATION_COLUMNS),
     ):
         try:
             cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')

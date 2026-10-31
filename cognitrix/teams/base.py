@@ -28,6 +28,9 @@ class Team(Model):
     """List of tasks in the team"""
 
     leader_id: str | None = None
+
+    owner_id: str | None = None
+    """User who created the team through the web API. None means shared."""
     """ID of the team leader"""
 
     class Config:

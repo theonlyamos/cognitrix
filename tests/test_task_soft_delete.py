@@ -13,6 +13,8 @@ from cognitrix.tasks.events import TaskRunEvent
 from cognitrix.tasks.repository import RunRepository, _insert_with_explicit_id
 from cognitrix.tasks.run import TaskRun, TaskRunHead, TaskRunStatus
 
+_CTX = AuthContext(user=SimpleNamespace(id='user-1'), api_key=None)
+
 
 @pytest.fixture
 async def task_delete_db(tmp_path):
@@ -46,7 +48,7 @@ async def test_delete_rejects_task_with_active_run(task_delete_db):
     )
 
     with pytest.raises(HTTPException) as exc:
-        await routes.delete_task(task.id)
+        await routes.delete_task(task.id, _CTX)
 
     assert exc.value.status_code == 409
     assert await TaskRun.get(run.id) is not None
@@ -73,7 +75,7 @@ async def test_delete_reconciles_legacy_active_run_before_tombstoning(
     assert await TaskRunHead.get(task.id) is None
 
     with pytest.raises(HTTPException) as exc:
-        await routes.delete_task(task.id)
+        await routes.delete_task(task.id, _CTX)
 
     assert exc.value.status_code == 409
     stored = await Task.get(task.id)
@@ -106,7 +108,7 @@ async def test_delete_tombstones_task_but_preserves_terminal_run_history(
     run = await RunRepository().request_cancel(run.id)
     assert run.status == TaskRunStatus.CANCELLED
 
-    response = await routes.delete_task(task.id)
+    response = await routes.delete_task(task.id, _CTX)
 
     assert response == {"message": "Task deleted successfully"}
     stored = await Task.get(task.id)
@@ -123,8 +125,8 @@ async def test_delete_tombstones_task_but_preserves_terminal_run_history(
     )
     assert authorized_task.id == task.id
     assert authorized_run.id == run.id
-    assert await routes.load_task(task.id) == {}
-    assert await routes.list_tasks() == []
+    assert await routes.load_task(task.id, _CTX) == {}
+    assert await routes.list_tasks(_CTX) == []
 
 
 async def test_tombstoned_task_cannot_be_edited_assigned_scheduled_or_started(
@@ -135,7 +137,7 @@ async def test_tombstoned_task_cannot_be_edited_assigned_scheduled_or_started(
 
     task = Task(title="deleted", description="hidden")
     await task.save()
-    await routes.delete_task(task.id)
+    await routes.delete_task(task.id, _CTX)
     stored = await Task.get(task.id)
     assert stored is not None
 
@@ -221,7 +223,7 @@ async def test_delete_winning_after_save_read_cannot_be_resurrected(
     )
     await save_read_live.wait()
 
-    deleted = await routes.delete_task(task.id)
+    deleted = await routes.delete_task(task.id, _CTX)
     assert deleted == {"message": "Task deleted successfully"}
     allow_save_to_continue.set()
 
@@ -290,7 +292,7 @@ async def test_enqueue_tombstone_race_cancels_reservation_before_publish(
     assert stored is not None
     assert stored.deleted_at == "2030-01-01 00:00:00"
 
-    repeated = await routes.delete_task(task.id)
+    repeated = await routes.delete_task(task.id, _CTX)
     assert repeated == {"message": "Task deleted successfully"}
     assert (await Task.get(task.id)).deleted_at == "2030-01-01 00:00:00"
     assert stored.status == TaskStatus.PENDING
@@ -336,7 +338,7 @@ async def test_head_tombstone_and_run_reservation_are_one_atomic_admission_fence
         lambda *args, **kwargs: SimpleNamespace(id="celery-race"),
     )
 
-    deleting = asyncio.create_task(routes.delete_task(task.id))
+    deleting = asyncio.create_task(routes.delete_task(task.id, _CTX))
     await delete_cas_started.wait()
     enqueueing = asyncio.create_task(routes._enqueue_task_start(task))
     deleted, queued = await asyncio.gather(
@@ -380,7 +382,7 @@ async def test_head_tombstone_blocks_enqueue_and_delete_repairs_task_row(
     assert exc.value.status_code == 404
     assert await TaskRun.find({"task_id": task.id}) == []
 
-    response = await routes.delete_task(task.id)
+    response = await routes.delete_task(task.id, _CTX)
     assert response == {"message": "Task deleted successfully"}
     stored = await Task.get(task.id)
     assert stored is not None

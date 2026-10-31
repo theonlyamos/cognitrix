@@ -65,6 +65,9 @@ class Task(Model):
     team_id: str | None = None
     """ID of the team assigned to this task"""
 
+    owner_id: str | None = None
+    """User who created the task through the web API. None means shared."""
+
     callback_url: str | None = None
     """Webhook POSTed on run completion (API-started tasks only). Stripped
     from API projections — callback URLs routinely embed capability tokens."""
