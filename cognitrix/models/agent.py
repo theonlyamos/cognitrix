@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Callable
 from enum import Enum
-from typing import Any, Self
+from typing import Any
 
 from odbms import Model
 from pydantic import Field
@@ -85,7 +85,7 @@ class Agent(Model):
     verbose: bool = Field(default=False)
     """Set agent verbosity"""
 
-    sub_agents: list[Self] = Field(default=[])
+    sub_agents: list["Agent"] = Field(default=[])
     """List of sub agents which can be called by this agent"""
 
     mcp_servers: list[str] = Field(default_factory=list)
@@ -96,6 +96,9 @@ class Agent(Model):
 
     parent_id: str | None = None
     """Id of this agent's parent agent (if it's a sub agent)"""
+
+    owner_id: str | None = None
+    """User who owns this agent. None means a shared agent that only admins can change."""
 
     autostart: bool = False
     """Whether the agent should start running as soon as it's created"""

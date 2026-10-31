@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.formparsers import MultiPartException, MultiPartParser
 
 from cognitrix.agents import Agent
+from cognitrix.agents import access as agent_access
 from cognitrix.common.security import (
     AuthContext,
     crud_scope,
@@ -51,6 +52,7 @@ from ...media.staging import (
 )
 
 from ...providers import LLM
+from ...providers.base import ProviderKeyDestinationError
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -292,30 +294,78 @@ agents_invoke_api = APIRouter(
 )
 
 
-async def _resolve_agent(agent_id, request: Request):
-    """Resolve the agent for this request: by id if given, else the server default."""
+async def _resolve_agent(agent_id, request: Request, user=None):
+    """Resolve the agent for this request: by id if given, else the server default.
+
+    An agent another user owns is treated as missing.
+    """
+    user_key = agent_access.owner_key(user) if user is not None else None
     if agent_id:
         agent = await Agent.find_one({'id': agent_id})
-        if agent:
-            return agent
-    return getattr(request.state, 'agent', None)
+        if agent is not None:
+            return agent if agent_access.can_view(agent, user_key) else None
+    default = getattr(request.state, 'agent', None)
+    if default is not None and not agent_access.can_view(default, user_key):
+        return None
+    return default
+
+
+async def _visible_agent_or_404(agent_id: str, ctx: AuthContext) -> Agent:
+    agent = await agent_access.find_visible_agent(
+        agent_access.owner_key(ctx.user), agent_id=agent_id
+    )
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return agent
 
 
 def _user_key(user) -> str:
     return str(getattr(user, 'id', None) or getattr(user, 'email', 'anon'))
 
 @agents_api.get('')
-async def list_agents():
-    agents = await Agent.all()
+async def list_agents(ctx: AuthContext = Depends(get_auth_context)):
+    agents = await agent_access.visible_agents(agent_access.owner_key(ctx.user))
 
     return [redact_secrets(agent.json()) for agent in agents]
 
 @agents_api.post('')
-async def save_agent(request: Request, agent: Agent):
+async def save_agent(request: Request, agent: Agent,
+                     ctx: AuthContext = Depends(get_auth_context)):
     data = await request.json()
+    user_key = agent_access.owner_key(ctx.user)
 
-    llm = LLM(**data['llm'])
-    llm.provider = data['llm']['provider']
+    existing = await Agent.find_one({'id': agent.id}) if agent.id else None
+    if existing is not None:
+        if not agent_access.can_view(existing, user_key):
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if not await agent_access.can_edit(existing, ctx.user):
+            raise HTTPException(status_code=403, detail="Only an admin can change a shared agent")
+        # Ownership never moves through this endpoint.
+        agent.owner_id = existing.owner_id
+    else:
+        agent.owner_id = user_key
+
+    llm_data = dict(data.get('llm') or {})
+    if not llm_data.get('provider'):
+        raise HTTPException(status_code=400, detail="llm.provider is required")
+    # GET /agents redacts api_key to '***'. Saving that back means "keep the
+    # key I already have", but only while the endpoint stays the same.
+    if llm_data.get('api_key') == '***':
+        llm_data.pop('api_key')
+        if (
+            existing is not None
+            and existing.llm is not None
+            and existing.llm.api_key
+            and (existing.llm.base_url or '') == (llm_data.get('base_url') or existing.llm.base_url or '')
+        ):
+            llm_data['api_key'] = existing.llm.api_key
+    try:
+        llm = LLM(**llm_data)
+    except ProviderKeyDestinationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    llm.provider = llm_data['provider']
 
     agent.llm = llm
     await agent.save()
@@ -336,7 +386,7 @@ async def sse_endpoint(request: Request, agent_id: str | None = None,
                        stream_id: str | None = None, user=Depends(get_current_user)):
     # Per-browser manager: isolates users and prevents another tab or stale
     # reconnect for the same agent from consuming this stream's chat action.
-    agent = await _resolve_agent(agent_id, request)
+    agent = await _resolve_agent(agent_id, request, user)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     if stream_id is not None and (not stream_id.strip() or len(stream_id) > 128):
@@ -372,7 +422,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 detail='Task execution mode does not support attachments or document capabilities',
             )
 
-        agent = await _resolve_agent(data.get('agent_id'), request)
+        agent = await _resolve_agent(data.get('agent_id'), request, user)
         if agent is None:
             raise HTTPException(status_code=404, detail='Agent not found')
         stream_id = data.get('stream_id')
@@ -435,7 +485,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
 async def stop_endpoint(request: Request, user=Depends(get_current_user)):
     """Cancel the pending or active turn for this exact browser stream."""
     data = await request.json()
-    agent = await _resolve_agent(data.get("agent_id"), request)
+    agent = await _resolve_agent(data.get("agent_id"), request, user)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     stream_id = data.get("stream_id")
@@ -602,9 +652,7 @@ async def generate(agent_id: str, body: GenerateRequest,
                    ctx: AuthContext = Depends(get_auth_context)):
     """Programmatic chat: one agent turn (tools run server-side), stateful via
     session_id. Blocking JSON by default; stream=true for SSE chunks."""
-    agent = await Agent.find_one({'id': agent_id})
-    if agent is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = await _visible_agent_or_404(agent_id, ctx)
     if not ctx.agent_allowed(agent.id):
         raise HTTPException(status_code=403, detail="API key not allowed for this agent")
     if not body.message.strip():
@@ -706,18 +754,16 @@ def _stream_generate(session: Session, agent: Agent, message: str, tool_context)
 
 
 @agents_api.get('/{agent_id}')
-async def load_agent(agent_id: str):
-    agent = await Agent.find_one({'id': agent_id})
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+async def load_agent(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
+    agent = await _visible_agent_or_404(agent_id, ctx)
 
     return redact_secrets(agent.json())
 
 @agents_api.delete('/{agent_id}')
-async def delete_agent(agent_id: str):
-    agent = await Agent.find_one({'id': agent_id})
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+async def delete_agent(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
+    agent = await _visible_agent_or_404(agent_id, ctx)
+    if not await agent_access.can_edit(agent, ctx.user):
+        raise HTTPException(status_code=403, detail="Only an admin can delete a shared agent")
 
     # delete_many avoids the odbms sqlite `delete_one` bug (emits DELETE … LIMIT,
     # which SQLite rejects); an id filter still deletes exactly one row.
@@ -729,9 +775,7 @@ async def load_session(
     agent_id: str,
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    agent = await Agent.find_one({'id': agent_id})
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = await _visible_agent_or_404(agent_id, ctx)
     if not ctx.agent_allowed(str(agent.id)):
         raise HTTPException(
             status_code=403,

@@ -66,7 +66,7 @@ class FakeManager:
 def _install_route_fakes(monkeypatch, manager):
     agent = types.SimpleNamespace(id='agent-1')
 
-    async def resolve_agent(agent_id, _request):
+    async def resolve_agent(agent_id, _request, _user=None):
         assert agent_id == agent.id
         return agent
 

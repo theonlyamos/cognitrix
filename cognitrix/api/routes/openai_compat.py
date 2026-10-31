@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from cognitrix.agents import Agent
+from cognitrix.agents import access as agent_access
 from cognitrix.common.security import AuthContext, get_auth_context, require
 from cognitrix.sessions.base import Session
 
@@ -42,7 +43,7 @@ class ChatCompletionRequest(BaseModel):
 
 
 async def _resolve_agent(model: str, ctx: AuthContext) -> Agent:
-    agents = await Agent.all()
+    agents = await agent_access.visible_agents(agent_access.owner_key(ctx.user))
     match = next((a for a in agents if a.name.lower() == model.lower() or a.id == model), None)
     if match is None:
         raise HTTPException(status_code=404, detail=f"Model '{model}' not found")
@@ -75,7 +76,7 @@ def _seed_session(agent: Agent, messages: list[ChatMessage]) -> Session:
 
 @openai_api.get('/models')
 async def list_models(ctx: AuthContext = Depends(get_auth_context)):
-    agents = await Agent.all()
+    agents = await agent_access.visible_agents(agent_access.owner_key(ctx.user))
     data = [
         {'id': a.name, 'object': 'model', 'created': 0, 'owned_by': 'cognitrix'}
         for a in agents if ctx.agent_allowed(a.id)

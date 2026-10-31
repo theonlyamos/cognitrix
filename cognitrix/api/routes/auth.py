@@ -46,9 +46,18 @@ async def login(form_data: LoginForm):
 
 @auth_api.post("/signup")
 async def signup(new_user: User):
-    # Operators can close open registration in shared/production deployments.
-    # Defaults to enabled so single-user local setups are unaffected.
-    if os.getenv('COGNITRIX_ALLOW_SIGNUP', 'true').strip().lower() not in ('1', 'true', 'yes'):
+    # Registration is closed by default once the first account exists: the
+    # first person to sign up (the owner, and the default admin) always can,
+    # so a fresh install still works. COGNITRIX_ALLOW_SIGNUP=true opens it to
+    # everyone; =false closes it even for the first account.
+    allow = os.getenv('COGNITRIX_ALLOW_SIGNUP', '').strip().lower()
+    if allow in ('0', 'false', 'no'):
+        open_signup = False
+    elif allow in ('1', 'true', 'yes'):
+        open_signup = True
+    else:
+        open_signup = not await User.find_one({})
+    if not open_signup:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Open registration is disabled"

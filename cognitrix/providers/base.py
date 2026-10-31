@@ -67,6 +67,85 @@ def _env_key(provider: str, suffix: str) -> str:
     return f"{provider.upper()}_{suffix}"
 
 
+class ProviderKeyDestinationError(ValueError):
+    """A server-held provider key would be sent to a base URL the server does not trust."""
+
+
+def _normalize_base_url(url: str | None) -> str:
+    return (url or '').strip().rstrip('/').lower()
+
+
+_KEY_ENV_SUFFIXES = ('_API_KEY', '_ACCESS_TOKEN', '_TOKEN')
+
+
+def _server_held_keys() -> dict[str, set[str]]:
+    """Map every provider key the server holds to the providers it belongs to.
+
+    Covers <PROVIDER>_API_KEY style env vars and the keys known to settings,
+    so a key is recognised however it was configured.
+    """
+    from cognitrix.config import settings
+
+    held: dict[str, set[str]] = {}
+    for name, value in os.environ.items():
+        if not value or len(value) < 8:
+            continue
+        for suffix in _KEY_ENV_SUFFIXES:
+            if name.endswith(suffix):
+                provider = name[: -len(suffix)].lower()
+                held.setdefault(value, set()).add(provider)
+                break
+    for provider in set(_DEFAULT_BASE_URLS) | {'together', 'cohere', 'groq', 'cerebras'}:
+        try:
+            value = settings.get_api_key(provider)
+        except Exception:
+            value = ''
+        if value:
+            held.setdefault(value, set()).add(provider)
+    return held
+
+
+def _trusted_base_urls(providers: set[str]) -> set[str]:
+    """Base URLs a server-held key may be sent to.
+
+    That is the operator's <PROVIDER>_BASE_URL (or the built-in default) for
+    the key's own provider, plus any extra URLs listed in
+    COGNITRIX_TRUSTED_BASE_URLS (comma-separated).
+    """
+    trusted: set[str] = set()
+    for provider in providers:
+        for candidate in (
+            os.getenv(_env_key(provider, 'BASE_URL')),
+            _DEFAULT_BASE_URLS.get(provider),
+        ):
+            if candidate:
+                trusted.add(_normalize_base_url(candidate))
+    extra = os.getenv('COGNITRIX_TRUSTED_BASE_URLS', '')
+    trusted.update(_normalize_base_url(u) for u in extra.split(',') if u.strip())
+    return trusted
+
+
+def assert_key_destination_allowed(base_url: str, api_key: str) -> None:
+    """Refuse to send a server-held provider key to an untrusted base URL.
+
+    Agents can be created by any logged-in user with their own `base_url`.
+    Without this check the server would attach its own provider key to a
+    request to whatever host the user picked.
+    """
+    if not api_key:
+        return
+    owners = _server_held_keys().get(api_key)
+    if not owners:
+        return  # caller-supplied key: theirs to send wherever they like
+    if _normalize_base_url(base_url) in _trusted_base_urls(owners):
+        return
+    raise ProviderKeyDestinationError(
+        f"base_url '{base_url}' is not a trusted endpoint for the server's "
+        f"{'/'.join(sorted(owners))} key. Supply your own api_key for a custom "
+        "base_url, or ask the operator to add it to COGNITRIX_TRUSTED_BASE_URLS."
+    )
+
+
 def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Resolve runtime config from env and overrides.
@@ -122,6 +201,8 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
             f"Missing model for provider '{effective_provider}'. "
             f"Set {_env_key(effective_provider, 'MODEL')} or pass model."
         )
+
+    assert_key_destination_allowed(base_url, api_key)
 
     config: dict[str, Any] = {
         'provider': effective_provider,
@@ -430,6 +511,7 @@ class LLMManager:
     def get_supported_models(llm: LLM):
         if llm.provider == 'openrouter':
             return _openrouter_list_models(llm.api_key)
+        assert_key_destination_allowed(llm.base_url, llm.api_key)
         client = OpenAI(api_key=llm.api_key, base_url=llm.base_url)
         return client.models.list()
 
@@ -455,6 +537,10 @@ class LLMManager:
 
             if llm.provider in ('google', 'gemini'):
                 helicone_base = helicone_base + 'beta/openai/v1'
+
+            # Re-checked here because an LLM's fields can change after it
+            # was constructed (and stored agents predate the check).
+            assert_key_destination_allowed(llm.base_url, llm.api_key)
 
             if use_helicone:
                 headers: dict[str, str] = {

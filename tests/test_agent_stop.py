@@ -20,7 +20,7 @@ async def test_stop_endpoint_cancels_the_callers_scoped_browser_turn(monkeypatch
     manager = SSEManager(agent)
     manager.begin_turn()
 
-    async def resolve_agent(_agent_id, _request):
+    async def resolve_agent(_agent_id, _request, _user=None):
         return agent
 
     monkeypatch.setattr(agent_routes, "_resolve_agent", resolve_agent)
@@ -40,7 +40,7 @@ async def test_stop_endpoint_rejects_when_no_turn_is_running(monkeypatch):
     agent = types.SimpleNamespace(id="agent-1")
     manager = SSEManager(agent)
 
-    async def resolve_agent(_agent_id, _request):
+    async def resolve_agent(_agent_id, _request, _user=None):
         return agent
 
     monkeypatch.setattr(agent_routes, "_resolve_agent", resolve_agent)
@@ -61,7 +61,7 @@ async def test_turn_endpoints_do_not_create_missing_stream_manager(monkeypatch, 
     _SSE_MANAGERS.clear()
     agent = types.SimpleNamespace(id="agent-1")
 
-    async def resolve_agent(_agent_id, _request):
+    async def resolve_agent(_agent_id, _request, _user=None):
         return agent
 
     monkeypatch.setattr(agent_routes, "_resolve_agent", resolve_agent)
