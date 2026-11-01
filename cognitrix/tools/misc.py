@@ -20,6 +20,7 @@ from cognitrix.common.process_security import (
     HostProcessMode,
     require_host_process_authority,
 )
+from cognitrix.common import folders as folder_paths
 from cognitrix.common.safe_exec import (
     DEFAULT_TIMEOUT,
     CommandNotAllowed,
@@ -224,20 +225,22 @@ def _resolve_tool_path(
     write: bool = False,
     allow_upload_root: bool = False,
 ) -> Path:
-    root = Path(settings.tools_root).expanduser().resolve()
-    lexical = _lexical_path(value, root)
-    if not _inside(lexical, root):
-        raise PathEscapesRoot(
-            f"Path '{value}' resolves outside the permitted root '{root}'"
-        )
-    resolved = resolve_within_root(value, root)
-    lexical_uploads = root / 'uploads'
-    resolved_uploads = lexical_uploads.resolve()
-    lexical_relative = _upload_relative(lexical, lexical_uploads)
-    resolved_relative = _upload_relative(resolved, resolved_uploads)
-    touches_uploads = lexical_relative is not None or resolved_relative is not None
+    # Paths resolve inside this turn's working folders (relative ones start
+    # at the primary folder); see cognitrix.common.folders.
+    uploads_root = Path(settings.tools_root).expanduser().resolve() / 'uploads'
+    lexical = folder_paths.lexical_path(value)
+    lexical_relative = _upload_relative(lexical, uploads_root)
+    resolved_uploads = uploads_root.resolve()
+    if lexical_relative is None:
+        try:
+            real = Path(os.path.realpath(os.fspath(lexical)))
+        except OSError:
+            real = lexical
+        touches_uploads = _upload_relative(real, resolved_uploads) is not None
+    else:
+        touches_uploads = True
     if not touches_uploads:
-        return resolved
+        return folder_paths.resolve_path(value, write=write)
     if write:
         raise ManagedUploadAccessError('Managed uploads are read-only')
     # Managed documents are never traversed or opened by path. Read dispatches
@@ -1530,22 +1533,19 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = None
     # Validate and resolve the working directory
     # Commands run inside the working folder (settings.tools_root, the same
     # root the file tools use), never elsewhere on the machine.
-    root = Path(settings.tools_root).expanduser().resolve()
+    # Commands start in the primary working folder and may only run inside
+    # this chat's folders (cognitrix.common.folders).
     if working_dir:
         try:
-            candidate = Path(working_dir).expanduser()
-            work_dir = (candidate if candidate.is_absolute() else root / candidate).resolve()
+            work_dir = folder_paths.resolve_path(working_dir)
+        except PathEscapesRoot as e:
+            return f"Error: Command refused - {e}"
         except Exception as e:
             return f"Error: Working directory validation failed - {str(e)}"
-        if not _inside(work_dir, root):
-            return (
-                f"Error: Command refused - '{working_dir}' is outside the working folder "
-                f"'{root}'. Commands can only run inside the working folder."
-            )
         if not work_dir.exists() or not work_dir.is_dir():
             return f"Error: Invalid working directory - {working_dir}"
     else:
-        work_dir = root
+        work_dir = folder_paths.primary_folder()
 
     # Normalise timeout (the LLM may pass it as a string)
     try:

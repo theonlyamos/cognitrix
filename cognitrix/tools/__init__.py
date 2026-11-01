@@ -1,5 +1,6 @@
 from cognitrix.tools.automation import notify_me, read_notes, schedule_next_check, update_notes
 from cognitrix.tools.base import Tool
+from cognitrix.tools.folders import request_folder
 from cognitrix.tools.image import generate_image
 from cognitrix.tools.management import assign_task, create_new_team, create_task, delete_task, update_task
 from cognitrix.tools.mcp import list_mcp_tools, run_mcp_tool
@@ -40,4 +41,5 @@ __all__ = [
     'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool',
     'load_skill', 'ask_user',
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',
+    'request_folder',
 ]

@@ -92,10 +92,10 @@ def _path_lock_for(params: dict[str, Any]) -> asyncio.Lock | None:
     )
     if raw is None:
         return None
-    # File tools resolve relative paths against the tools root.
+    # File tools resolve relative paths against the primary working folder.
     try:
-        from cognitrix.config import settings
-        base = os.path.expanduser(str(settings.tools_root))
+        from cognitrix.common.folders import primary_folder
+        base = str(primary_folder())
     except Exception:
         base = os.getcwd()
     key = os.path.normcase(os.path.abspath(os.path.join(base, os.path.expanduser(raw.strip()))))

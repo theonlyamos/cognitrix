@@ -360,6 +360,25 @@ async def _check_mcp_servers(agent: Agent) -> None:
             agent.tools = [*(agent.tools or []), tool]
 
 
+def _check_folders(agent: Agent, data: dict, existing: Agent | None) -> None:
+    """Validate an agent's default working folders.
+
+    A save that doesn't mention folders keeps the ones the agent had, so older
+    clients don't wipe them.
+    """
+    from cognitrix.common.folders import FolderError, folders_to_dicts, normalize_folders
+
+    if 'folders' not in data:
+        agent.folders = existing.folders if existing is not None else None
+    elif agent.folders is not None:
+        try:
+            agent.folders = folders_to_dicts(normalize_folders(agent.folders))
+        except FolderError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+    if 'can_request_folders' not in data and existing is not None:
+        agent.can_request_folders = existing.can_request_folders
+
+
 @agents_api.get('')
 async def list_agents(ctx: AuthContext = Depends(get_auth_context)):
     agents = await agent_access.visible_agents(agent_access.owner_key(ctx.user))
@@ -384,6 +403,7 @@ async def save_agent(request: Request, agent: Agent,
         agent.owner_id = user_key
 
     await _check_mcp_servers(agent)
+    _check_folders(agent, data, existing)
 
     llm_data = dict(data.get('llm') or {})
     if not llm_data.get('provider'):
@@ -488,6 +508,15 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 detail='A turn is already running for this browser stream',
             )
 
+        folders = None
+        if data.get('folders') is not None and not data.get('session_id'):
+            from cognitrix.common.folders import FolderError, folders_to_dicts, normalize_folders
+            try:
+                folders = folders_to_dicts(normalize_folders(data.get('folders') or []))
+            except FolderError as exc:
+                manager.finish_turn()
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+
         staged: StagedAttachmentSet | None = None
         try:
             if upload_files:
@@ -513,6 +542,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'bypass_permissions': bool(data.get('bypass_permissions')),
                 'reasoning_effort': normalize_reasoning_effort(data.get('reasoning_effort')),
                 'execution_mode': execution_mode.value,
+                **({'folders': folders} if folders is not None else {}),
             })
         except BaseException:
             try:
