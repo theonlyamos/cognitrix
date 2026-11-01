@@ -1290,28 +1290,21 @@ async def load_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)):
     task = await _visible_task(task_id, ctx)
     return await _task_projection(task) if task else {}
 
-@tasks_api.delete('/{task_id}')
-async def delete_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)):
-    # Read the retained row directly so repeating DELETE can repair a crash
-    # between the authoritative head tombstone and this projection update.
-    task = await _require_task_edit(await Task.get(task_id), ctx)
+async def soft_delete_task(task: Task) -> None:
+    """Tombstone a task and stop its schedule. Raises ActiveRunExists while a
+    run is queued or running. Safe to repeat: a second call repairs a crash
+    between the authoritative head tombstone and the Task row update."""
     requested_deleted_at = task.deleted_at or datetime.now(timezone.utc).replace(
         tzinfo=None
     ).strftime('%Y-%m-%d %H:%M:%S')
-    try:
-        head = await RunRepository().tombstone_task(
-            task_id,
-            deleted_at=requested_deleted_at,
-        )
-    except ActiveRunExists:
-        raise HTTPException(
-            status_code=409,
-            detail="Task has an active run. Cancel it before deleting the task.",
-        )
+    head = await RunRepository().tombstone_task(
+        task.id,
+        deleted_at=requested_deleted_at,
+    )
     # The admission tombstone commits first. If this projection write fails,
     # repeating DELETE is safe and repairs the Task row from the head value.
     await Task.update_one(
-        {'id': task_id},
+        {'id': task.id},
         {
             'deleted_at': head.deleted_at,
             'autostart': False,
@@ -1319,6 +1312,20 @@ async def delete_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)
             'next_run_at': None,
         },
     )
+
+
+@tasks_api.delete('/{task_id}')
+async def delete_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)):
+    # Read the retained row directly so repeating DELETE can repair a crash
+    # between the authoritative head tombstone and this projection update.
+    task = await _require_task_edit(await Task.get(task_id), ctx)
+    try:
+        await soft_delete_task(task)
+    except ActiveRunExists:
+        raise HTTPException(
+            status_code=409,
+            detail="Task has an active run. Cancel it before deleting the task.",
+        )
     return {'message': 'Task deleted successfully'}
 
 
