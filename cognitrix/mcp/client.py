@@ -34,13 +34,16 @@ class DynamicMCPClient:
         self.sessions: dict[str, ClientSession] = {}
         self.exit_stacks: dict[str, AsyncExitStack] = {}
         self.connections: dict[str, Any] = {}
+        # connection key -> tool name -> MCP tool annotations (readOnlyHint,
+        # destructiveHint, ...), filled by list_tools.
+        self.tool_annotations: dict[str, dict[str, dict[str, Any]]] = {}
 
     async def connect_to_server(self, server_config: MCPServerConfig) -> bool:
         """Connect to an MCP server based on its configuration"""
         try:
-            if server_config.name in self.sessions:
+            if server_config.key in self.sessions:
                 logger.warning(f"Already connected to server: {server_config.name}")
-                update_connection_status(server_config.name, True, {'transport': server_config.transport.value})
+                update_connection_status(server_config.key, True, {'transport': server_config.transport.value})
                 return True
 
             success = False
@@ -55,7 +58,7 @@ class DynamicMCPClient:
                 success = False
 
             # Update global connection status
-            update_connection_status(server_config.name, success, {
+            update_connection_status(server_config.key, success, {
                 'transport': server_config.transport.value,
                 'description': server_config.description
             })
@@ -64,7 +67,7 @@ class DynamicMCPClient:
 
         except Exception as e:
             logger.error(f"Error connecting to server {server_config.name}: {e}")
-            update_connection_status(server_config.name, False, {'error': str(e)})
+            update_connection_status(server_config.key, False, {'error': str(e)})
             return False
 
     async def _connect_stdio(self, server_config: MCPServerConfig) -> bool:
@@ -107,7 +110,7 @@ class DynamicMCPClient:
 
             # Create exit stack for resource management
             exit_stack = AsyncExitStack()
-            self.exit_stacks[server_config.name] = exit_stack
+            self.exit_stacks[server_config.key] = exit_stack
 
             # Start the server, open the session and run the handshake under a
             # timeout — a broken/hung server must not block the event loop.
@@ -128,8 +131,8 @@ class DynamicMCPClient:
                 await session.initialize()
 
             # Store session and connection info
-            self.sessions[server_config.name] = session
-            self.connections[server_config.name] = {
+            self.sessions[server_config.key] = session
+            self.connections[server_config.key] = {
                 'type': 'stdio',
                 'config': server_config,
                 'streams': (read_stream, write_stream)
@@ -140,9 +143,9 @@ class DynamicMCPClient:
 
         except Exception as e:
             logger.error(f"Error connecting to STDIO server {server_config.name}: {e}")
-            if server_config.name in self.exit_stacks:
-                await self.exit_stacks[server_config.name].aclose()
-                del self.exit_stacks[server_config.name]
+            if server_config.key in self.exit_stacks:
+                await self.exit_stacks[server_config.key].aclose()
+                del self.exit_stacks[server_config.key]
             return False
 
     async def _connect_sse(self, server_config: MCPServerConfig) -> bool:
@@ -155,7 +158,7 @@ class DynamicMCPClient:
 
             # Create exit stack for resource management
             exit_stack = AsyncExitStack()
-            self.exit_stacks[server_config.name] = exit_stack
+            self.exit_stacks[server_config.key] = exit_stack
 
             # Connect, open the session and run the handshake under a timeout —
             # a slow/unreachable endpoint must not block the event loop.
@@ -173,8 +176,8 @@ class DynamicMCPClient:
                 await session.initialize()
 
             # Store session and connection info
-            self.sessions[server_config.name] = session
-            self.connections[server_config.name] = {
+            self.sessions[server_config.key] = session
+            self.connections[server_config.key] = {
                 'type': 'sse',
                 'config': server_config,
                 'url': server_config.url
@@ -185,9 +188,9 @@ class DynamicMCPClient:
 
         except Exception as e:
             logger.error(f"Error connecting to SSE server {server_config.name}: {e}")
-            if server_config.name in self.exit_stacks:
-                await self.exit_stacks[server_config.name].aclose()
-                del self.exit_stacks[server_config.name]
+            if server_config.key in self.exit_stacks:
+                await self.exit_stacks[server_config.key].aclose()
+                del self.exit_stacks[server_config.key]
             return False
 
     async def _connect_http(self, server_config: MCPServerConfig) -> bool:
@@ -200,7 +203,7 @@ class DynamicMCPClient:
 
             # Create exit stack for resource management
             exit_stack = AsyncExitStack()
-            self.exit_stacks[server_config.name] = exit_stack
+            self.exit_stacks[server_config.key] = exit_stack
 
             # Prepare headers
             headers = server_config.headers or {}
@@ -225,8 +228,8 @@ class DynamicMCPClient:
                 await session.initialize()
 
             # Store session and connection info
-            self.sessions[server_config.name] = session
-            self.connections[server_config.name] = {
+            self.sessions[server_config.key] = session
+            self.connections[server_config.key] = {
                 'type': 'http',
                 'config': server_config,
                 'url': server_config.url,
@@ -238,9 +241,9 @@ class DynamicMCPClient:
 
         except Exception as e:
             logger.error(f"Error connecting to HTTP server {server_config.name}: {e}")
-            if server_config.name in self.exit_stacks:
-                await self.exit_stacks[server_config.name].aclose()
-                del self.exit_stacks[server_config.name]
+            if server_config.key in self.exit_stacks:
+                await self.exit_stacks[server_config.key].aclose()
+                del self.exit_stacks[server_config.key]
             return False
 
     async def disconnect_from_server(self, server_name: str) -> bool:
@@ -255,6 +258,8 @@ class DynamicMCPClient:
 
             if server_name in self.connections:
                 del self.connections[server_name]
+
+            self.tool_annotations.pop(server_name, None)
 
             # Update connection status
             update_connection_status(server_name, False)
@@ -271,6 +276,17 @@ class DynamicMCPClient:
         server_names = list(self.sessions.keys())
         for server_name in server_names:
             await self.disconnect_from_server(server_name)
+
+    def is_read_only(self, server_name: str, tool_name: str) -> bool | None:
+        """Whether the server marked this tool read-only (readOnlyHint).
+
+        None when the tool hasn't been listed yet, so callers can treat an
+        unknown tool as one that may change data.
+        """
+        tools = self.tool_annotations.get(server_name)
+        if tools is None or tool_name not in tools:
+            return None
+        return bool(tools[tool_name].get('readOnlyHint'))
 
     def is_connected(self, server_name: str) -> bool:
         """Check if connected to a specific server"""
@@ -289,14 +305,20 @@ class DynamicMCPClient:
         try:
             session = self.sessions[server_name]
             response = await asyncio.wait_for(session.list_tools(), timeout=DEFAULT_MCP_TIMEOUT)
-            return [
-                {
+            tools = []
+            annotations: dict[str, dict[str, Any]] = {}
+            for tool in response.tools:
+                notes = getattr(tool, 'annotations', None)
+                notes = notes.model_dump(exclude_none=True, by_alias=True) if hasattr(notes, 'model_dump') else {}
+                annotations[tool.name] = notes
+                tools.append({
                     'name': tool.name,
                     'description': tool.description,
-                    'input_schema': dict(tool.input_schema) if tool.input_schema else {}
-                }
-                for tool in response.tools
-            ]
+                    'input_schema': dict(tool.input_schema) if tool.input_schema else {},
+                    'annotations': notes,
+                })
+            self.tool_annotations[server_name] = annotations
+            return tools
         except TimeoutError:
             logger.error(f"Timeout listing tools for server {server_name} after {DEFAULT_MCP_TIMEOUT}s")
             return None

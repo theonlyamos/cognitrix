@@ -9,6 +9,7 @@ import { Toggle } from '@/pages/Notifications';
 import { cn } from '@/lib/utils';
 import { useSystemInfo } from '@/hooks/useSystemInfo';
 import { VoiceSettingsCard } from '@/components/VoiceSettingsCard';
+import { McpServersCard } from '@/components/McpServersCard';
 
 function Card({ title, children, className, id }: { title: string; children: ReactNode; className?: string; id?: string }) {
   return (
@@ -202,6 +203,10 @@ export default function Settings() {
                 Cognitrix API keys
               </Link>
             </div>
+          </Card>
+
+          <Card title="MCP servers" id="mcp-servers" className="lg:col-span-2">
+            <McpServersCard />
           </Card>
 
           <Card title="Voice input" id="voice-input">
