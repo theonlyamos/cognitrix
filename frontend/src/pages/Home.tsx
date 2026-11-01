@@ -7,6 +7,7 @@ import { useSSE } from '@/hooks/useSSE';
 import { useResource } from '@/hooks/useResource';
 import { api } from '@/lib/api';
 import { REASONING_LEVELS } from '@/lib/reasoning';
+import { AGENTS_CHANGED_EVENT } from '@/lib/providers';
 import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
@@ -232,9 +233,23 @@ export default function Home() {
 
   // Agent selection — chat + SSE must share one agent_id (they rendezvous on a
   // per-(user, agent) manager on the backend).
-  const { data: agentsData, loading: agentsLoading } = useResource<{ id: string; name: string }[]>('/agents');
+  const { data: agentsData, loading: agentsLoading, refetch: refetchAgents } = useResource<{ id: string; name: string }[]>('/agents');
   const agents = useMemo(() => (agentsData || []).filter((a) => a.id), [agentsData]);
   const [agentId, setAgentId] = useState<string>(() => localStorage.getItem('selectedAgentId') || '');
+
+  // The first-run setup made the user's assistant: list it and switch to it.
+  useEffect(() => {
+    const onAgentsChanged = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail;
+      // Switch only once the list has it, or the guard below would fall
+      // back to the first agent.
+      void refetchAgents({ silent: true }).then(() => {
+        if (id) setAgentId(id);
+      });
+    };
+    window.addEventListener(AGENTS_CHANGED_EVENT, onAgentsChanged);
+    return () => window.removeEventListener(AGENTS_CHANGED_EVENT, onAgentsChanged);
+  }, [refetchAgents]);
 
   // Conversations — server-side sessions per agent (task runs excluded).
   const { data: convos, refetch: refetchConvos } = useResource<ConvoSummary[]>(
