@@ -770,6 +770,14 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
             task.next_run_at = None
             task.schedule_enabled = False
 
+    if stored is not None and stored.schedule_enabled and not task.schedule_enabled:
+        # Turning the schedule off from the edit form means stop, like the
+        # pause toggle: cancel the agent's pending wake-up too. Edits of a
+        # task that had no active schedule keep the wake-up.
+        for field in WAKE_FIELDS:
+            setattr(task, field, None)
+        task.wake_pending = False
+
     if task.schedule_enabled:
         requested_by, _actor_key = _run_identity(ctx)
         authority_kind, authority_id = _run_authority(ctx)

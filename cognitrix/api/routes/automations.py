@@ -16,6 +16,7 @@ from cognitrix.api.routes.tasks import (
     _require_task_view,
     _run_authority,
     _run_identity,
+    _run_visible,
     _user_key,
     _visible_task,
 )
@@ -42,6 +43,7 @@ from cognitrix.tasks.automation import (
     utcnow_str,
 )
 from cognitrix.tasks.repository import RunRepository
+from cognitrix.tasks.run import run_acl_allowed
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -232,8 +234,11 @@ def _is_automation(task: Task, trigger_count: int) -> bool:
                 or task.schedule_at or task.schedule_interval or task.schedule_cron)
 
 
-async def _automation_summary(task: Task, triggers: list[TaskTrigger]) -> dict[str, Any]:
+async def _automation_summary(task: Task, triggers: list[TaskTrigger], ctx: AuthContext) -> dict[str, Any]:
     latest = await RunRepository().latest_run(task.id)
+    # Same rule as the run endpoints: on a shared task you only see runs you may open.
+    if latest is not None and not (run_acl_allowed(latest, ctx) and await _run_visible(task, latest, ctx)):
+        latest = None
     last_run = None
     if latest is not None:
         status = getattr(latest.status, 'value', latest.status)
@@ -275,7 +280,7 @@ async def list_automations(ctx: AuthContext = Depends(get_auth_context)):
         and _is_automation(task, len(by_task.get(str(task.id), [])))
     ]
     return await asyncio.gather(*[
-        _automation_summary(task, by_task.get(str(task.id), [])) for task in tasks
+        _automation_summary(task, by_task.get(str(task.id), []), ctx) for task in tasks
     ])
 
 

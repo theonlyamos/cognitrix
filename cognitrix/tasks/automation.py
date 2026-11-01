@@ -45,6 +45,7 @@ EVENT_MAX_BYTES = 16 * 1024
 MAX_PENDING_EVENTS = 20
 MAX_TRIGGERS_PER_TASK = 10
 MAX_RUNS_PER_DAY_LIMIT = 1_440
+DISPATCH_CLAIM_SECONDS = 300
 AUTOMATION_TRIGGER_KINDS = ('wake', 'webhook')
 
 PENDING = 'pending'
@@ -122,6 +123,8 @@ class TriggerEvent(Model):
     payload: str = ''
     content_type: str = ''
     received_at: str | None = None
+    claimed_at: str | None = None
+    """When a dispatcher claimed it; a stale claim is recovered."""
     run_id: str | None = None
     error: str | None = None
 
@@ -323,11 +326,38 @@ async def fire_due_wakes(now: datetime | None = None) -> int:
     return fired
 
 
+async def recover_stale_dispatches(now: datetime | None = None) -> int:
+    """Settle events whose dispatcher died between claiming and enqueueing.
+
+    A run carrying the event's id means the run was published: mark it
+    dispatched. Otherwise put the event back in the queue.
+    """
+    from cognitrix.tasks.run import TaskRun
+
+    cutoff = ((now or utcnow()) - timedelta(seconds=DISPATCH_CLAIM_SECONDS)).strftime(FMT)
+    settled = 0
+    for event in await TriggerEvent.find({'status': DISPATCHING}) or []:
+        if event.claimed_at and event.claimed_at > cutoff:
+            continue
+        runs = await TaskRun.find({'trigger_event_id': event.id}) or []
+        if runs:
+            update = {'status': DISPATCHED, 'run_id': str(runs[0].id)}
+        else:
+            update = {'status': PENDING, 'claimed_at': None}
+        settled += await TriggerEvent.update_one(
+            {'id': event.id, 'status': DISPATCHING}, update) or 0
+    return settled
+
+
 async def dispatch_trigger_events(now: datetime | None = None) -> int:
     """Hand the oldest waiting webhook event of each idle task to a new run."""
     from cognitrix.tasks.base import Task
 
     now = now or utcnow()
+    try:
+        await recover_stale_dispatches(now)
+    except Exception:
+        logger.exception('Could not recover interrupted webhook dispatches')
     events = sorted(
         await TriggerEvent.find({'status': PENDING}) or [],
         key=lambda item: (item.received_at or '', str(item.id)),
@@ -349,7 +379,8 @@ async def dispatch_trigger_events(now: datetime | None = None) -> int:
             if await over_daily_cap(task, now):
                 continue  # waits for the rolling window to free up
             if await TriggerEvent.update_one(
-                    {'id': event.id, 'status': PENDING}, {'status': DISPATCHING}) != 1:
+                    {'id': event.id, 'status': PENDING},
+                    {'status': DISPATCHING, 'claimed_at': now.strftime(FMT)}) != 1:
                 continue
             from cognitrix.api.routes.tasks import _enqueue_task_start
             try:

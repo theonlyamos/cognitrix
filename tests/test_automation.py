@@ -402,3 +402,67 @@ def test_snapshot_keeps_automation_tools_when_planner_picks_none():
     )
     snapshot = build_runtime_snapshot(agent, [])
     assert snapshot.tool_names == ('Read Notes',)
+
+
+# --- review follow-ups ------------------------------------------------------------
+
+async def test_edit_that_turns_schedule_off_cancels_wake(db):
+    from cognitrix.api.routes.tasks import save_task
+
+    stored = await _armed(schedule_interval=300, schedule_enabled=True,
+                          next_run_at='2030-06-01 12:05:00')
+    edit = Task(title='t', description='d', assigned_agents=['a1'], schedule_at=None,
+                schedule_interval=None, schedule_cron=None, schedule_enabled=False)
+    edit.id = stored.id
+    await save_task(None, edit, BackgroundTasks(), _ctx())
+    fresh = await Task.get(stored.id)
+    assert fresh.schedule_enabled is False and fresh.wake_pending is False and fresh.wake_at is None
+
+
+async def test_edit_of_unscheduled_task_keeps_wake(db):
+    from cognitrix.api.routes.tasks import save_task
+
+    stored = await _armed()
+    edit = Task(title='t', description='d', assigned_agents=['a1'], schedule_at=None,
+                schedule_interval=None, schedule_cron=None, schedule_enabled=False)
+    edit.id = stored.id
+    await save_task(None, edit, BackgroundTasks(), _ctx())
+    assert (await Task.get(stored.id)).wake_pending is True
+
+
+async def test_stale_dispatch_claims_are_recovered(db, enqueue):
+    from cognitrix.tasks.automation import DISPATCHING
+
+    task = await _task()
+    trigger = await _trigger(task)
+    lost = await _event(trigger, '2030-06-01 10:00:00')
+    await TriggerEvent.update_one({'id': lost.id}, {'status': DISPATCHING, 'claimed_at': '2030-06-01 11:00:00'})
+    published = await _event(trigger, '2030-06-01 10:30:00')
+    await TriggerEvent.update_one({'id': published.id}, {'status': DISPATCHING, 'claimed_at': '2030-06-01 11:00:00'})
+    run = await _run(task, trigger_kind='webhook', trigger_event_id=published.id)
+    fresh = await _event(trigger, '2030-06-01 10:45:00')
+    await TriggerEvent.update_one({'id': fresh.id}, {'status': DISPATCHING, 'claimed_at': '2030-06-01 11:59:00'})
+
+    assert await dispatch_trigger_events(NOW) == 1
+    assert (await TriggerEvent.get(published.id)).run_id == run.id
+    assert (await TriggerEvent.get(published.id)).status == DISPATCHED
+    assert (await TriggerEvent.get(lost.id)).status == DISPATCHED  # re-queued, then dispatched
+    assert enqueue.calls[0][1]['trigger_event_id'] == lost.id
+    assert (await TriggerEvent.get(fresh.id)).status == DISPATCHING  # claim still live
+
+
+async def test_automations_hide_runs_the_viewer_cannot_open(db, monkeypatch):
+    import cognitrix.api.routes.tasks as task_routes
+    from cognitrix.api.routes import automations
+
+    async def not_admin(_user):
+        return False
+
+    monkeypatch.setattr(task_routes, 'is_admin', not_admin)
+
+    task = await _task(owner_id=None, notes='shared')  # shared task
+    await _run(task, result='secret output', acl_version=1, acl_agent_ids=['a1'])
+    mine = await automations.list_automations(_ctx('u1'))
+    other = await automations.list_automations(_ctx('u2'))
+    assert mine[0]['last_run']['result'] == 'secret output'
+    assert other[0]['last_run'] is None
