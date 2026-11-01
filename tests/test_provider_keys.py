@@ -143,3 +143,58 @@ async def test_test_endpoint_reports_missing_key(db):
     result = await providers.test_provider_key('cerebras', admin)
     assert result['ok'] is False
     assert 'Missing api_key' in result['message']
+
+
+async def test_replaced_saved_key_is_swapped_for_agents_that_kept_the_old_one(db):
+    from cognitrix.providers.saved_keys import refresh_key, set_saved_key
+
+    set_saved_key('groq', KEY_A)
+    set_saved_key('groq', KEY_B)
+    # An agent saved while KEY_A was current still carries it.
+    assert refresh_key('groq', KEY_A) == KEY_B
+    # Keys typed into an agent by hand are never touched.
+    assert refresh_key('groq', KEY_C) == KEY_C
+    # Saving the old key again makes it current, not retired.
+    set_saved_key('groq', KEY_A)
+    assert refresh_key('groq', KEY_A) == KEY_A
+    assert refresh_key('groq', KEY_B) == KEY_A
+    # Removed with nothing in its place: stop sending it.
+    set_saved_key('groq', '')
+    assert refresh_key('groq', KEY_A) == ''
+
+
+async def test_llm_call_uses_the_current_saved_key(db, monkeypatch):
+    from cognitrix.providers.base import LLM, LLMManager
+    from cognitrix.providers.saved_keys import set_saved_key
+
+    set_saved_key('groq', KEY_A)
+    llm = LLM(provider='groq', model='m')
+    assert llm.api_key == KEY_A
+    set_saved_key('groq', KEY_B)
+
+    seen = {}
+
+    async def fake_generate(runtime_llm, *args, **kwargs):
+        seen['key'] = runtime_llm.api_key
+        return {'content': 'ok'}
+
+    monkeypatch.setattr(LLMManager, 'generate_response', staticmethod(fake_generate))
+    await llm([{'role': 'user', 'content': 'hi'}])
+    assert seen['key'] == KEY_B
+
+
+async def test_image_generation_uses_a_saved_google_key(db, monkeypatch):
+    import base64
+
+    from cognitrix.providers import gemini_image
+    from cognitrix.providers.saved_keys import set_saved_key
+    from tests.test_gemini_image_provider import _install_stream
+
+    monkeypatch.delenv('GOOGLE_API_KEY', raising=False)
+    set_saved_key('google', KEY_A)
+    payload = {'steps': [{'type': 'model_output', 'content': [
+        {'type': 'image', 'mime_type': 'image/png', 'data': base64.b64encode(b'img').decode()},
+    ]}]}
+    captured = _install_stream(monkeypatch, gemini_image, payload)
+    await gemini_image.GeminiImageProvider().generate('prompt', source=None, aspect_ratio='1:1')
+    assert captured['headers']['x-goog-api-key'] == KEY_A

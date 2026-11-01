@@ -34,6 +34,13 @@ def _known(provider: str) -> str:
     return provider
 
 
+def _forget_cached_llms() -> None:
+    """Drop this process's resolved LLMs so new ones pick up the change."""
+    from cognitrix.providers.base import LLMManager
+
+    LLMManager._llm_cache = {}
+
+
 def _key_row(provider: str) -> dict[str, Any]:
     from cognitrix.providers.base import _DEFAULT_BASE_URLS, _env_key
     from cognitrix.providers.saved_keys import env_key, get_saved_key
@@ -87,6 +94,7 @@ async def save_provider_key(provider: str, body: KeyBody, ctx: AuthContext = Dep
         set_saved_key(provider, body.api_key)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _forget_cached_llms()
     return _key_row(provider)
 
 
@@ -98,6 +106,7 @@ async def remove_provider_key(provider: str, ctx: AuthContext = Depends(jwt_only
     if not await is_admin(ctx.user):
         raise HTTPException(status_code=403, detail='Only an admin can change the engine\'s provider keys.')
     set_saved_key(provider, '')
+    _forget_cached_llms()
     return _key_row(provider)
 
 

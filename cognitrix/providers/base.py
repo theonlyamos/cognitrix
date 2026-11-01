@@ -522,7 +522,12 @@ class LLM(Model):
             tools = []
         # Imported lazily to keep the provider layer usable without the task
         # runtime and to avoid a module cycle through provider limiters.
+        from cognitrix.providers.saved_keys import refresh_key
         from cognitrix.tasks.accounting import wrap_llm_result
+
+        # Agents and the LLM cache keep the key they were built with; swap in
+        # the current one if that was a saved key replaced in Settings since.
+        self.api_key = refresh_key(self.provider, self.api_key)
 
         return await wrap_llm_result(
             self,
