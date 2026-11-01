@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from typing import Any
 
@@ -205,9 +206,10 @@ async def provider_models(provider: str, refresh: bool = False,
         return {'models': cached[1], 'live': True}
     try:
         models = await asyncio.to_thread(_list_models, provider)
-    except Exception as exc:  # noqa: BLE001 - the picker falls back to its own list
-        reason = str(exc) if isinstance(exc, ValueError) else f"Couldn't reach {provider}"
-        return {'models': [], 'live': False, 'reason': reason}
+    except Exception:  # noqa: BLE001 - the picker falls back to its own list
+        # Keep error details (which can include keys or URLs) in the log only.
+        logging.getLogger(__name__).info('Listing %s models failed', provider, exc_info=True)
+        return {'models': [], 'live': False, 'reason': f"Couldn't list {provider} models"}
     _models_cache[provider] = (time.monotonic(), models)
     return {'models': models, 'live': True}
 

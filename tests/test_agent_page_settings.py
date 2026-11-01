@@ -285,7 +285,8 @@ async def test_provider_models_lists_and_caches(monkeypatch):
 
     monkeypatch.setattr(provider_routes, '_list_models', broken)
     out = await provider_routes.provider_models('groq', _ctx=None)
-    assert out == {'models': [], 'live': False, 'reason': 'No API key for groq'}
+    assert out == {'models': [], 'live': False, 'reason': "Couldn't list groq models"}
+    assert 'No API key' not in str(out)
     with pytest.raises(HTTPException):
         await provider_routes.provider_models('nope', _ctx=None)
 
