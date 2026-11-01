@@ -128,6 +128,7 @@ async def tick(now: datetime | None = None) -> int:
                     requested_by=task.schedule_requested_by,
                     authority_kind=task.schedule_authority_kind,
                     authority_id=task.schedule_authority_id,
+                    trigger_kind='schedule',
                 )
                 fired += 1
             except Exception as exc:
@@ -159,4 +160,16 @@ async def scheduler_loop() -> None:
             await tick()
         except Exception:
             logger.exception('Scheduler tick failed')
+        try:
+            await automation_tick()
+        except Exception:
+            logger.exception('Automation tick failed')
         await asyncio.sleep(TICK_SECONDS)
+
+
+async def automation_tick(now: datetime | None = None) -> int:
+    """Agent wake-ups and queued webhook events (see tasks/automation.py)."""
+    from cognitrix.tasks.automation import dispatch_trigger_events, fire_due_wakes
+
+    now = now or _utcnow()
+    return await fire_due_wakes(now) + await dispatch_trigger_events(now)

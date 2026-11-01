@@ -1,3 +1,4 @@
+from cognitrix.tools.automation import notify_me, read_notes, schedule_next_check, update_notes
 from cognitrix.tools.base import Tool
 from cognitrix.tools.image import generate_image
 from cognitrix.tools.management import assign_task, create_new_team, create_task
@@ -37,5 +38,6 @@ __all__ = [
     'create_agent', 'call_agent', 'create_new_team', 'create_task', 'assign_task', 'generate_image', 'list_agents',
     'bash',
     'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool',
-    'load_skill', 'ask_user'
+    'load_skill', 'ask_user',
+    'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',
 ]

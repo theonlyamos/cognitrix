@@ -177,6 +177,15 @@ class TaskRun(Model):
 
     resume_from_run_id: str | None = None
 
+    trigger_kind: str | None = None
+    """What started the run: manual, schedule, wake or webhook (None = legacy)."""
+
+    trigger_note: str | None = None
+    """Wake reason or trigger name, shown to the run's agents."""
+
+    trigger_event_id: str | None = None
+    """TriggerEvent whose payload this run handles (webhook runs)."""
+
     queue_job_id: str | None = None
     queued_at: str | None = None
 
