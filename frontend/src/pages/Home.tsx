@@ -12,6 +12,8 @@ import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
+import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
+import { insertTranscript } from '@/lib/voice';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
@@ -85,6 +87,25 @@ export default function Home() {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Voice input: the transcript goes in at the cursor, ready to edit.
+  const voice = useVoiceInput({
+    onText: (text) => {
+      const el = inputRef.current;
+      setInput((current) => {
+        const start = el ? Math.min(el.selectionStart ?? current.length, current.length) : current.length;
+        const end = el ? Math.min(el.selectionEnd ?? start, current.length) : start;
+        const next = insertTranscript(current, text, start, end);
+        requestAnimationFrame(() => {
+          const box = inputRef.current;
+          if (!box) return;
+          box.focus();
+          box.setSelectionRange(next.cursor, next.cursor);
+        });
+        return next.value;
+      });
+    },
+  });
 
   // Composer attachments (images → vision, other files → agent workspace).
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -1078,6 +1099,7 @@ export default function Home() {
                   )}
                 </div>
               )}
+              {voice.active && <VoiceBar voice={voice} />}
               <textarea
                 ref={inputRef}
                 rows={1}
@@ -1108,8 +1130,11 @@ export default function Home() {
                 aria-controls="skill-menu"
                 aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
                 placeholder="Message the agent…"
-                className="block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-12 text-sm text-fg placeholder:text-fg-dim md:min-h-0"
+                className={cn('block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-24 text-sm text-fg placeholder:text-fg-dim md:min-h-0 md:pr-20', voice.active && '!hidden')}
               />
+              {!voice.active && (
+                <MicButton voice={voice} className="absolute bottom-1 right-[3.25rem] md:right-10" />
+              )}
               <button
                 onClick={() => { if (busy) void stop(); else void send(input); }}
                 disabled={busy ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
@@ -1117,6 +1142,7 @@ export default function Home() {
                 className={cn(
                   'absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded transition disabled:cursor-not-allowed disabled:opacity-60 hover:brightness-105 md:h-8 md:w-8',
                   busy ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
+                  voice.active && '!hidden',
                 )}
               >
                 {busy && stopping ? (
@@ -1142,6 +1168,7 @@ export default function Home() {
             {stopError && (
               <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
             )}
+            <VoiceNotice voice={voice} />
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim">
               <button
                 type="button"
