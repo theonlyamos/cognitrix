@@ -57,6 +57,10 @@ PERSON_ONLY_CATEGORY = 'permission_ask'
 # Session.__call__ for each turn.
 turn_goal: ContextVar[str | None] = ContextVar('reviewer_turn_goal', default=None)
 
+# The calling agent's own reviewer settings (Agent.reviewer), set around each
+# approval check. Empty values fall back to the environment settings below.
+agent_settings: ContextVar[dict | None] = ContextVar('reviewer_agent_settings', default=None)
+
 _MAX_PARAMS_CHARS = 6000
 _MAX_GOAL_CHARS = 3000
 
@@ -83,7 +87,41 @@ class ReviewVerdict:
         return {'decision': self.decision, 'reason': self.reason, 'model': self.model}
 
 
+def normalize_agent_settings(value: Any) -> dict[str, str]:
+    """Clean an agent's reviewer override. Raises ValueError on bad values."""
+    if value in (None, ''):
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError('reviewer must be an object')
+    cleaned: dict[str, str] = {}
+    mode = str(value.get('mode') or '').strip().lower()
+    if mode:
+        if mode not in MODES:
+            raise ValueError(f"Unknown reviewer mode '{mode}'. Use one of: {', '.join(MODES)}")
+        cleaned['mode'] = mode
+    for key in ('provider', 'model'):
+        text = str(value.get(key) or '').strip()
+        if len(text) > 200:
+            raise ValueError(f'reviewer {key} is too long')
+        if text:
+            cleaned[key] = text
+    max_allow = str(value.get('max_allow') or '').strip().lower()
+    if max_allow:
+        if max_allow not in ('medium', 'high'):
+            raise ValueError("reviewer max_allow must be 'medium' or 'high'")
+        cleaned['max_allow'] = max_allow
+    return cleaned
+
+
+def _agent_setting(key: str) -> str:
+    value = str((agent_settings.get(None) or {}).get(key) or '').strip()
+    return value if key == 'model' else value.lower()
+
+
 def reviewer_mode() -> str:
+    override = _agent_setting('mode')
+    if override in MODES:
+        return override
     mode = os.getenv('COGNITRIX_REVIEWER', '').strip().lower()
     if mode in ('1', 'true', 'yes', 'on'):
         return 'unattended'
@@ -91,7 +129,7 @@ def reviewer_mode() -> str:
 
 
 def _max_allow() -> RiskLevel:
-    raw = os.getenv('COGNITRIX_REVIEWER_MAX_ALLOW', 'medium').strip().lower()
+    raw = _agent_setting('max_allow') or os.getenv('COGNITRIX_REVIEWER_MAX_ALLOW', 'medium').strip().lower()
     return RiskLevel.HIGH if raw == 'high' else RiskLevel.MEDIUM
 
 
@@ -106,8 +144,13 @@ def reviewer_config() -> dict[str, Any]:
     """Current settings, for the settings screen and logs (no secrets)."""
     from cognitrix.config import settings
 
-    provider = os.getenv('COGNITRIX_REVIEWER_PROVIDER', '').strip() or settings.ai_provider
-    model = os.getenv('COGNITRIX_REVIEWER_MODEL', '').strip()
+    if _agent_setting('provider'):
+        # An agent that picks its own reviewer provider picks its model too.
+        provider = _agent_setting('provider')
+        model = _agent_setting('model')
+    else:
+        provider = os.getenv('COGNITRIX_REVIEWER_PROVIDER', '').strip() or settings.ai_provider
+        model = os.getenv('COGNITRIX_REVIEWER_MODEL', '').strip()
     return {
         'mode': reviewer_mode(),
         'provider': provider,

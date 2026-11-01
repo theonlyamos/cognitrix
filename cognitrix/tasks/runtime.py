@@ -371,6 +371,26 @@ class CapabilityPolicySnapshot(BaseModel):
     approval_mode: Literal["risk_based", "assigned_only", "always"] = "risk_based"
 
 
+# Agent settings that change what tools may do, carried into task runs.
+AGENT_POLICY_FIELDS = (
+    "reviewer", "coding_agents", "credentials", "can_create_sub_agents",
+    "sub_agent_model", "automation",
+)
+
+
+def agent_policy(agent: Any) -> dict[str, Any]:
+    policy: dict[str, Any] = {}
+    for name in AGENT_POLICY_FIELDS:
+        value = getattr(agent, name, None)
+        if value is not None:
+            policy[name] = copy.deepcopy(value)
+    try:
+        json.dumps(policy)
+    except (TypeError, ValueError):
+        return {}
+    return policy
+
+
 class AgentRuntimeSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -388,6 +408,9 @@ class AgentRuntimeSnapshot(BaseModel):
     # The agent's permission levels (see cognitrix/safety/permissions.py).
     permission_level: Literal["auto", "ask", "allow"] = "auto"
     tool_permissions: tuple[tuple[str, Literal["allow", "ask", "deny"]], ...] = ()
+    # Other per-agent limits that tools and the reviewer read at run time
+    # (see AGENT_POLICY_FIELDS).
+    agent_policy: dict[str, Any] = Field(default_factory=dict)
     prompt_profile: TaskPromptProfile = Field(default_factory=TaskPromptProfile)
 
     @field_validator("tool_schemas", mode="before")
@@ -641,6 +664,7 @@ def build_runtime_snapshot(
             else tuple(copy.deepcopy(dict(f)) for f in agent.folders)
         ),
         can_request_folders=bool(getattr(agent, "can_request_folders", True)),
+        agent_policy=agent_policy(agent),
         tool_policies=tuple(
             CapabilityPolicySnapshot(
                 name=tool.name,
@@ -740,6 +764,7 @@ def instantiate_runtime(
         can_request_folders=snapshot.can_request_folders,
         permission_level=snapshot.permission_level,
         tool_permissions=dict(snapshot.tool_permissions),
+        **copy.deepcopy(dict(snapshot.agent_policy or {})),
     )
     from cognitrix.tasks.context import TaskContextManager
 

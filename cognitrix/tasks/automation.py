@@ -213,8 +213,25 @@ async def automation_runs_last_day(task_id: str, now: datetime | None = None) ->
     return count
 
 
+async def agent_daily_cap(task: Any) -> int | None:
+    """The cap set on the task's first assigned agent (Agent.automation)."""
+    from cognitrix.models.agent import Agent
+
+    for agent_id in list(getattr(task, 'assigned_agents', None) or [])[:1]:
+        try:
+            agent = await Agent.find_one({'id': agent_id})
+        except Exception:
+            agent = None
+        settings_ = getattr(agent, 'automation', None) if agent is not None else None
+        value = settings_.get('max_runs_per_day') if isinstance(settings_, dict) else None
+        if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= MAX_RUNS_PER_DAY_LIMIT:
+            return value
+    return None
+
+
 async def over_daily_cap(task: Any, now: datetime | None = None) -> bool:
-    cap = getattr(task, 'max_runs_per_day', None) or default_max_runs_per_day()
+    cap = (getattr(task, 'max_runs_per_day', None) or await agent_daily_cap(task)
+           or default_max_runs_per_day())
     return await automation_runs_last_day(task.id, now) >= cap
 
 

@@ -164,6 +164,23 @@ def describe(row: Any) -> dict[str, Any]:
     }
 
 
+def only_allowed(rows: list[Any], allowed: list[str] | None) -> list[Any]:
+    """The rows an agent may use. ``allowed`` None means all of them."""
+    if allowed is None:
+        return list(rows)
+
+    def key(name: Any) -> str:
+        return re.sub(r'[\s\-]+', '_', str(name or '').strip()).upper()
+
+    names = {key(n) for n in allowed}
+    return [row for row in rows if key(row.name) in names]
+
+
+def agent_allowed_credentials(agent: Any) -> list[str] | None:
+    value = getattr(agent, 'credentials', None)
+    return [str(v) for v in value] if isinstance(value, list) else None
+
+
 @dataclass
 class Resolver:
     """Fills placeholders for one tool call, remembering what it used."""
@@ -174,8 +191,8 @@ class Resolver:
     _values: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @classmethod
-    async def for_owner(cls, owner: str | None) -> Resolver:
-        rows = await load_rows(owner)
+    async def for_owner(cls, owner: str | None, allowed: list[str] | None = None) -> Resolver:
+        rows = only_allowed(await load_rows(owner), allowed)
         return cls(owner=owner, rows={row.name: row for row in rows})
 
     def _row(self, name: str, host: str | None) -> Any:

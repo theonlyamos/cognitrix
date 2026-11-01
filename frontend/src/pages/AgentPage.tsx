@@ -10,9 +10,10 @@ import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm } from '@/components/form';
 import { cn } from '@/lib/utils';
 import { REASONING_LEVELS } from '@/lib/reasoning';
-import { BASE_URLS, MODELS, PROVIDERS, ignoresTemperature } from '@/lib/providers';
+import { BASE_URLS, MODELS, PROVIDERS, PROVIDER_LABELS, ignoresTemperature } from '@/lib/providers';
 import { listMcpServers, type McpServer } from '@/lib/mcp';
 import FolderChips from '@/components/FolderChips';
+import ModelPicker from '@/components/ModelPicker';
 import { folderInfo, type WorkFolder } from '@/lib/folders';
 
 interface Tool { name: string; description?: string; category?: string; default_permission?: 'asks' | 'runs' | 'depends' }
@@ -212,15 +213,12 @@ export default function AgentPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="PROVIDER">
           <Select value={provider} onChange={(e) => changeProvider(e.target.value)}>
-            {PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}
+            {PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
           </Select>
         </Field>
-        <Field label="MODEL" hint="free text — suggestions per provider" required>
-          <Input list="model-suggestions" value={model} onChange={(e) => setModel(e.target.value)} placeholder="model name" />
+        <Field label="MODEL" required>
+          <ModelPicker provider={provider} value={model} onChange={setModel} />
         </Field>
-        <datalist id="model-suggestions">
-          {(MODELS[provider] || []).map((m) => <option key={m} value={m} />)}
-        </datalist>
       </div>
 
       <Field label="TEMPERATURE" hint={noTemperature ? 'not used' : temperature.toFixed(2)}>

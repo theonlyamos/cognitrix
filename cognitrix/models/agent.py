@@ -106,6 +106,73 @@ class Agent(Model):
     tool_permissions: dict[str, str] = Field(default_factory=dict)
     """Per-tool levels that override permission_level: allow, ask or deny."""
 
+    description: str = ''
+    """One line about what the agent is for. Shown on the agent list and to
+    teammates deciding who to hand work to."""
+
+    reviewer: dict[str, Any] = Field(default_factory=dict)
+    """Per-agent override for the second-model check
+    (cognitrix/safety/action_reviewer.py): mode ('' = app setting, off,
+    unattended, always), provider, model, max_allow (medium/high)."""
+
+    coding_agents: dict[str, Any] = Field(default_factory=dict)
+    """Limits for the Coding Agent tool: clis (list of allowed CLI keys, None
+    or missing = any installed) and max_mode (read_only, edit or full)."""
+
+    credentials: list[str] | None = None
+    """Saved sign-ins this agent may use by name. None means all of the owner's."""
+
+    can_create_sub_agents: bool = True
+    """Whether the agent may create short-lived helper agents."""
+
+    sub_agent_model: str = ''
+    """Model for helpers it creates: '' lets the agent choose, 'same' uses this
+    agent's own provider and model, anything else is a model of this agent's
+    provider."""
+
+    automation: dict[str, Any] = Field(default_factory=dict)
+    """Always-on behaviour for this agent's tasks: self_checkins (bool, default
+    True: may use Schedule Next Check) and max_runs_per_day (int or None: the
+    default cap for its tasks that don't set their own)."""
+
+    @field_validator('description', 'sub_agent_model', mode='before')
+    @classmethod
+    def _text_default(cls, value):
+        return '' if value is None else value
+
+    @field_validator('can_create_sub_agents', mode='before')
+    @classmethod
+    def _sub_agents_default(cls, value):
+        return True if value is None else value
+
+    @field_validator('reviewer', 'coding_agents', 'automation', mode='before')
+    @classmethod
+    def _dict_default(cls, value):
+        if value in (None, ''):
+            return {}
+        if isinstance(value, str):
+            import json
+
+            try:
+                value = json.loads(value)
+            except ValueError:
+                return {}
+        return value if isinstance(value, dict) else {}
+
+    @field_validator('credentials', mode='before')
+    @classmethod
+    def _credentials_default(cls, value):
+        if value in (None, ''):
+            return None
+        if isinstance(value, str):
+            import json
+
+            try:
+                value = json.loads(value)
+            except ValueError:
+                return None
+        return [str(v) for v in value] if isinstance(value, list) else None
+
     @field_validator('can_request_folders', mode='before')
     @classmethod
     def _can_request_folders_default(cls, value):

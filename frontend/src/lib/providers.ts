@@ -14,17 +14,25 @@ export const PROVIDER_LABELS: Record<string, string> = {
   ollama: 'Ollama (local)',
 };
 
+// Recent models per provider, newest and most useful first. The first one is
+// the default for a new agent. The model pickers also add whatever the
+// provider lists for your key (GET /providers/{id}/models), and "Custom…"
+// takes any other name. Keep the first entry in step with
+// Settings.get_default_model in cognitrix/config.py.
 export const MODELS: Record<string, string[]> = {
-  openrouter: ['google/gemini-3.5-flash', 'openai/gpt-5.5', 'anthropic/claude-sonnet-5.5'],
-  openai: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
+  openrouter: [
+    'google/gemini-3.6-flash', 'anthropic/claude-sonnet-5.5', 'openai/gpt-5.5',
+    'anthropic/claude-opus-5.5', 'openai/gpt-oss-120b',
+  ],
+  openai: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano'],
   anthropic: [
     'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1',
     'claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5',
   ],
-  google: ['gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-3.1-flash'],
-  groq: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'],
-  cerebras: ['llama-3.3-70b', 'llama3.1-8b'],
-  ollama: ['llama3.2', 'qwen2.5', 'mistral'],
+  google: ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro'],
+  groq: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'],
+  cerebras: ['gpt-oss-120b', 'zai-glm-4.7'],
+  ollama: ['llama3.2', 'gpt-oss:20b', 'qwen3', 'mistral'],
 };
 
 // Where to create an API key for each provider.

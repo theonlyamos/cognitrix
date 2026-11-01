@@ -19,7 +19,7 @@ const status = (over: Record<string, unknown> = {}) => ({
   suggested: { name: 'Assistant', provider: 'anthropic', model: 'claude-sonnet-5-5' },
   providers: [
     { id: 'anthropic', needs_key: true, has_key: true, default_model: 'claude-sonnet-5-5' },
-    { id: 'openai', needs_key: true, has_key: false, default_model: 'gpt-4o' },
+    { id: 'openai', needs_key: true, has_key: false, default_model: 'gpt-5.5' },
     { id: 'ollama', needs_key: false, has_key: false, default_model: 'llama3.2' },
   ],
   ...over,
@@ -74,7 +74,7 @@ describe('first-run assistant setup', () => {
     expect(screen.queryByLabelText(/API KEY/)).not.toBeInTheDocument();
 
     fireEvent.change(provider, { target: { value: 'openai' } });
-    expect(screen.getByLabelText(/MODEL/)).toHaveValue('gpt-4o');
+    expect(screen.getByLabelText(/MODEL/)).toHaveValue('gpt-5.5');
     fireEvent.click(screen.getByRole('button', { name: 'Create assistant' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/API key/);
     expect(apiPost).not.toHaveBeenCalled();
@@ -83,7 +83,7 @@ describe('first-run assistant setup', () => {
     fireEvent.change(screen.getByLabelText(/API KEY/), { target: { value: 'sk-mine' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create assistant' }));
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/onboarding/assistant', {
-      name: 'Assistant', provider: 'openai', model: 'gpt-4o', api_key: 'sk-mine',
+      name: 'Assistant', provider: 'openai', model: 'gpt-5.5', api_key: 'sk-mine',
     }));
   });
 

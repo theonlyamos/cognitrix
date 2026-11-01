@@ -536,12 +536,19 @@ class AgentManager:
                     status_print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
                     status_print(f"   Details: {risk.details}")
 
-                    approval = await self.approval_gate.check_approval(
-                        tool_call=tool_call,
-                        risk=risk,
-                        interface=interface,
-                        scope=str(self.agent.id),
-                    )
+                    from cognitrix.safety import action_reviewer
+
+                    reviewer_token = action_reviewer.agent_settings.set(
+                        dict(getattr(self.agent, 'reviewer', None) or {}))
+                    try:
+                        approval = await self.approval_gate.check_approval(
+                            tool_call=tool_call,
+                            risk=risk,
+                            interface=interface,
+                            scope=str(self.agent.id),
+                        )
+                    finally:
+                        action_reviewer.agent_settings.reset(reviewer_token)
 
                     if not approval.approved:
                         denial_code = (

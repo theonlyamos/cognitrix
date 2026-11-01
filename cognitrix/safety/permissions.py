@@ -105,9 +105,31 @@ def is_denied(agent: Any, tool_name: str) -> bool:
     return tool_level(agent, tool_name) == 'deny'
 
 
+# Tools an agent setting can switch off, and why.
+_SWITCHES = {
+    'create_agent': ('can_create_sub_agents', None, "This agent isn't allowed to create sub-agents"),
+    'schedule_next_check': ('automation', 'self_checkins', "This agent isn't allowed to schedule its own check-ins"),
+}
+
+
+def switched_off(agent: Any, tool_name: str) -> str | None:
+    """Why an agent setting turns this tool off, or None."""
+    switch = _SWITCHES.get(tool_key(tool_name))
+    if switch is None:
+        return None
+    field, key, reason = switch
+    value = getattr(agent, field, None)
+    if key is not None:
+        value = value.get(key) if isinstance(value, dict) else None
+    return reason if value is False else None
+
+
 def visible_tools(agent: Any, tools: list) -> list:
-    """Drop tools set to "never" so the model isn't offered them."""
-    return [t for t in tools if not is_denied(agent, getattr(t, 'name', ''))]
+    """Drop tools set to "never" (or switched off) so the model isn't offered them."""
+    return [
+        t for t in tools
+        if not is_denied(agent, getattr(t, 'name', '')) and not switched_off(agent, getattr(t, 'name', ''))
+    ]
 
 
 @dataclass
@@ -167,6 +189,9 @@ def decide_tool_call(
     from the agent's assigned copy.
     """
     name = str(getattr(tool, 'name', '') or '')
+    off = switched_off(agent, name)
+    if off:
+        return ToolDecision('block', risk, 'agent', off)
     level = tool_level(agent, name)
     source = 'tool'
     if level == 'auto':

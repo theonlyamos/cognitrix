@@ -147,6 +147,30 @@ async def test_shared_task_runs_are_visible_to_their_starter(db):
 
 
 @pytest.mark.asyncio
+async def test_agent_overview_only_counts_runs_you_may_see(db):
+    import cognitrix.api.routes.agents as agent_routes
+    from cognitrix.agents import Agent
+    from cognitrix.providers.base import LLM
+    from cognitrix.tasks import Task
+    from cognitrix.tasks.run import TaskRun
+
+    alice, bob = await _users()
+    agent = Agent(name='shared helper', system_prompt='s',
+                  llm=LLM(provider='openai', api_key='k-1234567890', model='m'))
+    await agent.save()
+    shared = Task(title='shared', description='d', assigned_agents=[agent.id])
+    await shared.save()
+    await TaskRun(task_id=shared.id, requested_by=str(alice.user.id)).save()
+
+    seen_by_bob = await agent_routes.agent_overview(agent.id, bob)
+    assert seen_by_bob['stats']['task_runs_week'] == 0
+    assert seen_by_bob['tasks'][0]['last_run_at'] is None
+    seen_by_alice = await agent_routes.agent_overview(agent.id, alice)
+    assert seen_by_alice['stats']['task_runs_week'] == 1
+    assert seen_by_alice['tasks'][0]['last_run_status']
+
+
+@pytest.mark.asyncio
 async def test_teams_are_private_to_their_creator(db):
     import cognitrix.api.routes.teams as routes
     from cognitrix.teams.base import Team

@@ -187,12 +187,12 @@ class CognitrixSettings:
     def get_default_model(self, provider: str) -> str:
         """Get default model for a provider"""
         model_mapping = {
-            'openai': 'gpt-4o',
-            'openrouter': 'google/gemini-3.5-flash',
+            'openai': 'gpt-5.5',
+            'openrouter': 'google/gemini-3.6-flash',
             'anthropic': 'claude-sonnet-5-5',
-            'google': 'gemini-3.5-flash',
+            'google': 'gemini-3.6-flash',
             'groq': 'openai/gpt-oss-120b',
-            'cerebras': 'llama-3.3-70b',
+            'cerebras': 'gpt-oss-120b',
             'ollama': 'llama3.2',
             'cohere': 'command-r-plus',
             'together': 'meta-llama/llama-3.3-70b-instruct',
@@ -391,6 +391,9 @@ _AGENT_MIGRATION_COLUMNS = (
     ('folders', 'TEXT'), ('can_request_folders', 'BOOLEAN'),
     ('permission_level', 'TEXT'),
     ('tool_permissions', 'TEXT'),
+    ('description', 'TEXT'), ('reviewer', 'TEXT'), ('coding_agents', 'TEXT'),
+    ('credentials', 'TEXT'), ('can_create_sub_agents', 'BOOLEAN'),
+    ('sub_agent_model', 'TEXT'), ('automation', 'TEXT'),
 )
 
 _SESSION_MIGRATION_COLUMNS = (
