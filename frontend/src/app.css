@@ -218,3 +218,10 @@ html.dark {
 .md .hljs-deletion { color: var(--danger-ink); }
 .md .hljs-emphasis { font-style: italic; }
 .md .hljs-strong { font-weight: 700; }
+
+/* Native <select> popups follow the theme (the OS list ignores a transparent select). */
+select option,
+select optgroup {
+  background-color: var(--panel);
+  color: var(--fg);
+}
