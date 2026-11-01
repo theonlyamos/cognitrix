@@ -299,6 +299,18 @@ async fn pick_working_folder(app: AppHandle) -> Result<Option<String>, String> {
     Ok(Some(path.display().to_string()))
 }
 
+/// Native folder picker for adding a working folder to a chat or an agent.
+/// Only returns the path; the engine checks it before anything uses it.
+#[tauri::command]
+async fn pick_folder(app: AppHandle, title: Option<String>) -> Result<Option<String>, String> {
+    let title = title.unwrap_or_else(|| "Add a folder".to_string());
+    let Some(picked) = app.dialog().file().set_title(&title).blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    Ok(Some(path.display().to_string()))
+}
+
 /// Returns whether a notification was shown, so the UI can fall back to its
 /// own toast when they're off or Windows refused it. Async so the toast call
 /// never blocks the window's thread.
@@ -387,6 +399,7 @@ pub fn run() {
             get_desktop_settings,
             set_desktop_settings,
             pick_working_folder,
+            pick_folder,
             desktop_notify,
             show_main_window,
             hide_quick_ask,

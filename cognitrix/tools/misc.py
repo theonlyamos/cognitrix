@@ -14,6 +14,7 @@ from typing import Any
 
 import regex as regex_engine
 
+from cognitrix.common import folders as folder_paths
 from cognitrix.common.encoding import status_print
 from cognitrix.common.process_security import (
     HostProcessAccessError,
@@ -21,7 +22,6 @@ from cognitrix.common.process_security import (
 )
 from cognitrix.common.safe_exec import (
     PathEscapesRoot,
-    resolve_within_root,
 )
 from cognitrix.common.shell import shell_label
 from cognitrix.config import settings
@@ -221,20 +221,22 @@ def _resolve_tool_path(
     write: bool = False,
     allow_upload_root: bool = False,
 ) -> Path:
-    root = Path(settings.tools_root).expanduser().resolve()
-    lexical = _lexical_path(value, root)
-    if not _inside(lexical, root):
-        raise PathEscapesRoot(
-            f"Path '{value}' resolves outside the permitted root '{root}'"
-        )
-    resolved = resolve_within_root(value, root)
-    lexical_uploads = root / 'uploads'
-    resolved_uploads = lexical_uploads.resolve()
-    lexical_relative = _upload_relative(lexical, lexical_uploads)
-    resolved_relative = _upload_relative(resolved, resolved_uploads)
-    touches_uploads = lexical_relative is not None or resolved_relative is not None
+    # Paths resolve inside this turn's working folders (relative ones start
+    # at the primary folder); see cognitrix.common.folders.
+    uploads_root = Path(settings.tools_root).expanduser().resolve() / 'uploads'
+    lexical = folder_paths.lexical_path(value)
+    lexical_relative = _upload_relative(lexical, uploads_root)
+    resolved_uploads = uploads_root.resolve()
+    if lexical_relative is None:
+        try:
+            real = Path(os.path.realpath(os.fspath(lexical)))
+        except OSError:
+            real = lexical
+        touches_uploads = _upload_relative(real, resolved_uploads) is not None
+    else:
+        touches_uploads = True
     if not touches_uploads:
-        return resolved
+        return folder_paths.resolve_path(value, write=write)
     if write:
         raise ManagedUploadAccessError('Managed uploads are read-only')
     # Managed documents are never traversed or opened by path. Read dispatches
@@ -1563,25 +1565,27 @@ def bash(
     except HostProcessAccessError as e:
         return f'Error: {e}'
 
-    # Commands start inside the working folder (settings.tools_root, the same
-    # root the file tools use) and the remembered directory never leaves it.
-    root = Path(settings.tools_root).expanduser().resolve()
+    # Commands start in the primary working folder (or where this chat last
+    # cd'd to) and only run inside this chat's folders. The folder holding the
+    # start directory is the root that cd and paths in the command stay inside.
     session_key = _shell_session_key(context)
     if working_dir:
         try:
-            candidate = Path(working_dir).expanduser()
-            work_dir = (candidate if candidate.is_absolute() else root / candidate).resolve()
+            work_dir = folder_paths.resolve_path(working_dir)
+        except PathEscapesRoot as e:
+            return f"Error: Command refused - {e}"
         except Exception as e:
             return f"Error: Working directory validation failed - {str(e)}"
-        if not _inside(work_dir, root):
-            return (
-                f"Error: Command refused - '{working_dir}' is outside the working folder "
-                f"'{root}'. Commands can only run inside the working folder."
-            )
         if not work_dir.exists() or not work_dir.is_dir():
             return f"Error: Invalid working directory - {working_dir}"
     else:
-        work_dir = sh.session_cwd(session_key, root)
+        remembered = sh.remembered_cwd(session_key)
+        if remembered is not None and folder_paths.folder_for(remembered) is not None:
+            work_dir = remembered
+        else:
+            work_dir = folder_paths.primary_folder()
+    containing = folder_paths.folder_for(work_dir)
+    root = containing.root if containing is not None else folder_paths.primary_folder()
 
     # The model may pass the timeout as a string.
     try:

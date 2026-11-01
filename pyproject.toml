@@ -60,6 +60,7 @@ pymupdf = "^1.27.2"
 odbms = "0.5.2"
 bcrypt = "^4.3.0"
 pyjwt = "^2.8.0"
+cryptography = ">=44.0.0"
 
 # Utilities
 rich = ">=13.7.1"

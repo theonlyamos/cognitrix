@@ -652,6 +652,10 @@ class SkillExecutor:
             ),
             llm=self.llm,
             tools=parent_tools,
+            # The skill acts for the parent, so it keeps the parent's
+            # permission levels (a tool set to never stays blocked).
+            permission_level=getattr(self.agent_manager.agent, 'permission_level', 'auto'),
+            tool_permissions=dict(getattr(self.agent_manager.agent, 'tool_permissions', None) or {}),
         )
 
         # Resolve restrictions now, then apply them after any selected-agent
@@ -694,7 +698,9 @@ class SkillExecutor:
             {'role': 'system', 'content': sub_manager.formatted_system_prompt()},
             {'role': 'user', 'content': prompt},
         ]
-        formatted_tools = [t.to_dict_format() for t in agent.tools]
+        from cognitrix.safety.permissions import visible_tools
+
+        formatted_tools = [t.to_dict_format() for t in visible_tools(agent, agent.tools)]
 
         # Tool call loop
         max_iterations = 15

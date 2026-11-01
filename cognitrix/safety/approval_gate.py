@@ -16,6 +16,15 @@ from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
 logger = logging.getLogger('cognitrix.log')
 
 
+# Tools a person must answer even with the browser's auto-approve on:
+# giving an agent a new folder or write access widens what it can touch.
+_NEVER_AUTO_APPROVED = frozenset({'request_folder'})
+
+
+def _normal_name(name: str) -> str:
+    return str(name or '').strip().lower().replace(' ', '_')
+
+
 def _auto_approve_enabled() -> bool:
     return os.getenv('COGNITRIX_AUTO_APPROVE', '').strip().lower() in ('1', 'true', 'yes')
 
@@ -355,7 +364,7 @@ class ApprovalGate:
         global _web_request_counter
         ctx = web_turn_ctx.get(None)
 
-        if ctx and ctx.get('bypass'):
+        if ctx and ctx.get('bypass') and _normal_name(tool_call.tool_name) not in _NEVER_AUTO_APPROVED:
             # Auto-approve tool calls only — the bash whitelist / sandbox-shell
             # bypass is never enabled from the web.
             return ApprovalResult(approved=True, auto=True)

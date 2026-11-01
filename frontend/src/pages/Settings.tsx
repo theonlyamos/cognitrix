@@ -11,6 +11,7 @@ import { useSystemInfo } from '@/hooks/useSystemInfo';
 import { VoiceSettingsCard } from '@/components/VoiceSettingsCard';
 import { McpServersCard } from '@/components/McpServersCard';
 import { ChatChannelsCard } from '@/components/ChatChannelsCard';
+import { CredentialsCard } from '@/components/CredentialsCard';
 
 function Card({ title, children, className, id }: { title: string; children: ReactNode; className?: string; id?: string }) {
   return (
@@ -212,6 +213,10 @@ export default function Settings() {
 
           <Card title="Chat apps" id="chat-apps" className="lg:col-span-2">
             <ChatChannelsCard />
+          </Card>
+
+          <Card title="Saved sign-ins" id="saved-sign-ins" className="lg:col-span-2">
+            <CredentialsCard />
           </Card>
 
           <Card title="Voice input" id="voice-input">

@@ -298,6 +298,13 @@ def session_cwd(key: str, root: Path) -> Path:
     return cwd
 
 
+def remembered_cwd(key: str) -> Path | None:
+    """The directory this shell session last cd'd into, if it still exists."""
+    with _CWDS_LOCK:
+        cwd = _CWDS.get(key)
+    return cwd if cwd is not None and cwd.is_dir() else None
+
+
 def set_session_cwd(key: str, cwd: Path) -> None:
     with _CWDS_LOCK:
         _CWDS[key] = cwd
