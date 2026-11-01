@@ -598,7 +598,10 @@ describe('final accessibility contracts', () => {
 
     await user.click(screen.getByRole('button', { name: '+ new' }));
     expect(screen.getByRole('heading', { name: 'Who do you want to talk to?' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Agent Two\s*groq · gpt-oss-120b/ })).toBeInTheDocument();
+    // The last agent used is offered first.
+    const recent = screen.getByRole('heading', { name: 'Recent' }).nextElementSibling as HTMLElement;
+    expect(within(recent).getByRole('button', { name: /^Agent Two/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Agent Two\s*groq · gpt-oss-120b/ })).toHaveLength(2);
     await user.click(screen.getByRole('button', { name: /^Agent One/ }));
     expect(screen.queryByRole('heading', { name: 'Who do you want to talk to?' })).not.toBeInTheDocument();
     expect(localStorage.getItem('selectedAgentId')).toBe('agent-1');
@@ -610,7 +613,9 @@ describe('final accessibility contracts', () => {
 
     expect(screen.getByRole('banner')).toHaveClass('flex-row', 'flex-nowrap');
     expect(screen.getByRole('banner')).not.toHaveClass('overflow-hidden');
-    expect(screen.getByRole('heading', { name: 'New chat' })).toHaveClass('truncate');
+    expect(within(screen.getByRole('banner')).getByRole('heading', { name: 'New chat' })).toHaveClass('truncate');
+    // Desktop hides the bar while connected.
+    expect(screen.getByRole('banner')).toHaveClass('md:hidden');
     expect(screen.getByRole('button', { name: 'Open conversations' })).toHaveClass('h-11', 'w-11', 'md:hidden');
     const connectionStatus = screen.getByLabelText('Connection status: connected');
     expect(connectionStatus).toHaveClass('flex', 'items-center');

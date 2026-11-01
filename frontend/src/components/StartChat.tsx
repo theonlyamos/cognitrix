@@ -39,10 +39,13 @@ export function AgentBadge({
 export function StartChat({
   agents,
   teams,
+  recent = [],
   onPick,
 }: {
   agents: PickerAgent[];
   teams: PickerTeam[];
+  /** Agents and teams the user chatted with last, newest first. */
+  recent?: PickTarget[];
   onPick: (target: PickTarget) => void;
 }) {
   const card = (target: PickTarget, name: string, line: string, desc: string | null | undefined) => (
@@ -63,13 +66,27 @@ export function StartChat({
     </button>
   );
   const addCard = 'flex min-h-[4.25rem] items-center justify-center rounded-lg border border-dashed border-line p-3.5 text-[13px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg';
+  const recentCards = recent.slice(0, 3).flatMap((target) => {
+    if (target.kind === 'agent') {
+      const a = agents.find((x) => x.id === target.id);
+      return a ? [card(target, a.name, agentModel(a), a.description)] : [];
+    }
+    const t = teams.find((x) => x.id === target.id);
+    return t ? [card(target, t.name, teamLine(t), t.description)] : [];
+  });
   const heading = 'font-mono text-[10px] uppercase tracking-[0.14em] text-fg-dim';
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col px-4 py-10 sm:px-6">
       <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ new chat</p>
       <h2 className="mt-3 text-2xl font-bold tracking-tight">Who do you want to talk to?</h2>
       <p className="mt-2 text-fg-dim">Each chat is with one agent or team. You can start another chat with someone else at any time.</p>
-      <h3 className={cn(heading, 'mb-2 mt-7')}>Agents</h3>
+      {recentCards.length > 0 && (
+        <>
+          <h3 className={cn(heading, 'mb-2 mt-7')}>Recent</h3>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{recentCards}</div>
+        </>
+      )}
+      <h3 className={cn(heading, 'mb-2', recentCards.length > 0 ? 'mt-6' : 'mt-7')}>Agents</h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {agents.map((a) => card({ kind: 'agent', id: a.id }, a.name, agentModel(a), a.description))}
         <Link to="/agents/new" className={addCard}>+ New agent</Link>

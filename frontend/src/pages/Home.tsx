@@ -318,6 +318,20 @@ export default function Home() {
     }
     return merged.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
   }, [allChatsData, convos, agentById, teamById, agentId]);
+  // Who the user chatted with last (agent or team), newest first.
+  const recentTargets = useMemo(() => {
+    const seen = new Set<string>();
+    const out: PickTarget[] = [];
+    for (const c of allChats) {
+      const target: PickTarget | null = c.kind === 'team'
+        ? (c.team_id ? { kind: 'team', id: c.team_id } : null)
+        : (c.agent_id ? { kind: 'agent', id: c.agent_id } : null);
+      if (!target || seen.has(`${target.kind}:${target.id}`)) continue;
+      seen.add(`${target.kind}:${target.id}`);
+      out.push(target);
+    }
+    return out;
+  }, [allChats]);
   // "+ new" shows the who-to-talk-to screen until the user picks someone.
   const [picking, setPicking] = useState(false);
   const convosSorted = useMemo(
@@ -1098,8 +1112,10 @@ export default function Home() {
 
       {/* Chat column */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {/* Top bar */}
-        <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:flex-wrap md:px-6">
+        {/* Top bar: phones only (menu + chat list buttons). On desktop it
+            shows only while the event stream is down, for the reconnect button. */}
+        {isConnected && <h1 className="hidden sr-only md:block">{picking || !activeSessionId ? 'New chat' : 'Chat'}</h1>}
+        <header className={cn('app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:flex-wrap md:px-6', isConnected && 'md:hidden')}>
           <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-hidden">
             <h1 className="truncate text-[15px] font-semibold">
               {picking || !activeSessionId
@@ -1152,7 +1168,7 @@ export default function Home() {
           className="min-h-0 flex-1 overscroll-contain overflow-y-auto"
         >
           {picking && agents.length > 0 ? (
-            <StartChat agents={agents} teams={teams} onPick={startChatWith} />
+            <StartChat agents={agents} teams={teams} recent={recentTargets} onPick={startChatWith} />
           ) : empty ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col justify-center px-6">
               <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ {agentById.get(agentId) ? `new chat with ${agentById.get(agentId)!.name}` : 'start a conversation'}</p>
