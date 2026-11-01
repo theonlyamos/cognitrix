@@ -52,10 +52,14 @@ export function useVoiceRecorder({ maxSeconds = 600, onLimit }: { maxSeconds?: n
   const [elapsed, setElapsed] = useState(0);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const session = useRef<Session | null>(null);
+  // Bumped by cancel and unmount so a start still waiting on the permission
+  // prompt (or worklet load) knows to drop what it acquired.
+  const generation = useRef(0);
   const onLimitRef = useRef(onLimit);
   onLimitRef.current = onLimit;
 
   const teardown = useCallback(() => {
+    generation.current += 1;
     const s = session.current;
     session.current = null;
     if (!s) return;
@@ -72,14 +76,21 @@ export function useVoiceRecorder({ maxSeconds = 600, onLimit }: { maxSeconds?: n
     if (session.current || state !== 'idle') return;
     setState('starting');
     setElapsed(0);
+    const gen = ++generation.current;
+    const stale = () => gen !== generation.current;
     let stream: MediaStream | null = null;
+    let context: AudioContext | null = null;
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('unsupported');
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
+      if (stale()) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       const Ctx: typeof AudioContext = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const context = new Ctx();
+      context = new Ctx();
       if (context.state === 'suspended') await context.resume();
       const source = context.createMediaStreamSource(stream);
       const meter = context.createAnalyser();
@@ -112,17 +123,25 @@ export function useVoiceRecorder({ maxSeconds = 600, onLimit }: { maxSeconds?: n
       node.connect(mute);
       mute.connect(context.destination);
 
+      if (stale()) {
+        stream.getTracks().forEach((t) => t.stop());
+        void context.close().catch(() => undefined);
+        return;
+      }
       const startedAt = performance.now();
       const timer = window.setInterval(() => {
         const secs = (performance.now() - startedAt) / 1000;
         setElapsed(secs);
         if (secs >= maxSeconds) onLimitRef.current?.();
       }, 250);
-      session.current = { stream, context, source, node, chunks, startedAt, timer };
+      const ctx = context;
+      session.current = { stream, context: ctx, source, node, chunks, startedAt, timer };
       setAnalyser(meter);
       setState('recording');
     } catch (err) {
       stream?.getTracks().forEach((t) => t.stop());
+      void context?.close().catch(() => undefined);
+      if (stale()) return;
       setState('idle');
       throw err;
     }

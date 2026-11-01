@@ -188,6 +188,8 @@ def _friendly(provider: str, exc: Exception) -> TranscriptionError:
     label = VOICE_PROVIDERS[provider].label
     if status in (401, 403):
         return TranscriptionError(f'{label} rejected the API key. Check it under Settings, Voice input.', 400)
+    if status == 402:
+        return TranscriptionError(f'Your {label} account is out of credit.', 400)
     if status == 404:
         return TranscriptionError(f'{label} doesn\'t know that model. Pick another under Settings, Voice input.', 400)
     if status == 429:
