@@ -65,19 +65,43 @@ export const desktop = {
   setSettings: (patch: Partial<Pick<DesktopSettings, 'close_to_tray' | 'notify_desktop' | 'start_with_windows'>>) =>
     invokeDesktop<DesktopSettings>('set_desktop_settings', { patch }),
   pickWorkingFolder: () => invokeDesktop<string | null>('pick_working_folder'),
-  notify: (title: string, body: string) => invokeDesktop<void>('desktop_notify', { title, body }),
+  /** Native notification; clicking it opens `path` in the main window.
+   *  Resolves true when one was shown. */
+  notify: (title: string, body: string, path?: string, urgent?: boolean) =>
+    invokeDesktop<boolean>('desktop_notify', { title, body, path: path ?? null, urgent: urgent ?? false }),
   showMain: (path?: string) => invokeDesktop<void>('show_main_window', { path: path ?? null }),
   hideQuickAsk: () => invokeDesktop<void>('hide_quick_ask'),
 };
 
-/** Show a system notification: the desktop shell's in the app, the browser's
- *  Notification API on the web (only if the person already allowed it). */
-export async function systemNotify(title: string, body: string) {
+export interface SystemNotice {
+  title: string;
+  body: string;
+  /** In-app route to open when the notification is clicked. */
+  href?: string;
+  /** Approvals and questions: stays on screen until the person acts. */
+  urgent?: boolean;
+}
+
+/** Show a system notification: a native Windows toast in the desktop app,
+ *  the browser's Notification API on the web (only if the person already
+ *  allowed it). Resolves true when one was shown. */
+export async function systemNotify({ title, body, href, urgent }: SystemNotice): Promise<boolean> {
   if (isDesktop()) {
-    await desktop.notify(title, body);
-    return;
+    try {
+      return Boolean(await desktop.notify(title, body, href, urgent));
+    } catch {
+      return false;
+    }
   }
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    new Notification(title, { body });
+    const n = new Notification(title, { body });
+    if (href) {
+      n.onclick = () => {
+        window.focus();
+        window.location.assign(href);
+      };
+    }
+    return true;
   }
+  return false;
 }

@@ -181,6 +181,7 @@ fn start_blocking(app: &AppHandle) {
             s.status = Status::Failed;
             s.error = Some(message.clone());
         });
+        crate::notify(app, "Cognitrix engine couldn't start", &message, Some("/settings"));
     };
 
     let mut cmd = match engine_command(app) {
@@ -273,7 +274,7 @@ fn watch(app: &AppHandle, generation: u64) {
                 s.status = Status::Stopped;
                 s.error = Some(format!("The engine stopped unexpectedly (exit code {code})."));
             });
-            crate::notify(app, "Cognitrix engine stopped", "Restart it from the tray or the app window.");
+            crate::notify(app, "Cognitrix engine stopped", "Restart it from the tray or the app window.", Some("/settings"));
             return;
         }
     }

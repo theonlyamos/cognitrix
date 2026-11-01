@@ -191,15 +191,28 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     };
     const channel = prefsRef.current[n.event] ?? DEFAULT_PREFS[n.event];
     const inApp = channel.inApp || EVENT_LABELS[n.event].alwaysInApp;
-    if (inApp) {
-      setNotifications((list) => [item, ...list].slice(0, MAX_KEPT));
-      setToasts((list) => [item, ...list].slice(0, 3));
-    }
+    if (inApp) setNotifications((list) => [item, ...list].slice(0, MAX_KEPT));
+    const popToast = () => {
+      if (inApp) setToasts((list) => [item, ...list].slice(0, 3));
+    };
+
     // "Task finished" only pops a system notification when you're elsewhere.
+    // In the desktop app the shell raises its own "engine stopped" and
+    // "engine couldn't start" notifications.
     const away = typeof document !== 'undefined' && (document.hidden || !document.hasFocus());
-    if (channel.desktop && (n.event !== 'task_finished' || away)) {
-      void systemNotify(n.title, n.body);
+    const system =
+      channel.desktop && (n.event !== 'task_finished' || away) && !(n.event === 'engine' && isDesktop());
+    if (!system) {
+      popToast();
+      return;
     }
+    const urgent = n.event === 'approval' || n.event === 'question';
+    void systemNotify({ title: n.title, body: n.body, href: n.href, urgent }).then((shown) => {
+      // In the desktop app a Windows notification replaces the in-app toast
+      // (it's still listed under the bell). On the web, or when Windows
+      // notifications are off, the in-app toast shows as before.
+      if (!(shown && isDesktop())) popToast();
+    });
   }, []);
 
   const refreshInbox = useCallback(async () => {
