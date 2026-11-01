@@ -113,8 +113,27 @@ mod platform {
         }
     }
 
+    /// Windows accepts a toast even when the person turned notifications
+    /// off for the app (or system-wide, or Focus is blocking them), then
+    /// never shows it. Report that as a failure so the UI shows its own toast.
+    fn blocked(id: &str) -> Option<String> {
+        use windows::core::HSTRING;
+        use windows::UI::Notifications::{NotificationSetting, ToastNotificationManager};
+        let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(id)).ok()?;
+        let setting = notifier.Setting().ok()?;
+        if setting == NotificationSetting::Enabled {
+            None
+        } else {
+            Some(format!("Windows notifications are blocked ({setting:?})"))
+        }
+    }
+
     pub fn show(app: &AppHandle, notice: Notice) -> Result<(), String> {
-        let mut toast = Toast::new(&app_id(app)).title(notice.title).text1(notice.body);
+        let id = app_id(app);
+        if let Some(reason) = blocked(&id) {
+            return Err(reason);
+        }
+        let mut toast = Toast::new(&id).title(notice.title).text1(notice.body);
         if notice.urgent {
             // Reminders stay on screen until clicked or dismissed. Windows
             // only honours that when the toast has a button.

@@ -181,6 +181,7 @@ fn start_blocking(app: &AppHandle) {
             s.status = Status::Failed;
             s.error = Some(message.clone());
         });
+        crate::notify(app, "Cognitrix engine couldn't start", &message, Some("/settings"));
     };
 
     let mut cmd = match engine_command(app) {

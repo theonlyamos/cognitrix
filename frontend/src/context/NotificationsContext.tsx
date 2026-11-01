@@ -182,7 +182,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     };
 
     // "Task finished" only pops a system notification when you're elsewhere.
-    // In the desktop app the shell already raises its own "engine stopped".
+    // In the desktop app the shell raises its own "engine stopped" and
+    // "engine couldn't start" notifications.
     const away = typeof document !== 'undefined' && (document.hidden || !document.hasFocus());
     const system =
       channel.desktop && (n.event !== 'task_finished' || away) && !(n.event === 'engine' && isDesktop());
