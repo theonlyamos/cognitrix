@@ -329,22 +329,24 @@ async def update_task(task_ref: str, title: str | None = None, description: str 
             _require_scope('run')
             if not task.assigned_agents:
                 return ToolOutcome.failure('task_owner_required', 'Scheduling a task requires an owner')
-        if schedule_touched:
-            if task.schedule_enabled:
-                if new_type or not was_enabled:
-                    task.next_run_at = compute_next_run(task)
-                authority = current_execution_context()
-                task.schedule_requested_by = authority.user_id
-                task.schedule_authority_kind = 'api_key' if authority.api_key_id else 'jwt'
-                task.schedule_authority_id = authority.api_key_id or authority.user_id
-            else:
-                task.next_run_at = None
-                if clear_schedule or new_type:
-                    task.schedule_requested_by = None
-                    task.schedule_authority_kind = None
-                    task.schedule_authority_id = None
-                if was_enabled:
-                    _clear_wake(task)
+        if task.schedule_enabled:
+            # Any edit of an enabled schedule, even to its instructions only,
+            # makes the editor its authority (as save_task does). Otherwise a
+            # narrower key could change what runs under broader stored authority.
+            if new_type or not was_enabled:
+                task.next_run_at = compute_next_run(task)
+            authority = current_execution_context()
+            task.schedule_requested_by = authority.user_id
+            task.schedule_authority_kind = 'api_key' if authority.api_key_id else 'jwt'
+            task.schedule_authority_id = authority.api_key_id or authority.user_id
+        elif schedule_touched:
+            task.next_run_at = None
+            if clear_schedule or new_type:
+                task.schedule_requested_by = None
+                task.schedule_authority_kind = None
+                task.schedule_authority_id = None
+            if was_enabled:
+                _clear_wake(task)
 
         from cognitrix.api.routes.tasks import _update_existing_task_if_live
         if await _update_existing_task_if_live(task) != 1:

@@ -348,3 +348,17 @@ async def test_create_task_records_owner(monkeypatch):
     with _as_user('u1'):
         await create_task.run('T', 'D')
     assert saved[0].owner_id == 'u1'
+
+
+@pytest.mark.asyncio
+async def test_content_edit_of_enabled_schedule_takes_editor_authority(task_store):
+    from cognitrix.tools.management import update_task
+    task = _real_task(schedule_interval=600, schedule_enabled=True, next_run_at='2030-01-01 00:00:00',
+                      schedule_requested_by='u1', schedule_authority_kind='jwt', schedule_authority_id='u1')
+    task_store['tasks'].append(task)
+    with _as_user('u1', api_key_id='k1', scopes=frozenset({'write', 'run'})):
+        out = await update_task.run(task.id, steps=['Do something else'])
+    assert out.outcome.status == 'success'
+    saved = task_store['saved'][0]
+    assert saved.schedule_authority_kind == 'api_key' and saved.schedule_authority_id == 'k1'
+    assert saved.next_run_at == '2030-01-01 00:00:00'
