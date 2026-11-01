@@ -55,11 +55,16 @@ def test_split_command_operators_and_quotes():
 
 
 @pytest.mark.parametrize('command', [
-    'echo $HOME', 'echo "$HOME"', 'ls > out', 'cat < f', 'sleep 1 &', 'echo `id`', 'ls *.py', '(ls)',
+    'echo $HOME', pytest.param('echo "$HOME"', marks=posix_only), 'ls > out', 'cat < f', 'sleep 1 &', 'echo `id`', 'ls *.py', '(ls)',
 ])
 def test_split_command_needs_shell(command):
     with pytest.raises(sh.ShellSyntaxError):
         sh.split_command(command)
+
+
+def test_dollar_in_double_quotes_never_runs_allowlisted(root):
+    # POSIX: the shell would expand it. Windows: build_argv refuses '$'.
+    assert sh.plan_command('echo "$HOME"', root).kind == 'shell'
 
 
 def test_plan_read_only_and_mutating(root):
