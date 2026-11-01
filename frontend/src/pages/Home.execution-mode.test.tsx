@@ -30,6 +30,7 @@ vi.mock('@/hooks/useResource', () => ({
   useResource: (path: string | null) => ({
     data: path === '/agents' ? [{ id: 'agent-1', name: 'Agent One' }] : [],
     loading: false,
+    loadedPath: path,
     refetch: vi.fn(),
   }),
 }));

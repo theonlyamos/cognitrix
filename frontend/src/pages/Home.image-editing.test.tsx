@@ -35,6 +35,7 @@ vi.mock('@/hooks/useResource', () => ({
         ? harness.conversations
         : [],
     loading: false,
+    loadedPath: path,
     refetch: vi.fn(),
   }),
 }));
@@ -259,10 +260,11 @@ describe('Home image editing transport', () => {
 
   it.each([
     ['conversation switch', async () => {
-      await userEvent.click(screen.getByRole('button', { name: 'Second' }));
+      await userEvent.click(screen.getByRole('button', { name: /^Second/ }));
     }],
     ['agent switch', async () => {
-      await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Active agent' }), 'agent-2');
+      await userEvent.click(screen.getByRole('button', { name: '+ new' }));
+      await userEvent.click(screen.getByRole('button', { name: /^Agent Two/ }));
     }],
     ['new conversation', async () => {
       await userEvent.click(screen.getByRole('button', { name: '+ new' }));
@@ -303,11 +305,12 @@ describe('Home image editing transport', () => {
     ] }];
     renderHome();
     await userEvent.click(await screen.findByRole('button', { name: 'Use source.png as edit source' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Second' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Second/ }));
     await waitFor(() => expect(screen.queryByText('Editing image')).not.toBeInTheDocument());
 
     await userEvent.click(screen.getByRole('button', { name: 'Use source.png as edit source' }));
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Active agent' }), 'agent-2');
+    await userEvent.click(screen.getByRole('button', { name: '+ new' }));
+      await userEvent.click(screen.getByRole('button', { name: /^Agent Two/ }));
     expect(screen.queryByText('Editing image')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Use source.png as edit source' }));

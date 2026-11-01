@@ -66,6 +66,7 @@ vi.mock('@/hooks/useResource', () => ({
       loading: state?.loading ?? false,
       error: state?.error ?? null,
       refetch: harness.refetch,
+      loadedPath: path,
     };
   },
 }));
@@ -564,12 +565,64 @@ describe('final accessibility contracts', () => {
     await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Keep this turn running');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    const picker = screen.getByRole('combobox', { name: 'Active agent' });
-    expect(picker).not.toBeDisabled();
-    await user.selectOptions(picker, 'agent-2');
+    await user.click(screen.getByRole('button', { name: '+ new' }));
+    await user.click(screen.getByRole('button', { name: /^Agent Two/ }));
     // The old turn keeps its stream; this page moves to a fresh one.
     expect(harness.rotateStream).toHaveBeenCalledTimes(1);
     expect(harness.apiPost).not.toHaveBeenCalledWith('/agents/stop', expect.anything());
+  });
+
+  it('lists chats with every agent and starts new chats from the who-to-talk-to screen', async () => {
+    harness.resources.set('/agents', {
+      data: [
+        { id: 'agent-1', name: 'Agent One' },
+        { id: 'agent-2', name: 'Agent Two', llm: { provider: 'groq', model: 'gpt-oss-120b' } },
+      ],
+    });
+    harness.resources.set('/sessions/chats', {
+      data: [
+        { id: 's-two', title: 'Other chat', message_count: 2, kind: 'agent', agent_id: 'agent-2', team_id: null, updated_at: '2026-11-01T10:00:00' },
+      ],
+    });
+    harness.resources.set('/sessions/agents/agent-2?exclude_tasks=true', {
+      data: [{ id: 's-two', title: 'Other chat', message_count: 2, updated_at: '2026-11-01T10:00:00' }],
+    });
+    const user = userEvent.setup();
+    renderRoute(<Home />);
+
+    // Each row names who the chat is with.
+    const row = screen.getByRole('button', { name: /Other chat\s*Agent Two/ });
+    await user.click(row);
+    expect(localStorage.getItem('selectedAgentId')).toBe('agent-2');
+    expect(localStorage.getItem('chatSession:agent-2')).toBe('s-two');
+
+    await user.click(screen.getByRole('button', { name: '+ new' }));
+    expect(screen.getByRole('heading', { name: 'Who do you want to talk to?' })).toBeInTheDocument();
+    // The last agent used is offered first.
+    const recent = screen.getByRole('heading', { name: 'Recent' }).nextElementSibling as HTMLElement;
+    expect(within(recent).getByRole('button', { name: /^Agent Two/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Agent Two\s*groq · gpt-oss-120b/ })).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: /^Agent One/ }));
+    expect(screen.queryByRole('heading', { name: 'Who do you want to talk to?' })).not.toBeInTheDocument();
+    expect(localStorage.getItem('selectedAgentId')).toBe('agent-1');
+    expect(localStorage.getItem('chatSession:agent-1')).toBe('');
+  });
+
+  it('keeps re-reading the chat list while a chat with another agent is running', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      harness.resources.set('/agents', { data: [{ id: 'agent-1', name: 'Agent One' }, { id: 'agent-2', name: 'Agent Two' }] });
+      harness.resources.set('/sessions/chats', {
+        data: [{ id: 's-bg', title: 'Background', message_count: 1, kind: 'agent', agent_id: 'agent-2', team_id: null, running: true }],
+      });
+      renderRoute(<Home />);
+      expect(screen.getByTestId('running-s-bg')).toBeInTheDocument();
+      harness.refetch.mockClear();
+      await act(async () => { vi.advanceTimersByTime(4_100); });
+      expect(harness.refetch).toHaveBeenCalledWith({ silent: true });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps the Home header on one compact mobile row', () => {
@@ -577,8 +630,9 @@ describe('final accessibility contracts', () => {
 
     expect(screen.getByRole('banner')).toHaveClass('flex-row', 'flex-nowrap');
     expect(screen.getByRole('banner')).not.toHaveClass('overflow-hidden');
-    expect(screen.getByRole('heading', { name: 'Chat' })).toHaveClass('sr-only', 'md:not-sr-only');
-    expect(screen.getByRole('combobox', { name: 'Active agent' })).toHaveClass('w-full', 'min-w-0');
+    expect(within(screen.getByRole('banner')).getByRole('heading', { name: 'New chat' })).toHaveClass('truncate');
+    // Desktop hides the bar while connected.
+    expect(screen.getByRole('banner')).toHaveClass('md:hidden');
     expect(screen.getByRole('button', { name: 'Open conversations' })).toHaveClass('h-11', 'w-11', 'md:hidden');
     const connectionStatus = screen.getByLabelText('Connection status: connected');
     expect(connectionStatus).toHaveClass('flex', 'items-center');
