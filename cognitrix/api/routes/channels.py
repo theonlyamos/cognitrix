@@ -195,6 +195,9 @@ async def relink_channel(kind: str, ctx: AuthContext = Depends(get_auth_context)
         'chat_id': '', 'peer_id': '', 'peer_name': '', 'linked_at': '', 'session_id': '',
         'link_code': code, 'link_code_expires_at': expires,
     })
+    service = channel_service.get_service()
+    if service is not None:
+        await service.cancel_turn(row.id)
     return _payload(kind, await ChatChannel.get(row.id))
 
 

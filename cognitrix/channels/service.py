@@ -108,7 +108,8 @@ class ChannelService:
         self._turns: dict[str, asyncio.Task] = {}
         self._questions: dict[str, str] = {}
         """channel id -> request id of an Ask User question waiting for a reply."""
-        self._button_text: dict[str, str] = {}
+        self._button_text: dict[tuple[str, str, str], str] = {}
+        """(channel id, chat id, message ref) -> text of a message with buttons."""
         self._link_failures: dict[str, int] = {}
         self._delivered: dict[str, set[tuple[str, str]]] = {}
         self._delivery_task: asyncio.Task | None = None
@@ -143,6 +144,20 @@ class ChannelService:
         channel = await ChatChannel.get(channel_id)
         if channel is not None and channel.enabled and channel.bot_token:
             self._start_runner(channel_id)
+
+    async def cancel_turn(self, channel_id: str) -> None:
+        """Stop the running reply, e.g. because the chat it answers was unlinked."""
+        turn = self._turns.pop(channel_id, None)
+        if turn is not None and not turn.done():
+            turn.cancel()
+            try:
+                await turn
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    async def _still_linked(self, channel: ChatChannel) -> bool:
+        fresh = await ChatChannel.get(channel.id)
+        return fresh is not None and fresh.chat_id == channel.chat_id and fresh.peer_id == channel.peer_id
 
     def is_connected(self, channel_id: str) -> bool:
         return channel_id in self._connected
@@ -228,7 +243,7 @@ class ChannelService:
             last = index == len(parts) - 1
             ref = await transport.send(chat_id, part, buttons if last else None)
         if buttons and ref:
-            self._button_text[ref] = parts[-1]
+            self._button_text[(channel.id, chat_id, ref)] = parts[-1]
         return ref
 
     async def send(self, channel: ChatChannel, chat_id: str, text: str) -> str:
@@ -440,7 +455,7 @@ class ChannelService:
         async def flush() -> None:
             reply = strip_reasoning(''.join(collected))
             collected.clear()
-            if reply:
+            if reply and await self._still_linked(channel):
                 await self._reply(channel, channel.chat_id, reply)
 
         async def output(payload: Any = None, *args, **kwargs) -> None:
@@ -453,6 +468,9 @@ class ChannelService:
         async def emit(event: dict[str, Any]) -> None:
             run.record({**event, 'session_id': str(session.id)})
             kind = event.get('type')
+            if kind in ('approval_request', 'question_request') and not await self._still_linked(channel):
+                # The chat was unlinked: never send its prompts to the old chat.
+                raise asyncio.CancelledError
             if kind == 'approval_request':
                 await flush()
                 rid = str(event.get('request_id'))
@@ -544,7 +562,7 @@ class ChannelService:
             outcome = await self._answer_question(channel, item_id, choice)
         await transport.answer_button(press, outcome)
         if outcome:
-            original = self._button_text.pop(press.message_ref, '')
+            original = self._button_text.pop((channel.id, press.chat_id, press.message_ref), '')
             await transport.edit(press.chat_id, press.message_ref,
                                  f'{original}\n\n{outcome}'.strip())
 
@@ -671,7 +689,8 @@ class ChannelService:
                     status = getattr(row, 'status', 'gone')
                     transport = self._transports.get(channel.id)
                     if transport is not None and delivery.message_ref:
-                        original = self._button_text.pop(delivery.message_ref, '')
+                        original = self._button_text.pop(
+                            (channel.id, channel.chat_id, delivery.message_ref), '')
                         await transport.edit(channel.chat_id, delivery.message_ref,
                                              f'{original}\n\n{str(status).capitalize()}.'.strip())
                     await ChannelDelivery.update_one({'id': delivery.id}, {'closed': True})

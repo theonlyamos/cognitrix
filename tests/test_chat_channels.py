@@ -453,3 +453,45 @@ async def test_slack_transport_ignores_bot_messages_and_reads_buttons():
     blocks = transport._blocks('Approve?', [])
     assert blocks is None
     await transport.close()
+
+
+async def test_button_text_is_scoped_to_its_channel(db):
+    from cognitrix.channels.base import Button
+
+    first = await _channel(chat_id='c1', peer_id='p1', link_code='')
+    second = await _channel(user='u2', bot_token='9:z', chat_id='c2', peer_id='p2', link_code='')
+    service, transport = await _service(first)
+    service._transports[second.id] = transport
+    await service._reply(first, 'c1', 'secret params of u1', [Button('Deny', 'ca:x:0')])
+    ref = transport.sent[-1]
+    # The second channel gets a message with the same id from its own chat.
+    await service._on_button(second.id, ButtonPress('c2', 'p2', 'ca:missing:0', '1'))
+    assert 'secret params' not in transport.edits[-1][2]
+    assert ref[1] == 'secret params of u1'
+
+
+async def test_relinking_stops_the_running_reply_and_sends_nothing_to_the_old_chat(db):
+    from cognitrix.api.routes import channels
+    from cognitrix.channels import service as svc
+
+    channel = await _channel(chat_id='c1', peer_id='p1', link_code='')
+    service, transport = await _service(channel)
+    started = asyncio.Event()
+
+    class SlowSession(FakeSession):
+        async def __call__(self, text, agent, *, output, **kwargs):
+            await output({'type': 'generate', 'content': 'partial'})
+            started.set()
+            await asyncio.sleep(30)
+
+    service._agent = lambda _c: _async(SimpleNamespace(name='Helper', id='a1'))
+    service._session = lambda _c, _a: _async(SlowSession())
+    svc._service = service
+    try:
+        await service._on_message(channel.id, _msg('long job'))
+        await started.wait()
+        await channels.relink_channel('telegram', _ctx('u1'))
+        assert channel.id not in service._turns
+        assert transport.sent == []
+    finally:
+        svc._service = None
