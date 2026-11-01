@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ModelPicker from '@/components/ModelPicker';
 import { PROVIDER_LABELS } from '@/lib/providers';
@@ -9,6 +9,9 @@ export default function TeamsTab({ agent, draft, update, overview }: TabProps) {
   const modelId = useId();
   const teams = overview?.teams || [];
   const providerLabel = PROVIDER_LABELS[draft.provider] || draft.provider;
+  // "A specific model" stays picked while its name is being typed (even when empty).
+  const [specificPicked, setSpecificPicked] = useState(false);
+  const specific = draft.subAgentModel === '' ? specificPicked : draft.subAgentModel !== 'same';
 
   return (
     <div className="flex flex-col gap-[18px]">
@@ -55,26 +58,26 @@ export default function TeamsTab({ agent, draft, update, overview }: TabProps) {
             <div className="text-[14.5px] font-medium">Sub-agent model</div>
             <div className="mt-2 flex flex-col gap-2" role="radiogroup" aria-label="Sub-agent model">
               <label className="flex cursor-pointer items-center gap-2.5 text-[14px]">
-                <input type="radio" name="sub-model" checked={draft.subAgentModel === ''} disabled={!draft.canCreateSubAgents}
-                  onChange={() => update({ subAgentModel: '' })} className="h-4 w-4 accent-[var(--accent)]" />
+                <input type="radio" name="sub-model" checked={!specific && draft.subAgentModel === ''} disabled={!draft.canCreateSubAgents}
+                  onChange={() => { setSpecificPicked(false); update({ subAgentModel: '' }); }} className="h-4 w-4 accent-[var(--accent)]" />
                 The agent chooses
               </label>
               <label className="flex cursor-pointer items-center gap-2.5 text-[14px]">
-                <input type="radio" name="sub-model" checked={draft.subAgentModel === 'same'} disabled={!draft.canCreateSubAgents}
-                  onChange={() => update({ subAgentModel: 'same' })} className="h-4 w-4 accent-[var(--accent)]" />
+                <input type="radio" name="sub-model" checked={!specific && draft.subAgentModel === 'same'} disabled={!draft.canCreateSubAgents}
+                  onChange={() => { setSpecificPicked(false); update({ subAgentModel: 'same' }); }} className="h-4 w-4 accent-[var(--accent)]" />
                 Same as this agent ({draft.model || '—'})
               </label>
               <label className="flex cursor-pointer items-center gap-2.5 text-[14px]">
-                <input type="radio" name="sub-model" checked={draft.subAgentModel !== '' && draft.subAgentModel !== 'same'} disabled={!draft.canCreateSubAgents}
-                  onChange={() => update({ subAgentModel: draft.model || 'same' })} className="h-4 w-4 accent-[var(--accent)]" />
+                <input type="radio" name="sub-model" checked={specific} disabled={!draft.canCreateSubAgents}
+                  onChange={() => { setSpecificPicked(true); update({ subAgentModel: draft.model }); }} className="h-4 w-4 accent-[var(--accent)]" />
                 A specific {providerLabel} model
               </label>
-              {draft.subAgentModel !== '' && draft.subAgentModel !== 'same' && (
+              {specific && (
                 <div className="ml-[26px] max-w-[360px]">
                   <label htmlFor={modelId} className="sr-only">Sub-agent model</label>
                   <ModelPicker id={modelId} provider={draft.provider} value={draft.subAgentModel}
-                    onChange={(subAgentModel) => update({ subAgentModel: subAgentModel || 'same' })} disabled={!draft.canCreateSubAgents} />
-                  <p className="mt-1.5 text-[12px] text-fg-dim">Uses this agent's provider and key. A cheaper model keeps helper jobs cheap.</p>
+                    onChange={(subAgentModel) => update({ subAgentModel })} disabled={!draft.canCreateSubAgents} />
+                  <p className="mt-1.5 text-[12px] text-fg-dim">{draft.subAgentModel === '' && 'Until you name a model, the agent chooses. '}Uses this agent's provider and key. A cheaper model keeps helper jobs cheap.</p>
                 </div>
               )}
             </div>

@@ -275,6 +275,25 @@ describe('entity detail routes', () => {
     expect(screen.getByRole('link', { name: 'Open group chat' })).toHaveAttribute('href', '/teams/team-1/chat');
   });
 
+  it('lets a specific sub-agent model switch to a custom name', async () => {
+    harness.apiPost.mockResolvedValueOnce({ data: { id: 'agent-1' } });
+    // A model from the recent list, so picking Custom has to clear it first.
+    harness.resources.set('/agents/agent-1', {
+      data: { id: 'agent-1', name: 'Agent One', llm: { provider: 'openai', model: 'gpt-5.5' }, tools: [] },
+    });
+    renderAgentDetail('/agents/agent-1/teams');
+
+    await userEvent.click(screen.getByRole('radio', { name: /A specific .* model/ }));
+    await userEvent.selectOptions(screen.getByLabelText('Sub-agent model', { selector: 'select' }), '__custom__');
+    expect(screen.getByRole('radio', { name: /A specific .* model/ })).toBeChecked();
+    await userEvent.type(screen.getByLabelText('Custom model name'), 'my-small-model');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(harness.apiPost).toHaveBeenCalledWith('/agents', expect.objectContaining({
+      sub_agent_model: 'my-small-model',
+    })));
+  });
+
   it('deletes an agent from its detail header and returns to the list', async () => {
     renderAgentDetail();
 

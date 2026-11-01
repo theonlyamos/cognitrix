@@ -974,12 +974,13 @@ async def agent_overview(agent_id: str, ctx: AuthContext = Depends(get_auth_cont
     """Activity for the agent page: chats, task runs, approvals, teams."""
     from datetime import datetime, timedelta
 
-    from cognitrix.agents.access import can_view
+    from cognitrix.agents.access import can_view, is_admin as _is_admin
     from cognitrix.api.routes.sessions import _session_summary, _visible_remote_sessions
     from cognitrix.session_ownership import principal_key
     from cognitrix.tasks import approvals
     from cognitrix.tasks.base import Task
-    from cognitrix.tasks.run import TaskRun
+    from cognitrix.api.routes.tasks import _run_visible
+    from cognitrix.tasks.run import TaskRun, run_acl_allowed
     from cognitrix.teams.base import Team
 
     agent = await _visible_agent_or_404(agent_id, ctx)
@@ -1009,9 +1010,15 @@ async def agent_overview(agent_id: str, ctx: AuthContext = Depends(get_auth_cont
     except Exception:
         logger.exception('Could not list tasks for agent %s', agent_id)
         tasks = []
+    admin = await _is_admin(getattr(ctx, 'user', None))
     for task in tasks:
         task_titles[str(task.id)] = task.title
-        runs = await TaskRun.find({'task_id': task.id}) or []
+        # Same run visibility as the task's own run list: on a shared task,
+        # people only see the runs they started.
+        runs = [
+            r for r in await TaskRun.find({'task_id': task.id}) or []
+            if run_acl_allowed(r, ctx) and await _run_visible(task, r, ctx, admin=admin)
+        ]
         stamped = sorted(
             ((_when(r.json().get('created_at') or r.queued_at), r) for r in runs),
             key=lambda pair: pair[0], reverse=True,
