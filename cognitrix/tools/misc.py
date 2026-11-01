@@ -14,19 +14,16 @@ from typing import Any
 
 import regex as regex_engine
 
-from cognitrix.common.encoding import decode_output, status_print, utf8_child_env
+from cognitrix.common.encoding import status_print
 from cognitrix.common.process_security import (
     HostProcessAccessError,
-    HostProcessMode,
     require_host_process_authority,
 )
 from cognitrix.common.safe_exec import (
-    DEFAULT_TIMEOUT,
-    CommandNotAllowed,
     PathEscapesRoot,
     resolve_within_root,
-    run_whitelisted,
 )
+from cognitrix.common.shell import shell_label
 from cognitrix.config import settings
 from cognitrix.media import document_storage
 from cognitrix.media.document_capabilities import storage_record
@@ -1497,40 +1494,79 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
 # (unauthenticated RCE). Follows the ede84af precedent that removed python_repl/calculator.
 
 
-@tool(category='system')
-def bash(command: str, timeout: int | None = 180, working_dir: str | None = None) -> str:
-    """Execute a single whitelisted terminal command.
+_BASH_DOC = """Run a shell command on this computer and return its output.
 
-    Only one command runs per call — command chaining and shell operators
-    (`;`, `&&`, `|`, `>`, `$()`, backticks, `..`) are rejected, and only
-    whitelisted base commands are allowed (ls, cat, grep, find, git, python,
-    pip, node, npm, mkdir, mv, cp, touch, ...). To run a command inside a
-    subdirectory (e.g. run tests for a package that lives in a subfolder), pass
-    that folder as working_dir rather than using `cd` — e.g. bash("python -m
-    pytest tests", working_dir="myproject"). `python -c`/`node -e` inline code is
-    not allowed; put code in a file and run the file instead.
+The shell here is {shell}. The working folder is the starting directory, and
+the directory persists between calls: `cd sub` in one call means the next
+call starts in `sub` (pass working_dir to run a single command elsewhere).
 
-    Args:
-        command (str): The single command to execute (no chaining).
-        timeout (int, optional): Maximum execution time in seconds.
-        working_dir (str, optional): Directory to run the command in. Use this
-            instead of `cd` to operate in a subfolder. Relative paths start at
-            the working folder, and the directory must stay inside it.
-            Defaults to the working folder.
+Simple commands run straight away when every part is on the allowlist
+(ls, cat, head, tail, grep, rg, find, wc, sort, sed, git, python, node, npm,
+pnpm, pip, uv, mkdir, mv, cp, touch, ...), joined with |, &&, || or ;.
+Read-only ones run without asking. Everything else (redirection with > or <,
+$VARIABLES, globs like *.py, installs, curl, rm, docker, PowerShell cmdlets,
+scripts) runs in the full shell and waits for the user's approval first, so
+prefer allowlisted forms when they do the job.
 
-    Returns:
-        str: Command output or error message.
-    """
+Tips:
+- Prefer the Read, Grep, Glob, Edit and Write tools for reading, searching and
+  editing files; use this tool for builds, tests, git, package managers and
+  other programs.
+- Quote paths that contain spaces.
+- Commands can't read input (stdin is closed); pass flags such as `-y` or
+  `--yes` instead of waiting for a prompt.
+- Long-running commands (dev servers, watchers, long builds) should use
+  run_in_background=true. You get a shell id back; read its output with the
+  Bash Output tool and stop it with the Kill Shell tool.
+- Output over {max_chars:,} characters keeps the start and the end; narrow it
+  with grep, head or tail.
+
+Args:
+    command (str): The command line to run.
+    timeout (int, optional): Seconds before the command is stopped
+        (default {default_timeout}, max {max_timeout}). Partial output is returned.
+    working_dir (str, optional): Run this command in another folder inside the
+        working folder (relative paths start at the working folder). Does not
+        change the folder for later calls; use `cd` for that.
+    run_in_background (bool, optional): Start the command and return at once
+        with a shell id instead of waiting for it to finish.
+
+Returns:
+    str: The command's output (stdout and stderr), its exit code when it
+    failed, and notes such as a timeout.
+"""
+
+
+def _shell_owner(context) -> str:
+    return str(context.user_id or 'local')
+
+
+def _shell_session_key(context) -> str:
+    return '|'.join(str(part or '') for part in (
+        context.user_id, context.session_id, context.task_id, context.run_id, context.agent_id,
+    ))
+
+
+def bash(
+    command: str,
+    timeout: int | None = None,
+    working_dir: str | None = None,
+    run_in_background: bool = False,
+    *,
+    approved: bool = False,
+) -> str:
+    from cognitrix.common import shell as sh
+
     context = current_execution_context()
     try:
         require_host_process_authority(context.host_process_mode)
     except HostProcessAccessError as e:
         return f'Error: {e}'
 
-    # Validate and resolve the working directory
-    # Commands run inside the working folder (settings.tools_root, the same
-    # root the file tools use), never elsewhere on the machine.
+    # Commands start inside the working folder (settings.tools_root, the same
+    # root the file tools use) and the remembered directory never leaves it.
     root = Path(settings.tools_root).expanduser().resolve()
+    session_key = _shell_session_key(context)
     if working_dir:
         try:
             candidate = Path(working_dir).expanduser()
@@ -1545,62 +1581,142 @@ def bash(command: str, timeout: int | None = 180, working_dir: str | None = None
         if not work_dir.exists() or not work_dir.is_dir():
             return f"Error: Invalid working directory - {working_dir}"
     else:
-        work_dir = root
+        work_dir = sh.session_cwd(session_key, root)
 
-    # Normalise timeout (the LLM may pass it as a string)
+    # The model may pass the timeout as a string.
     try:
-        timeout_s = int(timeout) if timeout is not None else DEFAULT_TIMEOUT
+        timeout_s = int(timeout) if timeout not in (None, '') else sh.DEFAULT_TIMEOUT
     except (ValueError, TypeError):
         return f"Error: Invalid timeout value '{timeout}'. Must be an integer."
+    timeout_s = max(1, min(timeout_s, sh.MAX_TIMEOUT))
 
-    # Sandbox mode: run through a real shell (pipes, &&, arbitrary commands),
-    # bypassing the whitelist. ONLY for throwaway sandboxes (benchmark/CI
-    # containers) where the environment itself is the isolation boundary — never
-    # enable on a host you care about. Off by default.
-    if os.getenv('COGNITRIX_SANDBOX_SHELL', '').strip().lower() in ('1', 'true', 'yes'):
-        return _run_sandbox_shell(
-            command,
-            cwd=str(work_dir),
-            timeout=timeout_s,
-            host_process_mode=context.host_process_mode,
-        )
+    plan = sh.plan_command(command, root)
+    if plan.kind == 'shell':
+        # The full shell needs this exact call approved by a person, or a
+        # throwaway sandbox (COGNITRIX_SANDBOX_SHELL). Auto-approval, bypass
+        # mode and approval_mode='never' never unlock it.
+        if sh.sandbox_shell_enabled():
+            pass
+        elif sh.shell_mode() == 'allowlist':
+            return (
+                f"Error: Command refused - {plan.reason}. Only allowlisted commands joined "
+                "with |, &&, || or ; can run here (the full shell is turned off by "
+                "COGNITRIX_SHELL_MODE=allowlist)."
+            )
+        elif not approved:
+            return (
+                f"Error: Command refused - {plan.reason}, so it needs the full shell, which "
+                "only runs after the user approves this call (remembered approvals don't "
+                "count). Rewrite it with allowlisted commands or ask the user."
+            )
 
-    # Default: the shared safety boundary — whitelist + argv + shell=False.
     try:
-        return run_whitelisted(
-            command,
-            cwd=str(work_dir),
-            timeout=timeout_s,
-            host_process_mode=context.host_process_mode,
-        )
-    except CommandNotAllowed as e:
-        return f"Error: {e}"
+        if run_in_background:
+            return _bash_background(sh, plan, command, context, work_dir, root)
+        if plan.kind == 'allowlisted':
+            result = sh.run_allowlisted(plan, work_dir, root, timeout_s)
+        else:
+            result = sh.run_full_shell(command, work_dir, root, timeout_s)
     except Exception as e:
         logger.exception("bash tool failed")
         return f"Error executing command: {e}"
 
+    if not working_dir and result.cwd is not None:
+        sh.set_session_cwd(session_key, result.cwd)
+    return sh.format_result(result, timeout_s)
 
-def _run_sandbox_shell(
-    command: str,
-    cwd: str,
-    timeout: int,
-    *,
-    host_process_mode: HostProcessMode,
-) -> str:
-    """Run a command through a real shell (no whitelist). Sandbox-only; gated by
-    COGNITRIX_SANDBOX_SHELL."""
-    import subprocess
-    require_host_process_authority(host_process_mode)
+
+bash.__doc__ = _BASH_DOC.format(
+    shell=shell_label(),
+    max_chars=30_000, default_timeout=120, max_timeout=600,
+)
+bash = tool(category='system')(bash)
+
+
+def _bash_background(sh, plan, command: str, context, work_dir: Path, root: Path) -> str:
+    if plan.kind == 'allowlisted':
+        if len(plan.steps) != 1 or len(plan.steps[0].pipeline) != 1 or plan.steps[0].pipeline[0][0] in ('cd', 'pwd'):
+            return (
+                "Error: Background commands that use |, &&, || or ; need the full shell. "
+                "Run a single command, or ask the user to approve the full shell."
+            )
+        try:
+            argv = sh._resolve_program(plan.steps[0].pipeline[0], work_dir, sh.child_env())
+        except FileNotFoundError as e:
+            return f"Error: {e.args[0]}: command not found"
+    else:
+        argv = sh.build_shell_argv(command)
     try:
-        proc = subprocess.run(
-            command, shell=True, cwd=cwd, timeout=timeout,
-            capture_output=True, env=utf8_child_env(),
-        )
-    except subprocess.TimeoutExpired:
-        return f"Command timed out after {timeout}s"
-    out = decode_output(proc.stdout).strip()
-    err = decode_output(proc.stderr).strip()
-    if proc.returncode != 0:
-        detail = err or out or f"exit code {proc.returncode}"
-        return f"Command failed (exit {proc.returncode}): {detail}"
-    return out or (f"[stderr: {err}]" if err else "Command executed successfully (no output)")
+        shell = sh.start_background(argv, owner=_shell_owner(context), command=command, cwd=work_dir)
+    except RuntimeError as e:
+        return f"Error: {e}"
+    time.sleep(0.5)  # let fast failures (bad flags, missing files) show up
+    return (
+        f"Started in the background as {shell.id} (in {work_dir}).\n"
+        f"Read its output with Bash Output (shell_id='{shell.id}') and stop it with "
+        f"Kill Shell.\n\n{sh.read_background(shell)}"
+    )
+
+
+@tool(category='system')
+def bash_output(shell_id: str, filter: str | None = None) -> str:
+    """Read new output from a command started with Bash(run_in_background=true).
+
+    Returns only what was printed since the last read, plus whether the command
+    is still running or its exit code. Call it again later to see more.
+
+    Args:
+        shell_id (str): The id Bash returned, e.g. 'shell_3'. Pass 'list' to
+            see your background commands.
+        filter (str, optional): A regular expression; only matching lines are
+            returned (the rest are still marked as read).
+
+    Returns:
+        str: The new output and the command's status.
+    """
+    from cognitrix.common import shell as sh
+
+    context = current_execution_context()
+    try:
+        require_host_process_authority(context.host_process_mode)
+    except HostProcessAccessError as e:
+        return f'Error: {e}'
+    owner = _shell_owner(context)
+    if (shell_id or '').strip().lower() == 'list':
+        shells = sh.list_background(owner)
+        if not shells:
+            return 'No background commands.'
+        return '\n'.join(f'{s.id}: {s.status()} - {s.command}' for s in shells)
+    shell = sh.get_background(shell_id, owner)
+    if shell is None:
+        return f"Error: No background command '{shell_id}'. Pass shell_id='list' to see them."
+    if filter:
+        try:
+            re.compile(filter)
+        except re.error as e:
+            return f"Error: Invalid filter regex: {e}"
+    return sh.read_background(shell, filter)
+
+
+@tool(category='system')
+def kill_shell(shell_id: str) -> str:
+    """Stop a command started with Bash(run_in_background=true), along with
+    everything it started.
+
+    Args:
+        shell_id (str): The id Bash returned, e.g. 'shell_3'.
+
+    Returns:
+        str: Whether it was stopped.
+    """
+    from cognitrix.common import shell as sh
+
+    context = current_execution_context()
+    try:
+        require_host_process_authority(context.host_process_mode)
+    except HostProcessAccessError as e:
+        return f'Error: {e}'
+    shell = sh.get_background(shell_id, _shell_owner(context))
+    if shell is None:
+        return f"Error: No background command '{shell_id}'."
+    return sh.stop_background(shell)

@@ -57,14 +57,21 @@ _DANGEROUS_ARG_TOKENS: dict[str, frozenset[str]] = {
     'python': frozenset({'-c'}),
     'python3': frozenset({'-c'}),
     'node': frozenset({'-e', '--eval', '-p', '--print'}),
-    'find': frozenset({'-exec', '-execdir', '-delete', '-fprintf', '-fprint'}),
+    'find': frozenset({'-exec', '-execdir', '-ok', '-okdir', '-delete', '-fprintf', '-fprint'}),
+    # rg --pre/--pre-glob and sort --compress-program run a program.
+    'rg': frozenset({'--pre'}),
+    'sort': frozenset({'--compress-program'}),
     'sed': frozenset({'-i', '--in-place'}),
 }
 
 # git options that run arbitrary programs (config overrides can set
 # core.pager/core.sshCommand/alias.*; pack options name a helper to execute).
 _GIT_GLOBAL_DANGEROUS = frozenset({'-c', '--config-env', '--exec-path'})
-_GIT_ANYWHERE_DANGEROUS = ('--upload-pack', '--receive-pack', '--exec=', '--config-env')
+_GIT_ANYWHERE_DANGEROUS = (
+    '--upload-pack', '--receive-pack', '--exec=', '--config-env',
+    # git grep -O/--open-files-in-pager=<cmd> runs a program.
+    '-O', '--open-files-in-pager',
+)
 
 # Without GNU sed's --sandbox, refuse scripts that could use the e (execute),
 # w/W (write file) or r/R (read file) commands, or the s///e and s///w flags.
@@ -144,6 +151,30 @@ def _check_paths_within(argv: list[str], root: str | os.PathLike[str]) -> None:
                 raise CommandNotAllowed(f"Path '{value}' is outside the working directory")
 
 
+def _unquoted_text(command: str) -> str:
+    """``command`` with the contents of quoted strings blanked out."""
+    out, quote, i = [], None, 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            elif ch == '\\' and quote == '"':
+                i += 1
+            i += 1
+            continue
+        if ch in ('"', "'"):
+            quote = ch
+        elif ch == '\\':
+            out.append(ch)
+            i += 2
+            continue
+        else:
+            out.append(ch)
+        i += 1
+    return ''.join(out)
+
+
 class CommandNotAllowed(Exception):
     """Raised when a command is not on the allow-list or contains forbidden syntax."""
 
@@ -157,8 +188,14 @@ def build_argv(
     allowed: frozenset[str] | None = None,
     *,
     root: str | os.PathLike[str] | None = None,
+    quoted_metachars_ok: bool = False,
 ) -> list[str]:
     """Validate ``command`` and return its argv, or raise ``CommandNotAllowed``.
+
+    With ``quoted_metachars_ok`` (POSIX only), ``| ; & $ < >`` and backticks
+    are accepted inside quotes, where ``shell=False`` treats them as plain
+    text (``grep "a|b" f``). ``..`` is refused everywhere, and awk keeps the
+    strict check because its program text can pipe to commands.
 
     Rejects empty input, shell metacharacters (``; & | ` $ > < .. newline``), and
     any base command not present in ``allowed``. Splits with ``shlex`` so the caller
@@ -170,14 +207,15 @@ def build_argv(
     if not command or not command.strip():
         raise CommandNotAllowed("Empty command")
 
-    if _FORBIDDEN.search(command):
-        raise CommandNotAllowed("Command contains forbidden shell metacharacters")
-
     argv = shlex.split(command, posix=(os.name != 'nt'))
     if not argv:
         raise CommandNotAllowed("Empty command")
 
     base = argv[0].lower()
+    relaxed = quoted_metachars_ok and os.name != 'nt' and base not in ('awk', 'gawk', 'mawk')
+    checked = _unquoted_text(command) if relaxed else command
+    if _FORBIDDEN.search(checked) or '..' in command:
+        raise CommandNotAllowed("Command contains forbidden shell metacharacters")
     if base not in allowed:
         raise CommandNotAllowed(
             f"Command '{base}' is not allowed. Allowed: {', '.join(sorted(allowed))}"

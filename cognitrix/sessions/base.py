@@ -330,6 +330,21 @@ class Session(Model):
             except Exception:
                 pass
 
+        # Bash's background mode needs its two helpers; agents that have Bash
+        # get them for the turn without changing the saved agent.
+        try:
+            names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
+            if 'bash' in names:
+                from cognitrix.tools.base import ToolManager
+                helpers = [
+                    t for t in (ToolManager.get_by_name(n) for n in ('bash_output', 'kill_shell'))
+                    if t is not None and t.name.lower() not in names
+                ]
+                if helpers:
+                    agent = agent.model_copy(update={'tools': [*agent.tools, *helpers]})
+        except Exception:
+            pass
+
         # Add the new message to the history before building the prompt
         if wsquery is None:
             wsquery = {}
