@@ -211,8 +211,11 @@ async def test_loop_asks_for_ask_first_tools(runner, monkeypatch):
 # ── task runs carry the levels ──────────────────────────────────────────
 
 
-def test_task_snapshot_carries_levels():
+def test_task_snapshot_carries_levels(monkeypatch):
     from cognitrix.tasks.runtime import build_runtime_snapshot, instantiate_runtime
+
+    # No provider key in CI: hand back a plain LLM.
+    monkeypatch.setattr("cognitrix.tasks.runtime.LLM.load_llm", staticmethod(lambda provider: _llm()))
 
     read = _tool("Read")
     agent = _agent([read], permission_level="ask", tool_permissions={"Read": "deny", "Bad": "maybe"})
