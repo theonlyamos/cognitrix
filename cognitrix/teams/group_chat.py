@@ -43,8 +43,39 @@ MAX_TURNS_PER_AGENT = 2
 # Each agent turn only needs recent context; the window shaper trims further.
 VIEW_ENTRIES = 400
 
-_THINK = re.compile(r'<think>.*?</think>', re.DOTALL)
-_CODE = re.compile(r'```.*?```|`[^`\n]*`', re.DOTALL)
+
+
+def _cut_spans(text: str, start: str, end: str, keep_unclosed: bool = True) -> str:
+    """Remove every ``start...end`` span in one linear pass (no regex, so a
+    reply full of unclosed openers can't make it slow)."""
+    out: list[str] = []
+    pos = 0
+    while True:
+        i = text.find(start, pos)
+        if i < 0:
+            out.append(text[pos:])
+            break
+        j = text.find(end, i + len(start))
+        if j < 0:
+            out.append(text[pos:] if keep_unclosed else text[pos:i])
+            break
+        out.append(text[pos:i])
+        out.append(' ')
+        pos = j + len(end)
+    return ''.join(out)
+
+
+def _strip_think(text: str) -> str:
+    return _cut_spans(text, '<think>', '</think>')
+
+
+def _strip_code(text: str) -> str:
+    text = _cut_spans(text, '```', '```')
+    # Inline code: drop `...` spans that stay on one line.
+    lines = []
+    for line in text.split('\n'):
+        lines.append(_cut_spans(line, '`', '`'))
+    return '\n'.join(lines)
 
 
 def now_iso() -> str:
@@ -78,7 +109,7 @@ def find_mentions(text: str, agents: Sequence[Agent]) -> list[str]:
     """
     if not text or '@' not in text:
         return []
-    plain = _CODE.sub(' ', _THINK.sub(' ', text))
+    plain = _strip_code(_strip_think(text))
     lowered = plain.lower()
     candidates: list[tuple[str, str]] = []  # (alias, agent id), longest first
     for agent in agents:
@@ -149,7 +180,7 @@ def visible_text(entry: dict[str, Any]) -> str:
     if role == 'assistant' and kind == 'text' and not entry.get('tool_calls'):
         if entry.get('turn_error'):
             return ''
-        return _THINK.sub('', str(entry.get('content') or '')).strip()
+        return _strip_think(str(entry.get('content') or '')).strip()
     return ''
 
 

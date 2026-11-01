@@ -181,3 +181,14 @@ async def test_stopped_agent_keeps_partial_output():
     assert session.chat[-1]['content'] == 'partial'
     assert session.chat[-1]['speaker'] == 'Alice'
     assert session.saves == 1
+
+
+def test_mention_scan_stays_fast_on_hostile_input():
+    import time
+
+    hostile = '<think>' * 20000 + '```' * 20000 + '`@alice' * 5000
+    started = time.monotonic()
+    gc.find_mentions(hostile, TEAM)
+    gc.visible_text({'role': 'assistant', 'type': 'text', 'content': hostile})
+    assert time.monotonic() - started < 2
+    assert gc.find_mentions('<think>@bob</think> @cara', TEAM) == ['c']
