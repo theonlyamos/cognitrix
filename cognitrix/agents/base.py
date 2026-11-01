@@ -22,6 +22,7 @@ from cognitrix.safety.destructive_ops import (
     RiskLevel,
     mcp_tool_risk,
 )
+from cognitrix.safety.permissions import decide_tool_call, visible_tools
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
 from cognitrix.tools.utils import ToolCallResult, ToolOutcome
@@ -255,7 +256,7 @@ class AgentManager:
         return prompt
 
     def _format_tools_string(self) -> str:
-        return "You have access to the following Tools:\n" + "\n".join([f"{tool.name}: {tool.description}" for tool in self.agent.tools])
+        return "You have access to the following Tools:\n" + "\n".join([f"{tool.name}: {tool.description}" for tool in visible_tools(self.agent, self.agent.tools)])
 
     def _format_subagents_string(self) -> str:
         if not len(self.agent.sub_agents):
@@ -489,9 +490,22 @@ class AgentManager:
                 if mcp_risk is not None and _RISK_ORDER[mcp_risk.risk_level] > _RISK_ORDER[risk.risk_level]:
                     risk = mcp_risk
 
-                if assigned_tool.approval_mode == 'always' or (
-                    assigned_tool.approval_mode == 'risk_based' and risk.risk_level.value in ['medium', 'high']
-                ):
+                # Per-agent and per-tool permission levels, on top of the
+                # default risk policy (see cognitrix/safety/permissions.py).
+                decision = decide_tool_call(self.agent, assigned_tool, args, risk, runtime_tool=tool)
+                if decision.action == 'block':
+                    results_by_index[i] = _tool_result_entry(
+                        tc_id,
+                        ToolOutcome.failure(
+                            'permission_denied',
+                            f"{OPERATION_BLOCKED_PREFIX}: {decision.reason}. Don't try it again.",
+                            denied=True,
+                        ),
+                    )
+                    continue
+
+                if decision.action == 'ask':
+                    risk = decision.risk
                     status_print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
                     status_print(f"   Details: {risk.details}")
 

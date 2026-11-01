@@ -16,6 +16,7 @@ from starlette.formparsers import MultiPartException, MultiPartParser
 
 from cognitrix.agents import Agent
 from cognitrix.agents import access as agent_access
+from cognitrix.safety.permissions import normalize_agent_level, normalize_tool_permissions
 from cognitrix.tools.base import ToolManager
 from cognitrix.common.security import (
     AuthContext,
@@ -385,6 +386,11 @@ async def save_agent(request: Request, agent: Agent,
         agent.owner_id = user_key
 
     await _check_mcp_servers(agent)
+    try:
+        agent.permission_level = normalize_agent_level(agent.permission_level)
+        agent.tool_permissions = normalize_tool_permissions(agent.tool_permissions)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     llm_data = dict(data.get('llm') or {})
     if not llm_data.get('provider'):

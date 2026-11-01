@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cognitrix.models import Agent
 from cognitrix.models.tool import MCPTool, Tool
 from cognitrix.providers.base import LLM
+from cognitrix.safety.permissions import agent_level, stored_tool_permissions
 from cognitrix.tools.base import ToolManager
 
 
@@ -381,6 +382,9 @@ class AgentRuntimeSnapshot(BaseModel):
     tool_names: tuple[str, ...] = ()
     tool_schemas: tuple[dict[str, Any], ...] = ()
     tool_policies: tuple[CapabilityPolicySnapshot, ...] = ()
+    # The agent's permission levels (see cognitrix/safety/permissions.py).
+    permission_level: Literal["auto", "ask", "allow"] = "auto"
+    tool_permissions: tuple[tuple[str, Literal["allow", "ask", "deny"]], ...] = ()
     prompt_profile: TaskPromptProfile = Field(default_factory=TaskPromptProfile)
 
     @field_validator("tool_schemas", mode="before")
@@ -623,6 +627,10 @@ def build_runtime_snapshot(
             extra_body=copy.deepcopy(llm.extra_body or {}),
             response_format=copy.deepcopy(llm.response_format),
         ),
+        permission_level=agent_level(agent),
+        tool_permissions=tuple(
+            sorted(stored_tool_permissions(agent).items())
+        ),
         tool_names=tuple(tool.name for tool in tools),
         tool_schemas=tuple(copy.deepcopy(tool.to_dict_format()) for tool in tools),
         tool_policies=tuple(
@@ -720,6 +728,8 @@ def instantiate_runtime(
         sub_agents=[],
         mcp_servers=[],
         is_sub_agent=False,
+        permission_level=snapshot.permission_level,
+        tool_permissions=dict(snapshot.tool_permissions),
     )
     from cognitrix.tasks.context import TaskContextManager
 

@@ -388,6 +388,8 @@ _ARTIFACT_MIGRATION_COLUMNS = (
 
 _AGENT_MIGRATION_COLUMNS = (
     ('owner_id', 'TEXT'),
+    ('permission_level', 'TEXT'),
+    ('tool_permissions', 'TEXT'),
 )
 
 _SESSION_MIGRATION_COLUMNS = (

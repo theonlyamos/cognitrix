@@ -440,8 +440,11 @@ class Session(Model):
         # Build the context-aware prompt using the manager
         prompt = await agent.get_context_manager().build_prompt(agent, self)
 
+        # Tools set to "never" for this agent aren't offered to the model
+        # (the agent loop refuses them too, see safety/permissions.py).
+        from cognitrix.safety.permissions import visible_tools
         formatted_tools = [
-            tool.to_dict_format() for tool in agent.tools
+            tool.to_dict_format() for tool in visible_tools(agent, agent.tools)
             if not tool.supported_interfaces or interface in tool.supported_interfaces
         ]
         # Only advertise tools to models with native tool-use; otherwise the tool
