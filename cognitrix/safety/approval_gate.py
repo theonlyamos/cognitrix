@@ -108,6 +108,7 @@ class ApprovalGate:
 
     def __init__(self, cache_dir: str = None):
         self.session_cache: set[str] = set()
+        self.session_denied: set[str] = set()
         self.permanent_cache: set[str] = set()
         self.pending_requests: dict[str, ApprovalRequest] = {}
         self.request_counter = 0
@@ -179,14 +180,22 @@ class ApprovalGate:
         # Interactive caches are intentionally ignored; a future durable
         # approval design must carry an explicit run-scoped authorization.
         if interface == 'task':
+            from cognitrix.tasks.approvals import prior_decision, request_task_approval, task_turn_ctx
+
+            ctx = task_turn_ctx.get(None)
+            # A person's earlier answer for this call in this run wins; the
+            # reviewer never overrides a recorded denial.
+            if ctx and ctx.get('run_id'):
+                earlier = await prior_decision(ctx, tool_call.tool_name, tool_call.params)
+                if earlier is not None:
+                    return ApprovalResult(approved=earlier)
+
             reviewed = await self._review(tool_call, risk, interface)
             if reviewed is not None:
                 return reviewed
+
             # A run started by a person parks the call and asks them in the
             # web UI. Runs with nobody to ask (system/scheduler) are denied.
-            from cognitrix.tasks.approvals import request_task_approval, task_turn_ctx
-
-            ctx = task_turn_ctx.get(None)
             if not ctx or not ctx.get('user_id') or not ctx.get('run_id'):
                 return ApprovalResult(approved=False, error="approval_required")
             approved, error = await request_task_approval(
@@ -204,8 +213,10 @@ class ApprovalGate:
             return ApprovalResult(approved=True, cached=True, remember=True)
 
         # Web bypass mode approves everything anyway; don't spend a review.
+        # A call a person already refused goes back to the person.
         web_ctx = web_turn_ctx.get(None)
-        if not (interface in ('web', 'ws', 'websocket') and web_ctx and web_ctx.get('bypass')):
+        bypass = interface in ('web', 'ws', 'websocket') and web_ctx and web_ctx.get('bypass')
+        if not bypass and scoped not in self.session_denied:
             reviewed = await self._review(tool_call, risk, interface)
             if reviewed is not None:
                 return reviewed
@@ -225,8 +236,13 @@ class ApprovalGate:
         else:
             return ApprovalResult(approved=False, error=f"Unknown interface: {interface}")
 
+        if not result.approved and not result.error:
+            # The person said no; the reviewer must not approve it later.
+            self.session_denied.add(scoped)
+
         # Cache if approved (scoped)
         if result.approved:
+            self.session_denied.discard(scoped)
             if result.permanent:
                 self.permanent_cache.add(scoped)
                 self._save_permanent_cache()
@@ -435,6 +451,7 @@ class ApprovalGate:
     def clear_session_cache(self):
         """Clear session-level approvals."""
         self.session_cache.clear()
+        self.session_denied.clear()
         logger.info("Session approval cache cleared")
 
     def clear_permanent_cache(self):

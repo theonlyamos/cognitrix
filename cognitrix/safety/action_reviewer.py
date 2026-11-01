@@ -35,6 +35,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
+from cognitrix.errors import ExecutionControlError
 from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
 
 logger = logging.getLogger('cognitrix.log')
@@ -229,6 +230,9 @@ async def review_action(tool_name: str, params: dict[str, Any], risk: RiskAssess
     prompt = build_review_prompt(tool_name, params, risk, goal)
     try:
         response = await asyncio.wait_for(llm(prompt, stream=False), timeout=_timeout())
+    except ExecutionControlError:
+        # Run limits (budget, call caps, cancellation) must stop the step.
+        raise
     except TimeoutError:
         return ReviewVerdict(ASK, 'The reviewer took too long to answer', model)
     except Exception as exc:

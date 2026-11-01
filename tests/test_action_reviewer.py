@@ -219,7 +219,8 @@ async def test_gate_task_allow_skips_parking_and_records_event(gate, reviewer):
 
     token = approvals.task_turn_ctx.set({'run_id': 'r1', 'user_id': 'u1', 'emit': emit})
     try:
-        with patch.object(approvals, 'request_task_approval', new_callable=AsyncMock) as park:
+        with patch.object(approvals, 'prior_decision', new=AsyncMock(return_value=None)), \
+                patch.object(approvals, 'request_task_approval', new_callable=AsyncMock) as park:
             result = await gate.check_approval(CALL, _risk(), interface='task')
     finally:
         approvals.task_turn_ctx.reset(token)
@@ -237,7 +238,8 @@ async def test_gate_task_ask_parks_for_owner(gate, reviewer):
     reviewer('{"decision": "ask", "reason": "unsure"}', mode='unattended')
     token = approvals.task_turn_ctx.set({'run_id': 'r1', 'user_id': 'u1'})
     try:
-        with patch.object(approvals, 'request_task_approval', new_callable=AsyncMock) as park:
+        with patch.object(approvals, 'prior_decision', new=AsyncMock(return_value=None)), \
+                patch.object(approvals, 'request_task_approval', new_callable=AsyncMock) as park:
             park.return_value = (True, None)
             result = await gate.check_approval(CALL, _risk(), interface='task')
     finally:
@@ -304,3 +306,44 @@ async def test_agent_loop_reports_reviewer_block(tmp_path, monkeypatch, reviewer
     assert not entry['success']
     assert 'blocked by the reviewer: wipes a file the goal never mentions' in entry['data']
     assert target.read_text() == 'important'
+
+
+# ── review fixes: limits stop the step, people's refusals stand ─────────
+
+@pytest.mark.asyncio
+async def test_run_limits_are_not_swallowed(reviewer):
+    from cognitrix.errors import ExecutionControlError
+
+    reviewer(raises=ExecutionControlError('budget exceeded'))
+    with pytest.raises(ExecutionControlError):
+        await ar.review_action('Write', {}, _risk())
+
+
+@pytest.mark.asyncio
+async def test_task_recorded_denial_beats_reviewer(gate, reviewer):
+    from cognitrix.tasks import approvals
+
+    llm = reviewer('{"decision": "allow", "reason": "ok"}', mode='unattended')
+    token = approvals.task_turn_ctx.set({'run_id': 'r1', 'user_id': 'u1'})
+    try:
+        with patch.object(approvals, 'prior_decision', new=AsyncMock(return_value=False)):
+            result = await gate.check_approval(CALL, _risk(), interface='task')
+    finally:
+        approvals.task_turn_ctx.reset(token)
+    assert not result.approved
+    assert llm.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_chat_denial_is_not_overridden_by_reviewer(gate, reviewer):
+    llm = reviewer('{"decision": "ask", "reason": "unsure"}')
+    with patch.object(gate, '_cli_approval', new_callable=AsyncMock) as cli:
+        cli.return_value = ApprovalResult(approved=False)
+        first = await gate.check_approval(CALL, _risk(), interface='cli', scope='a1')
+        assert not first.approved
+        # The reviewer would now allow it, but the person already said no.
+        llm.reply = '{"decision": "allow", "reason": "ok"}'
+        second = await gate.check_approval(CALL, _risk(), interface='cli', scope='a1')
+    assert not second.approved
+    assert cli.call_count == 2
+    assert len(llm.prompts) == 1
