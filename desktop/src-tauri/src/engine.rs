@@ -273,7 +273,7 @@ fn watch(app: &AppHandle, generation: u64) {
                 s.status = Status::Stopped;
                 s.error = Some(format!("The engine stopped unexpectedly (exit code {code})."));
             });
-            crate::notify(app, "Cognitrix engine stopped", "Restart it from the tray or the app window.");
+            crate::notify(app, "Cognitrix engine stopped", "Restart it from the tray or the app window.", Some("/settings"));
             return;
         }
     }
