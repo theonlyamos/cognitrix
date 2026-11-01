@@ -11,6 +11,7 @@ mod tray;
 
 use serde::{Deserialize, Serialize};
 use tauri::{
+    webview::{PermissionKind, PermissionResponse},
     AppHandle, Emitter, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
     WindowEvent,
 };
@@ -44,6 +45,17 @@ fn allow_navigation(app: &AppHandle, url: &Url) -> bool {
     false
 }
 
+/// Voice input in the chat box records the microphone. These windows only
+/// ever show the bundled start screen or the engine's pages (see
+/// `allow_navigation`), so the microphone is allowed without a prompt;
+/// everything else keeps the webview's default behaviour.
+fn permission_for(kind: PermissionKind) -> PermissionResponse {
+    match kind {
+        PermissionKind::Microphone => PermissionResponse::Allow,
+        _ => PermissionResponse::Default,
+    }
+}
+
 fn build_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let handle = app.clone();
     WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
@@ -56,6 +68,7 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .visible(false)
         .background_color(tauri::window::Color(11, 12, 14, 255))
         .on_navigation(move |url| allow_navigation(&handle, url))
+        .on_permission_request(|_, kind| permission_for(kind))
         .build()
 }
 
@@ -74,6 +87,7 @@ fn build_quick_window(app: &AppHandle, base: &str) -> tauri::Result<WebviewWindo
         .visible(false)
         .background_color(tauri::window::Color(17, 19, 21, 255))
         .on_navigation(move |url| allow_navigation(&handle, url))
+        .on_permission_request(|_, kind| permission_for(kind))
         .build()
 }
 

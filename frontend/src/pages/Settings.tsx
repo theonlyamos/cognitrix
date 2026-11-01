@@ -8,10 +8,11 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { Toggle } from '@/pages/Notifications';
 import { cn } from '@/lib/utils';
 import { useSystemInfo } from '@/hooks/useSystemInfo';
+import { VoiceSettingsCard } from '@/components/VoiceSettingsCard';
 
-function Card({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
+function Card({ title, children, className, id }: { title: string; children: ReactNode; className?: string; id?: string }) {
   return (
-    <section aria-label={title} className={cn('rounded-[14px] border border-line bg-panel p-4', className)}>
+    <section id={id} aria-label={title} className={cn('rounded-[14px] border border-line bg-panel p-4', className)}>
       <h2 className="mb-3 font-mono text-[10.5px] tracking-[0.14em] text-fg-dim">{title.toUpperCase()}</h2>
       {children}
     </section>
@@ -201,6 +202,10 @@ export default function Settings() {
                 Cognitrix API keys
               </Link>
             </div>
+          </Card>
+
+          <Card title="Voice input" id="voice-input">
+            <VoiceSettingsCard />
           </Card>
 
           <Card title="Appearance">

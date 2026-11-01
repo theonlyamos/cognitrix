@@ -690,6 +690,7 @@ async def _ensure_schema():
 
     from cognitrix.artifacts import Artifact, DocumentArtifact
     from cognitrix.models.api_key import APIKey
+    from cognitrix.models.voice_settings import VoiceSettings
     from cognitrix.session_ownership import SessionOwnership
     from cognitrix.tasks.events import TaskRunEvent
     from cognitrix.tasks.metrics import TaskRunPhaseMetric
@@ -727,6 +728,7 @@ async def _ensure_schema():
         APIKey,
         Artifact,
         TaskApproval,
+        VoiceSettings,
     ):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)

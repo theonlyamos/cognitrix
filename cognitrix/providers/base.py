@@ -6,7 +6,6 @@ Groq and Ollama: direct. Others: route through Helicone.
 """
 import asyncio
 import contextvars
-import hashlib
 import json
 import logging
 import os
@@ -27,7 +26,7 @@ from cognitrix.utils.llm_response import LLMResponse
 # Cache async OpenAI clients by effective config to avoid per-request overhead.
 # Async clients keep the server event loop free during the (long) provider call
 # instead of blocking it for every socket read.
-_client_cache: dict[str, tuple[asyncio.AbstractEventLoop | None, AsyncOpenAI]] = {}
+_client_cache: dict[tuple[str, str, tuple[tuple[str, str], ...]], tuple[asyncio.AbstractEventLoop | None, AsyncOpenAI]] = {}
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -291,10 +290,12 @@ def _apply_provider_param_rules(llm: 'LLM', params: dict[str, Any]) -> dict[str,
     return params
 
 
-def _client_cache_key(base_url: str, api_key: str, headers: dict[str, str] | None) -> str:
-    """Stable cache key for OpenAI client config."""
-    payload = {'base_url': base_url, 'api_key': api_key, 'headers': headers or {}}
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+def _client_cache_key(
+    base_url: str, api_key: str, headers: dict[str, str] | None
+) -> tuple[str, str, tuple[tuple[str, str], ...]]:
+    """Cache key for an OpenAI client config. The cache is in memory and the
+    cached client holds the same key anyway, so the key isn't hashed."""
+    return base_url, api_key, tuple(sorted((headers or {}).items()))
 
 
 def _get_or_create_client(
