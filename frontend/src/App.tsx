@@ -20,6 +20,7 @@ const TaskPage = lazy(() => import('@/pages/TaskPage'));
 const TaskDetail = lazy(() => import('@/pages/TaskDetail'));
 const Teams = lazy(() => import('@/pages/Teams'));
 const TeamDetail = lazy(() => import('@/pages/TeamDetail'));
+const TeamChat = lazy(() => import('@/pages/TeamChat'));
 const TeamPage = lazy(() => import('@/pages/TeamPage'));
 const ApiKeys = lazy(() => import('@/pages/ApiKeys'));
 const Inbox = lazy(() => import('@/pages/Inbox'));
@@ -81,6 +82,7 @@ function AppRoutes() {
           <Route path="/teams/new" element={<TeamPage />} />
           <Route path="/teams/:teamId" element={<TeamDetail />} />
           <Route path="/teams/:teamId/edit" element={<TeamPage />} />
+          <Route path="/teams/:teamId/chat" element={<TeamChat />} />
           <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/automations" element={<Automations />} />

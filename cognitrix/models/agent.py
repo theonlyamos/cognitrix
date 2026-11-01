@@ -106,6 +106,12 @@ class Agent(Model):
     tool_permissions: dict[str, str] = Field(default_factory=dict)
     """Per-tool levels that override permission_level: allow, ask or deny."""
 
+    @field_validator('can_request_folders', mode='before')
+    @classmethod
+    def _can_request_folders_default(cls, value):
+        # Agents saved before this column existed load it as NULL.
+        return True if value is None else value
+
     @field_validator('permission_level', mode='before')
     @classmethod
     def _permission_level_default(cls, value):

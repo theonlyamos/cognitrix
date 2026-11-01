@@ -101,8 +101,11 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   const blockedUrl = isUser ? null : blockedEndpoint(message.content);
   return (
     <div className="grid grid-cols-1 gap-2 border-b border-line px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
-      <div className={cn('pt-0.5 font-mono text-[11px] tracking-[0.06em]', isUser ? 'text-accent-ink' : 'text-fg-dim')}>
-        {isUser ? 'YOU' : 'AGENT'}
+      <div
+        className={cn('truncate pt-0.5 font-mono text-[11px] tracking-[0.06em]', isUser ? 'text-accent-ink' : 'text-fg-dim')}
+        title={message.speaker}
+      >
+        {isUser ? 'YOU' : message.speaker ? message.speaker.toUpperCase() : 'AGENT'}
       </div>
       <div className="min-w-0" aria-live={!isUser && isLast && streaming ? 'off' : undefined}>
         {blockedUrl && <BlockedEndpointNotice url={blockedUrl} />}

@@ -142,3 +142,19 @@ describe('parseChatEntries tool results', () => {
     expect(messages[0].artifacts).toEqual([{ id: 'valid-size', mime_type: 'image/png', origin: 'uploaded', width: 8, height: 4 }]);
   });
 });
+
+describe('toChatMessages speakers', () => {
+  it('labels group chat replies and tool rows with the agent name', () => {
+    const entries = parseChatEntries([
+      { role: 'User', type: 'text', content: '@alice hi' },
+      { role: 'assistant', name: 'Alice', type: 'tool_calls', content: 'Checking', tool_calls: [{ name: 'search', tool_call_id: 't1' }] },
+      { role: 'tool', tool_call_id: 't1', content: 'ok' },
+      { role: 'assistant', name: 'Alice', type: 'text', content: 'Done. @Bob over to you' },
+    ]);
+    const grouped = toChatMessages(entries, { speakers: true });
+    expect(grouped.map((m) => [m.role, m.speaker])).toEqual([
+      ['user', undefined], ['assistant', 'Alice'], ['tool', 'Alice'], ['assistant', 'Alice'],
+    ]);
+    expect(toChatMessages(entries).some((m) => m.speaker)).toBe(false);
+  });
+});

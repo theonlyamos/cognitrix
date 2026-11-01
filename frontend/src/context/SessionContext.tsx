@@ -32,6 +32,8 @@ export interface ChatMessage {
   artifacts?: ToolArtifact[];
   /** Tool chips for a `role: 'tool'` row (the agent's tool activity). */
   tools?: ToolUse[];
+  /** Group chats: the agent who wrote this message. */
+  speaker?: string;
 }
 
 interface SessionContextType {
