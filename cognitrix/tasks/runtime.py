@@ -71,20 +71,17 @@ async def _reconstruct_agent_mcp_tools(agent: Agent, names: set[str]) -> dict[st
         return {}
     try:
         from cognitrix.mcp.client import get_dynamic_client
-        from cognitrix.mcp.server_manager import mcp_server_manager
+        from cognitrix.mcp.registry import agent_servers, ensure_connected
         from cognitrix.mcp.tools import create_mcp_tool_wrapper
 
         client = await get_dynamic_client()
         rebuilt: dict[str, Tool] = {}
-        for server in list(agent.mcp_servers or []):
-            if not client.is_connected(server):
-                config = mcp_server_manager.get_server(server)
-                if config is None or not config.enabled:
-                    continue
-                if not await client.connect_to_server(config):
-                    continue
-            for tool_info in await client.list_tools(server) or []:
-                candidate = create_mcp_tool_wrapper(server, tool_info)
+        # Only servers the agent's owner may use (shared, or their own).
+        for config in await agent_servers(agent):
+            if not await ensure_connected(client, config):
+                continue
+            for tool_info in await client.list_tools(config.key) or []:
+                candidate = create_mcp_tool_wrapper(config.name, tool_info, config.key)
                 if candidate.name in names:
                     rebuilt[candidate.name] = candidate
         return rebuilt

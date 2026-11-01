@@ -38,6 +38,19 @@ class MCPServerConfig:
     # Server status
     enabled: bool = True
 
+    # Set for servers saved in the database (see cognitrix/mcp/registry.py).
+    # Servers from mcp.json have no id and are shared.
+    id: str | None = None
+    owner_id: str | None = None
+
+    @property
+    def key(self) -> str:
+        """Connection key: the database id, or the name for mcp.json servers.
+
+        Names are only unique per person, so live connections are keyed by id.
+        """
+        return self.id or self.name
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return asdict(self)

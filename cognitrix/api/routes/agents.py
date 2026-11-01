@@ -16,6 +16,7 @@ from starlette.formparsers import MultiPartException, MultiPartParser
 
 from cognitrix.agents import Agent
 from cognitrix.agents import access as agent_access
+from cognitrix.tools.base import ToolManager
 from cognitrix.common.security import (
     AuthContext,
     crud_scope,
@@ -323,6 +324,42 @@ async def _visible_agent_or_404(agent_id: str, ctx: AuthContext) -> Agent:
 def _user_key(user) -> str:
     return str(getattr(user, 'id', None) or getattr(user, 'email', 'anon'))
 
+
+_MCP_TOOL_NAMES = ('List Mcp Tools', 'Run Mcp Tool')
+
+
+async def _check_mcp_servers(agent: Agent) -> None:
+    """An agent may only name MCP servers its owner can use.
+
+    Shared agents (no owner) may only use shared servers, so nobody reaches
+    another person's server through them. Picking a server also assigns the
+    two tools that list and run MCP tools, or the agent couldn't use it.
+    """
+    from cognitrix.mcp import registry as mcp_registry
+
+    refs: list[str] = []
+    for ref in agent.mcp_servers or []:
+        ref = str(ref).strip()
+        if ref and ref not in refs:
+            refs.append(ref)
+    for ref in refs:
+        if await mcp_registry.resolve(ref, agent.owner_id or None) is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"MCP server '{ref}' isn't available to this agent",
+            )
+    agent.mcp_servers = refs
+    if not refs:
+        return
+    assigned = {str(getattr(t, 'name', '')).lower() for t in agent.tools or []}
+    for name in _MCP_TOOL_NAMES:
+        if name.lower() in assigned:
+            continue
+        tool = ToolManager.get_by_name(name)
+        if tool is not None:
+            agent.tools = [*(agent.tools or []), tool]
+
+
 @agents_api.get('')
 async def list_agents(ctx: AuthContext = Depends(get_auth_context)):
     agents = await agent_access.visible_agents(agent_access.owner_key(ctx.user))
@@ -345,6 +382,8 @@ async def save_agent(request: Request, agent: Agent,
         agent.owner_id = existing.owner_id
     else:
         agent.owner_id = user_key
+
+    await _check_mcp_servers(agent)
 
     llm_data = dict(data.get('llm') or {})
     if not llm_data.get('provider'):

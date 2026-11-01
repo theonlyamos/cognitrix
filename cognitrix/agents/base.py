@@ -15,7 +15,7 @@ from cognitrix.models import Agent, Message, Tool
 from cognitrix.models.tool import MCPTool
 from cognitrix.providers.base import LLM
 from cognitrix.safety.approval_gate import OPERATION_BLOCKED_PREFIX, ApprovalGate, ToolCall
-from cognitrix.safety.destructive_ops import DestructiveOpDetector
+from cognitrix.safety.destructive_ops import _RISK_ORDER, DestructiveOpDetector, RiskAssessment, RiskLevel
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
 from cognitrix.tools.utils import ToolCallResult, ToolOutcome
@@ -476,6 +476,9 @@ class AgentManager:
                 args = {k: v for k, v in dict(args).items() if k not in internal_params}
                 tool_call = ToolCall(tool_name=assigned_tool.name, params=args)
                 risk = self.detector.analyze(assigned_tool.name, args)
+                mcp_risk = await self._mcp_write_risk(assigned_tool, args)
+                if mcp_risk is not None and _RISK_ORDER[mcp_risk.risk_level] > _RISK_ORDER[risk.risk_level]:
+                    risk = mcp_risk
 
                 if assigned_tool.approval_mode == 'always' or (
                     assigned_tool.approval_mode == 'risk_based' and risk.risk_level.value in ['medium', 'high']
@@ -640,6 +643,46 @@ class AgentManager:
                     )
             return completed_result()
 
+    async def _mcp_write_risk(self, tool: Any, args: dict) -> Any:
+        """Risk for MCP tools the server doesn't mark read-only, else None.
+
+        Name patterns can't tell what a remote app's tool does, so MCP tools
+        ask before running unless their server says they only read
+        (readOnlyHint). A tool that hasn't been listed yet counts as one that
+        may change data.
+        """
+        category = getattr(tool, 'category', None)
+        if category == 'mcp_dynamic':
+            if getattr(tool, 'approval_mode', None) != 'always':
+                return None
+            return RiskAssessment(
+                risk_level=RiskLevel.MEDIUM,
+                categories=['mcp_write'],
+                details=f"'{tool.name}' isn't marked read-only by its MCP server, so it may change data",
+            )
+        name = str(getattr(tool, 'name', '') or '').strip().lower().replace(' ', '_')
+        if category != 'mcp' or name != 'run_mcp_tool':
+            return None
+        server = str(args.get('server') or '')
+        tool_name = str(args.get('tool_name') or '')
+        try:
+            from cognitrix.mcp.client import get_dynamic_client
+            from cognitrix.mcp.registry import agent_servers, matches
+
+            config = next((c for c in await agent_servers(self.agent) if matches(c, server)), None)
+            if config is None:
+                return None  # the tool itself refuses servers the agent can't use
+            client = await get_dynamic_client()
+            if client.is_read_only(config.key, tool_name):
+                return None
+        except Exception:
+            logger.exception("Could not check MCP tool annotations")
+        return RiskAssessment(
+            risk_level=RiskLevel.MEDIUM,
+            categories=['mcp_write'],
+            details=f"'{tool_name}' on MCP server '{server}' isn't marked read-only, so it may change data",
+        )
+
     def add_tool(self, tool: Tool):
         if tool not in self.agent.tools:
             self.agent.tools.append(tool)
@@ -665,27 +708,30 @@ class AgentManager:
         pass
 
     async def init_mcp_tools(self):
-        for server in self.agent.mcp_servers:
-            await self.import_mcp_tools(server)
+        """Add tool wrappers for every MCP server this agent may use."""
+        from cognitrix.mcp.tools import sync_mcp_tools_for_agent
+
+        for tool in await sync_mcp_tools_for_agent(self.agent):
+            self.add_tool(tool)
 
     async def import_mcp_tools(self, server: str):
-        """Import tools from a single connected MCP server.
-
-        Uses the shared, working client API + wrapper factory (the previous
-        bespoke implementation called a no-arg async factory with an argument,
-        never awaited it, and used a nonexistent client.run_tool method).
-        """
+        """Import tools from one of this agent's MCP servers (id or name)."""
         try:
             from cognitrix.mcp.client import get_dynamic_client
+            from cognitrix.mcp.registry import agent_servers, ensure_connected, matches
             from cognitrix.mcp.tools import create_mcp_tool_wrapper
 
+            config = next((c for c in await agent_servers(self.agent) if matches(c, server)), None)
+            if config is None:
+                logger.warning("MCP server '%s' isn't available to this agent; skipping tool import", server)
+                return
             client = await get_dynamic_client()
-            if not client.is_connected(server):
+            if not await ensure_connected(client, config):
                 logger.warning("MCP server '%s' is not connected; skipping tool import", server)
                 return
-            tools_list = await client.list_tools(server)
+            tools_list = await client.list_tools(config.key)
             for tool_def in (tools_list or []):
-                self.add_tool(create_mcp_tool_wrapper(server, tool_def))
+                self.add_tool(create_mcp_tool_wrapper(config.name, tool_def, config.key))
         except Exception as e:
             logger.error(f"Failed to import tools from MCP server '{server}': {e}")
 
