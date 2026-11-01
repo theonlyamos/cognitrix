@@ -32,6 +32,7 @@ from cognitrix.questions.broker import (
     pending_question,
     question_turn_ctx,
 )
+from cognitrix.sessions import runs as chat_runs
 from cognitrix.sessions.base import Session
 from cognitrix.session_ownership import (
     OwnershipConflict,
@@ -128,6 +129,12 @@ class SSEManager:
         self._consumer_superseded = asyncio.Event()
         self._consumer_lock = asyncio.Lock()
         self._consumer_claims: set[int] = set()
+        # Set when turn output overflowed with nobody reading it. The turn
+        # keeps running (its events are kept in the chat run log); a consumer
+        # that comes back is told to reattach to the run instead.
+        self._lossy_queue: asyncio.Queue | None = None
+        self._lossy_session_id: str | None = None
+        self._resync_sent = False
 
     def begin_turn(self) -> bool:
         """Reserve this browser stream for one chat turn."""
@@ -213,7 +220,38 @@ class SSEManager:
         self.turn_terminal_event = terminal_event
         self.turn_terminal = None
         self.completed_output_at = None
+        self._lossy_queue = None
+        self._lossy_session_id = None
+        self._resync_sent = False
         return queue, terminal_event
+
+    async def _deliver(self, queue: asyncio.Queue, item, session_id=None) -> None:
+        """Hand one turn event to the browser stream without ever stalling.
+
+        While a browser is reading, a full queue backpressures as before. With
+        no reader (the user navigated away) the turn must keep going, so once
+        the queue fills further output is dropped here; the chat run log still
+        has all of it for when the user comes back.
+        """
+        if self._lossy_queue is queue:
+            return
+        while True:
+            try:
+                queue.put_nowait(item)
+                return
+            except asyncio.QueueFull:
+                pass
+            if not self._consumer_claimed:
+                self._lossy_queue = queue
+                self._lossy_session_id = (
+                    str(session_id) if session_id is not None else None
+                )
+                return
+            try:
+                await asyncio.wait_for(queue.put(item), timeout=1.0)
+                return
+            except TimeoutError:
+                continue
 
     def _complete_turn_output(
         self,
@@ -531,14 +569,18 @@ class SSEManager:
             'content': '',
             'session_id': requested_sid,
         }
+        run: chat_runs.ChatRun | None = None
 
         async def emit(payload):
+            current_sid = session.id if session is not None else requested_sid
             if isinstance(payload, dict):
                 payload = {
                     **payload,
-                    'session_id': session.id if session is not None else requested_sid,
+                    'session_id': current_sid,
                 }
-            await output_queue.put(payload)
+                if run is not None:
+                    run.record(payload)
+            await self._deliver(output_queue, payload, current_sid)
 
         def mark_adopted() -> None:
             nonlocal adopted, adoption_task, ingestion_emitted
@@ -564,14 +606,22 @@ class SSEManager:
                         )
                     )
             if promoted is not None and not ingestion_emitted:
-                output_queue.put_nowait({
+                ingested = {
                     'type': 'attachments_ingested',
                     'artifacts': [
                         item.model_dump() for item in promoted.image_refs
                     ],
                     'document_count': len(promoted.document_paths),
                     'session_id': session.id,
-                })
+                }
+                if run is not None:
+                    run.record(ingested)
+                if self._lossy_queue is not output_queue:
+                    try:
+                        output_queue.put_nowait(ingested)
+                    except asyncio.QueueFull:
+                        self._lossy_queue = output_queue
+                        self._lossy_session_id = str(session.id)
                 ingestion_emitted = True
 
         try:
@@ -604,6 +654,14 @@ class SSEManager:
                 })
                 return
             terminal['session_id'] = session.id
+            run = chat_runs.start_run(
+                str(self.user_key or ''),
+                str(self.agent.id),
+                str(session.id),
+                prompt=action.get('content') or '',
+                history_len=len(getattr(session, 'chat', None) or []),
+                stop=self.stop_current_turn,
+            )
             session_agent_id = getattr(session, 'agent_id', None)
             if session_agent_id and str(session_agent_id) != str(self.agent.id):
                 logger.warning(
@@ -812,6 +870,8 @@ class SSEManager:
                     'content': '',
                     'session_id': terminal.get('session_id'),
                 }
+            if run is not None:
+                run.finish(terminal)
             self._complete_turn_output(
                 asyncio.current_task(),
                 output_queue,
@@ -836,6 +896,15 @@ class SSEManager:
                 turn_queue = self.turn_output_queue
                 if turn_queue is not None:
                     terminal_event = self.turn_terminal_event
+                    if self._lossy_queue is turn_queue and not self._resync_sent:
+                        # Some of this turn's output was dropped while nobody
+                        # was reading; the browser should replay it from the
+                        # run log instead of showing a gap.
+                        self._resync_sent = True
+                        yield {'event': 'message', 'data': json.dumps({
+                            'type': 'run_resync',
+                            'session_id': self._lossy_session_id,
+                        })}
                     item = await self._next_queue_item(
                         turn_queue, request, superseded, terminal_event
                     )
