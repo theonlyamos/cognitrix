@@ -4,6 +4,7 @@ import Sidebar from '@/components/Sidebar';
 import TitleBar from '@/components/TitleBar';
 import CommandPalette from '@/components/CommandPalette';
 import AppAlerts from '@/components/AppAlerts';
+import AssistantSetup from '@/components/AssistantSetup';
 import { NotificationsProvider } from '@/context/NotificationsContext';
 import { isDesktop, onDesktopEvent } from '@/lib/desktop';
 
@@ -75,6 +76,7 @@ function AppShell() {
       <TitleBar onOpenPalette={() => setPaletteOpen(true)} />
       <AppAlerts />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <AssistantSetup />
       <div className="flex min-h-0 flex-1 overflow-hidden">
       <button
         type="button"

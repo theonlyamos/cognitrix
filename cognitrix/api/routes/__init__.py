@@ -3,6 +3,7 @@ from ...api.routes.api_keys import api_keys_api
 from ...api.routes.artifacts import artifacts_api
 from ...api.routes.auth import auth_api
 from ...api.routes.oauth import oauth_api
+from ...api.routes.onboarding import onboarding_api
 from ...api.routes.base import api_router
 from ...api.routes.providers import providers_api
 from ...api.routes.public import public_api
@@ -30,5 +31,6 @@ api_router.include_router(teams_api)
 api_router.include_router(sessions_api)
 api_router.include_router(auth_api)
 api_router.include_router(oauth_api)
+api_router.include_router(onboarding_api)
 api_router.include_router(api_keys_api)
 api_router.include_router(system_api)

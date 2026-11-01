@@ -10,44 +10,7 @@ import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm } from '@/components/form';
 import { cn } from '@/lib/utils';
 import { REASONING_LEVELS } from '@/lib/reasoning';
-
-const PROVIDERS = ['openrouter', 'openai', 'anthropic', 'google', 'groq', 'cerebras', 'ollama'];
-const MODELS: Record<string, string[]> = {
-  openrouter: ['google/gemini-3.5-flash', 'openai/gpt-5.5', 'anthropic/claude-sonnet-5.5'],
-  openai: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
-  anthropic: [
-    'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1',
-    'claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5',
-  ],
-  google: ['gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-3.1-flash'],
-  groq: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'],
-  cerebras: ['llama-3.3-70b', 'llama3.1-8b'],
-  ollama: ['llama3.2', 'qwen2.5', 'mistral'],
-};
-// Default OpenAI-compatible endpoint per provider — mirrors the backend's
-// _DEFAULT_BASE_URLS in cognitrix/providers/base.py.
-const BASE_URLS: Record<string, string> = {
-  openrouter: 'https://openrouter.ai/api/v1',
-  openai: 'https://api.openai.com/v1',
-  anthropic: 'https://api.anthropic.com/v1',
-  google: 'https://generativelanguage.googleapis.com/v1beta/openai/v1',
-  groq: 'https://api.groq.com/openai/v1',
-  cerebras: 'https://api.cerebras.ai/v1',
-  ollama: 'http://localhost:11434/v1',
-};
-
-// Claude Opus 4.7 and every later Claude model reject `temperature`; the
-// backend drops it for them (_anthropic_rejects_temperature in base.py).
-function ignoresTemperature(provider: string, model: string): boolean {
-  if (provider !== 'anthropic') return false;
-  const m = /^claude-(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(
-    model.trim().toLowerCase().split('/').pop() || '',
-  );
-  if (!m) return false;
-  const major = Number(m[1]);
-  const minor = Number(m[2] || 0);
-  return major > 4 || (major === 4 && minor >= 7);
-}
+import { BASE_URLS, MODELS, PROVIDERS, ignoresTemperature } from '@/lib/providers';
 
 interface Tool { name: string; description?: string; category?: string }
 interface AgentData {

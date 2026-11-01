@@ -8,3 +8,5 @@ class User(Model):
     tokens_valid_after: int | None = None
     """Unix time; session tokens issued before it are rejected (set on logout)."""
 
+    onboarded_at: int | None = None
+    """Unix time the user finished (or skipped) first-run setup of their assistant."""

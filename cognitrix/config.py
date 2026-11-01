@@ -192,6 +192,8 @@ class CognitrixSettings:
             'anthropic': 'claude-sonnet-5-5',
             'google': 'gemini-3.5-flash',
             'groq': 'openai/gpt-oss-120b',
+            'cerebras': 'llama-3.3-70b',
+            'ollama': 'llama3.2',
             'cohere': 'command-r-plus',
             'together': 'meta-llama/llama-3.3-70b-instruct',
             'huggingface': 'meta-llama/llama-3.3-70b-instruct',
@@ -365,6 +367,7 @@ _TASK_MIGRATION_COLUMNS = (
 
 _USER_MIGRATION_COLUMNS = (
     ('tokens_valid_after', 'INTEGER'),
+    ('onboarded_at', 'INTEGER'),
 )
 
 _TEAM_MIGRATION_COLUMNS = (

@@ -187,7 +187,8 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
         overrides.get('api_key')
         or os.getenv(_env_key(effective_provider, 'API_KEY'))
         or settings.get_api_key(effective_provider)
-        or ''
+        # A local Ollama ignores the key, but the OpenAI client needs one.
+        or ('ollama' if effective_provider == 'ollama' else '')
     )
     model = (
         overrides.get('model')
