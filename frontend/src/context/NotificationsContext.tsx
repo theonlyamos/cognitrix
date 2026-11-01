@@ -8,6 +8,7 @@ import { useUser } from '@/context/AppContext';
 export type NotificationEvent =
   | 'approval'
   | 'question'
+  | 'agent_alert'
   | 'task_finished'
   | 'task_failed'
   | 'refused'
@@ -16,6 +17,7 @@ export type NotificationEvent =
 export const EVENT_LABELS: Record<NotificationEvent, { title: string; detail: string; alwaysInApp?: boolean }> = {
   approval: { title: 'Approval needed', detail: 'A task is paused on a risky step', alwaysInApp: true },
   question: { title: 'Agent asks a question', detail: 'A chat is waiting for your answer', alwaysInApp: true },
+  agent_alert: { title: 'Agent alert', detail: 'An agent used Notify Me, usually from an automation' },
   task_finished: { title: 'Task finished', detail: 'Only when the window isn’t focused' },
   task_failed: { title: 'Task failed', detail: 'With the reason and a link to retry' },
   refused: { title: 'Command refused or address blocked', detail: 'Outside the working folder, or a blocked provider URL' },
@@ -32,6 +34,7 @@ export type NotificationPrefs = Record<NotificationEvent, ChannelPrefs>;
 const DEFAULT_PREFS: NotificationPrefs = {
   approval: { inApp: true, desktop: true },
   question: { inApp: true, desktop: true },
+  agent_alert: { inApp: true, desktop: true },
   task_finished: { inApp: true, desktop: true },
   task_failed: { inApp: true, desktop: true },
   refused: { inApp: true, desktop: false },
@@ -81,7 +84,19 @@ export interface InboxQuestion {
   created_at: string | null;
 }
 
-export type InboxItem = InboxApproval | InboxQuestion;
+export interface InboxNotification {
+  kind: 'notification';
+  id: string;
+  task_id: string | null;
+  run_id: string | null;
+  session_id: string | null;
+  title: string;
+  message: string;
+  created_at: string | null;
+  task_title: string;
+}
+
+export type InboxItem = InboxApproval | InboxQuestion | InboxNotification;
 
 interface TaskSummary {
   id: string;
@@ -202,6 +217,13 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
               event: 'approval',
               title: `Approval needed: ${item.tool_name}`,
               body: item.task_title ? `${item.task_title} is paused until you answer.` : 'A task run is paused until you answer.',
+              href: '/inbox',
+            });
+          } else if (item.kind === 'notification') {
+            push({
+              event: 'agent_alert',
+              title: item.title,
+              body: item.message || (item.task_title ? `From ${item.task_title}` : 'Open the inbox to see it.'),
               href: '/inbox',
             });
           } else {

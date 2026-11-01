@@ -70,7 +70,8 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
     const actions: Item[] = [
       { id: 'new-chat', group: 'Actions', label: 'New chat', hint: 'Talk to your selected agent', shortcut: 'Ctrl N', run: go('/home') },
       { id: 'run-task', group: 'Actions', label: 'Run task…', hint: 'Plan and execute with an agent or team in the background', run: go('/tasks/new') },
-      { id: 'inbox', group: 'Actions', label: 'Open inbox', hint: 'Approvals and questions waiting on you', run: go('/inbox') },
+      { id: 'inbox', group: 'Actions', label: 'Open inbox', hint: 'Approvals, questions and agent alerts waiting on you', run: go('/inbox') },
+      { id: 'automations', group: 'Actions', label: 'Open automations', hint: 'Scheduled, self-checking and webhook tasks', run: go('/automations') },
       { id: 'new-agent', group: 'Actions', label: 'New agent', run: go('/agents/new') },
       { id: 'new-team', group: 'Actions', label: 'New team', run: go('/teams/new') },
       { id: 'notifications', group: 'Actions', label: 'Notifications', keywords: 'alerts bell', run: go('/notifications') },
