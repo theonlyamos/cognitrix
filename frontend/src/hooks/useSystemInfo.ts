@@ -9,6 +9,8 @@ export interface SystemInfo {
   task_queue: 'filesystem' | 'redis';
   worker_running: boolean | null;
   worker_log: string | null;
+  /** Coding agent CLIs found on this computer (claude, codex, gemini). */
+  coding_agents?: string[];
 }
 
 /** Engine facts for Settings and the agent editor (GET /system/info). */

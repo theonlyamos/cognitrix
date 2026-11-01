@@ -340,11 +340,12 @@ class Session(Model):
             except Exception:
                 pass
 
-        # Bash's background mode needs its two helpers; agents that have Bash
-        # get them for the turn without changing the saved agent.
+        # Bash's background mode and the Coding Agent tool need the two
+        # background helpers; agents that have either get them for the turn
+        # without changing the saved agent.
         try:
             names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
-            if 'bash' in names:
+            if names & {'bash', 'coding agent'}:
                 from cognitrix.tools.base import ToolManager
                 helpers = [
                     t for t in (ToolManager.get_by_name(n) for n in ('bash_output', 'kill_shell'))

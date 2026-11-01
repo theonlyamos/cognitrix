@@ -7,6 +7,7 @@ actions that are destructive or hard to undo:
 - overwriting an existing file
 - sending or posting something outside the app (email, messages, deploys)
 - shell commands (rules owned by the shell tool, see ``_shell_risk``)
+- handing work to a coding agent CLI (``cognitrix.common.coding_agents.risk``)
 - remote (MCP) actions whose effect we can't tell from the name or annotations
 
 Reading, listing, searching, web search and web fetch never ask, whatever
@@ -99,6 +100,10 @@ _DESKTOP_CONTROL = frozenset({
     'text_input', 'key_press', 'hot_key', 'mouse_click',
     'mouse_double_click', 'mouse_right_click',
 })
+
+# Handing a job to a coding agent CLI (Claude Code, Codex, ...): it edits
+# files and may run commands on its own, so a run always asks.
+_CODING_AGENT_TOOLS = frozenset({'coding_agent'})
 
 _SHELL_TOOLS = frozenset({'bash', 'shell', 'terminal', 'run_command', 'execute_command', 'execute_code'})
 
@@ -228,6 +233,10 @@ class DestructiveOpDetector:
 
         if name in _KNOWN_LOW:
             return _low()
+        if name in _CODING_AGENT_TOOLS:
+            from cognitrix.common.coding_agents import risk as coding_agent_risk
+            level, details = coding_agent_risk(params)
+            return RiskAssessment(RiskLevel(level), ['coding_agent'], details)
         if name in _SHELL_TOOLS or _words(tool_name) & _SHELL_WORDS or isinstance(params.get('command'), str):
             return _shell_risk(tool_name, params)
         if name in _WRITE_TOOLS:
