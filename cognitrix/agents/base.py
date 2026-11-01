@@ -514,7 +514,11 @@ class AgentManager:
 
                     if approval.cached:
                         status_print("   (Using cached approval)")
-                    person_approved = not getattr(approval, "auto", False)
+                    # A remembered approval was for the same text, which can mean
+                    # something else after a `cd`, so the full shell needs a fresh one.
+                    person_approved = not (
+                        getattr(approval, "auto", False) or getattr(approval, "cached", False)
+                    )
 
                 status_print(f"\nRunning tool '{tool.name.title()}' with parameters: {args}")
 

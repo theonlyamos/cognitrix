@@ -1606,8 +1606,8 @@ def bash(
         elif not approved:
             return (
                 f"Error: Command refused - {plan.reason}, so it needs the full shell, which "
-                "only runs after the user approves the call. Approval isn't available for "
-                "this call; rewrite it with allowlisted commands or ask the user."
+                "only runs after the user approves this call (remembered approvals don't "
+                "count). Rewrite it with allowlisted commands or ask the user."
             )
 
     try:

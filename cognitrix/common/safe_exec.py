@@ -57,7 +57,10 @@ _DANGEROUS_ARG_TOKENS: dict[str, frozenset[str]] = {
     'python': frozenset({'-c'}),
     'python3': frozenset({'-c'}),
     'node': frozenset({'-e', '--eval', '-p', '--print'}),
-    'find': frozenset({'-exec', '-execdir', '-delete', '-fprintf', '-fprint'}),
+    'find': frozenset({'-exec', '-execdir', '-ok', '-okdir', '-delete', '-fprintf', '-fprint'}),
+    # rg --pre/--pre-glob and sort --compress-program run a program.
+    'rg': frozenset({'--pre'}),
+    'sort': frozenset({'--compress-program'}),
     'sed': frozenset({'-i', '--in-place'}),
 }
 

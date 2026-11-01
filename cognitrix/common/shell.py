@@ -737,8 +737,12 @@ def read_background(shell: BackgroundShell, pattern: str | None = None) -> str:
 
 
 def stop_background(shell: BackgroundShell) -> str:
+    # Even when the leader has exited, children it left running (`cmd &`)
+    # are still in its process group, so always clean up the tree.
     if shell.proc.poll() is not None:
-        return f'{shell.id} had already {shell.status()}.'
+        status = shell.status()
+        kill_tree(shell.proc)
+        return f'{shell.id} had already {status}; stopped anything it left running.'
     shell.killed = True
     kill_tree(shell.proc, graceful=True)
     return f'Stopped {shell.id} ({shell.command}).'
@@ -749,5 +753,4 @@ def _stop_all_background() -> None:  # pragma: no cover - process exit
     with _BG_LOCK:
         shells = list(_BACKGROUND.values())
     for shell in shells:
-        if shell.proc.poll() is None:
-            kill_tree(shell.proc)
+        kill_tree(shell.proc)

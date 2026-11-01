@@ -3,6 +3,7 @@ persistent cwd, timeouts, background commands and risk ratings."""
 
 import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -79,8 +80,12 @@ def test_quoted_metachars_ok_on_posix_but_awk_stays_strict(root):
         build_argv('cat "../secret"', root=root, quoted_metachars_ok=True)
 
 
-def test_git_open_files_in_pager_refused(root):
-    for bad in ('git grep -Osh x', 'git grep --open-files-in-pager=sh x'):
+def test_options_that_run_programs_are_refused(root):
+    for bad in (
+        'git grep -Osh x', 'git grep --open-files-in-pager=sh x',
+        'rg --pre=python x payload.py', 'rg --pre python x .', 'rg --pre-glob=* x',
+        'sort --compress-program=sh f', 'find . -ok rm {} ;',
+    ):
         with pytest.raises(CommandNotAllowed):
             build_argv(bad, root=root)
 
@@ -198,6 +203,27 @@ async def test_background_output_and_kill(root, local):
         assert (await bash_output.run(shell_id=shell_id)).content.startswith('Error')
     finally:
         reset_execution_context(token)
+
+
+@posix_only
+@pytest.mark.asyncio
+async def test_kill_shell_stops_children_left_by_an_exited_leader(root, local):
+    out = await run(command='sleep 60 & echo $! > child.pid', run_in_background=True, approved=True)
+    shell_id = out.split('as ', 1)[1].split(' ', 1)[0]
+    for _ in range(50):
+        if (root / 'child.pid').exists() and (root / 'child.pid').read_text().strip():
+            break
+        time.sleep(0.1)
+    pid = int((root / 'child.pid').read_text())
+    time.sleep(0.3)
+    await kill_shell.run(shell_id=shell_id)
+    time.sleep(0.3)
+    status = Path(f'/proc/{pid}/status')
+    if status.exists():  # Linux: gone, or a zombie waiting for init to reap it
+        assert 'zombie' in status.read_text().lower()
+    else:
+        with pytest.raises(OSError):
+            os.kill(pid, 0)
 
 
 @pytest.mark.asyncio
