@@ -88,6 +88,7 @@ function AppRoutes() {
           <Route path="/automations" element={<Automations />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/settings/:section" element={<Settings />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

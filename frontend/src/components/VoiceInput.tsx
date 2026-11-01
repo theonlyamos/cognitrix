@@ -243,7 +243,7 @@ export function VoiceNotice({ voice }: { voice: VoiceInput }) {
     return (
       <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-fg-dim">
         Voice input needs a speech-to-text provider.{' '}
-        <Link to="/settings#voice-input" className="text-accent-ink hover:underline">Set it up in Settings</Link>
+        <Link to="/settings/voice" className="text-accent-ink hover:underline">Set it up in Settings</Link>
         <button type="button" onClick={voice.dismiss} className="ml-2 hover:text-fg" aria-label="Dismiss">✕</button>
       </div>
     );

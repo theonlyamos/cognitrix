@@ -76,6 +76,10 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
       { id: 'new-team', group: 'Actions', label: 'New team', run: go('/teams/new') },
       { id: 'notifications', group: 'Actions', label: 'Notifications', keywords: 'alerts bell', run: go('/notifications') },
       { id: 'settings', group: 'Actions', label: 'Settings', keywords: 'engine providers keys sign out preferences', run: go('/settings') },
+      { id: 'settings-models', group: 'Actions', label: 'Settings: Models and keys', keywords: 'provider api key openai anthropic gemini groq', run: go('/settings/models') },
+      { id: 'settings-appearance', group: 'Actions', label: 'Settings: Appearance', keywords: 'theme dark light', run: go('/settings/appearance') },
+      { id: 'settings-access', group: 'Actions', label: 'Settings: Agent access', keywords: 'working folder mcp servers saved sign-ins', run: go('/settings/access') },
+      { id: 'settings-chat-apps', group: 'Actions', label: 'Settings: Chat apps', keywords: 'telegram slack', run: go('/settings/chat-apps') },
       { id: 'api-keys', group: 'Actions', label: 'API keys', keywords: 'tokens access', run: go('/api-keys') },
     ];
     const agentItems: Item[] = agents.map((a) => ({

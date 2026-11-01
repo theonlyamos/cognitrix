@@ -38,9 +38,17 @@ beforeEach(() => {
 });
 
 describe('ChatChannelsCard', () => {
+  it('shows one compact row per app with setup hidden until asked', async () => {
+    render(<ChatChannelsCard />);
+    expect(await screen.findByRole('button', { name: 'Set up Telegram' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: 'Set up Slack' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Telegram bot token')).not.toBeInTheDocument();
+  });
+
   it('connects Telegram with a token and then shows the link code', async () => {
     channels.saveChannel.mockResolvedValue(waiting);
     render(<ChatChannelsCard />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up Telegram' }));
     fireEvent.change(await screen.findByLabelText('Telegram bot token'), { target: { value: '123:token' } });
     fireEvent.click(screen.getByRole('button', { name: 'Connect Telegram' }));
 
@@ -51,6 +59,7 @@ describe('ChatChannelsCard', () => {
 
   it('asks Slack for both tokens', async () => {
     render(<ChatChannelsCard />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up Slack' }));
     fireEvent.change(await screen.findByLabelText('Slack bot token'), { target: { value: 'xoxb-1' } });
     expect(screen.getByRole('button', { name: 'Connect Slack' })).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Slack app-level token'), { target: { value: 'xapp-1' } });

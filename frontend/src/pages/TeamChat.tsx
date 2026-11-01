@@ -8,6 +8,8 @@ import { LoadingState, ErrorState } from '@/components/list-ui';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import { parseChatEntries, toChatMessages, fmtRelative, type BackendChatEntry } from '@/lib/transcript';
 import { cn } from '@/lib/utils';
+import { getSendKey, isSendKey } from '@/lib/preferences';
+import { SendKeyHint } from '@/components/SendKeyHint';
 
 interface Member { id: string; name: string; handle: string; lead: boolean; provider?: string | null; model?: string | null }
 interface ChatSummary { id: string; title: string; updated_at?: string | null; running: boolean }
@@ -505,7 +507,7 @@ export default function TeamChat() {
                   if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickMention(options[mentionIndex]); return; }
                   if (e.key === 'Escape') { e.preventDefault(); setMention(null); return; }
                 }
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
+                if (isSendKey(e, getSendKey())) { e.preventDefault(); void send(); }
               }}
               role="combobox"
               aria-label="Message the team"
@@ -534,8 +536,7 @@ export default function TeamChat() {
           {sendError && <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{sendError}</div>}
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim">
             <span>@name picks who answers · @all asks everyone</span>
-            <span className="ml-auto hidden sm:inline"><kbd className="rounded border border-line px-1">⏎</kbd> send</span>
-            <span className="hidden sm:inline"><kbd className="rounded border border-line px-1">⇧⏎</kbd> newline</span>
+            <SendKeyHint />
           </div>
         </div>
       </div>

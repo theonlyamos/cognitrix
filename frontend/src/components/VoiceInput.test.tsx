@@ -117,7 +117,7 @@ describe('voice input', () => {
     await waitFor(() => expect(apiGet).toHaveBeenCalled());
     fireEvent.click(screen.getByRole('button', { name: 'Voice input' }));
 
-    expect(await screen.findByRole('link', { name: 'Set it up in Settings' })).toHaveAttribute('href', '/settings#voice-input');
+    expect(await screen.findByRole('link', { name: 'Set it up in Settings' })).toHaveAttribute('href', '/settings/voice');
     expect(recorder.start).not.toHaveBeenCalled();
   });
 
