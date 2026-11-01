@@ -36,6 +36,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from cognitrix.common.encoding import decode_output, utf8_child_env
 from cognitrix.common.safe_exec import CommandNotAllowed, build_argv
@@ -642,13 +643,22 @@ class BackgroundShell:
     dropped: int = 0          # bytes discarded from the front of the buffer
     read_pos: int = 0         # absolute offset already returned to the model
     killed: bool = False
+    timed_out: bool = False
+    cwd: Path | None = None
+    # Called once, the first time output is read after the process ended;
+    # its text is appended to that read (e.g. a coding agent's changed files).
+    on_finish: Callable[[BackgroundShell], str] | None = None
+    finish_reported: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock)
     reader: threading.Thread | None = None
+    watchdog: threading.Timer | None = None
 
     def status(self) -> str:
         code = self.proc.poll()
         if code is None:
             return 'running'
+        if self.timed_out:
+            return 'stopped after reaching its time limit'
         if self.killed:
             return 'stopped'
         return f'exited with code {code}'
@@ -676,9 +686,53 @@ def _pump(shell: BackgroundShell) -> None:
             if overflow > 0:
                 del shell.buffer[:overflow]
                 shell.dropped += overflow
+    # Output is closed: the process and everything that shared its output
+    # have finished, so the time limit has nothing left to stop.
+    try:
+        shell.proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        return
+    if shell.watchdog is not None:
+        shell.watchdog.cancel()
 
 
-def start_background(argv: list[str], *, owner: str, command: str, cwd: Path) -> BackgroundShell:
+def _feed_stdin(proc: subprocess.Popen, data: bytes) -> None:
+    try:
+        assert proc.stdin is not None
+        proc.stdin.write(data)
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            proc.stdin.close()  # type: ignore[union-attr]
+        except (OSError, ValueError):
+            pass
+
+
+def _time_limit_reached(shell: BackgroundShell) -> None:
+    if shell.proc.poll() is None:
+        shell.timed_out = True
+        shell.killed = True
+        kill_tree(shell.proc, graceful=True)
+    else:
+        # The leader exited, but children it left running (servers,
+        # watchers) are still in its process group.
+        kill_tree(shell.proc)
+
+
+def start_background(
+    argv: list[str], *, owner: str, command: str, cwd: Path,
+    stdin_data: bytes | None = None,
+    max_seconds: float | None = None,
+    env: dict[str, str] | None = None,
+    on_finish: Callable[[BackgroundShell], str] | None = None,
+) -> BackgroundShell:
+    """Start ``argv`` without waiting for it.
+
+    ``stdin_data`` is written to the process and then stdin is closed (stdin is
+    closed straight away without it). ``max_seconds`` stops the process tree
+    when it runs longer than that.
+    """
     with _BG_LOCK:
         running = [s for s in _BACKGROUND.values() if s.owner == owner and s.proc.poll() is None]
         if len(running) >= MAX_BACKGROUND_PER_OWNER:
@@ -686,21 +740,38 @@ def start_background(argv: list[str], *, owner: str, command: str, cwd: Path) ->
                 f'{len(running)} background commands are already running. '
                 'Stop one with Kill Shell first.'
             )
-    env = child_env()
+    env = dict(env) if env is not None else child_env()
     env['COGNITRIX_CWD_FILE'] = os.devnull
     proc = subprocess.Popen(
-        argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        argv,
+        stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, cwd=str(cwd), env=env, **_group_kwargs(),
     )
     shell = BackgroundShell(
         id=f'shell_{next(_BG_IDS)}', owner=owner, command=command, proc=proc,
-        started=time.time(),
+        started=time.time(), cwd=cwd, on_finish=on_finish,
     )
+    if stdin_data is not None:
+        threading.Thread(target=_feed_stdin, args=(proc, stdin_data), daemon=True).start()
+    if max_seconds:  # set before the reader starts, which cancels it on exit
+        shell.watchdog = threading.Timer(max_seconds, _time_limit_reached, args=(shell,))
+        shell.watchdog.daemon = True
+        shell.watchdog.start()
     shell.reader = threading.Thread(target=_pump, args=(shell,), daemon=True)
     shell.reader.start()
     with _BG_LOCK:
         _BACKGROUND[shell.id] = shell
     return shell
+
+
+def wait_background(shell: BackgroundShell, seconds: float) -> bool:
+    """Wait up to ``seconds`` for the process to end. True if it ended."""
+    try:
+        shell.proc.wait(timeout=max(0.0, seconds))
+        return True
+    except subprocess.TimeoutExpired:
+        return False
 
 
 def get_background(shell_id: str, owner: str) -> BackgroundShell | None:
@@ -733,6 +804,17 @@ def read_background(shell: BackgroundShell, pattern: str | None = None) -> str:
     if skipped:
         parts.append(f'[{skipped:,} bytes of older output were discarded]')
     parts.append(truncate_output(text.rstrip('\n')) if text.strip() else '[No new output]')
+    if shell.on_finish is not None and shell.proc.poll() is not None:
+        with shell.lock:
+            report = not shell.finish_reported
+            shell.finish_reported = True
+        if report:
+            try:
+                extra = shell.on_finish(shell)
+            except Exception as e:  # a report must never break reading output
+                extra = f'[Could not summarise the result: {e}]'
+            if extra:
+                parts.append(extra)
     return '\n'.join(parts)
 
 
@@ -744,6 +826,8 @@ def stop_background(shell: BackgroundShell) -> str:
         kill_tree(shell.proc)
         return f'{shell.id} had already {status}; stopped anything it left running.'
     shell.killed = True
+    if shell.watchdog is not None:
+        shell.watchdog.cancel()
     kill_tree(shell.proc, graceful=True)
     return f'Stopped {shell.id} ({shell.command}).'
 

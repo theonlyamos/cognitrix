@@ -194,6 +194,14 @@ export default function AgentPage() {
           <Link to="/settings" className="text-accent-ink hover:underline">Change</Link>
         </p>
       )}
+      {selected.has('Coding Agent') && (
+        <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
+          Hands coding jobs to a coding agent on this computer, which works in the background in the working folder. Every run waits for your approval.{' '}
+          {systemInfo && (systemInfo.coding_agents?.length
+            ? <>Installed: <span className="font-mono text-[12px] text-fg">{systemInfo.coding_agents.join(', ')}</span>.</>
+            : 'None installed yet: install Claude Code, Codex or Gemini CLI and sign in once.')}
+        </p>
+      )}
       <Field label={`TOOLS · ${selected.size} selected`} composite>
         <div role="group" className="max-h-72 overflow-y-auto rounded border border-line">
           {toolsByCategory.length === 0 ? (
