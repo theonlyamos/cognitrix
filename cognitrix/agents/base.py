@@ -15,7 +15,13 @@ from cognitrix.models import Agent, Message, Tool
 from cognitrix.models.tool import MCPTool
 from cognitrix.providers.base import LLM
 from cognitrix.safety.approval_gate import OPERATION_BLOCKED_PREFIX, ApprovalGate, ToolCall
-from cognitrix.safety.destructive_ops import _RISK_ORDER, DestructiveOpDetector, RiskAssessment, RiskLevel
+from cognitrix.safety.destructive_ops import (
+    _RISK_ORDER,
+    DestructiveOpDetector,
+    RiskAssessment,
+    RiskLevel,
+    mcp_tool_risk,
+)
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
 from cognitrix.tools.utils import ToolCallResult, ToolOutcome
@@ -644,27 +650,28 @@ class AgentManager:
             return completed_result()
 
     async def _mcp_write_risk(self, tool: Any, args: dict) -> Any:
-        """Risk for MCP tools the server doesn't mark read-only, else None.
+        """Risk for an MCP action that should ask first, else None.
 
-        Name patterns can't tell what a remote app's tool does, so MCP tools
-        ask before running unless their server says they only read
-        (readOnlyHint). A tool that hasn't been listed yet counts as one that
-        may change data.
+        Read-only tools, and ones whose name or server annotations show an
+        undoable change, run without asking. Deletes, outward sends, and
+        tools we can't classify ask (see ``mcp_tool_risk``).
         """
         category = getattr(tool, 'category', None)
         if category == 'mcp_dynamic':
+            # The wrapper was classified when it was built.
             if getattr(tool, 'approval_mode', None) != 'always':
                 return None
             return RiskAssessment(
                 risk_level=RiskLevel.MEDIUM,
                 categories=['mcp_write'],
-                details=f"'{tool.name}' isn't marked read-only by its MCP server, so it may change data",
+                details=f"'{tool.name}' may delete data or send something outside the app",
             )
         name = str(getattr(tool, 'name', '') or '').strip().lower().replace(' ', '_')
         if category != 'mcp' or name != 'run_mcp_tool':
             return None
         server = str(args.get('server') or '')
         tool_name = str(args.get('tool_name') or '')
+        annotations = None
         try:
             from cognitrix.mcp.client import get_dynamic_client
             from cognitrix.mcp.registry import agent_servers, matches
@@ -673,15 +680,14 @@ class AgentManager:
             if config is None:
                 return None  # the tool itself refuses servers the agent can't use
             client = await get_dynamic_client()
-            if client.is_read_only(config.key, tool_name):
-                return None
+            annotations = (client.tool_annotations.get(config.key) or {}).get(tool_name)
         except Exception:
             logger.exception("Could not check MCP tool annotations")
-        return RiskAssessment(
-            risk_level=RiskLevel.MEDIUM,
-            categories=['mcp_write'],
-            details=f"'{tool_name}' on MCP server '{server}' isn't marked read-only, so it may change data",
-        )
+        risk = mcp_tool_risk(tool_name, annotations)
+        if risk.risk_level == RiskLevel.LOW:
+            return None
+        risk.details = f"{risk.details} (MCP server '{server}')"
+        return risk
 
     def add_tool(self, tool: Tool):
         if tool not in self.agent.tools:
