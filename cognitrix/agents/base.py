@@ -492,7 +492,7 @@ class AgentManager:
 
                 # Per-agent and per-tool permission levels, on top of the
                 # default risk policy (see cognitrix/safety/permissions.py).
-                decision = decide_tool_call(self.agent, assigned_tool, args, risk)
+                decision = decide_tool_call(self.agent, assigned_tool, args, risk, runtime_tool=tool)
                 if decision.action == 'block':
                     results_by_index[i] = _tool_result_entry(
                         tc_id,

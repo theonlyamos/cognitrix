@@ -122,12 +122,14 @@ class ToolDecision:
     reason: str = ''
 
 
-def _needs_person(tool: Any, args: dict) -> bool:
+def _needs_person(tools: tuple, args: dict) -> bool:
     """True when the tool itself only runs this call after a person approves it.
 
-    Today that's Bash outside the allowlist (the full shell).
+    Today that's Bash outside the allowlist (the full shell). ``tools`` is the
+    assigned tool and the registered one that actually runs: an agent saved
+    before Bash had ``internal_params`` only shows it on the registered one.
     """
-    if 'approved' not in (getattr(tool, 'internal_params', None) or []):
+    if not any('approved' in (getattr(t, 'internal_params', None) or []) for t in tools if t is not None):
         return False
     command = args.get('command') if isinstance(args, dict) else None
     if not isinstance(command, str) or not command.strip():
@@ -156,8 +158,14 @@ def _asking(risk: RiskAssessment, details: str) -> RiskAssessment:
     return RiskAssessment(level, categories, shown, risk.confidence)
 
 
-def decide_tool_call(agent: Any, tool: Any, args: dict, risk: RiskAssessment) -> ToolDecision:
-    """Decide whether a call runs, asks a person first, or is blocked."""
+def decide_tool_call(
+    agent: Any, tool: Any, args: dict, risk: RiskAssessment, *, runtime_tool: Any = None,
+) -> ToolDecision:
+    """Decide whether a call runs, asks a person first, or is blocked.
+
+    ``runtime_tool`` is the registered tool that will run, when it differs
+    from the agent's assigned copy.
+    """
     name = str(getattr(tool, 'name', '') or '')
     level = tool_level(agent, name)
     source = 'tool'
@@ -169,7 +177,7 @@ def decide_tool_call(agent: Any, tool: Any, args: dict, risk: RiskAssessment) ->
         return ToolDecision('block', risk, source, f"'{name}' is set to never run for this agent")
 
     if level == 'allow':
-        if _needs_person(tool, args):
+        if _needs_person((tool, runtime_tool), args):
             return ToolDecision(
                 'ask', risk, source,
                 'The full shell needs a person to approve each command, even when the tool is always allowed',
