@@ -7,6 +7,9 @@ import { api, errorMessage } from '@/lib/api';
  */
 export function useResource<T = unknown>(path: string | null) {
   const [data, setData] = useState<T | null>(null);
+  // Which path `data` came from, so callers can tell stale data apart
+  // right after the path changes.
+  const [loadedPath, setLoadedPath] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(path !== null);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,6 +22,7 @@ export function useResource<T = unknown>(path: string | null) {
     try {
       const res = await api.get<T>(path);
       setData(res.data);
+      setLoadedPath(path);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -30,5 +34,5 @@ export function useResource<T = unknown>(path: string | null) {
     refetch();
   }, [refetch]);
 
-  return { data, loading, error, refetch, setData };
+  return { data, loading, error, refetch, setData, loadedPath };
 }

@@ -332,6 +332,67 @@ async def new_session(
     return session.json()
 
 
+# Declared before '/{session_id}' so 'chats' is not read as a session id.
+@sessions_api.get('/chats')
+async def all_chats(ctx: AuthContext = Depends(get_auth_context)):
+    """Every chat the caller owns, newest first: one-to-one chats with any
+    agent plus team group chats. Task-run sessions are left out."""
+    from cognitrix.agents.access import can_view
+    from cognitrix.sessions import runs as chat_runs
+    from cognitrix.teams import group_chat
+    from cognitrix.teams.base import Team
+
+    user_id = principal_key(ctx.user)
+    run_key = str(getattr(ctx.user, 'id', None) or getattr(ctx.user, 'email', 'anon'))
+
+    def running(session_id: str) -> bool:
+        run = chat_runs.get_run(run_key, session_id)
+        return bool(run and run.running)
+
+    chats: list[dict[str, Any]] = []
+    for session in await _owned_sessions(ctx):
+        if session.task_id or session.run_id or session.group_chat:
+            continue
+        chats.append({
+            **_session_summary(session),
+            'kind': 'agent',
+            'agent_id': str(session.agent_id or ''),
+            'team_id': None,
+            'running': running(str(session.id)),
+        })
+
+    # Group chats are browser-only (their routes are JWT-only).
+    if ctx.api_key is None:
+        teams: dict[str, Any] = {}
+        for session in await Session.find({'user_id': user_id}):
+            if not session.group_chat or not session.team_id:
+                continue
+            team_id = str(session.team_id)
+            if team_id not in teams:
+                team = await Team.get(team_id)
+                teams[team_id] = team if team is not None and can_view(team, user_id) else None
+            if teams[team_id] is None:
+                continue
+            last = next(
+                (e.get('timestamp') for e in reversed(session.chat or []) if e.get('timestamp')),
+                None,
+            )
+            chats.append({
+                'id': session.id,
+                'title': group_chat.chat_title(session.chat or []),
+                # Same clock as the agent rows, so the list sorts fairly.
+                'updated_at': session.json().get('updated_at') or last,
+                'message_count': len(session.chat or []),
+                'kind': 'team',
+                'agent_id': None,
+                'team_id': team_id,
+                'running': running(str(session.id)),
+            })
+
+    chats.sort(key=lambda c: str(c.get('updated_at') or ''), reverse=True)
+    return chats
+
+
 @sessions_api.get('/{session_id}')
 async def get_session(
     session_id: str,

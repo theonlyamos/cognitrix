@@ -20,6 +20,9 @@ import FolderChips from '@/components/FolderChips';
 import { folderInfo, getChatFolders, setChatFolders, type FolderInfo, type WorkFolder } from '@/lib/folders';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
+import { AgentBadge, StartChat } from '@/components/StartChat';
+import type { PickTarget, PickerAgent, PickerTeam } from '@/lib/agentPicker';
+import { useNavigate } from 'react-router-dom';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
@@ -33,6 +36,14 @@ interface ConvoSummary {
   datetime?: string;
   updated_at?: string;
   message_count: number;
+}
+
+/** One row of the combined chat list: a chat with an agent or a team. */
+interface ChatSummary extends ConvoSummary {
+  kind: 'agent' | 'team';
+  agent_id: string | null;
+  team_id: string | null;
+  running?: boolean;
 }
 
 const sessionKey = (agentId: string) => `chatSession:${agentId}`;
@@ -260,7 +271,7 @@ export default function Home() {
 
   // Agent selection — chat + SSE must share one agent_id (they rendezvous on a
   // per-(user, agent) manager on the backend).
-  const { data: agentsData, loading: agentsLoading, refetch: refetchAgents } = useResource<{ id: string; name: string; folders?: WorkFolder[] | null }[]>('/agents');
+  const { data: agentsData, loading: agentsLoading, refetch: refetchAgents } = useResource<(PickerAgent & { folders?: WorkFolder[] | null })[]>('/agents');
   const agents = useMemo(() => (agentsData || []).filter((a) => a.id), [agentsData]);
   const [agentId, setAgentId] = useState<string>(() => localStorage.getItem('selectedAgentId') || '');
 
@@ -279,9 +290,59 @@ export default function Home() {
   }, [refetchAgents]);
 
   // Conversations — server-side sessions per agent (task runs excluded).
-  const { data: convos, refetch: refetchConvos } = useResource<ConvoSummary[]>(
-    agentId ? `/sessions/agents/${agentId}?exclude_tasks=true` : null,
-  );
+  const convosPath = agentId ? `/sessions/agents/${agentId}?exclude_tasks=true` : null;
+  const { data: convos, refetch: refetchConvos, loadedPath: convosLoadedPath } = useResource<ConvoSummary[]>(convosPath);
+  // True once `convos` is this agent's list (not the previous agent's).
+  const convosReady = convos !== null && convosLoadedPath === convosPath;
+
+  // Every chat, with any agent or team, for the sidebar. Refreshed whenever
+  // the current agent's list changes.
+  const navigate = useNavigate();
+  const { data: teamsData } = useResource<PickerTeam[]>('/teams');
+  const teams = useMemo(() => (teamsData || []).filter((t) => t.id), [teamsData]);
+  const { data: allChatsData, refetch: refetchAllChats } = useResource<ChatSummary[]>('/sessions/chats');
+  useEffect(() => {
+    if (convos) void refetchAllChats({ silent: true });
+  }, [convos, refetchAllChats]);
+  const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
+  const teamById = useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
+  const allChats = useMemo(() => {
+    const rows = (allChatsData || []).filter((c) =>
+      c.kind === 'team' ? !!c.team_id && teamById.has(c.team_id) : !!c.agent_id && agentById.has(c.agent_id),
+    );
+    // The current agent's list is fresher (it refetches after each turn).
+    const fresh = new Map((convos || []).map((c) => [c.id, c]));
+    const merged = rows.map((c) => (fresh.has(c.id) ? { ...c, ...fresh.get(c.id)! } : c));
+    for (const c of convos || []) {
+      if (!merged.some((m) => m.id === c.id)) merged.push({ ...c, kind: 'agent', agent_id: agentId, team_id: null });
+    }
+    return merged.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+  }, [allChatsData, convos, agentById, teamById, agentId]);
+  // Chats running with other agents or teams aren't covered by this agent's
+  // run polling, so re-read the combined list until they finish.
+  const othersRunning = (allChatsData || []).some((c) => c.running && !(c.kind === 'agent' && c.agent_id === agentId));
+  useEffect(() => {
+    if (!othersRunning) return;
+    const timer = window.setInterval(() => { void refetchAllChats({ silent: true }); }, 4_000);
+    return () => window.clearInterval(timer);
+  }, [othersRunning, refetchAllChats]);
+
+  // Who the user chatted with last (agent or team), newest first.
+  const recentTargets = useMemo(() => {
+    const seen = new Set<string>();
+    const out: PickTarget[] = [];
+    for (const c of allChats) {
+      const target: PickTarget | null = c.kind === 'team'
+        ? (c.team_id ? { kind: 'team', id: c.team_id } : null)
+        : (c.agent_id ? { kind: 'agent', id: c.agent_id } : null);
+      if (!target || seen.has(`${target.kind}:${target.id}`)) continue;
+      seen.add(`${target.kind}:${target.id}`);
+      out.push(target);
+    }
+    return out;
+  }, [allChats]);
+  // "+ new" shows the who-to-talk-to screen until the user picks someone.
+  const [picking, setPicking] = useState(false);
   const convosSorted = useMemo(
     () => [...(convos || [])].sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '')),
     [convos],
@@ -572,7 +633,7 @@ export default function Home() {
   // (which must never open as a chat thread).
   const restoredForAgent = useRef<string | null>(null);
   useEffect(() => {
-    if (!agentId || convos === null) return;
+    if (!agentId || !convosReady) return;
     if (restoredForAgent.current === agentId) return;
     restoredForAgent.current = agentId;
     const stored = localStorage.getItem(sessionKey(agentId));
@@ -593,7 +654,7 @@ export default function Home() {
       setActiveSessionId(null);
       resetThreadState();
     }
-  }, [agentId, convos, convosSorted, loadConversation, resetThreadState]);
+  }, [agentId, convosReady, convosSorted, loadConversation, resetThreadState]);
 
   const handleSSEEvent = useCallback(
     (event: { type: string; content?: string; action?: string; session_id?: string; tool_name?: string; status?: string; tool_call_id?: string; params?: string; result?: string; artifacts?: ToolArtifact[] }) => {
@@ -883,6 +944,7 @@ export default function Home() {
   };
 
   const switchConversation = (id: string) => {
+    setPicking(false);
     if (id === activeSessionId) return;
     setMobileConversationsOpen(false);
     leaveRunningTurn();
@@ -899,11 +961,13 @@ export default function Home() {
     inputRef.current?.focus();
   };
 
-  const deleteConversation = async (id: string) => {
-    if (isRunning(id) || !confirm('Delete this conversation?')) return;
+  const deleteConversation = async (chat: ChatSummary) => {
+    const id = chat.id;
+    if (isRunning(id) || chat.running || !confirm('Delete this conversation?')) return;
     try {
-      await api.delete(`/sessions/${id}`);
+      await api.delete(chat.kind === 'team' ? `/teams/${chat.team_id}/chats/${id}` : `/sessions/${id}`);
       refetchConvos({ silent: true });
+      void refetchAllChats({ silent: true });
       if (id === activeSessionId) newConversation();
     } catch {
       // list stays as-is; nothing destructive happened client-side
@@ -921,6 +985,47 @@ export default function Home() {
     // restore effect picks up this agent's own last conversation
   };
 
+  // Open any chat from the combined list. A chat with another agent switches
+  // to that agent first; the restore effect then opens the stored chat.
+  const openChat = (chat: ChatSummary) => {
+    setMobileConversationsOpen(false);
+    if (chat.kind === 'team') {
+      leaveRunningTurn();
+      navigate(`/teams/${chat.team_id}/chat?chat=${encodeURIComponent(chat.id)}`);
+      return;
+    }
+    if (!chat.agent_id || chat.agent_id === agentId) {
+      switchConversation(chat.id);
+      return;
+    }
+    setPicking(false);
+    localStorage.setItem(sessionKey(chat.agent_id), chat.id);
+    switchAgent(chat.agent_id);
+  };
+
+  // Start a fresh chat with an agent, or open a team's group chat.
+  const startChatWith = (target: PickTarget) => {
+    setPicking(false);
+    if (target.kind === 'team') {
+      leaveRunningTurn();
+      navigate(`/teams/${target.id}/chat`);
+      return;
+    }
+    if (target.id === agentId) {
+      newConversation();
+      return;
+    }
+    // Empty-string sentinel: open a blank thread, not this agent's last chat.
+    localStorage.setItem(sessionKey(target.id), '');
+    switchAgent(target.id);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const startPicking = () => {
+    newConversation();
+    setPicking(true);
+  };
+
   const empty = messages.length === 0;
 
   const conversationPanel = (
@@ -928,7 +1033,7 @@ export default function Home() {
       <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
         <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">CONVERSATIONS</span>
         <div className="flex items-center gap-1">
-          <Button variant="outline" size="sm" onClick={newConversation}>
+          <Button variant="outline" size="sm" onClick={startPicking}>
             + new
           </Button>
           <Button
@@ -943,47 +1048,53 @@ export default function Home() {
         </div>
       </div>
       <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto">
-        {convosSorted.length === 0 ? (
+        {allChats.length === 0 ? (
           <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no conversations yet</p>
         ) : (
-          convosSorted.map((c) => (
-            <SelectionRow
-              key={c.id}
-              selected={c.id === activeSessionId}
-              onSelect={() => switchConversation(c.id)}
-              className={cn(
-                'group min-h-11 gap-2 border-b border-line transition-colors',
-                c.id === activeSessionId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
-              )}
-              buttonClassName="self-stretch px-4 py-2.5"
-              trailingAction={
-                <button
-                  type="button"
-                  onClick={() => void deleteConversation(c.id)}
-                  disabled={isRunning(c.id)}
-                  aria-label={`Delete conversation ${c.title}`}
-                  className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8"
-                >
-                  ✕
-                </button>
-              }
-            >
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13px]">
-                  {/* A new conversation has no saved messages (and so no title) until its first reply is done. */}
-                  {(c.message_count === 0 && chatRuns.find((run) => run.session_id === c.id)?.prompt) || c.title}
-                </div>
-                {isRunning(c.id) ? (
-                  <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px] text-accent" data-testid={`running-${c.id}`}>
-                    <span aria-hidden className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />
-                    working…
-                  </div>
-                ) : (
-                  <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">{fmtRelative(c.updated_at)}</div>
+          allChats.map((c) => {
+            const isTeam = c.kind === 'team';
+            const who = isTeam ? teamById.get(c.team_id || '')?.name : agentById.get(c.agent_id || '')?.name;
+            const selected = !picking && !isTeam && c.id === activeSessionId;
+            const running = (!isTeam && c.agent_id === agentId) ? isRunning(c.id) : !!c.running;
+            const title = (c.message_count === 0 && chatRuns.find((run) => run.session_id === c.id)?.prompt) || c.title;
+            return (
+              <SelectionRow
+                key={c.id}
+                selected={selected}
+                onSelect={() => openChat(c)}
+                className={cn(
+                  'group min-h-11 gap-2 border-b border-line transition-colors',
+                  selected ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
                 )}
-              </div>
-            </SelectionRow>
-          ))
+                buttonClassName="flex items-start gap-2.5 self-stretch px-4 py-2.5"
+                trailingAction={
+                  <button
+                    type="button"
+                    onClick={() => void deleteConversation(c)}
+                    disabled={running}
+                    aria-label={`Delete conversation ${c.title}`}
+                    className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8"
+                  >
+                    ✕
+                  </button>
+                }
+              >
+                <span className="mt-0.5"><AgentBadge name={who || '?'} team={isTeam} size="sm" /></span>
+                <div className="min-w-0 flex-1">
+                  {/* A new conversation has no saved messages (and so no title) until its first reply is done. */}
+                  <div className="truncate text-[13px]">{title}</div>
+                  {running ? (
+                    <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px] text-accent" data-testid={`running-${c.id}`}>
+                      <span aria-hidden className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />
+                      {who ? `${who} · ` : ''}working…
+                    </div>
+                  ) : (
+                    <div className="mt-0.5 truncate font-mono text-[10.5px] text-fg-dim">{who ? `${who} · ` : ''}{fmtRelative(c.updated_at)}</div>
+                  )}
+                </div>
+              </SelectionRow>
+            );
+          })
         )}
       </div>
     </>
@@ -1010,25 +1121,21 @@ export default function Home() {
 
       {/* Chat column */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {/* Top bar */}
-        <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:flex-wrap md:px-6">
+        {/* Top bar: phones only (menu + chat list buttons). On desktop it
+            shows only while the event stream is down, for the reconnect button. */}
+        {isConnected && <h1 className="hidden sr-only md:block">{picking || !activeSessionId ? 'New chat' : 'Chat'}</h1>}
+        <header className={cn('app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:flex-wrap md:px-6', isConnected && 'md:hidden')}>
           <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-hidden">
-            <h1 className="sr-only text-[15px] font-semibold md:not-sr-only">Chat</h1>
-            {agents.length > 0 && (
-              <div className="relative min-w-0 flex-1">
-              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-[10px] text-fg-dim">/</span>
-              <select
-                value={agentId || agents[0]?.id || ''}
-                onChange={(e) => switchAgent(e.target.value)}
-                aria-label="Active agent"
-                className="h-11 w-full min-w-0 appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent md:h-8"
-              >
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-              <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-            </div>
+            <h1 className="truncate text-[15px] font-semibold">
+              {picking || !activeSessionId
+                ? 'New chat'
+                : (allChats.find((c) => c.id === activeSessionId)?.title || 'Chat')}
+            </h1>
+            {!picking && agentById.get(agentId) && (
+              <span className="hidden flex-none items-center gap-1.5 text-[12.5px] text-fg-dim sm:flex" aria-label={`Chatting with ${agentById.get(agentId)!.name}`}>
+                <AgentBadge name={agentById.get(agentId)!.name} selected size="sm" />
+                <span className="text-fg">{agentById.get(agentId)!.name}</span>
+              </span>
             )}
           </div>
           <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-3">
@@ -1069,9 +1176,11 @@ export default function Home() {
           aria-relevant="additions text"
           className="min-h-0 flex-1 overscroll-contain overflow-y-auto"
         >
-          {empty ? (
+          {picking && agents.length > 0 ? (
+            <StartChat agents={agents} teams={teams} recent={recentTargets} onPick={startChatWith} />
+          ) : empty ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col justify-center px-6">
-              <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ start a conversation</p>
+              <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ {agentById.get(agentId) ? `new chat with ${agentById.get(agentId)!.name}` : 'start a conversation'}</p>
               <h2 className="mt-3 text-2xl font-bold tracking-tight">What should we run?</h2>
               <p className="mt-2 max-w-md text-fg-dim">
                 Ask a question, chat, or kick off a multi-step task — the agent plans and executes with its tools.
@@ -1154,8 +1263,8 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Composer */}
-        <div className="flex-none border-t border-line px-6 py-4">
+        {/* Composer (hidden while choosing who to talk to) */}
+        <div className={cn('flex-none border-t border-line px-6 py-4', picking && agents.length > 0 && 'hidden')}>
           <div className="relative mx-auto max-w-3xl">
             {skillMenuOpen && (
               <div
