@@ -140,6 +140,9 @@ class Session(Model):
     step_title: str | None = None
     """Plan step title, denormalized for display"""
 
+    group_chat: bool | None = None
+    """True for a team group chat (the user talking with every team member)"""
+
     @classmethod
     async def load(cls, session_id: str) -> Self:
         """Load an existing session or create a new one if it doesn't exist"""

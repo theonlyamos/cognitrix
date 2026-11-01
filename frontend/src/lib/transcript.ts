@@ -170,8 +170,13 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
 
 /** Reduce a transcript to the plain chat bubbles Home renders (drops tool
  *  chatter and timing rows so a restored thread looks like the live one). */
-export function toChatMessages(entries: TranscriptEntry[]): ChatMessage[] {
+export function toChatMessages(
+  entries: TranscriptEntry[],
+  options: { speakers?: boolean } = {},
+): ChatMessage[] {
   const out: ChatMessage[] = [];
+  // Group chats label each reply with the agent who wrote it.
+  const who = (name?: string) => (options.speakers && name ? { speaker: name } : {});
   for (const e of entries) {
     if (e.kind === 'user') out.push({ id: `hist-${out.length}`, role: 'user', content: e.content });
     else if (e.kind === 'image') {
@@ -182,15 +187,16 @@ export function toChatMessages(entries: TranscriptEntry[]): ChatMessage[] {
         out.push({ id: `hist-${out.length}`, role: 'user', content: '', artifacts: [e.artifact] });
       }
     }
-    else if (e.kind === 'assistant') out.push({ id: `hist-${out.length}`, role: 'assistant', content: e.content });
+    else if (e.kind === 'assistant') out.push({ id: `hist-${out.length}`, role: 'assistant', content: e.content, ...who(e.name) });
     else if (e.kind === 'tool_calls') {
       // The assistant's preamble (if any) first, then the tools it invoked as a
       // chip row — matches how the live stream renders a tool round.
-      if (e.content.trim()) out.push({ id: `hist-${out.length}`, role: 'assistant', content: e.content });
+      if (e.content.trim()) out.push({ id: `hist-${out.length}`, role: 'assistant', content: e.content, ...who(e.name) });
       if (e.tools.length)
         out.push({
           id: `hist-${out.length}`,
           role: 'tool',
+          ...who(e.name),
           content: '',
           tools: e.tools.map((t) => ({
             name: t.name,

@@ -92,7 +92,10 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
       hint: t.status?.replace('_', ' '),
       run: go(`/tasks/${t.id}`),
     }));
-    const teamItems: Item[] = teams.map((t) => ({ id: `team-${t.id}`, group: 'Teams', label: t.name, run: go(`/teams/${t.id}`) }));
+    const teamItems: Item[] = teams.flatMap((t) => [
+      { id: `team-${t.id}`, group: 'Teams' as const, label: t.name, run: go(`/teams/${t.id}`) },
+      { id: `team-chat-${t.id}`, group: 'Teams' as const, label: `Group chat: ${t.name}`, run: go(`/teams/${t.id}/chat`) },
+    ]);
     const all = [...actions, ...agentItems, ...taskItems, ...teamItems];
     const q = query.trim().toLowerCase();
     if (!q) return [...actions, ...agentItems.slice(0, 4), ...taskItems.slice(0, 5)];

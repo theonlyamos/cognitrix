@@ -72,6 +72,14 @@ export default function TeamDetail() {
           </div>
         </div>
         <div className="flex flex-none items-center gap-1 md:gap-2">
+          {members.length > 0 && (
+            <Button asChild size="sm" className="w-11 px-0 md:w-auto md:px-3">
+              <Link to={`/teams/${team.id}/chat`} aria-label="Open group chat">
+                <svg className="h-4 w-4 md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+                <span className="sr-only md:not-sr-only">Group chat</span>
+              </Link>
+            </Button>
+          )}
           <Button asChild variant="outline" size="sm" className="w-11 px-0 md:w-auto md:px-3">
             <Link to={`/teams/${team.id}/edit`} aria-label="Edit team">
               <svg className="h-4 w-4 md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
