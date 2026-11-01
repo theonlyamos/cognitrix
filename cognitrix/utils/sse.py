@@ -659,6 +659,7 @@ class SSEManager:
                 str(self.agent.id),
                 str(session.id),
                 prompt=action.get('content') or '',
+                history_len=len(getattr(session, 'chat', None) or []),
                 stop=self.stop_current_turn,
             )
             session_agent_id = getattr(session, 'agent_id', None)

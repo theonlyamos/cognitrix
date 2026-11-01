@@ -450,6 +450,7 @@ export default function Home() {
         ) return false;
         clearComposerMedia();
         adoptSession(id);
+        const run = runs.find((item) => item.session_id === id);
         const history = toChatMessages(parseChatEntries(res.data));
         setMessages(history);
         setStopping(false);
@@ -457,10 +458,13 @@ export default function Home() {
         setPlanning(null);
         setApprovals([]);
         setQuestion(null);
-        if (runs.some((run) => run.session_id === id)) {
+        if (run) {
           // Still working on the server: show what it has done so far and
-          // follow it live until it finishes.
-          runBaseRef.current = history;
+          // follow it live until it finishes. The turn may already be saved
+          // (it ends just after saving), so start from the history before it.
+          runBaseRef.current = Array.isArray(res.data) && typeof run.history_len === 'number'
+            ? toChatMessages(parseChatEntries(res.data.slice(0, run.history_len)))
+            : history;
           setFollowSid(id);
           setWaiting(true);
           setStreaming(false);
@@ -825,7 +829,9 @@ export default function Home() {
   // elsewhere right away.
   const leaveRunningTurn = () => {
     if (!busy) return;
-    if (!followSidRef.current) rotateStream();
+    // Even while following from the run log, this page's own stream may
+    // still hold that turn (after a resync), so always move to a fresh one.
+    rotateStream();
     void refreshRuns();
     void refetchConvos({ silent: true });
   };

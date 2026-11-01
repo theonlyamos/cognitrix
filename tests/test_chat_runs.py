@@ -119,6 +119,7 @@ async def test_turn_finishes_when_nobody_is_reading(monkeypatch):
     class Session:
         id = 'session-1'
         finished = False
+        chat: list = []
 
         async def __call__(self, *args, output, **kwargs):
             for n in range(20):
@@ -154,6 +155,7 @@ async def test_turn_finishes_when_nobody_is_reading(monkeypatch):
 
     run = chat_runs.get_run('userA', session.id)
     assert run is not None and run.status == 'complete'
+    assert run.summary()['history_len'] == 0
     items = await _collect(run)
     assert items[0]['content'] == ''.join(f'{n} ' for n in range(20))
     assert items[-1]['type'] == 'turn_complete'

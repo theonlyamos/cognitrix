@@ -59,6 +59,9 @@ class ChatRun:
     agent_id: str
     session_id: str
     prompt: str = ''
+    # Saved history entries before this turn: a page that reopens the
+    # conversation shows only these, then replays the turn on top.
+    history_len: int = 0
     stop: Callable[[], bool] | None = None
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     started_at: str = field(
@@ -116,6 +119,7 @@ class ChatRun:
             'status': self.status,
             'started_at': self.started_at,
             'prompt': self.prompt,
+            'history_len': self.history_len,
         }
 
     async def follow(self, idle_timeout: float = 15.0) -> AsyncIterator[Any]:
@@ -195,6 +199,7 @@ def start_run(
     session_id: str,
     *,
     prompt: str = '',
+    history_len: int = 0,
     stop: Callable[[], bool] | None = None,
 ) -> ChatRun:
     """Register the run for one turn, replacing a finished one for the session."""
@@ -211,6 +216,7 @@ def start_run(
         agent_id=str(agent_id),
         session_id=str(session_id),
         prompt=prompt if isinstance(prompt, str) else '',
+        history_len=max(0, int(history_len or 0)),
         stop=stop,
     )
     _RUNS[key] = run

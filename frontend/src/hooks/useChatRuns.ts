@@ -8,6 +8,8 @@ export interface ChatRunSummary {
   status: string;
   started_at: string;
   prompt?: string;
+  /** Saved history entries that existed before this turn started. */
+  history_len?: number;
 }
 
 const BUSY_POLL_MS = 3_000;
