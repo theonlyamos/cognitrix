@@ -26,6 +26,7 @@ from cognitrix.common.security import (
     redact_secrets,
     require,
 )
+from cognitrix.sessions import runs as chat_runs
 from cognitrix.sessions.base import Session
 from cognitrix.questions.broker import resolve_question
 from cognitrix.questions.models import QuestionAction
@@ -442,6 +443,42 @@ async def sse_endpoint(request: Request, agent_id: str | None = None,
     assert manager is not None
     return await manager.sse_endpoint(request)
 
+@agents_api.get("/runs", dependencies=[Depends(jwt_only)])
+async def list_chat_runs(agent_id: str | None = None, user=Depends(get_current_user)):
+    """Chat turns still running for this user, so the UI can mark them."""
+    return {'runs': [
+        run.summary() for run in chat_runs.active_runs(_user_key(user), agent_id)
+    ]}
+
+
+@agents_api.get("/runs/{session_id}/events", dependencies=[Depends(jwt_only)])
+async def follow_chat_run(request: Request, session_id: str,
+                          user=Depends(get_current_user)):
+    """Replay a conversation's current turn from its start, then follow it live.
+
+    Lets the browser come back to a conversation whose turn kept running
+    after the user left it. 404 when nothing is running (or recently ended)
+    for that conversation: the saved history is then complete.
+    """
+    run = chat_runs.get_run(_user_key(user), session_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="No run for this conversation")
+
+    async def events():
+        yield {'event': 'message', 'data': json.dumps({
+            'type': 'run_attached', **run.summary(),
+        })}
+        async for item in run.follow():
+            if await request.is_disconnected():
+                return
+            if item is chat_runs.IDLE:
+                yield {'event': 'ping', 'data': ''}
+                continue
+            yield {'event': 'message', 'data': json.dumps(item)}
+
+    return EventSourceResponse(events())
+
+
 # Add other endpoints to handle user input and trigger SSE events
 @agents_api.post('/chat', dependencies=[Depends(jwt_only)])
 async def chat_endpoint(request: Request, user=Depends(get_current_user)):
@@ -482,6 +519,14 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 status_code=409,
                 detail='Connect to the event stream before sending a message',
             )
+        requested_session = data.get('session_id')
+        if isinstance(requested_session, str) and requested_session:
+            running = chat_runs.get_run(_user_key(user), requested_session)
+            if running is not None and running.running:
+                raise HTTPException(
+                    status_code=409,
+                    detail='This conversation is still working on its last message',
+                )
         if not manager.begin_turn():
             raise HTTPException(
                 status_code=409,
@@ -528,6 +573,12 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
 async def stop_endpoint(request: Request, user=Depends(get_current_user)):
     """Cancel the pending or active turn for this exact browser stream."""
     data = await request.json()
+    session_id = data.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        # A conversation's turn may be running on a stream this page no
+        # longer holds (the user left and came back): stop it by session.
+        if chat_runs.stop_run(_user_key(user), session_id):
+            return {"status": "stopping"}
     agent = await _resolve_agent(data.get("agent_id"), request, user)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")

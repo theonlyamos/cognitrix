@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
-import { useSession, type ToolArtifact } from '@/context/SessionContext';
+import { useSession, type ChatMessage, type ToolArtifact } from '@/context/SessionContext';
 import { MobileSheet } from '@/components/MobileSheet';
 import { SelectionRow } from '@/components/SelectionRow';
-import { useSSE } from '@/hooks/useSSE';
+import { useSSE, type SSEEvent } from '@/hooks/useSSE';
+import { useEventStream } from '@/hooks/useEventStream';
+import { fetchChatRuns, useChatRuns } from '@/hooks/useChatRuns';
 import { useResource } from '@/hooks/useResource';
 import { api } from '@/lib/api';
 import ReasoningPicker from '@/components/ReasoningPicker';
@@ -283,6 +285,15 @@ export default function Home() {
   const convosRef = useRef(convosSorted);
   convosRef.current = convosSorted;
 
+  // Conversations still working on the server, including ones the user left.
+  const { runs: chatRuns, runningIds, refresh: refreshRuns } = useChatRuns(agentId || null);
+  // The conversation whose running turn this page is following from the
+  // server's run log (after coming back to it), not from its own stream.
+  const [followSid, setFollowSid] = useState<string | null>(null);
+  const followSidRef = useRef<string | null>(null);
+  followSidRef.current = followSid;
+  const runBaseRef = useRef<ChatMessage[]>([]);
+
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeSessionId;
@@ -410,6 +421,7 @@ export default function Home() {
     setApprovals([]);
     setQuestion(null);
     setIsStreaming(false);
+    setFollowSid(null);
     clearComposerMedia();
   }, [clearComposerMedia, clearMessages, clearStopFallback, setIsStreaming]);
 
@@ -426,24 +438,39 @@ export default function Home() {
   );
 
   const loadConversation = useCallback(
-    async (id: string, expectedGeneration?: number) => {
+    async (id: string, expectedGeneration?: number, attach = true) => {
       try {
-        const res = await api.get(`/sessions/${id}/chat`);
+        const [res, runs] = await Promise.all([
+          api.get(`/sessions/${id}/chat`),
+          attach && agentId ? fetchChatRuns(agentId).catch(() => []) : Promise.resolve([]),
+        ]);
         if (
           expectedGeneration !== undefined
           && turnGenerationRef.current !== expectedGeneration
         ) return false;
         clearComposerMedia();
         adoptSession(id);
-        setMessages(toChatMessages(parseChatEntries(res.data)));
-        setWaiting(false);
-        setStreaming(false);
+        const history = toChatMessages(parseChatEntries(res.data));
+        setMessages(history);
         setStopping(false);
         setStopError(null);
         setPlanning(null);
         setApprovals([]);
         setQuestion(null);
-        setIsStreaming(false);
+        if (runs.some((run) => run.session_id === id)) {
+          // Still working on the server: show what it has done so far and
+          // follow it live until it finishes.
+          runBaseRef.current = history;
+          setFollowSid(id);
+          setWaiting(true);
+          setStreaming(false);
+          setIsStreaming(true);
+        } else {
+          setFollowSid(null);
+          setWaiting(false);
+          setStreaming(false);
+          setIsStreaming(false);
+        }
         return true;
       } catch {
         // Deleted/stale id — clear it and let the caller fall back.
@@ -472,10 +499,23 @@ export default function Home() {
     setPlanning(null);
     setApprovals([]);
     setQuestion(null);
+    setFollowSid(null);
     if (reason === 'stopped') stopRunningTools();
     else if (reason === 'error') failRunningTools(errorResult);
     void refetchConvos({ silent: true });
-  }, [clearStopFallback, failRunningTools, refetchConvos, setIsStreaming, stopRunningTools]);
+    void refreshRuns();
+  }, [clearStopFallback, failRunningTools, refetchConvos, refreshRuns, setIsStreaming, stopRunningTools]);
+
+  // A conversation finished in the background: refresh the list so its
+  // new reply time shows.
+  const prevRunningRef = useRef<Set<string>>(new Set());
+  const runningKey = [...runningIds].sort().join(',');
+  useEffect(() => {
+    const previous = prevRunningRef.current;
+    const current = new Set(runningKey ? runningKey.split(',') : []);
+    prevRunningRef.current = current;
+    if ([...previous].some((id) => !current.has(id))) void refetchConvos({ silent: true });
+  }, [runningKey, refetchConvos]);
 
   // Restore the last-active conversation when the agent resolves or changes.
   // Waits for the conversation list so the stored id can be validated against
@@ -521,6 +561,8 @@ export default function Home() {
         if (!waitingRef.current) return;
         setActiveSessionId(sid);
         if (agentId) localStorage.setItem(sessionKey(agentId), sid);
+        // List the new conversation now, not only once its reply is saved.
+        void refetchConvos({ silent: true });
       }
       switch (event.type) {
         case 'generate':
@@ -601,14 +643,67 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn],
+    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
   // so a fresh visitor doesn't connect to the default agent then reconnect.
   const sseReady = !!agentId || (!agentsLoading && agents.length === 0);
-  const { isConnected, error, reconnect, streamId } = useSSE({
-    onMessage: handleSSEEvent,
+  const handleStreamEvent = useCallback((event: SSEEvent) => {
+    const sid = typeof event.session_id === 'string' ? event.session_id : undefined;
+    if (event.type === 'run_resync') {
+      // Part of this turn's output was missed while the page was away:
+      // replay it from the server's run log.
+      if (sid && sid === activeRef.current) void loadConversation(sid);
+      return;
+    }
+    // That conversation is shown from its run log; skip the duplicate.
+    if (sid && sid === followSidRef.current) return;
+    handleSSEEvent(event);
+  }, [handleSSEEvent, loadConversation]);
+
+  const handleRunEvent = useCallback((event: SSEEvent) => {
+    const sid = typeof event.session_id === 'string' ? event.session_id : undefined;
+    if (!sid || sid !== followSidRef.current) return;
+    if (event.type === 'run_attached') {
+      // (Re)start from the saved history plus the message being answered,
+      // so a reconnect replays cleanly instead of doubling text.
+      const base = [...runBaseRef.current];
+      const prompt = typeof event.prompt === 'string' ? event.prompt.trim() : '';
+      const last = base[base.length - 1];
+      if (prompt && !(last?.role === 'user' && last.content.trim() === prompt)) {
+        base.push({
+          id: `run-${String(event.run_id ?? sid)}`,
+          role: 'user',
+          content: prompt,
+          timestamp: typeof event.started_at === 'string' ? event.started_at : undefined,
+        });
+      }
+      setMessages(base);
+      setWaiting(true);
+      setStreaming(false);
+      setIsStreaming(true);
+      return;
+    }
+    handleSSEEvent(event);
+  }, [handleSSEEvent, setIsStreaming, setMessages]);
+
+  useEventStream<SSEEvent>({
+    path: followSid ? `/agents/runs/${encodeURIComponent(followSid)}/events` : null,
+    enabled: !!followSid,
+    maxRetries: 3,
+    onEvent: ({ data }) => handleRunEvent(data),
+    onError: useCallback(() => {
+      // The run is gone (finished long ago or the server restarted): show
+      // the saved conversation instead.
+      const sid = followSidRef.current;
+      setFollowSid(null);
+      if (sid && sid === activeRef.current) void loadConversation(sid, undefined, false);
+    }, [loadConversation]),
+  });
+
+  const { isConnected, error, reconnect, streamId, rotateStream } = useSSE({
+    onMessage: handleStreamEvent,
     onError: useCallback((e: Error) => console.error('SSE error:', e), []),
     agentId: agentId || undefined,
     enabled: sseReady,
@@ -673,6 +768,7 @@ export default function Home() {
         } else {
           await api.post('/agents/chat', payload);
         }
+        window.setTimeout(() => void refreshRuns(), 600);
       } catch {
         setInput(text);
         setAttachments(pending);
@@ -681,7 +777,7 @@ export default function Home() {
         finishTurn();
       }
     },
-    [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, agentId, activeSessionId, streamId, revokePreviewUrl, uploadError],
+    [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
   );
 
   const stop = useCallback(async () => {
@@ -702,6 +798,9 @@ export default function Home() {
       await api.post('/agents/stop', {
         ...(agentId ? { agent_id: agentId } : {}),
         ...(streamId ? { stream_id: streamId } : {}),
+        // Stops the conversation's turn even when it runs on a stream this
+        // page no longer holds (the user left and came back).
+        ...(activeRef.current ? { session_id: activeRef.current } : {}),
       });
       if (turnGenerationRef.current !== generation || !busyRef.current) return;
     } catch (error) {
@@ -719,15 +818,29 @@ export default function Home() {
     }
   }, [agentId, busy, clearStopFallback, finishTurn, loadConversation, stopping, streamId]);
 
+  const isRunning = (id: string) => runningIds.has(id) || (busy && id === activeSessionId);
+
+  // Leaving a conversation mid-turn keeps that turn running on the server.
+  // This page moves to a fresh browser stream so it can start another turn
+  // elsewhere right away.
+  const leaveRunningTurn = () => {
+    if (!busy) return;
+    if (!followSidRef.current) rotateStream();
+    void refreshRuns();
+    void refetchConvos({ silent: true });
+  };
+
   const switchConversation = (id: string) => {
-    if (busy || id === activeSessionId) return;
+    if (id === activeSessionId) return;
     setMobileConversationsOpen(false);
+    leaveRunningTurn();
+    resetThreadState();
     void loadConversation(id);
   };
 
   const newConversation = () => {
-    if (busy) return;
     setMobileConversationsOpen(false);
+    leaveRunningTurn();
     adoptSession(null);
     resetThreadState();
     setInput('');
@@ -735,7 +848,7 @@ export default function Home() {
   };
 
   const deleteConversation = async (id: string) => {
-    if (busy || !confirm('Delete this conversation?')) return;
+    if (isRunning(id) || !confirm('Delete this conversation?')) return;
     try {
       await api.delete(`/sessions/${id}`);
       refetchConvos({ silent: true });
@@ -746,8 +859,9 @@ export default function Home() {
   };
 
   const switchAgent = (id: string) => {
-    if (busy || id === agentId) return;
+    if (id === agentId) return;
     setMobileConversationsOpen(false);
+    leaveRunningTurn();
     setAgentId(id);
     localStorage.setItem('selectedAgentId', id);
     setActiveSessionId(null);
@@ -762,7 +876,7 @@ export default function Home() {
       <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
         <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">CONVERSATIONS</span>
         <div className="flex items-center gap-1">
-          <Button variant="outline" size="sm" onClick={newConversation} disabled={busy}>
+          <Button variant="outline" size="sm" onClick={newConversation}>
             + new
           </Button>
           <Button
@@ -785,18 +899,16 @@ export default function Home() {
               key={c.id}
               selected={c.id === activeSessionId}
               onSelect={() => switchConversation(c.id)}
-              disabled={busy}
               className={cn(
                 'group min-h-11 gap-2 border-b border-line transition-colors',
                 c.id === activeSessionId ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
-                busy && 'pointer-events-none opacity-60',
               )}
               buttonClassName="self-stretch px-4 py-2.5"
               trailingAction={
                 <button
                   type="button"
                   onClick={() => void deleteConversation(c.id)}
-                  disabled={busy}
+                  disabled={isRunning(c.id)}
                   aria-label={`Delete conversation ${c.title}`}
                   className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8"
                 >
@@ -805,8 +917,18 @@ export default function Home() {
               }
             >
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[13px]">{c.title}</div>
-                <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">{fmtRelative(c.updated_at)}</div>
+                <div className="truncate text-[13px]">
+                  {/* A new conversation has no saved messages (and so no title) until its first reply is done. */}
+                  {(c.message_count === 0 && chatRuns.find((run) => run.session_id === c.id)?.prompt) || c.title}
+                </div>
+                {isRunning(c.id) ? (
+                  <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px] text-accent" data-testid={`running-${c.id}`}>
+                    <span aria-hidden className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />
+                    working…
+                  </div>
+                ) : (
+                  <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">{fmtRelative(c.updated_at)}</div>
+                )}
               </div>
             </SelectionRow>
           ))
@@ -846,7 +968,6 @@ export default function Home() {
               <select
                 value={agentId || agents[0]?.id || ''}
                 onChange={(e) => switchAgent(e.target.value)}
-                disabled={busy}
                 aria-label="Active agent"
                 className="h-11 w-full min-w-0 appearance-none rounded border border-line bg-panel-2 pl-5 pr-7 font-mono text-[12px] text-fg transition-colors hover:border-fg-dim focus:border-accent md:h-8"
               >
