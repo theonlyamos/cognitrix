@@ -384,3 +384,50 @@ async def test_sse_plumbing_authorizes_path_and_rejects_action_spoofing(tmp_path
     queued = await manager.action_queue.get()
     assert queued['session_id'] == own.id
     assert queued['agent_id'] == 'agent-1'
+
+
+async def test_all_chats_lists_agent_and_team_chats_newest_first(tmp_path, monkeypatch):
+    from cognitrix.api.routes import sessions as routes
+    from cognitrix.sessions.base import Session
+    from cognitrix.teams.base import Team
+
+    await _initialize_routes_db(tmp_path)
+    older = await _owned_session(
+        'user-1', 'agent-1',
+        chat=[{'role': 'user', 'type': 'text', 'content': 'hello there', 'timestamp': '2026-11-01T09:00:00'}],
+    )
+    newer = await _owned_session('user-1', 'agent-2')
+    await _owned_session('user-1', 'agent-1', task_id='task-1', run_id='run-1')
+    await _owned_session('user-2', 'agent-1')
+    team_chat = Session(
+        team_id='team-1', user_id='user-1', group_chat=True,
+        chat=[{'speaker_id': 'user', 'content': 'plan the launch', 'timestamp': '2999-01-01T00:00:00'}],
+    )
+    await team_chat.save()
+    hidden_team_chat = Session(team_id='team-gone', user_id='user-1', group_chat=True, chat=[])
+    await hidden_team_chat.save()
+    foreign_team_chat = Session(team_id='team-1', user_id='user-2', group_chat=True, chat=[])
+    await foreign_team_chat.save()
+
+    async def fake_team_get(team_id):
+        if team_id == 'team-1':
+            return SimpleNamespace(id='team-1', owner_id='user-1')
+        return None
+
+    monkeypatch.setattr(Team, 'get', fake_team_get)
+
+    rows = await routes.all_chats(_ctx('user-1'))
+    assert [row['id'] for row in rows][0] == team_chat.id
+    assert {row['id'] for row in rows} == {older.id, newer.id, team_chat.id}
+    by_id = {row['id']: row for row in rows}
+    assert by_id[team_chat.id]['kind'] == 'team'
+    assert by_id[team_chat.id]['team_id'] == 'team-1'
+    assert by_id[team_chat.id]['title'] == 'plan the launch'
+    assert by_id[older.id]['kind'] == 'agent'
+    assert by_id[older.id]['agent_id'] == 'agent-1'
+    assert by_id[older.id]['title'] == 'hello there'
+    assert by_id[older.id]['running'] is False
+
+    # API keys see only their allowed agents and never group chats.
+    narrowed = await routes.all_chats(_ctx('user-1', allowed_agents=['agent-2']))
+    assert [row['id'] for row in narrowed] == [newer.id]
