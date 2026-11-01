@@ -318,6 +318,15 @@ export default function Home() {
     }
     return merged.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
   }, [allChatsData, convos, agentById, teamById, agentId]);
+  // Chats running with other agents or teams aren't covered by this agent's
+  // run polling, so re-read the combined list until they finish.
+  const othersRunning = (allChatsData || []).some((c) => c.running && !(c.kind === 'agent' && c.agent_id === agentId));
+  useEffect(() => {
+    if (!othersRunning) return;
+    const timer = window.setInterval(() => { void refetchAllChats({ silent: true }); }, 4_000);
+    return () => window.clearInterval(timer);
+  }, [othersRunning, refetchAllChats]);
+
   // Who the user chatted with last (agent or team), newest first.
   const recentTargets = useMemo(() => {
     const seen = new Set<string>();

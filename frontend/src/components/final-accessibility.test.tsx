@@ -608,6 +608,23 @@ describe('final accessibility contracts', () => {
     expect(localStorage.getItem('chatSession:agent-1')).toBe('');
   });
 
+  it('keeps re-reading the chat list while a chat with another agent is running', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      harness.resources.set('/agents', { data: [{ id: 'agent-1', name: 'Agent One' }, { id: 'agent-2', name: 'Agent Two' }] });
+      harness.resources.set('/sessions/chats', {
+        data: [{ id: 's-bg', title: 'Background', message_count: 1, kind: 'agent', agent_id: 'agent-2', team_id: null, running: true }],
+      });
+      renderRoute(<Home />);
+      expect(screen.getByTestId('running-s-bg')).toBeInTheDocument();
+      harness.refetch.mockClear();
+      await act(async () => { vi.advanceTimersByTime(4_100); });
+      expect(harness.refetch).toHaveBeenCalledWith({ silent: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the Home header on one compact mobile row', () => {
     renderRoute(<Home />);
 
