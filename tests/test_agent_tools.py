@@ -237,3 +237,30 @@ async def test_call_agent_is_disabled_inside_durable_task_runs(monkeypatch):
         reset_execution_context(token)
 
     assert 'unavailable inside durable task runs' in out
+
+
+@pytest.mark.asyncio
+async def test_list_agents_includes_the_callers_sub_agents(monkeypatch):
+    # create_agent saves the new agent as a sub-agent of the caller, so the
+    # caller must see it in list_agents (it used to be hidden).
+    from cognitrix.tools.misc import list_agents
+
+    class FakeLLM:
+        provider, model = 'anthropic', 'claude-test'
+
+    class FakeAgent:
+        def __init__(self, agent_id, name):
+            self.id, self.name, self.system_prompt, self.llm = agent_id, name, '', FakeLLM()
+
+    parent = FakeAgent('p1', 'Parent')
+
+    async def fake_list(parent_id=None):
+        if parent_id == 'p1':
+            return [FakeAgent('c1', 'Coder'), parent]
+        return [parent]
+
+    monkeypatch.setattr('cognitrix.agents.Agent.list_agents', staticmethod(fake_list))
+
+    out = (await list_agents.run(parent=parent)).content
+    assert '2 agent(s):' in out
+    assert '- Coder [anthropic/claude-test]' in out

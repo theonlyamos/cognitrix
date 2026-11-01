@@ -28,7 +28,7 @@ def str_or_file(string):
     if len(string) > 100:
         return string
     if Path(string).is_file() or Path(os.curdir, string).is_file():
-        with open(Path(string)) as file:
+        with open(Path(string), encoding='utf-8') as file:
             return file.read()
     return string
 

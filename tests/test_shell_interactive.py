@@ -184,8 +184,8 @@ def test_run_shell_command_uses_devnull_and_timeout(monkeypatch):
 
     class Result:
         returncode = 0
-        stdout = "ok"
-        stderr = ""
+        stdout = b"ok"
+        stderr = b""
 
     def fake_run(cmd, **kwargs):
         captured.update(kwargs)
