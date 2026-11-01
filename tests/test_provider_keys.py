@@ -4,6 +4,11 @@ import json
 import pytest
 from fastapi import HTTPException
 
+# Obviously fake, low-entropy keys so secret scanners don't flag them.
+KEY_A = 'fake' + 'x' * 12 + '9876'
+KEY_B = 'fake' + 'y' * 12 + '1234'
+KEY_C = 'fake' + 'z' * 12 + '4444'
+
 
 @pytest.fixture
 async def db(tmp_path, monkeypatch):
@@ -61,16 +66,16 @@ async def test_admin_saves_key_sealed_and_engine_uses_it(db):
     assert listing['can_edit'] is True
     assert _row(listing, 'groq')['source'] == 'none'
 
-    row = await providers.save_provider_key('groq', providers.KeyBody(api_key=' gsk-saved-key-9876 '), admin)
+    row = await providers.save_provider_key('groq', providers.KeyBody(api_key=f' {KEY_A} '), admin)
     assert row['source'] == 'saved'
     assert row['hint'] == '…9876'
 
     on_disk = (db / 'provider_keys.json').read_text()
-    assert 'gsk-saved-key-9876' not in on_disk
+    assert KEY_A not in on_disk
     assert json.loads(on_disk)['groq'].startswith('enc:v1:')
 
-    assert _resolve_runtime_config('groq')['api_key'] == 'gsk-saved-key-9876'
-    assert 'gsk-saved-key' not in repr(await providers.list_provider_keys(admin))
+    assert _resolve_runtime_config('groq')['api_key'] == KEY_A
+    assert KEY_A not in repr(await providers.list_provider_keys(admin))
 
     row = await providers.remove_provider_key('groq', admin)
     assert row['source'] == 'none'
@@ -81,11 +86,11 @@ async def test_admin_saves_key_sealed_and_engine_uses_it(db):
 async def test_environment_key_wins_and_cannot_be_overwritten(db, monkeypatch):
     from cognitrix.api.routes import providers
 
-    monkeypatch.setenv('OPENAI_API_KEY', 'sk-env-key-123456')
+    monkeypatch.setenv('OPENAI_API_KEY', 'fake' + 'e' * 12)
     admin = _ctx(await _user('Ada', 'ada@example.com'))
     assert _row(await providers.list_provider_keys(admin), 'openai')['source'] == 'env'
     with pytest.raises(HTTPException) as err:
-        await providers.save_provider_key('openai', providers.KeyBody(api_key='sk-other-123456'), admin)
+        await providers.save_provider_key('openai', providers.KeyBody(api_key='fake' + 'o' * 12), admin)
     assert err.value.status_code == 409
 
 
@@ -96,7 +101,7 @@ async def test_only_admin_can_change_keys(db):
     other = _ctx(await _user('Bob', 'bob@example.com'))
     assert (await providers.list_provider_keys(other))['can_edit'] is False
     with pytest.raises(HTTPException) as err:
-        await providers.save_provider_key('groq', providers.KeyBody(api_key='gsk-bob-key-1234'), other)
+        await providers.save_provider_key('groq', providers.KeyBody(api_key=KEY_B), other)
     assert err.value.status_code == 403
     with pytest.raises(HTTPException) as err:
         await providers.remove_provider_key('groq', other)
@@ -125,10 +130,10 @@ async def test_saved_key_counts_for_onboarding_and_voice_and_trust_check(db):
     from cognitrix.providers.saved_keys import set_saved_key
     from cognitrix.providers.transcription import server_key
 
-    set_saved_key('groq', 'gsk-saved-key-4444')
+    set_saved_key('groq', KEY_C)
     assert onboarding._has_server_key('groq') is True
-    assert server_key('groq') == 'gsk-saved-key-4444'
-    assert 'groq' in _server_held_keys()['gsk-saved-key-4444']
+    assert server_key('groq') == KEY_C
+    assert 'groq' in _server_held_keys()[KEY_C]
 
 
 async def test_test_endpoint_reports_missing_key(db):
