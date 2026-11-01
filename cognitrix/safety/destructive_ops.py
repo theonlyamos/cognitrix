@@ -105,6 +105,21 @@ class DestructiveOpDetector:
             RiskAssessment with level and categories
         """
         tool_name_lower = tool_name.lower()
+
+        # Shell tools are rated by what the command actually does.
+        from cognitrix.common.shell import (
+            SHELL_HELPER_TOOL_NAMES,
+            SHELL_TOOL_NAMES,
+            shell_risk,
+        )
+        normalized = tool_name_lower.replace('_', ' ').strip()
+        if normalized in SHELL_HELPER_TOOL_NAMES:
+            return RiskAssessment(RiskLevel.LOW, [], 'Reads or stops a background command')
+        if normalized in SHELL_TOOL_NAMES:
+            level, details = shell_risk(params)
+            category = [] if level == 'low' else ['code_execution']
+            return RiskAssessment(RiskLevel(level), category, details)
+
         params_str = str(params).lower()
         combined = f"{tool_name_lower} {params_str}"
 

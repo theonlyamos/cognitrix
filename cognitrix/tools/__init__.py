@@ -13,8 +13,10 @@ from cognitrix.tools.misc import (
     WebFetch,
     Write,
     bash,
+    bash_output,
     call_agent,
     create_agent,
+    kill_shell,
     list_agents,
     open_file,
 )
@@ -35,7 +37,7 @@ __all__ = [
     'Tavily_Search',
     'open_file',
     'create_agent', 'call_agent', 'create_new_team', 'create_task', 'assign_task', 'generate_image', 'list_agents',
-    'bash',
+    'bash', 'bash_output', 'kill_shell',
     'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool',
     'load_skill', 'ask_user'
 ]

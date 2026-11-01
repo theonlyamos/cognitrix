@@ -188,8 +188,8 @@ export default function AgentPage() {
 
       {selected.has('Bash') && (
         <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
-          Shell commands can only run inside the working folder
-          {systemInfo?.working_folder ? <> <span className="font-mono text-[12px] text-fg">{systemInfo.working_folder}</span></> : null}, and risky ones wait for your approval.{' '}
+          Shell commands start in the working folder
+          {systemInfo?.working_folder ? <> <span className="font-mono text-[12px] text-fg">{systemInfo.working_folder}</span></> : null}. Read-only commands run right away; anything else waits for your approval.{' '}
           {systemInfo && !systemInfo.desktop && 'On a shared server, the shell is off in chats and tasks; it works in the desktop app and the CLI. '}
           <Link to="/settings" className="text-accent-ink hover:underline">Change</Link>
         </p>

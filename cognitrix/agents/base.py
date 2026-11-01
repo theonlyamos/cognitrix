@@ -475,6 +475,9 @@ class AgentManager:
                 internal_params = set(getattr(tool, 'internal_params', None) or [])
                 args = {k: v for k, v in dict(args).items() if k not in internal_params}
                 tool_call = ToolCall(tool_name=assigned_tool.name, params=args)
+                # Set only when a person approved this exact call (not auto
+                # approval); Bash needs it before using the full shell.
+                person_approved = False
                 risk = self.detector.analyze(assigned_tool.name, args)
                 mcp_risk = await self._mcp_write_risk(assigned_tool, args)
                 if mcp_risk is not None and _RISK_ORDER[mcp_risk.risk_level] > _RISK_ORDER[risk.risk_level]:
@@ -511,6 +514,7 @@ class AgentManager:
 
                     if approval.cached:
                         status_print("   (Using cached approval)")
+                    person_approved = not getattr(approval, "auto", False)
 
                 status_print(f"\nRunning tool '{tool.name.title()}' with parameters: {args}")
 
@@ -521,6 +525,8 @@ class AgentManager:
                     args['parent'] = self.agent
                 if 'interface' in internal_params:
                     args['interface'] = interface
+                if 'approved' in internal_params:
+                    args['approved'] = person_approved
 
                 jobs.append(
                     (
