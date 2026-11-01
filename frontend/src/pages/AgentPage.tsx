@@ -15,7 +15,24 @@ import { listMcpServers, type McpServer } from '@/lib/mcp';
 import FolderChips from '@/components/FolderChips';
 import { folderInfo, type WorkFolder } from '@/lib/folders';
 
-interface Tool { name: string; description?: string; category?: string }
+interface Tool { name: string; description?: string; category?: string; default_permission?: 'asks' | 'runs' | 'depends' }
+type AgentLevel = 'auto' | 'ask' | 'allow';
+type ToolLevel = 'auto' | 'allow' | 'ask' | 'deny';
+
+const AGENT_LEVELS: { value: AgentLevel; label: string; help: string }[] = [
+  { value: 'auto', label: 'Ask before risky actions', help: 'Deleting, overwriting files, sending things outside the app and most shell commands wait for your approval. Everything else runs.' },
+  { value: 'ask', label: 'Ask before every action', help: 'Every tool call waits for your approval, except asking you a question.' },
+  { value: 'allow', label: "Don't ask", help: 'Tools run without asking, including deletes and sends. Commands that need the full shell still ask each time.' },
+];
+
+const TOOL_LEVELS: { value: ToolLevel; label: string }[] = [
+  { value: 'auto', label: 'Default' },
+  { value: 'allow', label: 'Always allow' },
+  { value: 'ask', label: 'Ask first' },
+  { value: 'deny', label: 'Never' },
+];
+
+const DEFAULT_NOTE: Record<string, string> = { asks: 'asks', runs: 'runs', depends: 'depends' };
 interface AgentData {
   id?: string;
   name?: string;
@@ -25,6 +42,8 @@ interface AgentData {
   mcp_servers?: string[];
   folders?: WorkFolder[] | null;
   can_request_folders?: boolean;
+  permission_level?: AgentLevel;
+  tool_permissions?: Record<string, ToolLevel>;
 }
 
 export default function AgentPage() {
@@ -59,6 +78,8 @@ export default function AgentPage() {
   useEffect(() => {
     folderInfo().then((i) => setWorkingFolder(i.working_folder)).catch(() => {});
   }, []);
+  const [permissionLevel, setPermissionLevel] = useState<AgentLevel>('auto');
+  const [toolPermissions, setToolPermissions] = useState<Record<string, ToolLevel>>({});
 
   useEffect(() => {
     listMcpServers().then((l) => setMcpServers(Array.isArray(l?.servers) ? l.servers : [])).catch(() => setMcpServers([]));
@@ -78,6 +99,8 @@ export default function AgentPage() {
     setSelectedServers(existing.mcp_servers || []);
     setFolders(existing.folders ?? null);
     setCanRequestFolders(existing.can_request_folders ?? true);
+    setPermissionLevel(existing.permission_level || 'auto');
+    setToolPermissions(existing.tool_permissions || {});
   }, [existing]);
 
   const toolsByCategory = useMemo(() => {
@@ -104,6 +127,21 @@ export default function AgentPage() {
       return next;
     });
 
+  const setToolLevel = (n: string, level: ToolLevel) =>
+    setToolPermissions((cur) => {
+      const next = { ...cur };
+      if (level === 'auto') delete next[n];
+      else next[n] = level;
+      return next;
+    });
+
+  // What "Default" does for a tool under the agent-wide level.
+  const defaultNote = (t: Tool) => {
+    if (permissionLevel === 'allow') return 'runs';
+    if (permissionLevel === 'ask') return 'asks';
+    return DEFAULT_NOTE[t.default_permission || ''] || '';
+  };
+
   const save = async () => {
     if (!name.trim()) return setError('Give the agent a name.');
     if (!model.trim()) return setError('Choose a model.');
@@ -123,10 +161,22 @@ export default function AgentPage() {
           ...(baseUrl ? { base_url: baseUrl } : {}),
           ...(maxTokens ? { max_tokens: Number(maxTokens) } : {}),
         },
-        tools: (toolList || []).filter((t) => selected.has(t.name)),
+        tools: (toolList || [])
+          .filter((t) => selected.has(t.name))
+          .map((t) => {
+            const rest: Tool = { ...t };
+            delete rest.default_permission;
+            return rest;
+          }),
         mcp_servers: selectedServers,
         folders,
         can_request_folders: canRequestFolders,
+        permission_level: permissionLevel,
+        // Levels for tools the agent no longer has are dropped, except MCP
+        // tools, which aren't in the list but can still be set by name.
+        tool_permissions: Object.fromEntries(
+          Object.entries(toolPermissions).filter(([n]) => selected.has(n) || !(toolList || []).some((t) => t.name === n)),
+        ),
       };
       const response = await api.post('/agents', payload);
       const id = agentId || response.data?.id;
@@ -204,9 +254,17 @@ export default function AgentPage() {
 
       {selected.has('Bash') && (
         <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
-          Shell commands can only run inside the agent's working folders (set below), and risky ones wait for your approval.{' '}
+          Shell commands start in the agent's primary working folder (set below) and only run inside its working folders. Read-only commands run right away; anything else waits for your approval.{' '}
           {systemInfo && !systemInfo.desktop && 'On a shared server, the shell is off in chats and tasks; it works in the desktop app and the CLI. '}
           <Link to="/settings" className="text-accent-ink hover:underline">Change</Link>
+        </p>
+      )}
+      {selected.has('Coding Agent') && (
+        <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
+          Hands coding jobs to a coding agent on this computer, which works in the background in the working folder. Every run waits for your approval.{' '}
+          {systemInfo && (systemInfo.coding_agents?.length
+            ? <>Installed: <span className="font-mono text-[12px] text-fg">{systemInfo.coding_agents.join(', ')}</span>.</>
+            : 'None installed yet: install Claude Code, Codex or Gemini CLI and sign in once.')}
         </p>
       )}
       <Field label={`TOOLS · ${selected.size} selected`} composite>
@@ -217,20 +275,53 @@ export default function AgentPage() {
             toolsByCategory.map(([cat, tools]) => (
               <div key={cat} className="border-b border-line last:border-b-0">
                 <div className="bg-panel-2 px-3 py-1.5 font-mono text-[10px] tracking-[0.14em] text-fg-dim">{cat.toUpperCase()}</div>
-                {tools.map((t) => (
-                  <label key={t.name} className="flex cursor-pointer items-start gap-2.5 px-3 py-2 hover:bg-panel-2">
-                    <input type="checkbox" checked={selected.has(t.name)} onChange={() => toggleTool(t.name)}
-                      className="mt-0.5 accent-[var(--accent)]" />
-                    <div className="min-w-0">
-                      <div className="font-mono text-[12px]">{t.name}</div>
-                      {t.description && <div className="truncate text-[12px] text-fg-dim">{t.description}</div>}
+                {tools.map((t) => {
+                  const level = toolPermissions[t.name] || 'auto';
+                  const note = defaultNote(t);
+                  return (
+                    <div key={t.name} className="flex items-start gap-2 px-3 py-2 hover:bg-panel-2">
+                      <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2.5">
+                        <input type="checkbox" checked={selected.has(t.name)} onChange={() => toggleTool(t.name)}
+                          className="mt-0.5 accent-[var(--accent)]" />
+                        <div className="min-w-0">
+                          <div className="font-mono text-[12px]">{t.name}</div>
+                          {t.description && <div className="truncate text-[12px] text-fg-dim">{t.description}</div>}
+                        </div>
+                      </label>
+                      {selected.has(t.name) && (
+                        <Select
+                          aria-label={`Permission for ${t.name}`}
+                          value={level}
+                          onChange={(e) => setToolLevel(t.name, e.target.value as ToolLevel)}
+                          className={cn(
+                            'h-9 w-36 shrink-0 px-2 text-[12px] md:h-8',
+                            level === 'deny' && 'text-danger-ink',
+                            level !== 'auto' && 'border-accent',
+                          )}
+                        >
+                          {TOOL_LEVELS.map((l) => (
+                            <option key={l.value} value={l.value}>
+                              {l.value === 'auto' && note ? `Default (${note})` : l.label}
+                            </option>
+                          ))}
+                        </Select>
+                      )}
                     </div>
-                  </label>
-                ))}
+                  );
+                })}
               </div>
             ))
           )}
         </div>
+      </Field>
+
+      <Field label="PERMISSIONS">
+        <Select aria-label="Permission level" value={permissionLevel} onChange={(e) => setPermissionLevel(e.target.value as AgentLevel)}>
+          {AGENT_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+        </Select>
+        <p className={cn('mt-1.5 text-[12px]', permissionLevel === 'allow' ? 'text-danger-ink' : 'text-fg-dim')}>
+          {AGENT_LEVELS.find((l) => l.value === permissionLevel)?.help} Set a single tool to always allow, ask first or never in the tool list above; that wins over this.
+        </p>
       </Field>
 
       <Field label={`MCP SERVERS · ${selectedServers.length} selected`} composite>

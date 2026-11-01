@@ -36,6 +36,9 @@ const harness = vi.hoisted(() => ({
   sseConnected: true,
   sseError: null as Error | null,
   sseOnMessage: null as null | ((event: Record<string, unknown>) => void),
+  rotateStream: vi.fn(),
+  followPath: null as string | null,
+  followOnEvent: null as null | ((frame: { data: Record<string, unknown> }) => void),
   taskRunOnEvent: null as null | ((event: Record<string, unknown>) => void),
   taskRunId: undefined as string | null | undefined,
   taskRunConnected: true,
@@ -105,7 +108,19 @@ vi.mock('@/hooks/useSSE', () => ({
       error: harness.sseError,
       reconnect: vi.fn(),
       streamId: 'browser-stream-1',
+      rotateStream: harness.rotateStream,
     };
+  },
+}));
+
+vi.mock('@/hooks/useEventStream', () => ({
+  useEventStream: ({ path, onEvent }: {
+    path: string | null;
+    onEvent?: (frame: { data: Record<string, unknown> }) => void;
+  }) => {
+    harness.followPath = path;
+    harness.followOnEvent = onEvent ?? null;
+    return { isConnected: !!path, error: null, connect: vi.fn(), disconnect: vi.fn(), reconnect: vi.fn() };
   },
 }));
 
@@ -502,7 +517,40 @@ describe('final accessibility contracts', () => {
     expect(harness.stopRunningTools).toHaveBeenCalledTimes(1);
   });
 
-  it('prevents switching agents while a turn is active', async () => {
+  it('reattaches to a conversation that kept running while the user was away', async () => {
+    harness.resources.set('/sessions/agents/agent-1?exclude_tasks=true', {
+      data: [{ id: 's-run', title: 'Long research', updated_at: '2026-11-01T09:00:00Z', message_count: 2 }],
+    });
+    localStorage.setItem('chatSession:agent-1', 's-run');
+    harness.apiGet.mockImplementation((path: string) => Promise.resolve(
+      path === '/agents/runs'
+        ? { data: { runs: [{ run_id: 'r1', session_id: 's-run', agent_id: 'agent-1', status: 'running', started_at: '2026-11-01T09:00:00Z', prompt: 'Research it' }] } }
+        : { data: [] },
+    ));
+    renderRoute(<Home />);
+
+    await waitFor(() => expect(harness.followPath).toBe('/agents/runs/s-run/events'));
+    act(() => harness.followOnEvent?.({ data: {
+      type: 'run_attached', run_id: 'r1', session_id: 's-run', prompt: 'Research it', started_at: '2026-11-01T09:00:00Z',
+    } }));
+    expect(harness.setMessages).toHaveBeenLastCalledWith([
+      expect.objectContaining({ role: 'user', content: 'Research it' }),
+    ]);
+    expect(await screen.findByRole('button', { name: 'Stop response' })).toBeInTheDocument();
+    expect(await screen.findByTestId('running-s-run')).toBeInTheDocument();
+
+    act(() => harness.followOnEvent?.({ data: { type: 'generate', content: 'So far…', session_id: 's-run' } }));
+    expect(harness.appendToLastMessage).toHaveBeenCalledWith('So far…');
+    // Events for another conversation are ignored.
+    act(() => harness.followOnEvent?.({ data: { type: 'generate', content: 'other', session_id: 's-other' } }));
+    expect(harness.appendToLastMessage).not.toHaveBeenCalledWith('other');
+
+    act(() => harness.followOnEvent?.({ data: { type: 'turn_complete', content: '', session_id: 's-run' } }));
+    await waitFor(() => expect(harness.followPath).toBeNull());
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeInTheDocument();
+  });
+
+  it('lets you switch agents while a turn keeps running on the server', async () => {
     harness.resources.set('/agents', {
       data: [
         { id: 'agent-1', name: 'Agent One' },
@@ -512,10 +560,16 @@ describe('final accessibility contracts', () => {
     const user = userEvent.setup();
     renderRoute(<Home />);
 
-    await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Keep this turn attached');
+    harness.rotateStream.mockReset();
+    await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Keep this turn running');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(screen.getByRole('combobox', { name: 'Active agent' })).toBeDisabled();
+    const picker = screen.getByRole('combobox', { name: 'Active agent' });
+    expect(picker).not.toBeDisabled();
+    await user.selectOptions(picker, 'agent-2');
+    // The old turn keeps its stream; this page moves to a fresh one.
+    expect(harness.rotateStream).toHaveBeenCalledTimes(1);
+    expect(harness.apiPost).not.toHaveBeenCalledWith('/agents/stop', expect.anything());
   });
 
   it('keeps the Home header on one compact mobile row', () => {

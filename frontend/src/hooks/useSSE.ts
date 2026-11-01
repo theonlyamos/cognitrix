@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useEventStream } from '@/hooks/useEventStream';
 
 const CHAT_EVENT_TYPES = new Set([
@@ -14,6 +14,7 @@ const CHAT_EVENT_TYPES = new Set([
   'turn_complete',
   'turn_stopped',
   'attachments_ingested',
+  'run_resync',
 ]);
 
 export interface SSEEvent {
@@ -49,9 +50,10 @@ export function useSSE(options: UseSSEOptions = {}) {
     enabled = true,
   } = options;
   const [lastEvent, setLastEvent] = useState<SSEEvent | null>(null);
-  const streamIdRef = useRef<string | null>(null);
-  if (!streamIdRef.current) streamIdRef.current = crypto.randomUUID();
-  const streamId = streamIdRef.current;
+  const [streamId, setStreamId] = useState(() => crypto.randomUUID());
+  // A fresh browser stream lets a new turn start while the previous one
+  // keeps running on the server under the old stream.
+  const rotateStream = useCallback(() => setStreamId(crypto.randomUUID()), []);
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
 
@@ -72,5 +74,5 @@ export function useSSE(options: UseSSEOptions = {}) {
     },
   });
 
-  return { ...stream, lastEvent, streamId };
+  return { ...stream, lastEvent, streamId, rotateStream };
 }

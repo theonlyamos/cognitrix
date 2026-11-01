@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { useSystemInfo } from '@/hooks/useSystemInfo';
 import { VoiceSettingsCard } from '@/components/VoiceSettingsCard';
 import { McpServersCard } from '@/components/McpServersCard';
+import { CredentialsCard } from '@/components/CredentialsCard';
 
 function Card({ title, children, className, id }: { title: string; children: ReactNode; className?: string; id?: string }) {
   return (
@@ -207,6 +208,10 @@ export default function Settings() {
 
           <Card title="MCP servers" id="mcp-servers" className="lg:col-span-2">
             <McpServersCard />
+          </Card>
+
+          <Card title="Saved sign-ins" id="saved-sign-ins" className="lg:col-span-2">
+            <CredentialsCard />
           </Card>
 
           <Card title="Voice input" id="voice-input">

@@ -389,6 +389,8 @@ _ARTIFACT_MIGRATION_COLUMNS = (
 _AGENT_MIGRATION_COLUMNS = (
     ('owner_id', 'TEXT'),
     ('folders', 'TEXT'), ('can_request_folders', 'BOOLEAN'),
+    ('permission_level', 'TEXT'),
+    ('tool_permissions', 'TEXT'),
 )
 
 _SESSION_MIGRATION_COLUMNS = (
@@ -675,6 +677,33 @@ async def _migrate_relational_task_schema(database) -> None:
     await _verify_relational_event_index(database, dbms)
 
 
+async def _seal_legacy_secrets(log) -> None:
+    """Encrypt MCP header/env tokens and voice keys saved as plain text.
+
+    Rows written before encryption hold plain JSON. Idempotent: sealed values
+    are skipped, so this is cheap on every start.
+    """
+    from cognitrix.common.secret_box import SecretBoxError, is_sealed, seal
+    from cognitrix.models.mcp_server import MCPServer
+    from cognitrix.models.voice_settings import VoiceSettings
+
+    jobs = ((MCPServer, ('headers', 'env')), (VoiceSettings, ('api_keys',)))
+    try:
+        for model, fields in jobs:
+            for row in await model.all() or []:
+                changes = {
+                    name: seal(getattr(row, name))
+                    for name in fields
+                    if getattr(row, name, '') and not is_sealed(getattr(row, name))
+                }
+                if changes:
+                    await model.update_one({'id': row.id}, changes)
+    except SecretBoxError:
+        log.exception("Could not encrypt saved secrets; check COGNITRIX_SECRETS_KEY")
+    except Exception:
+        log.exception("Could not encrypt older saved secrets")
+
+
 async def _ensure_schema():
     """Additive schema upkeep odbms can't do itself on sqlite.
 
@@ -698,6 +727,7 @@ async def _ensure_schema():
 
     from cognitrix.artifacts import Artifact, DocumentArtifact
     from cognitrix.models.api_key import APIKey
+    from cognitrix.models.credential import Credential
     from cognitrix.models.mcp_server import MCPServer
     from cognitrix.models.voice_settings import VoiceSettings
     from cognitrix.session_ownership import SessionOwnership
@@ -743,6 +773,7 @@ async def _ensure_schema():
         TriggerEvent,
         AgentNotification,
         MCPServer,
+        Credential,
     ):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)
@@ -770,6 +801,8 @@ async def _ensure_schema():
         result = create()
         if hasattr(result, '__await__'):
             await result
+
+    await _seal_legacy_secrets(log)
 
     if dbms in ('postgresql', 'mysql'):
         await _migrate_relational_task_schema(DBMS.Database)

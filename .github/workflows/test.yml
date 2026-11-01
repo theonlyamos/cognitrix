@@ -55,4 +55,4 @@ jobs:
       - name: Install dependencies
         run: poetry install --with dev
       - name: Test
-        run: poetry run pytest -q tests/test_windows_encoding.py tests/test_agent_tools.py tests/test_turn_loop.py
+        run: poetry run pytest -q tests/test_windows_encoding.py tests/test_agent_tools.py tests/test_turn_loop.py tests/test_shell_tool.py

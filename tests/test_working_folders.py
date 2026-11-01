@@ -101,6 +101,22 @@ async def test_bash_starts_in_the_primary_folder_and_can_use_other_folders(two_f
     assert 'Command refused' in refused.content
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='uses POSIX ls/pwd')
+async def test_bash_cd_is_remembered_and_stays_in_its_folder(two_folders):
+    from cognitrix.tools.misc import bash
+
+    project, notes, _ = two_folders
+    (project / 'sub').mkdir()
+    await bash.run(command='cd sub')
+    assert (await bash.run(command='pwd')).content.strip() == str((project / 'sub').resolve())
+    out = await bash.run(command='cd ../..')
+    assert 'outside the working folder' in out.content
+    # A one-off run in another folder doesn't move the remembered directory.
+    there = await bash.run(command='pwd', working_dir=str(notes))
+    assert there.content.strip() == str(notes.resolve())
+    assert (await bash.run(command='pwd')).content.strip() == str((project / 'sub').resolve())
+
+
 def test_shell_approval_mentions_a_read_only_folder(two_folders):
     from cognitrix.safety.destructive_ops import DestructiveOpDetector
 

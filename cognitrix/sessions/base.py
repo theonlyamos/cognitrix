@@ -304,7 +304,17 @@ class Session(Model):
         await self.save()
         logger.info("Compacted session history: folded %s turns into a summary", len(fold_turns))
 
-    async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws', 'compat'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None, tool_context=None, record_history: bool | None = None, persist_history: bool | None = None, compact_history: bool | None = None):
+    async def __call__(self, message: str | dict, agent: 'Agent', *args: Any, **kwargs: Any):
+        # The action reviewer reads what this turn was asked to do.
+        from cognitrix.safety.action_reviewer import _goal_text, turn_goal
+
+        token = turn_goal.set(_goal_text(message))
+        try:
+            return await self._run_turn(message, agent, *args, **kwargs)
+        finally:
+            turn_goal.reset(token)
+
+    async def _run_turn(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws', 'compat'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None, tool_context=None, record_history: bool | None = None, persist_history: bool | None = None, compact_history: bool | None = None):
 
         # ``save_history`` remains the compatibility umbrella.  Task execution
         # records the assistant/tool protocol in memory while independently
@@ -359,6 +369,22 @@ class Session(Model):
                         })
             except Exception:
                 pass
+
+        # Bash's background mode and the Coding Agent tool need the two
+        # background helpers; agents that have either get them for the turn
+        # without changing the saved agent.
+        try:
+            names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
+            if names & {'bash', 'coding agent'}:
+                from cognitrix.tools.base import ToolManager
+                helpers = [
+                    t for t in (ToolManager.get_by_name(n) for n in ('bash_output', 'kill_shell'))
+                    if t is not None and t.name.lower() not in names
+                ]
+                if helpers:
+                    agent = agent.model_copy(update={'tools': [*agent.tools, *helpers]})
+        except Exception:
+            pass
 
         # Add the new message to the history before building the prompt
         if wsquery is None:
@@ -451,8 +477,11 @@ class Session(Model):
         prompt = await agent.get_context_manager().build_prompt(agent, self)
         prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders))
 
+        # Tools set to "never" for this agent aren't offered to the model
+        # (the agent loop refuses them too, see safety/permissions.py).
+        from cognitrix.safety.permissions import visible_tools
         formatted_tools = [
-            tool.to_dict_format() for tool in agent.tools
+            tool.to_dict_format() for tool in visible_tools(agent, agent.tools)
             if not tool.supported_interfaces or interface in tool.supported_interfaces
         ]
         # Only advertise tools to models with native tool-use; otherwise the tool

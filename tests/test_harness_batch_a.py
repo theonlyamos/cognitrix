@@ -8,9 +8,8 @@ class TestRiskOrdinal:
         # A code-execution tool (HIGH) that matches no MEDIUM category must be
         # rated HIGH — the old lexicographic compare left it at LOW (auto-approved).
         detector = DestructiveOpDetector()
-        # Without the shell tool's own rules, every shell command asks.
-        risk = detector.analyze("bash", {"command": "ls"})
-        assert risk.risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH) or "shell" in risk.categories
+        risk = detector.analyze("bash", {"command": "rm -rf build"})
+        assert risk.risk_level == RiskLevel.HIGH
 
     def test_overwriting_write_flagged(self, tmp_path):
         detector = DestructiveOpDetector()

@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any
 
 from odbms import Model
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from cognitrix.models.tool import Tool
 from cognitrix.providers.base import LLM
@@ -98,6 +98,33 @@ class Agent(Model):
 
     can_request_folders: bool = True
     """Whether the agent may ask (with approval) for more folders or write access."""
+
+    permission_level: str = 'auto'
+    """How the agent asks before acting: auto (only risky actions ask), ask
+    (every action asks) or allow (nothing asks). See cognitrix/safety/permissions.py."""
+
+    tool_permissions: dict[str, str] = Field(default_factory=dict)
+    """Per-tool levels that override permission_level: allow, ask or deny."""
+
+    @field_validator('permission_level', mode='before')
+    @classmethod
+    def _permission_level_default(cls, value):
+        # Agents saved before these columns existed load them as NULL.
+        return 'auto' if value in (None, '') else value
+
+    @field_validator('tool_permissions', mode='before')
+    @classmethod
+    def _tool_permissions_default(cls, value):
+        if value in (None, ''):
+            return {}
+        if isinstance(value, str):
+            import json
+
+            try:
+                value = json.loads(value)
+            except ValueError:
+                return {}
+        return value if isinstance(value, dict) else {}
 
     is_sub_agent: bool = Field(default=False)
     """Whether this agent is a sub agent for another agent"""

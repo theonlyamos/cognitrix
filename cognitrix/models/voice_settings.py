@@ -14,4 +14,5 @@ class VoiceSettings(Model):
     provider: str = ''
     model: str = ''
     api_keys: str = ''
-    """JSON object of provider id -> API key the user pasted."""
+    """JSON object of provider id -> API key the user pasted, encrypted
+    (``cognitrix.common.secret_box``)."""

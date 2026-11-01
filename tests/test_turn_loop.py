@@ -1246,7 +1246,7 @@ async def test_risky_tool_denied_over_web(monkeypatch):
     )
 
     res = await agent.call_tools(
-        [{"name": "bash", "arguments": {"command": "ls"}, "tool_call_id": "1"}],
+        [{"name": "bash", "arguments": {"command": "rm -rf build"}, "tool_call_id": "1"}],
         interface="web",
     )
     assert "denied" in res["result"][0]["data"].lower()
