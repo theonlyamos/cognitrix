@@ -411,17 +411,20 @@ async def test_worker_reconnects_allowed_mcp_server_for_db_hydrated_tool(monkeyp
                 },
             ]
 
+    from cognitrix.mcp.server_manager import MCPServerConfig, MCPTransportType
+
     client = FakeClient()
-    config = type("Config", (), {"enabled": True})()
+    config = MCPServerConfig(name="docs", transport=MCPTransportType.HTTP, url="https://docs.example.com/mcp")
 
     async def get_client():
         return client
 
+    async def agent_servers(agent):
+        # Servers now resolve through the per-owner registry.
+        return [config] if "docs" in (agent.mcp_servers or []) else []
+
     monkeypatch.setattr("cognitrix.mcp.client.get_dynamic_client", get_client)
-    monkeypatch.setattr(
-        "cognitrix.mcp.server_manager.mcp_server_manager.get_server",
-        lambda name: config if name == "docs" else None,
-    )
+    monkeypatch.setattr("cognitrix.mcp.registry.agent_servers", agent_servers)
 
     registry = await build_task_capability_registry([agent], actor_user_id=None)
     resolved = registry.resolver_for("agent-mcp")("docs_search")

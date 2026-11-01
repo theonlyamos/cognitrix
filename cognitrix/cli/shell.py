@@ -18,8 +18,10 @@ from prompt_toolkit.history import FileHistory, InMemoryHistory
 from rich import print as rich_print
 from rich.console import Console
 from rich.panel import Panel
+from rich.text import Text
 
 from cognitrix.agents.base import AgentManager
+from cognitrix.common.encoding import decode_output, utf8_child_env
 from cognitrix.skills.executor import SkillExecutor
 from cognitrix.skills.manager import get_skill_manager
 from cognitrix.skills.models import SkillEventType
@@ -135,19 +137,22 @@ def run_shell_command(command: str) -> bool:
         # stdin=DEVNULL: a command that tries to read stdin fails fast instead
         # of blocking forever on the REPL's own input. timeout: bound runtime.
         result = subprocess.run(
-            command, capture_output=True, text=True, shell=True,
+            command, capture_output=True, shell=True, env=utf8_child_env(),
             stdin=subprocess.DEVNULL, timeout=SHELL_COMMAND_TIMEOUT,
         )
+        stdout, stderr = decode_output(result.stdout), decode_output(result.stderr)
         if result.returncode == 0:
-            output = result.stdout.strip()
+            output = stdout.strip()
             if output:
-                console.print(Panel(output, title="[bold green]Shell Output", border_style="green"))
+                console.print(Panel(Text(output), title="[bold green]Shell Output", border_style="green"))
             else:
                 console.print(Panel("[dim]Command executed successfully, but no output.",
                                    title="[bold green]Shell Output", border_style="green"))
             return True
         else:
-            console.print(Panel(f"[bold red]Command failed with exit code {result.returncode}\n{result.stderr}",
+            message = Text(f"Command failed with exit code {result.returncode}\n", style="bold red")
+            message.append(stderr)
+            console.print(Panel(message,
                                title="[bold red]Shell Error", border_style="red"))
             return False
     except subprocess.TimeoutExpired:

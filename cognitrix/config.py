@@ -696,6 +696,7 @@ async def _ensure_schema():
 
     from cognitrix.artifacts import Artifact, DocumentArtifact
     from cognitrix.models.api_key import APIKey
+    from cognitrix.models.mcp_server import MCPServer
     from cognitrix.models.voice_settings import VoiceSettings
     from cognitrix.session_ownership import SessionOwnership
     from cognitrix.tasks.events import TaskRunEvent
@@ -739,6 +740,7 @@ async def _ensure_schema():
         TaskTrigger,
         TriggerEvent,
         AgentNotification,
+        MCPServer,
     ):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)

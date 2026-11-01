@@ -1,8 +1,8 @@
 import asyncio
 import json
-import re
 import logging
 import os
+import re
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, Self
 
 from odbms import Model
 from pydantic import Field
-from rich import print
 
+from cognitrix.common.encoding import status_print
 from cognitrix.errors import ExecutionControlError
 from cognitrix.providers.base import LLMResponse
 from cognitrix.safety.approval_gate import OPERATION_BLOCKED_PREFIX
@@ -554,7 +554,9 @@ class Session(Model):
                             # allowing the model to choose a storage namespace.
                             from cognitrix.artifacts import reset_session, set_session
                             from cognitrix.tools.utils import (
-                                ToolExecutionContext, reset_execution_context, set_execution_context,
+                                ToolExecutionContext,
+                                reset_execution_context,
+                                set_execution_context,
                             )
                             bound_context = tool_context or ToolExecutionContext()
                             artifact_token = set_session(
@@ -732,7 +734,7 @@ class Session(Model):
 
                         # Display timing for CLI
                         if interface == 'cli':
-                            print(f"\n[dim]Took {duration_str}[/dim]")
+                            status_print(f"\n[dim]Took {duration_str}[/dim]", markup=True)
 
                         break # Exit loop if no tools were called
 
@@ -782,7 +784,7 @@ class Session(Model):
 
             # Display timing for CLI (only if not already displayed)
             if interface == 'cli' and called_tools:
-                print(f"\n[dim]Took {duration_str}[/dim]")
+                status_print(f"\n[dim]Took {duration_str}[/dim]", markup=True)
 
             if persist_history:
                 await self.save()

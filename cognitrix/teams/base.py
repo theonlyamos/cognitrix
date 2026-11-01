@@ -1,12 +1,12 @@
 import asyncio
 import logging
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 from odbms import Model
-from rich import print
 
 from cognitrix.agents.base import Agent, Message, MessagePriority
+from cognitrix.common.encoding import status_print
 from cognitrix.tasks.base import Task, TaskStatus
 
 if TYPE_CHECKING:
@@ -81,7 +81,7 @@ class Team(Model):
                 while agent.response_list:
                     message, response = agent.response_list.pop(0)
                     processed_response = await self.process_agent_message(agent, message, response.result)
-                    print(f"{agent.name} processed message from {message.sender}: {processed_response}")
+                    status_print(f"{agent.name} processed message from {message.sender}: {processed_response}")
             await asyncio.sleep(0.1)  # Small delay to prevent busy-waiting
 
     async def create_task(self, title: str, description: str) -> Task:

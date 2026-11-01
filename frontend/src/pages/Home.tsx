@@ -6,7 +6,7 @@ import { SelectionRow } from '@/components/SelectionRow';
 import { useSSE } from '@/hooks/useSSE';
 import { useResource } from '@/hooks/useResource';
 import { api } from '@/lib/api';
-import { REASONING_LEVELS } from '@/lib/reasoning';
+import ReasoningPicker from '@/components/ReasoningPicker';
 import { AGENTS_CHANGED_EVENT } from '@/lib/providers';
 import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
@@ -1188,23 +1188,13 @@ export default function Home() {
               >
                 <span>[{bypass ? '✓' : 'x'}]</span> auto-approve
               </button>
-              <label
+              <div
                 title="How hard the model thinks before answering. Agent default uses the level set on the agent."
                 className="flex min-h-11 items-center gap-1 md:min-h-0"
               >
-                <span>reasoning:</span>
-                <select
-                  aria-label="Reasoning level"
-                  value={reasoning}
-                  onChange={(e) => changeReasoning(e.target.value)}
-                  className={cn('cursor-pointer appearance-none rounded border-none bg-transparent p-0 font-mono text-[10.5px] outline-none hover:text-fg focus-visible:ring-1 focus-visible:ring-accent', reasoning && 'text-accent-ink')}
-                >
-                  <option value="">agent default</option>
-                  {REASONING_LEVELS.map((l) => (
-                    <option key={l.value} value={l.value}>{l.label.toLowerCase()}</option>
-                  ))}
-                </select>
-              </label>
+                <span aria-hidden>reasoning:</span>
+                <ReasoningPicker value={reasoning} onChange={changeReasoning} />
+              </div>
               <button
                 type="button"
                 onClick={() => void send(input, 'task')}
