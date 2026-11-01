@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
 import { usePolling } from '@/hooks/usePolling';
@@ -12,6 +12,7 @@ import { SelectionRow } from '@/components/SelectionRow';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { TranscriptView } from '@/components/TranscriptView';
 import { TaskApprovals } from '@/components/TaskApprovals';
+import { AutomationPanel } from '@/components/AutomationPanel';
 import {
   parseChatEntries,
   parseSessionDate,
@@ -39,7 +40,17 @@ interface TaskData {
   schedule_cron?: string | null;
   next_run_at?: string | null;
   schedule_enabled?: boolean;
+  notes?: string | null;
+  wake_pending?: boolean;
+  wake_at?: string | null;
+  wake_reason?: string | null;
 }
+
+const TRIGGER_LABEL: Record<string, string> = {
+  schedule: '⏱ schedule',
+  wake: '↺ self-check',
+  webhook: '⚡ webhook',
+};
 
 // next_run_at is naive UTC — parse with an explicit Z, never as local time.
 const nextRunLocal = (s: string) => new Date(s.replace(' ', 'T') + 'Z').toLocaleString();
@@ -63,6 +74,8 @@ interface TaskRunRecord {
   result?: string | null;
   error?: string | null;
   error_code?: string | null;
+  trigger_kind?: string | null;
+  trigger_note?: string | null;
   usage?: Record<string, number | string | null> | null;
   budget?: Record<string, number | string | null> | null;
   queued_at?: string | null;
@@ -334,6 +347,8 @@ function DurableToolCalls({
  *  (task status, plan step statuses, the watched step's transcript). */
 export default function TaskDetail() {
   const { taskId } = useParams();
+  const [searchParams] = useSearchParams();
+  const [showAutomation, setShowAutomation] = useState(() => searchParams.get('automation') === '1');
   const { data: task, loading: taskLoading, refetch } = useResource<TaskData>(taskId ? `/tasks/${taskId}` : null);
   const { data: runs, loading: runsLoading, error: runsError, refetch: refetchRuns } = useResource<TaskRunRecord[]>(
     taskId ? `/tasks/${taskId}/runs` : null,
@@ -840,6 +855,11 @@ export default function TaskDetail() {
 
   const mobileActions: MobileHeaderAction[] = [
     { key: 'edit', label: 'Edit task', to: `/tasks/${taskId}/edit` },
+    {
+      key: 'automation',
+      label: showAutomation ? 'Hide notes and triggers' : 'Notes and triggers',
+      onSelect: () => setShowAutomation((v) => !v),
+    },
     ...(hasSchedule
       ? [{
           key: 'schedule',
@@ -981,6 +1001,11 @@ export default function TaskDetail() {
                     <span className={cn('font-mono text-[10.5px]', RUN_BADGE[r.status] || 'text-fg-dim')}>{r.status}</span>
                   )}
                 </div>
+                {r.trigger_kind && TRIGGER_LABEL[r.trigger_kind] && (
+                  <div className="mt-0.5 truncate font-mono text-[10.5px] text-fg-dim" title={r.trigger_note || undefined}>
+                    {TRIGGER_LABEL[r.trigger_kind]}
+                  </div>
+                )}
                 <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">
                   {r.started_at ? fmtRelative(r.started_at) : '—'}
                   {!ACTIVE_RUN.has(r.status) && fmtDuration(r.started_at, r.completed_at) ? ` · ${fmtDuration(r.started_at, r.completed_at)}` : ''}
@@ -1079,6 +1104,11 @@ export default function TaskDetail() {
           {plan.length > 0 && (
             <span className="sr-only font-mono text-[10.5px] text-fg-dim tnum md:not-sr-only">steps {stepsDone}/{plan.length}</span>
           )}
+          {task?.wake_pending && task.wake_at && (
+            <span className="sr-only font-mono text-[10.5px] text-fg-dim md:not-sr-only" title={task.wake_reason || 'next check'}>
+              ↺ check {nextRunLocal(task.wake_at)}
+            </span>
+          )}
           {hasSchedule && (
             <span className="sr-only font-mono text-[10.5px] text-fg-dim md:not-sr-only" title="schedule">
               {task?.schedule_enabled && task?.next_run_at ? `⏱ next ${nextRunLocal(task.next_run_at)}` : '⏸ schedule paused'}
@@ -1104,6 +1134,15 @@ export default function TaskDetail() {
                 {task?.schedule_enabled ? 'Pause schedule' : 'Resume schedule'}
               </Button>
             )}
+            <Button
+              variant={showAutomation ? 'subtle' : 'outline'}
+              size="sm"
+              className="hidden md:inline-flex"
+              aria-pressed={showAutomation}
+              onClick={() => setShowAutomation((v) => !v)}
+            >
+              Notes &amp; triggers
+            </Button>
             <Button asChild variant="outline" size="sm" className="hidden md:inline-flex">
               <Link to={`/tasks/${taskId}/edit`}>Edit</Link>
             </Button>
@@ -1150,6 +1189,12 @@ export default function TaskDetail() {
 
         {error && (
           <p role="alert" className="mx-6 mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
+        )}
+
+        {showAutomation && taskId && (
+          <div className="max-h-[55vh] flex-none overflow-y-auto">
+            <AutomationPanel taskId={taskId} task={task} onChanged={() => refetch({ silent: true })} />
+          </div>
         )}
 
         {selectedRun && (

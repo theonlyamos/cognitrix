@@ -38,6 +38,13 @@ const NAV = [
     ),
   },
   {
+    path: '/automations',
+    label: 'Automations',
+    icon: (p: IconProps) => (
+      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 4v5h-5" /><path d="M12 7v5l3 2" /></svg>
+    ),
+  },
+  {
     path: '/teams',
     label: 'Teams',
     icon: (p: IconProps) => (
