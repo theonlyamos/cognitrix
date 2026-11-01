@@ -9,6 +9,7 @@ and ``/agents/question`` endpoints.
 
 import asyncio
 import logging
+import weakref
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +32,16 @@ MAX_MESSAGE_CHARS = 32_000
 
 # Strong refs so running group turns are not garbage-collected.
 _TASKS: set[asyncio.Task] = set()
+# One send at a time per chat, so two tabs can't both start a turn.
+_SEND_LOCKS: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+
+
+def _send_lock(session_id: str) -> asyncio.Lock:
+    lock = _SEND_LOCKS.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SEND_LOCKS[session_id] = lock
+    return lock
 
 
 def _owner(user) -> str:
@@ -163,21 +174,35 @@ async def send_team_chat(team_id: str, body: TeamChatMessage, user=Depends(get_c
 
     run_key = _run_key(user)
     if body.session_id:
-        session = await _owned_chat(team_id, body.session_id, user)
-        running = chat_runs.get_run(run_key, str(session.id))
-        if running is not None and running.running:
-            raise HTTPException(
-                status_code=409,
-                detail='The team is still answering the last message',
-            )
-    else:
-        session = Session(team_id=str(team.id), user_id=_owner(user), group_chat=True)
+        lock = _send_lock(str(body.session_id))
+        async with lock:
+            session = await _owned_chat(team_id, body.session_id, user)
+            running = chat_runs.get_run(run_key, str(session.id))
+            if running is not None and running.running:
+                raise HTTPException(
+                    status_code=409,
+                    detail='The team is still answering the last message',
+                )
+            return await _start_turn(session, team, members, message, run_key, body)
+    session = Session(team_id=str(team.id), user_id=_owner(user), group_chat=True)
+    return await _start_turn(session, team, members, message, run_key, body)
+
+
+async def _start_turn(
+    session: Session,
+    team: Team,
+    members: list[Agent],
+    message: str,
+    run_key: str,
+    body: TeamChatMessage,
+) -> dict[str, Any]:
+    """Save the user's message and register the run before anything can yield
+    to a second send for the same chat (the caller holds its lock)."""
+    from cognitrix.providers.base import normalize_reasoning_effort
 
     history_len = len(session.chat or [])
     session.update_history(group_chat.transcript_entry(message))
     await session.save()
-
-    from cognitrix.providers.base import normalize_reasoning_effort
 
     task: asyncio.Task | None = None
 

@@ -95,10 +95,11 @@ export default function TeamChat() {
 
   useEffect(() => { void loadInfo(); }, [loadInfo]);
 
-  const loadChat = useCallback(async (id: string | null) => {
+  const loadChat = useCallback(async (id: string | null, opts: { keepStatus?: boolean } = {}) => {
     setApprovals([]);
     setQuestion(null);
-    setStatus(null);
+    // A refresh after a turn keeps its last notice (e.g. "Paused after 6 replies").
+    if (!opts.keepStatus) setStatus(null);
     setSendError(null);
     if (!id) {
       setMessages([]);
@@ -141,7 +142,7 @@ export default function TeamChat() {
     setApprovals([]);
     setQuestion(null);
     void loadInfo();
-    if (chatIdRef.current) void loadChat(chatIdRef.current);
+    if (chatIdRef.current) void loadChat(chatIdRef.current, { keepStatus: true });
   }, [loadChat, loadInfo]);
 
   const onEvent = useCallback((event: RunEvent) => {
