@@ -11,6 +11,7 @@ import { Field, PageForm } from '@/components/form';
 import { cn } from '@/lib/utils';
 import { REASONING_LEVELS } from '@/lib/reasoning';
 import { BASE_URLS, MODELS, PROVIDERS, ignoresTemperature } from '@/lib/providers';
+import { listMcpServers, type McpServer } from '@/lib/mcp';
 
 interface Tool { name: string; description?: string; category?: string }
 interface AgentData {
@@ -19,6 +20,7 @@ interface AgentData {
   system_prompt?: string;
   llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number; reasoning_effort?: string };
   tools?: Tool[];
+  mcp_servers?: string[];
 }
 
 export default function AgentPage() {
@@ -43,6 +45,12 @@ export default function AgentPage() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [mcpServers, setMcpServers] = useState<McpServer[] | null>(null);
+  const [selectedServers, setSelectedServers] = useState<string[]>([]);
+
+  useEffect(() => {
+    listMcpServers().then((l) => setMcpServers(Array.isArray(l?.servers) ? l.servers : [])).catch(() => setMcpServers([]));
+  }, []);
 
   useEffect(() => {
     if (!existing) return;
@@ -55,6 +63,7 @@ export default function AgentPage() {
     setSelected(new Set((existing.tools || []).map((t) => t.name)));
     setMaxTokens(existing.llm?.max_tokens ? String(existing.llm.max_tokens) : '');
     setBaseUrl(existing.llm?.base_url || '');
+    setSelectedServers(existing.mcp_servers || []);
   }, [existing]);
 
   const toolsByCategory = useMemo(() => {
@@ -101,7 +110,7 @@ export default function AgentPage() {
           ...(maxTokens ? { max_tokens: Number(maxTokens) } : {}),
         },
         tools: (toolList || []).filter((t) => selected.has(t.name)),
-        mcp_servers: [],
+        mcp_servers: selectedServers,
       };
       const response = await api.post('/agents', payload);
       const id = agentId || response.data?.id;
@@ -207,6 +216,59 @@ export default function AgentPage() {
             ))
           )}
         </div>
+      </Field>
+
+      <Field label={`MCP SERVERS · ${selectedServers.length} selected`} composite>
+        <div role="group" className="rounded border border-line">
+          {mcpServers === null ? (
+            <div className="px-3 py-3 font-mono text-[11px] text-fg-dim">loading…</div>
+          ) : mcpServers.length === 0 && selectedServers.length === 0 ? (
+            <div className="px-3 py-3 text-[12.5px] text-fg-dim">
+              No MCP servers yet. <Link to="/settings#mcp-servers" className="text-accent-ink hover:underline">Add one in Settings</Link>
+            </div>
+          ) : (
+            <>
+              {mcpServers.map((s) => {
+                const checked = selectedServers.includes(s.ref) || selectedServers.includes(s.name);
+                return (
+                  <label key={s.ref} className="flex cursor-pointer items-start gap-2.5 border-b border-line px-3 py-2 last:border-b-0 hover:bg-panel-2">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => setSelectedServers((cur) =>
+                        checked ? cur.filter((r) => r !== s.ref && r !== s.name) : [...cur, s.ref])}
+                      className="mt-0.5 accent-[var(--accent)]"
+                    />
+                    <div className="min-w-0">
+                      <div className="font-mono text-[12px]">
+                        {s.name}
+                        {s.shared && <span className="ml-2 font-sans text-[11px] text-fg-dim">shared</span>}
+                        {!s.enabled && <span className="ml-2 font-sans text-[11px] text-fg-dim">off</span>}
+                      </div>
+                      {s.description && <div className="truncate text-[12px] text-fg-dim">{s.description}</div>}
+                    </div>
+                  </label>
+                );
+              })}
+              {selectedServers
+                .filter((r) => !mcpServers.some((s) => s.ref === r || s.name === r))
+                .map((r) => (
+                  <div key={r} className="flex items-center justify-between gap-2 border-b border-line px-3 py-2 text-[12px] last:border-b-0">
+                    <span className="text-fg-dim">
+                      <span className="font-mono">{r}</span> isn't available any more
+                    </span>
+                    <button type="button" onClick={() => setSelectedServers((cur) => cur.filter((x) => x !== r))}
+                      className="text-danger-ink hover:underline">
+                      Remove
+                    </button>
+                  </div>
+                ))}
+            </>
+          )}
+        </div>
+        <p className="mt-1.5 text-[12px] text-fg-dim">
+          The agent can list and run these servers' tools. Tools that aren't marked read-only ask for your approval first.
+        </p>
       </Field>
 
       <button

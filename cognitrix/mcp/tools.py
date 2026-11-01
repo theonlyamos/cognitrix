@@ -26,13 +26,22 @@ _JSON_TO_PYNAME = {
 _NAME_SANITIZE = re.compile(r'[^A-Za-z0-9_-]')
 
 
-def create_mcp_tool_wrapper(server_name: str, tool_info: dict[str, Any]) -> Tool:
+def create_mcp_tool_wrapper(
+    server_name: str, tool_info: dict[str, Any], connection_key: str | None = None
+) -> Tool:
     """Create a Tool wrapper for an MCP server tool.
 
     The wrapper's advertised schema is taken from the server's input_schema so
     the model sees the real parameter names (the old version advertised a single
     catch-all `kwargs` param, making argument-taking MCP tools uncallable).
+
+    ``server_name`` is the name people see (and goes into the tool name);
+    ``connection_key`` is the live connection to call (a database server's id).
+    Tools the server doesn't mark read-only always ask before running.
     """
+    connection_key = connection_key or server_name
+    annotations = tool_info.get('annotations')
+    read_only = isinstance(annotations, dict) and bool(annotations.get('readOnlyHint'))
     tool_name = str(tool_info.get('name', 'unknown'))
     description = str(tool_info.get('description', 'No description available'))
     input_schema = tool_info.get('input_schema')
@@ -53,13 +62,13 @@ def create_mcp_tool_wrapper(server_name: str, tool_info: dict[str, Any]) -> Tool
         try:
             from cognitrix.mcp.client import get_dynamic_client
             client = await get_dynamic_client()
-            if not client.is_connected(server_name):
+            if not client.is_connected(connection_key):
                 return f"Server '{server_name}' is not connected. Please connect first."
 
             # Filter out None values for optional parameters
             filtered_args = {k: v for k, v in kwargs.items() if v is not None}
 
-            result = await client.call_tool(server_name, tool_name, filtered_args)
+            result = await client.call_tool(connection_key, tool_name, filtered_args)
             return str(result) if result else "Tool call completed with no result"
 
         except Exception as e:
@@ -87,35 +96,39 @@ def create_mcp_tool_wrapper(server_name: str, tool_info: dict[str, Any]) -> Tool
         for pname, pinfo in properties.items()
     }
     wrapped_tool.required_params = [r for r in required if r in properties]
+    if not read_only:
+        wrapped_tool.approval_mode = 'always'
 
     return wrapped_tool
 
 async def sync_mcp_tools_for_agent(agent) -> list[Tool]:
-    """Synchronize MCP server tools with agent tools"""
+    """Build tool wrappers for the servers this agent may use.
+
+    Only the agent's own ``mcp_servers`` count (shared ones, or its owner's),
+    never every server that happens to be connected in this process.
+    """
     new_tools = []
 
     try:
         from cognitrix.mcp.client import get_dynamic_client
+        from cognitrix.mcp.registry import agent_servers, ensure_connected
         client = await get_dynamic_client()
-        connected_servers = client.get_connected_servers()
 
-        for server_name in connected_servers:
+        for config in await agent_servers(agent):
             try:
-                # Get tools from this server
-                tools_list = await client.list_tools(server_name)
+                if not await ensure_connected(client, config):
+                    continue
+                tools_list = await client.list_tools(config.key)
                 if not tools_list:
                     continue
 
                 for tool_info in tools_list:
-                    tool_wrapper = create_mcp_tool_wrapper(server_name, tool_info)
-                    unique_name = f"{server_name}_{tool_info.get('name', 'unknown')}"
-
-                    # Store in global registry
-                    _dynamic_mcp_tools[unique_name] = tool_wrapper
+                    tool_wrapper = create_mcp_tool_wrapper(config.name, tool_info, config.key)
+                    _dynamic_mcp_tools[tool_wrapper.name] = tool_wrapper
                     new_tools.append(tool_wrapper)
 
             except Exception as e:
-                logger.error(f"Error syncing tools from server {server_name}: {e}")
+                logger.error(f"Error syncing tools from server {config.name}: {e}")
 
     except Exception as e:
         logger.error(f"Error syncing MCP tools: {e}")

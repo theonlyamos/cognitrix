@@ -127,7 +127,7 @@ async def index(request: Request, path: str):
     index_file = FRONTEND_BUILD_DIR / 'index.html'
     if not index_file.is_file():
         raise HTTPException(status_code=404, detail='Frontend is not built (run `npm run build` in frontend/)')
-    async with aiofiles.open(index_file) as file:
+    async with aiofiles.open(index_file, encoding='utf-8') as file:
         content = await file.read()
 
     return HTMLResponse(content)

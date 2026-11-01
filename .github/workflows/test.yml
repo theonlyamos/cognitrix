@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   container-build:
     runs-on: ubuntu-latest
@@ -34,3 +37,22 @@ jobs:
         continue-on-error: true
       - name: Test
         run: poetry run pytest -q
+
+  # Windows pipes and files default to cp1252, which is where the
+  # "'charmap' codec can't encode" tool failures came from. Runs the tests that
+  # cover tool calls and text encoding on a real Windows interpreter.
+  windows:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Poetry
+        run: pipx install poetry
+      - name: Install dependencies
+        run: poetry install --with dev
+      - name: Test
+        run: poetry run pytest -q tests/test_windows_encoding.py tests/test_agent_tools.py tests/test_turn_loop.py

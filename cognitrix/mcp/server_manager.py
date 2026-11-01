@@ -38,6 +38,19 @@ class MCPServerConfig:
     # Server status
     enabled: bool = True
 
+    # Set for servers saved in the database (see cognitrix/mcp/registry.py).
+    # Servers from mcp.json have no id and are shared.
+    id: str | None = None
+    owner_id: str | None = None
+
+    @property
+    def key(self) -> str:
+        """Connection key: the database id, or the name for mcp.json servers.
+
+        Names are only unique per person, so live connections are keyed by id.
+        """
+        return self.id or self.name
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return asdict(self)
@@ -80,7 +93,7 @@ class MCPServerManager:
 
         if self.config_file.exists():
             try:
-                with open(self.config_file) as f:
+                with open(self.config_file, encoding='utf-8') as f:
                     data = json.load(f)
 
                 # Load servers
@@ -109,7 +122,7 @@ class MCPServerManager:
         }
 
         try:
-            with open(self.config_file, 'w') as f:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
             logger.info(f"Saved MCP configuration to {self.config_file}")
         except Exception as e:
@@ -197,7 +210,7 @@ class MCPServerManager:
             'version': '1.0'
         }
 
-        with open(output_file, 'w') as f:
+        with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
 
         logger.info(f"Exported MCP configuration to {output_file}")
@@ -206,7 +219,7 @@ class MCPServerManager:
     def import_config(self, input_file: Path, merge: bool = True) -> bool:
         """Import configuration from a file"""
         try:
-            with open(input_file) as f:
+            with open(input_file, encoding='utf-8') as f:
                 data = json.load(f)
 
             if not merge:

@@ -17,6 +17,7 @@ from celery.signals import (
     worker_process_init,
 )
 
+from cognitrix.common.encoding import utf8_child_env
 from cognitrix.config import COGNITRIX_WORKDIR, initialize_database
 from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.tasks.completion import (
@@ -162,7 +163,7 @@ def local_worker_running() -> bool:
     if _worker_proc is not None and _worker_proc.poll() is None:
         return True
     try:
-        return _pid_alive(int(WORKER_PIDFILE.read_text().strip()))
+        return _pid_alive(int(WORKER_PIDFILE.read_text(encoding='utf-8').strip()))
     except (OSError, ValueError):
         return False
 
@@ -203,7 +204,7 @@ def ensure_local_worker() -> bool:
             return True
         # A worker started outside this process (e.g. before an API restart).
         try:
-            if _pid_alive(int(WORKER_PIDFILE.read_text().strip())):
+            if _pid_alive(int(WORKER_PIDFILE.read_text(encoding='utf-8').strip())):
                 return True
         except (OSError, ValueError):
             pass
@@ -213,7 +214,9 @@ def ensure_local_worker() -> bool:
         # new worker exit with "Pidfile already exists".
         WORKER_PIDFILE.unlink(missing_ok=True)
 
-        env = {**os.environ, 'CELERY_WORKER_MODE': '1', 'CELERY_FORCE_FILESYSTEM': '1'}
+        # The worker's stdout is a log file, which Windows would otherwise
+        # encode as cp1252 and fail on the first emoji a tool prints.
+        env = {**utf8_child_env(), 'CELERY_WORKER_MODE': '1', 'CELERY_FORCE_FILESYSTEM': '1'}
         if not getattr(sys, 'frozen', False):
             # Pin the child's imports to this process's package set: celery's
             # re-exec on Windows can land on the venv's base interpreter

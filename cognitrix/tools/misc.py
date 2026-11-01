@@ -6,14 +6,15 @@ import html
 import logging
 import os
 import re
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import regex as regex_engine
-from rich import print
 
+from cognitrix.common.encoding import decode_output, status_print, utf8_child_env
 from cognitrix.common.process_security import (
     HostProcessAccessError,
     HostProcessMode,
@@ -33,9 +34,9 @@ from cognitrix.media.types import MediaAccessError, MediaValidationError
 from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import (
     DocumentCapability,
+    ToolOutcome,
     current_execution_context,
     delegated_execution_context,
-    ToolOutcome,
 )
 
 logging.basicConfig(
@@ -316,7 +317,7 @@ def _pyautogui():
     return pyautogui
 
 def get_file_content(full_path: Path):
-    with full_path.open('rt') as file:
+    with full_path.open('rt', encoding='utf-8', errors='replace') as file:
         lines = file.readlines()
         line_data = [(i + 1, line.rstrip()) for i, line in enumerate(lines)]
         return '\n'.join(f"{num}: {content}" for num, content in line_data)
@@ -342,14 +343,29 @@ def open_file(path: str, filename: str | None = None):
         except (HostProcessAccessError, ManagedUploadAccessError, PathEscapesRoot) as e:
             return f'Error: {e}'
         if filename and npath.is_file():
-            os.startfile(npath)
+            _open_with_default_app(npath)
             return 'Successfully opened file'
         elif npath.exists():
-            os.startfile(npath)
+            _open_with_default_app(npath)
             return 'Successfully opened file' if npath.is_file() else 'Successfully opened folder'
         return 'Unable to open file'
     except Exception as e:
         return str(e)
+
+
+def _open_with_default_app(path: Path) -> None:
+    """Hand a path to the OS's default app. ``os.startfile`` exists only on
+    Windows; macOS uses ``open`` and Linux desktops ``xdg-open``."""
+    if sys.platform == 'win32':
+        os.startfile(path)  # type: ignore[attr-defined]
+        return
+    import subprocess
+    opener = 'open' if sys.platform == 'darwin' else 'xdg-open'
+    subprocess.Popen(
+        [opener, os.fspath(path)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 def _bounded_pdf_pages(page_range: str | None, total_pages: int) -> tuple[list[int], bool]:
@@ -1112,10 +1128,10 @@ def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
         - Longer content: WebFetch("https://example.com", max_length=10000)
     """
     try:
+        from urllib.parse import urljoin
+
         import requests
         from bs4 import BeautifulSoup
-
-        from urllib.parse import urljoin
 
         from cognitrix.utils.webhooks import check_public_url
 
@@ -1298,7 +1314,7 @@ async def create_agent(name: str, provider: str, description: str, tools: list[s
 
 
 @tool(category='system')
-async def list_agents():
+async def list_agents(*, parent: Any | None = None):
     """List the saved agents available to delegate tasks to (e.g. with call_agent).
 
     Returns:
@@ -1308,9 +1324,18 @@ async def list_agents():
     from cognitrix.agents.access import can_view  # noqa: WPS433
 
     authority = current_execution_context()
+    candidates = list(await Agent.list_agents())  # type: ignore[attr-defined]
+    # Sub-agents made with create_agent are saved under the calling agent, so
+    # include them too: otherwise an agent can't see what it just created.
+    if parent is not None and getattr(parent, 'id', None):
+        seen = {str(getattr(a, 'id', '')) for a in candidates}
+        candidates.extend(
+            a for a in await Agent.list_agents(parent_id=parent.id)  # type: ignore[attr-defined]
+            if str(getattr(a, 'id', '')) not in seen
+        )
     agents = [
         agent
-        for agent in await Agent.list_agents()  # type: ignore[attr-defined]
+        for agent in candidates
         if authority.agent_allowed(str(getattr(agent, 'id', '')))
         and can_view(agent, authority.user_id)
     ]
@@ -1363,10 +1388,8 @@ async def call_agent(name: str, task: str, *, interface: str = 'task'):
         return f"Error calling agent: delegation depth limit ({MAX_AGENT_CALL_DEPTH}) reached"
     token = _CALL_AGENT_DEPTH.set(depth + 1)
     try:
-        from cognitrix.agents import Agent  # noqa: WPS433
-        from cognitrix.sessions.base import Session  # noqa: WPS433
-
         from cognitrix.agents.access import find_visible_agent  # noqa: WPS433
+        from cognitrix.sessions.base import Session  # noqa: WPS433
 
         # Only agents the calling user may see: another user's agent (and
         # whatever key it carries) is not reachable by name.
@@ -1449,14 +1472,14 @@ async def create_new_team(name: str, description: str, agent_names: list[str], l
             if agent:
                 await new_team.add_agent(agent)
             else:
-                print(f"Warning: Agent '{agent_name}' not found and couldn't be added to the team.")
+                status_print(f"Warning: Agent '{agent_name}' not found and couldn't be added to the team.")
 
         if leader_name:
             leader = await Agent.load_agent(leader_name)  # type: ignore[attr-defined]
             if leader and leader.id in new_team.assigned_agents:
                 new_team.leader = leader
             else:
-                print(f"Warning: Leader '{leader_name}' not found or not in the team. No leader set.")
+                status_print(f"Warning: Leader '{leader_name}' not found or not in the team. No leader set.")
 
         await new_team.save()
 
@@ -1571,12 +1594,12 @@ def _run_sandbox_shell(
     try:
         proc = subprocess.run(
             command, shell=True, cwd=cwd, timeout=timeout,
-            capture_output=True, text=True,
+            capture_output=True, env=utf8_child_env(),
         )
     except subprocess.TimeoutExpired:
         return f"Command timed out after {timeout}s"
-    out = (proc.stdout or '').strip()
-    err = (proc.stderr or '').strip()
+    out = decode_output(proc.stdout).strip()
+    err = decode_output(proc.stderr).strip()
     if proc.returncode != 0:
         detail = err or out or f"exit code {proc.returncode}"
         return f"Command failed (exit {proc.returncode}): {detail}"
