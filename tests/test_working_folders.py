@@ -263,7 +263,8 @@ async def db(tmp_path):
     yield
 
 
-async def test_folders_survive_a_save_and_none_stays_different_from_empty(db, tmp_path):
+async def test_folders_survive_a_save_and_none_stays_different_from_empty(db, tmp_path, monkeypatch):
+    monkeypatch.setenv('OPENAI_API_KEY', 'sk-test')
     from cognitrix.agents import Agent
     from cognitrix.providers.base import LLM
     from cognitrix.sessions.base import Session
@@ -352,6 +353,7 @@ def test_a_chat_keeps_its_own_scratch_folder_but_not_anyone_elses(tmp_path, monk
 
 
 def test_task_runtime_snapshots_keep_the_folder_policy(tmp_path, monkeypatch):
+    monkeypatch.setenv('OPENAI_API_KEY', 'sk-test')
     from cognitrix.agents import Agent
     from cognitrix.providers.base import LLM
     from cognitrix.tasks.runtime import AgentRuntimeSnapshot, build_runtime_snapshot, instantiate_runtime
