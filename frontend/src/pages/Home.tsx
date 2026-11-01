@@ -18,6 +18,8 @@ import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/Vo
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
 import { folderInfo, getChatFolders, setChatFolders, type FolderInfo, type WorkFolder } from '@/lib/folders';
+import { getSendKey, isSendKey } from '@/lib/preferences';
+import { SendKeyHint } from '@/components/SendKeyHint';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
@@ -1290,7 +1292,7 @@ export default function Home() {
                     if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); selectSkill(filteredSkills[skillIndex]); return; }
                     if (e.key === 'Escape') { e.preventDefault(); setMenuHidden(true); return; }
                   }
-                  if (e.key === 'Enter' && !e.shiftKey) {
+                  if (isSendKey(e, getSendKey())) {
                     e.preventDefault();
                     send(input);
                   }
@@ -1385,8 +1387,7 @@ export default function Home() {
               >
                 <span aria-hidden>[ ]</span> run as task
               </button>
-              <span className="ml-auto hidden sm:inline"><kbd className="rounded border border-line px-1">⏎</kbd> send</span>
-              <span className="hidden sm:inline"><kbd className="rounded border border-line px-1">⇧⏎</kbd> newline</span>
+              <SendKeyHint />
             </div>
           </div>
         </div>

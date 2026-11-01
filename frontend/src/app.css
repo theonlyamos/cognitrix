@@ -116,6 +116,9 @@ html.dark {
     html { scroll-behavior: auto; }
     *, ::before, ::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   }
+  /* Settings › Appearance › Reduce motion (same effect, chosen in the app). */
+  html.reduce-motion { scroll-behavior: auto; }
+  html.reduce-motion *, html.reduce-motion ::before, html.reduce-motion ::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
 }
 
 @layer utilities {

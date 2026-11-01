@@ -28,7 +28,7 @@ export function RefusedNotice() {
     <div role="note" className="w-full max-w-2xl rounded border border-[#ffb86b]/40 bg-[#ffb86b]/10 px-3 py-2 text-[12.5px] leading-relaxed">
       <span className="font-mono text-[10.5px] tracking-[0.1em] text-[#b4691a] dark:text-[#ffb86b]">REFUSED</span>{' '}
       This path is outside the agents' working folder, so the command didn't run. The agent was told why and can carry on without it.{' '}
-      <a href="/settings" className="text-accent-ink underline-offset-2 hover:underline">Change working folder</a>
+      <a href="/settings/access" className="text-accent-ink underline-offset-2 hover:underline">Change working folder</a>
     </div>
   );
 }

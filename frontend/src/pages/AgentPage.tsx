@@ -256,7 +256,7 @@ export default function AgentPage() {
         <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
           Shell commands start in the agent's primary working folder (set below) and only run inside its working folders. Read-only commands run right away; anything else waits for your approval.{' '}
           {systemInfo && !systemInfo.desktop && 'On a shared server, the shell is off in chats and tasks; it works in the desktop app and the CLI. '}
-          <Link to="/settings" className="text-accent-ink hover:underline">Change</Link>
+          <Link to="/settings/access" className="text-accent-ink hover:underline">Change</Link>
         </p>
       )}
       {selected.has('Coding Agent') && (
@@ -330,7 +330,7 @@ export default function AgentPage() {
             <div className="px-3 py-3 font-mono text-[11px] text-fg-dim">loading…</div>
           ) : mcpServers.length === 0 && selectedServers.length === 0 ? (
             <div className="px-3 py-3 text-[12.5px] text-fg-dim">
-              No MCP servers yet. <Link to="/settings#mcp-servers" className="text-accent-ink hover:underline">Add one in Settings</Link>
+              No MCP servers yet. <Link to="/settings/access#mcp-servers" className="text-accent-ink hover:underline">Add one in Settings</Link>
             </div>
           ) : (
             <>

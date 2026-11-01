@@ -170,24 +170,18 @@ function ChannelPanel({
   );
 
   return (
-    <div className="rounded-[12px] border border-line bg-bg p-3.5">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[14px] font-medium">{label}</div>
-          {channel.configured && <div className="truncate font-mono text-[11.5px] text-fg-dim">{channel.bot_name}</div>}
+    <div>
+      {channel.configured && (
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <StatusDot channel={channel} />
+          <Toggle
+            label={`${label} on`}
+            checked={channel.enabled}
+            disabled={busy}
+            onChange={(v) => void update({ enabled: v })}
+          />
         </div>
-        {channel.configured && (
-          <div className="flex items-center gap-3">
-            <StatusDot channel={channel} />
-            <Toggle
-              label={`${label} on`}
-              checked={channel.enabled}
-              disabled={busy}
-              onChange={(v) => void update({ enabled: v })}
-            />
-          </div>
-        )}
-      </div>
+      )}
 
       {!channel.configured ? (
         <div className="space-y-3">
@@ -293,6 +287,77 @@ function ChannelPanel({
   );
 }
 
+const BLURB: Record<ChannelKind, string> = {
+  telegram: 'Chat with an agent from your own Telegram bot',
+  slack: 'Chat in Slack DMs and approve tasks with buttons',
+};
+
+function summary(channel: ChatChannel): string {
+  if (!channel.configured) return BLURB[channel.kind];
+  if (!channel.enabled) return `${channel.bot_name || LABEL[channel.kind]} · off`;
+  if (channel.status === 'error') return 'Needs attention';
+  if (!channel.linked) return 'Waiting for the link code';
+  return [channel.bot_name, channel.peer_name && `linked to ${channel.peer_name}`].filter(Boolean).join(' · ');
+}
+
+/** One compact row per chat app. Setup and options open underneath. */
+function ChannelRow({
+  channel, agents, manifest, onChange,
+}: {
+  channel: ChatChannel;
+  agents: AgentLite[];
+  manifest: Record<string, unknown>;
+  onChange: (next: ChatChannel | null) => void;
+}) {
+  const label = LABEL[channel.kind];
+  const needsAttention = channel.configured && channel.enabled && (channel.status === 'error' || !channel.linked);
+  const [open, setOpen] = useState(needsAttention);
+  const panelId = `channel-${channel.kind}`;
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-3">
+        <span aria-hidden="true" className="grid h-7 w-7 flex-none place-items-center rounded-[7px] bg-panel-2 font-mono text-[11px] font-medium">
+          {channel.kind === 'telegram' ? 'TG' : 'SL'}
+        </span>
+        <div className="min-w-0 flex-1 basis-[160px]">
+          <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium">
+            {label}
+            {channel.configured && <StatusDot channel={channel} />}
+          </div>
+          <div className="mt-0.5 text-[12px] leading-snug text-fg-dim">{summary(channel)}</div>
+        </div>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setOpen((v) => !v)}
+          className={cn(
+            'inline-flex h-9 flex-none items-center rounded-lg px-3 text-[12.5px] md:h-8',
+            open ? 'text-fg-dim hover:bg-panel-2 hover:text-fg'
+              : channel.configured ? 'border border-line hover:bg-panel-2' : 'bg-accent font-medium text-[#0b0c0e]',
+          )}
+        >
+          {open ? 'Close' : channel.configured ? 'Manage' : 'Set up'}
+          <span className="sr-only"> {label}</span>
+        </button>
+      </div>
+      {open && (
+        <div id={panelId} className="border-t border-line px-3.5 pb-3 pt-3">
+          <ChannelPanel
+            channel={channel}
+            agents={agents}
+            manifest={manifest}
+            onChange={(next) => {
+              onChange(next);
+              if (next === null) setOpen(false);
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Settings › Chat apps: talk to agents from Telegram or Slack and get
  *  Inbox alerts and approvals there. Bots connect out from the engine, so
  *  the desktop app needs no public address. */
@@ -319,12 +384,6 @@ export function ChatChannelsCard() {
     return () => clearInterval(timer);
   }, [waiting]);
 
-  useEffect(() => {
-    if (list && window.location.hash === '#chat-apps') {
-      document.getElementById('chat-apps')?.scrollIntoView({ block: 'start' });
-    }
-  }, [list]);
-
   if (loadError) return <p role="alert" className="text-[12.5px] text-danger-ink">{loadError}</p>;
   if (!list) return <p className="text-[13px] text-fg-dim">Loading…</p>;
 
@@ -341,18 +400,14 @@ export function ChatChannelsCard() {
 
   return (
     <div className="space-y-3">
-      <p className="text-[13px] leading-relaxed text-fg-dim">
-        Chat with your agents from Telegram or Slack, and get agent alerts and task approvals there. You create the bot,
-        so messages go only between your bot and this engine; nothing needs a public address.
-      </p>
       {!list.available && (
         <p className="rounded-[10px] border border-line bg-bg px-3 py-2 text-[12.5px] text-fg-dim">
           Chat apps are turned off on this engine (<span className="font-mono">COGNITRIX_CHANNELS=0</span>).
         </p>
       )}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <div className="divide-y divide-line rounded-[12px] border border-line bg-panel">
         {list.channels.map((channel) => (
-          <ChannelPanel
+          <ChannelRow
             key={channel.kind}
             channel={channel}
             agents={agents}

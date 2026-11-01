@@ -131,6 +131,10 @@ class GeminiImageProvider:
     ) -> ProviderImage:
         api_key = os.getenv('GOOGLE_API_KEY', '')
         if not api_key:
+            from cognitrix.providers.saved_keys import get_saved_key
+
+            api_key = get_saved_key('google')
+        if not api_key:
             raise GeminiImageError(
                 'missing_google_api_key',
                 'GOOGLE_API_KEY is required for image generation',

@@ -294,7 +294,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     void onDesktopEvent<EngineStatus>('engine-status', (s) => {
       setEngine(s);
       if ((s.status === 'stopped' || s.status === 'failed') && last !== s.status) {
-        push({ event: 'engine', title: 'The local engine stopped', body: s.error ?? 'Restart it from Settings or the tray.', href: '/settings' });
+        push({ event: 'engine', title: 'The local engine stopped', body: s.error ?? 'Restart it from Settings or the tray.', href: '/settings/engine' });
       }
       last = s.status;
     }).then((fn) => (stop = fn));

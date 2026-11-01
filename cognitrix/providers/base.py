@@ -102,6 +102,7 @@ def _server_held_keys() -> dict[str, set[str]]:
     so a key is recognised however it was configured.
     """
     from cognitrix.config import settings
+    from cognitrix.providers.saved_keys import saved_providers
 
     held: dict[str, set[str]] = {}
     for name, value in os.environ.items():
@@ -119,6 +120,8 @@ def _server_held_keys() -> dict[str, set[str]]:
             value = ''
         if value:
             held.setdefault(value, set()).add(provider)
+    for provider, value in saved_providers().items():
+        held.setdefault(value, set()).add(provider)
     return held
 
 
@@ -170,6 +173,7 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
     AI_PROVIDER used when provider not explicitly passed.
     """
     from cognitrix.config import settings
+    from cognitrix.providers.saved_keys import get_saved_key
 
     provider = str(provider).strip().lower()
     overrides = overrides or {}
@@ -186,6 +190,7 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
         overrides.get('api_key')
         or os.getenv(_env_key(effective_provider, 'API_KEY'))
         or settings.get_api_key(effective_provider)
+        or get_saved_key(effective_provider)
         # A local Ollama ignores the key, but the OpenAI client needs one.
         or ('ollama' if effective_provider == 'ollama' else '')
     )
@@ -517,7 +522,12 @@ class LLM(Model):
             tools = []
         # Imported lazily to keep the provider layer usable without the task
         # runtime and to avoid a module cycle through provider limiters.
+        from cognitrix.providers.saved_keys import refresh_key
         from cognitrix.tasks.accounting import wrap_llm_result
+
+        # Agents and the LLM cache keep the key they were built with; swap in
+        # the current one if that was a saved key replaced in Settings since.
+        self.api_key = refresh_key(self.provider, self.api_key)
 
         return await wrap_llm_result(
             self,

@@ -99,6 +99,10 @@ def server_key(provider: str) -> str:
             value = settings.get_api_key(provider) or ''
         except Exception:
             value = ''
+    if not value:
+        from cognitrix.providers.saved_keys import get_saved_key
+
+        value = get_saved_key(provider)
     return value.strip()
 
 

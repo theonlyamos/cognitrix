@@ -27,6 +27,16 @@ export const MODELS: Record<string, string[]> = {
   ollama: ['llama3.2', 'qwen2.5', 'mistral'],
 };
 
+// Where to create an API key for each provider.
+export const KEY_URLS: Record<string, string> = {
+  openrouter: 'https://openrouter.ai/keys',
+  openai: 'https://platform.openai.com/api-keys',
+  anthropic: 'https://console.anthropic.com/settings/keys',
+  google: 'https://aistudio.google.com/apikey',
+  groq: 'https://console.groq.com/keys',
+  cerebras: 'https://cloud.cerebras.ai/',
+};
+
 // Default OpenAI-compatible endpoint per provider.
 export const BASE_URLS: Record<string, string> = {
   openrouter: 'https://openrouter.ai/api/v1',
