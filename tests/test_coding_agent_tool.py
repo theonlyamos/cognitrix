@@ -215,3 +215,37 @@ def test_changed_files_in_git_repo(tmp_path):
     (tmp_path / 'new.py').write_text('x', encoding='utf-8')
     assert '?? new.py' in ca.changed_files(tmp_path)
     assert ca.changed_files(tmp_path / 'nope') == ''
+
+
+@posix_only
+def test_time_limit_stops_children_left_running(tmp_path):
+    # The leader exits at once but leaves a child running in its group.
+    shell = sh.start_background(
+        ['/bin/sh', '-c', 'sleep 30 & echo $!'], owner='u-orphans', command='orphan',
+        cwd=tmp_path, max_seconds=1,
+    )
+    assert sh.wait_background(shell, 5)
+    time.sleep(0.3)
+    child = int(sh.read_background(shell).splitlines()[-1])
+    os.kill(child, 0)  # still alive before the limit
+    deadline = time.monotonic() + 5
+    alive = True
+    while alive and time.monotonic() < deadline:
+        time.sleep(0.2)
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            alive = False
+    assert not alive
+
+
+@posix_only
+def test_watchdog_retired_when_job_finishes(tmp_path):
+    shell = sh.start_background(
+        ['/bin/sh', '-c', 'echo hi'], owner='u-retire', command='quick',
+        cwd=tmp_path, max_seconds=3600,
+    )
+    assert sh.wait_background(shell, 5)
+    shell.reader.join(timeout=10)
+    shell.watchdog.join(timeout=5)
+    assert not shell.watchdog.is_alive()

@@ -686,6 +686,14 @@ def _pump(shell: BackgroundShell) -> None:
             if overflow > 0:
                 del shell.buffer[:overflow]
                 shell.dropped += overflow
+    # Output is closed: the process and everything that shared its output
+    # have finished, so the time limit has nothing left to stop.
+    try:
+        shell.proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        return
+    if shell.watchdog is not None:
+        shell.watchdog.cancel()
 
 
 def _feed_stdin(proc: subprocess.Popen, data: bytes) -> None:
@@ -706,6 +714,10 @@ def _time_limit_reached(shell: BackgroundShell) -> None:
         shell.timed_out = True
         shell.killed = True
         kill_tree(shell.proc, graceful=True)
+    else:
+        # The leader exited, but children it left running (servers,
+        # watchers) are still in its process group.
+        kill_tree(shell.proc)
 
 
 def start_background(
@@ -742,12 +754,12 @@ def start_background(
     )
     if stdin_data is not None:
         threading.Thread(target=_feed_stdin, args=(proc, stdin_data), daemon=True).start()
-    shell.reader = threading.Thread(target=_pump, args=(shell,), daemon=True)
-    shell.reader.start()
-    if max_seconds:
+    if max_seconds:  # set before the reader starts, which cancels it on exit
         shell.watchdog = threading.Timer(max_seconds, _time_limit_reached, args=(shell,))
         shell.watchdog.daemon = True
         shell.watchdog.start()
+    shell.reader = threading.Thread(target=_pump, args=(shell,), daemon=True)
+    shell.reader.start()
     with _BG_LOCK:
         _BACKGROUND[shell.id] = shell
     return shell
