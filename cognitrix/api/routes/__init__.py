@@ -6,6 +6,7 @@ from ...api.routes.artifacts import artifacts_api
 from ...api.routes.automations import automations_api, hooks_api
 from ...api.routes.audio import audio_api
 from ...api.routes.auth import auth_api
+from ...api.routes.channels import channels_api
 from ...api.routes.oauth import oauth_api
 from ...api.routes.onboarding import onboarding_api
 from ...api.routes.folders import folders_api
@@ -45,3 +46,4 @@ api_router.include_router(api_keys_api)
 api_router.include_router(mcp_api)
 api_router.include_router(credentials_api)
 api_router.include_router(system_api)
+api_router.include_router(channels_api)

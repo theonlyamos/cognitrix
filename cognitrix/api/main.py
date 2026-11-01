@@ -64,9 +64,20 @@ async def lifespan(app: FastAPI):
         )
         start_attachment_maintenance()
         maintenance_started = True
+        try:
+            from ..channels.service import start_channels
+            await start_channels()
+        except Exception:
+            import logging
+            logging.getLogger('cognitrix.log').exception('Chat app bots did not start')
         yield
     finally:
         cleanup_errors = []
+        try:
+            from ..channels.service import stop_channels
+            await stop_channels()
+        except BaseException as exc:
+            cleanup_errors.append(exc)
         tasks = tuple(task for task in (scheduler, recovery) if task is not None)
         for task in tasks:
             task.cancel()
