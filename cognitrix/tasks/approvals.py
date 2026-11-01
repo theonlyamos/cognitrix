@@ -94,6 +94,17 @@ async def _emit(ctx: dict, kind: str, data: dict[str, Any]) -> None:
         logger.exception('Could not emit %s for run %s', kind, ctx.get('run_id'))
 
 
+async def prior_decision(ctx: dict, tool_name: str, params: dict[str, Any]) -> bool | None:
+    """A person's earlier answer for this exact call in this run, if any."""
+    op_hash = operation_hash(tool_name, params)
+    for row in await TaskApproval.find({'run_id': str(ctx['run_id']), 'op_hash': op_hash}) or []:
+        if row.status == APPROVED:
+            return True
+        if row.status == DENIED:
+            return False
+    return None
+
+
 async def request_task_approval(ctx: dict, tool_name: str, params: dict[str, Any], risk) -> tuple[bool, str | None]:
     """Park a risky task tool call until its run's owner answers.
 
@@ -104,11 +115,9 @@ async def request_task_approval(ctx: dict, tool_name: str, params: dict[str, Any
     user_id = str(ctx['user_id'])
     op_hash = operation_hash(tool_name, params)
 
-    for row in await TaskApproval.find({'run_id': run_id, 'op_hash': op_hash}) or []:
-        if row.status == APPROVED:
-            return True, None
-        if row.status == DENIED:
-            return False, None
+    earlier = await prior_decision(ctx, tool_name, params)
+    if earlier is not None:
+        return earlier, None
 
     row = TaskApproval(
         run_id=run_id,

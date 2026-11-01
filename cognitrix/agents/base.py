@@ -508,11 +508,16 @@ class AgentManager:
                             if approval.error == 'approval_required'
                             else 'approval_denied'
                         )
+                        reason = (
+                            f"{tool.name} was {approval.error}"
+                            if getattr(approval, 'reviewed', False) and approval.error
+                            else f"user denied approval for {tool.name}"
+                        )
                         results_by_index[i] = _tool_result_entry(
                             tc_id,
                             ToolOutcome.failure(
                                 denial_code,
-                                f"{OPERATION_BLOCKED_PREFIX}: user denied approval for {tool.name}",
+                                f"{OPERATION_BLOCKED_PREFIX}: {reason}",
                                 denied=True,
                             ),
                         )
