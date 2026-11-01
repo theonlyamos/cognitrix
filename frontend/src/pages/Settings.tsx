@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { useSystemInfo } from '@/hooks/useSystemInfo';
 import { VoiceSettingsCard } from '@/components/VoiceSettingsCard';
 import { McpServersCard } from '@/components/McpServersCard';
+import { ChatChannelsCard } from '@/components/ChatChannelsCard';
 
 function Card({ title, children, className, id }: { title: string; children: ReactNode; className?: string; id?: string }) {
   return (
@@ -207,6 +208,10 @@ export default function Settings() {
 
           <Card title="MCP servers" id="mcp-servers" className="lg:col-span-2">
             <McpServersCard />
+          </Card>
+
+          <Card title="Chat apps" id="chat-apps" className="lg:col-span-2">
+            <ChatChannelsCard />
           </Card>
 
           <Card title="Voice input" id="voice-input">
