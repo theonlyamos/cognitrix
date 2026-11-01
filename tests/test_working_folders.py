@@ -318,3 +318,52 @@ async def test_chat_folders_api_checks_every_path(db, tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as err:
         await routes.set_session_folders(str(session.id), body, AuthContext(user=other))
     assert err.value.status_code == 404
+
+
+def test_a_chat_keeps_its_own_scratch_folder_but_not_anyone_elses(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from cognitrix.config import settings
+    from cognitrix.sessions.base import Session
+
+    # A web server: only the working folder is allowed, scratch lives elsewhere.
+    monkeypatch.delenv('COGNITRIX_DESKTOP', raising=False)
+    monkeypatch.delenv('COGNITRIX_ALLOWED_FOLDERS', raising=False)
+    monkeypatch.setattr(settings, 'tools_root', (tmp_path / 'work').resolve())
+    monkeypatch.setattr(settings, 'workdir', (tmp_path / 'data').resolve())
+    (tmp_path / 'work' / 'repo').mkdir(parents=True)
+
+    session = Session(agent_id='a')
+    session.id = 'chat-one'
+    scratch = session._turn_folders(SimpleNamespace(folders=[]), 'web')[0]
+    # Adding a folder next to the scratch folder keeps both.
+    kept = F.normalize_folders(
+        [scratch.to_dict(), {'path': str(tmp_path / 'work' / 'repo'), 'access': 'read'}],
+        scratch=session.scratch_path(),
+    )
+    assert [f.name for f in kept] == ['scratch', 'repo'] and kept[0].primary
+    # ...and the next turn doesn't drop it.
+    session.folders = F.folders_to_dicts(kept)
+    assert session._turn_folders(SimpleNamespace(folders=[]), 'web')[0].path == scratch.path
+
+    other = F.scratch_folder('chat-two')
+    with pytest.raises(F.FolderError, match="another chat"):
+        F.normalize_folders([other.to_dict()], scratch=session.scratch_path())
+
+
+def test_task_runtime_snapshots_keep_the_folder_policy(tmp_path, monkeypatch):
+    from cognitrix.agents import Agent
+    from cognitrix.providers.base import LLM
+    from cognitrix.tasks.runtime import AgentRuntimeSnapshot, build_runtime_snapshot, instantiate_runtime
+
+    folders = [{'path': str(tmp_path), 'access': 'read', 'name': 'x', 'primary': True}]
+    agent = Agent(name='A', llm=LLM(provider='openai', model='gpt-x'), system_prompt='hi',
+                  folders=folders, can_request_folders=False)
+    snap = build_runtime_snapshot(agent, None)
+    again = AgentRuntimeSnapshot.model_validate(snap.model_dump(mode='json'))
+    runtime = instantiate_runtime(again)
+    assert runtime.folders == folders
+    assert runtime.can_request_folders is False
+    unset = instantiate_runtime(build_runtime_snapshot(
+        Agent(name='B', llm=LLM(provider='openai', model='gpt-x'), system_prompt='hi'), None))
+    assert unset.folders is None

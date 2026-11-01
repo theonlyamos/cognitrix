@@ -719,6 +719,8 @@ class Session(Model):
                                 last_denied_sig = sig if all_blocked else None
 
                                 prompt = await agent.get_context_manager().build_prompt(agent, self)
+                                # Keep the folder list (including any just granted) on every request.
+                                prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders))
                                 continue  # Continue the loop to re-prompt the LLM with the tool result
                             else:
                                 if interface == 'cli':
@@ -910,13 +912,19 @@ class Session(Model):
                 folders_to_dicts(legacy_default_folders())
                 if agent_folders is None else list(agent_folders)
             )
-        folders = normalize_folders(source, validate=False)
+        folders = normalize_folders(source, validate=False, scratch=self.scratch_path())
         if not folders:
-            folders = [scratch_folder(
-                f"task-{self.task_id}" if self.task_id else f"chat-{self.id or 'new'}"
-            )]
+            folders = [scratch_folder(self.scratch_key())]
         self.folders = folders_to_dicts(folders)
         return folders
+
+    def scratch_key(self) -> str:
+        return f"task-{self.task_id}" if self.task_id else f"chat-{self.id or 'new'}"
+
+    def scratch_path(self) -> str:
+        """This chat's own scratch folder (the only scratch folder it may list)."""
+        from cognitrix.common.folders import scratch_path
+        return str(scratch_path(self.scratch_key()))
 
     def _folder_grant_sink(self, turn_folders: list):
         """Apply an approved Request Folder to this chat (and this turn)."""

@@ -142,8 +142,15 @@ def allowed_roots() -> list[Path] | None:
     return [Path(_settings().tools_root).expanduser().resolve()]
 
 
-def validate_folder(path: str, access: str = READ, name: str = '', primary: bool = False) -> Folder:
-    """Check one folder a person (or an approved request) wants to add."""
+def validate_folder(
+    path: str, access: str = READ, name: str = '', primary: bool = False,
+    *, scratch: str | None = None,
+) -> Folder:
+    """Check one folder a person (or an approved request) wants to add.
+
+    ``scratch`` is the chat's own scratch folder: it may stay in the list, but
+    no other chat's scratch folder can be added.
+    """
     raw = str(path or '').strip()
     if not raw:
         raise FolderError('Folder path is empty')
@@ -158,7 +165,10 @@ def validate_folder(path: str, access: str = READ, name: str = '', primary: bool
         raise FolderError(f"'{raw}' is not a folder on this machine")
     if is_blocked(resolved):
         raise FolderError(f"'{raw}' is a protected location and can't be used")
-    roots = allowed_roots()
+    own_scratch = scratch is not None and _norm(resolved) == _norm(Path(scratch).resolve())
+    if not own_scratch and _inside(_norm(resolved), _norm(workspaces_root())):
+        raise FolderError(f"'{raw}' is another chat's private folder")
+    roots = None if own_scratch else allowed_roots()
     if roots is not None and not any(_inside(resolved, r) for r in roots):
         raise FolderError(
             f"'{raw}' is outside the folders this server allows "
@@ -169,7 +179,9 @@ def validate_folder(path: str, access: str = READ, name: str = '', primary: bool
     return Folder(path=str(resolved), access=access, name=label, primary=bool(primary))
 
 
-def normalize_folders(items: Iterable[Any] | None, *, validate: bool = True) -> list[Folder]:
+def normalize_folders(
+    items: Iterable[Any] | None, *, validate: bool = True, scratch: str | None = None,
+) -> list[Folder]:
     """Turn stored or submitted folders into a clean list.
 
     Drops duplicates, keeps at most MAX_FOLDERS and makes sure exactly one is
@@ -192,6 +204,7 @@ def normalize_folders(items: Iterable[Any] | None, *, validate: bool = True) -> 
         try:
             folder = validate_folder(
                 data.get('path', ''), data.get('access', READ), data.get('name', ''), bool(data.get('primary')),
+                scratch=scratch,
             )
         except FolderError:
             if validate:
@@ -225,10 +238,14 @@ def read_only(folders: Iterable[Folder]) -> tuple[Folder, ...]:
     return tuple(Folder(f.path, READ, f.name, f.primary) for f in folders)
 
 
+def scratch_path(key: str) -> Path:
+    safe = re.sub(r'[^A-Za-z0-9_.-]', '_', str(key or 'default'))[:80] or 'default'
+    return workspaces_root() / safe
+
+
 def scratch_folder(key: str) -> Folder:
     """A private read & write folder for one chat or task, made on first use."""
-    safe = re.sub(r'[^A-Za-z0-9_.-]', '_', str(key or 'default'))[:80] or 'default'
-    path = workspaces_root() / safe
+    path = scratch_path(key)
     path.mkdir(parents=True, exist_ok=True)
     return Folder(path=str(path.resolve()), access=WRITE, name='scratch', primary=True)
 

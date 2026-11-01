@@ -79,7 +79,7 @@ async def set_session_folders(
     if session.run_id:
         raise HTTPException(status_code=400, detail="A task run's folders can't be changed")
     try:
-        folders = normalize_folders(body.folders)
+        folders = normalize_folders(body.folders, scratch=session.scratch_path())
     except FolderError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     session.folders = folders_to_dicts(folders)
