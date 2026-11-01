@@ -7,134 +7,121 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from cognitrix.safety.approval_gate import ApprovalGate, ApprovalResult, ToolCall
-from cognitrix.safety.destructive_ops import DESTRUCTIVE_CATEGORIES, DestructiveOpDetector, RiskAssessment, RiskLevel
+from cognitrix.safety.destructive_ops import DestructiveOpDetector, RiskAssessment, RiskLevel, mcp_tool_risk
 
 
 class TestDestructiveOpDetector:
-    """Test suite for DestructiveOpDetector."""
+    """Only destructive or hard-to-undo actions ask; everything else runs."""
 
     @pytest.fixture
     def detector(self):
-        """Create a destructive operation detector."""
         return DestructiveOpDetector()
 
-    def test_analyze_low_risk_operation(self, detector):
-        """Test analysis of low-risk operations."""
-        assessment = detector.analyze("search_tool", {"query": "hello world"})
+    @pytest.mark.parametrize("name,params", [
+        ("Search", {"query": "how to rotate an api key and delete old config"}),
+        ("Tavily Search", {"query": "password manager reviews"}),
+        ("WebFetch", {"url": "https://example.com/token?remove=1"}),
+        ("Read", {"file_path": ".env"}),
+        ("Grep", {"pattern": "secret|delete", "path": "."}),
+        ("Glob", {"pattern": "**/*.py"}),
+        ("Edit", {"file_path": "a.py", "old_string": "x", "new_string": "y"}),
+        ("List Agents", {}),
+        ("Load Skill", {"skill_name": "web-scraper"}),
+        ("Read Notes", {}),
+        ("Update Notes", {"notes": "clear the cache next time"}),
+        ("Notify Me", {"message": "send the report"}),
+        ("Create Task", {"title": "Update config", "description": "remove old keys"}),
+        ("Bash Output", {"shell_id": "1"}),
+        ("Kill Shell", {"shell_id": "1"}),
+        ("search_tool", {"query": "hello world"}),
+        ("some_custom_tool", {"anything": "rm -rf /"}),
+    ])
+    def test_reads_and_undoable_changes_never_ask(self, detector, name, params):
+        assessment = detector.analyze(name, params)
+        assert assessment.risk_level == RiskLevel.LOW, assessment
 
-        assert assessment.risk_level == RiskLevel.LOW
-        assert assessment.categories == []
-        assert "No specific risk" in assessment.details
+    @pytest.mark.parametrize("name", ["delete_file", "Delete Path", "remove_file", "Delete Task", "dropTable", "trash_message"])
+    def test_deletes_are_high(self, detector, name):
+        assessment = detector.analyze(name, {"path": "x"})
+        assert assessment.risk_level == RiskLevel.HIGH
+        assert "deletion" in assessment.categories
 
-    def test_analyze_file_deletion_risk(self, detector):
-        """Test detection of file deletion risk."""
-        assessment = detector.analyze("delete_file", {"path": "/tmp/file.txt"})
-
-        # Check category is detected (implementation checks for 'delete' keyword)
-        assert "file_deletion" in assessment.categories
-        # Just verify it detects something - risk level may vary
-        assert len(assessment.categories) >= 1
-
-    def test_analyze_file_modification_risk(self, detector):
-        """Test detection of file modification risk."""
-        assessment = detector.analyze("write_file", {"content": "new data", "overwrite": True})
-
+    @pytest.mark.parametrize("name", ["send_email", "post_tweet", "publish_page", "deploy_site", "reply_to_thread"])
+    def test_outward_sends_ask(self, detector, name):
+        assessment = detector.analyze(name, {"content": "hi"})
         assert assessment.risk_level == RiskLevel.MEDIUM
-        assert "file_modification" in assessment.categories
+        assert "external_send" in assessment.categories
 
-    def test_analyze_code_execution_risk(self, detector):
-        """Test detection of code execution risk."""
-        assessment = detector.analyze("python_repl", {"code": "import os; os.system('ls')"})
+    def test_word_matching_does_not_catch_substrings(self, detector):
+        # 'postgres' isn't 'post', 'formatter' isn't a delete
+        assert detector.analyze("postgres_query", {}).risk_level == RiskLevel.LOW
+        assert detector.analyze("code_formatter", {}).risk_level == RiskLevel.LOW
 
-        # Should detect code execution category
-        assert "code_execution" in assessment.categories
-        # Just verify it detects something
+    def test_write_new_file_runs_but_overwrite_asks(self, detector, tmp_path):
+        existing = tmp_path / "old.txt"
+        existing.write_text("keep me")
+        new = tmp_path / "new.txt"
+        assert detector.analyze("Write", {"file_path": str(new), "content": "x"}).risk_level == RiskLevel.LOW
+        overwrite = detector.analyze("Write", {"file_path": str(existing), "content": "x"})
+        assert overwrite.risk_level == RiskLevel.MEDIUM
+        assert "file_overwrite" in overwrite.categories
+        appended = detector.analyze("Write", {"file_path": str(existing), "content": "x", "append": True})
+        assert appended.risk_level == RiskLevel.LOW
 
-    def test_analyze_system_modification_risk(self, detector):
-        """Test detection of system modification risk."""
-        assessment = detector.analyze("create_directory", {"path": "/etc/mydir"})
+    def test_relative_write_resolves_under_tools_root(self, detector, tmp_path, monkeypatch):
+        from cognitrix.config import settings
+        monkeypatch.setattr(settings, "tools_root", str(tmp_path))
+        (tmp_path / "notes.md").write_text("x")
+        assert detector.analyze("Write", {"file_path": "notes.md", "content": "y"}).risk_level == RiskLevel.MEDIUM
+        assert detector.analyze("Write", {"file_path": "fresh.md", "content": "y"}).risk_level == RiskLevel.LOW
 
-        assert assessment.risk_level == RiskLevel.MEDIUM
-        assert "system_modification" in assessment.categories
+    def test_shell_asks_without_the_shell_rules(self, detector):
+        assessment = detector.analyze("bash", {"command": "ls"})
+        assert assessment.risk_level in (RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH)
+        assert "shell" in assessment.categories
 
-    def test_analyze_network_external_risk(self, detector):
-        """Test detection of network external communication risk."""
-        assessment = detector.analyze("WebFetch", {"query": "test"})
+    def test_shell_uses_shell_tool_rules_when_present(self, detector, monkeypatch):
+        import sys
+        import types
+        fake = types.ModuleType("cognitrix.common.shell")
+        fake.shell_risk = lambda params: ("low", "read-only") if params["command"] == "ls" else ("high", "deletes")
+        monkeypatch.setitem(sys.modules, "cognitrix.common.shell", fake)
+        assert detector.analyze("Bash", {"command": "ls"}).risk_level == RiskLevel.LOW
+        assert detector.analyze("Bash", {"command": "rm -rf x"}).risk_level == RiskLevel.HIGH
 
-        # Network external is LOW risk
-        assert assessment.risk_level == RiskLevel.LOW
-        assert "network_external" in assessment.categories
-
-    def test_analyze_data_exposure_risk(self, detector):
-        """Test detection of potential data exposure risk."""
-        assessment = detector.analyze("send_email", {"content": "password: secret123"})
-
-        # Should detect data exposure category if 'password' keyword matches
-        # (implementation checks for 'password' in keywords)
-        assert "data_exposure" in assessment.categories or len(assessment.categories) > 0
-
-    def test_analyze_multiple_risks(self, detector):
-        """Test detection of multiple risk categories."""
-        assessment = detector.analyze(
-            "delete_path",
-            {"path": "/important", "recursive": True}
-        )
-
-        # At least one category should be detected
-        assert len(assessment.categories) >= 1
-
-    def test_analyze_by_keywords_in_params(self, detector):
-        """Test risk detection based on keywords in parameters."""
-        assessment = detector.analyze("execute", {"command": "rm -rf /"})
-
-        # Should detect code execution if 'rm -rf' matches keyword
-        assert "code_execution" in assessment.categories or assessment.risk_level.value in ['medium', 'high']
+    def test_desktop_control_asks(self, detector):
+        assert detector.analyze("mouse_click", {"x": 1, "y": 2}).risk_level == RiskLevel.MEDIUM
 
     def test_analyze_case_insensitive(self, detector):
-        """Test that analysis is case insensitive."""
-        assessment1 = detector.analyze("DELETE_FILE", {"path": "file.txt"})
-        assessment2 = detector.analyze("delete_file", {"path": "file.txt"})
-
-        assert assessment1.risk_level == assessment2.risk_level
-        assert assessment1.categories == assessment2.categories
+        assert detector.analyze("DELETE_FILE", {}).risk_level == detector.analyze("delete_file", {}).risk_level
 
     def test_is_destructive_with_threshold(self, detector):
-        """Test is_destructive with different thresholds."""
-        medium_risk_op = detector.analyze("write_file", {"path": "test.txt"})
-
-        # With LOW threshold, MEDIUM should be destructive
-        assert detector.is_destructive("write_file", {"path": "test.txt"}, RiskLevel.LOW)
-
-        # With MEDIUM threshold, MEDIUM should be destructive
-        assert detector.is_destructive("write_file", {"path": "test.txt"}, RiskLevel.MEDIUM)
-
-        # With HIGH threshold, MEDIUM should NOT be destructive
-        assert not detector.is_destructive("write_file", {"path": "test.txt"}, RiskLevel.HIGH)
-
-    def test_is_destructive_high_risk_always(self, detector):
-        """Test that high risk is always destructive."""
-        # The implementation may return different risk levels
-        # So we just verify is_destructive works without error
-        result = detector.is_destructive("delete_file", {"path": "x"}, RiskLevel.LOW)
-        # Just check it returns a boolean
-        assert isinstance(result, bool)
+        assert detector.is_destructive("send_email", {}, RiskLevel.MEDIUM)
+        assert not detector.is_destructive("send_email", {}, RiskLevel.HIGH)
+        assert not detector.is_destructive("Search", {"query": "delete"}, RiskLevel.MEDIUM)
 
     def test_risk_level_ordering(self):
-        """Test that risk levels have correct ordering."""
-        # Verify enum values are ordered correctly
         risk_values = {'low': 0, 'medium': 1, 'high': 2}
         assert risk_values[RiskLevel.LOW.value] < risk_values[RiskLevel.MEDIUM.value] < risk_values[RiskLevel.HIGH.value]
 
-    def test_destructive_categories_structure(self, detector):
-        """Test that destructive categories are properly structured."""
-        for category_name, config in DESTRUCTIVE_CATEGORIES.items():
-            assert 'tools' in config
-            assert 'keywords' in config
-            assert 'risk_level' in config
-            assert 'description' in config
-            assert isinstance(config['tools'], list)
-            assert isinstance(config['keywords'], list)
-            assert isinstance(config['risk_level'], RiskLevel)
+
+class TestMcpToolRisk:
+    def test_read_only_hint_runs(self):
+        assert mcp_tool_risk("delete_note", {"readOnlyHint": True}).risk_level == RiskLevel.LOW
+
+    def test_reads_and_creates_run(self):
+        for name in ("search_threads", "get_file_metadata", "create_draft", "update_label", "list_projects"):
+            assert mcp_tool_risk(name, {}).risk_level == RiskLevel.LOW, name
+
+    def test_deletes_sends_and_unknowns_ask(self):
+        assert mcp_tool_risk("delete_branch", {}).risk_level == RiskLevel.HIGH
+        assert mcp_tool_risk("send_message", {"destructiveHint": False}).risk_level == RiskLevel.MEDIUM
+        assert mcp_tool_risk("execute_sql", None).risk_level == RiskLevel.MEDIUM
+        assert mcp_tool_risk("merge_branch", {}).risk_level == RiskLevel.MEDIUM
+
+    def test_destructive_hint(self):
+        assert mcp_tool_risk("update_file", {"destructiveHint": True}).risk_level == RiskLevel.MEDIUM
+        assert mcp_tool_risk("execute_sql", {"destructiveHint": False}).risk_level == RiskLevel.LOW
 
 
 class TestApprovalGate:
@@ -546,14 +533,13 @@ class TestRiskDetectionForTools:
 
     def test_file_write_risk(self, detector):
         """Test risk detection for file write."""
-        assessment = detector.analyze("write_file", {"path": "config.ini", "content": "[settings]"})
+        assessment = detector.analyze("write_file", {"path": __file__, "content": "[settings]"})
         assert assessment.risk_level.value in ['medium', 'high']
 
     def test_code_eval_risk(self, detector):
         """Test risk detection for code evaluation."""
         assessment = detector.analyze("eval", {"expression": "os.system('ls')"})
-        # Should detect code execution category
-        assert "code_execution" in assessment.categories or assessment.risk_level.value in ['medium', 'high']
+        assert "shell" in assessment.categories
 
     def test_database_delete_risk(self, detector):
         """Test risk detection for database deletion."""
@@ -564,8 +550,10 @@ class TestRiskDetectionForTools:
     def test_network_post_risk(self, detector):
         """Test risk detection for network POST requests."""
         assessment = detector.analyze("http_request", {"method": "POST", "url": "http://api.example.com"})
-        assert assessment.risk_level == RiskLevel.LOW
-        assert "network_external" in assessment.categories
+        assert assessment.risk_level == RiskLevel.MEDIUM
+        assert "external_send" in assessment.categories
+        get = detector.analyze("http_request", {"method": "GET", "url": "http://api.example.com"})
+        assert get.risk_level == RiskLevel.LOW
 
     def test_privilege_escalation_risk(self, detector):
         """Test risk detection for privilege escalation commands."""
@@ -577,3 +565,20 @@ class TestRiskDetectionForTools:
         """Test risk detection for package installation."""
         assessment = detector.analyze("pip_install", {"package": "requests"})
         assert assessment.risk_level in [RiskLevel.LOW, RiskLevel.MEDIUM]
+
+
+async def test_unattended_task_run_does_not_park_web_search(tmp_path):
+    """A task step's web search runs without parking an approval."""
+    from cognitrix.tasks.approvals import task_turn_ctx
+
+    gate = ApprovalGate(cache_dir=str(tmp_path))
+    params = {"query": "how to delete an old api key from the config"}
+    risk = DestructiveOpDetector().analyze("Search", params)
+    token = task_turn_ctx.set({"run_id": "r1", "user_id": "u1"})
+    try:
+        with patch("cognitrix.tasks.approvals.request_task_approval", new=AsyncMock()) as park:
+            result = await gate.check_approval(ToolCall("Search", params), risk, interface="task")
+    finally:
+        task_turn_ctx.reset(token)
+    assert result.approved and result.auto
+    park.assert_not_called()

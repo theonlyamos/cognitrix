@@ -11,12 +11,12 @@ class TestRiskOrdinal:
         risk = detector.analyze("bash", {"command": "rm -rf build"})
         assert risk.risk_level == RiskLevel.HIGH
 
-    def test_write_edit_flagged(self):
+    def test_overwriting_write_flagged(self, tmp_path):
         detector = DestructiveOpDetector()
-        order = {RiskLevel.LOW: 0, RiskLevel.MEDIUM: 1, RiskLevel.HIGH: 2}
-        for name in ("Write", "Edit"):
-            risk = detector.analyze(name, {"file_path": "notes.txt", "content": "hi"})
-            assert order[risk.risk_level] >= order[RiskLevel.MEDIUM], f"{name} not flagged"
+        target = tmp_path / "notes.txt"
+        target.write_text("old")
+        risk = detector.analyze("Write", {"file_path": str(target), "content": "hi"})
+        assert risk.risk_level == RiskLevel.MEDIUM
 
     def test_delete_flagged_high(self):
         detector = DestructiveOpDetector()

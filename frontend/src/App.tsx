@@ -23,6 +23,7 @@ const TeamDetail = lazy(() => import('@/pages/TeamDetail'));
 const TeamPage = lazy(() => import('@/pages/TeamPage'));
 const ApiKeys = lazy(() => import('@/pages/ApiKeys'));
 const Inbox = lazy(() => import('@/pages/Inbox'));
+const Automations = lazy(() => import('@/pages/Automations'));
 const Notifications = lazy(() => import('@/pages/Notifications'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const QuickAsk = lazy(() => import('@/pages/QuickAsk'));
@@ -82,6 +83,7 @@ function AppRoutes() {
           <Route path="/teams/:teamId/edit" element={<TeamPage />} />
           <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/inbox" element={<Inbox />} />
+          <Route path="/automations" element={<Automations />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/settings" element={<Settings />} />
         </Route>

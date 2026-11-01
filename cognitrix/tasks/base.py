@@ -102,6 +102,29 @@ class Task(Model):
     schedule_authority_id: str | None = None
     """Non-secret user/API-key reference revalidated at scheduled pickup."""
 
+    notes: str | None = None
+    """Working notes that persist between runs. Every run sees them; agents
+    edit them with the Update Notes tool and owners on the task page."""
+
+    wake_pending: bool = False
+    """True while an agent-requested wake-up (Schedule Next Check) is armed."""
+
+    wake_at: str | None = None
+    """When the armed wake-up fires (naive UTC). Independent of the schedule."""
+
+    wake_reason: str | None = None
+    """Why the agent asked to wake up; shown to the run it starts."""
+
+    wake_requested_by: str | None = None
+    wake_authority_kind: str | None = None
+    wake_authority_id: str | None = None
+    """Authority snapshot of the run that armed the wake-up."""
+
+    max_runs_per_day: int | None = None
+    """Cap on agent wake-ups and webhook runs in a rolling 24 hours. None uses
+    COGNITRIX_AUTOMATION_MAX_RUNS_PER_DAY. User-defined schedules don't count
+    against it."""
+
     async def team(self):
         agents: list[Agent] = []
         for agent_id in self.assigned_agents:
@@ -160,7 +183,7 @@ class Task(Model):
     def _coerce_null_lists(cls, value):
         return [] if value is None else value
 
-    @validator("schedule_enabled", pre=True)
+    @validator("schedule_enabled", "wake_pending", pre=True)
     def _coerce_null_bool(cls, value):
         return False if value is None else value
 

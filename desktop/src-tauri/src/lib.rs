@@ -6,6 +6,7 @@
 //! desktop shell and turns on the title bar, tray and notification features.
 
 mod engine;
+mod notify;
 mod settings;
 mod tray;
 
@@ -18,12 +19,20 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 const MAIN: &str = "main";
 const QUICK: &str = "quick";
 const MINIMIZED_FLAG: &str = "--minimized";
+
+/// WebView2 arguments for every window (they must match, or the second
+/// window fails to open). The first part is wry's default. The rest stops
+/// Chromium from slowing timers in a hidden window: the app usually sits in
+/// the tray, and the UI's polling is what notices approvals, questions and
+/// finished tasks and raises their notifications.
+const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+    --disable-background-timer-throttling --disable-renderer-backgrounding \
+    --disable-backgrounding-occluded-windows";
 
 fn quick_ask_shortcut() -> Shortcut {
     Shortcut::new(Some(Modifiers::ALT), Code::Space)
@@ -67,6 +76,7 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .shadow(true)
         .visible(false)
         .background_color(tauri::window::Color(11, 12, 14, 255))
+        .additional_browser_args(BROWSER_ARGS)
         .on_navigation(move |url| allow_navigation(&handle, url))
         .on_permission_request(|_, kind| permission_for(kind))
         .build()
@@ -86,6 +96,7 @@ fn build_quick_window(app: &AppHandle, base: &str) -> tauri::Result<WebviewWindo
         .shadow(true)
         .visible(false)
         .background_color(tauri::window::Color(17, 19, 21, 255))
+        .additional_browser_args(BROWSER_ARGS)
         .on_navigation(move |url| allow_navigation(&handle, url))
         .on_permission_request(|_, kind| permission_for(kind))
         .build()
@@ -160,11 +171,12 @@ pub(crate) fn toggle_quick_ask(app: &AppHandle) {
     }
 }
 
-pub(crate) fn notify(app: &AppHandle, title: &str, body: &str) {
-    if !settings::load(app).notify_desktop {
-        return;
-    }
-    let _ = app.notification().builder().title(title).body(body).show();
+/// Show a system notification; clicking it opens `path` in the main window.
+pub(crate) fn notify(app: &AppHandle, title: &str, body: &str, path: Option<&str>) -> bool {
+    notify::show(
+        app,
+        notify::Notice { title, body, path: notify::clean_path(path.map(str::to_owned)), urgent: false },
+    )
 }
 
 pub(crate) fn open_engine_log(app: &AppHandle) {
@@ -287,9 +299,21 @@ async fn pick_working_folder(app: AppHandle) -> Result<Option<String>, String> {
     Ok(Some(path.display().to_string()))
 }
 
+/// Returns whether a notification was shown, so the UI can fall back to its
+/// own toast when they're off or Windows refused it. Async so the toast call
+/// never blocks the window's thread.
 #[tauri::command]
-fn desktop_notify(app: AppHandle, title: String, body: String) {
-    notify(&app, &title, &body);
+async fn desktop_notify(
+    app: AppHandle,
+    title: String,
+    body: String,
+    path: Option<String>,
+    urgent: Option<bool>,
+) -> bool {
+    notify::show(
+        &app,
+        notify::Notice { title: &title, body: &body, path: notify::clean_path(path), urgent: urgent.unwrap_or(false) },
+    )
 }
 
 #[tauri::command]
@@ -334,6 +358,7 @@ pub fn run() {
                 main.show()?;
             }
             tray::create(&handle)?;
+            notify::init(&handle);
             if let Err(e) = handle.global_shortcut().register(quick_ask_shortcut()) {
                 log::warn!("Alt+Space is taken by another app, quick ask has no hotkey: {e}");
             }

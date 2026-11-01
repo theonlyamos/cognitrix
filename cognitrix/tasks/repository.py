@@ -1586,6 +1586,9 @@ class RunRepository:
         callback_key_id: str | None = None,
         resume_from_run_id: str | None = None,
         budget: dict[str, Any] | None = None,
+        trigger_kind: str | None = None,
+        trigger_note: str | None = None,
+        trigger_event_id: str | None = None,
     ) -> TaskRun:
         # Reject before reserving a head or persisting a queued row. Letting
         # MongoDB reach worker claim would strand a RUNNING row because the
@@ -1608,6 +1611,9 @@ class RunRepository:
             callback_url=callback_url,
             callback_key_id=callback_key_id,
             resume_from_run_id=resume_from_run_id,
+            trigger_kind=trigger_kind,
+            trigger_note=trigger_note,
+            trigger_event_id=trigger_event_id,
             budget=dict(budget or {}),
             version=0,
             next_event_sequence=0,

@@ -1,8 +1,26 @@
-"""Detection and classification of potentially destructive operations."""
+"""Decide which tool calls are risky enough to ask a person first.
+
+Tasks are meant to run without anyone watching, so the policy only asks for
+actions that are destructive or hard to undo:
+
+- deleting things (files, records, branches, ...)
+- overwriting an existing file
+- sending or posting something outside the app (email, messages, deploys)
+- shell commands (rules owned by the shell tool, see ``_shell_risk``)
+- remote (MCP) actions whose effect we can't tell from the name or annotations
+
+Reading, listing, searching, web search and web fetch never ask, whatever
+words appear in their arguments. Earlier versions scanned the arguments for
+keywords like "key", "update" or "config", which made ordinary searches ask.
+
+The agent loop asks for MEDIUM and HIGH; LOW runs straight away.
+"""
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
+from typing import Any
 
 
 class RiskLevel(Enum):
@@ -20,156 +38,219 @@ _RISK_ORDER = {RiskLevel.LOW: 0, RiskLevel.MEDIUM: 1, RiskLevel.HIGH: 2}
 class RiskAssessment:
     """Assessment of operation risk."""
     risk_level: RiskLevel
-    categories: list[str]
-    details: str
+    categories: list[str] = field(default_factory=list)
+    details: str = "No specific risk detected"
     confidence: float = 1.0
 
 
-# Operation risk categories
-DESTRUCTIVE_CATEGORIES = {
-    'file_deletion': {
-        'tools': ['delete_path', 'delete path', 'remove_file', 'delete_file', 'remove path'],
-        'keywords': [
-            'delete', 'remove', 'rm ', 'del ', 'destroy', 'eliminate',
-            'erase', 'wipe', 'purge', 'clean', 'clear'
-        ],
-        'risk_level': RiskLevel.HIGH,
-        'description': 'File or directory deletion'
-    },
-    'file_modification': {
-        'tools': ['update_file', 'write_file', 'overwrite_file', 'write', 'edit'],
-        'keywords': [
-            'overwrite', 'replace', 'modify', 'edit', 'change',
-            'update', 'rewrite', 'truncate'
-        ],
-        'risk_level': RiskLevel.MEDIUM,
-        'description': 'File content modification'
-    },
-    'code_execution': {
-        'tools': ['bash', 'execute_code'],
-        'keywords': [
-            'exec', 'eval', 'execfile', 'compile', '__import__',
-            'subprocess', 'os.system', 'os.popen', 'spawn',
-            'rm -rf', 'format c:', 'dd if=', 'del /f /s',
-            'shutdown', 'reboot', 'halt'
-        ],
-        'risk_level': RiskLevel.HIGH,
-        'description': 'Arbitrary code execution'
-    },
-    'system_modification': {
-        'tools': ['create_file', 'create_directory', 'mkdir'],
-        'keywords': [
-            'sudo', 'chmod', 'chown', 'chgrp', 'install',
-            'pip install', 'npm install', 'apt-get', 'yum',
-            'registry', 'system32', 'etc/', 'bin/'
-        ],
-        'risk_level': RiskLevel.MEDIUM,
-        'description': 'System configuration modification'
-    },
-    'network_external': {
-        'tools': ['Search', 'WebFetch', 'open_website'],
-        'keywords': [
-            'post', 'send', 'submit', 'upload', 'download',
-            'curl', 'wget', 'fetch', 'request'
-        ],
-        'risk_level': RiskLevel.LOW,
-        'description': 'External network communication'
-    },
-    'data_exposure': {
-        'tools': [],
-        'keywords': [
-            'password', 'secret', 'key', 'token', 'credential',
-            'api_key', 'private_key', '.env', 'config'
-        ],
-        'risk_level': RiskLevel.HIGH,
-        'description': 'Potential sensitive data exposure'
-    }
-}
+def _low(details: str = "No specific risk detected", category: str | None = None) -> RiskAssessment:
+    return RiskAssessment(RiskLevel.LOW, [category] if category else [], details)
+
+
+# Verbs that destroy data. A tool whose name contains one of these asks.
+DESTRUCTIVE_VERBS = frozenset({
+    'delete', 'remove', 'rm', 'unlink', 'destroy', 'drop', 'purge', 'wipe',
+    'erase', 'trash', 'truncate', 'shred', 'uninstall', 'revoke',
+})
+
+# Verbs that send something outside the app. These can't be taken back.
+OUTWARD_VERBS = frozenset({
+    'send', 'post', 'publish', 'reply', 'forward', 'tweet', 'share',
+    'submit', 'deploy', 'transfer', 'pay', 'purchase', 'buy', 'invite',
+    'comment', 'broadcast',
+})
+
+# Verbs that only look things up.
+READ_VERBS = frozenset({
+    'get', 'list', 'search', 'read', 'fetch', 'find', 'query', 'describe',
+    'view', 'show', 'lookup', 'count', 'check', 'download', 'inspect',
+    'explain', 'preview', 'summarize', 'browse', 'open', 'glob', 'grep',
+    'status', 'info', 'load', 'ask', 'screenshot',
+})
+
+# Verbs that add or change things in a way that's easy to undo.
+CHANGE_VERBS = frozenset({
+    'create', 'add', 'new', 'update', 'edit', 'set', 'write', 'upload',
+    'save', 'label', 'mark', 'unmark', 'rename', 'copy', 'draft', 'append',
+    'schedule', 'assign', 'generate', 'tag', 'untag', 'star',
+})
+
+# Built-in tools with a known effect, keyed by normalised name.
+_KNOWN_LOW = frozenset({
+    # files (Edit is a targeted change; Write is checked separately)
+    'read', 'grep', 'glob', 'edit', 'open_file',
+    # web
+    'search', 'tavily_search', 'webfetch', 'web_fetch', 'open_website',
+    # agents, teams, tasks, skills, mcp discovery
+    'list_agents', 'create_agent', 'call_agent', 'create_new_team',
+    'create_task', 'assign_task', 'load_skill', 'list_mcp_tools',
+    'run_mcp_tool',  # the MCP action itself is checked in the agent loop
+    # always-on agents: notes and alerts go to the run's own owner
+    'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',
+    # asking the person a question, images, screenshots
+    'ask_user', 'ask_question', 'generate_image', 'take_screenshot',
+    # background shells: reading output or stopping a shell the agent started
+    'bash_output', 'kill_shell',
+})
+
+# Desktop control acts on the person's live screen, where a click can do
+# anything (including pressing "Send"), so it keeps asking.
+_DESKTOP_CONTROL = frozenset({
+    'text_input', 'key_press', 'hot_key', 'mouse_click',
+    'mouse_double_click', 'mouse_right_click',
+})
+
+_SHELL_TOOLS = frozenset({'bash', 'shell', 'terminal', 'run_command', 'execute_command', 'execute_code'})
+
+# Custom tools that run commands or code go through the shell rules too.
+_SHELL_WORDS = frozenset({'shell', 'terminal', 'exec', 'execute', 'eval'})
+
+# HTTP methods that change something on the other side.
+_SENDING_METHODS = frozenset({'POST', 'PUT', 'PATCH', 'DELETE'})
+
+_WRITE_TOOLS = frozenset({'write', 'write_file', 'overwrite_file'})
+
+
+def _normalise(name: str) -> str:
+    return re.sub(r'[\s\-]+', '_', str(name or '').strip()).lower()
+
+
+def _words(name: str) -> set[str]:
+    """Split a tool name into lowercase words (snake, kebab, spaces, camelCase)."""
+    spaced = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', str(name or ''))
+    return {w for w in re.split(r'[^A-Za-z0-9]+', spaced.lower()) if w}
+
+
+def _name_verb_risk(name: str) -> RiskAssessment | None:
+    """Risk from destructive or outward verbs in a tool name, else None."""
+    words = _words(name)
+    hit = words & DESTRUCTIVE_VERBS
+    if hit:
+        return RiskAssessment(
+            RiskLevel.HIGH, ['deletion'], f"'{name}' deletes or removes data ({', '.join(sorted(hit))})"
+        )
+    hit = words & OUTWARD_VERBS
+    if hit:
+        return RiskAssessment(
+            RiskLevel.MEDIUM, ['external_send'],
+            f"'{name}' sends or publishes something outside the app ({', '.join(sorted(hit))})",
+        )
+    return None
+
+
+def _resolve_tool_path(path: Any) -> Path | None:
+    """Resolve a file tool's path the way the file tools do (under tools_root)."""
+    if not path or not isinstance(path, str):
+        return None
+    try:
+        candidate = Path(path).expanduser()
+        if not candidate.is_absolute():
+            from cognitrix.config import settings
+            candidate = Path(settings.tools_root).expanduser() / candidate
+        return candidate.resolve()
+    except Exception:
+        return None
+
+
+def _write_risk(params: dict) -> RiskAssessment:
+    """Writing a new file or appending is fine; replacing an existing file asks."""
+    if params.get('append') in (True, 'true', 'True', 1):
+        return _low("Appends to a file", 'file_write')
+    raw = params.get('file_path') or params.get('path') or params.get('filename')
+    target = _resolve_tool_path(raw)
+    if target is None:
+        # Can't tell where it goes: treat as a possible overwrite.
+        return RiskAssessment(RiskLevel.MEDIUM, ['file_overwrite'], "May overwrite an existing file")
+    if target.exists():
+        return RiskAssessment(
+            RiskLevel.MEDIUM, ['file_overwrite'], f"Overwrites the existing file '{raw}'"
+        )
+    return _low(f"Creates the new file '{raw}'", 'file_write')
+
+
+def _shell_risk(tool_name: str, params: dict) -> RiskAssessment:
+    """Risk for shell commands, using the shell tool's own rules.
+
+    ``cognitrix.common.shell.shell_risk`` decides which commands are safe to
+    run unattended. Where it isn't available every command asks, as before.
+    """
+    command = str(params.get('command') or params.get('code') or '')
+    try:
+        from cognitrix.common.shell import shell_risk  # type: ignore[attr-defined]
+    except ImportError:
+        shell_risk = None
+    if shell_risk is not None:
+        try:
+            level, details = shell_risk(params)
+            return RiskAssessment(RiskLevel(str(level).lower()), ['shell'], details)
+        except Exception:
+            pass
+    return RiskAssessment(
+        RiskLevel.MEDIUM, ['shell'], f"Runs a shell command: {command[:200]}"
+    )
+
+
+def mcp_tool_risk(tool_name: str, annotations: dict | None) -> RiskAssessment:
+    """Risk for an action on a connected app (MCP server).
+
+    ``annotations`` are the server's hints for the tool (``readOnlyHint``,
+    ``destructiveHint``), or None when the tool hasn't been listed yet.
+    """
+    notes = annotations if isinstance(annotations, dict) else {}
+    if notes.get('readOnlyHint'):
+        return _low(f"'{tool_name}' is marked read-only by its server", 'mcp_read')
+    by_name = _name_verb_risk(tool_name)
+    if by_name is not None:
+        return by_name
+    if notes.get('destructiveHint') is True:
+        return RiskAssessment(
+            RiskLevel.MEDIUM, ['mcp_destructive'],
+            f"'{tool_name}' is marked as possibly destructive by its server",
+        )
+    if notes.get('destructiveHint') is False:
+        return _low(f"'{tool_name}' is marked non-destructive by its server", 'mcp_write')
+    words = _words(tool_name)
+    if words & (READ_VERBS | CHANGE_VERBS):
+        return _low(f"'{tool_name}' reads or makes an undoable change", 'mcp_write')
+    return RiskAssessment(
+        RiskLevel.MEDIUM, ['mcp_unknown'],
+        f"Can't tell what '{tool_name}' does from its name, and its server doesn't say",
+    )
 
 
 class DestructiveOpDetector:
-    """Detects and classifies potentially destructive operations."""
-
-    def __init__(self):
-        self.categories = DESTRUCTIVE_CATEGORIES
+    """Classifies tool calls by how hard they are to undo."""
 
     def analyze(self, tool_name: str, params: dict) -> RiskAssessment:
-        """
-        Analyze a tool call for risk.
-        
-        Args:
-            tool_name: Name of the tool being called
-            params: Tool parameters
-            
-        Returns:
-            RiskAssessment with level and categories
-        """
-        tool_name_lower = tool_name.lower()
+        """Assess a tool call. Only names and a few known parameters count."""
+        params = params if isinstance(params, dict) else {}
+        name = _normalise(tool_name)
 
-        # Shell tools are rated by what the command actually does.
-        from cognitrix.common.shell import (
-            SHELL_HELPER_TOOL_NAMES,
-            SHELL_TOOL_NAMES,
-            shell_risk,
-        )
-        normalized = tool_name_lower.replace('_', ' ').strip()
-        if normalized in SHELL_HELPER_TOOL_NAMES:
-            return RiskAssessment(RiskLevel.LOW, [], 'Reads or stops a background command')
-        if normalized in SHELL_TOOL_NAMES:
-            level, details = shell_risk(params)
-            category = [] if level == 'low' else ['code_execution']
-            return RiskAssessment(RiskLevel(level), category, details)
+        if name in _KNOWN_LOW:
+            return _low()
+        if name in _SHELL_TOOLS or _words(tool_name) & _SHELL_WORDS or isinstance(params.get('command'), str):
+            return _shell_risk(tool_name, params)
+        if name in _WRITE_TOOLS:
+            return _write_risk(params)
+        if name in _DESKTOP_CONTROL:
+            return RiskAssessment(
+                RiskLevel.MEDIUM, ['desktop_control'],
+                f"'{tool_name}' controls the live desktop",
+            )
+        method = str(params.get('method') or '').upper()
+        if method in _SENDING_METHODS:
+            return RiskAssessment(
+                RiskLevel.MEDIUM, ['external_send'],
+                f"Sends an HTTP {method} request to an outside service",
+            )
 
-        params_str = str(params).lower()
-        combined = f"{tool_name_lower} {params_str}"
-
-        detected_categories = []
-        max_risk = RiskLevel.LOW
-        details = []
-
-        for category_name, config in self.categories.items():
-            detected = False
-
-            # Check tool name match on whole words, so e.g. 'write'/'edit' don't
-            # match substrings of unrelated tool names ('rewrite', 'editor').
-            if any(re.search(rf'\b{re.escape(t)}\b', tool_name_lower) for t in config['tools']):
-                detected = True
-
-            # Check keyword match in params
-            if any(kw in combined for kw in config['keywords']):
-                detected = True
-
-            if detected:
-                detected_categories.append(category_name)
-
-                # Update max risk by severity ordinal (NOT lexicographic string
-                # compare: 'high' < 'low' < 'medium' as strings would mis-rank).
-                if _RISK_ORDER[config['risk_level']] > _RISK_ORDER[max_risk]:
-                    max_risk = config['risk_level']
-
-                details.append(config['description'])
-
-        # Build details string
-        details_str = "; ".join(details) if details else "No specific risk detected"
-
-        return RiskAssessment(
-            risk_level=max_risk,
-            categories=detected_categories,
-            details=details_str
-        )
+        by_name = _name_verb_risk(tool_name)
+        if by_name is not None:
+            return by_name
+        # Everything else (reads, creates, updates, custom tools) runs.
+        return _low()
 
     def is_destructive(self, tool_name: str, params: dict, threshold: RiskLevel = RiskLevel.MEDIUM) -> bool:
-        """
-        Quick check if operation is destructive above threshold.
-        
-        Args:
-            tool_name: Tool name
-            params: Tool parameters
-            threshold: Minimum risk level to consider destructive
-            
-        Returns:
-            True if operation is at or above threshold
-        """
+        """True if the call is at or above ``threshold``."""
         assessment = self.analyze(tool_name, params)
-        risk_values = {RiskLevel.LOW: 0, RiskLevel.MEDIUM: 1, RiskLevel.HIGH: 2}
-        return risk_values[assessment.risk_level] >= risk_values[threshold]
+        return _RISK_ORDER[assessment.risk_level] >= _RISK_ORDER[threshold]

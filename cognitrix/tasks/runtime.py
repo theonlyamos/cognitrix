@@ -598,6 +598,14 @@ def build_runtime_snapshot(
             f"Agent '{agent.name}' model does not support required tool use"
         )
     tools = _select_tools(agent, required_tools)
+    if required_tools is not None and bool(agent.llm.supports_tool_use):
+        # Automation tools (notes, next check, notify) are available to every
+        # step, whatever tools the planner asked for.
+        chosen = {tool.name for tool in tools}
+        tools = [*tools, *(
+            tool for tool in (agent.tools or [])
+            if tool.category == "automation" and tool.name not in chosen
+        )]
     llm = agent.llm
     return AgentRuntimeSnapshot(
         agent_id=str(agent.id),

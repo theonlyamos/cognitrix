@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
-import { useNotifications, type InboxApproval, type InboxItem, type InboxQuestion } from '@/context/NotificationsContext';
+import { useNotifications, type InboxApproval, type InboxItem, type InboxNotification, type InboxQuestion } from '@/context/NotificationsContext';
 import { LoadingState } from '@/components/list-ui';
 import { cn } from '@/lib/utils';
 
 function itemTitle(item: InboxItem): string {
   if (item.kind === 'approval') return `Run ${item.tool_name}`;
+  if (item.kind === 'notification') return item.title;
   return String(item.question.prompt || 'An agent asked a question');
 }
 
@@ -15,6 +16,7 @@ function itemSource(item: InboxItem): string {
     const step = item.step_index != null ? ` · step ${item.step_index + 1}` : '';
     return `${item.task_title || 'Task run'}${step}`;
   }
+  if (item.kind === 'notification') return item.task_title || (item.session_id ? 'Chat' : 'Agent');
   return 'Chat';
 }
 
@@ -23,10 +25,12 @@ function Badge({ kind }: { kind: InboxItem['kind'] }) {
     <span
       className={cn(
         'rounded px-1.5 py-0.5 font-mono text-[10px] tracking-[0.1em]',
-        kind === 'approval' ? 'bg-[#ffb86b]/15 text-[#b4691a] dark:text-[#ffb86b]' : 'bg-[#7cc4ff]/15 text-[#1f6f8b] dark:text-[#7cc4ff]',
+        kind === 'approval' && 'bg-[#ffb86b]/15 text-[#b4691a] dark:text-[#ffb86b]',
+        kind === 'question' && 'bg-[#7cc4ff]/15 text-[#1f6f8b] dark:text-[#7cc4ff]',
+        kind === 'notification' && 'bg-accent/15 text-accent-ink',
       )}
     >
-      {kind === 'approval' ? 'APPROVAL' : 'QUESTION'}
+      {kind === 'approval' ? 'APPROVAL' : kind === 'notification' ? 'ALERT' : 'QUESTION'}
     </span>
   );
 }
@@ -199,7 +203,53 @@ function QuestionDetail({ item, onDone }: { item: InboxQuestion; onDone: () => v
   );
 }
 
-/** Everything waiting on you: approvals from paused task runs and questions from chats. */
+function NotificationDetail({ item, onDone }: { item: InboxNotification; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const dismiss = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/notifications/${item.id}/read`);
+      onDone();
+    } catch (err) {
+      setError(errorMessage(err, 'Could not dismiss this alert.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <div className="font-mono text-[10.5px] tracking-[0.14em] text-accent-ink">AGENT ALERT</div>
+        <div className="mt-1 font-mono text-[12px] text-fg-dim">{itemSource(item)}</div>
+        <h2 className="mt-2 text-[20px] font-semibold leading-snug">{item.title}</h2>
+        {item.message && <p className="mt-2 whitespace-pre-wrap text-[13.5px] leading-relaxed text-fg">{item.message}</p>}
+      </div>
+      {error && <p role="alert" className="text-[13px] text-danger-ink">{error}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={dismiss}
+          className="h-10 rounded-[9px] bg-accent px-5 text-[13.5px] font-semibold text-accent-foreground disabled:opacity-60"
+        >
+          {busy ? 'Dismissing…' : 'Dismiss'}
+        </button>
+        <span className="flex-1" />
+        {item.task_id && (
+          <Link to={`/tasks/${item.task_id}`} className="text-[13px] text-accent-ink hover:underline">
+            Open task
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Everything waiting on you: approvals from paused task runs, questions from chats, and agent alerts. */
 export default function Inbox() {
   const { inbox, inboxLoaded, refreshInbox } = useNotifications();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -257,6 +307,8 @@ export default function Inbox() {
             </button>
             {selected.kind === 'approval' ? (
               <ApprovalDetail key={selected.id} item={selected} onDone={done} />
+            ) : selected.kind === 'notification' ? (
+              <NotificationDetail key={selected.id} item={selected} onDone={done} />
             ) : (
               <QuestionDetail key={selected.id} item={selected} onDone={done} />
             )}
@@ -266,7 +318,7 @@ export default function Inbox() {
             <div className="grid h-full place-items-center text-center">
               <div>
                 <div className="text-[15px] font-medium">You're all caught up</div>
-                <p className="mt-1 text-[13px] text-fg-dim">When a task pauses on a risky step or an agent asks something, it shows up here.</p>
+                <p className="mt-1 text-[13px] text-fg-dim">When a task pauses on a risky step, an agent asks something, or an automation sends an alert, it shows up here.</p>
               </div>
             </div>
           )

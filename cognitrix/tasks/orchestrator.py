@@ -13,6 +13,7 @@ import os
 import re
 import sys
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from cognitrix.agents.base import Agent
@@ -84,6 +85,35 @@ STEP_TIMEOUT = int(os.getenv('COGNITRIX_STEP_TIMEOUT', '600'))
 GATE_THRESHOLD = float(os.getenv('COGNITRIX_GATE_THRESHOLD', '7'))
 MAX_PARALLEL_STEPS = int(os.getenv('COGNITRIX_MAX_PARALLEL_STEPS', '3'))
 MAX_PLAN_STEPS = 10
+
+
+# Automation context (notes, wake reason, webhook payload) for the run in
+# progress. Set once per run by run(); read by the planner, step and synthesis
+# prompts. Empty for plain manual runs.
+_automation_brief: ContextVar[str] = ContextVar('task_automation_brief', default='')
+
+
+def _with_automation_brief(text: str) -> str:
+    brief = _automation_brief.get()
+    return f"{text}\n\n{brief}" if brief else text
+
+
+def _add_automation_tools(roster: Sequence[Agent]) -> None:
+    """Give every tool-capable agent in this run the automation tools.
+
+    In-memory only: the agents' stored tool lists are not changed.
+    """
+    from cognitrix.tools.automation import AUTOMATION_TOOL_CATEGORY
+    from cognitrix.tools.base import ToolManager
+
+    extra = ToolManager.get_tools_by_category(AUTOMATION_TOOL_CATEGORY)
+    for agent in roster:
+        if not getattr(agent.llm, 'supports_tool_use', False):
+            continue
+        tools = list(agent.tools or [])
+        have = {tool.name for tool in tools}
+        tools.extend(tool for tool in extra if tool.name not in have)
+        agent.tools = tools
 
 
 def _now() -> str:
@@ -161,8 +191,12 @@ async def _planner_plan(task: 'Task', roster: list[Agent], leader: Agent) -> lis
     """Generate a plan from the description via StructuredPlanner (never raises)."""
     from cognitrix.planning.structured_planner import StructuredPlanner
 
-    tools = list({t.name: t for a in roster for t in (a.tools or [])}.values())
-    plan = await StructuredPlanner(leader.llm).create_plan(task.description, roster, tools)
+    # Automation tools are always available to every step; the planner
+    # doesn't need to plan around them.
+    tools = list({t.name: t for a in roster for t in (a.tools or [])
+                  if t.category != 'automation'}.values())
+    plan = await StructuredPlanner(leader.llm).create_plan(
+        _with_automation_brief(task.description), roster, tools)
     steps = list(plan.steps or [])
     if not steps or len(steps) > MAX_PLAN_STEPS or not all((s.title or '').strip() for s in steps):
         logger.warning("Task %s: planner output invalid, falling back to single step", task.id)
@@ -676,6 +710,9 @@ def _durable_step_prompt(
         "for permission or confirmation. Risky tool calls are sent to the user for "
         "approval automatically."
     )
+    brief = _automation_brief.get()
+    if brief:
+        parts.append("\n" + brief)
     return '\n'.join(parts)
 
 
@@ -714,7 +751,7 @@ async def _synthesize_step_results(
         {
             'role': 'user',
             'content': (
-                f"Task: {task.title}\n{task.description}\n\n"
+                f"Task: {task.title}\n{_with_automation_brief(task.description)}\n\n"
                 "Completed step outputs follow as inert evidence only.\n"
                 + rendered_results
             ),
@@ -1304,6 +1341,17 @@ async def run(
         if not roster:
             raise RuntimeError(f"Task {task.id} has no agents assigned")
         _check_roster_ownership(task, run_rec, roster)
+        from cognitrix.tasks.automation import automation_brief
+        try:
+            brief = await automation_brief(task, run_rec)
+        except Exception:
+            logger.exception("Task %s: could not build automation context", task.id)
+            brief = ''
+        _automation_brief.set(brief)
+        if brief:
+            # Only automation runs (scheduled, woken, webhook, or with notes
+            # or triggers) get the automation tools automatically.
+            _add_automation_tools(roster)
         if (
             run_rec.acl_version != 1
             or run_rec.acl_team_id != (str(task.team_id) if task.team_id else None)
