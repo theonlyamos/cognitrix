@@ -128,3 +128,223 @@ async def test_chat_only_api_key_cannot_write_through_management_tool():
     finally:
         reset_execution_context(token)
     assert 'missing required scope: write' in result['result'][0]['data']
+
+
+# ── update_task / delete_task ────────────────────────────────────────────────
+
+from contextlib import contextmanager  # noqa: E402
+
+
+@contextmanager
+def _as_user(user_id='u1', **kw):
+    from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
+    token = set_execution_context(ToolExecutionContext(user_id=user_id, **kw))
+    try:
+        yield
+    finally:
+        reset_execution_context(token)
+
+
+def _real_task(**kw):
+    from cognitrix.tasks.base import Task
+    data = {'title': 'Daily digest', 'description': 'Summarise the news', 'owner_id': 'u1',
+            'assigned_agents': ['agent1']}
+    data.update(kw)
+    data.setdefault('id', 'task-1')
+    return Task(**data)
+
+
+@pytest.fixture
+def task_store(monkeypatch):
+    """Tasks the tools can find, and the edits/deletes they make."""
+    store = {'tasks': [], 'saved': [], 'deleted': []}
+
+    async def get(ref):
+        return next((t for t in store['tasks'] if str(t.id) == ref), None)
+
+    async def all_():
+        return list(store['tasks'])
+
+    async def live_update(task):
+        store['saved'].append(task.model_copy(deep=True))
+        return 1
+
+    async def soft_delete(task):
+        store['deleted'].append(task.id)
+
+    monkeypatch.setattr('cognitrix.tasks.base.Task.get', get)
+    monkeypatch.setattr('cognitrix.tasks.base.Task.all', all_)
+    monkeypatch.setattr('cognitrix.api.routes.tasks._update_existing_task_if_live', live_update)
+    monkeypatch.setattr('cognitrix.api.routes.tasks.soft_delete_task', soft_delete)
+    return store
+
+
+def test_update_and_delete_tools_are_registered():
+    update = ToolManager.get_by_name('update_task')
+    delete = ToolManager.get_by_name('delete_task')
+    assert update and delete
+    assert delete.approval_mode == 'always'
+    assert update.retryable is False and delete.max_attempts == 1
+    schema = update.to_dict_format()['function']['parameters']
+    assert schema['properties']['steps']['type'] == 'array'
+    assert schema['properties']['clear_schedule']['type'] == 'boolean'
+
+
+@pytest.mark.asyncio
+async def test_update_task_changes_only_given_fields(task_store):
+    from cognitrix.tools.management import update_task
+    task = _real_task()
+    task_store['tasks'].append(task)
+    with _as_user():
+        out = await update_task.run('daily DIGEST', title='Morning digest', steps=['Read feeds'])
+    assert out.outcome.status == 'success'
+    saved = task_store['saved'][0]
+    assert saved.title == 'Morning digest'
+    assert saved.description == 'Summarise the news'
+    assert saved.step_instructions['0']['step'] == 'Read feeds'
+
+
+@pytest.mark.asyncio
+async def test_update_task_sets_schedule_and_authority(task_store):
+    from cognitrix.tools.management import update_task
+    task = _real_task(schedule_cron='0 9 * * *', schedule_enabled=True)
+    task_store['tasks'].append(task)
+    with _as_user():
+        out = await update_task.run(task.id, schedule_interval_seconds=3600)
+    assert out.outcome.status == 'success', out.outcome
+    saved = task_store['saved'][0]
+    assert saved.schedule_interval == 3600 and saved.schedule_cron is None
+    assert saved.schedule_enabled and saved.next_run_at
+    assert saved.schedule_requested_by == 'u1' and saved.schedule_authority_kind == 'jwt'
+
+
+@pytest.mark.asyncio
+async def test_update_task_pause_and_clear(task_store):
+    from cognitrix.tools.management import update_task
+    task = _real_task(schedule_interval=600, schedule_enabled=True, next_run_at='2030-01-01 00:00:00')
+    task_store['tasks'].append(task)
+    with _as_user():
+        paused = await update_task.run(task.id, schedule_enabled=False)
+        cleared = await update_task.run(task.id, clear_schedule=True)
+    assert paused.outcome.status == 'success' and cleared.outcome.status == 'success'
+    assert task_store['saved'][0].schedule_enabled is False and task_store['saved'][0].next_run_at is None
+    assert task_store['saved'][0].schedule_interval == 600
+    assert task_store['saved'][1].schedule_interval is None
+
+
+@pytest.mark.asyncio
+async def test_update_task_rejects_bad_input(task_store):
+    from cognitrix.tools.management import update_task
+    task = _real_task()
+    task_store['tasks'].append(task)
+    with _as_user():
+        nothing = await update_task.run(task.id)
+        enable = await update_task.run(task.id, schedule_enabled=True)
+        short = await update_task.run(task.id, schedule_interval_seconds=5)
+    assert nothing.outcome.error.code == 'nothing_to_update'
+    assert enable.outcome.error.code == 'invalid_schedule'
+    assert short.outcome.error.code == 'invalid_schedule'
+    assert task_store['saved'] == []
+
+
+@pytest.mark.asyncio
+async def test_task_tools_cannot_touch_another_users_task(task_store):
+    from cognitrix.tools.management import delete_task, update_task
+    task = _real_task(owner_id='someone-else')
+    task_store['tasks'].append(task)
+    with _as_user('u1'):
+        upd = await update_task.run(task.id, title='Mine now')
+        rm = await delete_task.run('Daily digest')
+    assert upd.outcome.error.code == 'invalid_task_reference'
+    assert rm.outcome.error.code == 'invalid_task_reference'
+    assert task_store['saved'] == [] and task_store['deleted'] == []
+
+
+@pytest.mark.asyncio
+async def test_shared_task_needs_admin(task_store, monkeypatch):
+    from cognitrix.tools.management import delete_task
+    task = _real_task(owner_id=None)
+    task_store['tasks'].append(task)
+
+    async def no_user(_id): return None
+    async def not_admin(_user): return False
+    monkeypatch.setattr('cognitrix.models.user.User.get', no_user)
+    monkeypatch.setattr('cognitrix.agents.access.is_admin', not_admin)
+    with _as_user('u1'):
+        out = await delete_task.run(task.id)
+    assert out.outcome.error.code == 'authorization_denied'
+    assert task_store['deleted'] == []
+
+
+@pytest.mark.asyncio
+async def test_scheduled_runs_cannot_manage_tasks(task_store):
+    from cognitrix.tools.management import delete_task, update_task
+    task = _real_task()
+    task_store['tasks'].append(task)
+    # Scheduled/webhook runs: no user and no scopes.
+    from cognitrix.tools.management import ToolAuthorizationError
+    with _as_user(None, task_id=task.id, run_id='r1', scopes=frozenset()):
+        with pytest.raises(ToolAuthorizationError, match='missing required scope: write'):
+            await update_task.run(task.id, title='x')
+        with pytest.raises(ToolAuthorizationError, match='missing required scope: write'):
+            await delete_task.run(task.id)
+    # Any other context with no person behind it is refused too.
+    with _as_user(None, task_id=task.id, run_id='r1'):
+        rm = await delete_task.run(task.id)
+    assert rm.outcome.error.code == 'authorization_denied'
+    assert task_store['deleted'] == []
+
+
+@pytest.mark.asyncio
+async def test_api_key_allowlist_applies_to_existing_task(task_store):
+    from cognitrix.tools.management import delete_task
+    task = _real_task(assigned_agents=['agent1'])
+    task_store['tasks'].append(task)
+    with _as_user('u1', api_key_id='k1', scopes=frozenset({'write'}), allowed_agents=frozenset({'other'})):
+        out = await delete_task.run(task.id)
+    assert out.outcome.error.code == 'authorization_denied'
+
+
+@pytest.mark.asyncio
+async def test_delete_task_deletes_and_reports_active_run(task_store, monkeypatch):
+    from cognitrix.tasks.repository import ActiveRunExists
+    from cognitrix.tools.management import delete_task
+    task = _real_task()
+    task_store['tasks'].append(task)
+    with _as_user():
+        out = await delete_task.run('Daily digest')
+    assert out.outcome.status == 'success' and task_store['deleted'] == [task.id]
+
+    async def busy(_task): raise ActiveRunExists()
+    monkeypatch.setattr('cognitrix.api.routes.tasks.soft_delete_task', busy)
+    with _as_user():
+        out = await delete_task.run(task.id)
+    assert out.outcome.error.code == 'task_running'
+
+
+@pytest.mark.asyncio
+async def test_deleted_tasks_are_not_found(task_store):
+    from cognitrix.tools.management import update_task
+    task = _real_task(deleted_at='2026-01-01 00:00:00')
+    task_store['tasks'].append(task)
+    with _as_user():
+        out = await update_task.run(task.id, title='x')
+    assert out.outcome.error.code == 'invalid_task_reference'
+
+
+@pytest.mark.asyncio
+async def test_create_task_records_owner(monkeypatch):
+    from cognitrix.tools.management import create_task
+    saved = []
+
+    class Task:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+            self.id = 'task1'
+        async def save(self): saved.append(self)
+
+    monkeypatch.setattr('cognitrix.tasks.base.Task', Task)
+    monkeypatch.setattr('cognitrix.tasks.scheduler.validate_schedule', lambda task, respecified: None)
+    with _as_user('u1'):
+        await create_task.run('T', 'D')
+    assert saved[0].owner_id == 'u1'
