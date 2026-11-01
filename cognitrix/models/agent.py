@@ -91,6 +91,14 @@ class Agent(Model):
     mcp_servers: list[str] = Field(default_factory=list)
     """List of permitted MCP servers for this agent"""
 
+    folders: list[dict[str, Any]] | None = None
+    """Default working folders ({path, access, name, primary}) copied into each
+    new chat. None (never set) means the app's working folder; an empty list
+    means each chat gets a private scratch folder."""
+
+    can_request_folders: bool = True
+    """Whether the agent may ask (with approval) for more folders or write access."""
+
     permission_level: str = 'auto'
     """How the agent asks before acting: auto (only risky actions ask), ask
     (every action asks) or allow (nothing asks). See cognitrix/safety/permissions.py."""

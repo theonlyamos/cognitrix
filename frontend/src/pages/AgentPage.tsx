@@ -12,6 +12,8 @@ import { cn } from '@/lib/utils';
 import { REASONING_LEVELS } from '@/lib/reasoning';
 import { BASE_URLS, MODELS, PROVIDERS, ignoresTemperature } from '@/lib/providers';
 import { listMcpServers, type McpServer } from '@/lib/mcp';
+import FolderChips from '@/components/FolderChips';
+import { folderInfo, type WorkFolder } from '@/lib/folders';
 
 interface Tool { name: string; description?: string; category?: string; default_permission?: 'asks' | 'runs' | 'depends' }
 type AgentLevel = 'auto' | 'ask' | 'allow';
@@ -38,6 +40,8 @@ interface AgentData {
   llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number; reasoning_effort?: string };
   tools?: Tool[];
   mcp_servers?: string[];
+  folders?: WorkFolder[] | null;
+  can_request_folders?: boolean;
   permission_level?: AgentLevel;
   tool_permissions?: Record<string, ToolLevel>;
 }
@@ -66,6 +70,14 @@ export default function AgentPage() {
   const [saving, setSaving] = useState(false);
   const [mcpServers, setMcpServers] = useState<McpServer[] | null>(null);
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
+  // null: never set, so chats use the app's working folder.
+  const [folders, setFolders] = useState<WorkFolder[] | null>(null);
+  const [canRequestFolders, setCanRequestFolders] = useState(true);
+  const [workingFolder, setWorkingFolder] = useState('');
+
+  useEffect(() => {
+    folderInfo().then((i) => setWorkingFolder(i.working_folder)).catch(() => {});
+  }, []);
   const [permissionLevel, setPermissionLevel] = useState<AgentLevel>('auto');
   const [toolPermissions, setToolPermissions] = useState<Record<string, ToolLevel>>({});
 
@@ -85,6 +97,8 @@ export default function AgentPage() {
     setMaxTokens(existing.llm?.max_tokens ? String(existing.llm.max_tokens) : '');
     setBaseUrl(existing.llm?.base_url || '');
     setSelectedServers(existing.mcp_servers || []);
+    setFolders(existing.folders ?? null);
+    setCanRequestFolders(existing.can_request_folders ?? true);
     setPermissionLevel(existing.permission_level || 'auto');
     setToolPermissions(existing.tool_permissions || {});
   }, [existing]);
@@ -155,6 +169,8 @@ export default function AgentPage() {
             return rest;
           }),
         mcp_servers: selectedServers,
+        folders,
+        can_request_folders: canRequestFolders,
         permission_level: permissionLevel,
         // Levels for tools the agent no longer has are dropped, except MCP
         // tools, which aren't in the list but can still be set by name.
@@ -238,8 +254,7 @@ export default function AgentPage() {
 
       {selected.has('Bash') && (
         <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
-          Shell commands start in the working folder
-          {systemInfo?.working_folder ? <> <span className="font-mono text-[12px] text-fg">{systemInfo.working_folder}</span></> : null}. Read-only commands run right away; anything else waits for your approval.{' '}
+          Shell commands start in the agent's primary working folder (set below) and only run inside its working folders. Read-only commands run right away; anything else waits for your approval.{' '}
           {systemInfo && !systemInfo.desktop && 'On a shared server, the shell is off in chats and tasks; it works in the desktop app and the CLI. '}
           <Link to="/settings" className="text-accent-ink hover:underline">Change</Link>
         </p>
@@ -359,6 +374,42 @@ export default function AgentPage() {
         </div>
         <p className="mt-1.5 text-[12px] text-fg-dim">
           The agent can list and run these servers' tools. Tools that aren't marked read-only ask for your approval first.
+        </p>
+      </Field>
+
+      <Field label="WORKING FOLDERS" hint="copied into each new chat" composite>
+        <div className="rounded border border-line px-3 py-2.5">
+          {folders === null ? (
+            <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-fg-dim">
+              <span>
+                Uses the app's working folder
+                {workingFolder ? <> <span className="font-mono text-[12px] text-fg">{workingFolder}</span></> : null} (read &amp; write).
+              </span>
+              <button type="button" className="text-accent-ink hover:underline"
+                onClick={() => setFolders(workingFolder ? [{ path: workingFolder, access: 'write', primary: true }] : [])}>
+                Choose folders
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <FolderChips folders={folders} onChange={setFolders} emptyLabel="none: each chat gets a private scratch folder" />
+              <button type="button" className="self-start text-[12px] text-fg-dim hover:text-fg hover:underline"
+                onClick={() => setFolders(null)}>
+                Go back to the app's working folder
+              </button>
+            </div>
+          )}
+        </div>
+        <label className="mt-2 flex cursor-pointer items-start gap-2.5 text-[12.5px]">
+          <input type="checkbox" checked={canRequestFolders} onChange={(e) => setCanRequestFolders(e.target.checked)}
+            className="mt-0.5 accent-[var(--accent)]" />
+          <span>
+            Let the agent ask for other folders
+            <span className="block text-fg-dim">It can ask for a folder or for write access, and you approve or deny it in the chat. Task runs wait for an answer.</span>
+          </span>
+        </label>
+        <p className="mt-1.5 text-[12px] text-fg-dim">
+          Read only folders can be read and searched but not changed. The primary folder is where relative paths and shell commands start. Chats keep their own copy, so changing these doesn't change chats you already started.
         </p>
       </Field>
 

@@ -16,6 +16,8 @@ import { Button } from '@/lib/components/ui/button';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { insertTranscript } from '@/lib/voice';
+import FolderChips from '@/components/FolderChips';
+import { folderInfo, getChatFolders, setChatFolders, type FolderInfo, type WorkFolder } from '@/lib/folders';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
@@ -256,7 +258,7 @@ export default function Home() {
 
   // Agent selection — chat + SSE must share one agent_id (they rendezvous on a
   // per-(user, agent) manager on the backend).
-  const { data: agentsData, loading: agentsLoading, refetch: refetchAgents } = useResource<{ id: string; name: string }[]>('/agents');
+  const { data: agentsData, loading: agentsLoading, refetch: refetchAgents } = useResource<{ id: string; name: string; folders?: WorkFolder[] | null }[]>('/agents');
   const agents = useMemo(() => (agentsData || []).filter((a) => a.id), [agentsData]);
   const [agentId, setAgentId] = useState<string>(() => localStorage.getItem('selectedAgentId') || '');
 
@@ -313,6 +315,47 @@ export default function Home() {
   }, []);
 
   useEffect(() => clearStopFallback, [clearStopFallback]);
+
+  // ── Working folders ──
+  // A chat's folders live on its session; a new chat shows the agent's
+  // defaults and sends any changes with its first message.
+  const [folderSetup, setFolderSetup] = useState<FolderInfo | null>(null);
+  const [savedFolders, setSavedFolders] = useState<WorkFolder[] | null>(null);
+  const [draftFolders, setDraftFolders] = useState<WorkFolder[] | null>(null);
+  const draftFoldersRef = useRef<WorkFolder[] | null>(null);
+  draftFoldersRef.current = draftFolders;
+  useEffect(() => {
+    folderInfo().then(setFolderSetup).catch(() => setFolderSetup(null));
+  }, []);
+  const agentFolders = useMemo<WorkFolder[]>(() => {
+    const agent = agents.find((a) => a.id === agentId);
+    if (agent?.folders) return agent.folders;
+    if (agent && Array.isArray(agent.folders)) return [];
+    return folderSetup?.working_folder
+      ? [{ path: folderSetup.working_folder, access: 'write', primary: true }]
+      : [];
+  }, [agents, agentId, folderSetup]);
+  useEffect(() => {
+    // Switching chats or agents drops the new-chat draft. A new chat adopting
+    // its id mid-turn keeps it until the saved list loads.
+    if (!busyRef.current) setDraftFolders(null);
+  }, [activeSessionId, agentId]);
+  useEffect(() => {
+    setSavedFolders(null);
+    if (!activeSessionId || busy) return;
+    let cancelled = false;
+    getChatFolders(activeSessionId)
+      .then((f) => { if (!cancelled) setSavedFolders(f); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // Re-read after each turn: an approved folder request changes the list.
+  }, [activeSessionId, busy]);
+  const shownFolders = savedFolders ?? draftFolders ?? agentFolders;
+  const changeFolders = useCallback(async (next: WorkFolder[]) => {
+    const sid = activeRef.current;
+    if (sid) setSavedFolders(await setChatFolders(sid, next));
+    else setDraftFolders(next);
+  }, []);
 
   // Default to the first agent once the list loads (or if the saved one is gone).
   useEffect(() => {
@@ -760,6 +803,7 @@ export default function Home() {
             : {}),
           ...(bypassRef.current ? { bypass_permissions: true } : {}),
           ...(reasoningRef.current ? { reasoning_effort: reasoningRef.current } : {}),
+          ...(!activeRef.current && draftFoldersRef.current ? { folders: draftFoldersRef.current } : {}),
         };
         if (pending.length) {
           const form = new FormData();
@@ -1296,6 +1340,13 @@ export default function Home() {
               <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
             )}
             <VoiceNotice voice={voice} />
+            <FolderChips
+              className="mt-2"
+              folders={shownFolders}
+              onChange={changeFolders}
+              emptyLabel="private scratch folder"
+              disabled={busy}
+            />
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim">
               <button
                 type="button"

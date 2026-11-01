@@ -382,6 +382,9 @@ class AgentRuntimeSnapshot(BaseModel):
     tool_names: tuple[str, ...] = ()
     tool_schemas: tuple[dict[str, Any], ...] = ()
     tool_policies: tuple[CapabilityPolicySnapshot, ...] = ()
+    # The agent's working-folder policy (Agent.folders / can_request_folders).
+    folders: tuple[dict[str, Any], ...] | None = None
+    can_request_folders: bool = True
     # The agent's permission levels (see cognitrix/safety/permissions.py).
     permission_level: Literal["auto", "ask", "allow"] = "auto"
     tool_permissions: tuple[tuple[str, Literal["allow", "ask", "deny"]], ...] = ()
@@ -633,6 +636,11 @@ def build_runtime_snapshot(
         ),
         tool_names=tuple(tool.name for tool in tools),
         tool_schemas=tuple(copy.deepcopy(tool.to_dict_format()) for tool in tools),
+        folders=(
+            None if getattr(agent, "folders", None) is None
+            else tuple(copy.deepcopy(dict(f)) for f in agent.folders)
+        ),
+        can_request_folders=bool(getattr(agent, "can_request_folders", True)),
         tool_policies=tuple(
             CapabilityPolicySnapshot(
                 name=tool.name,
@@ -728,6 +736,8 @@ def instantiate_runtime(
         sub_agents=[],
         mcp_servers=[],
         is_sub_agent=False,
+        folders=None if snapshot.folders is None else [dict(f) for f in snapshot.folders],
+        can_request_folders=snapshot.can_request_folders,
         permission_level=snapshot.permission_level,
         tool_permissions=dict(snapshot.tool_permissions),
     )

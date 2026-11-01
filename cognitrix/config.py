@@ -388,6 +388,7 @@ _ARTIFACT_MIGRATION_COLUMNS = (
 
 _AGENT_MIGRATION_COLUMNS = (
     ('owner_id', 'TEXT'),
+    ('folders', 'TEXT'), ('can_request_folders', 'BOOLEAN'),
     ('permission_level', 'TEXT'),
     ('tool_permissions', 'TEXT'),
 )
@@ -395,6 +396,7 @@ _AGENT_MIGRATION_COLUMNS = (
 _SESSION_MIGRATION_COLUMNS = (
     ('user_id', 'TEXT'), ('run_id', 'TEXT'),
     ('step_index', 'INTEGER'), ('step_title', 'TEXT'),
+    ('folders', 'TEXT'),
 )
 
 _TASKRUN_INDEXES = (
