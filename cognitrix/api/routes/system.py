@@ -75,6 +75,23 @@ async def inbox(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
             **approvals.approval_payload(row),
             'task_title': titles.get(task_id, ''),
         })
+    from cognitrix.tasks.automation import public_notification, unread_notifications
+    try:
+        notes = await unread_notifications(user_key)
+    except Exception as exc:
+        if 'no such table' not in str(exc).lower():
+            raise
+        notes = []
+    for row in notes:
+        task_id = row.task_id or ''
+        if task_id and task_id not in titles:
+            task = await Task.get(task_id)
+            titles[task_id] = getattr(task, 'title', '') or ''
+        items.append({
+            'kind': 'notification',
+            **public_notification(row),
+            'task_title': titles.get(task_id, ''),
+        })
     items.sort(key=lambda item: item.get('created_at') or '', reverse=True)
     items.extend(_pending_questions(user_key))
     return {'items': items, 'count': len(items)}

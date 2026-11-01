@@ -344,6 +344,8 @@ _TASKRUN_MIGRATION_COLUMNS = (
     ('completion_notification_attempts', 'INTEGER'),
     ('completion_notified_at', 'TEXT'),
     ('resume_from_run_id', 'TEXT'),
+    ('trigger_kind', 'TEXT'), ('trigger_note', 'TEXT'),
+    ('trigger_event_id', 'TEXT'),
     ('queue_job_id', 'TEXT'), ('queued_at', 'TEXT'),
     ('lease_owner', 'TEXT'), ('lease_generation', 'INTEGER'),
     ('heartbeat_at', 'TEXT'), ('lease_expires_at', 'TEXT'),
@@ -363,6 +365,10 @@ _TASK_MIGRATION_COLUMNS = (
     ('schedule_enabled', 'BOOLEAN'), ('schedule_requested_by', 'TEXT'),
     ('schedule_authority_kind', 'TEXT'), ('schedule_authority_id', 'TEXT'),
     ('deleted_at', 'TEXT'), ('owner_id', 'TEXT'),
+    ('notes', 'TEXT'), ('wake_pending', 'BOOLEAN'), ('wake_at', 'TEXT'),
+    ('wake_reason', 'TEXT'), ('wake_requested_by', 'TEXT'),
+    ('wake_authority_kind', 'TEXT'), ('wake_authority_id', 'TEXT'),
+    ('max_runs_per_day', 'INTEGER'),
 )
 
 _USER_MIGRATION_COLUMNS = (
@@ -719,6 +725,7 @@ async def _ensure_schema():
                 await result
 
     from cognitrix.tasks.approvals import TaskApproval
+    from cognitrix.tasks.automation import AgentNotification, TaskTrigger, TriggerEvent
 
     for model in (
         TaskRun,
@@ -730,6 +737,9 @@ async def _ensure_schema():
         Artifact,
         TaskApproval,
         VoiceSettings,
+        TaskTrigger,
+        TriggerEvent,
+        AgentNotification,
         MCPServer,
     ):
         try:

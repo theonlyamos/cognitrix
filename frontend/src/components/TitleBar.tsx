@@ -11,6 +11,7 @@ const SECTIONS: [string, string][] = [
   ['/agents', 'Agents'],
   ['/teams', 'Teams'],
   ['/tasks', 'Tasks'],
+  ['/automations', 'Automations'],
   ['/notifications', 'Notifications'],
   ['/settings', 'Settings'],
   ['/api-keys', 'API keys'],

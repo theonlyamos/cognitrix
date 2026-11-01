@@ -17,6 +17,7 @@ from cognitrix.common.security import AuthContext, crud_scope, get_auth_context,
 from cognitrix.session_ownership import principal_key
 from cognitrix.tasks import Task
 from cognitrix.tasks.base import TaskStatus
+from cognitrix.tasks.automation import WAKE_FIELDS, validate_automation_fields
 from cognitrix.tasks.budget import TaskBudget, stable_actor_key
 from cognitrix.tasks.events import event_payload, events_after, step_tool_calls
 from cognitrix.tasks.repository import (
@@ -136,6 +137,9 @@ def _task_json(task: Task) -> dict:
         data.pop('schedule_requested_by', None)
         data.pop('schedule_authority_kind', None)
         data.pop('schedule_authority_id', None)
+        data.pop('wake_requested_by', None)
+        data.pop('wake_authority_kind', None)
+        data.pop('wake_authority_id', None)
         data.pop('deleted_at', None)
     return data
 
@@ -520,6 +524,8 @@ def _public_run_projection(run: TaskRun) -> dict:
         'status',
         'requested_by',
         'resume_from_run_id',
+        'trigger_kind',
+        'trigger_note',
         'queued_at',
         'started_at',
         'completed_at',
@@ -705,6 +711,14 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
     # Tombstones are server-owned. Full-row creates/edits cannot hide or
     # resurrect a task by supplying this field themselves.
     task.deleted_at = None
+    # Agent wake-ups are armed only by the Schedule Next Check tool (and
+    # cleared by pausing the schedule); an edit never sets or drops one.
+    for field in WAKE_FIELDS:
+        setattr(task, field, getattr(stored, field) if stored is not None else None)
+    task.wake_pending = bool(task.wake_pending)
+    automation_error = validate_automation_fields(task)
+    if automation_error:
+        raise HTTPException(status_code=422, detail=automation_error)
     # A schedule TYPE field (at/interval/cron) in the payload means the client
     # is (re)defining the schedule; schedule_enabled alone is a pause/resume
     # toggle over the stored schedule (like POST /tasks/{id}/schedule), not a
@@ -717,7 +731,7 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
         # resets to default. Callback fields never round-trip (stripped from
         # projections) and schedule fields may be omitted by API clients —
         # carry them over instead of silently wiping them.
-        for field in ('callback_url', 'callback_key_id'):
+        for field in ('callback_url', 'callback_key_id', 'notes', 'max_runs_per_day'):
             if field not in task.model_fields_set:
                 setattr(task, field, getattr(stored, field))
         if not respecified:
@@ -755,6 +769,14 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
         else:
             task.next_run_at = None
             task.schedule_enabled = False
+
+    if stored is not None and stored.schedule_enabled and not task.schedule_enabled:
+        # Turning the schedule off from the edit form means stop, like the
+        # pause toggle: cancel the agent's pending wake-up too. Edits of a
+        # task that had no active schedule keep the wake-up.
+        for field in WAKE_FIELDS:
+            setattr(task, field, None)
+        task.wake_pending = False
 
     if task.schedule_enabled:
         requested_by, _actor_key = _run_identity(ctx)
@@ -822,6 +844,9 @@ async def _enqueue_task_start(
     authority_kind: str | None = None,
     authority_id: str | None = None,
     budget: TaskBudget | dict | None = None,
+    trigger_kind: str | None = None,
+    trigger_note: str | None = None,
+    trigger_event_id: str | None = None,
 ) -> TaskRun:
     """Shared start path: 409-guard, broker probe, enqueue, mark in-progress.
 
@@ -884,6 +909,9 @@ async def _enqueue_task_start(
             callback_url=task.callback_url,
             callback_key_id=task.callback_key_id,
             resume_from_run_id=resume_from_run_id,
+            trigger_kind=trigger_kind,
+            trigger_note=trigger_note,
+            trigger_event_id=trigger_event_id,
             budget=(
                 budget.model_dump(mode='json', exclude_none=True)
                 if isinstance(budget, TaskBudget)
@@ -1070,7 +1098,9 @@ async def toggle_schedule(task_id: str, body: ScheduleToggle,
     task = await _require_task_edit(await _visible_task(task_id), ctx)
 
     if not body.enabled:
-        updates = {'schedule_enabled': False, 'next_run_at': None}
+        # Pausing also cancels an agent's pending wake-up: "stop" means stop.
+        updates = {'schedule_enabled': False, 'next_run_at': None,
+                   **{field: None for field in WAKE_FIELDS}, 'wake_pending': False}
     else:
         if not (task.schedule_at or task.schedule_interval or task.schedule_cron):
             raise HTTPException(status_code=422, detail="Task has no schedule to enable")

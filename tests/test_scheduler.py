@@ -200,6 +200,7 @@ async def test_tick_fires_due_interval_and_advances(sched_db, enqueue):
         'requested_by': None,
         'authority_kind': None,
         'authority_id': None,
+        'trigger_kind': 'schedule',
     }]
     fresh = await Task.get(t.id)
     assert fresh.next_run_at == '2030-06-01 12:05:00'
