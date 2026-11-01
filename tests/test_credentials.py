@@ -396,3 +396,35 @@ async def test_plain_text_secrets_from_before_are_encrypted_on_start(db):
 
     from cognitrix.api.routes.audio import _keys
     assert _keys(voice) == {'groq': 'gsk_oldkey'}
+
+
+async def test_review_fixes(db, monkeypatch):
+    """Cut responses don't leak a secret's start; passwords keep spaces; old JWT keys still open values."""
+    from cognitrix.common import secret_box
+    from cognitrix.credentials import Resolver
+    from cognitrix.tools.http import http_request
+    from cognitrix.tools.utils import reset_execution_context
+
+    ada = await _user('Ada', 'ada@example.com')
+    await _add_github(ada)
+    await _add_github(ada, name='site', kind='basic', value=None, username='ada', password=' pass word ',
+                      allowed_hosts=['site.example.com'])
+    assert (await Resolver.for_owner(str(ada.id))).value('SITE', 'password', 'site.example.com') == ' pass word '
+
+    _fake_http(monkeypatch, lambda request: httpx.Response(200, text='x' * 190 + 'ghp_supersecretvalue123'))
+    token = _as(ada)
+    try:
+        text = await _run(http_request, url='https://api.github.com/', max_length=200)
+    finally:
+        reset_execution_context(token)
+    assert 'ghp_' not in text
+
+    monkeypatch.delenv('COGNITRIX_SECRETS_KEY')
+    monkeypatch.setenv('COGNITRIX_ENV', 'production')
+    monkeypatch.setenv('JWT_SECRET_KEY', 'old-jwt')
+    secret_box.reset_key_cache()
+    sealed = secret_box.seal('v')
+    monkeypatch.setenv('COGNITRIX_SECRETS_KEY', 'new-dedicated-key')
+    monkeypatch.setenv('COGNITRIX_SECRETS_OLD_KEYS', 'old-jwt')
+    secret_box.reset_key_cache()
+    assert secret_box.unseal(sealed) == 'v'

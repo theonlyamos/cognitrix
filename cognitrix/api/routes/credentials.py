@@ -90,8 +90,9 @@ def _header(raw: str) -> str:
     return '' if header.lower() == 'authorization' else header
 
 
-def _check_value(label: str, value: str | None) -> str:
-    value = (value or '').strip()
+def _check_value(label: str, value: str | None, *, exact: bool = False) -> str:
+    # Passwords are kept exactly as typed; spaces at either end can be real.
+    value = (value or '') if exact else (value or '').strip()
     if len(value) > MAX_VALUE_LENGTH:
         raise HTTPException(status_code=400, detail=f'The {label} is too long')
     if '\n' in value or '\r' in value:
@@ -101,7 +102,7 @@ def _check_value(label: str, value: str | None) -> str:
 
 def _values(kind: str, value: str | None, username: str | None, password: str | None) -> dict[str, str]:
     if kind == 'basic':
-        values = {'username': _check_value('username', username), 'password': _check_value('password', password)}
+        values = {'username': _check_value('username', username), 'password': _check_value('password', password, exact=True)}
         if not values['username'] or not values['password']:
             raise HTTPException(status_code=400, detail='Enter both a username and a password')
         return values

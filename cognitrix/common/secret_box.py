@@ -19,7 +19,8 @@ Where the key comes from, first match wins:
    rotating the JWT secret does not lock the saved secrets.
 
 ``COGNITRIX_SECRETS_OLD_KEYS`` (comma separated) still decrypts values sealed
-with earlier keys, which lets an operator rotate the key.
+with earlier keys, which lets an operator rotate the key. An old
+``JWT_SECRET_KEY`` works there too, for moving off the production fallback.
 """
 from __future__ import annotations
 
@@ -97,6 +98,8 @@ def _get_box() -> MultiFernet:
             for old in os.getenv('COGNITRIX_SECRETS_OLD_KEYS', '').split(','):
                 if old.strip():
                     keys.append(Fernet(_stretch(old.strip(), 'secrets')))
+                    # An old JWT_SECRET_KEY, for deployments that used the fallback.
+                    keys.append(Fernet(_stretch(old.strip(), 'secrets-from-jwt')))
             _box = MultiFernet(keys)
         return _box
 

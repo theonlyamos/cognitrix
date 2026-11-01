@@ -155,7 +155,8 @@ async def http_request(
         await resolver.mark_used()
 
     shown = [f'{name}: {response.headers[name]}' for name in _SHOWN_HEADERS if name in response.headers]
-    text = response.text if method != 'HEAD' else ''
+    # Scrub before cutting, so a value split by the cut can't leak its start.
+    text = redact(response.text, secrets_map) if method != 'HEAD' else ''
     if len(text) > max_length:
         text = text[:max_length] + '\n... (truncated)'
     lines = [f'HTTP {response.status_code} {response.reason_phrase}', f'URL: {url}']
