@@ -192,3 +192,10 @@ def test_mention_scan_stays_fast_on_hostile_input():
     gc.visible_text({'role': 'assistant', 'type': 'text', 'content': hostile})
     assert time.monotonic() - started < 2
     assert gc.find_mentions('<think>@bob</think> @cara', TEAM) == ['c']
+
+
+def test_agents_saved_before_folder_columns_still_load():
+    from cognitrix.models.agent import Agent
+
+    assert Agent._can_request_folders_default(None) is True
+    assert Agent._can_request_folders_default(False) is False

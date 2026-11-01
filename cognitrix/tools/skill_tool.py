@@ -115,6 +115,9 @@ async def _execute_forked(manifest, skill_content: str, parent) -> str:
         llm=llm,
         system_prompt=skill_content,
         tools=tools,
+        # Keep the calling agent's permission levels.
+        permission_level=getattr(parent, 'permission_level', None) or 'auto',
+        tool_permissions=dict(getattr(parent, 'tool_permissions', None) or {}),
     )
     sub_manager = AgentManager(sub_agent)
 

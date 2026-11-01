@@ -7,6 +7,7 @@ actions that are destructive or hard to undo:
 - overwriting an existing file
 - sending or posting something outside the app (email, messages, deploys)
 - shell commands (rules owned by the shell tool, see ``_shell_risk``)
+- handing work to a coding agent CLI (``cognitrix.common.coding_agents.risk``)
 - remote (MCP) actions whose effect we can't tell from the name or annotations
 
 Reading, listing, searching, web search and web fetch never ask, whatever
@@ -100,6 +101,10 @@ _DESKTOP_CONTROL = frozenset({
     'mouse_double_click', 'mouse_right_click',
 })
 
+# Handing a job to a coding agent CLI (Claude Code, Codex, ...): it edits
+# files and may run commands on its own, so a run always asks.
+_CODING_AGENT_TOOLS = frozenset({'coding_agent'})
+
 _SHELL_TOOLS = frozenset({'bash', 'shell', 'terminal', 'run_command', 'execute_command', 'execute_code'})
 
 # Custom tools that run commands or code go through the shell rules too.
@@ -109,6 +114,9 @@ _SHELL_WORDS = frozenset({'shell', 'terminal', 'exec', 'execute', 'eval'})
 _SENDING_METHODS = frozenset({'POST', 'PUT', 'PATCH', 'DELETE'})
 
 _WRITE_TOOLS = frozenset({'write', 'write_file', 'overwrite_file'})
+
+# Giving an agent a folder (or write access to one) is the person's call.
+_FOLDER_REQUEST_TOOLS = frozenset({'request_folder'})
 
 
 def _normalise(name: str) -> str:
@@ -139,15 +147,12 @@ def _name_verb_risk(name: str) -> RiskAssessment | None:
 
 
 def _resolve_tool_path(path: Any) -> Path | None:
-    """Resolve a file tool's path the way the file tools do (under tools_root)."""
+    """Resolve a file tool's path the way the file tools do (from the primary folder)."""
     if not path or not isinstance(path, str):
         return None
     try:
-        candidate = Path(path).expanduser()
-        if not candidate.is_absolute():
-            from cognitrix.config import settings
-            candidate = Path(settings.tools_root).expanduser() / candidate
-        return candidate.resolve()
+        from cognitrix.common.folders import lexical_path
+        return lexical_path(path).resolve()
     except Exception:
         return None
 
@@ -179,14 +184,38 @@ def _shell_risk(tool_name: str, params: dict) -> RiskAssessment:
         from cognitrix.common.shell import shell_risk  # type: ignore[attr-defined]
     except ImportError:
         shell_risk = None
+    note = _read_only_folder_note(params)
     if shell_risk is not None:
         try:
             level, details = shell_risk(params)
-            return RiskAssessment(RiskLevel(str(level).lower()), ['shell'], details)
+            assessment = RiskAssessment(RiskLevel(str(level).lower()), ['shell'], details)
+            if note and assessment.risk_level != RiskLevel.LOW:
+                assessment = RiskAssessment(assessment.risk_level, assessment.categories, details + note)
+            return assessment
         except Exception:
             pass
     return RiskAssessment(
-        RiskLevel.MEDIUM, ['shell'], f"Runs a shell command: {command[:200]}"
+        RiskLevel.MEDIUM, ['shell'], f"Runs a shell command: {command[:200]}{note}"
+    )
+
+
+def _read_only_folder_note(params: dict) -> str:
+    """Warn on the approval card when a command runs in a read only folder.
+
+    The shell can't enforce read only, so approving lets this command write.
+    """
+    try:
+        from cognitrix.common.folders import folder_for, lexical_path, primary_folder
+        raw = params.get('working_dir') or params.get('cwd')
+        where = lexical_path(str(raw)) if raw else primary_folder()
+        folder = folder_for(where)
+    except Exception:
+        return ''
+    if folder is None or folder.writable:
+        return ''
+    return (
+        f" (runs in '{folder.label}', which is read only: approving lets this "
+        "command change files there)"
     )
 
 
@@ -228,10 +257,20 @@ class DestructiveOpDetector:
 
         if name in _KNOWN_LOW:
             return _low()
+        if name in _CODING_AGENT_TOOLS:
+            from cognitrix.common.coding_agents import risk as coding_agent_risk
+            level, details = coding_agent_risk(params)
+            return RiskAssessment(RiskLevel(level), ['coding_agent'], details)
         if name in _SHELL_TOOLS or _words(tool_name) & _SHELL_WORDS or isinstance(params.get('command'), str):
             return _shell_risk(tool_name, params)
         if name in _WRITE_TOOLS:
             return _write_risk(params)
+        if name in _FOLDER_REQUEST_TOOLS:
+            access = 'read & write' if str(params.get('access', '')).lower() == 'write' else 'read only'
+            return RiskAssessment(
+                RiskLevel.MEDIUM, ['folder_access'],
+                f"Wants {access} access to the folder '{params.get('path', '')}'",
+            )
         if name in _DESKTOP_CONTROL:
             return RiskAssessment(
                 RiskLevel.MEDIUM, ['desktop_control'],

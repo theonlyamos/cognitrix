@@ -12,8 +12,27 @@ import { cn } from '@/lib/utils';
 import { REASONING_LEVELS } from '@/lib/reasoning';
 import { BASE_URLS, MODELS, PROVIDERS, ignoresTemperature } from '@/lib/providers';
 import { listMcpServers, type McpServer } from '@/lib/mcp';
+import FolderChips from '@/components/FolderChips';
+import { folderInfo, type WorkFolder } from '@/lib/folders';
 
-interface Tool { name: string; description?: string; category?: string }
+interface Tool { name: string; description?: string; category?: string; default_permission?: 'asks' | 'runs' | 'depends' }
+type AgentLevel = 'auto' | 'ask' | 'allow';
+type ToolLevel = 'auto' | 'allow' | 'ask' | 'deny';
+
+const AGENT_LEVELS: { value: AgentLevel; label: string; help: string }[] = [
+  { value: 'auto', label: 'Ask before risky actions', help: 'Deleting, overwriting files, sending things outside the app and most shell commands wait for your approval. Everything else runs.' },
+  { value: 'ask', label: 'Ask before every action', help: 'Every tool call waits for your approval, except asking you a question.' },
+  { value: 'allow', label: "Don't ask", help: 'Tools run without asking, including deletes and sends. Commands that need the full shell still ask each time.' },
+];
+
+const TOOL_LEVELS: { value: ToolLevel; label: string }[] = [
+  { value: 'auto', label: 'Default' },
+  { value: 'allow', label: 'Always allow' },
+  { value: 'ask', label: 'Ask first' },
+  { value: 'deny', label: 'Never' },
+];
+
+const DEFAULT_NOTE: Record<string, string> = { asks: 'asks', runs: 'runs', depends: 'depends' };
 interface AgentData {
   id?: string;
   name?: string;
@@ -21,6 +40,10 @@ interface AgentData {
   llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number; reasoning_effort?: string };
   tools?: Tool[];
   mcp_servers?: string[];
+  folders?: WorkFolder[] | null;
+  can_request_folders?: boolean;
+  permission_level?: AgentLevel;
+  tool_permissions?: Record<string, ToolLevel>;
 }
 
 export default function AgentPage() {
@@ -47,6 +70,16 @@ export default function AgentPage() {
   const [saving, setSaving] = useState(false);
   const [mcpServers, setMcpServers] = useState<McpServer[] | null>(null);
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
+  // null: never set, so chats use the app's working folder.
+  const [folders, setFolders] = useState<WorkFolder[] | null>(null);
+  const [canRequestFolders, setCanRequestFolders] = useState(true);
+  const [workingFolder, setWorkingFolder] = useState('');
+
+  useEffect(() => {
+    folderInfo().then((i) => setWorkingFolder(i.working_folder)).catch(() => {});
+  }, []);
+  const [permissionLevel, setPermissionLevel] = useState<AgentLevel>('auto');
+  const [toolPermissions, setToolPermissions] = useState<Record<string, ToolLevel>>({});
 
   useEffect(() => {
     listMcpServers().then((l) => setMcpServers(Array.isArray(l?.servers) ? l.servers : [])).catch(() => setMcpServers([]));
@@ -64,6 +97,10 @@ export default function AgentPage() {
     setMaxTokens(existing.llm?.max_tokens ? String(existing.llm.max_tokens) : '');
     setBaseUrl(existing.llm?.base_url || '');
     setSelectedServers(existing.mcp_servers || []);
+    setFolders(existing.folders ?? null);
+    setCanRequestFolders(existing.can_request_folders ?? true);
+    setPermissionLevel(existing.permission_level || 'auto');
+    setToolPermissions(existing.tool_permissions || {});
   }, [existing]);
 
   const toolsByCategory = useMemo(() => {
@@ -90,6 +127,21 @@ export default function AgentPage() {
       return next;
     });
 
+  const setToolLevel = (n: string, level: ToolLevel) =>
+    setToolPermissions((cur) => {
+      const next = { ...cur };
+      if (level === 'auto') delete next[n];
+      else next[n] = level;
+      return next;
+    });
+
+  // What "Default" does for a tool under the agent-wide level.
+  const defaultNote = (t: Tool) => {
+    if (permissionLevel === 'allow') return 'runs';
+    if (permissionLevel === 'ask') return 'asks';
+    return DEFAULT_NOTE[t.default_permission || ''] || '';
+  };
+
   const save = async () => {
     if (!name.trim()) return setError('Give the agent a name.');
     if (!model.trim()) return setError('Choose a model.');
@@ -109,8 +161,22 @@ export default function AgentPage() {
           ...(baseUrl ? { base_url: baseUrl } : {}),
           ...(maxTokens ? { max_tokens: Number(maxTokens) } : {}),
         },
-        tools: (toolList || []).filter((t) => selected.has(t.name)),
+        tools: (toolList || [])
+          .filter((t) => selected.has(t.name))
+          .map((t) => {
+            const rest: Tool = { ...t };
+            delete rest.default_permission;
+            return rest;
+          }),
         mcp_servers: selectedServers,
+        folders,
+        can_request_folders: canRequestFolders,
+        permission_level: permissionLevel,
+        // Levels for tools the agent no longer has are dropped, except MCP
+        // tools, which aren't in the list but can still be set by name.
+        tool_permissions: Object.fromEntries(
+          Object.entries(toolPermissions).filter(([n]) => selected.has(n) || !(toolList || []).some((t) => t.name === n)),
+        ),
       };
       const response = await api.post('/agents', payload);
       const id = agentId || response.data?.id;
@@ -188,10 +254,17 @@ export default function AgentPage() {
 
       {selected.has('Bash') && (
         <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
-          Shell commands start in the working folder
-          {systemInfo?.working_folder ? <> <span className="font-mono text-[12px] text-fg">{systemInfo.working_folder}</span></> : null}. Read-only commands run right away; anything else waits for your approval.{' '}
+          Shell commands start in the agent's primary working folder (set below) and only run inside its working folders. Read-only commands run right away; anything else waits for your approval.{' '}
           {systemInfo && !systemInfo.desktop && 'On a shared server, the shell is off in chats and tasks; it works in the desktop app and the CLI. '}
           <Link to="/settings" className="text-accent-ink hover:underline">Change</Link>
+        </p>
+      )}
+      {selected.has('Coding Agent') && (
+        <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
+          Hands coding jobs to a coding agent on this computer, which works in the background in the working folder. Every run waits for your approval.{' '}
+          {systemInfo && (systemInfo.coding_agents?.length
+            ? <>Installed: <span className="font-mono text-[12px] text-fg">{systemInfo.coding_agents.join(', ')}</span>.</>
+            : 'None installed yet: install Claude Code, Codex or Gemini CLI and sign in once.')}
         </p>
       )}
       <Field label={`TOOLS · ${selected.size} selected`} composite>
@@ -202,20 +275,53 @@ export default function AgentPage() {
             toolsByCategory.map(([cat, tools]) => (
               <div key={cat} className="border-b border-line last:border-b-0">
                 <div className="bg-panel-2 px-3 py-1.5 font-mono text-[10px] tracking-[0.14em] text-fg-dim">{cat.toUpperCase()}</div>
-                {tools.map((t) => (
-                  <label key={t.name} className="flex cursor-pointer items-start gap-2.5 px-3 py-2 hover:bg-panel-2">
-                    <input type="checkbox" checked={selected.has(t.name)} onChange={() => toggleTool(t.name)}
-                      className="mt-0.5 accent-[var(--accent)]" />
-                    <div className="min-w-0">
-                      <div className="font-mono text-[12px]">{t.name}</div>
-                      {t.description && <div className="truncate text-[12px] text-fg-dim">{t.description}</div>}
+                {tools.map((t) => {
+                  const level = toolPermissions[t.name] || 'auto';
+                  const note = defaultNote(t);
+                  return (
+                    <div key={t.name} className="flex items-start gap-2 px-3 py-2 hover:bg-panel-2">
+                      <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2.5">
+                        <input type="checkbox" checked={selected.has(t.name)} onChange={() => toggleTool(t.name)}
+                          className="mt-0.5 accent-[var(--accent)]" />
+                        <div className="min-w-0">
+                          <div className="font-mono text-[12px]">{t.name}</div>
+                          {t.description && <div className="truncate text-[12px] text-fg-dim">{t.description}</div>}
+                        </div>
+                      </label>
+                      {selected.has(t.name) && (
+                        <Select
+                          aria-label={`Permission for ${t.name}`}
+                          value={level}
+                          onChange={(e) => setToolLevel(t.name, e.target.value as ToolLevel)}
+                          className={cn(
+                            'h-9 w-36 shrink-0 px-2 text-[12px] md:h-8',
+                            level === 'deny' && 'text-danger-ink',
+                            level !== 'auto' && 'border-accent',
+                          )}
+                        >
+                          {TOOL_LEVELS.map((l) => (
+                            <option key={l.value} value={l.value}>
+                              {l.value === 'auto' && note ? `Default (${note})` : l.label}
+                            </option>
+                          ))}
+                        </Select>
+                      )}
                     </div>
-                  </label>
-                ))}
+                  );
+                })}
               </div>
             ))
           )}
         </div>
+      </Field>
+
+      <Field label="PERMISSIONS">
+        <Select aria-label="Permission level" value={permissionLevel} onChange={(e) => setPermissionLevel(e.target.value as AgentLevel)}>
+          {AGENT_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+        </Select>
+        <p className={cn('mt-1.5 text-[12px]', permissionLevel === 'allow' ? 'text-danger-ink' : 'text-fg-dim')}>
+          {AGENT_LEVELS.find((l) => l.value === permissionLevel)?.help} Set a single tool to always allow, ask first or never in the tool list above; that wins over this.
+        </p>
       </Field>
 
       <Field label={`MCP SERVERS · ${selectedServers.length} selected`} composite>
@@ -268,6 +374,42 @@ export default function AgentPage() {
         </div>
         <p className="mt-1.5 text-[12px] text-fg-dim">
           The agent can list and run these servers' tools. Tools that aren't marked read-only ask for your approval first.
+        </p>
+      </Field>
+
+      <Field label="WORKING FOLDERS" hint="copied into each new chat" composite>
+        <div className="rounded border border-line px-3 py-2.5">
+          {folders === null ? (
+            <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-fg-dim">
+              <span>
+                Uses the app's working folder
+                {workingFolder ? <> <span className="font-mono text-[12px] text-fg">{workingFolder}</span></> : null} (read &amp; write).
+              </span>
+              <button type="button" className="text-accent-ink hover:underline"
+                onClick={() => setFolders(workingFolder ? [{ path: workingFolder, access: 'write', primary: true }] : [])}>
+                Choose folders
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <FolderChips folders={folders} onChange={setFolders} emptyLabel="none: each chat gets a private scratch folder" />
+              <button type="button" className="self-start text-[12px] text-fg-dim hover:text-fg hover:underline"
+                onClick={() => setFolders(null)}>
+                Go back to the app's working folder
+              </button>
+            </div>
+          )}
+        </div>
+        <label className="mt-2 flex cursor-pointer items-start gap-2.5 text-[12.5px]">
+          <input type="checkbox" checked={canRequestFolders} onChange={(e) => setCanRequestFolders(e.target.checked)}
+            className="mt-0.5 accent-[var(--accent)]" />
+          <span>
+            Let the agent ask for other folders
+            <span className="block text-fg-dim">It can ask for a folder or for write access, and you approve or deny it in the chat. Task runs wait for an answer.</span>
+          </span>
+        </label>
+        <p className="mt-1.5 text-[12px] text-fg-dim">
+          Read only folders can be read and searched but not changed. The primary folder is where relative paths and shell commands start. Chats keep their own copy, so changing these doesn't change chats you already started.
         </p>
       </Field>
 

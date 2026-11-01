@@ -18,6 +18,7 @@ async def system_info(_ctx: AuthContext = Depends(get_auth_context)) -> dict[str
     """What the local engine is running on. Signed-in sessions only: it names
     folders on this machine."""
     from cognitrix import celery_worker
+    from cognitrix.common import coding_agents
     from cognitrix.config import settings
 
     return {
@@ -26,6 +27,8 @@ async def system_info(_ctx: AuthContext = Depends(get_auth_context)) -> dict[str
         'data_folder': str(settings.workdir),
         'working_folder': str(settings.tools_root),
         'database': settings.db_type,
+        # Coding agent CLIs found on PATH, for the Coding Agent tool.
+        'coding_agents': list(coding_agents.installed()),
         'task_queue': 'filesystem' if celery_worker.USE_FILESYSTEM_BROKER else 'redis',
         'worker_running': celery_worker.local_worker_running()
         if celery_worker.USE_FILESYSTEM_BROKER else None,

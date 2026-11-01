@@ -22,6 +22,7 @@ from cognitrix.safety.destructive_ops import (
     RiskLevel,
     mcp_tool_risk,
 )
+from cognitrix.safety.permissions import decide_tool_call, visible_tools
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
 from cognitrix.tools.utils import ToolCallResult, ToolOutcome
@@ -92,10 +93,10 @@ def _path_lock_for(params: dict[str, Any]) -> asyncio.Lock | None:
     )
     if raw is None:
         return None
-    # File tools resolve relative paths against the tools root.
+    # File tools resolve relative paths against the primary working folder.
     try:
-        from cognitrix.config import settings
-        base = os.path.expanduser(str(settings.tools_root))
+        from cognitrix.common.folders import primary_folder
+        base = str(primary_folder())
     except Exception:
         base = os.getcwd()
     key = os.path.normcase(os.path.abspath(os.path.join(base, os.path.expanduser(raw.strip()))))
@@ -152,6 +153,33 @@ def _tool_outcome(value: Any) -> ToolOutcome:
     if isinstance(value, ToolCallResult) and value.outcome:
         return value.outcome
     return ToolOutcome.success(str(value))
+
+
+async def _hide_saved_secrets(outcome: ToolOutcome) -> ToolOutcome:
+    """Scrub the person's saved credential values out of a tool result.
+
+    A site, a file or a shell command can echo a token back; the model must
+    never see it. Values show up as ``[NAME hidden]`` instead.
+    """
+    from cognitrix.credentials import redact, redaction_map_for
+    from cognitrix.tools.utils import current_execution_context
+
+    owner = current_execution_context().user_id
+    if not owner:
+        return outcome
+    try:
+        secrets_map = await redaction_map_for(str(owner))
+    except Exception:
+        logger.exception("Could not load saved credentials to scrub a tool result")
+        return outcome
+    if not secrets_map:
+        return outcome
+    data = outcome.model_dump()
+    data['text'] = redact(data['text'], secrets_map)
+    data['warnings'] = [redact(w, secrets_map) for w in data.get('warnings') or []]
+    if data.get('error'):
+        data['error']['message'] = redact(data['error']['message'], secrets_map)
+    return ToolOutcome.model_validate(data)
 
 
 def _tool_result_entry(tool_call_id: str | None, outcome: ToolOutcome) -> dict[str, Any]:
@@ -255,7 +283,7 @@ class AgentManager:
         return prompt
 
     def _format_tools_string(self) -> str:
-        return "You have access to the following Tools:\n" + "\n".join([f"{tool.name}: {tool.description}" for tool in self.agent.tools])
+        return "You have access to the following Tools:\n" + "\n".join([f"{tool.name}: {tool.description}" for tool in visible_tools(self.agent, self.agent.tools)])
 
     def _format_subagents_string(self) -> str:
         if not len(self.agent.sub_agents):
@@ -489,9 +517,22 @@ class AgentManager:
                 if mcp_risk is not None and _RISK_ORDER[mcp_risk.risk_level] > _RISK_ORDER[risk.risk_level]:
                     risk = mcp_risk
 
-                if assigned_tool.approval_mode == 'always' or (
-                    assigned_tool.approval_mode == 'risk_based' and risk.risk_level.value in ['medium', 'high']
-                ):
+                # Per-agent and per-tool permission levels, on top of the
+                # default risk policy (see cognitrix/safety/permissions.py).
+                decision = decide_tool_call(self.agent, assigned_tool, args, risk, runtime_tool=tool)
+                if decision.action == 'block':
+                    results_by_index[i] = _tool_result_entry(
+                        tc_id,
+                        ToolOutcome.failure(
+                            'permission_denied',
+                            f"{OPERATION_BLOCKED_PREFIX}: {decision.reason}. Don't try it again.",
+                            denied=True,
+                        ),
+                    )
+                    continue
+
+                if decision.action == 'ask':
+                    risk = decision.risk
                     status_print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
                     status_print(f"   Details: {risk.details}")
 
@@ -508,11 +549,16 @@ class AgentManager:
                             if approval.error == 'approval_required'
                             else 'approval_denied'
                         )
+                        reason = (
+                            f"{tool.name} was {approval.error}"
+                            if getattr(approval, 'reviewed', False) and approval.error
+                            else f"user denied approval for {tool.name}"
+                        )
                         results_by_index[i] = _tool_result_entry(
                             tc_id,
                             ToolOutcome.failure(
                                 denial_code,
-                                f"{OPERATION_BLOCKED_PREFIX}: user denied approval for {tool.name}",
+                                f"{OPERATION_BLOCKED_PREFIX}: {reason}",
                                 denied=True,
                             ),
                         )
@@ -606,7 +652,7 @@ class AgentManager:
                 finally:
                     if lock_held:
                         path_lock.release()
-                results_by_index[i] = _tool_result_entry(tc_id, outcome)
+                results_by_index[i] = _tool_result_entry(tc_id, await _hide_saved_secrets(outcome))
 
             async def worker() -> None:
                 nonlocal next_job

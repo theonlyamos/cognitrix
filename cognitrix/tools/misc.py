@@ -14,6 +14,7 @@ from typing import Any
 
 import regex as regex_engine
 
+from cognitrix.common import folders as folder_paths
 from cognitrix.common.encoding import status_print
 from cognitrix.common.process_security import (
     HostProcessAccessError,
@@ -21,7 +22,6 @@ from cognitrix.common.process_security import (
 )
 from cognitrix.common.safe_exec import (
     PathEscapesRoot,
-    resolve_within_root,
 )
 from cognitrix.common.shell import shell_label
 from cognitrix.config import settings
@@ -221,20 +221,22 @@ def _resolve_tool_path(
     write: bool = False,
     allow_upload_root: bool = False,
 ) -> Path:
-    root = Path(settings.tools_root).expanduser().resolve()
-    lexical = _lexical_path(value, root)
-    if not _inside(lexical, root):
-        raise PathEscapesRoot(
-            f"Path '{value}' resolves outside the permitted root '{root}'"
-        )
-    resolved = resolve_within_root(value, root)
-    lexical_uploads = root / 'uploads'
-    resolved_uploads = lexical_uploads.resolve()
-    lexical_relative = _upload_relative(lexical, lexical_uploads)
-    resolved_relative = _upload_relative(resolved, resolved_uploads)
-    touches_uploads = lexical_relative is not None or resolved_relative is not None
+    # Paths resolve inside this turn's working folders (relative ones start
+    # at the primary folder); see cognitrix.common.folders.
+    uploads_root = Path(settings.tools_root).expanduser().resolve() / 'uploads'
+    lexical = folder_paths.lexical_path(value)
+    lexical_relative = _upload_relative(lexical, uploads_root)
+    resolved_uploads = uploads_root.resolve()
+    if lexical_relative is None:
+        try:
+            real = Path(os.path.realpath(os.fspath(lexical)))
+        except OSError:
+            real = lexical
+        touches_uploads = _upload_relative(real, resolved_uploads) is not None
+    else:
+        touches_uploads = True
     if not touches_uploads:
-        return resolved
+        return folder_paths.resolve_path(value, write=write)
     if write:
         raise ManagedUploadAccessError('Managed uploads are read-only')
     # Managed documents are never traversed or opened by path. Read dispatches
@@ -1563,25 +1565,27 @@ def bash(
     except HostProcessAccessError as e:
         return f'Error: {e}'
 
-    # Commands start inside the working folder (settings.tools_root, the same
-    # root the file tools use) and the remembered directory never leaves it.
-    root = Path(settings.tools_root).expanduser().resolve()
+    # Commands start in the primary working folder (or where this chat last
+    # cd'd to) and only run inside this chat's folders. The folder holding the
+    # start directory is the root that cd and paths in the command stay inside.
     session_key = _shell_session_key(context)
     if working_dir:
         try:
-            candidate = Path(working_dir).expanduser()
-            work_dir = (candidate if candidate.is_absolute() else root / candidate).resolve()
+            work_dir = folder_paths.resolve_path(working_dir)
+        except PathEscapesRoot as e:
+            return f"Error: Command refused - {e}"
         except Exception as e:
             return f"Error: Working directory validation failed - {str(e)}"
-        if not _inside(work_dir, root):
-            return (
-                f"Error: Command refused - '{working_dir}' is outside the working folder "
-                f"'{root}'. Commands can only run inside the working folder."
-            )
         if not work_dir.exists() or not work_dir.is_dir():
             return f"Error: Invalid working directory - {working_dir}"
     else:
-        work_dir = sh.session_cwd(session_key, root)
+        remembered = sh.remembered_cwd(session_key)
+        if remembered is not None and folder_paths.folder_for(remembered) is not None:
+            work_dir = remembered
+        else:
+            work_dir = folder_paths.primary_folder()
+    containing = folder_paths.folder_for(work_dir)
+    root = containing.root if containing is not None else folder_paths.primary_folder()
 
     # The model may pass the timeout as a string.
     try:
@@ -1660,7 +1664,8 @@ def _bash_background(sh, plan, command: str, context, work_dir: Path, root: Path
 
 @tool(category='system')
 def bash_output(shell_id: str, filter: str | None = None) -> str:
-    """Read new output from a command started with Bash(run_in_background=true).
+    """Read new output from a command started with Bash(run_in_background=true)
+    or a job started with the Coding Agent tool.
 
     Returns only what was printed since the last read, plus whether the command
     is still running or its exit code. Call it again later to see more.
@@ -1700,8 +1705,8 @@ def bash_output(shell_id: str, filter: str | None = None) -> str:
 
 @tool(category='system')
 def kill_shell(shell_id: str) -> str:
-    """Stop a command started with Bash(run_in_background=true), along with
-    everything it started.
+    """Stop a command started with Bash(run_in_background=true) or a Coding
+    Agent job, along with everything it started.
 
     Args:
         shell_id (str): The id Bash returned, e.g. 'shell_3'.
@@ -1720,3 +1725,142 @@ def kill_shell(shell_id: str) -> str:
     if shell is None:
         return f"Error: No background command '{shell_id}'."
     return sh.stop_background(shell)
+
+
+@tool(category='system')
+def coding_agent(
+    task: str,
+    agent: str = 'auto',
+    mode: str = 'edit',
+    working_dir: str | None = None,
+    model: str | None = None,
+    wait_seconds: int = 0,
+    *,
+    approved: bool = False,
+) -> str:
+    """Hand a coding job to a coding agent installed on this computer (Claude
+    Code, Codex or Gemini CLI). It works on its own in a folder, in the
+    background, and you read its result later.
+
+    Use it for larger coding work you'd rather delegate than do step by step:
+    implementing a feature, fixing failing tests, refactoring, reviewing a
+    change. Write the task like a brief for a colleague: the goal, the files
+    or area involved, how to check the work (tests to run), and what to report
+    back. It doesn't see this conversation.
+
+    Every run waits for the user's approval first. You get a shell id back;
+    read the agent's output with Bash Output (it shows the files it changed
+    when it finishes) and stop it with Kill Shell. Pass agent='list' to see
+    which coding agents are installed (that doesn't ask).
+
+    Args:
+        task (str): What the coding agent should do, in full.
+        agent (str, optional): 'claude' (Claude Code), 'codex', 'gemini', or
+            'auto' (the first one installed, in that order). 'list' shows
+            what's installed.
+        mode (str, optional): 'read_only' (reads and answers, no changes),
+            'edit' (default: may edit files in the folder) or 'full' (may also
+            run any command without asking; only when the task needs it).
+        working_dir (str, optional): Folder to work in, inside the working
+            folder. Defaults to the current Bash directory.
+        model (str, optional): Model for the coding agent, e.g. 'sonnet' or
+            'gpt-5.5'. Leave empty for its default.
+        wait_seconds (int, optional): Wait up to this many seconds (max 600)
+            for it to finish and return the result straight away. 0 (default)
+            returns at once.
+
+    Returns:
+        str: The shell id and any output so far, or the result if it finished
+        within wait_seconds.
+    """
+    from cognitrix.common import coding_agents as ca
+    from cognitrix.common import shell as sh
+
+    context = current_execution_context()
+    try:
+        require_host_process_authority(context.host_process_mode)
+    except HostProcessAccessError as e:
+        return f'Error: {e}'
+
+    try:
+        which = ca.normalise_agent(agent)
+        if which == 'list':
+            return ca.describe_installed(sh.child_env().get('PATH'))
+        run_mode = ca.normalise_mode(mode)
+        model_name = ca.validate_model(model)
+    except ca.CodingAgentError as e:
+        return f'Error: {e}'
+
+    task_text = (task or '').strip()
+    if not task_text:
+        return 'Error: Describe the task for the coding agent.'
+    if len(task_text) > ca.MAX_TASK_CHARS:
+        return f'Error: The task is too long ({len(task_text):,} characters, max {ca.MAX_TASK_CHARS:,}).'
+
+    # A coding agent edits files and (in some modes) runs commands on its own,
+    # so like the full shell it needs a person to approve this exact call.
+    if not approved and not sh.sandbox_shell_enabled():
+        return (
+            'Error: Coding agent refused - handing work to a coding agent only runs after '
+            'the user approves this call (remembered and automatic approvals don\'t count). '
+            'Ask the user, or do the work with the other tools.'
+        )
+
+    root = Path(settings.tools_root).expanduser().resolve()
+    if working_dir:
+        try:
+            candidate = Path(working_dir).expanduser()
+            work_dir = (candidate if candidate.is_absolute() else root / candidate).resolve()
+        except Exception as e:
+            return f'Error: Working directory validation failed - {e}'
+        if not _inside(work_dir, root):
+            return (
+                f"Error: '{working_dir}' is outside the working folder '{root}'. "
+                'Coding agents can only work inside the working folder.'
+            )
+        if not work_dir.is_dir():
+            return f'Error: Invalid working directory - {working_dir}'
+    else:
+        work_dir = sh.session_cwd(_shell_session_key(context), root)
+
+    env = sh.child_env()
+    try:
+        key, program = ca.pick(which, env.get('PATH'))
+    except ca.CodingAgentError as e:
+        return f'Error: {e}'
+    argv = ca.build_argv(program, key, run_mode, model_name)
+    cli = ca.CLIS[key]
+    label = f'{cli.label} ({run_mode}): {task_text.splitlines()[0][:80]}'
+
+    def report(shell) -> str:
+        elapsed = int(time.time() - shell.started)
+        summary = ca.changed_files(shell.cwd or work_dir)
+        head = f'[{cli.label} finished after {elapsed}s]'
+        return f'{head}\n{summary}' if summary else head
+
+    try:
+        shell = sh.start_background(
+            argv, owner=_shell_owner(context), command=label, cwd=work_dir,
+            stdin_data=task_text.encode('utf-8'), max_seconds=ca.time_limit(),
+            env=env, on_finish=report,
+        )
+    except RuntimeError as e:
+        return f'Error: {e}'
+    except OSError as e:
+        return f'Error: Could not start {cli.label}: {e}'
+
+    try:
+        wait = max(0, min(int(wait_seconds or 0), ca.MAX_WAIT))
+    except (TypeError, ValueError):
+        wait = 0
+    finished = sh.wait_background(shell, wait if wait else 1.0)
+    intro = (
+        f'{cli.label} is working in {work_dir} as {shell.id} (mode: {run_mode}, '
+        f'{cli.mode_notes[run_mode]}; stopped after {ca.time_limit() // 60} min).'
+    )
+    if finished:
+        return f'{intro}\n\n{sh.read_background(shell)}'
+    return (
+        f"{intro}\nRead its progress and result with Bash Output (shell_id='{shell.id}') "
+        f"and stop it with Kill Shell.\n\n{sh.read_background(shell)}"
+    )

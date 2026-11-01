@@ -25,6 +25,9 @@ logger = logging.getLogger('cognitrix.log')
 
 
 def _load_json_object(text: str | None) -> dict[str, str]:
+    from cognitrix.common.secret_box import unseal_or_empty
+
+    text = unseal_or_empty(text)
     if not text:
         return {}
     try:
@@ -143,7 +146,30 @@ async def ensure_connected(client: Any, config: MCPServerConfig) -> bool:
     if client.is_connected(config.key):
         return True
     try:
+        config = await _with_saved_secrets(config)
+    except ValueError as exc:
+        logger.warning("MCP server '%s' can't use its saved credential: %s", config.name, exc)
+        return False
+    try:
         return bool(await client.connect_to_server(config))
     except Exception:
         logger.exception("Could not connect to MCP server '%s'", config.name)
         return False
+
+
+async def _with_saved_secrets(config: MCPServerConfig) -> MCPServerConfig:
+    """Fill ``{{secret:NAME}}`` header values from the server owner's saved sign-ins.
+
+    The stored config keeps the placeholder; only the live connection gets the
+    value, and only when the server's host is one the credential allows.
+    """
+    import dataclasses
+
+    from cognitrix.credentials import fill_mcp_headers
+
+    if not config.headers:
+        return config
+    filled = await fill_mcp_headers(config.headers, config.owner_id, config.url)
+    if filled is config.headers:
+        return config
+    return dataclasses.replace(config, headers=filled)

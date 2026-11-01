@@ -101,6 +101,20 @@ def _stopped_tool_messages(tool_calls: list[dict[str, Any]]) -> list[dict[str, A
     return stopped
 
 
+def _with_folder_prompt(prompt, folders) -> Any:
+    """Add the working-folders block to the system message."""
+    if not folders or not isinstance(prompt, list):
+        return prompt
+    from cognitrix.common.folders import folder_prompt
+    block = folder_prompt(folders)
+    if not block:
+        return prompt
+    if prompt and isinstance(prompt[0], dict) and prompt[0].get('role') == 'system' \
+            and isinstance(prompt[0].get('content'), str):
+        return [{**prompt[0], 'content': prompt[0]['content'] + '\n\n' + block}, *prompt[1:]]
+    return [{'role': 'system', 'content': block}, *prompt]
+
+
 class Session(Model):
     chat: list[dict[str, Any]] = []
     """The chat history of the session"""
@@ -112,6 +126,10 @@ class Session(Model):
 
     agent_id: str | None = None
     """The id of the agent that started the session"""
+
+    folders: list[dict[str, Any]] | None = None
+    """Working folders for this chat ({path, access, name, primary}). None until
+    the first turn copies the agent's defaults."""
 
     user_id: str | None = None
     """Durable owner of an ordinary web/API chat (None for local/internal sessions)"""
@@ -289,7 +307,17 @@ class Session(Model):
         await self.save()
         logger.info("Compacted session history: folded %s turns into a summary", len(fold_turns))
 
-    async def __call__(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws', 'compat'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None, tool_context=None, record_history: bool | None = None, persist_history: bool | None = None, compact_history: bool | None = None):
+    async def __call__(self, message: str | dict, agent: 'Agent', *args: Any, **kwargs: Any):
+        # The action reviewer reads what this turn was asked to do.
+        from cognitrix.safety.action_reviewer import _goal_text, turn_goal
+
+        token = turn_goal.set(_goal_text(message))
+        try:
+            return await self._run_turn(message, agent, *args, **kwargs)
+        finally:
+            turn_goal.reset(token)
+
+    async def _run_turn(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws', 'compat'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None, tool_context=None, record_history: bool | None = None, persist_history: bool | None = None, compact_history: bool | None = None):
 
         # ``save_history`` remains the compatibility umbrella.  Task execution
         # records the assistant/tool protocol in memory while independently
@@ -318,6 +346,18 @@ class Session(Model):
             except Exception:
                 pass
 
+        # Request Folder lets the agent ask (with approval) for more folders.
+        # Like Ask User it's added per turn, not stored on the agent.
+        if interface in ('web', 'ws', 'task') and getattr(agent, 'can_request_folders', True):
+            try:
+                if not any(str(getattr(t, 'name', '')).lower() == 'request folder' for t in agent.tools):
+                    from cognitrix.tools.base import ToolManager
+                    folder_tool = ToolManager.get_by_name('request_folder')
+                    if folder_tool:
+                        agent = agent.model_copy(update={'tools': [*agent.tools, folder_tool]})
+            except Exception:
+                logger.debug('Request Folder tool unavailable', exc_info=True)
+
         # Ask User is a transport capability, not persisted agent
         # configuration. Attach it lazily to every direct web-chat turn so
         # existing Assistants gain the capability without a database migration.
@@ -333,11 +373,12 @@ class Session(Model):
             except Exception:
                 pass
 
-        # Bash's background mode needs its two helpers; agents that have Bash
-        # get them for the turn without changing the saved agent.
+        # Bash's background mode and the Coding Agent tool need the two
+        # background helpers; agents that have either get them for the turn
+        # without changing the saved agent.
         try:
             names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
-            if 'bash' in names:
+            if names & {'bash', 'coding agent'}:
                 from cognitrix.tools.base import ToolManager
                 helpers = [
                     t for t in (ToolManager.get_by_name(n) for n in ('bash_output', 'kill_shell'))
@@ -429,11 +470,21 @@ class Session(Model):
                         if cancelled is not None:
                             raise cancelled
 
+        # Working folders for this turn: the chat's own list, or (first turn)
+        # a copy of the agent's defaults. A delegated turn keeps the folders
+        # its parent passed down (read only).
+        turn_folders = self._turn_folders(agent, interface)
+        inherited_folders = tuple(getattr(tool_context, 'folders', ()) or ())
+
         # Build the context-aware prompt using the manager
         prompt = await agent.get_context_manager().build_prompt(agent, self)
+        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders))
 
+        # Tools set to "never" for this agent aren't offered to the model
+        # (the agent loop refuses them too, see safety/permissions.py).
+        from cognitrix.safety.permissions import visible_tools
         formatted_tools = [
-            tool.to_dict_format() for tool in agent.tools
+            tool.to_dict_format() for tool in visible_tools(agent, agent.tools)
             if not tool.supported_interfaces or interface in tool.supported_interfaces
         ]
         # Only advertise tools to models with native tool-use; otherwise the tool
@@ -577,6 +628,16 @@ class Session(Model):
                                 set_execution_context,
                             )
                             bound_context = tool_context or ToolExecutionContext()
+                            if turn_folders and not bound_context.folders:
+                                import dataclasses as _dc
+                                bound_context = _dc.replace(
+                                    bound_context, folders=tuple(turn_folders),
+                                )
+                            from cognitrix.common.folders import reset_grant_sink, set_grant_sink
+                            grant_token = set_grant_sink(
+                                self._folder_grant_sink(turn_folders)
+                                if turn_folders and not inherited_folders else None
+                            )
                             artifact_token = set_session(
                                 str(self.id), str(agent.id), bound_context.user_id
                             )
@@ -639,6 +700,7 @@ class Session(Model):
                                         active_tool_calls = unresolved
                                 raise
                             finally:
+                                reset_grant_sink(grant_token)
                                 reset_execution_context(execution_token)
                                 reset_session(artifact_token)
                             called_tools = True
@@ -689,6 +751,8 @@ class Session(Model):
                                 last_denied_sig = sig if all_blocked else None
 
                                 prompt = await agent.get_context_manager().build_prompt(agent, self)
+                                # Keep the folder list (including any just granted) on every request.
+                                prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders))
                                 continue  # Continue the loop to re-prompt the LLM with the tool result
                             else:
                                 if interface == 'cli':
@@ -859,6 +923,51 @@ class Session(Model):
             raise
         except Exception as e:
             logger.exception(e)
+
+    def _turn_folders(self, agent: 'Agent', interface: str) -> list:
+        """This chat's working folders, copying the agent's defaults on first use.
+
+        CLI and compat turns keep the app's working folder (an empty list).
+        """
+        if interface not in ('web', 'ws', 'task'):
+            return []
+        from cognitrix.common.folders import (
+            folders_to_dicts,
+            legacy_default_folders,
+            normalize_folders,
+            scratch_folder,
+        )
+        source = self.folders
+        if source is None:
+            agent_folders = getattr(agent, 'folders', None)
+            source = (
+                folders_to_dicts(legacy_default_folders())
+                if agent_folders is None else list(agent_folders)
+            )
+        folders = normalize_folders(source, validate=False, scratch=self.scratch_path())
+        if not folders:
+            folders = [scratch_folder(self.scratch_key())]
+        self.folders = folders_to_dicts(folders)
+        return folders
+
+    def scratch_key(self) -> str:
+        return f"task-{self.task_id}" if self.task_id else f"chat-{self.id or 'new'}"
+
+    def scratch_path(self) -> str:
+        """This chat's own scratch folder (the only scratch folder it may list)."""
+        from cognitrix.common.folders import scratch_path
+        return str(scratch_path(self.scratch_key()))
+
+    def _folder_grant_sink(self, turn_folders: list):
+        """Apply an approved Request Folder to this chat (and this turn)."""
+        from cognitrix.common.folders import folders_to_dicts, merge_folder
+
+        def sink(folder) -> None:
+            updated = merge_folder(turn_folders, folder)
+            turn_folders[:] = updated
+            self.folders = folders_to_dicts(updated)
+        return sink
+
 
 class SessionManager:
     """Manager for Session business logic"""

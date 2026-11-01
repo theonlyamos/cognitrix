@@ -46,6 +46,9 @@ class ToolExecutionContext:
     document_capabilities: tuple[DocumentCapability, ...] = ()
     selected_image_artifact_id: str | None = None
     host_process_mode: HostProcessMode = HostProcessMode.DENY
+    # Working folders for this turn (cognitrix.common.folders.Folder). Empty
+    # means the app's working folder, read & write, as before folders existed.
+    folders: tuple[Any, ...] = ()
 
     @property
     def restricted(self) -> bool:
@@ -113,7 +116,16 @@ def delegated_execution_context(
         allowed_agents=source.allowed_agents,
         allowed_teams=source.allowed_teams,
         host_process_mode=HostProcessMode.DENY,
+        # Sub-agents may look at the same folders but never change them.
+        folders=_read_only_folders(source.folders),
     )
+
+
+def _read_only_folders(folders) -> tuple[Any, ...]:
+    if not folders:
+        return ()
+    from cognitrix.common.folders import read_only
+    return read_only(folders)
 
 
 @contextmanager
