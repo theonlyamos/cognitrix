@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from cognitrix.agents import access as agent_access
+from cognitrix.common.secret_box import seal, unseal_or_empty
 from cognitrix.common.security import AuthContext, get_auth_context, jwt_only
 from cognitrix.models.voice_settings import VoiceSettings
 
@@ -63,7 +64,7 @@ def _keys(row: VoiceSettings | None) -> dict[str, str]:
     if row is None or not row.api_keys:
         return {}
     try:
-        data = json.loads(row.api_keys)
+        data = json.loads(unseal_or_empty(row.api_keys) or '{}')
     except (TypeError, ValueError):
         return {}
     return {str(k): str(v) for k, v in data.items() if v} if isinstance(data, dict) else {}
@@ -146,7 +147,7 @@ async def update_voice_settings(
         else:
             keys.pop(provider, None)
 
-    data = {'provider': provider, 'model': model, 'api_keys': json.dumps(keys) if keys else ''}
+    data = {'provider': provider, 'model': model, 'api_keys': seal(json.dumps(keys)) if keys else ''}
     if row is None:
         row = VoiceSettings(user_id=user_key, **data)
         await row.save()

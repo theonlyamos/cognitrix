@@ -129,6 +129,13 @@ async def _check_url(url: str | None, *, allow_private: bool) -> str:
     return url
 
 
+def _sealed(values: dict[str, str]) -> str:
+    """Header and env values are encrypted at rest."""
+    from cognitrix.common.secret_box import seal
+
+    return seal(json.dumps(values)) if values else ''
+
+
 def _merge_secrets(new: dict[str, str], old: dict[str, str] | None) -> dict[str, str]:
     old = old or {}
     merged: dict[str, str] = {}
@@ -220,8 +227,8 @@ async def add_server(body: ServerBody, ctx: AuthContext = Depends(jwt_only)):
         url=url,
         command=body.command.strip() if stdio and body.command else None,
         args=[str(a) for a in body.args] if stdio else [],
-        env=json.dumps(_merge_secrets(body.env, None)) if stdio else '',
-        headers='' if stdio else json.dumps(_merge_secrets(body.headers, None)),
+        env=_sealed(_merge_secrets(body.env, None)) if stdio else '',
+        headers='' if stdio else _sealed(_merge_secrets(body.headers, None)),
         timeout=max(5, min(int(body.timeout or 30), 300)),
         enabled=body.enabled,
     )
@@ -261,14 +268,14 @@ async def update_server(server_id: str, body: ServerUpdate, ctx: AuthContext = D
         if body.args is not None:
             changes['args'] = [str(a) for a in body.args]
         if body.env is not None:
-            changes['env'] = json.dumps(_merge_secrets(body.env, config.env))
+            changes['env'] = _sealed(_merge_secrets(body.env, config.env))
         changes['headers'] = ''
     else:
         changes['command'] = None
         changes['args'] = []
         changes['env'] = ''
         if body.headers is not None:
-            changes['headers'] = json.dumps(_merge_secrets(body.headers, config.headers))
+            changes['headers'] = _sealed(_merge_secrets(body.headers, config.headers))
 
     await MCPServer.update_one({'id': config.id}, changes)
     await _disconnect(config.key)
