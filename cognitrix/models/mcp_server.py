@@ -4,8 +4,10 @@ Each row belongs to the user who added it, or is shared (``owner_id`` None)
 when an admin added it for everyone. Servers in the CLI's ``mcp.json`` stay
 where they are and count as shared; see ``cognitrix/mcp/registry.py``.
 
-``headers`` and ``env`` are JSON objects stored as text. They can hold tokens,
-so API responses only ever show their keys.
+``headers`` and ``env`` are JSON objects stored as encrypted text
+(``cognitrix.common.secret_box``). They can hold tokens, so API responses only
+ever show their keys. A header value may be ``{{secret:NAME}}``, filled from
+the owner's saved sign-ins when the server connects.
 
 Persistence rule: instance ``save()`` once at creation, ``update_one`` after.
 """

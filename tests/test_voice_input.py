@@ -93,7 +93,10 @@ async def test_user_key_and_model_are_saved_per_user_and_never_returned(db):
     assert 'sk-user-abcd1234' not in repr(data)
 
     row = await VoiceSettings.find_one({'user_id': ada.id})
-    assert json.loads(row.api_keys) == {'openai': 'sk-user-abcd1234'}
+    # Saved encrypted; only the server can read it back.
+    from cognitrix.common.secret_box import unseal
+    assert row.api_keys.startswith('enc:v1:') and 'sk-user' not in row.api_keys
+    assert json.loads(unseal(row.api_keys)) == {'openai': 'sk-user-abcd1234'}
 
     # Bob sees none of it.
     other = await audio.get_voice_settings(_ctx(bob))

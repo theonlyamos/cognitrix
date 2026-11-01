@@ -155,6 +155,33 @@ def _tool_outcome(value: Any) -> ToolOutcome:
     return ToolOutcome.success(str(value))
 
 
+async def _hide_saved_secrets(outcome: ToolOutcome) -> ToolOutcome:
+    """Scrub the person's saved credential values out of a tool result.
+
+    A site, a file or a shell command can echo a token back; the model must
+    never see it. Values show up as ``[NAME hidden]`` instead.
+    """
+    from cognitrix.credentials import redact, redaction_map_for
+    from cognitrix.tools.utils import current_execution_context
+
+    owner = current_execution_context().user_id
+    if not owner:
+        return outcome
+    try:
+        secrets_map = await redaction_map_for(str(owner))
+    except Exception:
+        logger.exception("Could not load saved credentials to scrub a tool result")
+        return outcome
+    if not secrets_map:
+        return outcome
+    data = outcome.model_dump()
+    data['text'] = redact(data['text'], secrets_map)
+    data['warnings'] = [redact(w, secrets_map) for w in data.get('warnings') or []]
+    if data.get('error'):
+        data['error']['message'] = redact(data['error']['message'], secrets_map)
+    return ToolOutcome.model_validate(data)
+
+
 def _tool_result_entry(tool_call_id: str | None, outcome: ToolOutcome) -> dict[str, Any]:
     return {
         'tool_call_id': tool_call_id,
@@ -625,7 +652,7 @@ class AgentManager:
                 finally:
                     if lock_held:
                         path_lock.release()
-                results_by_index[i] = _tool_result_entry(tc_id, outcome)
+                results_by_index[i] = _tool_result_entry(tc_id, await _hide_saved_secrets(outcome))
 
             async def worker() -> None:
                 nonlocal next_job
