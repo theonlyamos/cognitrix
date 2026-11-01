@@ -145,7 +145,7 @@ export function McpServersCard() {
     <div className="space-y-3">
       <p className="text-[13px] leading-relaxed text-fg-dim">
         MCP servers give agents extra tools, such as a notes app or an issue tracker. Pick which ones an agent can use on its edit page.
-        Tools a server doesn't mark as read-only wait for your approval before they run.
+        Tools that delete data, send something outside the app, or do something Cognitrix can't recognise wait for your approval before they run.
       </p>
 
       {list.servers.length === 0 ? (
@@ -199,7 +199,7 @@ export function McpServersCard() {
                         {result.tools.map((t) => (
                           <li key={t.name} className="flex gap-2">
                             <span className="font-mono">{t.name}</span>
-                            <span className="text-fg-dim">{t.read_only ? 'reads only' : 'asks first'}</span>
+                            <span className="text-fg-dim">{(t.asks_first ?? !t.read_only) ? 'asks first' : t.read_only ? 'reads only' : 'runs without asking'}</span>
                           </li>
                         ))}
                       </ul>

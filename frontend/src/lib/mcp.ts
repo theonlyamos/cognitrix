@@ -46,7 +46,7 @@ export interface McpServerInput {
 
 export interface McpTestResult {
   connected: boolean;
-  tools: { name: string; description: string; read_only: boolean }[];
+  tools: { name: string; description: string; read_only: boolean; asks_first?: boolean }[];
   error: string | null;
 }
 

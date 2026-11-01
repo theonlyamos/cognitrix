@@ -310,6 +310,8 @@ async def test_server(server_ref: str, ctx: AuthContext = Depends(jwt_only)):
             'tools': [],
             'error': "Couldn't connect. Check the address, headers or command.",
         }
+    from cognitrix.safety.destructive_ops import RiskLevel, mcp_tool_risk
+
     tools = await client.list_tools(config.key) or []
     return {
         'connected': True,
@@ -318,6 +320,8 @@ async def test_server(server_ref: str, ctx: AuthContext = Depends(jwt_only)):
                 'name': t.get('name'),
                 'description': t.get('description') or '',
                 'read_only': bool((t.get('annotations') or {}).get('readOnlyHint')),
+                'asks_first': mcp_tool_risk(str(t.get('name') or ''), t.get('annotations')).risk_level
+                != RiskLevel.LOW,
             }
             for t in tools
         ],

@@ -37,11 +37,13 @@ def create_mcp_tool_wrapper(
 
     ``server_name`` is the name people see (and goes into the tool name);
     ``connection_key`` is the live connection to call (a database server's id).
-    Tools the server doesn't mark read-only always ask before running.
+    Only tools that delete, send something out, or whose effect can't be
+    told from their name and annotations ask before running.
     """
+    from cognitrix.safety.destructive_ops import RiskLevel, mcp_tool_risk
+
     connection_key = connection_key or server_name
     annotations = tool_info.get('annotations')
-    read_only = isinstance(annotations, dict) and bool(annotations.get('readOnlyHint'))
     tool_name = str(tool_info.get('name', 'unknown'))
     description = str(tool_info.get('description', 'No description available'))
     input_schema = tool_info.get('input_schema')
@@ -96,7 +98,7 @@ def create_mcp_tool_wrapper(
         for pname, pinfo in properties.items()
     }
     wrapped_tool.required_params = [r for r in required if r in properties]
-    if not read_only:
+    if mcp_tool_risk(tool_name, annotations).risk_level != RiskLevel.LOW:
         wrapped_tool.approval_mode = 'always'
 
     return wrapped_tool

@@ -43,12 +43,17 @@ describe('McpServersCard', () => {
   it('shows tools and whether they ask first after a test', async () => {
     mcp.testMcpServer.mockResolvedValue({
       connected: true, error: null,
-      tools: [{ name: 'search', description: '', read_only: true }, { name: 'create_page', description: '', read_only: false }],
+      tools: [
+        { name: 'search', description: '', read_only: true, asks_first: false },
+        { name: 'create_page', description: '', read_only: false, asks_first: false },
+        { name: 'delete_page', description: '', read_only: false, asks_first: true },
+      ],
     });
     render(<McpServersCard />);
     fireEvent.click((await screen.findAllByRole('button', { name: 'Test' }))[0]);
     expect(await screen.findByText('create_page')).toBeInTheDocument();
     expect(screen.getByText('reads only')).toBeInTheDocument();
+    expect(screen.getByText('runs without asking')).toBeInTheDocument();
     expect(screen.getByText('asks first')).toBeInTheDocument();
     expect(mcp.testMcpServer).toHaveBeenCalledWith('srv-1');
   });

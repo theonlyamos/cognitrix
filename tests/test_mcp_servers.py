@@ -243,6 +243,8 @@ async def test_admin_stdio_server_lists_tools_and_writes_need_approval(db, tmp_p
     assert result['connected'] is True, result
     flags = {t['name']: t['read_only'] for t in result['tools']}
     assert flags == {'read_note': True, 'delete_note': False}
+    asks = {t['name']: t['asks_first'] for t in result['tools']}
+    assert asks == {'read_note': False, 'delete_note': True}
 
     agent = _agent('n', owner_id=admin.id, mcp_servers=[created['id']])
     await _check_mcp_servers(agent)
@@ -255,11 +257,16 @@ async def test_admin_stdio_server_lists_tools_and_writes_need_approval(db, tmp_p
     run_tool = ToolManager.get_by_name('Run Mcp Tool')
     assert await manager._mcp_write_risk(run_tool, {'server': 'notes', 'tool_name': 'read_note'}) is None
     risk = await manager._mcp_write_risk(run_tool, {'server': 'notes', 'tool_name': 'delete_note'})
-    assert risk is not None and risk.risk_level.value == 'medium'
+    assert risk is not None and risk.risk_level.value == 'high'
 
     tools = {t['name']: t for t in result['tools']}
     wrapper = create_mcp_tool_wrapper('notes', {'name': 'delete_note', 'annotations': {}}, created['id'])
     assert wrapper.approval_mode == 'always'
     wrapper = create_mcp_tool_wrapper('notes', {'name': 'read_note', 'annotations': {'readOnlyHint': True}}, created['id'])
     assert wrapper.approval_mode == 'risk_based'
+    # Undoable changes run unattended; actions we can't classify still ask.
+    wrapper = create_mcp_tool_wrapper('notes', {'name': 'create_note', 'annotations': {}}, created['id'])
+    assert wrapper.approval_mode == 'risk_based'
+    wrapper = create_mcp_tool_wrapper('notes', {'name': 'execute_sql', 'annotations': {}}, created['id'])
+    assert wrapper.approval_mode == 'always'
     assert tools
