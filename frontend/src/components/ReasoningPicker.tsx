@@ -69,7 +69,7 @@ export default function ReasoningPicker({ value, onChange }: { value: string; on
       <button
         ref={buttonRef}
         type="button"
-        aria-label="Reasoning level"
+        aria-label={`Reasoning level: ${OPTIONS[selectedIndex].label}`}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}

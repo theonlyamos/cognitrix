@@ -8,8 +8,8 @@ describe('ReasoningPicker', () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<ReasoningPicker value="low" onChange={onChange} />);
-    const button = screen.getByRole('button', { name: 'Reasoning level' });
-    expect(button).toHaveTextContent('low');
+    const button = screen.getByRole('button', { name: /^Reasoning level/ });
+    expect(button).toHaveAccessibleName('Reasoning level: low');
 
     button.focus();
     await user.keyboard('{ArrowDown}');
@@ -24,7 +24,7 @@ describe('ReasoningPicker', () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<ReasoningPicker value="" onChange={onChange} />);
-    await user.click(screen.getByRole('button', { name: 'Reasoning level' }));
+    await user.click(screen.getByRole('button', { name: /^Reasoning level/ }));
     expect(screen.getByRole('listbox')).toBeInTheDocument();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();

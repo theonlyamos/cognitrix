@@ -71,7 +71,7 @@ describe('Home explicit execution mode', () => {
   it('sends the reasoning level picked under the message box', async () => {
     const user = userEvent.setup();
     renderHome();
-    await user.click(screen.getByRole('button', { name: 'Reasoning level' }));
+    await user.click(screen.getByRole('button', { name: /^Reasoning level/ }));
     await user.click(screen.getByRole('option', { name: 'high' }));
     await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'think hard{enter}');
 
