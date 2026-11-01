@@ -226,7 +226,8 @@ async def test_coding_agent_follows_agent_limits(folder_ctx):
 # ── task runs and caps ───────────────────────────────────────────────────
 
 
-def test_task_runs_carry_the_agent_settings():
+def test_task_runs_carry_the_agent_settings(monkeypatch):
+    monkeypatch.setenv('OPENAI_API_KEY', 'sk-test')
     source = _agent(reviewer={'mode': 'always'}, coding_agents={'max_mode': 'edit'},
                     credentials=['GITHUB_TOKEN'], can_create_sub_agents=False,
                     sub_agent_model='same', automation={'self_checkins': False})
