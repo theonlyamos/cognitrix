@@ -381,6 +381,55 @@ def _check_folders(agent: Agent, data: dict, existing: Agent | None) -> None:
         agent.can_request_folders = existing.can_request_folders
 
 
+_POLICY_DEFAULTS = {
+    'description': '', 'reviewer': {}, 'coding_agents': {}, 'credentials': None,
+    'can_create_sub_agents': True, 'sub_agent_model': '', 'automation': {},
+}
+
+
+def _check_policy(agent: Agent, data: dict, existing: Agent | None) -> None:
+    """Validate the agent page's newer settings.
+
+    A save that leaves a setting out keeps the stored value, so older clients
+    (and the create form) don't reset it.
+    """
+    from cognitrix.common.coding_agents import CodingAgentError, normalize_agent_limits
+    from cognitrix.safety.action_reviewer import normalize_agent_settings
+    from cognitrix.tasks.automation import MAX_RUNS_PER_DAY_LIMIT
+
+    for field, default in _POLICY_DEFAULTS.items():
+        if field not in data:
+            setattr(agent, field, getattr(existing, field, default) if existing is not None else default)
+
+    agent.description = str(agent.description or '').strip()
+    if len(agent.description) > 300:
+        raise HTTPException(status_code=400, detail='Keep the description under 300 characters')
+    try:
+        agent.reviewer = normalize_agent_settings(agent.reviewer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    try:
+        agent.coding_agents = normalize_agent_limits(agent.coding_agents)
+    except CodingAgentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    if agent.credentials is not None:
+        agent.credentials = sorted({str(n).strip().upper() for n in agent.credentials if str(n).strip()})
+    agent.sub_agent_model = str(agent.sub_agent_model or '').strip()
+    if len(agent.sub_agent_model) > 200:
+        raise HTTPException(status_code=400, detail='sub_agent_model is too long')
+    auto = dict(agent.automation or {})
+    cleaned: dict = {}
+    if 'self_checkins' in auto:
+        cleaned['self_checkins'] = bool(auto['self_checkins'])
+    cap = auto.get('max_runs_per_day')
+    if cap not in (None, ''):
+        if isinstance(cap, bool) or not isinstance(cap, int) or not 1 <= cap <= MAX_RUNS_PER_DAY_LIMIT:
+            raise HTTPException(
+                status_code=400, detail=f'max_runs_per_day must be between 1 and {MAX_RUNS_PER_DAY_LIMIT}')
+        cleaned['max_runs_per_day'] = cap
+    agent.automation = cleaned
+
+
 @agents_api.get('')
 async def list_agents(ctx: AuthContext = Depends(get_auth_context)):
     agents = await agent_access.visible_agents(agent_access.owner_key(ctx.user))
@@ -406,6 +455,7 @@ async def save_agent(request: Request, agent: Agent,
 
     await _check_mcp_servers(agent)
     _check_folders(agent, data, existing)
+    _check_policy(agent, data, existing)
     try:
         agent.permission_level = normalize_agent_level(agent.permission_level)
         agent.tool_permissions = normalize_tool_permissions(agent.tool_permissions)
@@ -881,6 +931,157 @@ def _stream_generate(session: Session, agent: Agent, message: str, tool_context)
                 logger.exception("Could not save session %s after stream end", session.id)
 
     return EventSourceResponse(event_stream())
+
+
+def _when(value) -> str:
+    """A stored timestamp as 'YYYY-MM-DD HH:MM:SS' (UTC), for sorting and cut-offs."""
+    if value is None:
+        return ''
+    if hasattr(value, 'strftime'):
+        return value.strftime('%Y-%m-%d %H:%M:%S')
+    return str(value).replace('T', ' ')[:19]
+
+
+@agents_api.get('/options', dependencies=[Depends(jwt_only)])
+async def agent_options(_ctx: AuthContext = Depends(get_auth_context)):
+    """App-wide settings the agent page shows next to each agent's own."""
+    from cognitrix.common import coding_agents as ca
+    from cognitrix.common import shell as sh
+    from cognitrix.safety import action_reviewer
+    from cognitrix.tasks.automation import default_max_runs_per_day
+
+    token = action_reviewer.agent_settings.set(None)
+    try:
+        reviewer = action_reviewer.reviewer_config()
+    finally:
+        action_reviewer.agent_settings.reset(token)
+    try:
+        found = await asyncio.to_thread(ca.installed, sh.child_env().get('PATH'))
+    except Exception:
+        found = {}
+    return {
+        'reviewer': {k: reviewer[k] for k in ('mode', 'provider', 'model', 'max_allow')},
+        'coding_clis': [
+            {'key': cli.key, 'label': cli.label, 'command': cli.program, 'installed': cli.key in found}
+            for cli in ca.CLIS.values()
+        ],
+        'default_max_runs_per_day': default_max_runs_per_day(),
+    }
+
+
+@agents_api.get('/{agent_id}/overview', dependencies=[Depends(jwt_only)])
+async def agent_overview(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
+    """Activity for the agent page: chats, task runs, approvals, teams."""
+    from datetime import datetime, timedelta
+
+    from cognitrix.agents.access import can_view
+    from cognitrix.api.routes.sessions import _session_summary, _visible_remote_sessions
+    from cognitrix.session_ownership import principal_key
+    from cognitrix.tasks import approvals
+    from cognitrix.tasks.base import Task
+    from cognitrix.tasks.run import TaskRun
+    from cognitrix.teams.base import Team
+
+    agent = await _visible_agent_or_404(agent_id, ctx)
+    agent_id = str(agent.id)
+    user_key = agent_access.owner_key(ctx.user)
+    week_ago = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+
+    chats: list[dict] = []
+    try:
+        sessions = await _visible_remote_sessions(list(await Session.find({'agent_id': agent_id})), ctx)
+        chats = [_session_summary(s) for s in sessions if not s.task_id and not getattr(s, 'group_chat', False)]
+    except Exception:
+        logger.exception('Could not list chats for agent %s', agent_id)
+    for chat in chats:
+        chat['last_active'] = _when(chat.get('updated_at') or chat.get('datetime'))
+    chats.sort(key=lambda c: c['last_active'], reverse=True)
+    running = {run.session_id for run in chat_runs.active_runs(_user_key(ctx.user), agent_id)}
+
+    tasks_out: list[dict] = []
+    runs_week = failed_week = 0
+    task_titles: dict[str, str] = {}
+    try:
+        tasks = [
+            t for t in await Task.all() or []
+            if not t.deleted_at and agent_id in (t.assigned_agents or []) and can_view(t, user_key)
+        ]
+    except Exception:
+        logger.exception('Could not list tasks for agent %s', agent_id)
+        tasks = []
+    for task in tasks:
+        task_titles[str(task.id)] = task.title
+        runs = await TaskRun.find({'task_id': task.id}) or []
+        stamped = sorted(
+            ((_when(r.json().get('created_at') or r.queued_at), r) for r in runs),
+            key=lambda pair: pair[0], reverse=True,
+        )
+        for when, run in stamped:
+            if when and when >= week_ago:
+                runs_week += 1
+                if str(getattr(run.status, 'value', run.status)) == 'failed':
+                    failed_week += 1
+        last = stamped[0] if stamped else None
+        tasks_out.append({
+            'id': task.id,
+            'title': task.title,
+            'status': str(getattr(task.status, 'value', task.status) or 'pending'),
+            'schedule_enabled': bool(task.schedule_enabled),
+            'schedule_at': task.schedule_at,
+            'schedule_interval': task.schedule_interval,
+            'schedule_cron': task.schedule_cron,
+            'next_run_at': task.next_run_at if task.schedule_enabled else None,
+            'wake_at': task.wake_at if task.wake_pending else None,
+            'wake_reason': task.wake_reason if task.wake_pending else None,
+            'max_runs_per_day': task.max_runs_per_day,
+            'last_run_at': last[0] if last else None,
+            'last_run_status': str(getattr(last[1].status, 'value', last[1].status)) if last else None,
+        })
+
+    pending: list[dict] = []
+    try:
+        for row in await approvals.TaskApproval.find({'user_id': principal_key(ctx.user)}) or []:
+            if row.status != approvals.PENDING or str(row.task_id) not in task_titles:
+                continue
+            item = approvals.approval_payload(row)
+            item['task_title'] = task_titles[str(row.task_id)]
+            pending.append(item)
+    except Exception:
+        logger.exception('Could not list approvals for agent %s', agent_id)
+
+    teams: list[dict] = []
+    try:
+        all_agents = {str(a.id): a.name for a in await agent_access.visible_agents(user_key)}
+        for team in await Team.all() or []:
+            members = [str(m) for m in (team.assigned_agents or [])]
+            if agent_id not in members or not can_view(team, user_key):
+                continue
+            teams.append({
+                'id': team.id,
+                'name': team.name,
+                'description': team.description,
+                'leader_id': team.leader_id,
+                'members': [{'id': m, 'name': all_agents.get(m, 'Unknown agent')} for m in members],
+            })
+    except Exception:
+        logger.exception('Could not list teams for agent %s', agent_id)
+
+    return {
+        'stats': {
+            'chats_week': sum(1 for c in chats if c['last_active'] >= week_ago),
+            'running_chats': sum(1 for c in chats if c['id'] in running),
+            'task_runs_week': runs_week,
+            'failed_runs_week': failed_week,
+            'pending_approvals': len(pending),
+        },
+        'recent_chats': [
+            {'id': c['id'], 'title': c['title'], 'last_active': c['last_active'], 'running': c['id'] in running}
+            for c in chats[:6]
+        ],
+        'tasks': tasks_out,
+        'approvals': pending[:10],
+        'teams': teams,
+    }
 
 
 @agents_api.get('/{agent_id}')

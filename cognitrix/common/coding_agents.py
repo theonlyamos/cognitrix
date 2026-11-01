@@ -136,6 +136,58 @@ def normalise_agent(name: str | None) -> str:
     raise CodingAgentError(f"Unknown coding agent '{name}'. Use one of: {known}, or 'auto'.")
 
 
+def normalize_agent_limits(value: object) -> dict:
+    """Clean an agent's coding_agents setting. Raises CodingAgentError."""
+    if value in (None, ''):
+        return {}
+    if not isinstance(value, dict):
+        raise CodingAgentError('coding_agents must be an object')
+    cleaned: dict = {}
+    clis = value.get('clis')
+    if clis is not None:
+        if not isinstance(clis, list):
+            raise CodingAgentError('coding_agents.clis must be a list')
+        keys = []
+        for name in clis:
+            key = _ALIASES.get(str(name or '').strip().lower())
+            if key is None:
+                raise CodingAgentError(f"Unknown coding agent '{name}'. Use one of: {', '.join(CLIS)}.")
+            if key not in keys:
+                keys.append(key)
+        cleaned['clis'] = keys
+    if value.get('max_mode') not in (None, ''):
+        cleaned['max_mode'] = normalise_mode(value.get('max_mode'))
+    return cleaned
+
+
+def apply_agent_limits(which: str, mode: str, limits: object) -> str:
+    """Check a call against the calling agent's limits.
+
+    Returns the CLI to use ('auto' becomes the first allowed installed one
+    later, via ``pick``; here it is narrowed to the allowed list).
+    """
+    try:
+        limits = normalize_agent_limits(limits)
+    except CodingAgentError:
+        limits = {}
+    max_mode = limits.get('max_mode')
+    if max_mode and MODES.index(mode) > MODES.index(max_mode):
+        raise CodingAgentError(
+            f"This agent may hand off coding work in mode '{max_mode}' at most, not '{mode}'."
+        )
+    allowed = limits.get('clis')
+    if allowed is None or which == 'list':
+        return which
+    if not allowed:
+        raise CodingAgentError('This agent is not allowed to use any coding agent.')
+    if which == 'auto':
+        return 'auto:' + ','.join(allowed)
+    if which not in allowed:
+        names = ', '.join(CLIS[k].label for k in allowed)
+        raise CodingAgentError(f'This agent may only use: {names}.')
+    return which
+
+
 def normalise_mode(mode: str | None) -> str:
     value = str(mode or DEFAULT_MODE).strip().lower().replace('-', '_').replace(' ', '_')
     if value in ('readonly', 'read', 'plan'):
@@ -173,9 +225,16 @@ def installed(path: str | None = None) -> dict[str, str]:
 
 
 def pick(agent: str, path: str | None = None) -> tuple[str, str]:
-    """(key, program path) for ``agent`` ('auto' picks the first installed)."""
-    if agent == 'auto':
+    """(key, program path) for ``agent`` ('auto' picks the first installed;
+    'auto:claude,codex' the first installed of those)."""
+    if agent == 'auto' or agent.startswith('auto:'):
         found = installed(path)
+        if agent.startswith('auto:'):
+            allowed = agent[5:].split(',')
+            found = {k: v for k, v in found.items() if k in allowed}
+            if not found:
+                names = ', '.join(CLIS[k].label for k in allowed if k in CLIS)
+                raise CodingAgentError(f'None of the coding agents this agent may use is installed: {names}.')
         if not found:
             raise CodingAgentError(
                 'No coding agent CLI is installed on this computer. Install one of: '

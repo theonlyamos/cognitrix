@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +17,8 @@ const harness = vi.hoisted(() => ({
   apiPost: vi.fn(),
   apiPatch: vi.fn(),
   apiDelete: vi.fn(),
+  apiGet: vi.fn(),
+  apiPut: vi.fn(),
 }));
 
 vi.mock('@/hooks/useResource', () => ({
@@ -27,20 +29,22 @@ vi.mock('@/hooks/useResource', () => ({
       loading: state?.loading ?? false,
       error: state?.error ?? null,
       refetch: harness.refetch,
+      setData: vi.fn(),
     };
   },
 }));
 
 vi.mock('@/lib/api', () => ({
-  api: { post: harness.apiPost, patch: harness.apiPatch, delete: harness.apiDelete },
+  api: { get: harness.apiGet, put: harness.apiPut, post: harness.apiPost, patch: harness.apiPatch, delete: harness.apiDelete },
   errorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
-function renderAgentDetail() {
+function renderAgentDetail(path = '/agents/agent-1') {
   return render(
-    <MemoryRouter initialEntries={['/agents/agent-1']} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+    <MemoryRouter initialEntries={[path]} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
       <Routes>
         <Route path="/agents/:agentId" element={<AgentDetail />} />
+        <Route path="/agents/:agentId/:tab" element={<AgentDetail />} />
         <Route path="/agents" element={<div>Agent list</div>} />
         <Route path="/home" element={<div>Chat home</div>} />
       </Routes>
@@ -59,11 +63,11 @@ function renderTeamDetail() {
   );
 }
 
-function renderAgentEdit() {
+function renderAgentNew() {
   return render(
-    <MemoryRouter initialEntries={['/agents/agent-1/edit']} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+    <MemoryRouter initialEntries={['/agents/new']} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
       <Routes>
-        <Route path="/agents/:agentId/edit" element={<AgentPage />} />
+        <Route path="/agents/new" element={<AgentPage />} />
         <Route path="/agents/:agentId" element={<div>Agent details destination</div>} />
       </Routes>
     </MemoryRouter>,
@@ -93,6 +97,19 @@ describe('entity detail routes', () => {
         tools: [{ name: 'search', description: 'Search the web' }],
       },
     });
+    harness.resources.set('/agents/agent-1/overview', {
+      data: {
+        stats: { chats_week: 3, running_chats: 1, task_runs_week: 2, failed_runs_week: 0, pending_approvals: 0 },
+        recent_chats: [{ id: 'chat-9', title: 'Weekly report', last_active: '2026-11-01T10:00:00', running: true }],
+        tasks: [{ id: 'task-1', title: 'Agent Assigned Task', status: 'pending', schedule_enabled: false }],
+        approvals: [],
+        teams: [{ id: 'team-1', name: 'Team One', leader_id: 'agent-1', members: [{ id: 'agent-1', name: 'Agent One' }, { id: 'agent-2', name: 'Agent Two' }] }],
+      },
+    });
+    harness.resources.set('/agents/options', {
+      data: { reviewer: { mode: 'off', provider: '', model: '', max_allow: 'medium' }, coding_clis: [], default_max_runs_per_day: 24 },
+    });
+    harness.resources.set('/automations', { data: [] });
     harness.resources.set('/teams/team-1', {
       data: {
         id: 'team-1',
@@ -146,6 +163,8 @@ describe('entity detail routes', () => {
     harness.apiPost.mockReset().mockResolvedValue({ data: {} });
     harness.apiPatch.mockReset().mockResolvedValue({ data: {} });
     harness.apiDelete.mockReset().mockResolvedValue({ data: {} });
+    harness.apiGet.mockReset().mockResolvedValue({ data: { models: [], live: false } });
+    harness.apiPut.mockReset().mockResolvedValue({ data: {} });
     localStorage.clear();
     vi.stubGlobal('confirm', vi.fn(() => true));
   });
@@ -154,7 +173,8 @@ describe('entity detail routes', () => {
     expect(appSource).toContain('const AgentDetail = lazy');
     expect(appSource).toContain('const TeamDetail = lazy');
     expect(appSource).toContain('<Route path="/agents/:agentId" element={<AgentDetail />} />');
-    expect(appSource).toContain('<Route path="/agents/:agentId/edit" element={<AgentPage />} />');
+    expect(appSource).toContain('<Route path="/agents/:agentId/:tab" element={<AgentDetail />} />');
+    expect(appSource).not.toContain('<Route path="/agents/:agentId/edit" element={<AgentPage />} />');
     expect(appSource).toContain('<Route path="/teams/:teamId" element={<TeamDetail />} />');
     expect(appSource).toContain('<Route path="/teams/:teamId/edit" element={<TeamPage />} />');
     expect(appSource).not.toContain('/interact');
@@ -163,14 +183,14 @@ describe('entity detail routes', () => {
   it('keeps the agent detail header on one mobile line and moves secondary actions into a sheet', async () => {
     renderAgentDetail();
 
-    const header = screen.getByRole('heading', { name: 'Agent One' }).closest('header');
+    const header = screen.getByRole('navigation', { name: 'Breadcrumb' }).closest('header');
     expect(header).toHaveClass('flex-row', 'flex-nowrap');
     expect(header).not.toHaveClass('overflow-hidden');
 
     await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    expect(screen.getByRole('dialog', { name: 'Page actions' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Edit agent' })).toHaveAttribute('href', '/agents/agent-1/edit');
-    expect(screen.getByRole('button', { name: 'Delete agent' })).toBeInTheDocument();
+    const sheet = screen.getByRole('dialog', { name: 'Page actions' });
+    expect(within(sheet).getByRole('link', { name: 'New task' })).toHaveAttribute('href', '/tasks/new?agentId=agent-1');
+    expect(within(sheet).getByRole('button', { name: 'Delete agent' })).toBeInTheDocument();
   });
 
   it('keeps the team detail header on one mobile line and moves secondary actions into a sheet', async () => {
@@ -186,21 +206,73 @@ describe('entity detail routes', () => {
     expect(screen.getByRole('button', { name: 'Delete team' })).toBeInTheDocument();
   });
 
-  it('renders agent details and prepares a blank chat for Interact', async () => {
+  it('opens on the overview with stats, chats and teams, and starts a blank chat', async () => {
     renderAgentDetail();
 
     expect(screen.getByRole('heading', { name: 'Agent One' })).toBeInTheDocument();
-    expect(screen.getByText('openai · gpt-4o')).toBeInTheDocument();
-    expect(screen.getByText('Be precise.')).toBeInTheDocument();
-    expect(screen.getByText('search')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Edit' })).toHaveAttribute('href', '/agents/agent-1/edit');
-    expect(screen.getByRole('link', { name: 'Agent Assigned Task', description: 'pending' })).toBeInTheDocument();
+    expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getAllByRole('tab')).toHaveLength(7);
+    expect(screen.getByText('1 chat running')).toBeInTheDocument();
+    expect(screen.getByText('Weekly report')).toBeInTheDocument();
+    expect(screen.getByText('leads Team One')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('link', { name: 'Interact with agent' }));
+    await userEvent.click(screen.getByRole('button', { name: /Chat with agent/ }));
 
     expect(localStorage.getItem('selectedAgentId')).toBe('agent-1');
     expect(localStorage.getItem('chatSession:agent-1')).toBe('');
     expect(screen.getByText('Chat home')).toBeInTheDocument();
+  });
+
+  it('opens a recent chat from the overview', async () => {
+    renderAgentDetail();
+    await userEvent.click(screen.getByRole('button', { name: /Weekly report/ }));
+    expect(localStorage.getItem('chatSession:agent-1')).toBe('chat-9');
+  });
+
+  it('sends the old edit link to the General tab', () => {
+    renderAgentDetail('/agents/agent-1/edit');
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByLabelText('Name')).toHaveValue('Agent One');
+  });
+
+  it('keeps edits across tabs and saves them together', async () => {
+    harness.apiPost.mockResolvedValueOnce({ data: { id: 'agent-1', name: 'Agent Prime' } });
+    renderAgentDetail('/agents/agent-1/general');
+
+    const name = screen.getByLabelText('Name');
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Agent Prime');
+    expect(screen.getByText('@Agent-Prime')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Teams' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /Let it create sub-agents/ }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Tasks' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /schedule its own check-ins/ }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(harness.apiPost).toHaveBeenCalledWith('/agents', expect.objectContaining({
+      id: 'agent-1',
+      name: 'Agent Prime',
+      can_create_sub_agents: false,
+      automation: expect.objectContaining({ self_checkins: false }),
+    })));
+  });
+
+  it('discards unsaved edits', async () => {
+    renderAgentDetail('/agents/agent-1/general');
+    const name = screen.getByLabelText('Name');
+    await userEvent.type(name, ' 2');
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(screen.getByLabelText('Name')).toHaveValue('Agent One');
+    expect(screen.queryByRole('button', { name: 'Save changes' })).not.toBeInTheDocument();
+  });
+
+  it('shows team roles and the group chat link', () => {
+    renderAgentDetail('/agents/agent-1/teams');
+    expect(screen.getByText('leader')).toBeInTheDocument();
+    expect(screen.getByText('With @Agent-Two')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open group chat' })).toHaveAttribute('href', '/teams/team-1/chat');
   });
 
   it('deletes an agent from its detail header and returns to the list', async () => {
@@ -232,9 +304,9 @@ describe('entity detail routes', () => {
   });
 
   it('assigns existing tasks to an agent without disturbing other fields', async () => {
-    renderAgentDetail();
+    renderAgentDetail('/agents/agent-1/tasks');
 
-    expect(screen.getByRole('link', { name: 'Agent Assigned Task' })).toHaveAttribute('href', '/tasks/task-1');
+    expect(screen.getByRole('link', { name: /Agent Assigned Task/ })).toHaveAttribute('href', '/tasks/task-1');
     expect(screen.getByRole('link', { name: 'New task' })).toHaveAttribute('href', '/tasks/new?agentId=agent-1');
 
     await userEvent.click(screen.getByRole('button', { name: 'Assign task' }));
@@ -269,7 +341,7 @@ describe('entity detail routes', () => {
 
   it('keeps assignment selection open when saving fails', async () => {
     harness.apiPatch.mockRejectedValueOnce(new Error('offline'));
-    renderAgentDetail();
+    renderAgentDetail('/agents/agent-1/tasks');
 
     await userEvent.click(screen.getByRole('button', { name: 'Assign task' }));
     const task = screen.getByRole('checkbox', { name: /Task Two/ });
@@ -283,7 +355,7 @@ describe('entity detail routes', () => {
   it('labels the assignment disclosure, moves focus, and disables choices while saving', async () => {
     let resolvePatch!: (value: { data: object }) => void;
     harness.apiPatch.mockReturnValueOnce(new Promise((resolve) => { resolvePatch = resolve; }));
-    renderAgentDetail();
+    renderAgentDetail('/agents/agent-1/tasks');
 
     const trigger = screen.getByRole('button', { name: 'Assign task' });
     await userEvent.click(trigger);
@@ -304,7 +376,7 @@ describe('entity detail routes', () => {
 
   it('shows a retryable task error instead of a false empty assignment state', async () => {
     harness.resources.set('/tasks', { error: 'Tasks are unavailable.' });
-    renderAgentDetail();
+    renderAgentDetail('/agents/agent-1/tasks');
 
     expect(screen.getByRole('alert')).toHaveTextContent('Tasks are unavailable.');
     expect(screen.queryByRole('button', { name: 'Assign task' })).not.toBeInTheDocument();
@@ -322,7 +394,7 @@ describe('entity detail routes', () => {
     harness.apiPatch
       .mockResolvedValueOnce({ data: {} })
       .mockRejectedValueOnce(new Error('offline'));
-    renderAgentDetail();
+    renderAgentDetail('/agents/agent-1/tasks');
 
     await userEvent.click(screen.getByRole('button', { name: 'Assign task' }));
     const succeeded = screen.getByRole('checkbox', { name: /Task Two/ });
@@ -337,35 +409,28 @@ describe('entity detail routes', () => {
     expect(failed).toBeChecked();
   });
 
-  it('returns agent edits to the canonical detail page', async () => {
-    renderAgentEdit();
+  it('offers Anthropic with recent models, a custom model name, and greys out temperature for new Claude models', async () => {
+    harness.apiPost.mockResolvedValueOnce({ data: { id: 'agent-new' } });
+    renderAgentNew();
 
-    expect(screen.getByRole('link', { name: 'Cancel' })).toHaveAttribute('href', '/agents/agent-1');
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-
-    await waitFor(() => expect(harness.apiPost).toHaveBeenCalledWith('/agents', expect.objectContaining({ id: 'agent-1' })));
-    expect(screen.getByText('Agent details destination')).toBeInTheDocument();
-  });
-
-  it('offers Anthropic with its endpoint and models, and greys out temperature for new Claude models', async () => {
-    renderAgentEdit();
-
+    await userEvent.type(screen.getByPlaceholderText('Research Assistant'), 'Claude helper');
     const providerSelect = screen.getAllByRole('combobox').find((el) =>
       Array.from((el as HTMLSelectElement).options).some((o) => o.value === 'anthropic'),
     ) as HTMLSelectElement;
     expect(providerSelect).toBeDefined();
     await userEvent.selectOptions(providerSelect, 'anthropic');
 
-    expect(screen.getByPlaceholderText('model name')).toHaveValue('claude-sonnet-5-5');
-    expect(document.querySelector('#model-suggestions option[value="claude-opus-5-5"]')).not.toBeNull();
+    const modelSelect = screen.getAllByRole('combobox').find((el) =>
+      Array.from((el as HTMLSelectElement).options).some((o) => o.value === 'claude-opus-5-5'),
+    ) as HTMLSelectElement;
+    expect(modelSelect).toHaveValue('claude-sonnet-5-5');
     expect(screen.getByLabelText('Temperature')).toBeDisabled();
 
-    const modelInput = screen.getByPlaceholderText('model name');
-    await userEvent.clear(modelInput);
-    await userEvent.type(modelInput, 'claude-haiku-4-5');
+    await userEvent.selectOptions(modelSelect, '__custom__');
+    await userEvent.type(screen.getByLabelText('Custom model name'), 'claude-haiku-4-5');
     expect(screen.getByLabelText('Temperature')).toBeEnabled();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await userEvent.click(screen.getByRole('button', { name: /Save/ }));
     await waitFor(() => expect(harness.apiPost).toHaveBeenCalledWith('/agents', expect.objectContaining({
       llm: expect.objectContaining({ provider: 'anthropic', model: 'claude-haiku-4-5', base_url: 'https://api.anthropic.com/v1' }),
     })));

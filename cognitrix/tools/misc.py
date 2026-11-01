@@ -1291,6 +1291,14 @@ async def create_agent(name: str, provider: str, description: str, tools: list[s
     # Local import to avoid circular-import issues.
     from cognitrix.agents import Agent  # noqa: WPS433  (allow internal import)
 
+    choice = str(getattr(parent, 'sub_agent_model', '') or '').strip() if parent is not None else ''
+    if parent is not None and getattr(parent, 'can_create_sub_agents', True) is False:
+        return {'status': 'error', 'message': "This agent isn't allowed to create sub-agents"}
+    if choice and getattr(parent, 'llm', None) is not None:
+        # The person picked the helpers' model on the agent page.
+        provider = parent.llm.provider
+        model = parent.llm.model if choice == 'same' else choice
+
     agent = await Agent.create_agent(  # type: ignore[attr-defined]
         name=name,
         system_prompt=description,
@@ -1346,7 +1354,7 @@ async def list_agents(*, parent: Any | None = None):
         llm = getattr(a, 'llm', None)
         provider = getattr(llm, 'provider', '') or '?'
         model = getattr(llm, 'model', '') or '?'
-        desc = ' '.join((a.system_prompt or '').split())
+        desc = ' '.join((getattr(a, 'description', '') or a.system_prompt or '').split())
         if len(desc) > 160:
             desc = desc[:160] + '…'
         line = f"- {a.name} [{provider}/{model}]"
@@ -1737,6 +1745,7 @@ def coding_agent(
     wait_seconds: int = 0,
     *,
     approved: bool = False,
+    parent: Any | None = None,
 ) -> str:
     """Hand a coding job to a coding agent installed on this computer (Claude
     Code, Codex or Gemini CLI). It works on its own in a folder, in the
@@ -1788,6 +1797,7 @@ def coding_agent(
             return ca.describe_installed(sh.child_env().get('PATH'))
         run_mode = ca.normalise_mode(mode)
         model_name = ca.validate_model(model)
+        which = ca.apply_agent_limits(which, run_mode, getattr(parent, 'coding_agents', None))
     except ca.CodingAgentError as e:
         return f'Error: {e}'
 
@@ -1806,22 +1816,29 @@ def coding_agent(
             'Ask the user, or do the work with the other tools.'
         )
 
-    root = Path(settings.tools_root).expanduser().resolve()
+    # It works in this chat's folders: the primary one unless told otherwise.
+    # Anything beyond read only needs a read & write folder.
     if working_dir:
         try:
-            candidate = Path(working_dir).expanduser()
-            work_dir = (candidate if candidate.is_absolute() else root / candidate).resolve()
+            work_dir = folder_paths.resolve_path(working_dir, write=run_mode != 'read_only')
+        except PathEscapesRoot as e:
+            return f'Error: Coding agent refused - {e}'
         except Exception as e:
             return f'Error: Working directory validation failed - {e}'
-        if not _inside(work_dir, root):
-            return (
-                f"Error: '{working_dir}' is outside the working folder '{root}'. "
-                'Coding agents can only work inside the working folder.'
-            )
         if not work_dir.is_dir():
             return f'Error: Invalid working directory - {working_dir}'
     else:
-        work_dir = sh.session_cwd(_shell_session_key(context), root)
+        remembered = sh.remembered_cwd(_shell_session_key(context))
+        if remembered is not None and folder_paths.folder_for(remembered) is not None:
+            work_dir = remembered
+        else:
+            work_dir = folder_paths.primary_folder()
+        containing = folder_paths.folder_for(work_dir)
+        if run_mode != 'read_only' and containing is not None and not containing.writable:
+            return (
+                f"Error: Coding agent refused - '{containing.label}' is read only in this chat. "
+                "Use mode='read_only', or ask the user to make the folder Read & write."
+            )
 
     env = sh.child_env()
     try:

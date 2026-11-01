@@ -5,6 +5,7 @@ import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { Select } from '@/lib/components/ui/select';
 import { Field } from '@/components/form';
+import ModelPicker from '@/components/ModelPicker';
 import { AGENTS_CHANGED_EVENT, MODELS, PROVIDER_LABELS } from '@/lib/providers';
 
 interface ProviderOption {
@@ -69,7 +70,6 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
 
   const option = status.providers.find((p) => p.id === provider);
   const askForKey = Boolean(option?.needs_key && !option.has_key);
-  const suggestions = Array.from(new Set([option?.default_model, ...(MODELS[provider] || [])].filter(Boolean))) as string[];
 
   const changeProvider = (next: string) => {
     setProvider(next);
@@ -167,11 +167,8 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
               </Select>
             </Field>
             <Field label="MODEL" required>
-              <Input list="setup-model-suggestions" value={model} onChange={(e) => setModel(e.target.value)} placeholder="model name" />
+              <ModelPicker provider={provider} value={model} onChange={setModel} />
             </Field>
-            <datalist id="setup-model-suggestions">
-              {suggestions.map((m) => <option key={m} value={m} />)}
-            </datalist>
           </div>
 
           {askForKey && (

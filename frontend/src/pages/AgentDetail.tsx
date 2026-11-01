@@ -1,67 +1,156 @@
-import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useResource } from '@/hooks/useResource';
 import { api, errorMessage } from '@/lib/api';
-import { Button } from '@/lib/components/ui/button';
 import { ErrorState, LoadingState } from '@/components/list-ui';
 import { MobileHeaderActions, type MobileHeaderAction } from '@/components/mobile-header-actions';
-import { TaskAssignmentPanel, type TaskRecord } from '@/components/TaskAssignmentPanel';
+import { PROVIDER_LABELS } from '@/lib/providers';
+import { cn } from '@/lib/utils';
+import {
+  TABS,
+  draftFrom,
+  draftProblem,
+  handleFor,
+  initials,
+  payloadFrom,
+  type AgentDraft,
+  type AgentOptions,
+  type AgentRecord,
+  type Overview,
+  type TabId,
+  type TabProps,
+  type ToolInfo,
+} from '@/lib/agentDraft';
+import { buttonClass, primaryButtonClass } from '@/components/agent/ui';
+import OverviewTab from '@/components/agent/OverviewTab';
+import GeneralTab from '@/components/agent/GeneralTab';
+import ToolsTab from '@/components/agent/ToolsTab';
+import FoldersTab from '@/components/agent/FoldersTab';
+import ConnectionsTab from '@/components/agent/ConnectionsTab';
+import TasksTab from '@/components/agent/TasksTab';
+import TeamsTab from '@/components/agent/TeamsTab';
 
-interface Tool {
-  name: string;
-  description?: string;
-  category?: string;
-}
+const TAB_VIEWS: Record<TabId, (props: TabProps) => JSX.Element> = {
+  overview: OverviewTab,
+  general: GeneralTab,
+  tools: ToolsTab,
+  folders: FoldersTab,
+  connections: ConnectionsTab,
+  tasks: TasksTab,
+  teams: TeamsTab,
+};
 
-interface AgentData {
-  id: string;
-  name: string;
-  system_prompt?: string;
-  llm?: {
-    provider?: string;
-    model?: string;
-    temperature?: number;
-    max_tokens?: number;
-    base_url?: string;
-  };
-  tools?: Tool[];
-}
+const isTab = (value: string | undefined): value is TabId => TABS.some((t) => t.id === value);
 
 export default function AgentDetail() {
-  const { agentId } = useParams();
+  const { agentId, tab: tabParam } = useParams();
   const navigate = useNavigate();
-  const { data: agent, loading, error: loadError, refetch } = useResource<AgentData>(
+  const { data: agent, loading, error: loadError, refetch, setData: setAgent } = useResource<AgentRecord>(
     agentId ? `/agents/${agentId}` : null,
   );
+  const { data: catalog } = useResource<ToolInfo[]>('/tools');
+  const { data: options } = useResource<AgentOptions>('/agents/options');
   const {
-    data: taskList,
-    loading: loadingTasks,
-    error: taskError,
-    refetch: refetchTasks,
-  } = useResource<TaskRecord[]>('/tasks');
-  const [actionError, setActionError] = useState('');
+    data: overview, error: overviewError, refetch: refetchOverview,
+  } = useResource<Overview>(agentId ? `/agents/${agentId}/overview` : null);
 
-  const prepareChat = () => {
+  const [draft, setDraft] = useState<AgentDraft | null>(null);
+  const [saved, setSaved] = useState<AgentDraft | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [notice, setNotice] = useState('');
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+
+  useEffect(() => {
     if (!agent) return;
-    localStorage.setItem('selectedAgentId', agent.id);
-    localStorage.setItem(`chatSession:${agent.id}`, '');
-  };
+    const fresh = draftFrom(agent);
+    setDraft(fresh);
+    setSaved(fresh);
+  }, [agent]);
 
-  const remove = async () => {
-    if (!agent || !confirm('Delete this agent? This cannot be undone.')) return;
-    setActionError('');
+  const dirty = useMemo(() => Boolean(draft && saved && JSON.stringify(draft) !== JSON.stringify(saved)), [draft, saved]);
+  const update = useCallback((patch: Partial<AgentDraft>) => {
+    setDraft((cur) => (cur ? { ...cur, ...patch } : cur));
+    setNotice('');
+  }, []);
+
+  // Closing or reloading the window with unsaved changes asks first. Tabs
+  // share one draft, so switching tabs keeps the changes.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
+  // On narrow screens the tab row scrolls; keep the open tab in view.
+  const ready = draft !== null;
+  useEffect(() => {
+    if (ready) tabRefs.current[tabParam || 'overview']?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [tabParam, ready]);
+
+  if (tabParam === 'edit') return <Navigate to={`/agents/${agentId}/general`} replace />;
+  const tab: TabId = isTab(tabParam) ? tabParam : 'overview';
+  const goTo = (next: TabId) => navigate(next === 'overview' ? `/agents/${agentId}` : `/agents/${agentId}/${next}`);
+
+  const save = async () => {
+    if (!agent || !draft) return;
+    const problem = draftProblem(draft);
+    if (problem) {
+      setSaveError(problem);
+      return;
+    }
+    setSaving(true);
+    setSaveError('');
     try {
-      await api.delete(`/agents/${agent.id}`);
-      navigate('/agents');
-    } catch (error) {
-      setActionError(errorMessage(error, 'Could not delete the agent.'));
+      const res = await api.post<AgentRecord>('/agents', payloadFrom(agent.id, draft, catalog || [], agent.tools || []));
+      setAgent(res.data);
+      setNotice('Saved. New chats and task runs use these settings.');
+      refetchOverview({ silent: true });
+    } catch (e) {
+      setSaveError(errorMessage(e, 'Could not save the agent.'));
+    } finally {
+      setSaving(false);
     }
   };
 
-  if (loading) {
+  const discard = () => {
+    setDraft(saved);
+    setSaveError('');
+  };
+
+  const remove = async () => {
+    if (!agent || !window.confirm('Delete this agent? This cannot be undone.')) return;
+    try {
+      setSaved(draft);
+      await api.delete(`/agents/${agent.id}`);
+      navigate('/agents');
+    } catch (e) {
+      setSaveError(errorMessage(e, 'Could not delete the agent.'));
+    }
+  };
+
+  const openChat = (sessionId = '') => {
+    if (!agent) return;
+    localStorage.setItem('selectedAgentId', agent.id);
+    localStorage.setItem(`chatSession:${agent.id}`, sessionId);
+    navigate('/home');
+  };
+
+  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    if (!step && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const nextIndex = e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : (index + step + TABS.length) % TABS.length;
+    const next = TABS[nextIndex].id;
+    goTo(next);
+    tabRefs.current[next]?.focus();
+  };
+
+  if (loading && !agent) {
     return <div className="flex h-full min-w-0 flex-1 flex-col bg-bg"><LoadingState label="loading agent…" /></div>;
   }
-  if (loadError || !agent) {
+  if (loadError || !agent || !draft) {
     return (
       <div className="flex h-full min-w-0 flex-1 flex-col bg-bg">
         <ErrorState message={loadError || 'Agent not found.'} onRetry={refetch} />
@@ -69,116 +158,105 @@ export default function AgentDetail() {
     );
   }
 
-  const tools = agent.tools || [];
-  const tasks = taskList || [];
-  const assignedTasks = tasks.filter((task) => (task.assigned_agents || []).includes(agent.id));
-  const providerModel = `${agent.llm?.provider || '—'} · ${agent.llm?.model || '—'}`;
   const mobileActions: MobileHeaderAction[] = [
-    { key: 'edit', label: 'Edit agent', to: `/agents/${agent.id}/edit` },
+    { key: 'task', label: 'New task', to: `/tasks/new?agentId=${encodeURIComponent(agent.id)}` },
     { key: 'delete', label: 'Delete agent', destructive: true, onSelect: remove },
   ];
+  const running = overview?.stats.running_chats || 0;
+  const View = TAB_VIEWS[tab];
+  const props: TabProps = {
+    agent, draft, update, overview: overview || null, overviewError,
+    refreshOverview: () => refetchOverview({ silent: true }), options: options || null, catalog: catalog || [], goTo,
+    openChat, remove,
+  };
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
-        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
-          <Link to="/agents" aria-label="Back to agents" className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
-          </Link>
-          <div className="min-w-0">
-            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">AGENT</p>
-            <h1 className="truncate text-lg font-semibold tracking-tight">{agent.name}</h1>
-          </div>
-        </div>
-        <div className="flex flex-none items-center gap-1 md:gap-2">
-          <Button asChild size="sm" className="w-11 px-0 md:w-auto md:px-3">
-            <Link to="/home" aria-label="Interact with agent" onClick={prepareChat}>
-              <svg className="h-4 w-4 md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" /></svg>
-              <span className="sr-only md:not-sr-only">Interact</span>
-            </Link>
-          </Button>
-          <div className="hidden items-center gap-2 md:flex">
-            <Button asChild variant="outline" size="sm"><Link to={`/agents/${agent.id}/edit`}>Edit</Link></Button>
-            <Button variant="ghost" size="sm" onClick={remove} className="hover:text-danger-ink">Delete</Button>
-          </div>
+      <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-8">
+        <nav aria-label="Breadcrumb" className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] text-fg-dim">
+          <Link to="/agents" className="hover:text-fg hover:underline">Agents</Link>
+          <span aria-hidden>›</span>
+          <span className="truncate text-fg" aria-current="page">{agent.name}</span>
+        </nav>
+        <div className="flex flex-none items-center gap-2">
+          <button type="button" onClick={() => openChat()} className={cn(primaryButtonClass, 'px-3 md:px-4')}>
+            Chat<span className="hidden sm:inline">&nbsp;with agent</span>
+          </button>
+          <Link to={`/tasks/new?agentId=${encodeURIComponent(agent.id)}`} className={cn(buttonClass, 'hidden md:inline-flex')}>New task</Link>
           <MobileHeaderActions id={`agent-${agent.id}-actions`} actions={mobileActions} />
         </div>
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl space-y-8 px-6 py-8">
-          {actionError && <p role="alert" className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{actionError}</p>}
-
-          <section className="space-y-3">
-            <div>
-              <p className="font-mono text-[11px] tracking-[0.16em] text-fg-dim">MODEL</p>
-              <p className="mt-1 text-sm font-medium">{providerModel}</p>
+        <div className="mx-auto w-full max-w-[928px] px-4 pb-28 pt-5 md:px-8 md:pt-7">
+          <div className="flex items-center gap-3.5">
+            <div aria-hidden className="grid h-12 w-12 flex-none place-items-center rounded-[10px] border border-accent bg-accent/10 text-[17px] font-bold text-accent-ink">
+              {initials(draft.name || agent.name)}
             </div>
-            <div className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-[11px] text-fg-dim">
-              <span>temperature {agent.llm?.temperature ?? '—'}</span>
-              <span>max tokens {agent.llm?.max_tokens ?? 'provider default'}</span>
-              <span>agent:{agent.id.slice(0, 8)}</span>
-            </div>
-            {agent.llm?.base_url && <p className="break-all font-mono text-[11px] text-fg-dim">{agent.llm.base_url}</p>}
-          </section>
-
-          <section>
-            <h2 className="mb-3 font-mono text-[11px] tracking-[0.16em] text-fg-dim">SYSTEM PROMPT</h2>
-            <p className="whitespace-pre-wrap rounded border border-line bg-panel px-4 py-3 text-sm text-fg-dim">
-              {agent.system_prompt || 'No system prompt configured.'}
-            </p>
-          </section>
-
-          <section>
-            <h2 className="mb-3 font-mono text-[11px] tracking-[0.16em] text-fg-dim">TOOLS · {tools.length}</h2>
-            {tools.length === 0 ? (
-              <p className="text-sm text-fg-dim">No tools configured.</p>
-            ) : (
-              <ul className="rounded border border-line">
-                {tools.map((tool) => (
-                  <li key={tool.name} className="border-b border-line px-4 py-3 last:border-b-0">
-                    <div className="font-mono text-[12px] text-fg">{tool.name}</div>
-                    {tool.description && <div className="mt-0.5 text-[12px] text-fg-dim">{tool.description}</div>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="font-mono text-[11px] tracking-[0.16em] text-fg-dim">TASKS · {taskList ? assignedTasks.length : '—'}</h2>
-              <div className="flex flex-wrap items-center gap-2">
-                {!loadingTasks && !taskError && (
-                  <TaskAssignmentPanel mode="agent" entityId={agent.id} tasks={tasks} onAssigned={() => refetchTasks({ silent: true })} />
+            <div className="min-w-0">
+              <h1 className="truncate text-[22px] font-bold tracking-tight md:text-[24px]">{agent.name}</h1>
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[13px] text-fg-dim">
+                <span className="font-mono text-[12px]">{handleFor(agent.name)}</span>
+                <span>
+                  {PROVIDER_LABELS[agent.llm?.provider || ''] || agent.llm?.provider || '—'} · <span className="font-mono text-[12px]">{agent.llm?.model || '—'}</span>
+                </span>
+                {running > 0 && (
+                  <span className="inline-flex items-center gap-1.5 text-ok">
+                    <span aria-hidden className="h-[7px] w-[7px] rounded-full bg-ok" />
+                    {running} {running === 1 ? 'chat' : 'chats'} running
+                  </span>
                 )}
-                <Button asChild variant="ghost" size="sm"><Link to={`/tasks/new?agentId=${encodeURIComponent(agent.id)}`}>New task</Link></Button>
               </div>
+              {agent.description && <p className="mt-1 text-[13.5px] text-fg-dim">{agent.description}</p>}
             </div>
-            {loadingTasks ? (
-              <p role="status" className="mt-3 text-sm text-fg-dim">Loading tasks…</p>
-            ) : taskError ? (
-              <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[11px] text-danger-ink">
-                <span>{taskError}</span>
-                <Button variant="ghost" size="sm" onClick={() => refetchTasks()}>Retry tasks</Button>
-              </div>
-            ) : assignedTasks.length === 0 ? (
-              <p className="mt-3 text-sm text-fg-dim">No tasks assigned to this agent.</p>
-            ) : (
-              <ul className="mt-3 rounded border border-line">
-                {assignedTasks.map((task) => (
-                  <li key={task.id}>
-                    <Link aria-label={task.title} aria-describedby={`agent-task-status-${task.id}`} to={`/tasks/${task.id}`} className="group flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 hover:bg-panel-2">
-                      <div className="min-w-0 flex-1 truncate text-[14px] font-medium group-hover:text-accent-ink">{task.title}</div>
-                      <span id={`agent-task-status-${task.id}`} className="rounded border border-line px-2 py-0.5 font-mono text-[10.5px] text-fg-dim">{task.status || 'pending'}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          </div>
+
+          <div role="tablist" aria-label="Agent sections" className="-mx-4 mt-5 flex gap-1 overflow-x-auto border-b border-line px-4 md:mx-0 md:px-0">
+            {TABS.map((t, i) => (
+              <button
+                key={t.id}
+                ref={(el) => { tabRefs.current[t.id] = el; }}
+                type="button"
+                role="tab"
+                id={`agent-tab-${t.id}`}
+                aria-selected={t.id === tab}
+                aria-controls="agent-tab-panel"
+                tabIndex={t.id === tab ? 0 : -1}
+                onClick={() => goTo(t.id)}
+                onKeyDown={(e) => onTabKey(e, i)}
+                className={cn(
+                  '-mb-px flex-none whitespace-nowrap border-b-2 px-3 py-2.5 text-[14px] transition-colors',
+                  t.id === tab ? 'border-accent font-medium text-fg' : 'border-transparent text-fg-dim hover:text-fg',
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <div id="agent-tab-panel" role="tabpanel" aria-labelledby={`agent-tab-${tab}`} className="mt-5 md:mt-6">
+            <View {...props} />
+          </div>
         </div>
       </div>
+
+      {(dirty || saveError || notice) && (
+        <div className="flex-none border-t border-line bg-panel px-4 py-3 md:px-8">
+          <div className="mx-auto flex w-full max-w-[864px] flex-wrap items-center gap-2.5">
+            <p role="status" className={cn('min-w-[200px] flex-1 text-[13px]', saveError ? 'text-danger-ink' : 'text-fg-dim')}>
+              {saveError || (dirty ? 'You have unsaved changes. Chats already running keep their old settings.' : notice)}
+            </p>
+            {dirty && (
+              <>
+                <button type="button" onClick={discard} disabled={saving} className={buttonClass}>Discard</button>
+                <button type="button" onClick={() => void save()} disabled={saving} className={primaryButtonClass}>
+                  {saving ? 'Saving…' : 'Save changes'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

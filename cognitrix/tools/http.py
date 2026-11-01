@@ -12,7 +12,16 @@ import os
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-from cognitrix.credentials import PLACEHOLDER_RE, Resolver, SecretUseError, describe, load_rows, redact
+from cognitrix.credentials import (
+    PLACEHOLDER_RE,
+    Resolver,
+    SecretUseError,
+    agent_allowed_credentials,
+    describe,
+    load_rows,
+    only_allowed,
+    redact,
+)
 from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import ToolOutcome, current_execution_context
 
@@ -55,6 +64,8 @@ async def http_request(
     json_body: dict | None = None,
     credential: str | None = None,
     max_length: int = 20000,
+    *,
+    parent: Any | None = None,
 ):
     """Send an HTTP request to an API, optionally signed in with a saved credential.
 
@@ -96,7 +107,7 @@ async def http_request(
 
     owner = _owner()
     uses_secrets = bool(credential) or _mentions_secret(url, headers, body, json_body)
-    resolver = await Resolver.for_owner(owner)
+    resolver = await Resolver.for_owner(owner, agent_allowed_credentials(parent))
     if uses_secrets and not owner:
         return ToolOutcome.failure(
             'no_credentials', 'Error: saved credentials are only available to a signed-in person',
@@ -168,7 +179,7 @@ async def http_request(
 
 
 @tool(category='web')
-async def list_credentials():
+async def list_credentials(*, parent: Any | None = None):
     """List the saved credentials you can use, without their values.
 
     Each entry has a name, a kind (token, basic or oauth), a description and
@@ -178,7 +189,7 @@ async def list_credentials():
     Returns:
         str: One line per saved credential, or a note that there are none.
     """
-    rows = await load_rows(_owner())
+    rows = only_allowed(await load_rows(_owner()), agent_allowed_credentials(parent))
     if not rows:
         return 'No saved credentials. The person can add them in Settings > Saved sign-ins.'
     lines = []

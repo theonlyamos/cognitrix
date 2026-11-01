@@ -73,7 +73,7 @@ function AppRoutes() {
           <Route path="/agents" element={<Agents />} />
           <Route path="/agents/new" element={<AgentPage />} />
           <Route path="/agents/:agentId" element={<AgentDetail />} />
-          <Route path="/agents/:agentId/edit" element={<AgentPage />} />
+          <Route path="/agents/:agentId/:tab" element={<AgentDetail />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/tasks/new" element={<TaskPage />} />
           <Route path="/tasks/:taskId" element={<TaskDetail />} />
