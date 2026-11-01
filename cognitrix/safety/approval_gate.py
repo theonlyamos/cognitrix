@@ -84,6 +84,8 @@ class ApprovalResult:
     cached: bool = False  # Result was from cache
     auto: bool = False  # Auto-approved (low risk)
     error: str | None = None
+    reviewed: bool = False  # Decided by the reviewer model, not a person
+    review: dict | None = None  # The reviewer's verdict, when it was asked
 
 
 @dataclass
@@ -177,6 +179,9 @@ class ApprovalGate:
         # Interactive caches are intentionally ignored; a future durable
         # approval design must carry an explicit run-scoped authorization.
         if interface == 'task':
+            reviewed = await self._review(tool_call, risk, interface)
+            if reviewed is not None:
+                return reviewed
             # A run started by a person parks the call and asks them in the
             # web UI. Runs with nobody to ask (system/scheduler) are denied.
             from cognitrix.tasks.approvals import request_task_approval, task_turn_ctx
@@ -197,6 +202,13 @@ class ApprovalGate:
 
         if scoped in self.session_cache:
             return ApprovalResult(approved=True, cached=True, remember=True)
+
+        # Web bypass mode approves everything anyway; don't spend a review.
+        web_ctx = web_turn_ctx.get(None)
+        if not (interface in ('web', 'ws', 'websocket') and web_ctx and web_ctx.get('bypass')):
+            reviewed = await self._review(tool_call, risk, interface)
+            if reviewed is not None:
+                return reviewed
 
         # Need explicit approval
         if interface == 'auto':
@@ -222,6 +234,55 @@ class ApprovalGate:
                 self.session_cache.add(scoped)
 
         return result
+
+    async def _review(self, tool_call: ToolCall, risk: RiskAssessment,
+                      interface: str) -> ApprovalResult | None:
+        """Let the reviewer model settle the call when it is turned on.
+
+        Returns an allow/block result, or None when a person should be asked
+        as usual (reviewer off, unsure, or failed).
+        """
+        from cognitrix.safety import action_reviewer
+
+        if not action_reviewer.should_review(risk, interface):
+            return None
+        verdict = await action_reviewer.review_action(tool_call.tool_name, tool_call.params, risk)
+        await self._report_review(tool_call, risk, interface, verdict)
+        if verdict.decision == action_reviewer.ALLOW:
+            status_print(f"   Reviewer allowed it: {verdict.reason}")
+            return ApprovalResult(approved=True, auto=True, reviewed=True, review=verdict.payload())
+        if verdict.decision == action_reviewer.BLOCK:
+            status_print(f"   Reviewer blocked it: {verdict.reason}")
+            return ApprovalResult(
+                approved=False,
+                reviewed=True,
+                review=verdict.payload(),
+                error=f"blocked by the reviewer: {verdict.reason or 'no reason given'}",
+            )
+        status_print(f"   Reviewer is unsure, asking: {verdict.reason}")
+        return None
+
+    async def _report_review(self, tool_call: ToolCall, risk: RiskAssessment,
+                             interface: str, verdict) -> None:
+        """Record the verdict where people can see it (task run events)."""
+        if interface != 'task':
+            return
+        from cognitrix.tasks.approvals import task_turn_ctx
+
+        ctx = task_turn_ctx.get(None) or {}
+        emit = ctx.get('emit')
+        if emit is None:
+            return
+        try:
+            await emit('action_reviewed', {
+                'tool_name': tool_call.tool_name,
+                'params': tool_call.params,
+                'risk_level': risk.risk_level.value,
+                'details': risk.details,
+                **verdict.payload(),
+            })
+        except Exception:
+            logger.exception("Could not record the reviewer's verdict")
 
     async def _cli_approval(self, tool_call: ToolCall, risk: RiskAssessment, timeout: float = 300.0) -> ApprovalResult:
         """Command-line approval prompt."""
