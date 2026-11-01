@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from cognitrix.common.encoding import status_print
 from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
 
 logger = logging.getLogger('cognitrix.log')
@@ -121,7 +122,7 @@ class ApprovalGate:
         cache_file = self._cache_file()
         if cache_file.exists():
             try:
-                with open(cache_file) as f:
+                with open(cache_file, encoding='utf-8') as f:
                     data = json.load(f)
                     self.permanent_cache = set(data.get('approved', []))
                     logger.info(f"Loaded {len(self.permanent_cache)} permanent approvals")
@@ -131,7 +132,7 @@ class ApprovalGate:
     def _save_permanent_cache(self):
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
-            with open(self._cache_file(), 'w') as f:
+            with open(self._cache_file(), 'w', encoding='utf-8') as f:
                 json.dump({'approved': list(self.permanent_cache)}, f)
         except Exception as e:
             logger.error(f"Failed to save approval cache: {e}")
@@ -224,15 +225,15 @@ class ApprovalGate:
 
     async def _cli_approval(self, tool_call: ToolCall, risk: RiskAssessment, timeout: float = 300.0) -> ApprovalResult:
         """Command-line approval prompt."""
-        print(f"\n{'='*60}")
-        print(f"⚠️  APPROVAL REQUIRED - {risk.risk_level.value.upper()} RISK")
-        print(f"{'='*60}")
-        print(f"\nOperation: {tool_call.tool_name}")
-        print("Parameters:")
-        print(json.dumps(tool_call.params, indent=2))
-        print(f"\nRisk Categories: {', '.join(risk.categories)}")
-        print(f"Details: {risk.details}")
-        print(f"\n{'='*60}")
+        status_print(f"\n{'='*60}")
+        status_print(f"⚠️  APPROVAL REQUIRED - {risk.risk_level.value.upper()} RISK")
+        status_print(f"{'='*60}")
+        status_print(f"\nOperation: {tool_call.tool_name}")
+        status_print("Parameters:")
+        status_print(json.dumps(tool_call.params, indent=2, ensure_ascii=False))
+        status_print(f"\nRisk Categories: {', '.join(risk.categories)}")
+        status_print(f"Details: {risk.details}")
+        status_print(f"\n{'='*60}")
 
         try:
             # input() in an executor so the event loop keeps running, with the
@@ -309,7 +310,7 @@ class ApprovalGate:
                 'session_id': ctx.get('session_id'),
             })
             return await asyncio.wait_for(future, timeout=timeout)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             return ApprovalResult(approved=False, error=f"Approval timed out after {timeout}s")
         except Exception as e:
             logger.exception("Web approval failed")

@@ -22,6 +22,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from cognitrix.common.encoding import decode_output, utf8_child_env
 from cognitrix.common.process_security import (
     HostProcessMode,
     require_host_process_authority,
@@ -249,12 +250,17 @@ def run_whitelisted(
     require_host_process_authority(host_process_mode)
     argv = build_argv(command, allowed, root=cwd if cwd is not None else os.getcwd())
     try:
+        # Bytes, not text=True: Windows would decode with cp1252 (strict) and
+        # raise on UTF-8 output from git/python/node.
         proc = subprocess.run(
-            argv, capture_output=True, text=True, cwd=cwd, timeout=timeout,
+            argv, capture_output=True, cwd=cwd, timeout=timeout,
+            env=utf8_child_env(),
         )
     except subprocess.TimeoutExpired:
         return f"Command timed out after {timeout}s"
-    return _format_output(proc.stdout, proc.stderr, proc.returncode)
+    return _format_output(
+        decode_output(proc.stdout), decode_output(proc.stderr), proc.returncode,
+    )
 
 
 async def run_whitelisted_async(
@@ -273,6 +279,7 @@ async def run_whitelisted_async(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
+        env=utf8_child_env(),
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -280,8 +287,8 @@ async def run_whitelisted_async(
         proc.kill()
         return f"Command timed out after {timeout}s"
     return _format_output(
-        stdout.decode('utf-8', errors='replace'),
-        stderr.decode('utf-8', errors='replace'),
+        decode_output(stdout),
+        decode_output(stderr),
         proc.returncode or 0,
     )
 

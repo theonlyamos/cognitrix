@@ -8,10 +8,9 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, TypeAlias
 
-from rich import print
-
-from cognitrix.errors import ExecutionControlError
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
+from cognitrix.common.encoding import status_print
+from cognitrix.errors import ExecutionControlError
 from cognitrix.models import Agent, Message, Tool
 from cognitrix.models.tool import MCPTool
 from cognitrix.providers.base import LLM
@@ -217,7 +216,7 @@ class AgentManager:
             async for response in self.agent.generate(content):
                 result += response.result # type: ignore
 
-        print(f"\n{self.agent.name} responded: {result}")
+        status_print(f"\n{self.agent.name} responded: {result}")
         response = LLMResponse()
         response.add_chunk(result)
 
@@ -304,10 +303,6 @@ class AgentManager:
         prompt: dict[str, Any] = {'role': role, 'type': 'text'}
 
         if isinstance(processed_query, dict):
-            if self.agent.is_sub_agent:
-                print("=======is sub agent===========")
-                print(processed_query)
-
             if processed_query.get('type') == 'tool_calls_result':
                 results = processed_query.get('result', [])
                 if isinstance(results, list):
@@ -485,8 +480,8 @@ class AgentManager:
                 if assigned_tool.approval_mode == 'always' or (
                     assigned_tool.approval_mode == 'risk_based' and risk.risk_level.value in ['medium', 'high']
                 ):
-                    print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
-                    print(f"   Details: {risk.details}")
+                    status_print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
+                    status_print(f"   Details: {risk.details}")
 
                     approval = await self.approval_gate.check_approval(
                         tool_call=tool_call,
@@ -512,9 +507,9 @@ class AgentManager:
                         continue
 
                     if approval.cached:
-                        print("   (Using cached approval)")
+                        status_print("   (Using cached approval)")
 
-                print(f"\nRunning tool '{tool.name.title()}' with parameters: {args}")
+                status_print(f"\nRunning tool '{tool.name.title()}' with parameters: {args}")
 
                 # Runtime-filled parameters. Delegation inherits the caller's
                 # interface so a sub-agent's risky tools are gated by the same

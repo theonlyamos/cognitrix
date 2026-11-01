@@ -24,7 +24,7 @@ def _load_connection_status():
     global _connection_status
     try:
         if _status_file_path.exists():
-            with open(_status_file_path) as f:
+            with open(_status_file_path, encoding='utf-8') as f:
                 _connection_status = json.load(f)
     except Exception as e:
         logger.warning(f"Could not load connection status: {e}")
@@ -34,7 +34,7 @@ def _save_connection_status():
     """Save connection status to disk"""
     try:
         _ensure_status_dir()
-        with open(_status_file_path, 'w') as f:
+        with open(_status_file_path, 'w', encoding='utf-8') as f:
             json.dump(_connection_status, f, indent=2)
     except Exception as e:
         logger.warning(f"Could not save connection status: {e}")

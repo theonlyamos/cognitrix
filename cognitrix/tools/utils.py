@@ -1,6 +1,6 @@
-import os
 import contextvars
 import json
+import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -243,7 +243,7 @@ def save_tool_as_json(name: str, description: str, category: str, function_code:
     tools_dir.mkdir(exist_ok=True)
 
     file_path = tools_dir / f"{name.lower().replace(' ', '_')}.json"
-    with file_path.open('w') as f:
+    with file_path.open('w', encoding='utf-8') as f:
         json.dump(tool_info, f, indent=2)
 
 def save_tool_as_python_file(name: str, description: str, category: str, function_code: str):
@@ -252,7 +252,7 @@ def save_tool_as_python_file(name: str, description: str, category: str, functio
     tools_dir.mkdir(exist_ok=True)
 
     file_path = tools_dir / f"{name.lower().replace(' ', '_')}.py"
-    with file_path.open('w') as f:
+    with file_path.open('w', encoding='utf-8') as f:
         f.write("from cognitrix.tools.tool import tool\n\n")
         f.write(f"@tool(category='{category}')\n")
         f.write(f"def {name.lower().replace(' ', '_')}(*args, **kwargs):\n")

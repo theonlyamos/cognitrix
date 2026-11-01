@@ -80,7 +80,7 @@ class MCPServerManager:
 
         if self.config_file.exists():
             try:
-                with open(self.config_file) as f:
+                with open(self.config_file, encoding='utf-8') as f:
                     data = json.load(f)
 
                 # Load servers
@@ -109,7 +109,7 @@ class MCPServerManager:
         }
 
         try:
-            with open(self.config_file, 'w') as f:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
             logger.info(f"Saved MCP configuration to {self.config_file}")
         except Exception as e:
@@ -197,7 +197,7 @@ class MCPServerManager:
             'version': '1.0'
         }
 
-        with open(output_file, 'w') as f:
+        with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
 
         logger.info(f"Exported MCP configuration to {output_file}")
@@ -206,7 +206,7 @@ class MCPServerManager:
     def import_config(self, input_file: Path, merge: bool = True) -> bool:
         """Import configuration from a file"""
         try:
-            with open(input_file) as f:
+            with open(input_file, encoding='utf-8') as f:
                 data = json.load(f)
 
             if not merge:
