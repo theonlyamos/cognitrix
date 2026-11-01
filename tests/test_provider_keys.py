@@ -150,6 +150,7 @@ async def test_replaced_saved_key_is_swapped_for_agents_that_kept_the_old_one(db
 
     set_saved_key('groq', KEY_A)
     set_saved_key('groq', KEY_B)
+    assert KEY_A not in (db / 'provider_keys.json').read_text()  # retired keys stay sealed
     # An agent saved while KEY_A was current still carries it.
     assert refresh_key('groq', KEY_A) == KEY_B
     # Keys typed into an agent by hand are never touched.

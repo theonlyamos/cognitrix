@@ -11,14 +11,13 @@ from ``.env``) always wins over a saved key, so an operator's config is never
 silently replaced from the UI.
 
 Agents keep the key they were resolved with, and ``LLMManager`` caches
-resolved LLMs. So when a saved key is replaced or removed, a fingerprint of
-the old one is kept under ``_retired``; ``refresh_key`` swaps a retired key
+resolved LLMs. So when a saved key is replaced or removed, the old one is
+kept, sealed like the rest, under ``_retired``; ``refresh_key`` swaps a retired key
 for the current one just before a request goes out. Keys someone typed into
 an agent themselves are never in that list, so they are left alone.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -44,10 +43,6 @@ def keys_file() -> Path:
     return Path(settings.workdir) / 'provider_keys.json'
 
 
-def _fingerprint(key: str) -> str:
-    return hashlib.sha256(key.encode('utf-8')).hexdigest()
-
-
 def _read_file() -> dict:
     path = keys_file()
     try:
@@ -61,7 +56,7 @@ def _read_file() -> dict:
 
 
 def _load() -> tuple[dict[str, str], dict[str, set[str]]]:
-    """(saved keys unsealed, retired fingerprints). Re-read only when the file changes."""
+    """(saved keys, retired keys), unsealed. Re-read only when the file changes."""
     global _cache
     path = keys_file()
     try:
@@ -75,7 +70,10 @@ def _load() -> tuple[dict[str, str], dict[str, set[str]]]:
         keys = {str(p): unseal_or_empty(v) for p, v in data.items() if isinstance(v, str)}
         keys = {p: v for p, v in keys.items() if v}
         retired_raw = data.get(RETIRED) if isinstance(data.get(RETIRED), dict) else {}
-        retired = {str(p): {str(h) for h in hs} for p, hs in retired_raw.items() if isinstance(hs, list)}
+        retired = {
+            str(p): {k for k in (unseal_or_empty(v) for v in hs if isinstance(v, str)) if k}
+            for p, hs in retired_raw.items() if isinstance(hs, list)
+        }
         _cache = (mtime, (keys, retired))
         return keys, retired
 
@@ -96,7 +94,7 @@ def refresh_key(provider: str, api_key: str) -> str:
     if not api_key:
         return api_key
     retired = _load()[1].get(provider)
-    if not retired or _fingerprint(api_key) not in retired:
+    if not retired or api_key not in retired:
         return api_key
     # Removed with nothing in its place: stop sending it.
     return env_key(provider) or get_saved_key(provider)
@@ -118,14 +116,13 @@ def set_saved_key(provider: str, key: str) -> None:
         else:
             raw.pop(provider, None)
         retired = raw.get(RETIRED) if isinstance(raw.get(RETIRED), dict) else {}
-        hashes = [h for h in retired.get(provider, []) if isinstance(h, str)]
-        if old and old != key:
-            hashes.append(_fingerprint(old))
-        if key:
-            # A key saved again is current, not retired.
-            hashes = [h for h in hashes if h != _fingerprint(key)]
-        if hashes:
-            retired[provider] = hashes[-MAX_RETIRED:]
+        old_keys = [k for k in (unseal_or_empty(v) for v in retired.get(provider, []) if isinstance(v, str)) if k]
+        if old and old != key and old not in old_keys:
+            old_keys.append(old)
+        # A key saved again is current, not retired.
+        old_keys = [k for k in old_keys if k != key][-MAX_RETIRED:]
+        if old_keys:
+            retired[provider] = [seal(k) for k in old_keys]
         else:
             retired.pop(provider, None)
         if retired:
