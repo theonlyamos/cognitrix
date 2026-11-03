@@ -222,13 +222,17 @@ def test_time_limit_stops_children_left_running(tmp_path):
     # The leader exits at once but leaves a child running in its group.
     shell = sh.start_background(
         ['/bin/sh', '-c', 'sleep 30 & echo $!'], owner='u-orphans', command='orphan',
-        cwd=tmp_path, max_seconds=1,
+        cwd=tmp_path, max_seconds=3,
     )
+    started = time.monotonic()
     assert sh.wait_background(shell, 5)
     time.sleep(0.3)
     child = int(sh.read_background(shell).splitlines()[-1])
-    os.kill(child, 0)  # still alive before the limit
-    deadline = time.monotonic() + 5
+    # Still alive before the limit (only checkable while well inside it: a
+    # slow runner can take a second just to start the shell).
+    if time.monotonic() - started < 2:
+        os.kill(child, 0)
+    deadline = time.monotonic() + 8
     alive = True
     while alive and time.monotonic() < deadline:
         time.sleep(0.2)

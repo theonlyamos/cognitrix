@@ -55,7 +55,10 @@ function useDesktopPrefs(enabled: boolean) {
   const [prefs, setPrefs] = useState<DesktopSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    if (enabled) void desktop.getSettings().then(setPrefs);
+    if (!enabled) return;
+    desktop.getSettings().then(setPrefs).catch((err: unknown) => {
+      setError(`Couldn't read the desktop settings: ${typeof err === 'string' ? err : err instanceof Error ? err.message : 'unknown error'}`);
+    });
   }, [enabled]);
   const update = async (patch: Parameters<typeof desktop.setSettings>[0]) => {
     setError(null);
@@ -176,14 +179,24 @@ function AccessSection({ desktopApp }: { desktopApp: boolean }) {
 
 function DesktopSection() {
   const { prefs, error, update } = useDesktopPrefs(true);
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const sendTest = async () => {
+    setTestResult(null);
+    try {
+      await desktop.testNotification();
+      setTestResult({ ok: true, text: 'Sent. If nothing appeared, check Focus / Do not disturb in your system settings.' });
+    } catch (err) {
+      setTestResult({ ok: false, text: typeof err === 'string' ? err : err instanceof Error ? err.message : 'The notification could not be shown.' });
+    }
+  };
   return (
     <>
       <SectionHeader title="Desktop app" description="How the app behaves on this computer." />
       {!prefs ? (
-        <p className="text-[13px] text-fg-dim">Loading…</p>
+        !error && <p className="text-[13px] text-fg-dim">Loading…</p>
       ) : (
         <Group>
-          <SettingRow label={onWindows ? 'Start with Windows' : 'Start at login'} detail="Opens in the tray when you sign in">
+          <SettingRow label={onWindows ? 'Start with Windows' : 'Start at login'} detail="Adds Cognitrix to your startup apps. It opens in the tray and starts the engine, so agents and automations are ready">
             <Toggle label={onWindows ? 'Start with Windows' : 'Start at login'} checked={prefs.start_with_windows} onChange={(v) => update({ start_with_windows: v })} />
           </SettingRow>
           <SettingRow label="Keep running in the tray when closed" detail="Tasks keep running while the window is closed">
@@ -193,8 +206,14 @@ function DesktopSection() {
             label={onWindows ? 'Windows notifications' : 'System notifications'}
             detail={<>Choose which events under <Link to="/notifications" className="text-accent-ink hover:underline">Notifications</Link></>}
           >
+            <button type="button" onClick={() => void sendTest()} className={quietButtonClass}>Send test</button>
             <Toggle label={onWindows ? 'Windows notifications' : 'System notifications'} checked={prefs.notify_desktop} onChange={(v) => update({ notify_desktop: v })} />
           </SettingRow>
+          {testResult && (
+            <p role={testResult.ok ? 'status' : 'alert'} className={cn('px-3.5 py-2 text-[12.5px]', testResult.ok ? 'text-fg-dim' : 'text-danger-ink')}>
+              {testResult.text}
+            </p>
+          )}
           <SettingRow label="Quick ask hotkey" detail="Opens a small ask box from anywhere">
             <kbd className="rounded border border-line px-2 py-0.5 font-mono text-[11.5px]">{prefs.quick_ask_shortcut.replace('+', ' ')}</kbd>
           </SettingRow>

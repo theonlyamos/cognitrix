@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { AUTH_EXPIRED_EVENT } from '@/lib/session';
 
 /** Base URL for the versioned API. Defaults to the current origin — in
  *  production the SPA is served by the API itself, so requests are same-origin
@@ -13,6 +14,15 @@ api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
+});
+
+// A signed-in request refused with 401 may mean the sign-in ended (signed
+// out on another device, or expired); UserProvider checks and signs out.
+api.interceptors.response.use(undefined, (error) => {
+  if (axios.isAxiosError(error) && error.response?.status === 401 && error.config?.headers?.Authorization) {
+    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+  }
+  return Promise.reject(error);
 });
 
 /** Normalize an axios/network error into a human-readable message. */

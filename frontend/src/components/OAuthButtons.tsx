@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, API_BASE } from '@/lib/api';
 import { useUser } from '@/context/AppContext';
 import { desktop, isDesktop } from '@/lib/desktop';
+import { setToken } from '@/lib/session';
 
 type Provider = 'google' | 'github';
 
@@ -59,7 +60,7 @@ export default function OAuthButtons({ mode }: { mode: 'signin' | 'signup' }) {
   }, []);
 
   const finish = async (token: string) => {
-    localStorage.setItem('token', token);
+    setToken(token);
     await checkAuth();
     navigate('/home', { replace: true });
   };

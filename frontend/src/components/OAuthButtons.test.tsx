@@ -7,11 +7,12 @@ const apiGet = vi.hoisted(() => vi.fn());
 const apiPost = vi.hoisted(() => vi.fn());
 const checkAuth = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const openExternal = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const saveSession = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const desktopMode = vi.hoisted(() => ({ on: false }));
 
 vi.mock('@/lib/api', () => ({ api: { get: apiGet, post: apiPost }, API_BASE: '/api/v1' }));
 vi.mock('@/context/AppContext', () => ({ useUser: () => ({ checkAuth }) }));
-vi.mock('@/lib/desktop', () => ({ isDesktop: () => desktopMode.on, desktop: { openExternal } }));
+vi.mock('@/lib/desktop', () => ({ isDesktop: () => desktopMode.on, desktop: { openExternal, saveSession } }));
 
 function renderButtons(path = '/') {
   return render(
@@ -64,6 +65,7 @@ describe('Google and GitHub sign-in buttons', () => {
     vi.useRealTimers();
     await waitFor(() => expect(checkAuth).toHaveBeenCalled());
     expect(localStorage.getItem('token')).toBe('tok-1');
+    expect(saveSession).toHaveBeenCalledWith('tok-1');
     const poll = openExternal.mock.calls[0][0].split('poll=')[1];
     expect(apiPost).toHaveBeenCalledWith('/auth/oauth/poll', { poll });
   });

@@ -69,7 +69,14 @@ export const desktop = {
    *  Resolves true when one was shown. */
   notify: (title: string, body: string, path?: string, urgent?: boolean) =>
     invokeDesktop<boolean>('desktop_notify', { title, body, path: path ?? null, urgent: urgent ?? false }),
+  /** Rejects with the reason when the OS won't show it. */
+  testNotification: () => invokeDesktop<void>('test_notification'),
   showMain: (path?: string) => invokeDesktop<void>('show_main_window', { path: path ?? null }),
+  /** The sign-in token the shell keeps in the OS keychain, so it survives
+   *  restarts and port changes (localStorage is per origin). */
+  getSavedSession: () => invokeDesktop<string | null>('get_saved_session'),
+  saveSession: (token: string) => invokeDesktop<void>('save_session', { token }),
+  clearSession: () => invokeDesktop<void>('clear_session'),
   hideQuickAsk: () => invokeDesktop<void>('hide_quick_ask'),
 };
 

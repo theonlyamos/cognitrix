@@ -8,7 +8,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from cognitrix.common.constants import JWT_ACCESS_TOKEN_EXPIRE_MINUTES
-from cognitrix.common.security import Token, authenticate, create_access_token, get_current_user
+from cognitrix.common.security import (
+    AuthContext,
+    Token,
+    authenticate,
+    create_access_token,
+    get_auth_context,
+    get_current_user,
+)
 from cognitrix.common.utils import Utils
 from cognitrix.models import User
 
@@ -90,6 +97,23 @@ async def signup(new_user: User):
 @auth_api.get("/user")
 async def get_user(user: Annotated[User, Depends(get_current_user)]):
     return user
+
+@auth_api.post("/refresh")
+async def refresh(ctx: Annotated[AuthContext, Depends(get_auth_context)]):
+    """Swap a valid session token for a fresh one, so an app that's in use
+    keeps its sign-in instead of hitting the expiry. API keys can't be
+    swapped for a session. Tokens revoked by "Sign out of all devices"
+    fail here like anywhere else."""
+    if ctx.api_key is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API keys can't be exchanged for a session token",
+        )
+    access_token = create_access_token(
+        data={"sub": ctx.user.email},
+        expires_delta=timedelta(minutes=float(JWT_ACCESS_TOKEN_EXPIRE_MINUTES)),
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @auth_api.post("/logout")
 async def logout(current_user: User = Depends(get_current_user)):

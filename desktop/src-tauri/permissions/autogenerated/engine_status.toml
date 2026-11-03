@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-engine-status"
+description = "Enables the engine_status command without any pre-configured scope."
+commands.allow = ["engine_status"]
+
+[[permission]]
+identifier = "deny-engine-status"
+description = "Denies the engine_status command without any pre-configured scope."
+commands.deny = ["engine_status"]
