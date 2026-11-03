@@ -183,7 +183,7 @@ function DesktopSection() {
         <p className="text-[13px] text-fg-dim">Loading…</p>
       ) : (
         <Group>
-          <SettingRow label={onWindows ? 'Start with Windows' : 'Start at login'} detail="Opens in the tray when you sign in">
+          <SettingRow label={onWindows ? 'Start with Windows' : 'Start at login'} detail="Adds Cognitrix to your startup apps. It opens in the tray and starts the engine, so agents and automations are ready">
             <Toggle label={onWindows ? 'Start with Windows' : 'Start at login'} checked={prefs.start_with_windows} onChange={(v) => update({ start_with_windows: v })} />
           </SettingRow>
           <SettingRow label="Keep running in the tray when closed" detail="Tasks keep running while the window is closed">

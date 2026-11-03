@@ -19,6 +19,9 @@ pub struct DesktopSettings {
     /// Port the engine tries first. A fixed port keeps the UI's origin, and
     /// with it your sign-in, the same across launches.
     pub preferred_port: u16,
+    /// Set once the app has turned on "Launch at startup" by itself on its
+    /// first run, so turning it off later sticks.
+    pub autostart_initialized: bool,
 }
 
 impl Default for DesktopSettings {
@@ -28,6 +31,7 @@ impl Default for DesktopSettings {
             notify_desktop: true,
             working_folder: None,
             preferred_port: 48210,
+            autostart_initialized: false,
         }
     }
 }

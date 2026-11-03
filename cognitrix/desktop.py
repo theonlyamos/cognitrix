@@ -42,6 +42,18 @@ def default_working_folder() -> Path:
     return Path.home() / 'Cognitrix'
 
 
+DESKTOP_SESSION_MINUTES = 60 * 24 * 30
+
+
+def desktop_session_minutes() -> int:
+    """Session length for the desktop app: at least 30 days."""
+    try:
+        configured = int(os.environ.get('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', '0'))
+    except ValueError:
+        configured = 0
+    return max(configured, DESKTOP_SESSION_MINUTES)
+
+
 def _prepare_environment(working_folder: str | None) -> None:
     os.environ['COGNITRIX_DESKTOP'] = '1'
     # Provider keys for the desktop app live in ~/.cognitrix/.env (the app has
@@ -50,9 +62,12 @@ def _prepare_environment(working_folder: str | None) -> None:
     if env_file.is_file():
         from dotenv import load_dotenv
         load_dotenv(env_file, override=False)
-    # A desktop app shouldn't sign you out every half hour. Sessions still end
-    # with "Sign out of all devices" in Settings.
-    os.environ.setdefault('JWT_ACCESS_TOKEN_EXPIRE_MINUTES', str(60 * 24 * 30))
+    # A desktop app shouldn't sign you out every half hour. A short
+    # JWT_ACCESS_TOKEN_EXPIRE_MINUTES copied into ~/.cognitrix/.env from a
+    # server setup used to do exactly that, so it can only make sessions
+    # longer here. The UI also refreshes its token while in use, and sessions
+    # still end with "Sign out of all devices" in Settings.
+    os.environ['JWT_ACCESS_TOKEN_EXPIRE_MINUTES'] = str(desktop_session_minutes())
     folder = working_folder or os.environ.get('COGNITRIX_TOOLS_ROOT')
     if not folder:
         path = default_working_folder()

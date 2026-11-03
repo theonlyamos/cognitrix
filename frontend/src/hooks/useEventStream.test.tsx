@@ -213,3 +213,48 @@ describe('useEventStream', () => {
     expect(consoleError).not.toHaveBeenCalled();
   });
 });
+
+describe('useEventStream wake-ups', () => {
+  afterEach(() => {
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('tries again when the network comes back after the retries ran out', async () => {
+    vi.useFakeTimers();
+    const reader = { read: vi.fn(() => new Promise(() => undefined)), cancel: vi.fn().mockResolvedValue(undefined) };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue({ ok: true, body: { getReader: () => reader } });
+    vi.stubGlobal('fetch', fetchMock);
+    localStorage.setItem('token', 'test-token');
+
+    const { result, unmount } = renderHook(() => useEventStream({ path: '/events', maxRetries: 0 }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(result.current.isConnected).toBe(false);
+    expect(result.current.isConnecting).toBe(false);
+    expect(result.current.error).toBeInstanceOf(TypeError);
+
+    await act(async () => {
+      window.dispatchEvent(new Event('online'));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current.isConnected).toBe(true);
+    expect(result.current.error).toBeNull();
+    unmount();
+  });
+
+  it('reports a refused token so the app can check the sign-in', async () => {
+    const listener = vi.fn();
+    window.addEventListener('cognitrix:auth-expired', listener);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }));
+    localStorage.setItem('token', 'test-token');
+    const { unmount } = renderHook(() => useEventStream({ path: '/events', autoReconnect: false }));
+    await waitFor(() => expect(listener).toHaveBeenCalled());
+    window.removeEventListener('cognitrix:auth-expired', listener);
+    unmount();
+  });
+});

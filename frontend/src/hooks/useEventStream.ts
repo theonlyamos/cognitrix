@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_BASE } from '@/lib/api';
+import { onDesktopEvent, type EngineStatus } from '@/lib/desktop';
+import { AUTH_EXPIRED_EVENT } from '@/lib/session';
 import { consumeSSE } from '@/lib/sse';
 
 export interface JSONSSEFrame<T> {
@@ -36,11 +38,16 @@ export function useEventStream<T>(options: UseEventStreamOptions<T>) {
     onError,
     enabled = true,
     autoReconnect = true,
-    maxRetries = 5,
+    maxRetries = 8,
     initialLastEventId,
   } = options;
   const [isConnected, setIsConnected] = useState(false);
+  /** A connection attempt is under way or a retry is scheduled. */
+  const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  // Where the stream stands, for the wake-up triggers below: only a stream
+  // that's waiting to retry or has given up gets kicked.
+  const phaseRef = useRef<'idle' | 'connecting' | 'connected' | 'waiting' | 'gave_up'>('idle');
   const onEventRef = useRef(onEvent);
   const onConnectRef = useRef(onConnect);
   const onDisconnectRef = useRef(onDisconnect);
@@ -66,7 +73,9 @@ export function useEventStream<T>(options: UseEventStreamOptions<T>) {
       cancelReader(readerRef.current);
       readerRef.current = null;
     }
+    phaseRef.current = 'idle';
     setIsConnected(false);
+    setIsConnecting(false);
     onDisconnectRef.current?.();
   }, []);
 
@@ -75,6 +84,8 @@ export function useEventStream<T>(options: UseEventStreamOptions<T>) {
     const token = localStorage.getItem('token');
     if (!token) {
       const missing = new Error('No auth token available');
+      phaseRef.current = 'gave_up';
+      setIsConnecting(false);
       setError(missing);
       onErrorRef.current?.(missing);
       return;
@@ -86,17 +97,26 @@ export function useEventStream<T>(options: UseEventStreamOptions<T>) {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    phaseRef.current = 'connecting';
+    setIsConnecting(true);
     const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
     if (lastEventIdRef.current) headers['Last-Event-ID'] = lastEventIdRef.current;
 
     const scheduleReconnect = (streamError?: Error) => {
-      if (autoReconnect && !controller.signal.aborted && retryCountRef.current < maxRetries) {
+      if (controller.signal.aborted) return;
+      if (autoReconnect && retryCountRef.current < maxRetries) {
         const delay = Math.min(1000 * (2 ** retryCountRef.current), 30000);
+        phaseRef.current = 'waiting';
+        setIsConnecting(true);
         retryTimeoutRef.current = setTimeout(() => {
           retryCountRef.current += 1;
           connectRef.current();
         }, delay);
-      } else if (streamError) {
+        return;
+      }
+      phaseRef.current = 'gave_up';
+      setIsConnecting(false);
+      if (streamError) {
         setError(streamError);
         onErrorRef.current?.(streamError);
       }
@@ -104,12 +124,17 @@ export function useEventStream<T>(options: UseEventStreamOptions<T>) {
 
     void fetch(`${API_BASE}${path}`, { headers, signal: controller.signal })
       .then((response) => {
-        if (!response.ok) throw new Error(`SSE connection failed: ${response.status}`);
+        if (!response.ok) {
+          if (response.status === 401) window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+          throw new Error(`SSE connection failed: ${response.status}`);
+        }
         const reader = response.body?.getReader();
         if (!reader) throw new Error('Failed to get reader from response');
 
         readerRef.current = reader;
+        phaseRef.current = 'connected';
         setIsConnected(true);
+        setIsConnecting(false);
         setError(null);
         onConnectRef.current?.();
 
@@ -169,8 +194,43 @@ export function useEventStream<T>(options: UseEventStreamOptions<T>) {
   const reconnect = useCallback(() => {
     disconnect();
     retryCountRef.current = 0;
+    setError(null);
     connect();
   }, [connect, disconnect]);
+
+  // Try again straight away when there's reason to think it will work: the
+  // network came back, the window was shown again, or the desktop engine
+  // finished (re)starting. This is what reconnects after the retries ran out.
+  useEffect(() => {
+    if (!enabled || !path || !autoReconnect) return;
+    const kick = () => {
+      if (phaseRef.current !== 'waiting' && phaseRef.current !== 'gave_up') return;
+      retryCountRef.current = 0;
+      setError(null);
+      connectRef.current();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') kick();
+    };
+    window.addEventListener('online', kick);
+    window.addEventListener('focus', kick);
+    document.addEventListener('visibilitychange', onVisible);
+    let stopEngine: (() => void) | undefined;
+    let live = true;
+    void onDesktopEvent<EngineStatus>('engine-status', (status) => {
+      if (status.status === 'running') kick();
+    }).then((unlisten) => {
+      if (live) stopEngine = unlisten;
+      else unlisten();
+    }).catch(() => undefined);
+    return () => {
+      live = false;
+      window.removeEventListener('online', kick);
+      window.removeEventListener('focus', kick);
+      document.removeEventListener('visibilitychange', onVisible);
+      stopEngine?.();
+    };
+  }, [autoReconnect, enabled, path]);
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -184,6 +244,7 @@ export function useEventStream<T>(options: UseEventStreamOptions<T>) {
 
   return {
     isConnected,
+    isConnecting,
     error,
     connect,
     disconnect,

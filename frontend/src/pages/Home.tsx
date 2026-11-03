@@ -8,6 +8,8 @@ import { useEventStream } from '@/hooks/useEventStream';
 import { fetchChatRuns, useChatRuns } from '@/hooks/useChatRuns';
 import { useResource } from '@/hooks/useResource';
 import { api } from '@/lib/api';
+import { desktop } from '@/lib/desktop';
+import { useOptionalNotifications } from '@/context/NotificationsContext';
 import ReasoningPicker from '@/components/ReasoningPicker';
 import { AGENTS_CHANGED_EVENT } from '@/lib/providers';
 import { cn } from '@/lib/utils';
@@ -812,12 +814,20 @@ export default function Home() {
     }, [loadConversation]),
   });
 
-  const { isConnected, error, reconnect, streamId, rotateStream } = useSSE({
+  const { isConnected, isConnecting, error, reconnect: reconnectStream, streamId, rotateStream } = useSSE({
     onMessage: handleStreamEvent,
     onError: useCallback((e: Error) => console.error('SSE error:', e), []),
     agentId: agentId || undefined,
     enabled: sseReady,
   });
+  // In the desktop app a lost connection usually means the engine stopped:
+  // start it again (the stream reconnects by itself once it's back).
+  const engine = useOptionalNotifications()?.engine ?? null;
+  const reconnect = useCallback(() => {
+    if (engine && (engine.status === 'stopped' || engine.status === 'failed')) void desktop.restartEngine();
+    reconnectStream();
+  }, [engine, reconnectStream]);
+  const reconnecting = isConnecting || engine?.status === 'starting';
 
   type ExecutionMode = 'chat' | 'task';
 
@@ -1160,9 +1170,16 @@ export default function Home() {
                 <span className="sr-only md:not-sr-only">connected</span>
               </span>
             ) : (
-              <Button variant="ghost" size="icon" aria-label="Reconnect" onClick={reconnect} className="md:h-8 md:w-auto md:px-2">
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11a8 8 0 1 0 2 5.5" /><path d="M20 5v6h-6" /></svg>
-                <span className="sr-only md:not-sr-only">reconnect</span>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={reconnecting ? 'Reconnecting, click to try now' : 'Reconnect'}
+                title={reconnecting ? 'Reconnecting… click to try now' : 'Reconnect'}
+                onClick={reconnect}
+                className="md:h-8 md:w-auto md:px-2"
+              >
+                <svg aria-hidden="true" className={cn(reconnecting && 'animate-spin')} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11a8 8 0 1 0 2 5.5" /><path d="M20 5v6h-6" /></svg>
+                <span className="sr-only md:not-sr-only">{reconnecting ? 'reconnecting…' : 'reconnect'}</span>
               </Button>
             )}
           </div>
