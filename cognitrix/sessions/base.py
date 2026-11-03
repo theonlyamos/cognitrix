@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -160,6 +159,11 @@ class Session(Model):
 
     group_chat: bool | None = None
     """True for a team group chat (the user talking with every team member)"""
+
+    incognito: bool | None = None
+    """An incognito chat: agents don't read or change memory or search past
+    chats in it, it's left out of chat lists and history search, and it's
+    deleted when the person leaves it (or after a day)."""
 
     started_by: dict[str, Any] | None = None
     """Set when an agent started this chat: {agent_id, agent_name, session_id
@@ -376,6 +380,36 @@ class Session(Model):
                         })
             except Exception:
                 pass
+
+        # Memory (save, update, forget what the agent remembers about the
+        # person) and Search Chats / Read Chat (look through past chats) are
+        # added per turn for signed-in chats while their switches are on, and
+        # never in an incognito chat.
+        owner = self.user_id or getattr(tool_context, 'user_id', None)
+        if interface in ('web', 'ws') and owner and not self.task_id:
+            try:
+                from cognitrix.memory.saved import get_settings
+                from cognitrix.tools.base import ToolManager
+
+                settings = await get_settings(str(owner))
+                incognito = bool(getattr(self, 'incognito', False))
+                wanted = {
+                    'memory': settings.enabled and not incognito,
+                    'search chats': settings.history_enabled and not incognito,
+                    'read chat': settings.history_enabled and not incognito,
+                }
+                tools = [t for t in agent.tools
+                         if wanted.get(str(getattr(t, 'name', '')).lower(), True)]
+                names = {str(getattr(t, 'name', '')).lower() for t in tools}
+                for name, on in wanted.items():
+                    if on and name not in names:
+                        extra = ToolManager.get_by_name(name.replace(' ', '_'))
+                        if extra:
+                            tools.append(extra)
+                if len(tools) != len(agent.tools) or any(a is not b for a, b in zip(tools, agent.tools, strict=False)):
+                    agent = agent.model_copy(update={'tools': tools})
+            except Exception:
+                logger.debug('Memory tools unavailable', exc_info=True)
 
         # Bash's background mode and the Coding Agent tool need the two
         # background helpers; agents that have either get them for the turn
@@ -879,36 +913,6 @@ class Session(Model):
                     await self._maybe_compact(agent)
                 except Exception:
                     logger.exception("History compaction failed; keeping history as-is")
-
-            # Add to agent's memory
-            # (This used to check hasattr(agent, 'context_manager'), which is
-            # never set, so nothing was ever written to long-term memory.)
-            context_manager = None
-            if persist_history and hasattr(agent, 'get_context_manager'):
-                try:
-                    context_manager = agent.get_context_manager()
-                except Exception:
-                    logger.exception("Could not load the agent's memory")
-            if context_manager is not None and hasattr(context_manager, 'add_to_memory'):
-                try:
-                    if isinstance(message, str) and message:
-                        await context_manager.add_to_memory({
-                            'role': 'user',
-                            'type': 'text',
-                            'content': message,
-                        }, user_id=self.user_id)
-                    reply = getattr(response, 'llm_response', None) if response else None
-                    if isinstance(reply, str):
-                        # Reasoning is scratch work, not something to recall later.
-                        reply = re.sub(r'<think>.*?</think>', '', reply, flags=re.DOTALL).strip()
-                    if isinstance(reply, str) and reply and not getattr(response, 'error', None):
-                        await context_manager.add_to_memory({
-                            'role': 'assistant',
-                            'type': 'text',
-                            'content': reply,
-                        }, user_id=self.user_id)
-                except Exception as e:
-                    logger.error(f"Failed to add to memory: {e}")
 
         except asyncio.CancelledError:
             if record_history:

@@ -138,40 +138,33 @@ async def test_sync_tool_runs_in_worker_thread():
     assert seen['thread'] != main_thread  # offloaded, didn't block the loop
 
 
-# --- memory: per-turn retrieval cache + off-loop construction ---
+# --- memory: prompts no longer query the old vector store ---
 
 @pytest.mark.asyncio
-async def test_retrieval_cache_reuses_same_query(monkeypatch):
+async def test_build_prompt_skips_old_vector_store(monkeypatch):
     from cognitrix.memory.hybrid_context import HybridContextManager
 
     mgr = HybridContextManager.__new__(HybridContextManager)
     mgr._vector_store_disabled = False
     mgr._chroma_store = object()
-    mgr._retrieval_cache = None
-    mgr.max_long_term = 5
 
     calls = {'n': 0}
 
-    class FakeStore:
-        async def retrieve(self, query, k, filter_metadata=None):
-            calls['n'] += 1
-            return []
-
     async def ensure():
-        return FakeStore()
+        calls['n'] += 1
 
     mgr._ensure_long_term = ensure
-    mgr._format_memories = lambda mems: "ctx"
     mgr.short_term = type('S', (), {'build_prompt': staticmethod(
         lambda a, s: _async([{'role': 'system', 'content': 'sys'}]))})()
 
     from types import SimpleNamespace
     agent = SimpleNamespace(formatted_system_prompt=lambda: "sys")
-    session = SimpleNamespace(chat=[{'role': 'user', 'type': 'text', 'content': 'same q'}])
+    # No signed-in person: nothing to look up at all.
+    session = SimpleNamespace(chat=[{'role': 'user', 'type': 'text', 'content': 'same q'}], user_id=None)
 
-    await mgr.build_prompt(agent, session)
-    await mgr.build_prompt(agent, session)  # identical query -> cache hit
-    assert calls['n'] == 1
+    prompt = await mgr.build_prompt(agent, session)
+    assert calls['n'] == 0
+    assert prompt[0]['content'] == 'sys'
 
 
 def _async(value):

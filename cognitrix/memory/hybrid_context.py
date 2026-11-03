@@ -14,6 +14,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger('cognitrix.log')
 
+INCOGNITO_NOTE = (
+    "## Incognito chat\n"
+    "The person started this chat in incognito. You can't see their saved memories, and "
+    "nothing from this chat is remembered afterwards. If they ask you to remember something, "
+    "say it won't be kept because the chat is incognito. Don't write it to a file, notes or "
+    "any other place instead."
+)
+
 
 class ImportanceScorer:
     """Scores the importance of a message for memory storage."""
@@ -174,43 +182,25 @@ class HybridContextManager(BaseContextManager):
         # 1. System prompt with agent configuration
         system_content = agent.formatted_system_prompt()
 
-        # 2. Retrieve relevant long-term memories
-        if session.chat and not self._vector_store_disabled:
-            # Query long-term memory by the last *user* message. chat[-1] is
-            # unreliable: after a turn it may be a tool result or a turn_timing
-            # ("Took 2.5s") entry, which would make retrieval search on noise.
+        # 2. Saved memories about this person (cognitrix/memory/saved.py).
+        # The old automatic store (raw messages in Chroma) is no longer read.
+        user_id = str(getattr(session, 'user_id', None) or '')
+        if user_id and not getattr(session, 'task_id', None) and not getattr(session, 'incognito', False):
             query = ''
-            for m in reversed(session.chat):
+            for m in reversed(session.chat or []):
                 if str(m.get('role', '')).lower() == 'user' and m.get('type', 'text') == 'text':
-                    query = m.get('content', '') or ''
+                    query = str(m.get('content', '') or '')
                     break
+            try:
+                from cognitrix.memory.saved import prompt_block
 
-            user_scope = str(getattr(session, 'user_id', None) or '')
-            cache_key = f"{user_scope}\x00{query}"
-            if query:
-                if self._retrieval_cache and self._retrieval_cache[0] == cache_key:
-                    # Same query as last build (e.g. another tool round in this
-                    # turn) — reuse instead of re-embedding + re-querying Chroma.
-                    memory_context = self._retrieval_cache[1]
-                    if memory_context:
-                        system_content += f"\n\n## Relevant Past Context\n{memory_context}"
-                else:
-                    try:
-                        lt = await self._ensure_long_term()
-                        if lt is not None:
-                            # Memories are per user: on a shared agent, one
-                            # user's facts must never reach another's prompt.
-                            memories = await lt.retrieve(
-                                query,
-                                k=self.max_long_term,
-                                filter_metadata={'user_id': user_scope},
-                            )
-                            memory_context = self._format_memories(memories) if memories else ''
-                            self._retrieval_cache = (cache_key, memory_context)
-                            if memory_context:
-                                system_content += f"\n\n## Relevant Past Context\n{memory_context}"
-                    except Exception as e:
-                        logger.error(f"Failed to retrieve memories: {e}")
+                block = await prompt_block(user_id, agent, query)
+                if block:
+                    system_content += "\n\n" + block
+            except Exception:
+                logger.exception("Could not load saved memories")
+        if getattr(session, 'incognito', False):
+            system_content += "\n\n" + INCOGNITO_NOTE
 
         prompt_parts.append({
             'role': 'system',

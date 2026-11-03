@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
+import { MemoryNotice } from '@/components/MemoryNotice';
 import { SignInNeededNotice, signInNeeded } from '@/components/SafetyNotices';
 import type { TranscriptEntry } from '@/lib/transcript';
 import { cn } from '@/lib/utils';
@@ -103,6 +104,7 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
                       {tool.status !== 'running' && signInNeeded(tool.result) && (
                         <SignInNeededNotice app={signInNeeded(tool.result)!} />
                       )}
+                      {tool.status === 'done' && <MemoryNotice toolName={tool.name} result={tool.result} />}
                       {tool.artifacts?.map((artifact) => (
                         <ArtifactPreview key={artifact.id} artifact={artifact} />
                       ))}

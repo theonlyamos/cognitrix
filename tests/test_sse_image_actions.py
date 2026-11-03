@@ -194,8 +194,9 @@ async def test_sse_new_session_is_claimed_before_it_is_returned(monkeypatch):
     class FreshSession:
         id = None
 
-        def __init__(self, *, agent_id):
+        def __init__(self, *, agent_id, user_id=None, incognito=None):
             self.agent_id = agent_id
+            self.user_id = user_id
 
         async def save(self):
             self.id = 'fresh-session'

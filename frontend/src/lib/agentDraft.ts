@@ -39,6 +39,9 @@ export interface AgentRecord {
   can_create_sub_agents?: boolean;
   sub_agent_model?: string;
   automation?: { self_checkins?: boolean; max_runs_per_day?: number | null };
+  memory?: { read_global?: boolean; save_global?: boolean };
+  /** Where this agent's saves go when the page never set it (the server decides). */
+  memory_saves_global?: boolean;
 }
 
 /** Everything the tabs can edit. Saved together with one button. */
@@ -69,6 +72,8 @@ export interface AgentDraft {
   subAgentModel: string;
   selfCheckins: boolean;
   maxRunsPerDay: string;
+  memoryReadGlobal: boolean;
+  memorySaveGlobal: boolean;
 }
 
 export function draftFrom(agent: AgentRecord): AgentDraft {
@@ -102,6 +107,8 @@ export function draftFrom(agent: AgentRecord): AgentDraft {
     subAgentModel: agent.sub_agent_model || '',
     selfCheckins: auto.self_checkins ?? true,
     maxRunsPerDay: auto.max_runs_per_day ? String(auto.max_runs_per_day) : '',
+    memoryReadGlobal: agent.memory?.read_global ?? true,
+    memorySaveGlobal: agent.memory?.save_global ?? agent.memory_saves_global ?? false,
   };
 }
 
@@ -161,6 +168,7 @@ export function payloadFrom(id: string, draft: AgentDraft, catalog: ToolInfo[], 
     can_create_sub_agents: draft.canCreateSubAgents,
     sub_agent_model: draft.subAgentModel.trim(),
     automation,
+    memory: { read_global: draft.memoryReadGlobal, save_global: draft.memoryReadGlobal && draft.memorySaveGlobal },
   };
 }
 

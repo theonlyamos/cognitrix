@@ -14,6 +14,7 @@ import { ChatChannelsCard } from '@/components/ChatChannelsCard';
 import { CredentialsCard } from '@/components/CredentialsCard';
 import { ProviderKeys } from '@/components/settings/ProviderKeys';
 import { AppearanceSettings } from '@/components/settings/Appearance';
+import { MemorySettings } from '@/components/settings/Memory';
 import {
   Group, SectionHeader, SettingRow, SubHeading, buttonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -22,7 +23,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'memory' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -37,6 +38,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'account', label: 'Account', group: 'GENERAL', keywords: 'profile email name sign out devices api keys' },
   { id: 'appearance', label: 'Appearance', group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
   { id: 'models', label: 'Models and keys', group: 'AI', keywords: 'providers api key openai anthropic claude gemini google groq openrouter cerebras ollama' },
+  { id: 'memory', label: 'Memory', group: 'AI', keywords: 'remember memories personalization forget history what agents know about me' },
   { id: 'voice', label: 'Voice input', group: 'AI', keywords: 'mic microphone speech transcription dictation' },
   { id: 'apps', label: 'Connected apps', group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
   { id: 'access', label: 'Agent access', group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
@@ -276,6 +278,16 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
       return (<><SectionHeader title="Appearance" description="How Cognitrix looks and behaves on this device." /><AppearanceSettings /></>);
     case 'models':
       return (<><SectionHeader title="Models and keys" description="API keys for the model providers your agents use." /><ProviderKeys /></>);
+    case 'memory':
+      return (
+        <>
+          <SectionHeader
+            title="Memory"
+            description="What your agents remember about you between chats. Only you can see these, and agents never see another person's."
+          />
+          <MemorySettings />
+        </>
+      );
     case 'voice':
       return (
         <>
