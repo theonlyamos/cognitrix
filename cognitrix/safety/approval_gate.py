@@ -44,8 +44,11 @@ _web_request_counter = 0
 
 
 def resolve_web_approval(request_id: str, approved: bool, user_key: str | None = None,
-                         remember: bool = False) -> bool:
+                         remember: bool = False, remember_shell: bool = False) -> bool:
     """Resolve a pending browser approval. Returns False if unknown or not the owner.
+
+    `remember_shell` (only for a full-shell command) lets every full-shell
+    command in that chat run without asking again until the app restarts.
 
     `user_key` scopes the answer to the user who owns the turn — a different
     authenticated user cannot approve someone else's pending tool call.
@@ -58,7 +61,10 @@ def resolve_web_approval(request_id: str, approved: bool, user_key: str | None =
         return False
     future = entry.get('future')
     if future is not None and not future.done():
-        future.set_result(ApprovalResult(approved=approved, remember=remember))
+        future.set_result(ApprovalResult(
+            approved=approved, remember=remember or remember_shell,
+            remember_shell=bool(approved and remember_shell and entry.get('person_only')),
+        ))
     return True
 
 # Prefix of the tool-result message for a denied operation. The session loop's
@@ -90,6 +96,7 @@ class ApprovalResult:
     approved: bool
     remember: bool = False  # Remember for this session
     permanent: bool = False  # Remember permanently
+    remember_shell: bool = False  # Allow every full-shell command in this chat
     cached: bool = False  # Result was from cache
     auto: bool = False  # Auto-approved (low risk)
     error: str | None = None
@@ -161,6 +168,7 @@ class ApprovalGate:
         interface: str = 'cli',
         timeout: float = 300.0,
         scope: str | None = None,
+        person_only: bool = False,
     ) -> ApprovalResult:
         """
         Check if operation requires and receives approval.
@@ -172,6 +180,10 @@ class ApprovalGate:
             timeout: Timeout in seconds for approval
             scope: Isolation scope for the approval cache (e.g. agent/user id) so
                    one caller's approval never auto-approves another's operation.
+            person_only: The call only runs once a person approved it (the
+                   full shell). The browser's auto-approve toggle and the
+                   permanent cache don't answer it; a person is asked, unless
+                   they approved this exact call for the session.
 
         Returns:
             ApprovalResult
@@ -182,7 +194,7 @@ class ApprovalGate:
             return ApprovalResult(approved=True, auto=True)
 
         # Auto-approve low risk
-        if risk.risk_level == RiskLevel.LOW:
+        if risk.risk_level == RiskLevel.LOW and not person_only:
             return ApprovalResult(approved=True, auto=True)
 
         # Durable workers have no interactive principal at execution time.
@@ -215,16 +227,26 @@ class ApprovalGate:
         # Cache keys are scoped so approvals don't leak across agents/users.
         scoped = f"{scope or 'global'}:{self._hash_operation(tool_call)}"
 
-        if scoped in self.permanent_cache:
+        if not person_only and scoped in self.permanent_cache:
             return ApprovalResult(approved=True, cached=True)
 
+        # "Approve for session" is a person's answer, so it also covers the
+        # full shell for the same command in this session.
         if scoped in self.session_cache:
+            return ApprovalResult(approved=True, cached=True, remember=True)
+
+        # The person allowed every full-shell command in this chat.
+        shell_key = self._shell_key(scope, interface)
+        if person_only and shell_key and shell_key in self.session_cache:
             return ApprovalResult(approved=True, cached=True, remember=True)
 
         # Web bypass mode approves everything anyway; don't spend a review.
         # A call a person already refused goes back to the person.
         web_ctx = web_turn_ctx.get(None)
-        bypass = interface in ('web', 'ws', 'websocket') and web_ctx and web_ctx.get('bypass')
+        bypass = (
+            not person_only
+            and interface in ('web', 'ws', 'websocket') and web_ctx and web_ctx.get('bypass')
+        )
         if not bypass and scoped not in self.session_denied:
             reviewed = await self._review(tool_call, risk, interface)
             if reviewed is not None:
@@ -241,7 +263,7 @@ class ApprovalGate:
         if interface == 'cli':
             result = await self._cli_approval(tool_call, risk, timeout)
         elif interface in ('web', 'ws', 'websocket'):
-            result = await self._web_approval(tool_call, risk, timeout)
+            result = await self._web_approval(tool_call, risk, timeout, person_only=person_only)
         else:
             return ApprovalResult(approved=False, error=f"Unknown interface: {interface}")
 
@@ -249,8 +271,14 @@ class ApprovalGate:
             # The person said no; the reviewer must not approve it later.
             self.session_denied.add(scoped)
 
-        # Cache if approved (scoped)
-        if result.approved:
+        # Cache if approved (scoped). The full shell is only ever remembered
+        # for the session, never permanently.
+        if result.approved and person_only and (result.permanent or result.remember):
+            self.session_denied.discard(scoped)
+            self.session_cache.add(scoped)
+            if getattr(result, 'remember_shell', False) and shell_key:
+                self.session_cache.add(shell_key)
+        elif result.approved:
             self.session_denied.discard(scoped)
             if result.permanent:
                 self.permanent_cache.add(scoped)
@@ -259,6 +287,17 @@ class ApprovalGate:
                 self.session_cache.add(scoped)
 
         return result
+
+    @staticmethod
+    def _shell_key(scope: str | None, interface: str) -> str | None:
+        """Cache key for "allow all shell commands in this chat"."""
+        if interface not in ('web', 'ws', 'websocket'):
+            return None
+        ctx = web_turn_ctx.get(None) or {}
+        session_id = ctx.get('session_id')
+        if not session_id:
+            return None
+        return f"{scope or 'global'}:full_shell:{ctx.get('user_key') or ''}:{session_id}"
 
     async def _review(self, tool_call: ToolCall, risk: RiskAssessment,
                       interface: str) -> ApprovalResult | None:
@@ -353,6 +392,7 @@ class ApprovalGate:
         tool_call: ToolCall,
         risk: RiskAssessment,
         timeout: float,
+        person_only: bool = False,
     ) -> ApprovalResult:
         """Interactive approval over the SSE chat stream.
 
@@ -364,7 +404,10 @@ class ApprovalGate:
         global _web_request_counter
         ctx = web_turn_ctx.get(None)
 
-        if ctx and ctx.get('bypass') and _normal_name(tool_call.tool_name) not in _NEVER_AUTO_APPROVED:
+        if (
+            ctx and ctx.get('bypass') and not person_only
+            and _normal_name(tool_call.tool_name) not in _NEVER_AUTO_APPROVED
+        ):
             # Auto-approve tool calls only — the bash whitelist / sandbox-shell
             # bypass is never enabled from the web.
             return ApprovalResult(approved=True, auto=True)
@@ -382,7 +425,9 @@ class ApprovalGate:
         _web_request_counter += 1
         request_id = f"web-approval-{_web_request_counter}"
         future = asyncio.get_running_loop().create_future()
-        _WEB_PENDING[request_id] = {'future': future, 'user_key': ctx.get('user_key')}
+        _WEB_PENDING[request_id] = {
+            'future': future, 'user_key': ctx.get('user_key'), 'person_only': person_only,
+        }
 
         try:
             await emit({
@@ -394,6 +439,9 @@ class ApprovalGate:
                 'categories': risk.categories,
                 'details': risk.details,
                 'session_id': ctx.get('session_id'),
+                # A full-shell command: the card offers "allow all commands
+                # in this chat".
+                'full_shell': person_only,
             })
             return await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError:

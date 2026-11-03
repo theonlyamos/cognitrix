@@ -23,6 +23,8 @@ interface ApprovalRequest {
   params?: Record<string, unknown>;
   risk_level: string;
   details?: string;
+  /** A full-shell command: the card offers "allow all commands in this chat". */
+  full_shell?: boolean;
 }
 
 interface RunEvent {
@@ -280,10 +282,10 @@ export default function TeamChat() {
     }
   }, [chatId, loadInfo, running, setParams, teamId]);
 
-  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false) => {
+  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false) => {
     setApprovals((prev) => prev.filter((a) => a.request_id !== requestId));
     try {
-      await api.post('/agents/approval', { request_id: requestId, approved, remember });
+      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}) });
     } catch {
       /* the turn times out server-side if this never lands */
     }
@@ -464,6 +466,9 @@ export default function TeamChat() {
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               <button onClick={() => respondApproval(a.request_id, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent-ink md:min-h-0">approve</button>
               <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">approve for session</button>
+              {a.full_shell && (
+                <button onClick={() => respondApproval(a.request_id, true, true, true)} title="Run every shell command in this chat without asking, until the app restarts" className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">allow all commands in this chat</button>
+              )}
               <button onClick={() => respondApproval(a.request_id, false)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:min-h-0">deny</button>
             </div>
           </div>

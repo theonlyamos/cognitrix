@@ -22,7 +22,7 @@ from cognitrix.safety.destructive_ops import (
     RiskLevel,
     mcp_tool_risk,
 )
-from cognitrix.safety.permissions import decide_tool_call, visible_tools
+from cognitrix.safety.permissions import ToolDecision, decide_tool_call, needs_person, visible_tools
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
 from cognitrix.tools.utils import ToolCallResult, ToolOutcome
@@ -531,6 +531,13 @@ class AgentManager:
                     )
                     continue
 
+                # A full-shell Bash command runs only when a person approved
+                # it (now, or for this session), so the gate must ask them even
+                # when the chat's auto-approve is on.
+                full_shell = needs_person((assigned_tool, tool), args)
+                if full_shell and decision.action == 'run':
+                    decision = ToolDecision('ask', risk, decision.source, decision.reason)
+
                 if decision.action == 'ask':
                     risk = decision.risk
                     status_print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
@@ -546,6 +553,7 @@ class AgentManager:
                             risk=risk,
                             interface=interface,
                             scope=str(self.agent.id),
+                            person_only=full_shell,
                         )
                     finally:
                         action_reviewer.agent_settings.reset(reviewer_token)
@@ -575,8 +583,11 @@ class AgentManager:
                         status_print("   (Using cached approval)")
                     # A remembered approval was for the same text, which can mean
                     # something else after a `cd`, so the full shell needs a fresh one.
-                    person_approved = not (
-                        getattr(approval, "auto", False) or getattr(approval, "cached", False)
+                    # For the full shell the gate only uses a session approval
+                    # a person gave for this exact command (never auto or the
+                    # permanent cache), so that counts as the person's answer.
+                    person_approved = not getattr(approval, "auto", False) and (
+                        full_shell or not getattr(approval, "cached", False)
                     )
 
                 status_print(f"\nRunning tool '{tool.name.title()}' with parameters: {args}")

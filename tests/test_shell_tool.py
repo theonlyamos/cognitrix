@@ -269,3 +269,124 @@ async def test_windows_allowlisted_builtins(root, local):
     assert 'hi' in await run(command='echo hi')
     assert 'a.txt' in await run(command='dir sub')
     assert 'alpha' in await run(command='type sub\\a.txt')
+
+
+# --- Asking before the full shell ---------------------------------------------
+
+def test_background_pipeline_plans_as_full_shell(root):
+    assert sh.plan_call('ls | wc -l', root, background=True).kind == 'shell'
+    assert sh.plan_call('ls | wc -l', root, background='false').kind == 'allowlisted'
+    assert sh.plan_call('ls', root, background=True).kind == 'allowlisted'
+    level, _ = sh.shell_risk({'command': 'ls | wc -l', 'run_in_background': True})
+    assert level == 'high'
+
+
+@pytest.mark.asyncio
+async def test_background_pipeline_runs_after_approval(root, local):
+    out = await run(command='echo hi | cat', run_in_background=True, approved=True)
+    assert out.startswith('Started in the background')
+
+
+def _full_shell_risk():
+    from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
+
+    return RiskAssessment(RiskLevel.HIGH, ['shell'], "Runs in the full shell (Command 'claude' isn't on the allowlist)")
+
+
+@pytest.mark.asyncio
+async def test_full_shell_asks_with_auto_approve_and_ignores_permanent_cache():
+    from cognitrix.safety.approval_gate import ApprovalGate, ToolCall, resolve_web_approval, web_turn_ctx
+
+    gate = ApprovalGate()
+    gate._save_permanent_cache = lambda: None
+    call = ToolCall('Bash', {'command': 'claude --help'})
+    gate.permanent_cache.add(f"a1:{gate._hash_operation(call)}")
+    emitted = []
+
+    async def emit(payload):
+        emitted.append(payload)
+        resolve_web_approval(payload['request_id'], approved=True, user_key='u1')
+
+    token = web_turn_ctx.set({'emit': emit, 'session_id': 's', 'bypass': True, 'user_key': 'u1'})
+    try:
+        result = await gate.check_approval(call, _full_shell_risk(), interface='web', timeout=5,
+                                           scope='a1', person_only=True)
+    finally:
+        web_turn_ctx.reset(token)
+    assert result.approved and not result.auto and not result.cached
+    assert emitted
+
+
+def _bash_agent():
+    from cognitrix.agents.base import AgentManager
+    from cognitrix.models.agent import Agent
+    from cognitrix.providers.base import LLM
+    from cognitrix.safety.approval_gate import ApprovalGate
+    from cognitrix.tools.base import ToolManager
+
+    agent = Agent(name='s', llm=LLM(provider='openai', api_key='k-1234567890', model='m'),
+                  tools=[ToolManager.get_by_name('Bash')], system_prompt='s')
+    manager = AgentManager(agent)
+    manager.approval_gate = ApprovalGate()
+    manager.approval_gate._save_permanent_cache = lambda: None
+    return manager
+
+
+async def _call_bash(manager, command, answer, session='s'):
+    """Run one Bash call with auto-approve on; ``answer`` is
+    (approved, remember[, remember_shell]) or None."""
+    from cognitrix.safety.approval_gate import resolve_web_approval, web_turn_ctx
+
+    asked = []
+
+    async def emit(payload):
+        if payload.get('type') == 'approval_request':
+            asked.append(payload)
+            approved, remember, *rest = answer
+            resolve_web_approval(payload['request_id'], approved=approved, user_key='u1',
+                                 remember=remember, remember_shell=bool(rest and rest[0]))
+
+    token = web_turn_ctx.set({'emit': emit, 'session_id': session, 'bypass': True, 'user_key': 'u1'})
+    try:
+        await manager.call_tools(
+            [{'name': 'Bash', 'tool_call_id': 'c1', 'arguments': {'command': command}}],
+            interface='web',
+        )
+    finally:
+        web_turn_ctx.reset(token)
+    return asked
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_asks_then_runs_full_shell_command(root, local):
+    """Auto-approve on: a command outside the allowlist still gets a card,
+    and runs once the person approves it."""
+    manager = _bash_agent()
+    asked = await _call_bash(manager, 'echo hi > made.txt', (True, False))
+    assert asked
+    assert (root / 'made.txt').exists()
+
+
+@pytest.mark.asyncio
+async def test_approve_for_session_covers_the_same_full_shell_command(root, local):
+    manager = _bash_agent()
+    assert await _call_bash(manager, 'echo 1 >> log.txt', (True, True))
+    # Same command again: no card, and it runs.
+    assert not await _call_bash(manager, 'echo 1 >> log.txt', None)
+    assert (root / 'log.txt').read_text().split() == ['1', '1']
+    # A different command still asks.
+    assert await _call_bash(manager, 'echo 2 >> log.txt', (False, False))
+    assert (root / 'log.txt').read_text().split() == ['1', '1']
+
+
+@pytest.mark.asyncio
+async def test_allow_all_shell_commands_in_this_chat(root, local):
+    manager = _bash_agent()
+    asked = await _call_bash(manager, 'echo 1 >> log.txt', (True, True, True))
+    assert asked and asked[0]['full_shell'] is True
+    # Any other full-shell command in the same chat runs without a card.
+    assert not await _call_bash(manager, 'echo 2 >> log.txt', None)
+    assert (root / 'log.txt').read_text().split() == ['1', '2']
+    # Another chat still asks.
+    assert await _call_bash(manager, 'echo 3 >> log.txt', (False, False), session='other')
+    assert (root / 'log.txt').read_text().split() == ['1', '2']

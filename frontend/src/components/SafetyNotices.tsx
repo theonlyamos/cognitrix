@@ -1,14 +1,20 @@
 /**
  * Explanations for the engine's safety refusals, shown where they happen:
- * a shell command that reached outside the working folder, and a provider key
- * that wasn't sent to an untrusted base URL.
+ * a shell command that didn't run (outside the working folder, or nobody was
+ * there to approve it), and a provider key that wasn't sent to an untrusted
+ * base URL.
  */
 
 const REFUSAL_PATTERNS = [
   /Command refused/i,
+  /Needs approval - /i,
   /outside the working (folder|directory)/i,
   /resolves outside the permitted root/i,
 ];
+
+const OUTSIDE_FOLDER = /outside the (working|permitted)|left the working folder|protected location/i;
+const NEEDS_APPROVAL = /Needs approval - /i;
+const ALLOWLIST_ONLY = /COGNITRIX_SHELL_MODE=allowlist/i;
 
 const BLOCKED_ENDPOINT = /base_url '([^']+)' is not a trusted endpoint/i;
 
@@ -23,12 +29,35 @@ export function blockedEndpoint(text?: string | null): string | null {
   return match ? match[1] : null;
 }
 
-export function RefusedNotice() {
+/** Why a refused command didn't run, in words for the person. */
+export function refusalKind(result?: string | null): 'folder' | 'approval' | 'allowlist' | 'other' {
+  const text = result || '';
+  if (OUTSIDE_FOLDER.test(text)) return 'folder';
+  if (ALLOWLIST_ONLY.test(text)) return 'allowlist';
+  if (NEEDS_APPROVAL.test(text)) return 'approval';
+  return 'other';
+}
+
+export function RefusedNotice({ result }: { result?: string | null }) {
+  const kind = refusalKind(result);
   return (
     <div role="note" className="w-full max-w-2xl rounded border border-[#ffb86b]/40 bg-[#ffb86b]/10 px-3 py-2 text-[12.5px] leading-relaxed">
-      <span className="font-mono text-[10.5px] tracking-[0.1em] text-[#b4691a] dark:text-[#ffb86b]">REFUSED</span>{' '}
-      This path is outside the agents' working folder, so the command didn't run. The agent was told why and can carry on without it.{' '}
-      <a href="/settings/access" className="text-accent-ink underline-offset-2 hover:underline">Change working folder</a>
+      <span className="font-mono text-[10.5px] tracking-[0.1em] text-[#b4691a] dark:text-[#ffb86b]">{kind === 'approval' ? 'NOT RUN' : 'REFUSED'}</span>{' '}
+      {kind === 'folder' && (
+        <>
+          This path is outside the agent's working folder, so the command didn't run. The agent was told why and can carry on without it.{' '}
+          <a href="/settings/access" className="text-accent-ink underline-offset-2 hover:underline">Change working folder</a>
+        </>
+      )}
+      {kind === 'approval' && (
+        <>This command needs your approval to run, and nobody was there to ask, so it didn't run. The agent was told why and can ask you to run it.</>
+      )}
+      {kind === 'allowlist' && (
+        <>This command isn't on the allowlist, and the full shell is turned off on this computer, so it didn't run. The agent was told why.</>
+      )}
+      {kind === 'other' && (
+        <>The command didn't run. The agent was told why and can carry on without it.</>
+      )}
     </div>
   );
 }

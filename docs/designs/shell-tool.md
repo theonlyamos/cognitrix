@@ -17,6 +17,17 @@ runtime-only `approved` flag to Bash, true only when a person approved the call
 (not auto-approval, bypass mode or a tool set to never ask), so a full-shell
 command can't run without a person seeing it.
 
+Because of that, the gate is called with `person_only=True` for a full-shell
+call: it skips the permanent approval cache and the chat's auto-approve toggle
+and shows the person an Approve/Deny card (task runs park it in the Inbox).
+"Approve for session" is a person's answer, so the same command runs without a
+card for the rest of the session (it is never remembered permanently). In a
+chat, the card also offers "allow all commands in this chat"
+(`remember_shell`): every full-shell command in that chat then runs without a
+card until the app restarts. Background commands joined with |, &&,
+|| or ; count as full shell too (`plan_call`). The tool only refuses outright
+when nobody can be asked, e.g. `COGNITRIX_AUTO_APPROVE`.
+
 Settings:
 
 - `COGNITRIX_SHELL_MODE=ask` (default) or `allowlist` (full shell refused).
