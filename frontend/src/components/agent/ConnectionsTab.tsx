@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom';
 import { errorMessage } from '@/lib/api';
 import { listChannels, saveChannel, type ChatChannel } from '@/lib/channels';
 import { listCredentials, type Credential } from '@/lib/credentials';
-import { listMcpServers, type McpServer } from '@/lib/mcp';
-import type { TabProps } from '@/lib/agentDraft';
+import { listMcpServerTools, listMcpServers, type McpServer, type McpTestResult } from '@/lib/mcp';
+import { appLabel } from '@/lib/apps';
+import type { TabProps, ToolLevel } from '@/lib/agentDraft';
+import { Segmented } from '@/components/settings/ui';
 import { Card, buttonClass, linkButtonClass } from '@/components/agent/ui';
 import { cn } from '@/lib/utils';
 
@@ -54,31 +56,48 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
 
   return (
     <div className="flex flex-col gap-[18px]">
-      <Card title="MCP servers" description="Servers you added in Settings. Turn on the ones this agent may use.">
+      <Card title="Apps and MCP servers" description="Apps you connected and servers you added in Settings. Turn on the ones this agent may use.">
         <div className="overflow-hidden rounded-lg border border-line">
           {servers === null ? (
             <p className="px-3.5 py-3 text-[13px] text-fg-dim">Loading…</p>
           ) : servers.length === 0 && missing.length === 0 ? (
-            <p className="px-3.5 py-3 text-[13px] text-fg-dim">No MCP servers yet.</p>
+            <p className="px-3.5 py-3 text-[13px] text-fg-dim">No apps or MCP servers yet.</p>
           ) : (
             <>
               {servers.map((s) => {
                 const on = selected.includes(s.ref) || selected.includes(s.name);
-                const status = !s.enabled ? 'off' : s.connected ? 'connected' : 'not connected';
+                const app = Boolean(s.catalog_id) || s.auth_type === 'oauth';
+                const status = !s.enabled ? 'off'
+                  : s.status === 'needs_reauth' ? 'needs reconnect'
+                    : app && s.status !== 'connected' ? 'not signed in'
+                      : s.connected || (app && s.status === 'connected') ? 'connected' : 'not connected';
                 return (
-                  <label key={s.ref} className="grid cursor-pointer grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 border-t border-line px-3.5 py-3 first:border-t-0">
-                    <input type="checkbox" checked={on} onChange={(e) => toggleServer(s, e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
-                    <span className="min-w-0">
-                      <span className="block font-mono text-[13.5px]">
-                        {s.name} <span className="font-sans text-[12px] text-fg-dim">{s.shared ? 'shared' : 'yours'} · {s.transport}</span>
+                  <div key={s.ref} className="border-t border-line first:border-t-0">
+                    <label className="grid cursor-pointer grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 px-3.5 py-3">
+                      <input type="checkbox" checked={on} onChange={(e) => toggleServer(s, e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
+                      <span className="min-w-0">
+                        <span className={cn('block text-[13.5px]', !s.catalog_id && 'font-mono')}>
+                          {appLabel(s.catalog_id, s.name)}{' '}
+                          <span className="font-sans text-[12px] text-fg-dim">
+                            {s.catalog_id ? (s.account || 'app') : `${s.shared ? 'shared' : 'yours'} · ${s.transport}`}
+                          </span>
+                        </span>
+                        {s.description && <span className="block truncate text-[12.5px] text-fg-dim">{s.description}</span>}
                       </span>
-                      {s.description && <span className="block truncate text-[12.5px] text-fg-dim">{s.description}</span>}
-                    </span>
-                    <span className={cn('inline-flex items-center gap-1.5 text-[12.5px]',
-                      status === 'connected' ? 'text-ok' : status === 'off' ? 'text-fg-dim' : 'text-[#a15c00] dark:text-[#e5b567]')}>
-                      <span aria-hidden className="h-[7px] w-[7px] rounded-full bg-current" />{status}
-                    </span>
-                  </label>
+                      <span className={cn('inline-flex items-center gap-1.5 text-[12.5px]',
+                        status === 'connected' ? 'text-ok' : status === 'off' ? 'text-fg-dim' : 'text-[#a15c00] dark:text-[#e5b567]')}>
+                        <span aria-hidden className="h-[7px] w-[7px] rounded-full bg-current" />{status}
+                      </span>
+                    </label>
+                    {on && s.enabled && (
+                      <ToolPermissions
+                        server={s}
+                        label={appLabel(s.catalog_id, s.name)}
+                        levels={draft.toolPermissions}
+                        onChange={(toolPermissions) => update({ toolPermissions })}
+                      />
+                    )}
+                  </div>
                 );
               })}
               {missing.map((r) => (
@@ -91,8 +110,9 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
           )}
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <Link to="/settings/access#mcp-servers" className={buttonClass}>+ Add a server</Link>
-          <span className="text-[12.5px] text-fg-dim">Tools a server doesn't mark read-only ask for approval first.</span>
+          <Link to="/settings/apps" className={buttonClass}>+ Connect an app</Link>
+          <Link to="/settings/access#mcp-servers" className={linkButtonClass}>Add an MCP server</Link>
+          <span className="text-[12.5px] text-fg-dim">Tools that only read run on their own. Anything that changes or sends something asks first, unless you change it.</span>
         </div>
       </Card>
 
@@ -159,6 +179,81 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
           <p className="mt-2.5 text-[12.5px] text-fg-dim">“Use this agent” switches the app right away; it isn't part of Save.</p>
         )}
       </Card>
+    </div>
+  );
+}
+
+const LEVELS: { value: 'allow' | 'ask' | 'deny'; label: string }[] = [
+  { value: 'allow', label: 'Allow' },
+  { value: 'ask', label: 'Ask' },
+  { value: 'deny', label: 'Off' },
+];
+
+/** Allow / Ask / Off for each of a server's tools, for this agent.
+ *  Matching the default stores nothing, so the default can change later. */
+function ToolPermissions({ server, label, levels, onChange }: {
+  server: McpServer;
+  label: string;
+  levels: Record<string, ToolLevel>;
+  onChange: (next: Record<string, ToolLevel>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [result, setResult] = useState<McpTestResult | null>(null);
+
+  useEffect(() => {
+    if (!open || result) return;
+    listMcpServerTools(server.ref)
+      .then(setResult)
+      .catch((e) => setResult({ connected: false, tools: [], error: errorMessage(e, "Couldn't load the tools.") }));
+  }, [open, result, server.ref]);
+
+  const set = (tool: string, fallback: 'allow' | 'ask', value: 'allow' | 'ask' | 'deny') => {
+    const next = { ...levels };
+    if (value === fallback) delete next[tool];
+    else next[tool] = value;
+    onChange(next);
+  };
+
+  const custom = result?.tools.filter((t) => t.tool && levels[t.tool] && levels[t.tool] !== 'auto').length ?? 0;
+
+  return (
+    <div className="border-t border-line bg-bg px-3.5 py-2.5">
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="text-[12.5px] text-accent-ink hover:underline">
+        {open ? 'Hide' : 'Choose'} what {label} tools may do{custom ? ` · ${custom} changed` : ''}
+      </button>
+      {open && (
+        !result ? (
+          <p className="mt-2 text-[12.5px] text-fg-dim">Connecting…</p>
+        ) : !result.connected ? (
+          <p role="alert" className="mt-2 text-[12.5px] text-[#a15c00] dark:text-[#e5b567]">
+            {result.error}{' '}
+            {(server.catalog_id || server.auth_type === 'oauth') && <Link to="/settings/apps" className="text-accent-ink hover:underline">Connected apps</Link>}
+          </p>
+        ) : result.tools.length === 0 ? (
+          <p className="mt-2 text-[12.5px] text-fg-dim">This server has no tools.</p>
+        ) : (
+          <ul className="mt-2 divide-y divide-line">
+            {result.tools.map((t) => {
+              const tool = t.tool || t.name;
+              const fallback = t.default || (t.asks_first ? 'ask' : 'allow');
+              const stored = levels[tool];
+              const value = stored === 'allow' || stored === 'ask' || stored === 'deny' ? stored : fallback;
+              return (
+                <li key={t.name} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2">
+                  <div className="min-w-0 flex-1 basis-[200px]">
+                    <div className="font-mono text-[12.5px]">{t.name}</div>
+                    <div className="truncate text-[11.5px] text-fg-dim" title={t.description}>
+                      {t.read_only ? 'Reads only' : fallback === 'ask' ? 'Changes or sends something' : 'Makes changes'}
+                      {t.description ? ` · ${t.description}` : ''}
+                    </div>
+                  </div>
+                  <Segmented label={`${t.name} permission`} value={value} options={LEVELS} onChange={(v) => set(tool, fallback, v)} />
+                </li>
+              );
+            })}
+          </ul>
+        )
+      )}
     </div>
   );
 }

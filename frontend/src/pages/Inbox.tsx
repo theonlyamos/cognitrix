@@ -239,6 +239,11 @@ function NotificationDetail({ item, onDone }: { item: InboxNotification; onDone:
           {busy ? 'Dismissing…' : 'Dismiss'}
         </button>
         <span className="flex-1" />
+        {item.link && item.link.startsWith('/') && (
+          <Link to={item.link} className="text-[13px] font-medium text-accent-ink hover:underline">
+            {item.title.startsWith('Reconnect ') ? item.title : 'Open'}
+          </Link>
+        )}
         {item.task_id && (
           <Link to={`/tasks/${item.task_id}`} className="text-[13px] text-accent-ink hover:underline">
             Open task

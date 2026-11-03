@@ -1,7 +1,9 @@
 import { lazy, memo, Suspense } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
-import { BlockedEndpointNotice, RefusedNotice, blockedEndpoint, isRefusal } from '@/components/SafetyNotices';
+import {
+  BlockedEndpointNotice, RefusedNotice, SignInNeededNotice, blockedEndpoint, isRefusal, signInNeeded,
+} from '@/components/SafetyNotices';
 import { cn } from '@/lib/utils';
 
 const MarkdownMessage = lazy(() => import('@/components/MarkdownMessage'));
@@ -80,6 +82,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
               </div>
               </details>
               {tool.status !== 'running' && isRefusal(tool.result) && <RefusedNotice />}
+              {tool.status !== 'running' && signInNeeded(tool.result) && <SignInNeededNotice app={signInNeeded(tool.result)!} />}
               {tool.artifacts?.map((artifact) => (
                 <ArtifactPreview
                   key={artifact.id}

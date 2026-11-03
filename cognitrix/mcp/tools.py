@@ -26,6 +26,11 @@ _JSON_TO_PYNAME = {
 _NAME_SANITIZE = re.compile(r'[^A-Za-z0-9_-]')
 
 
+def wrapper_name(server_name: str, tool_name: str) -> str:
+    """The name an MCP tool has inside Cognitrix (and in permission settings)."""
+    return _NAME_SANITIZE.sub('_', f"{server_name}_{tool_name}")
+
+
 def create_mcp_tool_wrapper(
     server_name: str, tool_info: dict[str, Any], connection_key: str | None = None
 ) -> Tool:
@@ -50,7 +55,7 @@ def create_mcp_tool_wrapper(
     if not isinstance(input_schema, dict):
         input_schema = {}
 
-    unique_name = _NAME_SANITIZE.sub('_', f"{server_name}_{tool_name}")
+    unique_name = wrapper_name(server_name, tool_name)
 
     properties = input_schema.get('properties')
     if not isinstance(properties, dict):
@@ -63,9 +68,11 @@ def create_mcp_tool_wrapper(
         """Dynamically generated wrapper for MCP tool"""
         try:
             from cognitrix.mcp.client import get_dynamic_client
+            from cognitrix.mcp.registry import prepare_key
+            problem = await prepare_key(connection_key)
+            if problem:
+                return problem
             client = await get_dynamic_client()
-            if not client.is_connected(connection_key):
-                return f"Server '{server_name}' is not connected. Please connect first."
 
             # Filter out None values for optional parameters
             filtered_args = {k: v for k, v in kwargs.items() if v is not None}
@@ -103,6 +110,26 @@ def create_mcp_tool_wrapper(
 
     return wrapped_tool
 
+def _sign_in_tool(server_name: str, message: str) -> Tool:
+    """Stand-in for an app whose sign-in has to be renewed."""
+    unique_name = _NAME_SANITIZE.sub('_', f"{server_name}_sign_in_needed")
+
+    async def sign_in_needed():
+        return message
+
+    sign_in_needed.__name__ = unique_name
+    sign_in_needed.__doc__ = (
+        f"{server_name} is connected to this agent, but it has to be signed in again before its tools work. "
+        f"Call this when you need {server_name}; it tells the person how to reconnect."
+    )
+    wrapped = tool(category="mcp_dynamic", name=unique_name)(sign_in_needed)
+    wrapped.name = unique_name
+    wrapped.parameters = {}
+    wrapped.required_params = []
+    wrapped.approval_mode = 'assigned_only'  # only explains; never needs approval
+    return wrapped
+
+
 async def sync_mcp_tools_for_agent(agent) -> list[Tool]:
     """Build tool wrappers for the servers this agent may use.
 
@@ -113,12 +140,18 @@ async def sync_mcp_tools_for_agent(agent) -> list[Tool]:
 
     try:
         from cognitrix.mcp.client import get_dynamic_client
-        from cognitrix.mcp.registry import agent_servers, ensure_connected
+        from cognitrix.mcp.registry import SIGN_IN_NEEDED, agent_servers, prepare
         client = await get_dynamic_client()
 
         for config in await agent_servers(agent):
             try:
-                if not await ensure_connected(client, config):
+                problem = await prepare(client, config)
+                if problem:
+                    if problem.startswith(SIGN_IN_NEEDED):
+                        # Keep the app visible to the agent, so it can tell
+                        # the person to reconnect instead of acting as if the
+                        # app doesn't exist.
+                        new_tools.append(_sign_in_tool(config.name, problem))
                     continue
                 tools_list = await client.list_tools(config.key)
                 if not tools_list:

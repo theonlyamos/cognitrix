@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { useSystemInfo } from '@/hooks/useSystemInfo';
 import { VoiceSettingsCard } from '@/components/VoiceSettingsCard';
 import { McpServersCard } from '@/components/McpServersCard';
+import { ConnectedAppsCard } from '@/components/ConnectedAppsCard';
 import { ChatChannelsCard } from '@/components/ChatChannelsCard';
 import { CredentialsCard } from '@/components/CredentialsCard';
 import { ProviderKeys } from '@/components/settings/ProviderKeys';
@@ -21,7 +22,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'voice' | 'access' | 'chat-apps' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -37,6 +38,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'appearance', label: 'Appearance', group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
   { id: 'models', label: 'Models and keys', group: 'AI', keywords: 'providers api key openai anthropic claude gemini google groq openrouter cerebras ollama' },
   { id: 'voice', label: 'Voice input', group: 'AI', keywords: 'mic microphone speech transcription dictation' },
+  { id: 'apps', label: 'Connected apps', group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
   { id: 'access', label: 'Agent access', group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
   { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack bot alerts approvals' },
   { id: 'desktop', label: 'Desktop app', group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask', desktopOnly: true },
@@ -47,6 +49,7 @@ const SECTIONS: SectionMeta[] = [
 const LEGACY_HASH: Record<string, SectionId> = {
   'voice-input': 'voice',
   'mcp-servers': 'access',
+  'connected-apps': 'apps',
   'saved-sign-ins': 'access',
   'chat-apps': 'chat-apps',
 };
@@ -278,6 +281,16 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
         <>
           <SectionHeader title="Voice input" />
           <div className="rounded-[12px] border border-line bg-panel p-3.5"><VoiceSettingsCard /></div>
+        </>
+      );
+    case 'apps':
+      return (
+        <>
+          <SectionHeader
+            title="Connected apps"
+            description="Sign in to apps so your agents can use them. Each connection is yours: other people on this server can't see or use it. Pick which apps an agent may use on its Connections tab."
+          />
+          <ConnectedAppsCard />
         </>
       );
     case 'access': return <AccessSection desktopApp={desktopApp} />;

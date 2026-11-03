@@ -95,6 +95,8 @@ export interface InboxNotification {
   session_id: string | null;
   title: string;
   message: string;
+  /** In-app page the alert opens, e.g. /settings/apps for "Reconnect Gmail". */
+  link?: string | null;
   created_at: string | null;
   task_title: string;
 }

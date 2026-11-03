@@ -57,6 +57,10 @@ def config_from_row(row: Any) -> MCPServerConfig:
         enabled=bool(row.enabled),
         id=str(row.id),
         owner_id=str(row.owner_id) if row.owner_id else None,
+        auth_type=getattr(row, 'auth_type', None) or None,
+        catalog_id=getattr(row, 'catalog_id', None) or None,
+        status=getattr(row, 'status', None) or None,
+        account=getattr(row, 'account', None) or None,
     )
 
 
@@ -142,19 +146,115 @@ async def agent_servers(agent: Any, *, enabled_only: bool = True) -> list[MCPSer
     return servers
 
 
-async def ensure_connected(client: Any, config: MCPServerConfig) -> bool:
+# Marks a tool result that means "the person has to sign in to this app".
+# The chat shows a Reconnect card for it (frontend SafetyNotices).
+SIGN_IN_NEEDED = 'App sign-in needed:'
+
+# Token expiry of each live OAuth connection, so it's reopened with a fresh
+# token before the old one stops working.
+_live_expiry: dict[str, float | None] = {}
+
+
+def sign_in_message(name: str, reason: str = 'expired') -> str:
+    why = {
+        'never': f"{name} isn't signed in yet",
+        'setup': f"{name} isn't set up on this server any more",
+    }.get(reason, f'the sign-in for {name} expired or was revoked')
+    return (
+        f'{SIGN_IN_NEEDED} {name}. Right now {why}. Tell the person to open Settings › '
+        f'Connected apps and press Connect next to {name}, then try again.'
+    )
+
+
+async def prepare(client: Any, config: MCPServerConfig) -> str | None:
+    """Connect to ``config`` if needed. None when ready, else why not (for the agent)."""
+    if config.auth_type == 'oauth' and config.id:
+        return await _prepare_oauth(client, config)
     if client.is_connected(config.key):
-        return True
+        return None
     try:
         config = await _with_saved_secrets(config)
     except ValueError as exc:
         logger.warning("MCP server '%s' can't use its saved credential: %s", config.name, exc)
-        return False
+        return f"'{config.name}' can't use its saved sign-in. Check the sign-in named in its headers under Settings › Agent access."
     try:
-        return bool(await client.connect_to_server(config))
+        if await client.connect_to_server(config):
+            return None
     except Exception:
         logger.exception("Could not connect to MCP server '%s'", config.name)
-        return False
+    return f"Couldn't connect to '{config.name}'. Check the server in Settings › Agent access."
+
+
+async def _prepare_oauth(client: Any, config: MCPServerConfig) -> str | None:
+    import dataclasses
+    import time
+
+    import httpx
+
+    from cognitrix.mcp import oauth
+    from cognitrix.models.mcp_server import MCPServer
+
+    key = config.key
+    expiry = _live_expiry.get(key)
+    if client.is_connected(key) and (expiry is None or expiry - time.time() > oauth.REFRESH_MARGIN):
+        return None
+    row = await MCPServer.get(config.id)
+    if row is None:
+        return f"'{config.name}' was removed."
+    name = oauth.app_name(row)
+    try:
+        token = await oauth.access_token(row)
+    except oauth.ReconnectNeeded as exc:
+        return sign_in_message(name, exc.reason)
+    except httpx.HTTPError:
+        return f"Couldn't reach {name} to renew its sign-in. Try again in a moment."
+    if client.is_connected(key):
+        await client.disconnect_from_server(key)
+    fresh = await MCPServer.get(config.id) or row
+    headers = {**(config.headers or {}), 'Authorization': f'Bearer {token}'}
+    live = dataclasses.replace(config, headers=headers)
+    try:
+        connected = bool(await client.connect_to_server(live))
+    except Exception:
+        logger.exception("Could not connect to %s", name)
+        connected = False
+    if connected:
+        _live_expiry[key] = oauth.expires_at(fresh)
+        return None
+    _live_expiry.pop(key, None)
+    allow_private = bool(oauth.load(fresh).get('allow_private'))
+    response = await oauth.probe(str(config.url or ''), token, allow_private=allow_private)
+    if response is not None and response.status_code == 401:
+        await oauth.mark_needs_reauth(fresh, 'revoked')
+        return sign_in_message(name)
+    return f"Couldn't connect to {name}. It may be down; try again in a moment."
+
+
+async def ensure_connected(client: Any, config: MCPServerConfig) -> bool:
+    return await prepare(client, config) is None
+
+
+async def prepare_key(connection_key: str) -> str | None:
+    """``prepare`` for a live connection key (a database id, or an mcp.json name)."""
+    from cognitrix.mcp.client import get_dynamic_client
+    from cognitrix.models.mcp_server import MCPServer
+
+    client = await get_dynamic_client()
+    try:
+        row = await MCPServer.get(connection_key)
+    except Exception:
+        row = None
+    if row is None:
+        if client.is_connected(connection_key):
+            return None
+        for config in _file_servers():
+            if config.key == connection_key:
+                return await prepare(client, config)
+        return f"Server '{connection_key}' is not available."
+    if not row.enabled:
+        # Turned off while an agent still holds its tools.
+        return f"'{row.name}' is turned off. Turn it back on in Settings to use it."
+    return await prepare(client, config_from_row(row))
 
 
 async def _with_saved_secrets(config: MCPServerConfig) -> MCPServerConfig:

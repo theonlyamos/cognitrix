@@ -22,6 +22,12 @@ export interface McpServer {
   source: 'database' | 'config_file';
   can_edit: boolean;
   connected: boolean;
+  /** Set for connected apps (Settings › Connected apps). */
+  catalog_id?: string | null;
+  auth_type?: 'none' | 'header' | 'oauth';
+  /** 'connected', 'needs_reauth', or '' (never signed in / signed out). */
+  status?: string;
+  account?: string;
 }
 
 export interface McpServerList {
@@ -44,10 +50,32 @@ export interface McpServerInput {
   shared?: boolean;
 }
 
+export interface McpToolInfo {
+  name: string;
+  /** The tool's name inside Cognitrix, as agents' permission settings use it. */
+  tool?: string;
+  title?: string;
+  description: string;
+  read_only: boolean;
+  asks_first?: boolean;
+  /** What happens with no per-agent setting: read-only tools run, others ask. */
+  default?: 'allow' | 'ask';
+}
+
 export interface McpTestResult {
   connected: boolean;
-  tools: { name: string; description: string; read_only: boolean; asks_first?: boolean }[];
+  tools: McpToolInfo[];
   error: string | null;
+}
+
+/** A server's tools, connecting first if needed (for per-agent permissions). */
+export async function listMcpServerTools(ref: string): Promise<McpTestResult> {
+  return (await api.get<McpTestResult>(`/mcp/servers/${encodeURIComponent(ref)}/tools`)).data;
+}
+
+/** Connected apps are managed in Settings › Connected apps, not as raw servers. */
+export function isConnectedApp(server: McpServer): boolean {
+  return Boolean(server.catalog_id) || server.auth_type === 'oauth';
 }
 
 export const KEEP_SECRET = '***';

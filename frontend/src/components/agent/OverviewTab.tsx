@@ -66,7 +66,7 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
     },
     {
       label: 'CONNECTIONS',
-      value: `${draft.mcpServers.length} MCP ${draft.mcpServers.length === 1 ? 'server' : 'servers'} · ${draft.credentials === null ? 'all saved sign-ins' : `${draft.credentials.length} saved sign-in${draft.credentials.length === 1 ? '' : 's'}`}`,
+      value: `${draft.mcpServers.length} ${draft.mcpServers.length === 1 ? 'app or MCP server' : 'apps and MCP servers'} · ${draft.credentials === null ? 'all saved sign-ins' : `${draft.credentials.length} saved sign-in${draft.credentials.length === 1 ? '' : 's'}`}`,
       link: 'Connections', tab: 'connections',
     },
     {
