@@ -9,6 +9,7 @@ export type NotificationEvent =
   | 'approval'
   | 'question'
   | 'agent_alert'
+  | 'chat_reply'
   | 'task_finished'
   | 'task_failed'
   | 'refused'
@@ -18,6 +19,7 @@ export const EVENT_LABELS: Record<NotificationEvent, { title: string; detail: st
   approval: { title: 'Approval needed', detail: 'A task is paused on a risky step', alwaysInApp: true },
   question: { title: 'Agent asks a question', detail: 'A chat is waiting for your answer', alwaysInApp: true },
   agent_alert: { title: 'Agent alert', detail: 'An agent used Notify Me, usually from an automation' },
+  chat_reply: { title: 'Chat reply', detail: 'An agent finished replying while you were in another window' },
   task_finished: { title: 'Task finished', detail: 'Only when the window isn’t focused' },
   task_failed: { title: 'Task failed', detail: 'With the reason and a link to retry' },
   refused: { title: 'Command refused or address blocked', detail: 'Outside the working folder, or a blocked provider URL' },
@@ -35,6 +37,7 @@ const DEFAULT_PREFS: NotificationPrefs = {
   approval: { inApp: true, desktop: true },
   question: { inApp: true, desktop: true },
   agent_alert: { inApp: true, desktop: true },
+  chat_reply: { inApp: false, desktop: true },
   task_finished: { inApp: true, desktop: true },
   task_failed: { inApp: true, desktop: true },
   refused: { inApp: true, desktop: false },
@@ -201,7 +204,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     // "engine couldn't start" notifications.
     const away = typeof document !== 'undefined' && (document.hidden || !document.hasFocus());
     const system =
-      channel.desktop && (n.event !== 'task_finished' || away) && !(n.event === 'engine' && isDesktop());
+      channel.desktop && ((n.event !== 'task_finished' && n.event !== 'chat_reply') || away) && !(n.event === 'engine' && isDesktop());
     if (!system) {
       popToast();
       return;

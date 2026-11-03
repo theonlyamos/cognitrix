@@ -176,6 +176,16 @@ function AccessSection({ desktopApp }: { desktopApp: boolean }) {
 
 function DesktopSection() {
   const { prefs, error, update } = useDesktopPrefs(true);
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const sendTest = async () => {
+    setTestResult(null);
+    try {
+      await desktop.testNotification();
+      setTestResult({ ok: true, text: 'Sent. If nothing appeared, check Focus / Do not disturb in your system settings.' });
+    } catch (err) {
+      setTestResult({ ok: false, text: typeof err === 'string' ? err : err instanceof Error ? err.message : 'The notification could not be shown.' });
+    }
+  };
   return (
     <>
       <SectionHeader title="Desktop app" description="How the app behaves on this computer." />
@@ -193,8 +203,14 @@ function DesktopSection() {
             label={onWindows ? 'Windows notifications' : 'System notifications'}
             detail={<>Choose which events under <Link to="/notifications" className="text-accent-ink hover:underline">Notifications</Link></>}
           >
+            <button type="button" onClick={() => void sendTest()} className={quietButtonClass}>Send test</button>
             <Toggle label={onWindows ? 'Windows notifications' : 'System notifications'} checked={prefs.notify_desktop} onChange={(v) => update({ notify_desktop: v })} />
           </SettingRow>
+          {testResult && (
+            <p role={testResult.ok ? 'status' : 'alert'} className={cn('px-3.5 py-2 text-[12.5px]', testResult.ok ? 'text-fg-dim' : 'text-danger-ink')}>
+              {testResult.text}
+            </p>
+          )}
           <SettingRow label="Quick ask hotkey" detail="Opens a small ask box from anywhere">
             <kbd className="rounded border border-line px-2 py-0.5 font-mono text-[11.5px]">{prefs.quick_ask_shortcut.replace('+', ' ')}</kbd>
           </SettingRow>

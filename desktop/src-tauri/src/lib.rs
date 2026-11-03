@@ -380,6 +380,11 @@ fn clear_session(app: AppHandle) {
 }
 
 #[tauri::command]
+async fn test_notification(app: AppHandle) -> Result<(), String> {
+    notify::test(&app)
+}
+
+#[tauri::command]
 fn show_main_window(app: AppHandle, path: Option<String>) {
     show_main(&app, path);
 }
@@ -458,6 +463,7 @@ pub fn run() {
             get_saved_session,
             save_session,
             clear_session,
+            test_notification,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the Cognitrix desktop app");

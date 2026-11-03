@@ -687,6 +687,7 @@ export default function Home() {
           break;
         case 'turn_complete':
           finishTurn();
+          notifyReplyRef.current();
           break;
         case 'turn_stopped':
           finishTurn('stopped');
@@ -761,6 +762,24 @@ export default function Home() {
   // Open the stream once we know which agent to use (or that there are none),
   // so a fresh visitor doesn't connect to the default agent then reconnect.
   const sseReady = !!agentId || (!agentsLoading && agents.length === 0);
+  // A reply that finishes while you're in another window raises a system
+  // notification (the notification code skips it when you're looking).
+  const notifications = useOptionalNotifications();
+  const notifyReplyRef = useRef<() => void>(() => undefined);
+  notifyReplyRef.current = () => {
+    if (!notifications || typeof document === 'undefined') return;
+    if (!document.hidden && document.hasFocus()) return;
+    const name = agentById.get(agentId)?.name ?? 'The agent';
+    const last = messages[messages.length - 1];
+    const text = last?.role === 'assistant' && typeof last.content === 'string' ? last.content.replace(/\s+/g, ' ').trim() : '';
+    notifications.push({
+      event: 'chat_reply',
+      title: `${name} replied`,
+      body: text ? (text.length > 140 ? `${text.slice(0, 139)}…` : text) : 'Open the chat to read the reply.',
+      href: '/home',
+    });
+  };
+
   const handleStreamEvent = useCallback((event: SSEEvent) => {
     const sid = typeof event.session_id === 'string' ? event.session_id : undefined;
     if (event.type === 'run_resync') {
@@ -822,7 +841,7 @@ export default function Home() {
   });
   // In the desktop app a lost connection usually means the engine stopped:
   // start it again (the stream reconnects by itself once it's back).
-  const engine = useOptionalNotifications()?.engine ?? null;
+  const engine = notifications?.engine ?? null;
   const reconnect = useCallback(() => {
     if (engine && (engine.status === 'stopped' || engine.status === 'failed')) void desktop.restartEngine();
     reconnectStream();
