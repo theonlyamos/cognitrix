@@ -5,6 +5,7 @@ import { SessionProvider } from '@/context/SessionContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import AppLayout from '@/components/AppLayout';
 import DesktopFrame from '@/components/DesktopFrame';
+import { isDesktop } from '@/lib/desktop';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
 import OAuthComplete from '@/pages/OAuthComplete';
@@ -29,7 +30,7 @@ const Notifications = lazy(() => import('@/pages/Notifications'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const QuickAsk = lazy(() => import('@/pages/QuickAsk'));
 
-function LoadingScreen() {
+function LoadingScreen({ waitingForServer = false }: { waitingForServer?: boolean }) {
   return (
     <div className="flex h-full min-h-[40vh] flex-1 items-center justify-center bg-bg text-fg-dim">
       <div className="flex items-center gap-3 font-mono text-sm">
@@ -37,22 +38,22 @@ function LoadingScreen() {
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" />
           <path className="opacity-90" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" d="M4 12a8 8 0 0 1 8-8" />
         </svg>
-        loading…
+        {waitingForServer ? (isDesktop() ? 'waiting for the engine…' : 'waiting for the server…') : 'loading…'}
       </div>
     </div>
   );
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useUser();
-  if (isLoading) return <DesktopFrame><LoadingScreen /></DesktopFrame>;
+  const { user, isLoading, waitingForServer } = useUser();
+  if (isLoading) return <DesktopFrame><LoadingScreen waitingForServer={waitingForServer} /></DesktopFrame>;
   if (!user) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useUser();
-  if (isLoading) return <DesktopFrame><LoadingScreen /></DesktopFrame>;
+  const { user, isLoading, waitingForServer } = useUser();
+  if (isLoading) return <DesktopFrame><LoadingScreen waitingForServer={waitingForServer} /></DesktopFrame>;
   if (user) return <Navigate to="/home" replace />;
   return <DesktopFrame>{children}</DesktopFrame>;
 }

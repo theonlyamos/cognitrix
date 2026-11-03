@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hide-quick-ask"
+description = "Enables the hide_quick_ask command without any pre-configured scope."
+commands.allow = ["hide_quick_ask"]
+
+[[permission]]
+identifier = "deny-hide-quick-ask"
+description = "Denies the hide_quick_ask command without any pre-configured scope."
+commands.deny = ["hide_quick_ask"]

@@ -23,6 +23,18 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// First start unpacks ONNX models and creates the database, so be generous.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// A crashed or stuck engine is restarted on its own this many times within
+/// RESTART_WINDOW. Past that something is wrong (a bad install, the port
+/// taken), so it stays stopped and the person is told.
+const MAX_AUTO_RESTARTS: usize = 3;
+const RESTART_WINDOW: Duration = Duration::from_secs(10 * 60);
+
+/// How often the running engine is asked for /health, and how many misses
+/// in a row count as stuck (about a minute and a half, so a slow request
+/// never trips it).
+const HEALTH_EVERY: Duration = Duration::from_secs(15);
+const HEALTH_MISSES: u32 = 6;
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
@@ -49,6 +61,8 @@ pub struct Engine {
     status: Mutex<EngineStatus>,
     /// Bumped on every start/stop so stale watcher threads exit.
     generation: AtomicU64,
+    /// When the engine was last restarted on its own.
+    auto_restarts: Mutex<Vec<Instant>>,
 }
 
 impl Engine {
@@ -64,6 +78,7 @@ impl Engine {
                 external: false,
             }),
             generation: AtomicU64::new(0),
+            auto_restarts: Mutex::new(Vec::new()),
         }
     }
 
@@ -244,7 +259,7 @@ fn start_blocking(app: &AppHandle) {
         s.url = Some(url.clone());
     });
     crate::on_engine_ready(app, &url);
-    watch(app, generation);
+    watch(app, generation, port);
 }
 
 /// Exit code if the engine process has exited.
@@ -261,22 +276,65 @@ fn exited(app: &AppHandle) -> Option<String> {
     }
 }
 
-/// Notice the engine dying after a good start, so the UI and tray can say so.
-fn watch(app: &AppHandle, generation: u64) {
+/// Room for another automatic restart right now?
+fn may_auto_restart(app: &AppHandle) -> bool {
     let engine = app.state::<Engine>();
+    let mut recent = engine.auto_restarts.lock().unwrap();
+    recent.retain(|at| at.elapsed() < RESTART_WINDOW);
+    if recent.len() >= MAX_AUTO_RESTARTS {
+        return false;
+    }
+    recent.push(Instant::now());
+    true
+}
+
+/// Notice the engine dying or hanging after a good start. It's restarted on
+/// its own (the UI reconnects when it's back); only repeated failures are
+/// left for the person, with a notification.
+fn watch(app: &AppHandle, generation: u64, port: u16) {
+    let engine = app.state::<Engine>();
+    let mut last_probe = Instant::now();
+    let mut misses = 0u32;
     loop {
         thread::sleep(Duration::from_secs(2));
         if engine.generation.load(Ordering::SeqCst) != generation {
             return;
         }
-        if let Some(code) = exited(app) {
-            set_status(app, |s| {
-                s.status = Status::Stopped;
-                s.error = Some(format!("The engine stopped unexpectedly (exit code {code})."));
-            });
-            crate::notify(app, "Cognitrix engine stopped", "Restart it from the tray or the app window.", Some("/settings"));
+        let problem = if let Some(code) = exited(app) {
+            Some(format!("The engine stopped unexpectedly (exit code {code})."))
+        } else if last_probe.elapsed() >= HEALTH_EVERY {
+            last_probe = Instant::now();
+            if responds(port) {
+                misses = 0;
+                None
+            } else {
+                misses += 1;
+                (misses >= HEALTH_MISSES).then(|| "The engine stopped responding.".to_string())
+            }
+        } else {
+            None
+        };
+        let Some(problem) = problem else { continue };
+        if engine.generation.load(Ordering::SeqCst) != generation {
             return;
         }
+        if may_auto_restart(app) {
+            log::warn!("{problem} Restarting it.");
+            set_status(app, |s| {
+                s.status = Status::Starting;
+                s.error = Some(format!("{problem} Restarting…"));
+            });
+            stop(app);
+            start(app);
+            return;
+        }
+        stop(app);
+        set_status(app, |s| {
+            s.status = Status::Stopped;
+            s.error = Some(problem.clone());
+        });
+        crate::notify(app, "Cognitrix engine stopped", "Restart it from the tray or the app window.", Some("/settings"));
+        return;
     }
 }
 
@@ -300,7 +358,10 @@ pub fn stop(app: &AppHandle) {
     let _ = child.wait();
 }
 
+/// Restart on request (Settings, the tray, the banner, Reconnect). Clears
+/// the automatic-restart count, so a manual restart always gets a fresh try.
 pub fn restart(app: &AppHandle) {
+    app.state::<Engine>().auto_restarts.lock().unwrap().clear();
     let app = app.clone();
     thread::spawn(move || {
         stop(&app);

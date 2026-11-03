@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
+import { setToken } from '@/lib/session';
 
 /** Landing page after Google/GitHub sign-in on the web: the token arrives in
  *  the URL fragment (never sent to a server), is stored, and the hash cleared. */
@@ -15,7 +16,7 @@ export default function OAuthComplete() {
       navigate('/?oauth_error=Sign-in+did+not+finish.+Please+try+again.', { replace: true });
       return;
     }
-    localStorage.setItem('token', token);
+    setToken(token);
     void checkAuth().then(() => navigate('/home', { replace: true }));
   }, [checkAuth, navigate]);
 

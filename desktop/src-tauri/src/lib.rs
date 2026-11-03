@@ -7,6 +7,7 @@
 
 mod engine;
 mod notify;
+mod session;
 mod settings;
 mod tray;
 
@@ -179,6 +180,42 @@ pub(crate) fn notify(app: &AppHandle, title: &str, body: &str, path: Option<&str
     )
 }
 
+pub(crate) fn autostart_enabled(app: &AppHandle) -> bool {
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+/// Add the app to (or remove it from) the apps the OS opens when you sign
+/// in: the Run key on Windows, a LaunchAgent on macOS, an autostart entry on
+/// Linux. It opens minimized to the tray, and the engine starts with it.
+pub(crate) fn set_autostart(app: &AppHandle, enable: bool) -> Result<(), String> {
+    let launcher = app.autolaunch();
+    let result = if enable { launcher.enable() } else { launcher.disable() };
+    result.map_err(|e| e.to_string())?;
+    tray::set_autostart_tick(app, autostart_enabled(app));
+    Ok(())
+}
+
+/// Turn "Launch at startup" on the first time the app runs, and re-register
+/// it on later runs so the entry follows the app after an update or a move.
+/// Development builds are left alone.
+fn init_autostart(app: &AppHandle) {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let mut prefs = settings::load(app);
+    let enable = if prefs.autostart_initialized { autostart_enabled(app) } else { true };
+    if enable {
+        if let Err(e) = set_autostart(app, true) {
+            log::warn!("could not turn on launch at startup: {e}");
+            return;
+        }
+    }
+    if !prefs.autostart_initialized {
+        prefs.autostart_initialized = true;
+        let _ = settings::save(app, &prefs);
+    }
+}
+
 pub(crate) fn open_engine_log(app: &AppHandle) {
     let path = engine::log_path(app);
     let _ = app.opener().reveal_item_in_dir(path);
@@ -246,7 +283,7 @@ fn settings_view(app: &AppHandle) -> DesktopSettingsView {
     DesktopSettingsView {
         close_to_tray: prefs.close_to_tray,
         notify_desktop: prefs.notify_desktop,
-        start_with_windows: app.autolaunch().is_enabled().unwrap_or(false),
+        start_with_windows: autostart_enabled(app),
         working_folder: settings::working_folder(app, &prefs).display().to_string(),
         data_folder: settings::data_folder(app).display().to_string(),
         quick_ask_shortcut: "Alt+Space".into(),
@@ -277,9 +314,7 @@ fn set_desktop_settings(app: AppHandle, patch: DesktopSettingsPatch) -> Result<D
     }
     settings::save(&app, &prefs)?;
     if let Some(enable) = patch.start_with_windows {
-        let launcher = app.autolaunch();
-        let result = if enable { launcher.enable() } else { launcher.disable() };
-        result.map_err(|e| e.to_string())?;
+        set_autostart(&app, enable)?;
     }
     Ok(settings_view(&app))
 }
@@ -328,6 +363,27 @@ async fn desktop_notify(
     )
 }
 
+/// The sign-in the app saved last time (see session.rs).
+#[tauri::command]
+fn get_saved_session(app: AppHandle) -> Option<String> {
+    session::load(&app)
+}
+
+#[tauri::command]
+fn save_session(app: AppHandle, token: String) -> Result<(), String> {
+    session::save(&app, &token)
+}
+
+#[tauri::command]
+fn clear_session(app: AppHandle) {
+    session::clear(&app);
+}
+
+#[tauri::command]
+async fn test_notification(app: AppHandle) -> Result<(), String> {
+    notify::test(&app)
+}
+
 #[tauri::command]
 fn show_main_window(app: AppHandle, path: Option<String>) {
     show_main(&app, path);
@@ -370,6 +426,7 @@ pub fn run() {
                 main.show()?;
             }
             tray::create(&handle)?;
+            init_autostart(&handle);
             notify::init(&handle);
             if let Err(e) = handle.global_shortcut().register(quick_ask_shortcut()) {
                 log::warn!("Alt+Space is taken by another app, quick ask has no hotkey: {e}");
@@ -403,6 +460,10 @@ pub fn run() {
             desktop_notify,
             show_main_window,
             hide_quick_ask,
+            get_saved_session,
+            save_session,
+            clear_session,
+            test_notification,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the Cognitrix desktop app");

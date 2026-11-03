@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Inbox as InboxIcon, MessageSquare as MessageSquareIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon, Users as UsersIcon, Settings as SettingsIcon, KeyRound as KeyRoundIcon, type LucideIcon } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
@@ -8,63 +9,20 @@ import { cn } from '@/lib/utils';
 
 type IconProps = { className?: string };
 
+// Each icon says what's behind it: a tray for the inbox, a speech bubble for
+// chat, a robot for agents, a checklist for tasks, a lightning bolt for
+// automations, people for teams, a gear for settings and a key for API keys.
+const icon = (Icon: LucideIcon) => (p: IconProps) => <Icon {...p} strokeWidth={1.9} aria-hidden="true" />;
+
 const NAV = [
-  {
-    path: '/inbox',
-    label: 'Inbox',
-    icon: (p: IconProps) => (
-      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z" /></svg>
-    ),
-  },
-  {
-    path: '/home',
-    label: 'Chat',
-    icon: (p: IconProps) => (
-      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12l9-8 9 8" /><path d="M5 10v10h14V10" /></svg>
-    ),
-  },
-  {
-    path: '/agents',
-    label: 'Agents',
-    icon: (p: IconProps) => (
-      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="13" rx="1.5" /><path d="M8 20h8M12 17v3" /></svg>
-    ),
-  },
-  {
-    path: '/tasks',
-    label: 'Tasks',
-    icon: (p: IconProps) => (
-      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5h11M9 12h11M9 19h11" /><path d="M4 5l1.4 1.4L8 4M4 12l1.4 1.4L8 11M4 19l1.4 1.4L8 18" /></svg>
-    ),
-  },
-  {
-    path: '/automations',
-    label: 'Automations',
-    icon: (p: IconProps) => (
-      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 4v5h-5" /><path d="M12 7v5l3 2" /></svg>
-    ),
-  },
-  {
-    path: '/teams',
-    label: 'Teams',
-    icon: (p: IconProps) => (
-      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3" /><path d="M3 20c0-3 2.5-5 6-5s6 2 6 5" /><path d="M16 6a3 3 0 0 1 0 6M21 20c0-2.5-1.5-4-3.5-4.5" /></svg>
-    ),
-  },
-  {
-    path: '/settings',
-    label: 'Settings',
-    icon: (p: IconProps) => (
-      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></svg>
-    ),
-  },
-  {
-    path: '/api-keys',
-    label: 'API Keys',
-    icon: (p: IconProps) => (
-      <svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="15" r="4" /><path d="M10.85 12.15 19 4M18 5l2 2M15 8l2 2" /></svg>
-    ),
-  },
+  { path: '/inbox', label: 'Inbox', icon: icon(InboxIcon) },
+  { path: '/home', label: 'Chat', icon: icon(MessageSquareIcon) },
+  { path: '/agents', label: 'Agents', icon: icon(BotIcon) },
+  { path: '/tasks', label: 'Tasks', icon: icon(ListChecksIcon) },
+  { path: '/automations', label: 'Automations', icon: icon(ZapIcon) },
+  { path: '/teams', label: 'Teams', icon: icon(UsersIcon) },
+  { path: '/settings', label: 'Settings', icon: icon(SettingsIcon) },
+  { path: '/api-keys', label: 'API Keys', icon: icon(KeyRoundIcon) },
 ];
 
 interface SidebarProps {

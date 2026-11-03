@@ -45,6 +45,20 @@ pub fn show(app: &AppHandle, notice: Notice) -> bool {
     }
 }
 
+/// "Send a test notification" in Settings: shows one even when they're
+/// turned off there, and says why when Windows won't show it.
+pub fn test(app: &AppHandle) -> Result<(), String> {
+    platform::show(
+        app,
+        Notice {
+            title: "Cognitrix notifications work",
+            body: "You'll see approvals, questions, replies and finished tasks here.",
+            path: Some("/settings/desktop".into()),
+            urgent: false,
+        },
+    )
+}
+
 /// Called once at startup.
 pub fn init(app: &AppHandle) {
     platform::init(app);
@@ -121,10 +135,18 @@ mod platform {
         use windows::UI::Notifications::{NotificationSetting, ToastNotificationManager};
         let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(id)).ok()?;
         let setting = notifier.Setting().ok()?;
-        if setting == NotificationSetting::Enabled {
-            None
-        } else {
-            Some(format!("Windows notifications are blocked ({setting:?})"))
+        match setting {
+            NotificationSetting::Enabled => None,
+            NotificationSetting::DisabledForApplication => Some(
+                "Notifications are off for Cognitrix. Turn them on in Windows Settings › System › Notifications.".into(),
+            ),
+            NotificationSetting::DisabledForUser => Some(
+                "Notifications are off for all apps. Turn them on in Windows Settings › System › Notifications.".into(),
+            ),
+            NotificationSetting::DisabledByGroupPolicy => {
+                Some("Notifications are turned off by your organization's policy.".into())
+            }
+            _ => Some(format!("Windows won't show notifications right now ({setting:?}).")),
         }
     }
 

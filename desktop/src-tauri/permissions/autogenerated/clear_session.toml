@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-session"
+description = "Enables the clear_session command without any pre-configured scope."
+commands.allow = ["clear_session"]
+
+[[permission]]
+identifier = "deny-clear-session"
+description = "Denies the clear_session command without any pre-configured scope."
+commands.deny = ["clear_session"]
