@@ -1,5 +1,6 @@
 import { lazy, memo, Suspense } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
+import { MemoryNotice } from '@/components/MemoryNotice';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import {
   BlockedEndpointNotice, RefusedNotice, SignInNeededNotice, blockedEndpoint, isRefusal, signInNeeded,
@@ -83,6 +84,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
               </details>
               {tool.status !== 'running' && isRefusal(tool.result) && <RefusedNotice result={tool.result} />}
               {tool.status !== 'running' && signInNeeded(tool.result) && <SignInNeededNotice app={signInNeeded(tool.result)!} />}
+              {tool.status === 'done' && <MemoryNotice toolName={tool.name} result={tool.result} />}
               {tool.artifacts?.map((artifact) => (
                 <ArtifactPreview
                   key={artifact.id}

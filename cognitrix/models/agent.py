@@ -135,6 +135,12 @@ class Agent(Model):
     True: may use Schedule Next Check) and max_runs_per_day (int or None: the
     default cap for its tasks that don't set their own)."""
 
+    memory: dict[str, Any] = Field(default_factory=dict)
+    """Saved-memory settings for this agent: read_global (bool, default True:
+    sees the person's global memories) and save_global (bool: its saves go to
+    global memory; unset means only the person's first agent does). See
+    cognitrix/memory/saved.py."""
+
     @field_validator('description', 'sub_agent_model', mode='before')
     @classmethod
     def _text_default(cls, value):
@@ -145,7 +151,7 @@ class Agent(Model):
     def _sub_agents_default(cls, value):
         return True if value is None else value
 
-    @field_validator('reviewer', 'coding_agents', 'automation', mode='before')
+    @field_validator('reviewer', 'coding_agents', 'automation', 'memory', mode='before')
     @classmethod
     def _dict_default(cls, value):
         if value in (None, ''):

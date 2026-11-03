@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -376,6 +375,25 @@ class Session(Model):
                         })
             except Exception:
                 pass
+
+        # Memory lets the agent save, update and forget what it remembers about
+        # the person. Added per turn for signed-in chats while memory is on.
+        if interface in ('web', 'ws') and self.user_id and not self.task_id:
+            try:
+                from cognitrix.memory.saved import get_settings
+
+                names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
+                enabled = (await get_settings(str(self.user_id))).enabled
+                if enabled and 'memory' not in names:
+                    from cognitrix.tools.base import ToolManager
+                    memory_tool = ToolManager.get_by_name('memory')
+                    if memory_tool:
+                        agent = agent.model_copy(update={'tools': [*agent.tools, memory_tool]})
+                elif not enabled and 'memory' in names:
+                    agent = agent.model_copy(update={
+                        'tools': [t for t in agent.tools if str(getattr(t, 'name', '')).lower() != 'memory']})
+            except Exception:
+                logger.debug('Memory tool unavailable', exc_info=True)
 
         # Bash's background mode and the Coding Agent tool need the two
         # background helpers; agents that have either get them for the turn
@@ -879,36 +897,6 @@ class Session(Model):
                     await self._maybe_compact(agent)
                 except Exception:
                     logger.exception("History compaction failed; keeping history as-is")
-
-            # Add to agent's memory
-            # (This used to check hasattr(agent, 'context_manager'), which is
-            # never set, so nothing was ever written to long-term memory.)
-            context_manager = None
-            if persist_history and hasattr(agent, 'get_context_manager'):
-                try:
-                    context_manager = agent.get_context_manager()
-                except Exception:
-                    logger.exception("Could not load the agent's memory")
-            if context_manager is not None and hasattr(context_manager, 'add_to_memory'):
-                try:
-                    if isinstance(message, str) and message:
-                        await context_manager.add_to_memory({
-                            'role': 'user',
-                            'type': 'text',
-                            'content': message,
-                        }, user_id=self.user_id)
-                    reply = getattr(response, 'llm_response', None) if response else None
-                    if isinstance(reply, str):
-                        # Reasoning is scratch work, not something to recall later.
-                        reply = re.sub(r'<think>.*?</think>', '', reply, flags=re.DOTALL).strip()
-                    if isinstance(reply, str) and reply and not getattr(response, 'error', None):
-                        await context_manager.add_to_memory({
-                            'role': 'assistant',
-                            'type': 'text',
-                            'content': reply,
-                        }, user_id=self.user_id)
-                except Exception as e:
-                    logger.error(f"Failed to add to memory: {e}")
 
         except asyncio.CancelledError:
             if record_history:

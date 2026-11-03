@@ -1,11 +1,11 @@
 import { useId, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import ModelPicker from '@/components/ModelPicker';
 import { BASE_URLS, MODELS, PROVIDERS, PROVIDER_LABELS, ignoresTemperature } from '@/lib/providers';
 import { REASONING_LEVELS } from '@/lib/reasoning';
 import { handleFor, payloadFrom, promptSummary, type TabProps } from '@/lib/agentDraft';
-import { Card, Eyebrow, buttonClass, inputClass } from '@/components/agent/ui';
+import { Card, Check, Eyebrow, buttonClass, inputClass, linkButtonClass } from '@/components/agent/ui';
 import { cn } from '@/lib/utils';
 
 const labelClass = 'flex flex-col gap-1.5 text-[13px] font-medium';
@@ -132,6 +132,28 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
           placeholder="You are a helpful assistant that…"
           className="w-full resize-y rounded border border-line bg-bg p-3 font-mono text-[12.5px] leading-relaxed text-fg placeholder:text-fg-dim focus:border-accent" />
         <div className="mt-1.5 text-[12px] text-fg-dim">{words} {words === 1 ? 'word' : 'words'}</div>
+      </Card>
+
+      <Card
+        title="Memory"
+        description="Notes this agent keeps about you between chats."
+        aside={<Link to="/settings/memory" className={linkButtonClass}>See memories</Link>}
+      >
+        <div className="flex flex-col gap-4">
+          <Check
+            checked={draft.memoryReadGlobal}
+            onChange={(memoryReadGlobal) => update({ memoryReadGlobal })}
+            label="Use your shared memories"
+            detail="Off for agents that shouldn't know personal details about you. It still keeps its own notes."
+          />
+          <Check
+            checked={draft.memoryReadGlobal && draft.memorySaveGlobal}
+            disabled={!draft.memoryReadGlobal}
+            onChange={(memorySaveGlobal) => update({ memorySaveGlobal })}
+            label="Save new memories for all agents"
+            detail="Off keeps what it learns to itself. You can move any memory between agents in Settings › Memory."
+          />
+        </div>
       </Card>
 
       <Card>

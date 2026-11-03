@@ -6,7 +6,7 @@ from cognitrix.tools.http import http_request, list_credentials
 from cognitrix.tools.image import generate_image
 from cognitrix.tools.management import assign_task, create_new_team, create_task, delete_task, update_task
 from cognitrix.tools.mcp import list_mcp_tools, run_mcp_tool
-from cognitrix.tools.question import ask_user
+from cognitrix.tools.memory import memory
 from cognitrix.tools.misc import (
     Edit,
     Glob,
@@ -25,6 +25,7 @@ from cognitrix.tools.misc import (
     list_agents,
     open_file,
 )
+from cognitrix.tools.question import ask_user
 from cognitrix.tools.skill_tool import load_skill
 from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import ToolCallResult
@@ -49,4 +50,5 @@ __all__ = [
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',
     'request_folder',
     'start_chat', 'check_chat', 'message_chat',
+    'memory',
 ]

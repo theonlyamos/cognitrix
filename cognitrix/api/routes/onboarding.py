@@ -171,6 +171,7 @@ async def _create_assistant(user: User, name: str, llm: LLM) -> Agent:
         system_prompt=default_assistant_prompt(getattr(user, 'name', None)),
         tools=list(ToolManager.list_all_tools()),
         owner_id=agent_access.owner_key(user),
+        memory={'save_global': True},
     )
     await agent.save()
     logger.info('Created default assistant %s for user %s', agent.id, agent.owner_id)

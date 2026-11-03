@@ -143,8 +143,19 @@ async def test_memories_are_tagged_and_retrieved_per_user(monkeypatch):
         return [{'role': 'system', 'content': 'sys'}]
 
     mgr.short_term.build_prompt = short_term
-    await mgr.build_prompt(FakeAgent(), FakeSession())
-    assert filters == [{'user_id': 'u2'}]
+    seen = []
+
+    async def prompt_block(user_id, agent, query=''):
+        seen.append((user_id, query))
+        return '## What you remember about the user\n- Codename is Falcon.'
+
+    monkeypatch.setattr('cognitrix.memory.saved.prompt_block', prompt_block)
+    prompt = await mgr.build_prompt(FakeAgent(), FakeSession())
+    # The old raw-message store is no longer read; saved memories for the
+    # chat's own person go in instead.
+    assert filters == []
+    assert seen == [('u2', 'what is my codename?')]
+    assert 'Codename is Falcon.' in prompt[0]['content']
 
 
 # --- Fresh database ------------------------------------------------------------

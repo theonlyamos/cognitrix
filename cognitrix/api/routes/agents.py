@@ -384,6 +384,7 @@ def _check_folders(agent: Agent, data: dict, existing: Agent | None) -> None:
 _POLICY_DEFAULTS = {
     'description': '', 'reviewer': {}, 'coding_agents': {}, 'credentials': None,
     'can_create_sub_agents': True, 'sub_agent_model': '', 'automation': {},
+    'memory': {},
 }
 
 
@@ -428,6 +429,9 @@ def _check_policy(agent: Agent, data: dict, existing: Agent | None) -> None:
                 status_code=400, detail=f'max_runs_per_day must be between 1 and {MAX_RUNS_PER_DAY_LIMIT}')
         cleaned['max_runs_per_day'] = cap
     agent.automation = cleaned
+    from cognitrix.memory.saved import memory_policy
+
+    agent.memory = memory_policy(agent)
 
 
 @agents_api.get('')
@@ -1095,8 +1099,13 @@ async def agent_overview(agent_id: str, ctx: AuthContext = Depends(get_auth_cont
 @agents_api.get('/{agent_id}')
 async def load_agent(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
     agent = await _visible_agent_or_404(agent_id, ctx)
+    data = redact_secrets(agent.json())
+    if isinstance(data, dict):
+        from cognitrix.memory.saved import agent_saves_global
 
-    return redact_secrets(agent.json())
+        # What "save to global memory" is when the agent page never set it.
+        data['memory_saves_global'] = await agent_saves_global(agent)
+    return data
 
 @agents_api.delete('/{agent_id}')
 async def delete_agent(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
