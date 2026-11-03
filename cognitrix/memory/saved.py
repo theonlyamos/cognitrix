@@ -306,7 +306,10 @@ async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: st
         pinned=bool(pinned), created=stamp, updated=stamp,
     )
     await row.save()
-    saved = await Memory.find_one({'user_id': str(user_id), 'created': stamp, 'content': text})
+    if row.id:
+        return row, True
+    saved = await Memory.find_one({'user_id': str(user_id), 'created': stamp, 'content': text,
+                                   'scope': row.scope, 'agent_id': row.agent_id})
     return saved or row, True
 
 

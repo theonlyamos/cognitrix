@@ -424,3 +424,14 @@ async def test_new_web_chat_is_owned_and_can_start_incognito(db, monkeypatch):
     hidden = await manager._resolve_session(None, incognito=True)
     assert plain.user_id == 'person-1' and not plain.incognito
     assert hidden.user_id == 'person-1' and hidden.incognito is True
+
+
+async def test_same_fact_in_two_scopes_returns_each_new_row(db):
+    from cognitrix.memory import saved
+
+    user = await _user('Amos', 'amos@example.com')
+    first, _ = await saved.add(str(user.id), 'Uses pnpm.')
+    second, created = await saved.add(str(user.id), 'Uses pnpm.', scope='agent', agent_id='a1')
+    assert created and second.id != first.id and second.scope == 'agent'
+    stored = await saved.get_memory(str(user.id), str(second.id))
+    assert stored is not None and stored.scope == 'agent'

@@ -47,14 +47,17 @@ export function MemorySettings() {
   if (loadError) return <p role="alert" className="text-[12.5px] text-danger-ink">{loadError}</p>;
   if (!data) return <p className="text-[13px] text-fg-dim">Loading…</p>;
 
-  const run = async (fn: () => Promise<unknown>, fallback: string) => {
+  /** Runs fn, then reloads. Resolves true on success, false after showing the error. */
+  const run = async (fn: () => Promise<unknown>, fallback: string): Promise<boolean> => {
     setBusy(true);
     setError(null);
     try {
       await fn();
       await load();
+      return true;
     } catch (e) {
       setError(errorMessage(e, fallback));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -193,7 +196,7 @@ function MemoryRow({ memory, agents, busy, highlighted, maxChars, onSave, onPin,
   busy: boolean;
   highlighted: boolean;
   maxChars: number;
-  onSave: (content: string, scope: MemoryScope, agentId: string | null) => Promise<void>;
+  onSave: (content: string, scope: MemoryScope, agentId: string | null) => Promise<boolean>;
   onPin: () => void;
   onDelete: () => void;
 }) {
@@ -203,7 +206,7 @@ function MemoryRow({ memory, agents, busy, highlighted, maxChars, onSave, onPin,
       <li className="p-2">
         <MemoryForm agents={agents} busy={busy} maxChars={maxChars} initial={memory}
           onCancel={() => setEditing(false)}
-          onSave={(content, scope, agentId) => void onSave(content, scope, agentId).then(() => setEditing(false))} />
+          onSave={(content, scope, agentId) => void onSave(content, scope, agentId).then((ok) => { if (ok) setEditing(false); })} />
       </li>
     );
   }
