@@ -21,6 +21,7 @@ export interface SavedMemory {
 
 export interface MemorySettings {
   enabled: boolean;
+  history_enabled: boolean;
   auto_save: AutoSave;
 }
 

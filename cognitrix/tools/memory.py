@@ -59,6 +59,14 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
     user_id = _owner()
     if not user_id:
         return ToolOutcome.failure('no_owner', 'Memory works in chats with a signed-in person only.')
+    ctx = current_execution_context()
+    if ctx.session_id:
+        from cognitrix.sessions.base import Session
+
+        current = await Session.get(str(ctx.session_id))
+        if current is not None and getattr(current, 'incognito', False):
+            return ToolOutcome.failure(
+                'incognito', "This is an incognito chat: memory can't be read or changed here.")
     settings = await saved.get_settings(user_id)
     if not settings.enabled:
         return ToolOutcome.failure('memory_off', 'This person has turned memory off in Settings.')
@@ -66,7 +74,6 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
     # Models often say "add" or "user"; read the obvious meaning instead of failing.
     action = _ACTIONS.get(str(action or '').strip().lower().replace(' ', '_'), str(action or '').strip().lower())
     agent_id = str(getattr(parent, 'id', '') or '')
-    ctx = current_execution_context()
     try:
         if action == 'save':
             if settings.auto_save == 'explicit':

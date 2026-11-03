@@ -86,6 +86,9 @@ async def start_chat(message: str, agent: str = '', report_back: bool = True, *,
         text = _message(message)
         ctx = current_execution_context()
         current = await Session.get(ctx.session_id) if ctx.session_id else None
+        if current is not None and getattr(current, 'incognito', False):
+            raise AgentChatError(
+                'incognito', "This is an incognito chat, so it can't start other chats that would be saved.")
         depth = agent_chats.depth_of(current) + 1 if current is not None else 1
         if depth > agent_chats.MAX_DEPTH:
             raise AgentChatError(

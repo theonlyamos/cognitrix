@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import logging
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -36,6 +38,8 @@ from cognitrix.session_ownership import (
 from cognitrix.sessions.access import visible_sessions
 from cognitrix.sessions.base import Session
 from cognitrix.tasks.run import TaskRun, run_acl_allowed
+
+logger = logging.getLogger('cognitrix.log')
 
 sessions_api = APIRouter(
     prefix='/sessions',
@@ -285,7 +289,7 @@ async def _owned_sessions(
 @sessions_api.get('')
 async def get_all_sessions(ctx: AuthContext = Depends(get_auth_context)):
     sessions = await _visible_remote_sessions(list(await Session.all()), ctx)
-    return JSONResponse([session.json() for session in sessions])
+    return JSONResponse([session.json() for session in sessions if not getattr(session, 'incognito', False)])
 
 
 @sessions_api.post('')
@@ -362,9 +366,10 @@ async def all_chats(ctx: AuthContext = Depends(get_auth_context)):
         run = chat_runs.get_run(run_key, session_id)
         return bool(run and run.running)
 
+    await _sweep_incognito(ctx)
     chats: list[dict[str, Any]] = []
     for session in await _owned_sessions(ctx):
-        if session.task_id or session.run_id or session.group_chat:
+        if session.task_id or session.run_id or session.group_chat or getattr(session, 'incognito', False):
             continue
         chats.append({
             **_session_summary(session),
@@ -477,6 +482,36 @@ async def delete_session(
     session_id: str,
     ctx: AuthContext = Depends(get_auth_context),
 ):
+    await _delete_owned(session_id, ctx)
+    return JSONResponse({'message': 'Session deleted successfully'})
+
+
+INCOGNITO_MAX_AGE = timedelta(hours=24)
+
+
+async def _sweep_incognito(ctx: AuthContext) -> None:
+    """Delete this person's incognito chats left for more than a day (the
+    browser normally deletes one as soon as the person leaves it)."""
+    user_id = principal_key(ctx.user)
+    cutoff = datetime.now() - INCOGNITO_MAX_AGE
+    for session in await Session.find({'user_id': user_id}):
+        if not getattr(session, 'incognito', False):
+            continue
+        updated = getattr(session, 'updated_at', None)
+        if isinstance(updated, str):
+            try:
+                updated = datetime.fromisoformat(updated)
+            except ValueError:
+                updated = None
+        if isinstance(updated, datetime) and updated.replace(tzinfo=None) > cutoff:
+            continue
+        try:
+            await _delete_owned(str(session.id), ctx)
+        except Exception:
+            logger.debug('Could not delete old incognito chat %s', session.id, exc_info=True)
+
+
+async def _delete_owned(session_id: str, ctx: AuthContext) -> None:
     token, _, resumed = await _begin_owned_lifecycle(session_id, ctx, 'delete')
     try:
         await _cleanup_for_token(token)
@@ -492,7 +527,6 @@ async def delete_session(
         # Once the durable lifecycle state is visible, cleanup may have made
         # partial progress. Keep DELETING for exact idempotent recovery.
         raise
-    return JSONResponse({'message': 'Session deleted successfully'})
 
 
 # Browser-session plumbing rejects API keys, but still consumes the same cached
@@ -586,7 +620,7 @@ async def sessions_by_agent(
     )
     if exclude_tasks:
         sessions = [session for session in sessions if not session.task_id]
-    return [_session_summary(session) for session in sessions]
+    return [_session_summary(session) for session in sessions if not getattr(session, 'incognito', False)]
 
 
 @sessions_api.get('/teams/{team_id}')

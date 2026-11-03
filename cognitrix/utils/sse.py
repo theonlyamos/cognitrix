@@ -334,7 +334,7 @@ class SSEManager:
                     task.cancel()
             await asyncio.gather(*wait_tasks, return_exceptions=True)
 
-    async def _resolve_session(self, session_id: str | None) -> Session | None:
+    async def _resolve_session(self, session_id: str | None, *, incognito: bool = False) -> Session | None:
         """Resolve the conversation for a chat action.
 
         - id given and found: that conversation (agent_id backfilled if empty).
@@ -342,7 +342,8 @@ class SSEManager:
           error tagged with the requested id and skip the action. Falling back
           to another session would silently persist the turn into the wrong
           conversation.
-        - no id: a fresh conversation; the client adopts its id from the
+        - no id: a fresh conversation owned by this person (``incognito``
+          marks it before its first turn); the client adopts its id from the
           tagged reply events.
         """
         user_id = str(self.user_key or '').strip()
@@ -362,7 +363,7 @@ class SSEManager:
                 raise OwnershipNotFound()
             return session
 
-        session = Session(agent_id=agent_id)
+        session = Session(agent_id=agent_id, user_id=user_id, incognito=True if incognito else None)
         created_id: str | None = None
         try:
             await _settle_mutation(session.save())
@@ -631,7 +632,11 @@ class SSEManager:
                 raise MediaValidationError('Staged attachments are unavailable')
 
             try:
-                session = await self._resolve_session(requested_sid)
+                session = await (
+                    self._resolve_session(requested_sid, incognito=True)
+                    if action.get('incognito') and not requested_sid
+                    else self._resolve_session(requested_sid)
+                )
                 # Folders picked before the first message of a new chat (already
                 # checked by the chat endpoint) replace the agent's defaults.
                 if session is not None and not requested_sid and action.get('folders') is not None:

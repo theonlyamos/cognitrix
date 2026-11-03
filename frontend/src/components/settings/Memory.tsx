@@ -75,6 +75,10 @@ export function MemorySettings() {
           <Toggle label="Use saved memories" checked={settings.enabled} disabled={busy}
             onChange={(enabled) => void run(() => saveMemorySettings({ enabled }), 'Could not change the setting.')} />
         </SettingRow>
+        <SettingRow label="Reference chat history" detail="Agents can search and read your past chats when you mention earlier work. Incognito chats are never searched.">
+          <Toggle label="Reference chat history" checked={settings.history_enabled} disabled={busy}
+            onChange={(history_enabled) => void run(() => saveMemorySettings({ history_enabled }), 'Could not change the setting.')} />
+        </SettingRow>
         <SettingRow
           label="Save new memories"
           detail={settings.auto_save === 'auto'
@@ -178,7 +182,7 @@ function origin(m: SavedMemory) {
   const when = timeAgo(m.updated || m.created);
   if (m.source === 'user') return <>You added this · {when}</>;
   if (m.source_session_id) {
-    return <>Saved in <Link to={`/?chat=${encodeURIComponent(m.source_session_id)}`} className="hover:text-fg hover:underline">a chat</Link> · {when}</>;
+    return <>Saved in <Link to={`/home?chat=${encodeURIComponent(m.source_session_id)}`} className="hover:text-fg hover:underline">a chat</Link> · {when}</>;
   }
   return <>Saved by an agent · {when}</>;
 }

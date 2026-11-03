@@ -648,6 +648,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'reasoning_effort': normalize_reasoning_effort(data.get('reasoning_effort')),
                 'execution_mode': execution_mode.value,
                 **({'folders': folders} if folders is not None else {}),
+                **({'incognito': True} if data.get('incognito') and not data.get('session_id') else {}),
             })
         except BaseException:
             try:
@@ -996,7 +997,8 @@ async def agent_overview(agent_id: str, ctx: AuthContext = Depends(get_auth_cont
     chats: list[dict] = []
     try:
         sessions = await _visible_remote_sessions(list(await Session.find({'agent_id': agent_id})), ctx)
-        chats = [_session_summary(s) for s in sessions if not s.task_id and not getattr(s, 'group_chat', False)]
+        chats = [_session_summary(s) for s in sessions
+                 if not s.task_id and not getattr(s, 'group_chat', False) and not getattr(s, 'incognito', False)]
     except Exception:
         logger.exception('Could not list chats for agent %s', agent_id)
     for chat in chats:

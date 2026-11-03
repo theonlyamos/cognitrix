@@ -412,6 +412,7 @@ _SESSION_MIGRATION_COLUMNS = (
     ('folders', 'TEXT'),
     ('group_chat', 'BOOLEAN'),
     ('started_by', 'TEXT'),
+    ('incognito', 'BOOLEAN'),
 )
 
 _TASKRUN_INDEXES = (

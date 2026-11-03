@@ -47,11 +47,13 @@ class MemorySettings(Model):
     user_id: str
     enabled: bool = True
     """Master switch: off means agents neither read nor save memories."""
+    history_enabled: bool = True
+    """Agents may search and read this person's past chats (Search Chats / Read Chat)."""
     auto_save: str = 'auto'
     """``auto``: agents save what seems worth keeping (a note shows in the
     chat). ``explicit``: only when the person asks them to remember something."""
 
-    @field_validator('enabled', mode='before')
+    @field_validator('enabled', 'history_enabled', mode='before')
     @classmethod
     def _enabled_default(cls, value):
         return True if value is None else bool(value)

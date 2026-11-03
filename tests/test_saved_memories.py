@@ -283,7 +283,7 @@ async def test_api_crud_and_privacy(db):
 
     listed = await routes.list_memories(ctx=_ctx(amos))
     assert [m['content'] for m in listed['memories']] == ['Prefers short answers.']
-    assert listed['settings'] == {'enabled': True, 'auto_save': 'auto'}
+    assert listed['settings'] == {'enabled': True, 'history_enabled': True, 'auto_save': 'auto'}
     assert (await routes.list_memories(ctx=_ctx(bea)))['memories'] == []
 
     with pytest.raises(HTTPException) as other:
@@ -294,7 +294,7 @@ async def test_api_crud_and_privacy(db):
     assert edited['pinned'] and edited['content'] == 'Prefers very short answers.'
 
     settings = await routes.put_settings(routes.SettingsBody(auto_save='explicit'), _ctx(amos))
-    assert settings == {'enabled': True, 'auto_save': 'explicit'}
+    assert settings == {'enabled': True, 'history_enabled': True, 'auto_save': 'explicit'}
 
     with pytest.raises(HTTPException):
         await routes.delete_all(routes.DeleteAll(), _ctx(amos))
@@ -323,3 +323,104 @@ async def test_tool_reads_common_wording(db):
         assert 'forgotten' in gone.content
     finally:
         reset_execution_context(token)
+
+
+# --- phase 2: incognito chats and chat history ----------------------------------------
+
+async def _chat(user, agent_id, texts, **fields):
+    from cognitrix.sessions.base import Session
+
+    chat = []
+    for i, text in enumerate(texts):
+        chat.append({'role': 'user' if i % 2 == 0 else 'assistant', 'type': 'text', 'content': text})
+    session = Session(agent_id=agent_id, user_id=str(user.id), chat=chat, **fields)
+    await session.save()
+    return session
+
+
+async def test_search_and_read_past_chats(db):
+    from cognitrix.tools.base import ToolManager
+    from cognitrix.tools.utils import reset_execution_context
+
+    amos = await _user('Amos', 'amos@example.com')
+    bea = await _user('Bea', 'bea@example.com')
+    old = await _chat(amos, 'a1', ['Help me plan the Lisbon offsite budget', 'Sure: venue 4k, flights 6k.'])
+    await _chat(amos, 'a1', ['Secret Lisbon surprise party'], incognito=True)
+    await _chat(amos, 'a1', ['Lisbon task step'], task_id='t1')
+    await _chat(bea, 'a1', ['Bea also went to Lisbon'])
+    current = await _chat(amos, 'a1', ['What did we decide about Lisbon?'])
+
+    search = ToolManager.get_by_name('search_chats')
+    read = ToolManager.get_by_name('read_chat')
+    token = _as(amos, session_id=str(current.id))
+    try:
+        found = await search.run(query='lisbon budget', parent=_agent('a1'))
+        assert str(old.id) in found.content and 'budget' in found.content
+        # Only the person's own, saved, ordinary chats, and never the current one.
+        assert 'surprise' not in found.content and 'task step' not in found.content
+        assert 'Bea' not in found.content and str(current.id) not in found.content
+
+        page = await read.run(chat_id=str(old.id), parent=_agent('a1'))
+        assert 'venue 4k, flights 6k' in page.content and 'Messages 0-1 of 2' in page.content
+
+        recent = await search.run(query='', parent=_agent('a1'))
+        assert str(old.id) in recent.content
+
+        # An agent that doesn't read shared memory only sees its own chats.
+        other = await search.run(query='lisbon', parent=_agent('a2', read_global=False))
+        assert 'No past chats match' in other.content
+    finally:
+        reset_execution_context(token)
+
+
+async def test_incognito_chat_has_no_memory(db):
+    from cognitrix.memory import saved
+    from cognitrix.tools.utils import reset_execution_context
+
+    user = await _user('Amos', 'amos@example.com')
+    await saved.add(str(user.id), 'Prefers short answers.')
+    secret = await _chat(user, 'a1', ['Draft a resignation letter'], incognito=True)
+
+    token = _as(user, session_id=str(secret.id))
+    try:
+        result = await _run(_agent(save_global=True), action='save', content='Is resigning.')
+    finally:
+        reset_execution_context(token)
+    assert result.outcome.error.code == 'incognito'
+    assert len(await saved.list_memories(str(user.id))) == 1
+
+    from cognitrix.memory.hybrid_context import HybridContextManager
+
+    mgr = HybridContextManager.__new__(HybridContextManager)
+
+    async def short_term(_a, _s):
+        return [{'role': 'system', 'content': 'sys'}]
+
+    mgr.short_term = SimpleNamespace(build_prompt=short_term)
+    prompt = await mgr.build_prompt(SimpleNamespace(formatted_system_prompt=lambda: 'sys', id='a1', memory={}), secret)
+    assert 'Prefers short answers' not in prompt[0]['content']
+    assert '## Incognito chat' in prompt[0]['content']
+
+
+async def test_history_switch_is_saved(db):
+    from cognitrix.api.routes import memories as routes
+
+    user = await _user('Amos', 'amos@example.com')
+    settings = await routes.put_settings(routes.SettingsBody(history_enabled=False), _ctx(user))
+    assert settings['history_enabled'] is False and settings['enabled'] is True
+
+
+async def test_new_web_chat_is_owned_and_can_start_incognito(db, monkeypatch):
+    from cognitrix.utils import sse
+
+    async def fake_claim(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(sse.session_ownerships, 'claim_new', fake_claim)
+    manager = sse.SSEManager.__new__(sse.SSEManager)
+    manager.user_key = 'person-1'
+    manager.agent = type('A', (), {'id': 'agent-1'})()
+    plain = await manager._resolve_session(None)
+    hidden = await manager._resolve_session(None, incognito=True)
+    assert plain.user_id == 'person-1' and not plain.incognito
+    assert hidden.user_id == 'person-1' and hidden.incognito is True

@@ -1,5 +1,6 @@
 from cognitrix.tools.automation import notify_me, read_notes, schedule_next_check, update_notes
 from cognitrix.tools.base import Tool
+from cognitrix.tools.chat_history import read_chat, search_chats
 from cognitrix.tools.chats import check_chat, message_chat, start_chat
 from cognitrix.tools.folders import request_folder
 from cognitrix.tools.http import http_request, list_credentials
@@ -50,5 +51,5 @@ __all__ = [
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',
     'request_folder',
     'start_chat', 'check_chat', 'message_chat',
-    'memory',
+    'memory', 'search_chats', 'read_chat',
 ]

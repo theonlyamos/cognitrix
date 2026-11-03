@@ -1,10 +1,10 @@
 # Global memory
 
-Status: phase 1 built (saved memories, Memory tool, chat note with Undo, Settings > Memory, per-agent switches; old automatic memory retired). Phases 2 and 3 (incognito chats, chat history search, ask-first after reading web content, import/export) are not built yet.
+Status: phases 1 and 2 built. Phase 1: saved memories, Memory tool, chat note with Undo, Settings > Memory, per-agent switches; old automatic memory retired. Phase 2: incognito chats (toggle on a new chat; no memories read or saved, no chat search, hidden from chat lists, deleted when you leave or after 24 hours), Search Chats and Read Chat tools, and the "Reference chat history" switch in Settings > Memory. Phase 3 (ask-first after reading web content, import/export, converting old automatic memory, task access) is not built yet.
 
 Decisions (Nov 3 2026): agents save automatically with a visible note and Undo; the first agent (the sign-up assistant) saves to global memory, other agents keep their own notes; the old raw-message memory is no longer read or written; list of items rather than one summary.
 
-Phase 1 differs from the design in two ways: search over memories is word matching (no Chroma index yet), and the prompt budget is about 6,000 characters.
+Phase 1 differs from the design in two ways: search over memories is word matching (no Chroma index yet), and the prompt budget is about 6,000 characters. Phase 2's chat search is also word matching over your own chats; an agent that doesn't read global memory only searches its own chats.
 
 ---
 

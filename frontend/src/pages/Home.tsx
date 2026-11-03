@@ -368,6 +368,32 @@ export default function Home() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeSessionId;
+
+  // ── Incognito ──
+  // Picked before a new chat's first message. The chat isn't listed, doesn't
+  // use or change memory, and is deleted as soon as the person leaves it.
+  const [incognito, setIncognito] = useState(false);
+  const incognitoRef = useRef(false);
+  incognitoRef.current = incognito;
+  const incognitoSidRef = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = incognitoSidRef.current;
+    if (previous && activeSessionId !== previous) {
+      incognitoSidRef.current = null;
+      setIncognito(false);
+      api.delete(`/sessions/${encodeURIComponent(previous)}`).catch(() => { /* swept after a day */ });
+      return;
+    }
+    if (activeSessionId && incognitoRef.current && !previous) {
+      incognitoSidRef.current = activeSessionId;
+      // Never reopen it after a reload.
+      if (agentId) localStorage.setItem(sessionKey(agentId), '');
+    }
+  }, [activeSessionId, agentId]);
+  useEffect(() => () => {
+    const left = incognitoSidRef.current;
+    if (left) api.delete(`/sessions/${encodeURIComponent(left)}`).catch(() => {});
+  }, []);
   const waitingRef = useRef(false);
   waitingRef.current = waiting;
 
@@ -921,6 +947,7 @@ export default function Home() {
           ...(bypassRef.current ? { bypass_permissions: true } : {}),
           ...(reasoningRef.current ? { reasoning_effort: reasoningRef.current } : {}),
           ...(!activeRef.current && draftFoldersRef.current ? { folders: draftFoldersRef.current } : {}),
+          ...(!activeRef.current && incognitoRef.current ? { incognito: true } : {}),
         };
         if (pending.length) {
           const form = new FormData();
@@ -1000,6 +1027,7 @@ export default function Home() {
   const switchConversation = (id: string) => {
     setPicking(false);
     if (id === activeSessionId) return;
+    if (!incognitoSidRef.current) setIncognito(false);
     setMobileConversationsOpen(false);
     leaveRunningTurn();
     resetThreadState();
@@ -1007,6 +1035,7 @@ export default function Home() {
   };
 
   const newConversation = () => {
+    if (!incognitoSidRef.current) setIncognito(false);
     setMobileConversationsOpen(false);
     leaveRunningTurn();
     adoptSession(null);
@@ -1030,6 +1059,7 @@ export default function Home() {
 
   const switchAgent = (id: string) => {
     if (id === agentId) return;
+    if (!incognitoSidRef.current) setIncognito(false);
     setMobileConversationsOpen(false);
     leaveRunningTurn();
     setAgentId(id);
@@ -1258,6 +1288,15 @@ export default function Home() {
           aria-relevant="additions text"
           className="min-h-0 flex-1 overscroll-contain overflow-y-auto"
         >
+          {incognito && !picking && (
+            <div role="note" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-dashed border-[#ffb86b]/60 bg-[#ffb86b]/10 px-3 py-2 text-[12.5px] leading-relaxed sm:mx-6">
+              <svg aria-hidden="true" className="mt-0.5 flex-none text-[#b4691a] dark:text-[#ffb86b]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><path d="M3 3l18 18" /></svg>
+              <span>
+                <span className="font-medium">Incognito.</span> This chat isn't saved to your chat list, doesn't use or change
+                memory, and is deleted when you leave it.
+              </span>
+            </div>
+          )}
           {picking && agents.length > 0 ? (
             <StartChat agents={agents} teams={teams} recent={recentTargets} onPick={startChatWith} />
           ) : empty ? (
@@ -1561,6 +1600,19 @@ export default function Home() {
                 className={cn('flex min-h-11 items-center gap-1 transition-colors md:min-h-0', bypass ? 'text-danger-ink' : 'hover:text-fg')}
               >
                 <span>[{bypass ? '✓' : 'x'}]</span> auto-approve
+              </button>
+              <button
+                type="button"
+                onClick={() => setIncognito((v) => !v)}
+                disabled={!!activeSessionId}
+                aria-pressed={incognito}
+                title={activeSessionId
+                  ? (incognito ? 'This chat is incognito.' : 'Incognito can only be turned on for a new chat.')
+                  : "Incognito: the chat isn't listed, doesn't use or change memory, and is deleted when you leave it."}
+                className={cn('flex min-h-11 items-center gap-1 transition-colors disabled:cursor-default md:min-h-0',
+                  incognito ? 'text-[#b4691a] dark:text-[#ffb86b]' : 'hover:text-fg disabled:opacity-50 disabled:hover:text-fg-dim')}
+              >
+                <span>[{incognito ? '✓' : ' '}]</span> incognito
               </button>
               <div
                 title="How hard the model thinks before answering. Agent default uses the level set on the agent."

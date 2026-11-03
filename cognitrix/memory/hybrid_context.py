@@ -14,6 +14,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger('cognitrix.log')
 
+INCOGNITO_NOTE = (
+    "## Incognito chat\n"
+    "The person started this chat in incognito. You can't see their saved memories, and "
+    "nothing from this chat is remembered afterwards. If they ask you to remember something, "
+    "say it won't be kept because the chat is incognito. Don't write it to a file, notes or "
+    "any other place instead."
+)
+
 
 class ImportanceScorer:
     """Scores the importance of a message for memory storage."""
@@ -177,7 +185,7 @@ class HybridContextManager(BaseContextManager):
         # 2. Saved memories about this person (cognitrix/memory/saved.py).
         # The old automatic store (raw messages in Chroma) is no longer read.
         user_id = str(getattr(session, 'user_id', None) or '')
-        if user_id and not getattr(session, 'task_id', None):
+        if user_id and not getattr(session, 'task_id', None) and not getattr(session, 'incognito', False):
             query = ''
             for m in reversed(session.chat or []):
                 if str(m.get('role', '')).lower() == 'user' and m.get('type', 'text') == 'text':
@@ -191,6 +199,8 @@ class HybridContextManager(BaseContextManager):
                     system_content += "\n\n" + block
             except Exception:
                 logger.exception("Could not load saved memories")
+        if getattr(session, 'incognito', False):
+            system_content += "\n\n" + INCOGNITO_NOTE
 
         prompt_parts.append({
             'role': 'system',

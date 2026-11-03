@@ -36,7 +36,7 @@ const pnpm: SavedMemory = {
 };
 
 const list = (memories: SavedMemory[]): MemoryList => ({
-  memories, settings: { enabled: true, auto_save: 'auto' }, limit: 500, max_chars: 300,
+  memories, settings: { enabled: true, history_enabled: true, auto_save: 'auto' }, limit: 500, max_chars: 300,
 });
 
 beforeEach(() => {
@@ -92,7 +92,7 @@ describe('MemorySettings', () => {
   });
 
   it('turns memory off and deletes everything after confirming', async () => {
-    lib.saveMemorySettings.mockResolvedValue({ enabled: false, auto_save: 'auto' });
+    lib.saveMemorySettings.mockResolvedValue({ enabled: false, history_enabled: true, auto_save: 'auto' });
     lib.deleteAllMemories.mockResolvedValue(2);
     renderSettings();
     fireEvent.click(await screen.findByLabelText('Use saved memories'));

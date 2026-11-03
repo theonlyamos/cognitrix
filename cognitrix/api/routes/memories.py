@@ -33,6 +33,7 @@ class MemoryUpdate(BaseModel):
 
 class SettingsBody(BaseModel):
     enabled: bool | None = None
+    history_enabled: bool | None = None
     auto_save: Literal['auto', 'explicit'] | None = None
 
 
@@ -61,7 +62,7 @@ def _bad(exc: saved.MemoryError_) -> HTTPException:
 
 async def _settings_json(user_key: str) -> dict:
     row = await saved.get_settings(user_key)
-    return {'enabled': bool(row.enabled), 'auto_save': row.auto_save}
+    return {'enabled': bool(row.enabled), 'history_enabled': bool(row.history_enabled), 'auto_save': row.auto_save}
 
 
 @memories_api.get('')
@@ -101,7 +102,8 @@ async def get_settings(ctx: AuthContext = Depends(jwt_only)):
 async def put_settings(body: SettingsBody, ctx: AuthContext = Depends(jwt_only)):
     owner = _owner(ctx)
     try:
-        await saved.save_settings(owner, enabled=body.enabled, auto_save=body.auto_save)
+        await saved.save_settings(owner, enabled=body.enabled, auto_save=body.auto_save,
+                                  history_enabled=body.history_enabled)
     except saved.MemoryError_ as exc:
         raise _bad(exc) from None
     return await _settings_json(owner)

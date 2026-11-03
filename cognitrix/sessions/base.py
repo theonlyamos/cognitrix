@@ -160,6 +160,11 @@ class Session(Model):
     group_chat: bool | None = None
     """True for a team group chat (the user talking with every team member)"""
 
+    incognito: bool | None = None
+    """An incognito chat: agents don't read or change memory or search past
+    chats in it, it's left out of chat lists and history search, and it's
+    deleted when the person leaves it (or after a day)."""
+
     started_by: dict[str, Any] | None = None
     """Set when an agent started this chat: {agent_id, agent_name, session_id
     (the chat it was started from), depth, report_back, exchanges}"""
@@ -376,24 +381,35 @@ class Session(Model):
             except Exception:
                 pass
 
-        # Memory lets the agent save, update and forget what it remembers about
-        # the person. Added per turn for signed-in chats while memory is on.
-        if interface in ('web', 'ws') and self.user_id and not self.task_id:
+        # Memory (save, update, forget what the agent remembers about the
+        # person) and Search Chats / Read Chat (look through past chats) are
+        # added per turn for signed-in chats while their switches are on, and
+        # never in an incognito chat.
+        owner = self.user_id or getattr(tool_context, 'user_id', None)
+        if interface in ('web', 'ws') and owner and not self.task_id:
             try:
                 from cognitrix.memory.saved import get_settings
+                from cognitrix.tools.base import ToolManager
 
-                names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
-                enabled = (await get_settings(str(self.user_id))).enabled
-                if enabled and 'memory' not in names:
-                    from cognitrix.tools.base import ToolManager
-                    memory_tool = ToolManager.get_by_name('memory')
-                    if memory_tool:
-                        agent = agent.model_copy(update={'tools': [*agent.tools, memory_tool]})
-                elif not enabled and 'memory' in names:
-                    agent = agent.model_copy(update={
-                        'tools': [t for t in agent.tools if str(getattr(t, 'name', '')).lower() != 'memory']})
+                settings = await get_settings(str(owner))
+                incognito = bool(getattr(self, 'incognito', False))
+                wanted = {
+                    'memory': settings.enabled and not incognito,
+                    'search chats': settings.history_enabled and not incognito,
+                    'read chat': settings.history_enabled and not incognito,
+                }
+                tools = [t for t in agent.tools
+                         if wanted.get(str(getattr(t, 'name', '')).lower(), True)]
+                names = {str(getattr(t, 'name', '')).lower() for t in tools}
+                for name, on in wanted.items():
+                    if on and name not in names:
+                        extra = ToolManager.get_by_name(name.replace(' ', '_'))
+                        if extra:
+                            tools.append(extra)
+                if len(tools) != len(agent.tools) or any(a is not b for a, b in zip(tools, agent.tools, strict=False)):
+                    agent = agent.model_copy(update={'tools': tools})
             except Exception:
-                logger.debug('Memory tool unavailable', exc_info=True)
+                logger.debug('Memory tools unavailable', exc_info=True)
 
         # Bash's background mode and the Coding Agent tool need the two
         # background helpers; agents that have either get them for the turn
