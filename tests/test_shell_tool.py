@@ -294,55 +294,84 @@ def _full_shell_risk():
 
 
 @pytest.mark.asyncio
-async def test_full_shell_asks_even_with_auto_approve_and_remembered_approval():
+async def test_full_shell_asks_with_auto_approve_and_ignores_permanent_cache():
     from cognitrix.safety.approval_gate import ApprovalGate, ToolCall, resolve_web_approval, web_turn_ctx
 
     gate = ApprovalGate()
+    gate._save_permanent_cache = lambda: None
     call = ToolCall('Bash', {'command': 'claude --help'})
-    gate.session_cache.add(f"a1:{gate._hash_operation(call)}")
+    gate.permanent_cache.add(f"a1:{gate._hash_operation(call)}")
     emitted = []
 
     async def emit(payload):
         emitted.append(payload)
-        resolve_web_approval(payload['request_id'], approved=True, user_key='u1', remember=True)
+        resolve_web_approval(payload['request_id'], approved=True, user_key='u1')
 
     token = web_turn_ctx.set({'emit': emit, 'session_id': 's', 'bypass': True, 'user_key': 'u1'})
     try:
         result = await gate.check_approval(call, _full_shell_risk(), interface='web', timeout=5,
-                                           scope='a1', each_time=True)
+                                           scope='a1', person_only=True)
     finally:
         web_turn_ctx.reset(token)
     assert result.approved and not result.auto and not result.cached
-    assert emitted and emitted[0]['each_time'] is True
+    assert emitted
 
 
-@pytest.mark.asyncio
-async def test_agent_loop_asks_then_runs_full_shell_command(root, local, monkeypatch):
-    """Auto-approve on: a command outside the allowlist still gets a card,
-    and runs once the person approves it."""
+def _bash_agent():
     from cognitrix.agents.base import AgentManager
     from cognitrix.models.agent import Agent
     from cognitrix.providers.base import LLM
-    from cognitrix.safety.approval_gate import resolve_web_approval, web_turn_ctx
+    from cognitrix.safety.approval_gate import ApprovalGate
     from cognitrix.tools.base import ToolManager
 
     agent = Agent(name='s', llm=LLM(provider='openai', api_key='k-1234567890', model='m'),
                   tools=[ToolManager.get_by_name('Bash')], system_prompt='s')
     manager = AgentManager(agent)
+    manager.approval_gate = ApprovalGate()
+    manager.approval_gate._save_permanent_cache = lambda: None
+    return manager
+
+
+async def _call_bash(manager, command, answer):
+    """Run one Bash call with auto-approve on; ``answer`` is (approved, remember) or None."""
+    from cognitrix.safety.approval_gate import resolve_web_approval, web_turn_ctx
+
     asked = []
 
     async def emit(payload):
         if payload.get('type') == 'approval_request':
             asked.append(payload)
-            resolve_web_approval(payload['request_id'], approved=True, user_key='u1')
+            approved, remember = answer
+            resolve_web_approval(payload['request_id'], approved=approved, user_key='u1', remember=remember)
 
     token = web_turn_ctx.set({'emit': emit, 'session_id': 's', 'bypass': True, 'user_key': 'u1'})
     try:
-        results = await manager.call_tools(
-            [{'name': 'Bash', 'tool_call_id': 'c1', 'arguments': {'command': 'echo hi > made.txt'}}],
+        await manager.call_tools(
+            [{'name': 'Bash', 'tool_call_id': 'c1', 'arguments': {'command': command}}],
             interface='web',
         )
     finally:
         web_turn_ctx.reset(token)
-    assert asked and asked[0]['each_time'] is True
-    assert (root / 'made.txt').exists(), results
+    return asked
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_asks_then_runs_full_shell_command(root, local):
+    """Auto-approve on: a command outside the allowlist still gets a card,
+    and runs once the person approves it."""
+    manager = _bash_agent()
+    asked = await _call_bash(manager, 'echo hi > made.txt', (True, False))
+    assert asked
+    assert (root / 'made.txt').exists()
+
+
+@pytest.mark.asyncio
+async def test_approve_for_session_covers_the_same_full_shell_command(root, local):
+    manager = _bash_agent()
+    assert await _call_bash(manager, 'echo 1 >> log.txt', (True, True))
+    # Same command again: no card, and it runs.
+    assert not await _call_bash(manager, 'echo 1 >> log.txt', None)
+    assert (root / 'log.txt').read_text().split() == ['1', '1']
+    # A different command still asks.
+    assert await _call_bash(manager, 'echo 2 >> log.txt', (False, False))
+    assert (root / 'log.txt').read_text().split() == ['1', '1']

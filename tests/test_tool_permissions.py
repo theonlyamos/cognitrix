@@ -192,7 +192,7 @@ async def test_loop_runs_always_allowed_tools_without_asking(runner, monkeypatch
 async def test_loop_asks_for_ask_first_tools(runner, monkeypatch):
     seen = {}
 
-    async def gate(tool_call, risk, interface="cli", timeout=300.0, scope=None, each_time=False):
+    async def gate(tool_call, risk, interface="cli", timeout=300.0, scope=None, person_only=False):
         seen["risk"] = risk
         return ApprovalResult(approved=False)
 

@@ -161,7 +161,7 @@ class ApprovalGate:
         interface: str = 'cli',
         timeout: float = 300.0,
         scope: str | None = None,
-        each_time: bool = False,
+        person_only: bool = False,
     ) -> ApprovalResult:
         """
         Check if operation requires and receives approval.
@@ -173,9 +173,10 @@ class ApprovalGate:
             timeout: Timeout in seconds for approval
             scope: Isolation scope for the approval cache (e.g. agent/user id) so
                    one caller's approval never auto-approves another's operation.
-            each_time: The call only runs after a person approves it this time
-                   (the full shell). Remembered approvals and the browser's
-                   auto-approve toggle don't answer it; a person is asked.
+            person_only: The call only runs once a person approved it (the
+                   full shell). The browser's auto-approve toggle and the
+                   permanent cache don't answer it; a person is asked, unless
+                   they approved this exact call for the session.
 
         Returns:
             ApprovalResult
@@ -186,7 +187,7 @@ class ApprovalGate:
             return ApprovalResult(approved=True, auto=True)
 
         # Auto-approve low risk
-        if risk.risk_level == RiskLevel.LOW and not each_time:
+        if risk.risk_level == RiskLevel.LOW and not person_only:
             return ApprovalResult(approved=True, auto=True)
 
         # Durable workers have no interactive principal at execution time.
@@ -219,17 +220,19 @@ class ApprovalGate:
         # Cache keys are scoped so approvals don't leak across agents/users.
         scoped = f"{scope or 'global'}:{self._hash_operation(tool_call)}"
 
-        if not each_time and scoped in self.permanent_cache:
+        if not person_only and scoped in self.permanent_cache:
             return ApprovalResult(approved=True, cached=True)
 
-        if not each_time and scoped in self.session_cache:
+        # "Approve for session" is a person's answer, so it also covers the
+        # full shell for the same command in this session.
+        if scoped in self.session_cache:
             return ApprovalResult(approved=True, cached=True, remember=True)
 
         # Web bypass mode approves everything anyway; don't spend a review.
         # A call a person already refused goes back to the person.
         web_ctx = web_turn_ctx.get(None)
         bypass = (
-            not each_time
+            not person_only
             and interface in ('web', 'ws', 'websocket') and web_ctx and web_ctx.get('bypass')
         )
         if not bypass and scoped not in self.session_denied:
@@ -248,7 +251,7 @@ class ApprovalGate:
         if interface == 'cli':
             result = await self._cli_approval(tool_call, risk, timeout)
         elif interface in ('web', 'ws', 'websocket'):
-            result = await self._web_approval(tool_call, risk, timeout, each_time=each_time)
+            result = await self._web_approval(tool_call, risk, timeout, person_only=person_only)
         else:
             return ApprovalResult(approved=False, error=f"Unknown interface: {interface}")
 
@@ -256,8 +259,12 @@ class ApprovalGate:
             # The person said no; the reviewer must not approve it later.
             self.session_denied.add(scoped)
 
-        # Cache if approved (scoped). A call asked each time isn't remembered.
-        if result.approved and not each_time:
+        # Cache if approved (scoped). The full shell is only ever remembered
+        # for the session, never permanently.
+        if result.approved and person_only and (result.permanent or result.remember):
+            self.session_denied.discard(scoped)
+            self.session_cache.add(scoped)
+        elif result.approved:
             self.session_denied.discard(scoped)
             if result.permanent:
                 self.permanent_cache.add(scoped)
@@ -360,7 +367,7 @@ class ApprovalGate:
         tool_call: ToolCall,
         risk: RiskAssessment,
         timeout: float,
-        each_time: bool = False,
+        person_only: bool = False,
     ) -> ApprovalResult:
         """Interactive approval over the SSE chat stream.
 
@@ -373,7 +380,7 @@ class ApprovalGate:
         ctx = web_turn_ctx.get(None)
 
         if (
-            ctx and ctx.get('bypass') and not each_time
+            ctx and ctx.get('bypass') and not person_only
             and _normal_name(tool_call.tool_name) not in _NEVER_AUTO_APPROVED
         ):
             # Auto-approve tool calls only — the bash whitelist / sandbox-shell
@@ -405,8 +412,6 @@ class ApprovalGate:
                 'categories': risk.categories,
                 'details': risk.details,
                 'session_id': ctx.get('session_id'),
-                # The card hides "approve for session": it wouldn't be used.
-                'each_time': each_time,
             })
             return await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError:
