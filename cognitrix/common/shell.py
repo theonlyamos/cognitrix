@@ -34,9 +34,9 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from cognitrix.common.encoding import decode_output, utf8_child_env
 from cognitrix.common.safe_exec import CommandNotAllowed, build_argv
@@ -243,6 +243,29 @@ def plan_command(command: str, root: str | os.PathLike[str]) -> ShellPlan:
     return ShellPlan(kind='allowlisted', read_only=read_only, steps=steps)
 
 
+def is_truthy(value) -> bool:
+    """A model may send booleans as strings."""
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
+
+
+def plan_call(command: str, root: str | os.PathLike[str], background=False) -> ShellPlan:
+    """Like ``plan_command``, for a Bash call that may run in the background.
+
+    An allowlisted background job can only be one program; anything joined
+    with |, &&, || or ; has to go through the full shell (and so asks first).
+    """
+    plan = plan_command(command, root)
+    if plan.kind == 'allowlisted' and is_truthy(background) and (
+        len(plan.steps) != 1
+        or len(plan.steps[0].pipeline) != 1
+        or plan.steps[0].pipeline[0][0] in ('cd', 'pwd')
+    ):
+        return ShellPlan(kind='shell', reason='background commands joined with |, &&, || or ; need the full shell')
+    return plan
+
+
 def _split_builtin(text: str) -> list[str]:
     import shlex
     argv = shlex.split(text, posix=not IS_WINDOWS)
@@ -266,7 +289,10 @@ def shell_risk(params: dict | None) -> tuple[str, str]:
     from cognitrix.config import settings
 
     command = str((params or {}).get('command') or '')
-    plan = plan_command(command, Path(settings.tools_root).expanduser().resolve())
+    plan = plan_call(
+        command, Path(settings.tools_root).expanduser().resolve(),
+        (params or {}).get('run_in_background'),
+    )
     if plan.kind == 'shell':
         if shell_mode() == 'allowlist' and not sandbox_shell_enabled():
             # The tool refuses it without running anything; don't ask first.

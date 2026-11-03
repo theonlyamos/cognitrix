@@ -81,7 +81,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
                 </div>
               </div>
               </details>
-              {tool.status !== 'running' && isRefusal(tool.result) && <RefusedNotice />}
+              {tool.status !== 'running' && isRefusal(tool.result) && <RefusedNotice result={tool.result} />}
               {tool.status !== 'running' && signInNeeded(tool.result) && <SignInNeededNotice app={signInNeeded(tool.result)!} />}
               {tool.artifacts?.map((artifact) => (
                 <ArtifactPreview

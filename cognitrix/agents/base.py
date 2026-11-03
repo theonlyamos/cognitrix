@@ -22,7 +22,7 @@ from cognitrix.safety.destructive_ops import (
     RiskLevel,
     mcp_tool_risk,
 )
-from cognitrix.safety.permissions import decide_tool_call, visible_tools
+from cognitrix.safety.permissions import ToolDecision, decide_tool_call, needs_person, visible_tools
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
 from cognitrix.tools.utils import ToolCallResult, ToolOutcome
@@ -531,6 +531,13 @@ class AgentManager:
                     )
                     continue
 
+                # A full-shell Bash command runs only when a person approves
+                # this call, so the gate must ask them even when approvals are
+                # remembered or the chat's auto-approve is on.
+                full_shell = needs_person((assigned_tool, tool), args)
+                if full_shell and decision.action == 'run':
+                    decision = ToolDecision('ask', risk, decision.source, decision.reason)
+
                 if decision.action == 'ask':
                     risk = decision.risk
                     status_print(f"\n⚠️  Risk detected: {risk.risk_level.value}")
@@ -546,6 +553,7 @@ class AgentManager:
                             risk=risk,
                             interface=interface,
                             scope=str(self.agent.id),
+                            each_time=full_shell,
                         )
                     finally:
                         action_reviewer.agent_settings.reset(reviewer_token)

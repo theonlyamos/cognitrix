@@ -269,3 +269,80 @@ async def test_windows_allowlisted_builtins(root, local):
     assert 'hi' in await run(command='echo hi')
     assert 'a.txt' in await run(command='dir sub')
     assert 'alpha' in await run(command='type sub\\a.txt')
+
+
+# --- Asking before the full shell ---------------------------------------------
+
+def test_background_pipeline_plans_as_full_shell(root):
+    assert sh.plan_call('ls | wc -l', root, background=True).kind == 'shell'
+    assert sh.plan_call('ls | wc -l', root, background='false').kind == 'allowlisted'
+    assert sh.plan_call('ls', root, background=True).kind == 'allowlisted'
+    level, _ = sh.shell_risk({'command': 'ls | wc -l', 'run_in_background': True})
+    assert level == 'high'
+
+
+@pytest.mark.asyncio
+async def test_background_pipeline_runs_after_approval(root, local):
+    out = await run(command='echo hi | cat', run_in_background=True, approved=True)
+    assert out.startswith('Started in the background')
+
+
+def _full_shell_risk():
+    from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
+
+    return RiskAssessment(RiskLevel.HIGH, ['shell'], "Runs in the full shell (Command 'claude' isn't on the allowlist)")
+
+
+@pytest.mark.asyncio
+async def test_full_shell_asks_even_with_auto_approve_and_remembered_approval():
+    from cognitrix.safety.approval_gate import ApprovalGate, ToolCall, resolve_web_approval, web_turn_ctx
+
+    gate = ApprovalGate()
+    call = ToolCall('Bash', {'command': 'claude --help'})
+    gate.session_cache.add(f"a1:{gate._hash_operation(call)}")
+    emitted = []
+
+    async def emit(payload):
+        emitted.append(payload)
+        resolve_web_approval(payload['request_id'], approved=True, user_key='u1', remember=True)
+
+    token = web_turn_ctx.set({'emit': emit, 'session_id': 's', 'bypass': True, 'user_key': 'u1'})
+    try:
+        result = await gate.check_approval(call, _full_shell_risk(), interface='web', timeout=5,
+                                           scope='a1', each_time=True)
+    finally:
+        web_turn_ctx.reset(token)
+    assert result.approved and not result.auto and not result.cached
+    assert emitted and emitted[0]['each_time'] is True
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_asks_then_runs_full_shell_command(root, local, monkeypatch):
+    """Auto-approve on: a command outside the allowlist still gets a card,
+    and runs once the person approves it."""
+    from cognitrix.agents.base import AgentManager
+    from cognitrix.models.agent import Agent
+    from cognitrix.providers.base import LLM
+    from cognitrix.safety.approval_gate import resolve_web_approval, web_turn_ctx
+    from cognitrix.tools.base import ToolManager
+
+    agent = Agent(name='s', llm=LLM(provider='openai', api_key='k-1234567890', model='m'),
+                  tools=[ToolManager.get_by_name('Bash')], system_prompt='s')
+    manager = AgentManager(agent)
+    asked = []
+
+    async def emit(payload):
+        if payload.get('type') == 'approval_request':
+            asked.append(payload)
+            resolve_web_approval(payload['request_id'], approved=True, user_key='u1')
+
+    token = web_turn_ctx.set({'emit': emit, 'session_id': 's', 'bypass': True, 'user_key': 'u1'})
+    try:
+        results = await manager.call_tools(
+            [{'name': 'Bash', 'tool_call_id': 'c1', 'arguments': {'command': 'echo hi > made.txt'}}],
+            interface='web',
+        )
+    finally:
+        web_turn_ctx.reset(token)
+    assert asked and asked[0]['each_time'] is True
+    assert (root / 'made.txt').exists(), results

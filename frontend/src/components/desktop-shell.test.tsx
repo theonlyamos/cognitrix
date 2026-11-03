@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { blockedEndpoint, isRefusal } from './SafetyNotices';
+import { blockedEndpoint, isRefusal, refusalKind } from './SafetyNotices';
 import CommandPalette from './CommandPalette';
 import Inbox from '@/pages/Inbox';
 import { NotificationsProvider } from '@/context/NotificationsContext';
@@ -61,6 +61,11 @@ describe('desktop shell', () => {
     expect(isRefusal("Error: Command refused - '/etc' is outside the working folder '/home/me/Cognitrix'.")).toBe(true);
     expect(isRefusal("Error: Path '/etc/passwd' is outside the working directory")).toBe(true);
     expect(isRefusal('total 0')).toBe(false);
+    // A command that needed approval isn't blamed on the working folder.
+    const needsApproval = "Error: Needs approval - Command 'claude' isn't on the allowlist, so it has to run in the full shell";
+    expect(isRefusal(needsApproval)).toBe(true);
+    expect(refusalKind(needsApproval)).toBe('approval');
+    expect(refusalKind("Error: Command refused - '/etc' is outside the working folder '/home/me'.")).toBe('folder');
     expect(blockedEndpoint("base_url 'http://169.254.169.254/v1' is not a trusted endpoint for the server's openai key")).toBe(
       'http://169.254.169.254/v1',
     );

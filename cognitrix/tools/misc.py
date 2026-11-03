@@ -1602,7 +1602,8 @@ def bash(
         return f"Error: Invalid timeout value '{timeout}'. Must be an integer."
     timeout_s = max(1, min(timeout_s, sh.MAX_TIMEOUT))
 
-    plan = sh.plan_command(command, root)
+    run_in_background = sh.is_truthy(run_in_background)
+    plan = sh.plan_call(command, root, run_in_background)
     if plan.kind == 'shell':
         # The full shell needs this exact call approved by a person, or a
         # throwaway sandbox (COGNITRIX_SANDBOX_SHELL). Auto-approval, bypass
@@ -1617,9 +1618,10 @@ def bash(
             )
         elif not approved:
             return (
-                f"Error: Command refused - {plan.reason}, so it needs the full shell, which "
-                "only runs after the user approves this call (remembered approvals don't "
-                "count). Rewrite it with allowlisted commands or ask the user."
+                f"Error: Needs approval - {plan.reason}, so it has to run in the full shell, "
+                "which only runs once a person approves this exact call, and nobody was "
+                "asked here (for example an unattended run or COGNITRIX_AUTO_APPROVE). "
+                "Rewrite it with allowlisted commands, or ask the user to run it."
             )
 
     try:
@@ -1647,11 +1649,7 @@ bash = tool(category='system')(bash)
 
 def _bash_background(sh, plan, command: str, context, work_dir: Path, root: Path) -> str:
     if plan.kind == 'allowlisted':
-        if len(plan.steps) != 1 or len(plan.steps[0].pipeline) != 1 or plan.steps[0].pipeline[0][0] in ('cd', 'pwd'):
-            return (
-                "Error: Background commands that use |, &&, || or ; need the full shell. "
-                "Run a single command, or ask the user to approve the full shell."
-            )
+        # plan_call already sent anything longer than one program to the shell.
         try:
             argv = sh._resolve_program(plan.steps[0].pipeline[0], work_dir, sh.child_env())
         except FileNotFoundError as e:

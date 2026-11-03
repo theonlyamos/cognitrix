@@ -23,6 +23,8 @@ interface ApprovalRequest {
   params?: Record<string, unknown>;
   risk_level: string;
   details?: string;
+  /** Asked every time (the full shell): "approve for session" wouldn't be used. */
+  each_time?: boolean;
 }
 
 interface RunEvent {
@@ -463,7 +465,9 @@ export default function TeamChat() {
             )}
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               <button onClick={() => respondApproval(a.request_id, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent-ink md:min-h-0">approve</button>
-              <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">approve for session</button>
+              {!a.each_time && (
+                <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">approve for session</button>
+              )}
               <button onClick={() => respondApproval(a.request_id, false)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:min-h-0">deny</button>
             </div>
           </div>

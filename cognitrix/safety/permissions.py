@@ -144,7 +144,7 @@ class ToolDecision:
     reason: str = ''
 
 
-def _needs_person(tools: tuple, args: dict) -> bool:
+def needs_person(tools: tuple, args: dict) -> bool:
     """True when the tool itself only runs this call after a person approves it.
 
     Today that's Bash outside the allowlist (the full shell). ``tools`` is the
@@ -164,10 +164,15 @@ def _needs_person(tools: tuple, args: dict) -> bool:
 
         if sh.sandbox_shell_enabled() or sh.shell_mode() == 'allowlist':
             return False  # runs without a person, or is refused without running
-        plan = sh.plan_command(command, Path(settings.tools_root).expanduser().resolve())
+        plan = sh.plan_call(
+            command, Path(settings.tools_root).expanduser().resolve(), args.get('run_in_background'),
+        )
         return plan.kind == 'shell'
     except Exception:
         return True
+
+
+_needs_person = needs_person
 
 
 def _asking(risk: RiskAssessment, details: str) -> RiskAssessment:
@@ -202,7 +207,7 @@ def decide_tool_call(
         return ToolDecision('block', risk, source, f"'{name}' is set to never run for this agent")
 
     if level == 'allow':
-        if _needs_person((tool, runtime_tool), args):
+        if needs_person((tool, runtime_tool), args):
             return ToolDecision(
                 'ask', risk, source,
                 'The full shell needs a person to approve each command, even when the tool is always allowed',
