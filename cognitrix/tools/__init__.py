@@ -1,5 +1,6 @@
 from cognitrix.tools.automation import notify_me, read_notes, schedule_next_check, update_notes
 from cognitrix.tools.base import Tool
+from cognitrix.tools.chats import check_chat, message_chat, start_chat
 from cognitrix.tools.folders import request_folder
 from cognitrix.tools.http import http_request, list_credentials
 from cognitrix.tools.image import generate_image
@@ -47,4 +48,5 @@ __all__ = [
     'load_skill', 'ask_user',
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',
     'request_folder',
+    'start_chat', 'check_chat', 'message_chat',
 ]

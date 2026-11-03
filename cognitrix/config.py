@@ -401,6 +401,7 @@ _SESSION_MIGRATION_COLUMNS = (
     ('step_index', 'INTEGER'), ('step_title', 'TEXT'),
     ('folders', 'TEXT'),
     ('group_chat', 'BOOLEAN'),
+    ('started_by', 'TEXT'),
 )
 
 _TASKRUN_INDEXES = (

@@ -22,7 +22,7 @@ import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
 import type { PickTarget, PickerAgent, PickerTeam } from '@/lib/agentPicker';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
@@ -36,6 +36,8 @@ interface ConvoSummary {
   datetime?: string;
   updated_at?: string;
   message_count: number;
+  /** Set when an agent started this chat. */
+  started_by?: { agent_id: string; agent_name: string; session_id?: string | null } | null;
 }
 
 /** One row of the combined chat list: a chat with an agent or a team. */
@@ -812,6 +814,21 @@ export default function Home() {
     }, [loadConversation]),
   });
 
+  // A turn this page didn't send can start in the open chat (an agent-started
+  // chat replying back to it): attach to it once the run poll sees it.
+  // Each run is attached at most once: a run this page sent or already
+  // followed can linger in the poll for a moment after it ends.
+  const seenRunsRef = useRef(new Set<string>());
+  useEffect(() => {
+    const sid = activeSessionId;
+    if (!sid) return;
+    const fresh = chatRuns.filter((run) => run.session_id === sid && !seenRunsRef.current.has(run.run_id));
+    if (fresh.length === 0) return;
+    for (const run of fresh) seenRunsRef.current.add(run.run_id);
+    if (followSid || busy || approvals.length > 0) return;
+    void loadConversation(sid);
+  }, [chatRuns, activeSessionId, followSid, busy, approvals.length, loadConversation]);
+
   const { isConnected, error, reconnect, streamId, rotateStream } = useSSE({
     onMessage: handleStreamEvent,
     onError: useCallback((e: Error) => console.error('SSE error:', e), []),
@@ -1003,6 +1020,22 @@ export default function Home() {
     switchAgent(chat.agent_id);
   };
 
+  // /home?chat=<id> (from an Inbox alert) opens that chat once the list has it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedChat = searchParams.get('chat');
+  useEffect(() => {
+    if (!linkedChat || !allChatsData) return;
+    const chat = allChatsData.find((c) => c.id === linkedChat);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('chat');
+      return next;
+    }, { replace: true });
+    if (chat) openChat(chat);
+    // openChat changes every render; this runs once per link.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedChat, allChatsData]);
+
   // Start a fresh chat with an agent, or open a team's group chat.
   const startChatWith = (target: PickTarget) => {
     setPicking(false);
@@ -1090,6 +1123,11 @@ export default function Home() {
                     </div>
                   ) : (
                     <div className="mt-0.5 truncate font-mono text-[10.5px] text-fg-dim">{who ? `${who} · ` : ''}{fmtRelative(c.updated_at)}</div>
+                  )}
+                  {c.started_by && (
+                    <div className="mt-0.5 truncate font-mono text-[10.5px] text-fg-dim" data-testid={`started-by-${c.id}`}>
+                      started by {c.started_by.agent_name || 'an agent'}
+                    </div>
                   )}
                 </div>
               </SelectionRow>

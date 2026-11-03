@@ -88,6 +88,8 @@ _KNOWN_LOW = frozenset({
     'run_mcp_tool',  # the MCP action itself is checked in the agent loop
     # always-on agents: notes and alerts go to the run's own owner
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',
+    # chats agents start: their own risky tool calls still ask in that chat
+    'start_chat', 'check_chat', 'message_chat',
     # asking the person a question, images, screenshots
     'ask_user', 'ask_question', 'generate_image', 'take_screenshot',
     # background shells: reading output or stopping a shell the agent started
