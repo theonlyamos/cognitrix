@@ -176,7 +176,7 @@ async def prepare(client: Any, config: MCPServerConfig) -> str | None:
         config = await _with_saved_secrets(config)
     except ValueError as exc:
         logger.warning("MCP server '%s' can't use its saved credential: %s", config.name, exc)
-        return f"'{config.name}' can't use its saved sign-in: {exc}"
+        return f"'{config.name}' can't use its saved sign-in. Check the sign-in named in its headers under Settings › Agent access."
     try:
         if await client.connect_to_server(config):
             return None
