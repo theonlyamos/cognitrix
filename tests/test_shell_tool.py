@@ -332,8 +332,9 @@ def _bash_agent():
     return manager
 
 
-async def _call_bash(manager, command, answer):
-    """Run one Bash call with auto-approve on; ``answer`` is (approved, remember) or None."""
+async def _call_bash(manager, command, answer, session='s'):
+    """Run one Bash call with auto-approve on; ``answer`` is
+    (approved, remember[, remember_shell]) or None."""
     from cognitrix.safety.approval_gate import resolve_web_approval, web_turn_ctx
 
     asked = []
@@ -341,10 +342,11 @@ async def _call_bash(manager, command, answer):
     async def emit(payload):
         if payload.get('type') == 'approval_request':
             asked.append(payload)
-            approved, remember = answer
-            resolve_web_approval(payload['request_id'], approved=approved, user_key='u1', remember=remember)
+            approved, remember, *rest = answer
+            resolve_web_approval(payload['request_id'], approved=approved, user_key='u1',
+                                 remember=remember, remember_shell=bool(rest and rest[0]))
 
-    token = web_turn_ctx.set({'emit': emit, 'session_id': 's', 'bypass': True, 'user_key': 'u1'})
+    token = web_turn_ctx.set({'emit': emit, 'session_id': session, 'bypass': True, 'user_key': 'u1'})
     try:
         await manager.call_tools(
             [{'name': 'Bash', 'tool_call_id': 'c1', 'arguments': {'command': command}}],
@@ -375,3 +377,16 @@ async def test_approve_for_session_covers_the_same_full_shell_command(root, loca
     # A different command still asks.
     assert await _call_bash(manager, 'echo 2 >> log.txt', (False, False))
     assert (root / 'log.txt').read_text().split() == ['1', '1']
+
+
+@pytest.mark.asyncio
+async def test_allow_all_shell_commands_in_this_chat(root, local):
+    manager = _bash_agent()
+    asked = await _call_bash(manager, 'echo 1 >> log.txt', (True, True, True))
+    assert asked and asked[0]['full_shell'] is True
+    # Any other full-shell command in the same chat runs without a card.
+    assert not await _call_bash(manager, 'echo 2 >> log.txt', None)
+    assert (root / 'log.txt').read_text().split() == ['1', '2']
+    # Another chat still asks.
+    assert await _call_bash(manager, 'echo 3 >> log.txt', (False, False), session='other')
+    assert (root / 'log.txt').read_text().split() == ['1', '2']

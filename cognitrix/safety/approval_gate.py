@@ -44,8 +44,11 @@ _web_request_counter = 0
 
 
 def resolve_web_approval(request_id: str, approved: bool, user_key: str | None = None,
-                         remember: bool = False) -> bool:
+                         remember: bool = False, remember_shell: bool = False) -> bool:
     """Resolve a pending browser approval. Returns False if unknown or not the owner.
+
+    `remember_shell` (only for a full-shell command) lets every full-shell
+    command in that chat run without asking again until the app restarts.
 
     `user_key` scopes the answer to the user who owns the turn — a different
     authenticated user cannot approve someone else's pending tool call.
@@ -58,7 +61,10 @@ def resolve_web_approval(request_id: str, approved: bool, user_key: str | None =
         return False
     future = entry.get('future')
     if future is not None and not future.done():
-        future.set_result(ApprovalResult(approved=approved, remember=remember))
+        future.set_result(ApprovalResult(
+            approved=approved, remember=remember or remember_shell,
+            remember_shell=bool(approved and remember_shell and entry.get('person_only')),
+        ))
     return True
 
 # Prefix of the tool-result message for a denied operation. The session loop's
@@ -90,6 +96,7 @@ class ApprovalResult:
     approved: bool
     remember: bool = False  # Remember for this session
     permanent: bool = False  # Remember permanently
+    remember_shell: bool = False  # Allow every full-shell command in this chat
     cached: bool = False  # Result was from cache
     auto: bool = False  # Auto-approved (low risk)
     error: str | None = None
@@ -228,6 +235,11 @@ class ApprovalGate:
         if scoped in self.session_cache:
             return ApprovalResult(approved=True, cached=True, remember=True)
 
+        # The person allowed every full-shell command in this chat.
+        shell_key = self._shell_key(scope, interface)
+        if person_only and shell_key and shell_key in self.session_cache:
+            return ApprovalResult(approved=True, cached=True, remember=True)
+
         # Web bypass mode approves everything anyway; don't spend a review.
         # A call a person already refused goes back to the person.
         web_ctx = web_turn_ctx.get(None)
@@ -264,6 +276,8 @@ class ApprovalGate:
         if result.approved and person_only and (result.permanent or result.remember):
             self.session_denied.discard(scoped)
             self.session_cache.add(scoped)
+            if getattr(result, 'remember_shell', False) and shell_key:
+                self.session_cache.add(shell_key)
         elif result.approved:
             self.session_denied.discard(scoped)
             if result.permanent:
@@ -273,6 +287,17 @@ class ApprovalGate:
                 self.session_cache.add(scoped)
 
         return result
+
+    @staticmethod
+    def _shell_key(scope: str | None, interface: str) -> str | None:
+        """Cache key for "allow all shell commands in this chat"."""
+        if interface not in ('web', 'ws', 'websocket'):
+            return None
+        ctx = web_turn_ctx.get(None) or {}
+        session_id = ctx.get('session_id')
+        if not session_id:
+            return None
+        return f"{scope or 'global'}:full_shell:{ctx.get('user_key') or ''}:{session_id}"
 
     async def _review(self, tool_call: ToolCall, risk: RiskAssessment,
                       interface: str) -> ApprovalResult | None:
@@ -400,7 +425,9 @@ class ApprovalGate:
         _web_request_counter += 1
         request_id = f"web-approval-{_web_request_counter}"
         future = asyncio.get_running_loop().create_future()
-        _WEB_PENDING[request_id] = {'future': future, 'user_key': ctx.get('user_key')}
+        _WEB_PENDING[request_id] = {
+            'future': future, 'user_key': ctx.get('user_key'), 'person_only': person_only,
+        }
 
         try:
             await emit({
@@ -412,6 +439,9 @@ class ApprovalGate:
                 'categories': risk.categories,
                 'details': risk.details,
                 'session_id': ctx.get('session_id'),
+                # A full-shell command: the card offers "allow all commands
+                # in this chat".
+                'full_shell': person_only,
             })
             return await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError:
