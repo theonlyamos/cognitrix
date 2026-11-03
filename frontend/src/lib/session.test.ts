@@ -47,6 +47,21 @@ describe('sign-in token', () => {
     expect(shell.saveSession).toHaveBeenCalledWith('local-token');
   });
 
+  it('keeps the newer sign-in when this origin and the shell disagree', async () => {
+    const older = jwtWithIat(1000);
+    const newer = jwtWithIat(2000);
+    localStorage.setItem('token', older);
+    shell.saved = newer;
+    expect(await restoreToken()).toBe(newer);
+    expect(localStorage.getItem('token')).toBe(newer);
+    expect(shell.saved).toBe(newer);
+
+    localStorage.setItem('token', newer);
+    shell.saved = older;
+    expect(await restoreToken()).toBe(newer);
+    expect(shell.saved).toBe(newer);
+  });
+
   it('keeps and clears the shell copy with the local one', () => {
     setToken('t1');
     expect(shell.saveSession).toHaveBeenCalledWith('t1');

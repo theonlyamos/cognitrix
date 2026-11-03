@@ -46,9 +46,14 @@ export async function restoreToken(): Promise<string | null> {
   if (!isDesktop()) return local;
   try {
     const saved = await desktop.getSavedSession();
-    if (!local && saved) {
-      localStorage.setItem(KEY, saved);
-      return saved;
+    if (saved && saved !== local) {
+      // Two different sign-ins (this origin was used before, on another
+      // port): keep the newer one, so a stale token never replaces a good one.
+      const savedIsNewer = !local || (issuedAt(saved) ?? 0) >= (issuedAt(local) ?? 0);
+      if (savedIsNewer) {
+        localStorage.setItem(KEY, saved);
+        return saved;
+      }
     }
     if (local && local !== saved) await desktop.saveSession(local);
   } catch {
@@ -57,17 +62,23 @@ export async function restoreToken(): Promise<string | null> {
   return getToken();
 }
 
-/** Seconds since the token was issued, or null if it can't be read. */
-export function tokenAge(token: string, now = Date.now()): number | null {
+/** When the token was issued (seconds since the epoch), or null. */
+function issuedAt(token: string): number | null {
   try {
     const part = token.split('.')[1];
     if (!part) return null;
     const json = atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '='));
     const iat = (JSON.parse(json) as { iat?: number }).iat;
-    return typeof iat === 'number' ? now / 1000 - iat : null;
+    return typeof iat === 'number' ? iat : null;
   } catch {
     return null;
   }
+}
+
+/** Seconds since the token was issued, or null if it can't be read. */
+export function tokenAge(token: string, now = Date.now()): number | null {
+  const iat = issuedAt(token);
+  return iat === null ? null : now / 1000 - iat;
 }
 
 /** Swap the token for a fresh one once it's a few hours old, so a session

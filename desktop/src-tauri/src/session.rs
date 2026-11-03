@@ -92,7 +92,12 @@ pub fn save(app: &AppHandle, token: &str) -> Result<(), String> {
                 remove_file(app);
                 return Ok(());
             }
-            Err(e) => log::warn!("could not save the sign-in to the keyring, using a file: {e}"),
+            Err(e) => {
+                log::warn!("could not save the sign-in to the keyring, using a file: {e}");
+                // load() reads the keyring first: drop the older entry there
+                // so the file's newer token is the one that's used.
+                let _ = entry.delete_credential();
+            }
         }
     }
     write_file(app, token)
