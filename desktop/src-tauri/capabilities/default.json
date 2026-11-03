@@ -2,12 +2,17 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "The startup screen bundled with the app.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "allow-engine-status",
+    "allow-restart-engine",
+    "allow-open-folder"
   ]
 }

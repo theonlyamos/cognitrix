@@ -55,7 +55,10 @@ function useDesktopPrefs(enabled: boolean) {
   const [prefs, setPrefs] = useState<DesktopSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    if (enabled) void desktop.getSettings().then(setPrefs);
+    if (!enabled) return;
+    desktop.getSettings().then(setPrefs).catch((err: unknown) => {
+      setError(`Couldn't read the desktop settings: ${typeof err === 'string' ? err : err instanceof Error ? err.message : 'unknown error'}`);
+    });
   }, [enabled]);
   const update = async (patch: Parameters<typeof desktop.setSettings>[0]) => {
     setError(null);
@@ -190,7 +193,7 @@ function DesktopSection() {
     <>
       <SectionHeader title="Desktop app" description="How the app behaves on this computer." />
       {!prefs ? (
-        <p className="text-[13px] text-fg-dim">Loading…</p>
+        !error && <p className="text-[13px] text-fg-dim">Loading…</p>
       ) : (
         <Group>
           <SettingRow label={onWindows ? 'Start with Windows' : 'Start at login'} detail="Adds Cognitrix to your startup apps. It opens in the tray and starts the engine, so agents and automations are ready">
