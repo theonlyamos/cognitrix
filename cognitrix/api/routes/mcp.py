@@ -99,6 +99,10 @@ def _project(config: MCPServerConfig, *, can_edit: bool, connected: bool) -> dic
         'source': 'database' if config.id else 'config_file',
         'can_edit': can_edit,
         'connected': connected,
+        'catalog_id': config.catalog_id,
+        'auth_type': config.auth_type or ('header' if config.headers else 'none'),
+        'status': config.status or '',
+        'account': config.account or '',
     }
 
 
@@ -311,26 +315,45 @@ async def test_server(server_ref: str, ctx: AuthContext = Depends(jwt_only)):
 
     client = await get_dynamic_client()
     await _disconnect(config.key)
-    if not await registry.ensure_connected(client, config):
-        return {
-            'connected': False,
-            'tools': [],
-            'error': "Couldn't connect. Check the address, headers or command.",
-        }
+    problem = await registry.prepare(client, config)
+    if problem:
+        if config.auth_type != 'oauth':
+            problem = "Couldn't connect. Check the address, headers or command."
+        return {'connected': False, 'tools': [], 'error': problem}
+    tools = await client.list_tools(config.key) or []
+    return {'connected': True, 'tools': [_tool_row(config, t) for t in tools], 'error': None}
+
+
+def _tool_row(config: MCPServerConfig, info: dict[str, Any]) -> dict[str, Any]:
+    """One tool, with the name agents' permission settings use and its default."""
+    from cognitrix.mcp.tools import wrapper_name
     from cognitrix.safety.destructive_ops import RiskLevel, mcp_tool_risk
 
-    tools = await client.list_tools(config.key) or []
+    name = str(info.get('name') or '')
+    notes = info.get('annotations') or {}
+    asks = mcp_tool_risk(name, notes).risk_level != RiskLevel.LOW
     return {
-        'connected': True,
-        'tools': [
-            {
-                'name': t.get('name'),
-                'description': t.get('description') or '',
-                'read_only': bool((t.get('annotations') or {}).get('readOnlyHint')),
-                'asks_first': mcp_tool_risk(str(t.get('name') or ''), t.get('annotations')).risk_level
-                != RiskLevel.LOW,
-            }
-            for t in tools
-        ],
-        'error': None,
+        'name': name,
+        'tool': wrapper_name(config.name, name),
+        'title': str(notes.get('title') or ''),
+        'description': info.get('description') or '',
+        'read_only': bool(notes.get('readOnlyHint')),
+        'asks_first': asks,
+        'default': 'ask' if asks else 'allow',
     }
+
+
+@mcp_api.get('/{server_ref}/tools')
+async def server_tools(server_ref: str, ctx: AuthContext = Depends(jwt_only)):
+    """A server's tools, for setting Allow / Ask / Off per agent. Connects if needed."""
+    from cognitrix.mcp.client import get_dynamic_client
+
+    config = await _find(server_ref, ctx)
+    if not config.enabled:
+        return {'connected': False, 'tools': [], 'error': "This server is turned off"}
+    client = await get_dynamic_client()
+    problem = await registry.prepare(client, config)
+    if problem:
+        return {'connected': False, 'tools': [], 'error': problem}
+    tools = await client.list_tools(config.key) or []
+    return {'connected': True, 'tools': [_tool_row(config, t) for t in tools], 'error': None}

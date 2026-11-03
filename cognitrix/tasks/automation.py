@@ -140,6 +140,8 @@ class AgentNotification(Model):
     title: str
     message: str = ''
     read_at: str | None = None
+    link: str | None = None
+    """In-app page the alert's button opens, e.g. /settings/apps."""
 
 
 def public_trigger(trigger: TaskTrigger) -> dict[str, Any]:
@@ -167,6 +169,7 @@ def public_notification(row: AgentNotification) -> dict[str, Any]:
         'session_id': data.get('session_id'),
         'title': data.get('title') or '',
         'message': data.get('message') or '',
+        'link': data.get('link') or None,
         'read_at': data.get('read_at'),
         'created_at': _timestamp(data.get('created_at')),
     }
@@ -440,8 +443,10 @@ async def create_notification(
     task_id: str | None = None,
     run_id: str | None = None,
     session_id: str | None = None,
+    link: str | None = None,
 ) -> AgentNotification:
     row = AgentNotification(
+        link=link,
         user_id=str(user_id),
         title=_clip(title, TITLE_MAX_CHARS) or 'Update',
         message=_clip(message, MESSAGE_MAX_CHARS),

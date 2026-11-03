@@ -42,6 +42,12 @@ class MCPServerConfig:
     # Servers from mcp.json have no id and are shared.
     id: str | None = None
     owner_id: str | None = None
+    # Connected apps (see cognitrix/mcp/oauth.py): "oauth" rows get their
+    # Authorization header from the stored sign-in when they connect.
+    auth_type: str | None = None
+    catalog_id: str | None = None
+    status: str | None = None
+    account: str | None = None
 
     @property
     def key(self) -> str:

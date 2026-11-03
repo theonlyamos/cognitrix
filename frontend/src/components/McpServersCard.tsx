@@ -6,6 +6,7 @@ import { Field } from '@/components/form';
 import { cn } from '@/lib/utils';
 import {
   KEEP_SECRET,
+  isConnectedApp,
   addMcpServer,
   deleteMcpServer,
   listMcpServers,
@@ -71,7 +72,7 @@ export function McpServersCard() {
 
   const load = () =>
     listMcpServers()
-      .then(setList)
+      .then((l) => setList({ ...l, servers: l.servers.filter((s) => !isConnectedApp(s)) }))
       .catch((e) => setLoadError(errorMessage(e, 'Could not load MCP servers.')));
 
   useEffect(() => { void load(); }, []);
@@ -144,7 +145,7 @@ export function McpServersCard() {
   return (
     <div className="space-y-3">
       <p className="text-[13px] leading-relaxed text-fg-dim">
-        MCP servers give agents extra tools, such as a notes app or an issue tracker. Pick which ones an agent can use on its edit page.
+        MCP servers give agents extra tools, such as a notes app or an issue tracker. Apps you sign in to, like GitHub or Gmail, are under <a href="/settings/apps" className="text-accent-ink hover:underline">Connected apps</a>. Pick which ones an agent can use on its edit page.
         Tools that delete data, send something outside the app, or do something Cognitrix can't recognise wait for your approval before they run.
       </p>
 

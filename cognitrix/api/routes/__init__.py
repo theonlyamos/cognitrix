@@ -1,6 +1,7 @@
 from ...api.routes.agents import agents_api, agents_invoke_api
 from ...api.routes.api_keys import api_keys_api
 from ...api.routes.mcp import mcp_api
+from ...api.routes.connected_apps import apps_api
 from ...api.routes.credentials import credentials_api
 from ...api.routes.artifacts import artifacts_api
 from ...api.routes.automations import automations_api, hooks_api
@@ -46,6 +47,7 @@ api_router.include_router(folders_api)
 api_router.include_router(audio_api)
 api_router.include_router(api_keys_api)
 api_router.include_router(mcp_api)
+api_router.include_router(apps_api)
 api_router.include_router(credentials_api)
 api_router.include_router(system_api)
 api_router.include_router(channels_api)

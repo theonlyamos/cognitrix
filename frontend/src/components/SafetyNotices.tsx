@@ -43,3 +43,25 @@ export function BlockedEndpointNotice({ url }: { url: string }) {
     </div>
   );
 }
+
+const SIGN_IN_NEEDED = /App sign-in needed: ([^.\n]+)\./;
+
+/** The app's name when a tool result says the person has to (re)connect it. */
+export function signInNeeded(result?: string | null): string | null {
+  const match = result ? SIGN_IN_NEEDED.exec(result) : null;
+  return match ? match[1].trim() : null;
+}
+
+export function SignInNeededNotice({ app }: { app: string }) {
+  return (
+    <div role="note" className="flex w-full max-w-2xl flex-wrap items-center gap-x-3 gap-y-2 rounded border border-[#ffb86b]/40 bg-[#ffb86b]/10 px-3 py-2.5 text-[12.5px] leading-relaxed">
+      <span className="min-w-0 flex-1 basis-[220px]">
+        <span className="font-mono text-[10.5px] tracking-[0.1em] text-[#b4691a] dark:text-[#ffb86b]">SIGN-IN NEEDED</span>{' '}
+        The agent can't use {app} until you connect it again. Ask it to try again afterwards.
+      </span>
+      <a href="/settings/apps" className="inline-flex h-8 items-center rounded-lg bg-accent px-3 text-[12.5px] font-medium text-[#0b0c0e]">
+        Reconnect {app}
+      </a>
+    </div>
+  );
+}

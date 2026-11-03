@@ -215,6 +215,12 @@ h1{{font-size:20px;margin:0 0 8px}}p{{color:#9aa0a6;line-height:1.5}}</style></h
 @oauth_api.get('/{provider}/callback')
 async def callback(provider: str, request: Request, code: str | None = None, state: str | None = None,
                    error: str | None = None):
+    from cognitrix.mcp import oauth as app_oauth
+
+    if app_oauth.owns_state(state):
+        # A connected-app sign-in (Gmail, GitHub...) through the same OAuth app.
+        name, problem = await app_oauth.finish_sign_in(state, code, error)
+        return app_oauth.callback_page(name, problem)
     _prune()
     flow = _flows.pop(state or '', None)
     if flow is None or flow['provider'] != provider:
