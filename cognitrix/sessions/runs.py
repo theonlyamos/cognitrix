@@ -63,6 +63,8 @@ class ChatRun:
     # conversation shows only these, then replays the turn on top.
     history_len: int = 0
     stop: Callable[[], bool] | None = None
+    # True for a chat an agent started (see sessions/agent_chats.py).
+    started_by_agent: bool = False
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     started_at: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat().replace('+00:00', 'Z')

@@ -161,6 +161,10 @@ class Session(Model):
     group_chat: bool | None = None
     """True for a team group chat (the user talking with every team member)"""
 
+    started_by: dict[str, Any] | None = None
+    """Set when an agent started this chat: {agent_id, agent_name, session_id
+    (the chat it was started from), depth, report_back, exchanges}"""
+
     @classmethod
     async def load(cls, session_id: str) -> Self:
         """Load an existing session or create a new one if it doesn't exist"""

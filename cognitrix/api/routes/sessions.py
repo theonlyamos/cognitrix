@@ -122,6 +122,19 @@ def _session_summary(session: Session) -> dict:
         'step_index': session.step_index,
         'step_title': session.step_title,
         'message_count': len(session.chat or []),
+        'started_by': _started_by(session),
+    }
+
+
+def _started_by(session: Session) -> dict | None:
+    """Which agent started this chat, if one did (see sessions/agent_chats.py)."""
+    started_by = getattr(session, 'started_by', None)
+    if not isinstance(started_by, dict) or not started_by.get('agent_id'):
+        return None
+    return {
+        'agent_id': str(started_by.get('agent_id')),
+        'agent_name': str(started_by.get('agent_name') or ''),
+        'session_id': started_by.get('session_id'),
     }
 
 

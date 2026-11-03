@@ -244,6 +244,11 @@ function NotificationDetail({ item, onDone }: { item: InboxNotification; onDone:
             Open task
           </Link>
         )}
+        {!item.task_id && item.session_id && (
+          <Link to={`/home?chat=${encodeURIComponent(item.session_id)}`} className="text-[13px] text-accent-ink hover:underline">
+            Open chat
+          </Link>
+        )}
       </div>
     </div>
   );

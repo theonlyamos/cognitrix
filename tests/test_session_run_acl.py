@@ -296,4 +296,5 @@ async def test_legacy_team_session_list_filters_task_run_acl(monkeypatch):
         "step_index": ordinary.step_index,
         "step_title": ordinary.step_title,
         "message_count": 1,
+        "started_by": None,
     }]
