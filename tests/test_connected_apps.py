@@ -355,6 +355,8 @@ async def test_github_with_a_personal_access_token(db, monkeypatch):
     await connected_apps.disconnect_app('github', _ctx(member))
     row = await MCPServer.get(conn['server_id'])
     assert not row.headers and not row.status
+    listing = await connected_apps.list_apps(_request(), _ctx(member))
+    assert next(a for a in listing['apps'] if a['id'] == 'github')['connection']['status'] == 'signed_out'
 
     with pytest.raises(HTTPException):
         await connected_apps.connect_with_token('gmail', connected_apps.TokenBody(token='x'), _ctx(member))
@@ -439,3 +441,14 @@ async def test_tool_call_on_an_app_that_needs_reconnecting(db, monkeypatch):
     wrapper = create_mcp_tool_wrapper('gmail', {'name': 'search_threads', 'input_schema': {}}, str(row.id))
     result = (await wrapper.run()).content
     assert result.startswith('App sign-in needed: Gmail.')
+
+
+async def test_disabled_server_is_not_reconnected_for_old_tool_wrappers(db):
+    from cognitrix.mcp import registry
+    from cognitrix.models.mcp_server import MCPServer
+
+    _, member = await _people()
+    await MCPServer(name='tracker', owner_id=str(member.id), url='https://mcp.example.com/mcp',
+                    auth_type='none', enabled=False).save()
+    row = await MCPServer.find_one({'name': 'tracker'})
+    assert 'turned off' in await registry.prepare_key(str(row.id))

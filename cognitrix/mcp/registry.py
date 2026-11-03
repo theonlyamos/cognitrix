@@ -251,6 +251,9 @@ async def prepare_key(connection_key: str) -> str | None:
             if config.key == connection_key:
                 return await prepare(client, config)
         return f"Server '{connection_key}' is not available."
+    if not row.enabled:
+        # Turned off while an agent still holds its tools.
+        return f"'{row.name}' is turned off. Turn it back on in Settings to use it."
     return await prepare(client, config_from_row(row))
 
 

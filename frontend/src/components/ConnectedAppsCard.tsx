@@ -150,9 +150,7 @@ export function ConnectedAppsCard() {
                       </div>
                     </div>
                     <div className="flex flex-none flex-wrap items-center gap-2">
-                      {!app.available ? (
-                        <span className="text-[12px] text-fg-dim">Not set up on this server</span>
-                      ) : on && !stale ? (
+                      {on && !stale ? (
                         <button type="button" disabled={working} onClick={() => void run(app.id, () => disconnectApp(app.id))} className={quietButtonClass}>
                           Disconnect
                         </button>
@@ -163,9 +161,13 @@ export function ConnectedAppsCard() {
                               Use a token
                             </button>
                           )}
-                          <button type="button" disabled={working} onClick={() => void connect(app)} className={stale ? primaryButtonClass : buttonClass}>
-                            {working ? 'Waiting for sign-in…' : stale ? 'Reconnect' : 'Connect'}
-                          </button>
+                          {app.available ? (
+                            <button type="button" disabled={working} onClick={() => void connect(app)} className={stale ? primaryButtonClass : buttonClass}>
+                              {working ? 'Waiting for sign-in…' : stale ? 'Reconnect' : 'Connect'}
+                            </button>
+                          ) : (
+                            !app.token_help && <span className="text-[12px] text-fg-dim">Not set up on this server</span>
+                          )}
                         </>
                       )}
                     </div>

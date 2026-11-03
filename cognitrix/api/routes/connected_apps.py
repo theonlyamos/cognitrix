@@ -47,7 +47,7 @@ def _connection(row: MCPServer | None) -> dict[str, Any] | None:
     if row is None:
         return None
     status = row.status or ''
-    if not status and (row.auth_type or '') == 'header':
+    if not status and (row.auth_type or '') == 'header' and row.headers:
         status = 'connected'
     return {
         'server_id': str(row.id),
@@ -207,7 +207,8 @@ async def disconnect_app(app_id: str, ctx: AuthContext = Depends(jwt_only)):
     if row is None:
         return {'disconnected': True}
     await oauth.sign_out(row)
-    await MCPServer.update_one({'id': row.id}, {'headers': '', 'status': '', 'account': ''})
+    # Back to the default way in, so the card offers Connect / Use a token again.
+    await MCPServer.update_one({'id': row.id}, {'headers': '', 'status': '', 'account': '', 'auth_type': 'oauth'})
     return {'disconnected': True}
 
 
