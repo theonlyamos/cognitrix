@@ -206,3 +206,53 @@ def test_start_chat_does_not_ask_for_approval():
     from cognitrix.safety.destructive_ops import _KNOWN_LOW
 
     assert {'start_chat', 'check_chat', 'message_chat'} <= _KNOWN_LOW
+
+
+async def test_replies_to_the_same_chat_are_delivered_one_at_a_time(db, world, monkeypatch):
+    from cognitrix.sessions import agent_chats
+    from cognitrix.sessions.base import Session
+
+    real_get = Session.get.__func__
+
+    async def slow_get(cls, *args, **kwargs):
+        # Give the other delivery a chance to interleave.
+        await asyncio.sleep(0.02)
+        return await real_get(cls, *args, **kwargs)
+
+    monkeypatch.setattr(Session, 'get', classmethod(slow_get))
+
+    parent = await _parent()
+    children = []
+    for _ in range(2):
+        child = await agent_chats.create_chat('u1', HELPER, {
+            'agent_id': BOSS.id, 'agent_name': 'Boss', 'session_id': str(parent.id),
+            'depth': 1, 'report_back': True, 'exchanges': 1})
+        children.append(child)
+    await asyncio.gather(*(agent_chats.report_back('u1', HELPER, c, 'complete', 'done') for c in children))
+    await _settle()
+    saved = await Session.get(parent.id)
+    # Both replies made it into the history: the turns did not overwrite each other.
+    delivered = [e for e in saved.chat if e['role'] == 'user']
+    assert len(delivered) == 2
+    assert {str(c.id) for c in children} == {
+        next(str(c.id) for c in children if str(c.id) in e['content']) for e in delivered}
+
+
+async def test_agents_pause_after_many_replies_in_a_row(db, world, monkeypatch):
+    from cognitrix.sessions import agent_chats
+    from cognitrix.tasks.automation import unread_notifications
+
+    monkeypatch.setattr(agent_chats, 'MAX_EXCHANGES', 2)
+    parent = await _parent(chat=[
+        {'role': 'User', 'content': 'please research'},
+        {'role': 'User', 'content': agent_chats.REPORT_PREFIX + 'one'},
+        {'role': 'User', 'content': agent_chats.REPORT_PREFIX + 'two'},
+    ])
+    assert agent_chats.reports_since_person(parent) == 2
+    child = await agent_chats.create_chat('u1', HELPER, {
+        'agent_id': BOSS.id, 'agent_name': 'Boss', 'session_id': str(parent.id),
+        'depth': 1, 'report_back': True, 'exchanges': 1})
+    await agent_chats.report_back('u1', HELPER, child, 'complete', 'more')
+    await _settle()
+    assert world == []
+    assert [a.title for a in await unread_notifications('u1')] == ['Helper replied to Boss']

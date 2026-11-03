@@ -824,8 +824,14 @@ export default function Home() {
     if (!sid) return;
     const fresh = chatRuns.filter((run) => run.session_id === sid && !seenRunsRef.current.has(run.run_id));
     if (fresh.length === 0) return;
-    for (const run of fresh) seenRunsRef.current.add(run.run_id);
+    // Already following this chat's run: that is the one listed.
+    if (followSid === sid) {
+      for (const run of fresh) seenRunsRef.current.add(run.run_id);
+      return;
+    }
+    // Busy with this page's own turn: try again once it ends.
     if (followSid || busy || approvals.length > 0) return;
+    for (const run of fresh) seenRunsRef.current.add(run.run_id);
     void loadConversation(sid);
   }, [chatRuns, activeSessionId, followSid, busy, approvals.length, loadConversation]);
 

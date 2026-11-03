@@ -34,6 +34,10 @@ REPLY_PREVIEW_CHARS = 4000
 REPORT_WAIT_SECONDS = 600.0
 REPORT_POLL_SECONDS = 2.0
 
+# Marks a reply delivered back to the chat that started it, so a run of
+# agent-only turns can be counted from the saved history.
+REPORT_PREFIX = '[Agent chat reply] '
+
 # Strong references: a bare create_task can be garbage collected mid-turn.
 _TASKS: set[asyncio.Task] = set()
 
@@ -194,6 +198,32 @@ async def _turn(
             logger.exception('Follow-up for chat %s failed', sid)
 
 
+_REPORT_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
+
+
+def _report_lock(user_key: str, session_id: str) -> asyncio.Lock:
+    key = (user_key, session_id)
+    lock = _REPORT_LOCKS.get(key)
+    if lock is None:
+        lock = _REPORT_LOCKS[key] = asyncio.Lock()
+    return lock
+
+
+def reports_since_person(session: Any) -> int:
+    """Replies delivered back into this chat since the person last wrote in it."""
+    count = 0
+    for entry in reversed(getattr(session, 'chat', None) or []):
+        if str(entry.get('role') or '').lower() != 'user':
+            continue
+        content = entry.get('content')
+        if isinstance(content, list):
+            content = ' '.join(str(p.get('text') or '') for p in content if isinstance(p, dict))
+        if not str(content or '').startswith(REPORT_PREFIX):
+            break
+        count += 1
+    return count
+
+
 async def _alert_once(user_key: str, session_id: str, title: str, message: str) -> None:
     """An Inbox alert for a chat, unless one for it is still unread."""
     from cognitrix.tasks.automation import AgentNotification, create_notification
@@ -254,24 +284,37 @@ async def report_back(user_key: str, agent: Any, session: Any, status: str, repl
     if parent_agent is None:
         return
 
-    waited = 0.0
-    while is_running(user_key, parent_id) and waited < REPORT_WAIT_SECONDS:
-        await asyncio.sleep(REPORT_POLL_SECONDS)
-        waited += REPORT_POLL_SECONDS
-    if is_running(user_key, parent_id):
-        logger.info('Chat %s stayed busy; reply from chat %s not delivered', parent_id, session.id)
-        return
-    parent = await Session.get(parent_id)
-    if parent is None or str(parent.agent_id or '') != parent_agent_id or str(parent.user_id or '') != user_key:
-        return
+    # One delivery at a time per chat: two children finishing together must
+    # not both see it idle and run overlapping turns on the same history.
+    async with _report_lock(user_key, parent_id):
+        waited = 0.0
+        while is_running(user_key, parent_id) and waited < REPORT_WAIT_SECONDS:
+            await asyncio.sleep(REPORT_POLL_SECONDS)
+            waited += REPORT_POLL_SECONDS
+        if is_running(user_key, parent_id):
+            logger.info('Chat %s stayed busy; reply from chat %s not delivered', parent_id, session.id)
+            return
+        parent = await Session.get(parent_id)
+        if parent is None or str(parent.agent_id or '') != parent_agent_id or str(parent.user_id or '') != user_key:
+            return
+        if reports_since_person(parent) >= MAX_EXCHANGES:
+            # Agents have gone back and forth long enough without the person.
+            await _alert_once(user_key, parent_id, f'{agent.name} replied to {parent_agent.name}',
+                              'Agents paused after several replies in a row. Open the chat to carry on.')
+            return
+        _deliver(user_key, agent, parent_agent, parent, session, status, reply)
 
+
+def _deliver(user_key: str, agent: Any, parent_agent: Any, parent: Any, session: Any,
+             status: str, reply: str) -> None:
+    parent_id = str(parent.id)
     if status == 'complete':
         body = reply[:MESSAGE_MAX_CHARS] or '(no reply)'
-        text = (f'{agent.name} (agent) replied in the chat you started (chat id {session.id}):\n\n{body}\n\n'
+        text = (f'{REPORT_PREFIX}{agent.name} (agent) replied in the chat you started (chat id {session.id}):\n\n{body}\n\n'
                 'Carry on with what you were doing. Only use Message Chat if you need something more '
                 'from it; do not reply just to thank it or confirm.')
     else:
-        text = (f'The chat you started with {agent.name} (chat id {session.id}) failed before it replied. '
+        text = (f'{REPORT_PREFIX}The chat you started with {agent.name} (chat id {session.id}) failed before it replied. '
                 'Tell the person if it matters.')
 
     async def told(parent_status: str, parent_reply: str) -> None:
