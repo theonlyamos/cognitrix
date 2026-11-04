@@ -371,7 +371,19 @@ class Session(Model):
             return False
         fold = rounds[:-TURN_KEEP_ROUNDS]
 
-        lines = [f"Earlier progress summary:\n{m.get('content', '')}" for _, m in earlier_summaries]
+        # The summarizer's own input has to fit the window too. When the
+        # folded rounds are bigger than that, they are summarized in pieces,
+        # each piece carrying the summary so far forward, so nothing in the
+        # middle is skipped.
+        cap = int(min(budget * 0.7, 120_000) * 4)
+
+        def clip(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            half = limit // 2
+            return text[:half] + f"\n[... {len(text) - limit} chars left out ...]\n" + text[-half:]
+
+        lines: list[str] = []
         for rnd in fold:
             for _, m in rnd:
                 content = str(m.get('content') or '')
@@ -382,26 +394,39 @@ class Session(Model):
                     )
                     lines.append(f"assistant: {content[:2000]} [called {calls}]".replace(':  [', ': ['))
                 elif str(m.get('role', '')).lower() == 'tool':
-                    lines.append(f"tool result: {content[:3000]}")
+                    lines.append(f"tool result: {clip(content, cap // 2)}")
                 elif content.strip():
                     lines.append(f"{m.get('role', '')}: {content[:2000]}")
-        convo = '\n'.join(lines)
-        # The summarizer's own input has to fit the window too.
-        cap = int(min(budget * 0.6, 120_000) * 4)
-        if len(convo) > cap:
-            convo = convo[:cap // 2] + '\n[... middle left out ...]\n' + convo[-cap // 2:]
+        pieces: list[str] = []
+        current = ''
+        for line in lines:
+            if current and len(current) + len(line) + 1 > cap:
+                pieces.append(current)
+                current = ''
+            current = f"{current}\n{line}" if current else line
+        if current:
+            pieces.append(current)
+
         request = str(turn[0][1].get('content') or '')[:4000]
-        prompt = [
-            {'role': 'system', 'content': _PROGRESS_SUMMARY_PROMPT},
-            {'role': 'user', 'content': f"The request:\n{request}\n\nWork done so far:\n{convo}"},
-        ]
-        resp = await llm(prompt, stream=False)
-        summary = ''
-        if resp and not getattr(resp, 'error', None):
-            summary = (resp.llm_response or '').strip()
-        if not summary:
-            logger.warning("Turn compaction skipped: summarizer returned no summary")
-            return False
+        summary = '\n\n'.join(str(m.get('content') or '') for _, m in earlier_summaries)
+        for piece in pieces:
+            earlier = f"Progress summary so far:\n{summary}\n\n" if summary else ''
+            prompt = [
+                {'role': 'system', 'content': _PROGRESS_SUMMARY_PROMPT},
+                {'role': 'user', 'content': (
+                    f"The request:\n{request}\n\n{earlier}"
+                    f"Work done since then:\n{piece}\n\n"
+                    "Write the updated progress summary, covering all of the above."
+                )},
+            ]
+            resp = await llm(prompt, stream=False)
+            text = ''
+            if resp and not getattr(resp, 'error', None):
+                text = (resp.llm_response or '').strip()
+            if not text:
+                logger.warning("Turn compaction skipped: summarizer returned no summary")
+                return False
+            summary = text
 
         for i, m in [*earlier_summaries, *(item for rnd in fold for item in rnd)]:
             self.chat[i] = {**m, 'folded': True}

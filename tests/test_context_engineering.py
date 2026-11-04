@@ -434,7 +434,7 @@ async def test_turn_compaction_runs_again_and_merges(monkeypatch):
     session.chat += [m for m in _long_turn(30)[1 + 2 * 18:]]  # rounds 18..29
     assert await session._maybe_compact_turn(agent)
     # The second summary carries the first one forward.
-    assert "Earlier progress summary" in seen[1][1]["content"]
+    assert "Progress summary so far" in seen[-1][1]["content"]
     live = [m for m in session.chat if not m.get("folded") and m.get("type") == "progress_summary"]
     assert len(live) == 1
 
@@ -455,3 +455,24 @@ async def test_turn_compaction_noop_when_small_or_failed(monkeypatch):
     before = list(big.chat)
     assert await big._maybe_compact_turn(agent) is False
     assert big.chat == before
+
+
+@pytest.mark.asyncio
+async def test_turn_compaction_summarizer_sees_middle_of_results(monkeypatch):
+    """A value in the middle of a long result must reach the summarizer."""
+    from cognitrix.sessions.base import Session
+
+    seen = []
+    _patch_llm(monkeypatch, seen=seen)
+    agent = Agent(name="A", llm=_llm(context_window=40_000, max_tokens=4000), system_prompt="sys")
+    session = Session(agent_id="t5")
+    turn = [_user("collect the letters")]
+    for i in range(18):
+        turn += _tool_exchange(i, payload="a" * 3500 + f" LETTER-{i} " + "b" * 3500)
+    session.chat = turn
+    assert await session._maybe_compact_turn(agent)
+    sent = "\n".join(p[1]["content"] for p in seen)
+    for i in range(18 - 4):
+        assert f"LETTER-{i} " in sent
+    assert len(seen) > 1  # too big for one summarizer call: done in pieces
+    assert "Progress summary so far" in seen[-1][1]["content"]

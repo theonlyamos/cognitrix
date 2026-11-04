@@ -362,12 +362,14 @@ def _retry_delay(error: Exception, attempt: int) -> float:
         retry_after = headers.get('retry-after')
     except Exception:
         retry_after = None
+    base = 2 ** (attempt - 1)
     if retry_after:
         try:
-            return min(max(float(retry_after), 0.0), _MAX_RETRY_AFTER_SECONDS)
+            # Never wait less than the backoff: some providers (Together)
+            # answer every 429 with "retry in ~2s" while the limit lasts longer.
+            return min(max(float(retry_after), float(base)), _MAX_RETRY_AFTER_SECONDS)
         except (TypeError, ValueError):
             pass
-    base = 2 ** (attempt - 1)
     return base + random.uniform(0, base / 2)
 
 

@@ -256,9 +256,12 @@ class SlidingWindowContextManager(BaseContextManager):
 
         llm = agent.llm
         # Reserve room for the model's output plus a safety margin.
+        # The 4-chars-per-token estimate runs low on some tokenizers (Claude
+        # counted ~10% more on long tool output in testing) and tool schemas
+        # aren't counted, so only 85% of the room is planned for.
         budget = max(
             2000,
-            llm.get_context_window() - estimate_tokens(system_content) - llm.max_tokens - 1000,
+            int((llm.get_context_window() - estimate_tokens(system_content) - llm.max_tokens - 1000) * 0.85),
         )
 
         recent_history = shape_history(session.chat, budget, max_past_turns=self.max_messages)
