@@ -339,7 +339,13 @@ def _transient_errors() -> tuple[type[BaseException], ...]:
     )
 
 _MAX_ATTEMPTS = 3
-_MAX_RETRY_AFTER_SECONDS = 30.0
+# Rate limits get more tries: on a tokens-per-minute limit (Groq's free
+# tier is 8k TPM) a long tool loop hits 429 again and again, and a third
+# 429 used to end the whole turn and lose its work.
+_MAX_RATE_LIMIT_ATTEMPTS = 6
+# Groq asks for waits of up to a minute ("try again in 39.66s"); a lower cap
+# made the retry land inside the same window and fail again.
+_MAX_RETRY_AFTER_SECONDS = 60.0
 
 
 def _retry_delay(error: Exception, attempt: int) -> float:
@@ -412,7 +418,9 @@ async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
     model = str(params.get('model') or '')
     if params.get('tools') and model in _NO_REASONING_WITH_TOOLS and not _reasoning_effort_pinned(params):
         params = {**params, 'reasoning_effort': 'none'}
-    for attempt in range(1, _MAX_ATTEMPTS + 1):
+    attempt = 0
+    while True:
+        attempt += 1
         if attempt > 1 and accounting is not None:
             retry_output_tokens = await accounting.begin_provider_retry()
             if retry_output_tokens is not None:
@@ -442,7 +450,8 @@ async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
                 # returning usage. Close this attempt conservatively
                 # before reserving any subsequent request.
                 await accounting.finish_failed_provider_attempt()
-            if attempt == _MAX_ATTEMPTS:
+            limit = _MAX_RATE_LIMIT_ATTEMPTS if isinstance(e, openai.RateLimitError) else _MAX_ATTEMPTS
+            if attempt >= limit:
                 raise
             delay = _retry_delay(e, attempt)
             logger.warning("Transient LLM error (attempt %s, retrying in %.1fs): %s", attempt, delay, e)
@@ -450,7 +459,6 @@ async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
                 await accounting.wait_within_wall(asyncio.sleep(delay))
             else:
                 await asyncio.sleep(delay)
-    raise RuntimeError('unreachable')
 
 
 def _malformed_arguments_error(name: str, raw: Any, truncated: bool) -> str:
@@ -613,7 +621,7 @@ class LLMManager:
                         for i, tc in enumerate(tool_calls)
                     ],
                 })
-            elif msg_type in ('text', 'summary', 'media_context'):
+            elif msg_type in ('text', 'summary', 'progress_summary', 'media_context'):
                 # Summaries and turn-local media instructions are text messages
                 # with distinct internal types so context shaping can preserve them.
                 msg = {'role': role, 'content': content}

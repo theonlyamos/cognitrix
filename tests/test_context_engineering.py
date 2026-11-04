@@ -327,3 +327,131 @@ def test_structured_result_string_is_still_unpacked():
     agent = Agent(name="A", llm=_llm(), system_prompt="sys")
     msg = agent.process_prompt('{"result": "done"}')
     assert msg["content"] == "done"
+
+
+# --- CE5: one long turn that outgrows the window --------------------------
+
+def _long_turn(rounds, size=8000):
+    turn = [_user("read all the files")]
+    for i in range(rounds):
+        turn += _tool_exchange(i, payload=f"file {i} " + "x" * size)
+    return turn
+
+
+def test_long_current_turn_is_shortened_to_fit():
+    from cognitrix.sessions.context import KEEP_RECENT_RESULTS
+
+    chat = _long_turn(60)  # ~120k tokens in one turn
+    budget = 40_000
+    out = shape_history(chat, budget)
+    assert estimate_tokens(out) <= budget
+    # Every call still has its result (protocol stays valid).
+    assert [m.get("tool_call_id") for m in out if m["role"] == "tool"] == [str(i) for i in range(60)]
+    tools = [m for m in out if m["role"] == "tool"]
+    # Newest results are whole, oldest are shortened with a note.
+    assert all(len(m["content"]) > 8000 for m in tools[-KEEP_RECENT_RESULTS:])
+    assert "shortened to save room" in tools[0]["content"]
+    assert tools[0]["content"].startswith("file 0 ")
+    # Stored history is untouched.
+    assert len(chat[2]["content"]) > 8000
+
+
+def test_short_current_turn_is_left_alone():
+    chat = _long_turn(3)
+    assert shape_history(chat, 100_000) == chat
+
+
+def test_shortening_moves_in_blocks():
+    """The cut point stays put for a few rounds, so prompt caches still hit."""
+    budget = 40_000
+    cuts = []
+    for rounds in range(40, 48):
+        out = shape_history(_long_turn(rounds), budget)
+        cuts.append(sum("shortened to save room" in m["content"] for m in out if m["role"] == "tool"))
+    assert len(set(cuts)) < len(cuts)
+
+
+# --- CE6: compaction inside a running turn ---------------------------------
+
+def _patch_llm(monkeypatch, text="found: file 0..13 values", seen=None):
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        if seen is not None:
+            seen.append(prompt)
+        r = LLMResponse()
+        if text is None:
+            return LLMResponse(llm_response="Error: boom", error="Error: boom")
+        r.add_chunk(text)
+        return r
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+
+
+@pytest.mark.asyncio
+async def test_turn_compaction_folds_older_rounds(monkeypatch):
+    from cognitrix.sessions.base import TURN_KEEP_ROUNDS, Session
+
+    seen = []
+    _patch_llm(monkeypatch, seen=seen)
+    agent = Agent(name="A", llm=_llm(context_window=40_000, max_tokens=4000), system_prompt="sys")
+    session = Session(agent_id="t1")
+    session.chat = [_user("earlier q"), _assistant("earlier a"), *_long_turn(18)]
+    total = len(session.chat)
+
+    assert await session._maybe_compact_turn(agent) is True
+    # Nothing deleted: one summary added, older rounds marked folded.
+    assert len(session.chat) == total + 1
+    folded = [m for m in session.chat if m.get("folded")]
+    assert len(folded) == 2 * (18 - TURN_KEEP_ROUNDS)
+    # The summarizer saw the request and the folded results.
+    assert "read all the files" in seen[0][1]["content"]
+    assert "file 0 " in seen[0][1]["content"]
+
+    shaped = shape_history(session.chat, 30_000)
+    assert not any(m.get("folded") for m in shaped)
+    summary = [m for m in shaped if m.get("type") == "progress_summary"]
+    assert len(summary) == 1 and "found: file 0..13 values" in summary[0]["content"]
+    # The request and the newest rounds are still there, in order, protocol-valid.
+    assert shaped[0]["content"] == "earlier q"
+    assert any(m.get("content") == "read all the files" for m in shaped)
+    ids = [m["tool_call_id"] for m in shaped if m["role"] == "tool"]
+    assert ids == [str(i) for i in range(18 - TURN_KEEP_ROUNDS, 18)]
+    out = LLMManager.format_query(agent.llm, shaped)
+    assert any("found: file 0..13 values" in str(m.get("content")) for m in out)
+
+
+@pytest.mark.asyncio
+async def test_turn_compaction_runs_again_and_merges(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    seen = []
+    _patch_llm(monkeypatch, seen=seen)
+    agent = Agent(name="A", llm=_llm(context_window=40_000, max_tokens=4000), system_prompt="sys")
+    session = Session(agent_id="t2")
+    session.chat = _long_turn(18)
+    assert await session._maybe_compact_turn(agent)
+    session.chat += [m for m in _long_turn(30)[1 + 2 * 18:]]  # rounds 18..29
+    assert await session._maybe_compact_turn(agent)
+    # The second summary carries the first one forward.
+    assert "Earlier progress summary" in seen[1][1]["content"]
+    live = [m for m in session.chat if not m.get("folded") and m.get("type") == "progress_summary"]
+    assert len(live) == 1
+
+
+@pytest.mark.asyncio
+async def test_turn_compaction_noop_when_small_or_failed(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    agent = Agent(name="A", llm=_llm(context_window=40_000, max_tokens=4000), system_prompt="sys")
+    _patch_llm(monkeypatch)
+    small = Session(agent_id="t3")
+    small.chat = _long_turn(3)
+    assert await small._maybe_compact_turn(agent) is False
+
+    _patch_llm(monkeypatch, text=None)
+    big = Session(agent_id="t4")
+    big.chat = _long_turn(18)
+    before = list(big.chat)
+    assert await big._maybe_compact_turn(agent) is False
+    assert big.chat == before

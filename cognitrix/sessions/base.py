@@ -52,6 +52,22 @@ COMPACT_THRESHOLD = 0.7
 # Never fold the most recent turns — they are the working context.
 COMPACT_KEEP_TURNS = 4
 
+# Compaction inside a turn: once a long tool loop's own messages pass this
+# fraction of the usable window, its older rounds are folded into a progress
+# summary. The newest rounds stay whole: they are what the model works from.
+TURN_COMPACT_THRESHOLD = 0.6
+TURN_KEEP_ROUNDS = 4
+
+_PROGRESS_SUMMARY_PROMPT = (
+    'You compact the working memory of an AI agent that is in the middle of a '
+    'long task. Write a progress summary the agent can continue from without '
+    'its earlier tool results. Keep every fact, number, value, name, file '
+    'path, URL and ID it found that may matter for the request, what it has '
+    'done (tools called and their outcomes, errors included) and what is left '
+    'to do. Be complete about data and brief about everything else. Output '
+    'only the summary.'
+)
+
 # Cap tool param/result previews streamed to the browser. A search tool can
 # return hundreds of KB; the chat UI only shows a preview in the collapsible.
 _TOOL_PREVIEW_MAX = 4000
@@ -314,6 +330,92 @@ class Session(Model):
         self.chat = [head] + [m for turn in turns[-COMPACT_KEEP_TURNS:] for m in turn]
         await self.save()
         logger.info("Compacted session history: folded %s turns into a summary", len(fold_turns))
+
+    async def _maybe_compact_turn(self, agent: 'Agent') -> bool:
+        """Fold the older tool rounds of the running turn into a progress summary.
+
+        Runs between tool rounds, so a long task keeps going instead of
+        outgrowing the model's window. Nothing is deleted: folded messages
+        are marked ``folded`` (the chat UI still shows them, the prompt
+        skips them) and a ``progress_summary`` message takes their place in
+        the prompt. If the summarizer fails, nothing changes and the prompt
+        builder falls back to shortening old results (fit_current_turn).
+        """
+        from cognitrix.utils.tokens import estimate_tokens
+
+        llm = agent.llm
+        budget = max(2000, llm.get_context_window() - llm.max_tokens - 2000)
+        live = [(i, m) for i, m in enumerate(self.chat) if not m.get('folded')]
+        start = None
+        for k in range(len(live) - 1, -1, -1):
+            m = live[k][1]
+            if str(m.get('role', '')).lower() == 'user' and m.get('type', 'text') in ('text', 'summary'):
+                start = k
+                break
+        if start is None:
+            return False
+        turn = live[start:]
+        if estimate_tokens([m for _, m in turn]) <= budget * TURN_COMPACT_THRESHOLD:
+            return False
+
+        earlier_summaries: list[tuple[int, dict[str, Any]]] = []
+        rounds: list[list[tuple[int, dict[str, Any]]]] = []
+        for i, m in turn[1:]:
+            if m.get('type') == 'progress_summary':
+                earlier_summaries.append((i, m))
+            elif str(m.get('role', '')).lower() == 'assistant' and m.get('tool_calls'):
+                rounds.append([(i, m)])
+            elif rounds:
+                rounds[-1].append((i, m))
+        if len(rounds) <= TURN_KEEP_ROUNDS:
+            return False
+        fold = rounds[:-TURN_KEEP_ROUNDS]
+
+        lines = [f"Earlier progress summary:\n{m.get('content', '')}" for _, m in earlier_summaries]
+        for rnd in fold:
+            for _, m in rnd:
+                content = str(m.get('content') or '')
+                if m.get('tool_calls'):
+                    calls = '; '.join(
+                        f"{tc.get('name')}({json.dumps(tc.get('arguments'), default=str)[:300]})"
+                        for tc in m['tool_calls'] if isinstance(tc, dict)
+                    )
+                    lines.append(f"assistant: {content[:2000]} [called {calls}]".replace(':  [', ': ['))
+                elif str(m.get('role', '')).lower() == 'tool':
+                    lines.append(f"tool result: {content[:3000]}")
+                elif content.strip():
+                    lines.append(f"{m.get('role', '')}: {content[:2000]}")
+        convo = '\n'.join(lines)
+        # The summarizer's own input has to fit the window too.
+        cap = int(min(budget * 0.6, 120_000) * 4)
+        if len(convo) > cap:
+            convo = convo[:cap // 2] + '\n[... middle left out ...]\n' + convo[-cap // 2:]
+        request = str(turn[0][1].get('content') or '')[:4000]
+        prompt = [
+            {'role': 'system', 'content': _PROGRESS_SUMMARY_PROMPT},
+            {'role': 'user', 'content': f"The request:\n{request}\n\nWork done so far:\n{convo}"},
+        ]
+        resp = await llm(prompt, stream=False)
+        summary = ''
+        if resp and not getattr(resp, 'error', None):
+            summary = (resp.llm_response or '').strip()
+        if not summary:
+            logger.warning("Turn compaction skipped: summarizer returned no summary")
+            return False
+
+        for i, m in [*earlier_summaries, *(item for rnd in fold for item in rnd)]:
+            self.chat[i] = {**m, 'folded': True}
+        insert_at = rounds[-TURN_KEEP_ROUNDS][0][0]
+        self.chat.insert(insert_at, {
+            'role': 'user',
+            'type': 'progress_summary',
+            'content': (
+                '[Progress so far on this request. Earlier tool calls were summarized '
+                'to save room; their full results are no longer visible to you.]\n' + summary
+            ),
+        })
+        logger.info("Compacted the running turn: folded %s tool rounds into a summary", len(fold))
+        return True
 
     async def __call__(self, message: str | dict, agent: 'Agent', *args: Any, **kwargs: Any):
         # The action reviewer reads what this turn was asked to do.
@@ -787,6 +889,14 @@ class Session(Model):
                                     stop_turn = True
                                     break
                                 last_denied_sig = sig if all_blocked else None
+
+                                if record_history:
+                                    try:
+                                        await self._maybe_compact_turn(agent)
+                                    except ExecutionControlError:
+                                        raise
+                                    except Exception:
+                                        logger.warning("Turn compaction failed", exc_info=True)
 
                                 prompt = await agent.get_context_manager().build_prompt(agent, self)
                                 # Keep the folder list (including any just granted) on every request.
