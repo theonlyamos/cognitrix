@@ -476,3 +476,19 @@ async def test_turn_compaction_summarizer_sees_middle_of_results(monkeypatch):
         assert f"LETTER-{i} " in sent
     assert len(seen) > 1  # too big for one summarizer call: done in pieces
     assert "Progress summary so far" in seen[-1][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_progress_summary_survives_into_the_next_turn(monkeypatch):
+    from cognitrix.sessions.base import Session
+
+    _patch_llm(monkeypatch, text="value of file 3 is 42")
+    agent = Agent(name="A", llm=_llm(context_window=40_000, max_tokens=4000), system_prompt="sys")
+    session = Session(agent_id="t6")
+    session.chat = _long_turn(18)
+    assert await session._maybe_compact_turn(agent)
+    session.chat += [_assistant("done"), _user("what was file 3's value?")]
+    shaped = shape_history(session.chat, 30_000)
+    assert any("value of file 3 is 42" in str(m.get("content")) for m in shaped)
+    ids = [m["tool_call_id"] for m in shaped if m["role"] == "tool"]
+    assert ids == [str(i) for i in range(14, 18)]

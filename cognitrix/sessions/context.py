@@ -115,6 +115,10 @@ def _compact_past_turn(turn: list[dict[str, Any]]) -> list[dict[str, Any]]:
             kept.append(m)
         elif role == 'assistant' and m.get('tool_calls'):
             kept.append(m)
+        elif m.get('type') == 'progress_summary':
+            # Stands in for the folded tool rounds, which are gone from the
+            # prompt; dropping it would lose what those rounds found.
+            kept.append(m)
         else:
             kept.extend(_slim_past_turn([m]))
     return kept
