@@ -58,7 +58,6 @@ class AssistantSetup(BaseModel):
 
 def _has_server_key(provider: str) -> bool:
     from cognitrix.config import settings
-
     from cognitrix.providers.saved_keys import get_saved_key
 
     if os.getenv(f'{provider.upper()}_API_KEY') or get_saved_key(provider):

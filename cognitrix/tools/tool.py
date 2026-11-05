@@ -44,12 +44,18 @@ def tool(*args: Any, **kwargs: Any):
 
         class GenericTool(Tool):
             def validate_parameters(self, params: dict[str, Any]) -> dict[str, Any]:
+                takes_any = any(
+                    p.kind is inspect.Parameter.VAR_KEYWORD
+                    for p in func_signatures.parameters.values()
+                )
                 unknown = set(params) - set(func_signatures.parameters)
-                if unknown:
+                if unknown and not takes_any:
                     raise ValueError(f"Unknown parameter(s): {', '.join(sorted(unknown))}")
                 validated = dict(params)
                 for name, parameter in func_signatures.parameters.items():
-                    if name in internal:
+                    if name in internal or parameter.kind in (
+                        inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL
+                    ):
                         continue
                     if name not in validated:
                         if parameter.default is inspect.Parameter.empty:

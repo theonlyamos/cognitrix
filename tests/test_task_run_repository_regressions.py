@@ -3,7 +3,7 @@
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -18,8 +18,7 @@ from cognitrix.tasks.repository import (
 )
 from cognitrix.tasks.run import TaskRun, TaskRunHead, TaskRunStatus
 
-
-EXPIRED_LEASE = datetime(2000, 1, 1, tzinfo=timezone.utc).replace(
+EXPIRED_LEASE = datetime(2000, 1, 1, tzinfo=UTC).replace(
     tzinfo=None
 ).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -247,7 +246,7 @@ async def test_relational_writes_defer_lease_expiry_to_database_clock(
     class SkewedDatetime(datetime):
         @classmethod
         def now(cls, tz=None):
-            skewed = datetime(2099, 1, 1, tzinfo=timezone.utc)
+            skewed = datetime(2099, 1, 1, tzinfo=UTC)
             return skewed if tz is not None else skewed.replace(tzinfo=None)
 
     monkeypatch.setattr(repository_module, "datetime", SkewedDatetime)

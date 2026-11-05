@@ -1,7 +1,7 @@
 """RED contracts for durable task-run lease recovery."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -9,12 +9,11 @@ from cognitrix.tasks.events import TaskRunEvent
 from cognitrix.tasks.repository import LeaseClaim, LeaseLost, RunRepository
 from cognitrix.tasks.run import RUN_TIMESTAMP_FORMAT, TaskRun, TaskRunHead, TaskRunStatus
 
-
-NOW = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2030, 1, 1, 12, 0, tzinfo=UTC)
 
 
 def _timestamp(value: datetime) -> str:
-    return value.astimezone(timezone.utc).replace(tzinfo=None).strftime(
+    return value.astimezone(UTC).replace(tzinfo=None).strftime(
         RUN_TIMESTAMP_FORMAT
     )
 
@@ -92,24 +91,24 @@ async def test_heartbeat_uses_database_clock_under_worker_skew(
     created = await repo.create_queued(task_id="task-skewed-heartbeat")
     claim = await repo.claim(created.id, owner="worker-a", lease_seconds=60)
     assert claim is not None
-    actual_before = datetime.now(timezone.utc).replace(microsecond=0)
+    actual_before = datetime.now(UTC).replace(microsecond=0)
 
     class SkewedDatetime(datetime):
         @classmethod
         def now(cls, tz=None):
-            skewed = datetime(2099, 1, 1, 0, 0, tzinfo=timezone.utc)
+            skewed = datetime(2099, 1, 1, 0, 0, tzinfo=UTC)
             return skewed if tz is not None else skewed.replace(tzinfo=None)
 
     monkeypatch.setattr(repository_module, "datetime", SkewedDatetime)
     renewed = await repo.heartbeat(created.id, claim=claim, lease_seconds=90)
 
-    actual_after = datetime.now(timezone.utc).replace(microsecond=0)
+    actual_after = datetime.now(UTC).replace(microsecond=0)
     heartbeat_at = datetime.strptime(
         renewed.heartbeat_at, RUN_TIMESTAMP_FORMAT
-    ).replace(tzinfo=timezone.utc)
+    ).replace(tzinfo=UTC)
     lease_expires_at = datetime.strptime(
         renewed.lease_expires_at, RUN_TIMESTAMP_FORMAT
-    ).replace(tzinfo=timezone.utc)
+    ).replace(tzinfo=UTC)
     tolerance = timedelta(seconds=2)
     assert actual_before - tolerance <= heartbeat_at <= actual_after + tolerance
     assert lease_expires_at - heartbeat_at == timedelta(seconds=90)
@@ -160,7 +159,7 @@ async def test_recovery_terminal_cas_uses_database_clock_for_live_lease(
     created = await repo.create_queued(task_id="task-db-clock-lease")
     claim = await repo.claim(created.id, owner="worker-a")
     assert claim is not None
-    database_now = datetime.now(timezone.utc)
+    database_now = datetime.now(UTC)
     live_until = database_now + timedelta(hours=1)
     await _set_run(
         created.id,
@@ -188,7 +187,7 @@ async def test_recovery_terminal_cas_uses_database_clock_for_queue_timeout(
 
     repo = RunRepository()
     created = await repo.create_queued(task_id="task-db-clock-queue")
-    database_now = datetime.now(timezone.utc)
+    database_now = datetime.now(UTC)
     await _set_run(created.id, queued_at=_timestamp(database_now))
 
     recovered = await recover_stale_runs(
@@ -218,7 +217,7 @@ async def test_recovery_fails_expired_lease_and_fences_late_worker(
     created = await repo.create_queued(task_id=f"task-expired-{stale_status.value}")
     claim = await repo.claim(created.id, owner="worker-a")
     assert claim is not None
-    database_now = datetime.now(timezone.utc)
+    database_now = datetime.now(UTC)
     await _set_run(
         created.id,
         status=stale_status.value,
@@ -255,7 +254,7 @@ async def test_recovery_fails_stranded_queued_run_with_queue_timeout(repository_
 
     repo = RunRepository()
     created = await repo.create_queued(task_id="task-queue-timeout")
-    database_now = datetime.now(timezone.utc)
+    database_now = datetime.now(UTC)
     await _set_run(
         created.id,
         queued_at=_timestamp(database_now - timedelta(minutes=10)),
@@ -288,7 +287,7 @@ async def test_recovery_releases_only_expired_missing_run_reservations(
 ):
     repo = RunRepository()
     await repo._reserve_head("task-stale-reservation", "missing-run")
-    fresh_now = datetime.now(timezone.utc)
+    fresh_now = datetime.now(UTC)
 
     async def forbid_full_head_scan():
         raise AssertionError("reservation recovery must query only active heads")
@@ -324,7 +323,7 @@ async def test_requested_cancellation_wins_over_worker_lost(repository_db):
     claim = await repo.claim(created.id, owner="worker-a")
     assert claim is not None
     requested = await repo.request_cancel(created.id)
-    database_now = datetime.now(timezone.utc)
+    database_now = datetime.now(UTC)
     await _set_run(
         created.id,
         lease_expires_at=_timestamp(database_now - timedelta(minutes=1)),

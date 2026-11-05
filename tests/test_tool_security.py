@@ -223,7 +223,6 @@ async def test_delegated_agent_keeps_allowlists_but_not_document_or_host_authori
     monkeypatch,
 ):
     from cognitrix.agents import Agent
-    from cognitrix.sessions.base import Session
 
     target = type('Target', (), {'id': 'target-agent'})()
     captured = {}

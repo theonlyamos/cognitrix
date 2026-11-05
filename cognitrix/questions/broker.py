@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from cognitrix.questions.models import (
     QuestionAction,
     QuestionAnswer,
     QuestionSpec,
 )
-
 
 AUTO_SUBMIT_SECONDS = 60.0
 
@@ -49,7 +49,7 @@ class PendingQuestion:
             'session_id': self.context.session_id,
             **self.spec.to_event(),
             'auto_submit_at': (
-                deadline.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+                deadline.astimezone(UTC).isoformat().replace('+00:00', 'Z')
                 if deadline is not None else None
             ),
         }
@@ -85,7 +85,7 @@ async def _auto_submit_if_due(pending: PendingQuestion) -> None:
     if current is not pending or pending.future.done():
         return
     deadline = pending.auto_submit_at
-    if deadline is None or deadline > datetime.now(timezone.utc):
+    if deadline is None or deadline > datetime.now(UTC):
         return
     option_id = pending.spec.recommended_option_id
     option = next(
@@ -110,7 +110,7 @@ async def ask_question(spec: QuestionSpec) -> QuestionAnswer:
     request_id = f'question-{uuid.uuid4().hex}'
     future = asyncio.get_running_loop().create_future()
     deadline = (
-        datetime.now(timezone.utc) + timedelta(seconds=AUTO_SUBMIT_SECONDS)
+        datetime.now(UTC) + timedelta(seconds=AUTO_SUBMIT_SECONDS)
         if spec.auto_submit_recommended else None
     )
     pending = PendingQuestion(request_id, context, spec, future, deadline)
@@ -125,13 +125,13 @@ async def ask_question(spec: QuestionSpec) -> QuestionAnswer:
                 result = await future
             else:
                 remaining = max(
-                    0.0, (deadline - datetime.now(timezone.utc)).total_seconds(),
+                    0.0, (deadline - datetime.now(UTC)).total_seconds(),
                 )
                 try:
                     result = await asyncio.wait_for(
                         asyncio.shield(future), timeout=remaining,
                     )
-                except (TimeoutError, asyncio.TimeoutError):
+                except TimeoutError:
                     await _auto_submit_if_due(pending)
                     continue
             if result is _CANCELLED:

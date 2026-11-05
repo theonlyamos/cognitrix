@@ -8,10 +8,6 @@ from sse_starlette.sse import EventSourceResponse
 
 from cognitrix.agents import Agent, PromptGenerator
 from cognitrix.agents.generators import TaskInstructor
-from cognitrix.sessions.access import (
-    browser_authorization,
-    visible_sessions,
-)
 from cognitrix.artifacts import delete_owned_session_artifacts
 from cognitrix.media import MediaOwnership, MediaValidationError, media_assets
 from cognitrix.media.document_capabilities import (
@@ -32,14 +28,18 @@ from cognitrix.questions.broker import (
     pending_question,
     question_turn_ctx,
 )
-from cognitrix.sessions import runs as chat_runs
-from cognitrix.sessions.base import Session
 from cognitrix.session_ownership import (
     OwnershipConflict,
     OwnershipNotFound,
     OwnershipState,
     session_ownerships,
 )
+from cognitrix.sessions import runs as chat_runs
+from cognitrix.sessions.access import (
+    browser_authorization,
+    visible_sessions,
+)
+from cognitrix.sessions.base import Session
 from cognitrix.tasks.handler import handle_multi_step_task
 from cognitrix.tools.utils import ToolExecutionContext, signed_in_host_process_mode
 
@@ -768,12 +768,12 @@ class SSEManager:
                     'session_id': session.id,
                 }
             else:
-                from cognitrix.safety.approval_gate import web_turn_ctx
                 from cognitrix.media.context import (
                     MediaTurnContext,
                     reset_media_turn_context,
                     set_media_turn_context,
                 )
+                from cognitrix.safety.approval_gate import web_turn_ctx
 
                 token = web_turn_ctx.set({
                     'emit': emit,

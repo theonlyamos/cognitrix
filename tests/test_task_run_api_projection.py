@@ -654,8 +654,9 @@ async def test_run_artifact_requires_run_provenance_and_a_persisted_reference(
     monkeypatch,
     tmp_path,
 ):
-    import cognitrix.api.routes.tasks as routes
     from fastapi import HTTPException
+
+    import cognitrix.api.routes.tasks as routes
 
     task = Task(_id="task-1", title="Task", description="Work")
     run = _run(TaskRunStatus.COMPLETED, "2030-01-02 00:00:00", run_id="run-1")
@@ -729,8 +730,9 @@ async def test_run_artifact_requires_run_provenance_and_a_persisted_reference(
 
 
 async def test_run_results_enforce_api_key_team_allowlist(monkeypatch):
-    import cognitrix.api.routes.tasks as routes
     from fastapi import HTTPException
+
+    import cognitrix.api.routes.tasks as routes
 
     task = Task(
         _id="task-1",
@@ -810,8 +812,9 @@ async def test_run_list_filters_each_historical_run_by_its_immutable_acl(monkeyp
 
 
 async def test_run_list_is_bounded_and_batch_hydrates_page_steps(monkeypatch):
-    import cognitrix.api.routes.tasks as routes
     from odbms import DBMS
+
+    import cognitrix.api.routes.tasks as routes
 
     task = Task(_id="task-1", title="Task", description="Work")
     denied = [

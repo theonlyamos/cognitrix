@@ -1,5 +1,5 @@
 import io
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from PIL import Image
@@ -34,7 +34,7 @@ def test_artifact_declares_persistent_media_metadata():
     assert artifact.vision_storage_key == 'safe/vision.png'
     assert artifact.thumbnail_storage_key == 'safe/thumbnail.png'
     created_at = datetime.fromisoformat(artifact.created_at)
-    assert created_at.utcoffset() == timezone.utc.utcoffset(created_at)
+    assert created_at.utcoffset() == UTC.utcoffset(created_at)
 
 
 def test_artifact_ref_exposes_only_safe_transport_fields():
@@ -570,7 +570,9 @@ async def _async(value):
 @pytest.mark.asyncio
 async def test_artifact_route_hides_other_users_artifacts(monkeypatch):
     from types import SimpleNamespace
+
     from fastapi import HTTPException
+
     from cognitrix.api.routes.artifacts import get_artifact
     from cognitrix.artifacts import Artifact
     from cognitrix.common.security import AuthContext
@@ -830,6 +832,7 @@ async def test_artifact_route_hides_missing_variant_without_path_exposure(
     monkeypatch,
 ):
     from types import SimpleNamespace
+
     from fastapi import HTTPException
 
     from cognitrix.api.routes import artifacts as route

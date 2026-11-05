@@ -23,23 +23,21 @@ from cognitrix.providers.limits import (
     LimitBackendUnavailable,
     LimitExceeded,
 )
-from cognitrix.tasks.events import TaskRunEventEmitter
+from cognitrix.tasks.authority import TaskAuthorityError, reconstruct_tool_context
 from cognitrix.tasks.budget import (
     BudgetExceeded,
     BudgetLedger,
     configured_model_pricing,
 )
-from cognitrix.tasks.authority import TaskAuthorityError, reconstruct_tool_context
+from cognitrix.tasks.completion import deliver_completion_notification
 from cognitrix.tasks.context import (
     DEFAULT_DEPENDENCY_CONTEXT_CHARS,
     dependency_context,
     untrusted_text_block,
 )
-from cognitrix.tasks.completion import deliver_completion_notification
 from cognitrix.tasks.dag import (
     DagExecutionCancelled,
     DagNode,
-    DagNodeFailed,
     DagNodeState,
     DagPersistenceError,
     DagValidationError,
@@ -47,8 +45,10 @@ from cognitrix.tasks.dag import (
     run_dag,
 )
 from cognitrix.tasks.evaluation import evaluate_step
+from cognitrix.tasks.events import TaskRunEventEmitter
 from cognitrix.tasks.executor import TaskStepExecutor
 from cognitrix.tasks.metrics import TaskRunPhase, TaskRunPhaseRecorder
+from cognitrix.tasks.recovery import LeaseController
 from cognitrix.tasks.repository import (
     ActiveRunExists,
     LeaseClaim,
@@ -56,7 +56,6 @@ from cognitrix.tasks.repository import (
     RunRepository,
     RunStateConflict,
 )
-from cognitrix.tasks.recovery import LeaseController
 from cognitrix.tasks.results import StepResult, UsageSummary
 from cognitrix.tasks.run import (
     TaskRun,
@@ -70,8 +69,8 @@ from cognitrix.tasks.runtime import (
     MissingRequiredTools,
     RuntimeInstantiationError,
     TaskCapabilityRegistry,
-    build_task_capability_registry,
     build_runtime_snapshot,
+    build_task_capability_registry,
     instantiate_runtime,
 )
 from cognitrix.tasks.step import TaskRunStep, TaskRunStepStatus
@@ -799,7 +798,7 @@ async def _watch_run_cancellation(run: TaskRun, cancel_event: asyncio.Event) -> 
                 return
             try:
                 await asyncio.wait_for(cancel_event.wait(), timeout=0.1)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
     except asyncio.CancelledError:
         raise
@@ -1025,7 +1024,7 @@ async def _execute_compiled_steps(
                         ),
                         timeout=STEP_TIMEOUT,
                     )
-            except asyncio.TimeoutError as exc:
+            except TimeoutError as exc:
                 raise StepFailure(
                     f"Step #{row.step_index + 1} timed out after {STEP_TIMEOUT}s"
                 ) from exc

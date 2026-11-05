@@ -13,7 +13,7 @@ write (revoke, last_used_at) MUST be a partial ``APIKey.update_one`` —
 
 import hashlib
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from odbms import Model
 from pydantic import validator
@@ -43,7 +43,7 @@ def normalize_expiry(value: str | None) -> str | None:
         return None
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
     return parsed.strftime('%Y-%m-%d %H:%M:%S')
 
 
@@ -95,7 +95,7 @@ class APIKey(Model):
     def is_expired(self, now: datetime | None = None) -> bool:
         if not self.expires_at:
             return False
-        now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+        now = now or datetime.now(UTC).replace(tzinfo=None)
         try:
             return datetime.fromisoformat(self.expires_at) <= now
         except ValueError:

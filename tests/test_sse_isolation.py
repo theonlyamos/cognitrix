@@ -197,7 +197,6 @@ async def test_stop_current_turn_cancels_only_that_streams_active_task():
 
 @pytest.mark.asyncio
 async def test_active_sse_turn_emits_stopped_without_closing_the_stream(monkeypatch):
-    from cognitrix.utils import sse
 
     _SSE_MANAGERS.clear()
 
@@ -250,7 +249,6 @@ async def test_active_sse_turn_emits_stopped_without_closing_the_stream(monkeypa
 
 @pytest.mark.asyncio
 async def test_reconnect_keeps_active_task_stoppable_after_disconnect(monkeypatch):
-    from cognitrix.utils import sse
 
     _SSE_MANAGERS.clear()
 

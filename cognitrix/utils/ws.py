@@ -35,9 +35,9 @@ from cognitrix.tasks.handler import handle_multi_step_task
 from cognitrix.tools.base import Tool
 from cognitrix.tools.utils import (
     ToolExecutionContext,
-    signed_in_host_process_mode,
     reset_execution_context,
     set_execution_context,
+    signed_in_host_process_mode,
 )
 
 logger = logging.getLogger('cognitrix.log')

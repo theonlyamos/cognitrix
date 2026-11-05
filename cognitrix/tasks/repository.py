@@ -14,11 +14,11 @@ import inspect
 import logging
 import uuid
 import weakref
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any, Iterable
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -26,7 +26,6 @@ from cognitrix.errors import ExecutionControlError
 from cognitrix.tasks.events import TaskRunEvent
 from cognitrix.tasks.metrics import TaskRunPhaseMetric
 from cognitrix.tasks.results import StepResult
-from cognitrix.tasks.runtime import AgentRuntimeSnapshot
 from cognitrix.tasks.run import (
     RUN_TIMESTAMP_FORMAT,
     TaskRun,
@@ -34,6 +33,7 @@ from cognitrix.tasks.run import (
     TaskRunStatus,
     run_acl_snapshot,
 )
+from cognitrix.tasks.runtime import AgentRuntimeSnapshot
 from cognitrix.tasks.step import TaskRunStep, TaskRunStepStatus
 
 logger = logging.getLogger("cognitrix.log")
@@ -217,8 +217,8 @@ def _database_index_setup(database: Any) -> _DatabaseIndexSetup:
 
 
 def _timestamp(value: datetime | None = None) -> str:
-    current = value or datetime.now(timezone.utc)
-    return current.astimezone(timezone.utc).replace(tzinfo=None).strftime(
+    current = value or datetime.now(UTC)
+    return current.astimezone(UTC).replace(tzinfo=None).strftime(
         RUN_TIMESTAMP_FORMAT
     )
 
@@ -234,8 +234,8 @@ def _parse_timestamp(value: str | None) -> datetime | None:
         except ValueError:
             return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _force_cancel_ready(
@@ -264,11 +264,11 @@ def _terminal_notification_state(run: TaskRun) -> str:
 
 def _lease_is_live(run: TaskRun, *, now: datetime | None = None) -> bool:
     expires = _parse_timestamp(run.lease_expires_at)
-    current = now or datetime.now(timezone.utc)
+    current = now or datetime.now(UTC)
     if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
+        current = current.replace(tzinfo=UTC)
     else:
-        current = current.astimezone(timezone.utc)
+        current = current.astimezone(UTC)
     return expires is not None and expires > current
 
 
@@ -732,7 +732,7 @@ async def _database_timestamp() -> str:
     value = records[0]["current_time"]
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
+            value = value.replace(tzinfo=UTC)
         return _timestamp(value)
     parsed = _parse_timestamp(str(value))
     if parsed is None:
@@ -788,11 +788,11 @@ class RunRepository:
             raise ValueError("grace_seconds must be non-negative")
         if run.status != TaskRunStatus.CANCELLING:
             return False
-        current_time = now or datetime.now(timezone.utc)
+        current_time = now or datetime.now(UTC)
         if current_time.tzinfo is None:
-            current_time = current_time.replace(tzinfo=timezone.utc)
+            current_time = current_time.replace(tzinfo=UTC)
         else:
-            current_time = current_time.astimezone(timezone.utc)
+            current_time = current_time.astimezone(UTC)
         return _force_cancel_ready(
             run,
             now=current_time,
@@ -1138,7 +1138,7 @@ class RunRepository:
                 try:
                     await _insert_with_explicit_id(TaskRunHead, candidate)
                     return None
-                except Exception as exc:
+                except Exception:
                     # A different process may have inserted the primary-key
                     # row. Only treat it as that race when the row now exists.
                     if await TaskRunHead.get(task_id) is None:
@@ -1186,11 +1186,11 @@ class RunRepository:
         """Release abandoned pre-insert reservations after a durable timeout."""
         if reservation_timeout_seconds < 0:
             raise ValueError("reservation_timeout_seconds cannot be negative")
-        current_time = now or datetime.now(timezone.utc)
+        current_time = now or datetime.now(UTC)
         if current_time.tzinfo is None:
-            current_time = current_time.replace(tzinfo=timezone.utc)
+            current_time = current_time.replace(tzinfo=UTC)
         else:
-            current_time = current_time.astimezone(timezone.utc)
+            current_time = current_time.astimezone(UTC)
         cutoff = current_time - timedelta(seconds=reservation_timeout_seconds)
         released: list[str] = []
 
@@ -1225,9 +1225,9 @@ class RunRepository:
 
                 updated_at = head.updated_at
                 if updated_at.tzinfo is None:
-                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+                    updated_at = updated_at.replace(tzinfo=UTC)
                 else:
-                    updated_at = updated_at.astimezone(timezone.utc)
+                    updated_at = updated_at.astimezone(UTC)
                 if updated_at > cutoff:
                     break
                 changed = await TaskRunHead.update_one(
@@ -1304,7 +1304,7 @@ class RunRepository:
         """Load pending or abandoned delivery claims without scanning history."""
         from odbms import DBMS
 
-        current_time = now or datetime.now(timezone.utc)
+        current_time = now or datetime.now(UTC)
         timestamp = _timestamp(current_time)
         dbms = getattr(DBMS.Database, "dbms", "")
         marker = (
@@ -1370,11 +1370,11 @@ class RunRepository:
             raise ValueError("owner is required")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
-        current_time = now or datetime.now(timezone.utc)
+        current_time = now or datetime.now(UTC)
         if current_time.tzinfo is None:
-            current_time = current_time.replace(tzinfo=timezone.utc)
+            current_time = current_time.replace(tzinfo=UTC)
         else:
-            current_time = current_time.astimezone(timezone.utc)
+            current_time = current_time.astimezone(UTC)
 
         for _ in range(MAX_CAS_ATTEMPTS):
             run = await TaskRun.get(run_id)
@@ -1463,7 +1463,7 @@ class RunRepository:
                     max(run.completion_notification_attempts - 1, 0),
                     len(NOTIFICATION_BACKOFF_SECONDS) - 1,
                 )
-                retry_at = (now or datetime.now(timezone.utc)) + timedelta(
+                retry_at = (now or datetime.now(UTC)) + timedelta(
                     seconds=NOTIFICATION_BACKOFF_SECONDS[backoff_index]
                 )
                 patch["completion_notification_state"] = _NOTIFICATION_PENDING
@@ -1693,7 +1693,7 @@ class RunRepository:
         if dbms not in ("sqlite", "postgresql", "mysql"):
             # Keep model-only fakes usable; production enqueue already rejects
             # every unsupported durable backend before a row can be created.
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             return await TaskRun.update_one(
                 {
                     "id": run.id,
@@ -1806,7 +1806,7 @@ class RunRepository:
         database = DBMS.Database
         dbms = getattr(database, "dbms", "")
         if dbms not in ("sqlite", "postgresql", "mysql"):
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             return await TaskRun.update_one(
                 {
                     "id": run.id,
@@ -1878,7 +1878,7 @@ class RunRepository:
         values = TaskRun.normalise(
             {
                 **patch,
-                "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
+                "updated_at": datetime.now(UTC).replace(tzinfo=None),
             },
             "params",
         )
@@ -2343,7 +2343,7 @@ class RunRepository:
         values = TaskRunStep.normalise(
             {
                 **patch,
-                "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
+                "updated_at": datetime.now(UTC).replace(tzinfo=None),
             },
             "params",
         )
@@ -2771,7 +2771,7 @@ class RunRepository:
         values = TaskRun.normalise(
             {
                 **patch,
-                "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
+                "updated_at": datetime.now(UTC).replace(tzinfo=None),
             },
             "params",
         )
@@ -2910,7 +2910,7 @@ class RunRepository:
                 and run.status != TaskRunStatus.QUEUED
                 and not _force_cancel_ready(
                     run,
-                    now=datetime.now(timezone.utc),
+                    now=datetime.now(UTC),
                     grace_seconds=force_grace_seconds,
                 )
             ):

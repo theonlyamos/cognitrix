@@ -154,8 +154,8 @@ async def test_generate_fresh_session_save_cancellation_is_settled_and_compensat
 
 
 async def test_generate_binds_exact_turn_context(tmp_path, monkeypatch):
-    from cognitrix.api.routes import agents as routes
     from cognitrix.agents import Agent
+    from cognitrix.api.routes import agents as routes
 
     await _initialize_db(tmp_path)
     session = await _owned_session('user-1', 'agent-1')
@@ -185,8 +185,8 @@ async def test_generate_binds_exact_turn_context(tmp_path, monkeypatch):
 
 
 async def test_agent_session_endpoint_reuses_only_owned_session(tmp_path, monkeypatch):
-    from cognitrix.api.routes import agents as routes
     from cognitrix.agents import Agent
+    from cognitrix.api.routes import agents as routes
     from cognitrix.session_ownership import require_owned
     from cognitrix.sessions.base import Session
 

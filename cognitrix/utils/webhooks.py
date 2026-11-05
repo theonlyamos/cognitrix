@@ -80,7 +80,7 @@ def check_callback_url(url: str) -> str | None:
 
 
 def sign(body: str, secret: str, timestamp: str) -> str:
-    digest = hmac.new(secret.encode('utf-8'), f'{timestamp}.{body}'.encode('utf-8'), hashlib.sha256)
+    digest = hmac.new(secret.encode('utf-8'), f'{timestamp}.{body}'.encode(), hashlib.sha256)
     return f'sha256={digest.hexdigest()}'
 
 

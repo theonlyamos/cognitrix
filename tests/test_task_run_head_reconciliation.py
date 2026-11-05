@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -58,7 +58,7 @@ async def _legacy_run(
 async def test_missing_head_is_seeded_from_existing_active_run_and_enqueue_rejects(
     repository_db,
 ):
-    created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    created_at = datetime(2025, 1, 1, tzinfo=UTC)
     active = await _legacy_run(
         "legacy-active",
         "task-active",
@@ -86,13 +86,13 @@ async def test_terminal_history_seeds_latest_projection_without_an_active_run(
         "run-old",
         "task-terminal",
         TaskRunStatus.FAILED,
-        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2025, 1, 1, tzinfo=UTC),
     )
     newest = await _legacy_run(
         "run-new",
         "task-terminal",
         TaskRunStatus.COMPLETED,
-        created_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
+        created_at=datetime(2025, 1, 2, tzinfo=UTC),
     )
 
     head = await RunRepository().reconcile_task_head("task-terminal")
@@ -109,13 +109,13 @@ async def test_duplicate_legacy_active_runs_fail_deterministically(repository_db
         "run-older",
         "task-corrupt",
         TaskRunStatus.RUNNING,
-        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2025, 1, 1, tzinfo=UTC),
     )
     await _legacy_run(
         "run-newer",
         "task-corrupt",
         TaskRunStatus.QUEUED,
-        created_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
+        created_at=datetime(2025, 1, 2, tzinfo=UTC),
     )
 
     with pytest.raises(TaskRunHeadInvariantError) as first:
@@ -135,7 +135,7 @@ async def test_head_reconciliation_is_idempotent(repository_db):
         "run-only",
         "task-idempotent",
         TaskRunStatus.COMPLETED,
-        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2025, 1, 1, tzinfo=UTC),
     )
     repository = RunRepository()
 
@@ -155,7 +155,7 @@ async def test_concurrent_startup_reconciliation_and_enqueue_serialize_on_sqlite
         "run-terminal",
         "task-race",
         TaskRunStatus.COMPLETED,
-        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2025, 1, 1, tzinfo=UTC),
     )
 
     reconciled, queued = await asyncio.gather(

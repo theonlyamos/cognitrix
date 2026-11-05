@@ -78,7 +78,25 @@ def create_mcp_tool_wrapper(
             filtered_args = {k: v for k, v in kwargs.items() if v is not None}
 
             result = await client.call_tool(connection_key, tool_name, filtered_args)
-            return str(result) if result else "Tool call completed with no result"
+            if not result:
+                return "Tool call completed with no result"
+            if isinstance(result, str):
+                return result
+            # Text blocks go in as text; image blocks (e.g. a browser
+            # screenshot) are shown to the model as images, not base64 text.
+            from cognitrix.tools import misc as _misc
+            parts = []
+            for block in result:
+                if getattr(block, 'type', None) == 'image' and getattr(block, 'data', None):
+                    _misc.pending_screenshots.append(
+                        f"data:{getattr(block, 'mime_type', None) or 'image/png'};base64,{block.data}"
+                    )
+                    parts.append('[Image attached as the next message]')
+                elif getattr(block, 'text', None) is not None:
+                    parts.append(block.text)
+                else:
+                    parts.append(str(block)[:2000])
+            return '\n'.join(parts)
 
         except Exception as e:
             return f"Error calling MCP tool '{tool_name}': {e}"
@@ -107,6 +125,9 @@ def create_mcp_tool_wrapper(
     wrapped_tool.required_params = [r for r in required if r in properties]
     if mcp_tool_risk(tool_name, annotations).risk_level != RiskLevel.LOW:
         wrapped_tool.approval_mode = 'always'
+    # Calls to one server in a batch run in order (a browser can't fill
+    # two fields at once); see AgentManager.call_tools.
+    object.__setattr__(wrapped_tool, '_mcp_server', connection_key)
 
     return wrapped_tool
 

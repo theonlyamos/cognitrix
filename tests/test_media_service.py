@@ -1112,8 +1112,8 @@ async def test_legacy_session_delete_wrapper_fails_closed_without_owner(
     monkeypatch, artifact_store
 ):
     from cognitrix import artifacts
-    from cognitrix.media.documents import document_assets
     from cognitrix.media import service as service_module
+    from cognitrix.media.documents import document_assets
 
     deleted = []
     deleted_documents = []

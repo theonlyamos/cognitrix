@@ -12,26 +12,29 @@ import os
 import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 from uuid import uuid4
 
 from fastapi import HTTPException
 
 from cognitrix.artifacts import DocumentArtifact
 from cognitrix.config import settings
-from cognitrix.media.documents import (
-    document_file_extension,
-    document_assets,
-    encode_identity,
-    ownership_directory_prefix,
-    sniff_document_mime,
-)
 from cognitrix.media import document_storage
 from cognitrix.media.document_storage import (
     DocumentStorageDestination as _UploadDestination,
+)
+from cognitrix.media.document_storage import (
     DocumentStorageRecord as _DocumentRollbackRecord,
+)
+from cognitrix.media.documents import (
+    document_assets,
+    document_file_extension,
+    encode_identity,
+    ownership_directory_prefix,
+    sniff_document_mime,
 )
 from cognitrix.media.service import CommittedArtifactCleanupError, media_assets
 from cognitrix.media.types import MediaOwnership, MediaValidationError
@@ -63,10 +66,10 @@ _OPAQUE_LEAF = re.compile(r'[A-Za-z0-9_-]{1,128}\Z')
 
 _ACTIVE_BATCHES: set[Path] = set()
 _BATCH_LEASES: dict[Path, tuple[str, float | None]] = {}
-_BATCH_OBJECTS: dict[Path, 'StagedAttachmentSet'] = {}
+_BATCH_OBJECTS: dict[Path, StagedAttachmentSet] = {}
 _ACTIVE_LOCK = threading.RLock()
-_PENDING_ROLLBACKS: dict[str, tuple['PromotedAttachments', MediaOwnership]] = {}
-_PENDING_STAGING_CLEANUPS: dict[str, 'StagedAttachmentSet'] = {}
+_PENDING_ROLLBACKS: dict[str, tuple[PromotedAttachments, MediaOwnership]] = {}
+_PENDING_STAGING_CLEANUPS: dict[str, StagedAttachmentSet] = {}
 _PENDING_CLEANUP_LOCK = threading.RLock()
 _ATTACHMENT_CLEANUP_OBLIGATION_UNITS = 0
 _ACTIVE_CLEANUP_RESERVATION_TOKENS: set[str] = set()
@@ -216,7 +219,7 @@ def _path_lexists(path: Path) -> bool:
     return os.path.lexists(os.fspath(path))
 
 
-def _remove_staged_batch_capability(staged: 'StagedAttachmentSet') -> None:
+def _remove_staged_batch_capability(staged: StagedAttachmentSet) -> None:
     if staged._root_identity is None or (
         staged._batch_identity is None
         and not staged._batch_identity_unsettled
@@ -1087,7 +1090,7 @@ async def stage_legacy_data_urls(
 class PromotedAttachments:
     image_refs: list[ArtifactRef]
     document_paths: list[dict[str, str]]
-    _rollback_records: list['_DocumentRollbackRecord'] = field(
+    _rollback_records: list[_DocumentRollbackRecord] = field(
         default_factory=list,
         repr=False,
         compare=False,
@@ -1416,7 +1419,7 @@ def _ensure_staging_cleanup_reservation(
         if reservation is None:
             return None
         try:
-            setattr(staged, '_cleanup_reservation', reservation)
+            staged._cleanup_reservation = reservation
         except (AttributeError, TypeError):
             reservation.release_staging()
             return None
@@ -1557,7 +1560,7 @@ async def _attachment_maintenance_wait(delay: float) -> None:
         return
     try:
         await asyncio.wait_for(wake.wait(), timeout=delay)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
     finally:
         wake.clear()

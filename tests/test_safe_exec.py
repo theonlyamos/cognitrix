@@ -2,6 +2,10 @@
 
 import pytest
 
+from cognitrix.common.process_security import (
+    HostProcessAccessError,
+    HostProcessMode,
+)
 from cognitrix.common.safe_exec import (
     CommandNotAllowed,
     PathEscapesRoot,
@@ -9,10 +13,6 @@ from cognitrix.common.safe_exec import (
     resolve_within_root,
     run_whitelisted,
     run_whitelisted_async,
-)
-from cognitrix.common.process_security import (
-    HostProcessAccessError,
-    HostProcessMode,
 )
 
 

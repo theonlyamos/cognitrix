@@ -10,7 +10,6 @@ from cognitrix.common.rate_limit import _windows, check_rate_limit
 from cognitrix.common.security import AuthContext, crud_scope, get_auth_context, jwt_only, require
 from cognitrix.models.api_key import (
     KEY_PREFIX,
-    VALID_SCOPES,
     APIKey,
     generate_secret,
     hash_secret,

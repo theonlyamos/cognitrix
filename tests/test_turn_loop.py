@@ -385,8 +385,8 @@ async def test_call_tools_propagates_a_child_cancelled_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_execution_control_error_cancels_workers_before_propagating(monkeypatch):
-    from cognitrix.errors import ExecutionControlError
     import cognitrix.agents.base as agent_base
+    from cognitrix.errors import ExecutionControlError
 
     sibling = Tool(name="Running Sibling", description="d", parameters={})
     failing = Tool(name="Control Failure", description="d", parameters={})

@@ -142,7 +142,6 @@ def _chain_step(index, deps):
 
 
 def test_step_prompt_includes_results_of_indirect_dependencies():
-    from types import SimpleNamespace
     from cognitrix.tasks.orchestrator import _durable_step_prompt
 
     steps = {0: _chain_step(0, []), 1: _chain_step(1, [0]), 2: _chain_step(2, [1])}

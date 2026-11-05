@@ -1,6 +1,6 @@
 """Task schedule fields, next-run math, and scheduler tick behavior."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -132,10 +132,10 @@ def test_next_run_cron_is_utc():
     got = datetime.fromisoformat(compute_next_run(t, NOW))
     # Independently derive the expected instant with the same contract.
     local_tz = datetime.now().astimezone().tzinfo
-    local_now = NOW.replace(tzinfo=timezone.utc).astimezone(local_tz)
+    local_now = NOW.replace(tzinfo=UTC).astimezone(local_tz)
     from croniter import croniter
     expected = croniter('*/15 * * * *', local_now).get_next(datetime)
-    assert got == expected.astimezone(timezone.utc).replace(tzinfo=None)
+    assert got == expected.astimezone(UTC).replace(tzinfo=None)
     assert timedelta(0) < got - NOW <= timedelta(minutes=15)
 
 

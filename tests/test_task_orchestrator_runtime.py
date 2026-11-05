@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 import cognitrix.tasks.orchestrator as orchestrator
-from cognitrix.providers.base import LLM
 from cognitrix.models.tool import MCPTool
+from cognitrix.providers.base import LLM
 from cognitrix.tasks.evaluation import StepEvaluation
 from cognitrix.tasks.repository import RunRepository
 from cognitrix.tasks.results import StepResult

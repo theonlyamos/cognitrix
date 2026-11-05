@@ -353,8 +353,8 @@ async def test_lifecycle_rotates_generation_blocks_live_lease_and_uses_cas(tmp_p
         finish_clear,
         release_reservation,
         require_owned,
-        resume_lifecycle,
         reserve_intent,
+        resume_lifecycle,
     )
 
     await _initialize_ownership_db(tmp_path)

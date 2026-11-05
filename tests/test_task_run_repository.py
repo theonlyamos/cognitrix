@@ -2,7 +2,7 @@
 
 import asyncio
 import importlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -168,12 +168,12 @@ async def test_queue_and_claim_timestamps_use_database_clock_under_worker_skew(
     """A worker clock must not manufacture queue or lease timestamps."""
     repository_module = importlib.import_module("cognitrix.tasks.repository")
     RunRepository, _, _, _ = _repository_api()
-    actual_before = datetime.now(timezone.utc).replace(microsecond=0)
+    actual_before = datetime.now(UTC).replace(microsecond=0)
 
     class SkewedDatetime(datetime):
         @classmethod
         def now(cls, tz=None):
-            skewed = datetime(2099, 1, 1, 0, 0, tzinfo=timezone.utc)
+            skewed = datetime(2099, 1, 1, 0, 0, tzinfo=UTC)
             return skewed if tz is not None else skewed.replace(tzinfo=None)
 
     monkeypatch.setattr(repository_module, "datetime", SkewedDatetime)
@@ -186,18 +186,18 @@ async def test_queue_and_claim_timestamps_use_database_clock_under_worker_skew(
     )
     assert claim is not None
 
-    actual_after = datetime.now(timezone.utc).replace(microsecond=0)
+    actual_after = datetime.now(UTC).replace(microsecond=0)
     stored = await TaskRun.get(created.id)
     assert stored is not None
     queued_at = datetime.strptime(stored.queued_at, "%Y-%m-%d %H:%M:%S").replace(
-        tzinfo=timezone.utc
+        tzinfo=UTC
     )
     heartbeat_at = datetime.strptime(
         stored.heartbeat_at, "%Y-%m-%d %H:%M:%S"
-    ).replace(tzinfo=timezone.utc)
+    ).replace(tzinfo=UTC)
     lease_expires_at = datetime.strptime(
         stored.lease_expires_at, "%Y-%m-%d %H:%M:%S"
-    ).replace(tzinfo=timezone.utc)
+    ).replace(tzinfo=UTC)
 
     tolerance = timedelta(seconds=2)
     assert actual_before - tolerance <= queued_at <= actual_after + tolerance

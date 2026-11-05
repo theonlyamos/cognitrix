@@ -42,7 +42,7 @@ class QuestionOption:
     description: str | None = None
 
     @classmethod
-    def from_value(cls, value: object) -> 'QuestionOption':
+    def from_value(cls, value: object) -> QuestionOption:
         if not isinstance(value, dict):
             raise QuestionValidationError('Each option must be an object')
         return cls(
@@ -77,7 +77,7 @@ class QuestionSpec:
         allow_free_text: bool = False,
         recommended_option_id: str | None = None,
         auto_submit_recommended: bool = False,
-    ) -> 'QuestionSpec':
+    ) -> QuestionSpec:
         if not isinstance(allow_free_text, bool) or not isinstance(auto_submit_recommended, bool):
             raise QuestionValidationError('Question flags must be true or false')
         raw_options = options or []
@@ -129,11 +129,11 @@ class QuestionAnswer:
     @classmethod
     def option(
         cls, option_id: str, label: str, *, auto_submitted: bool = False,
-    ) -> 'QuestionAnswer':
+    ) -> QuestionAnswer:
         return cls('answered', 'option', option_id, label, auto_submitted)
 
     @classmethod
-    def free_text(cls, text: str) -> 'QuestionAnswer':
+    def free_text(cls, text: str) -> QuestionAnswer:
         return cls('answered', 'text', None, text, False)
 
     def to_dict(self) -> dict[str, Any]:

@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
-from typing import Awaitable, Callable, Generic, Mapping, Sequence, TypeVar
+from typing import Generic, TypeVar
 
 from cognitrix.errors import ExecutionControlError
 from cognitrix.tasks.results import StepResult, UsageSummary
-
 
 PayloadT = TypeVar("PayloadT")
 ResultT = TypeVar("ResultT")

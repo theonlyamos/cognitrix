@@ -31,7 +31,7 @@ write MUST be a partial ``TaskRun.update_one({'id': run.id}, {...})`` —
 ``cancelling`` status from the cancel endpoint.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -40,12 +40,11 @@ from pydantic import Field, validator
 
 from cognitrix.tasks.results import StepResult
 
-
 RUN_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(tzinfo=None).strftime(RUN_TIMESTAMP_FORMAT)
+    return datetime.now(UTC).replace(tzinfo=None).strftime(RUN_TIMESTAMP_FORMAT)
 
 
 def final_result_update(value: StepResult | str | dict[str, Any]) -> dict[str, Any]:
