@@ -340,6 +340,7 @@ class Session(Model):
         # Add timing for turn duration
         turn_start_time = time.monotonic()
         self.__dict__['_last_turn_error'] = None
+        self.__dict__['_empty_nudged'] = False
 
         # Every agent can invoke skills: ensure the load_skill meta-tool is present
         # for this turn. UI/API-created agents only carry their configured tools,
@@ -680,6 +681,8 @@ class Session(Model):
                                 str(self.id), str(agent.id), bound_context.user_id
                             )
                             execution_token = set_execution_context(bound_context)
+                            from cognitrix.tools import misc as _misc
+                            images_token, round_images = _misc.start_image_collection()
                             try:
                                 result: dict[Any, Any] | str = await agent.call_tools(
                                     response.tool_calls,
@@ -741,6 +744,7 @@ class Session(Model):
                                 reset_grant_sink(grant_token)
                                 reset_execution_context(execution_token)
                                 reset_session(artifact_token)
+                                _misc.end_image_collection(images_token)
                             called_tools = True
                             tool_rounds += 1
                             is_tool_result = (
@@ -753,6 +757,13 @@ class Session(Model):
                                 # relabel completed calls as stopped.
                                 if record_history:
                                     self.update_history(agent.process_prompt(result))
+                                    # Screenshots from this round go in as images
+                                    # right after the tool results.
+                                    for image in round_images:
+                                        self.update_history({
+                                            'role': 'User', 'type': 'screenshot',
+                                            'content': image,
+                                        })
                                 active_tool_calls = []
                             if interface in ('web', 'ws', 'task'):
                                 result_list = result['result'] if is_tool_result else []
@@ -822,6 +833,24 @@ class Session(Model):
                             raise ProviderExecutionError('provider request failed')
                         self.__dict__['_last_turn_error'] = str(response.error)
                         break
+
+                    # An empty reply right after tool results (Gemini 3.1 Pro
+                    # does this mid-task) would end the turn silently. Ask once
+                    # more before giving up.
+                    if (
+                        response and not response.tool_calls and not called_tools
+                        and tool_rounds > 0 and not (response.llm_response or '').strip()
+                        and not self.__dict__.get('_empty_nudged') and record_history
+                    ):
+                        self.__dict__['_empty_nudged'] = True
+                        self.update_history({
+                            'role': 'User', 'type': 'text',
+                            'content': '[System: your last reply was empty. Continue the task, '
+                                       'or give your final answer.]',
+                        })
+                        prompt = await agent.get_context_manager().build_prompt(agent, self)
+                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders))
+                        continue
 
                     # Persist the final assistant text only when this response did
                     # NOT issue tool calls (that assistant message was already saved

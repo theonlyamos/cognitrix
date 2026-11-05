@@ -18,6 +18,8 @@ def estimate_tokens(content: str | dict[str, Any] | list[Any] | None) -> int:
     if isinstance(content, str):
         return len(content) // CHARS_PER_TOKEN
     if isinstance(content, dict):
+        if content.get('type') == 'screenshot':
+            return 1500  # a scaled-down screenshot, not its base64 length
         total = estimate_tokens(str(content.get('content') or ''))
         for tc in content.get('tool_calls') or []:
             total += estimate_tokens(str(tc))

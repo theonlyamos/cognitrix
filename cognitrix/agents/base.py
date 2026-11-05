@@ -148,6 +148,12 @@ def _truncate_tool_result(content: str) -> str:
     )
 
 
+_DESKTOP_TOOL_NAMES = frozenset({
+    'take_screenshot', 'text_input', 'key_press', 'hot_key', 'mouse_click',
+    'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
+})
+
+
 def _tool_outcome(value: Any) -> ToolOutcome:
     """Normalize legacy tool values into the stable public result contract."""
     if isinstance(value, ToolCallResult) and value.outcome:
@@ -622,6 +628,15 @@ class AgentManager:
             next_job = 0
             execution_slots = _tool_execution_limiter()
 
+            # One lock per MCP server used by 2+ calls in this batch: they run
+            # in the order given (asyncio.Lock wakes waiters first-in first-out).
+            server_counts: dict[str, int] = {}
+            for job in slot_jobs:
+                key = getattr(job[1], '_mcp_server', None)
+                if key:
+                    server_counts[key] = server_counts.get(key, 0) + 1
+            server_locks = {k: asyncio.Lock() for k, n in server_counts.items() if n > 1}
+
             async def run_job(
                 job: tuple[int, Tool, dict[str, Any], int, bool, bool],
                 *, constrained: bool,
@@ -629,8 +644,13 @@ class AgentManager:
                 i, tool, params, max_retries, attempt_recovery, _ = job
                 tc_id = agent_tool_calls[i].get('tool_call_id')
                 path_lock = _path_lock_for(params)
+                server_lock = server_locks.get(getattr(tool, '_mcp_server', None))
                 lock_held = False
+                server_held = False
                 try:
+                    if server_lock is not None:
+                        await server_lock.acquire()
+                        server_held = True
                     if path_lock is not None:
                         await path_lock.acquire()
                         lock_held = True
@@ -670,6 +690,8 @@ class AgentManager:
                 finally:
                     if lock_held:
                         path_lock.release()
+                    if server_held:
+                        server_lock.release()
                 results_by_index[i] = _tool_result_entry(tc_id, await _hide_saved_secrets(outcome))
 
             async def worker() -> None:
@@ -680,6 +702,21 @@ class AgentManager:
                     await run_job(slot_jobs[job_index], constrained=True)
 
             worker_count = min(MAX_CONCURRENT_TOOL_CALLS, len(slot_jobs))
+            coords_token = None
+            # Desktop actions (click, type, screenshot) must run one at a time
+            # and in the order the model gave them: "click the field, then
+            # type" breaks when run in parallel, and Xlib connections aren't
+            # thread-safe.
+            if any(
+                str(job[1].name).strip().lower().replace(' ', '_') in _DESKTOP_TOOL_NAMES
+                for job in slot_jobs
+            ):
+                worker_count = min(worker_count, 1)
+                from cognitrix.tools import misc as _misc
+                # Set before the worker tasks start so they inherit it.
+                coords_token = _misc.coords_normalized.set(
+                    str(getattr(self.agent.llm, 'provider', '')).lower() in ('google', 'gemini')
+                )
             worker_tasks = [
                 asyncio.create_task(worker()) for _ in range(worker_count)
             ]
@@ -687,8 +724,12 @@ class AgentManager:
                 asyncio.create_task(run_job(job, constrained=False))
                 for job in detached_jobs
             )
-            if worker_tasks:
-                await asyncio.gather(*worker_tasks)
+            try:
+                if worker_tasks:
+                    await asyncio.gather(*worker_tasks)
+            finally:
+                if coords_token is not None:
+                    _misc.coords_normalized.reset(coords_token)
 
             results = [results_by_index[i] for i in range(len(agent_tool_calls))]
             return {

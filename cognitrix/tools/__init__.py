@@ -22,9 +22,17 @@ from cognitrix.tools.misc import (
     call_agent,
     coding_agent,
     create_agent,
+    hot_key,
+    key_press,
     kill_shell,
     list_agents,
+    mouse_click,
+    mouse_double_click,
+    mouse_right_click,
+    mouse_scroll,
     open_file,
+    take_screenshot,
+    text_input,
 )
 from cognitrix.tools.question import ask_user
 from cognitrix.tools.skill_tool import load_skill
@@ -52,4 +60,6 @@ __all__ = [
     'request_folder',
     'start_chat', 'check_chat', 'message_chat',
     'memory', 'search_chats', 'read_chat',
+    'take_screenshot', 'text_input', 'key_press', 'hot_key',
+    'mouse_click', 'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
 ]
