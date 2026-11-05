@@ -346,6 +346,8 @@ _MAX_RATE_LIMIT_ATTEMPTS = 6
 # Groq asks for waits of up to a minute ("try again in 39.66s"); a lower cap
 # made the retry land inside the same window and fail again.
 _MAX_RETRY_AFTER_SECONDS = 60.0
+# Extra samples when the provider rejects a tool call the model invented.
+_MAX_INVALID_TOOL_RETRIES = 2
 
 
 def _retry_delay(error: Exception, attempt: int) -> float:
@@ -421,6 +423,7 @@ async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
     if params.get('tools') and model in _NO_REASONING_WITH_TOOLS and not _reasoning_effort_pinned(params):
         params = {**params, 'reasoning_effort': 'none'}
     attempt = 0
+    invalid_tool_retries = 0
     while True:
         attempt += 1
         if attempt > 1 and accounting is not None:
@@ -433,6 +436,19 @@ async def _create_with_retry(client: AsyncOpenAI, params: dict[str, Any]):
         try:
             return await client.chat.completions.create(**params)
         except openai.BadRequestError as e:
+            # Groq checks the model's tool calls on its side and answers 400
+            # when the model calls a tool that wasn't offered (gpt-oss called
+            # 'Shell' instead of 'Bash'). The model usually gets it right on
+            # a second sample, so try again rather than end the turn.
+            if (
+                'tool call validation failed' in str(e).lower()
+                and invalid_tool_retries < _MAX_INVALID_TOOL_RETRIES
+            ):
+                invalid_tool_retries += 1
+                logger.warning("Provider rejected the model's tool call; sampling again: %s", e)
+                if accounting is not None:
+                    await accounting.finish_failed_provider_attempt()
+                continue
             # Some OpenAI models only take function tools on /chat/completions
             # with reasoning turned off. Retry once that way rather than fail
             # every chat with tools.

@@ -1458,3 +1458,79 @@ async def test_task_turn_propagates_provider_error_instead_of_returning_error_te
             persist_history=False,
             compact_history=False,
         )
+
+
+@pytest.mark.asyncio
+async def test_reply_cut_off_by_output_limit_is_continued(monkeypatch):
+    """A reply that hits max_tokens doesn't end the turn: the model is asked
+    to continue, and can still call its tool."""
+    from cognitrix.sessions.base import Session
+
+    assigned = Tool(name="Run", description="d", parameters={})
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys", tools=[assigned])
+    session = Session(agent_id="cutoff")
+    prompts = []
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        prompts.append(prompt)
+        response = LLMResponse()
+        if len(prompts) == 1:
+            response.add_chunk("Let me think about the bug in cart.py, it seems")
+            response.finish_reason = "length"
+        elif len(prompts) == 2:
+            response.tool_calls = [{"name": "Run", "arguments": {}, "tool_call_id": "r1"}]
+        else:
+            response.add_chunk("fixed")
+            response.finish_reason = "stop"
+        return response
+
+    async def fake_run_tool(self, tool, params, **kw):
+        return ToolResult(success=True, data="ok")
+
+    async def fake_save(self):
+        return None
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+    monkeypatch.setattr(
+        "cognitrix.agents.base.ToolManager.get_by_name", staticmethod(lambda name: assigned)
+    )
+    monkeypatch.setattr(
+        "cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool", fake_run_tool
+    )
+    monkeypatch.setattr(Session, "save", fake_save)
+
+    await session("fix it", agent, "cli", False, lambda *args, **kwargs: None)
+
+    assert len(prompts) == 3
+    assert "cut off by the output limit" in str(prompts[1][-1]["content"])
+    assert session.chat[-2]["content"] == "fixed"
+
+
+@pytest.mark.asyncio
+async def test_cut_off_continuation_is_bounded(monkeypatch):
+    from cognitrix.sessions.base import MAX_CUTOFF_CONTINUES, Session
+
+    agent = Agent(name="A", llm=_llm(), system_prompt="sys")
+    session = Session(agent_id="cutoff-loop")
+    calls = 0
+
+    async def fake_generate(llm, prompt, stream=False, tools=None, **kw):
+        nonlocal calls
+        calls += 1
+        response = LLMResponse()
+        response.add_chunk("more text")
+        response.finish_reason = "length"
+        return response
+
+    async def fake_save(self):
+        return None
+
+    monkeypatch.setattr(
+        "cognitrix.providers.base.LLMManager.generate_response", staticmethod(fake_generate)
+    )
+    monkeypatch.setattr(Session, "save", fake_save)
+
+    await session("write a lot", agent, "cli", False, lambda *args, **kwargs: None)
+    assert calls == MAX_CUTOFF_CONTINUES + 1

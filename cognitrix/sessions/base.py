@@ -52,6 +52,10 @@ COMPACT_THRESHOLD = 0.7
 # Never fold the most recent turns — they are the working context.
 COMPACT_KEEP_TURNS = 4
 
+# A reply cut off by the output-token limit is continued this many times
+# before the turn ends with what it has.
+MAX_CUTOFF_CONTINUES = 3
+
 # Compaction inside a turn: once a long tool loop's own messages pass this
 # fraction of the usable window, its older rounds are folded into a progress
 # summary. The newest rounds stay whole: they are what the model works from.
@@ -661,6 +665,7 @@ class Session(Model):
         last_denied_sig = None
         stop_turn = False
         wrap_up_requested = False
+        cutoff_continues = 0
         try:
             while True:  # The loop now primarily handles tool calls, not initial message processing
                 if tool_rounds >= MAX_TOOL_ROUNDS and not wrap_up_requested and agent.llm.supports_tool_use:
@@ -969,6 +974,30 @@ class Session(Model):
                             'content': response.llm_response
                         }
                         self.update_history(response_dict)
+
+                    if (
+                        not called_tools
+                        and response
+                        and getattr(response, 'finish_reason', None) == 'length'
+                        and not response.tool_calls
+                        and cutoff_continues < MAX_CUTOFF_CONTINUES
+                    ):
+                        # The reply hit the output-token limit mid-way (seen
+                        # with Gemini thinking out loud before its next tool
+                        # call). Without this the cut-off text ended the turn
+                        # as if it were the answer.
+                        cutoff_continues += 1
+                        logger.warning("Reply cut off at the output limit; asking the model to continue")
+                        prompt = [*prompt, {
+                            'role': 'assistant', 'type': 'text', 'content': response.llm_response or '',
+                        }, {
+                            'role': 'user', 'type': 'text', 'content': (
+                                '[System: your last reply was cut off by the output limit. '
+                                'Continue from where it stopped. Keep it short, and if you were '
+                                'about to use a tool, call it now.]'
+                            ),
+                        }]
+                        continue
 
                     if not called_tools:
                         # Calculate turn duration
