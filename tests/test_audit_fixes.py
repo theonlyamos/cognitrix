@@ -262,7 +262,7 @@ def test_retry_delay_honours_retry_after():
 
     assert _retry_delay(Err(), 1) == 6.6
     Resp.headers = {'retry-after': '999'}
-    assert _retry_delay(Err(), 1) == 30.0
+    assert _retry_delay(Err(), 1) == 60.0
     Resp.headers = {}
     assert 1.0 <= _retry_delay(Err(), 1) <= 1.5
 

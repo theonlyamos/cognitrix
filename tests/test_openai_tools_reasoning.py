@@ -116,3 +116,37 @@ async def test_reasoning_level_is_sent_and_the_chat_choice_wins(monkeypatch):
     assert [p.get('reasoning_effort') for p in seen] == ['low', 'high', None]
     assert base.normalize_reasoning_effort('HIGH ') == 'high'
     assert base.normalize_reasoning_effort('turbo') == ''
+
+
+GROQ_INVALID_TOOL = ("Error code: 400 - Tool call validation failed: attempted to call tool 'Shell' "
+                     "which was not in request.tools")
+
+
+class _FailTimes:
+    def __init__(self, times, error):
+        self.calls = 0
+        self.times = times
+        self.error = error
+
+    async def create(self, **params):
+        self.calls += 1
+        if self.calls <= self.times:
+            raise self.error
+        return 'ok'
+
+
+@pytest.mark.asyncio
+async def test_invented_tool_call_is_sampled_again():
+    completions = _FailTimes(1, _bad_request(GROQ_INVALID_TOOL))
+    params = {'model': 'openai/gpt-oss-120b', 'messages': [], 'tools': [{'type': 'function'}]}
+    assert await base._create_with_retry(_Client(completions), params) == 'ok'
+    assert completions.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_invented_tool_call_retries_are_bounded():
+    completions = _FailTimes(10, _bad_request(GROQ_INVALID_TOOL))
+    params = {'model': 'openai/gpt-oss-120b', 'messages': [], 'tools': [{'type': 'function'}]}
+    with pytest.raises(openai.BadRequestError):
+        await base._create_with_retry(_Client(completions), params)
+    assert completions.calls == base._MAX_INVALID_TOOL_RETRIES + 1

@@ -901,6 +901,45 @@ def Grep(pattern: str, path: str = ".", include: str | None = None, exclude: str
         return f"Error during search: {str(e)}"
 
 
+def _glob_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a path glob: '**/' is any number of folders (none included),
+    '*' and '?' stay within one folder, [..] is a character class."""
+    pattern = pattern.replace('\\', '/')
+    if pattern.startswith('./'):
+        pattern = pattern[2:]
+    out = []
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith('**/', i):
+            out.append('(?:.*/)?')
+            i += 3
+        elif pattern.startswith('**', i):
+            out.append('.*')
+            i += 2
+        elif pattern[i] == '*':
+            out.append('[^/]*')
+            i += 1
+        elif pattern[i] == '?':
+            out.append('[^/]')
+            i += 1
+        elif pattern[i] == '[':
+            end = pattern.find(']', i + 1)
+            if end == -1:
+                out.append(re.escape(pattern[i]))
+                i += 1
+            else:
+                body = pattern[i + 1:end]
+                if body.startswith('!'):
+                    body = '^' + body[1:]
+                out.append(f'[{body}]')
+                i = end + 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    flags = re.IGNORECASE if os.name == 'nt' else 0
+    return re.compile(''.join(out), flags)
+
+
 @tool(category='filesystem')
 def Glob(pattern: str, path: str = ".", recursive: bool = True, include_dirs: bool = False, max_results: int = 100):
     """Find files matching a glob pattern, similar to glob.
@@ -943,8 +982,10 @@ def Glob(pattern: str, path: str = ".", recursive: bool = True, include_dirs: bo
         limits_hit: set[str] = set()
 
         if '**' in pattern:
-            pattern = pattern.replace('**', '*')
             recursive = True
+        # A pattern with a '/' is matched against the path under the search
+        # folder ('**/*.py', 'src/**/*.ts'); otherwise against the file name.
+        path_pattern = _glob_regex(pattern) if '/' in pattern.replace('\\', '/') else None
 
         entries = _collect_search_entries(
             search_path,
@@ -961,7 +1002,15 @@ def Glob(pattern: str, path: str = ".", recursive: bool = True, include_dirs: bo
                 )
                 break
             enumerated_candidates += 1
-            if fnmatch.fnmatch(entry.path.name, pattern):
+            if path_pattern is not None:
+                try:
+                    relative = entry.path.relative_to(search_path).as_posix()
+                except ValueError:
+                    relative = entry.path.name
+                matched = path_pattern.fullmatch(relative) is not None
+            else:
+                matched = fnmatch.fnmatch(entry.path.name, pattern)
+            if matched:
                 results.append(str(entry.path))
             if len(results) >= max_results:
                 break

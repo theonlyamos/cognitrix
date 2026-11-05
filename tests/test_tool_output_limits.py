@@ -326,3 +326,27 @@ async def test_pdf_explicit_range_is_limited_and_reports_pagination(
     assert len(result.content) <= MAX_TOOL_OUTPUT_CHARS
     assert f'limited to {MAX_PDF_PAGES_PER_READ} pages' in result.content
     assert 'request another page_range' in result.content
+
+
+@pytest.mark.asyncio
+async def test_glob_matches_path_patterns(tmp_path, monkeypatch):
+    """'**/*.py' used to find nothing: patterns with '/' were matched
+    against the bare file name."""
+    monkeypatch.setattr(settings, 'tools_root', tmp_path.resolve())
+    (tmp_path / 'pkg' / 'sub').mkdir(parents=True)
+    (tmp_path / 'tests').mkdir()
+    for name in ('top.py', 'pkg/a.py', 'pkg/sub/b.py', 'tests/test_a.py', 'pkg/notes.md'):
+        (tmp_path / name).write_text('x')
+
+    def found(result):
+        return sorted(
+            line.replace(str(tmp_path.resolve()), '').lstrip('/\\').replace('\\', '/')
+            for line in result.content.splitlines()[2:]
+        )
+
+    assert found(await Glob.run(pattern='**/*.py', path='.')) == [
+        'pkg/a.py', 'pkg/sub/b.py', 'tests/test_a.py', 'top.py']
+    assert found(await Glob.run(pattern='pkg/*.py', path='.')) == ['pkg/a.py']
+    assert found(await Glob.run(pattern='pkg/**/*.py', path='.')) == ['pkg/a.py', 'pkg/sub/b.py']
+    assert found(await Glob.run(pattern='**/test_*.py', path='.')) == ['tests/test_a.py']
+    assert found(await Glob.run(pattern='*.md', path='.')) == ['pkg/notes.md']
