@@ -88,10 +88,11 @@ def create_mcp_tool_wrapper(
             parts = []
             for block in result:
                 if getattr(block, 'type', None) == 'image' and getattr(block, 'data', None):
-                    _misc.pending_screenshots.append(
+                    shown = _misc.queue_image(
                         f"data:{getattr(block, 'mime_type', None) or 'image/png'};base64,{block.data}"
                     )
-                    parts.append('[Image attached as the next message]')
+                    parts.append('[Image attached as the next message]' if shown
+                                 else '[Image returned; this chat cannot show images]')
                 elif getattr(block, 'text', None) is not None:
                     parts.append(block.text)
                 else:

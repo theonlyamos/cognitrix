@@ -1228,19 +1228,44 @@ def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
 # The model then clicks in screenshot coordinates; we scale back to the screen.
 _SHOT_MAX_W, _SHOT_MAX_H = 1280, 800
 _screen_scale: float = 1.0
-# Screenshots taken during the current tool round, handed to the session loop,
-# which appends them to the chat as images right after the tool results.
-pending_screenshots: list[str] = []
-
+# Images from the current tool round (screenshots, MCP image blocks). The
+# session opens a collection per round and adds them to its own chat after the
+# tool results. A context variable keeps concurrent chats apart.
+_round_images: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    'round_images', default=None
+)
 
 # Gemini models give image coordinates on a 0-1000 grid whatever they are
 # told, so for them we ask for that grid and convert it. Set per tool round.
-coords_normalized: bool = False
+coords_normalized: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    'coords_normalized', default=False
+)
 _shot_size: tuple[int, int] = (_SHOT_MAX_W, _SHOT_MAX_H)
 
 
+def start_image_collection() -> tuple[contextvars.Token, list[str]]:
+    """Collect images queued by this tool round. Pass the token to
+    ``end_image_collection`` when the round ends."""
+    images: list[str] = []
+    return _round_images.set(images), images
+
+
+def end_image_collection(token: contextvars.Token) -> None:
+    _round_images.reset(token)
+
+
+def queue_image(data_uri: str) -> bool:
+    """Show an image to the model after this round's tool results. False when
+    no session is collecting (the image can't be shown)."""
+    images = _round_images.get()
+    if images is None:
+        return False
+    images.append(data_uri)
+    return True
+
+
 def _to_screen(x: int, y: int) -> tuple[int, int]:
-    if coords_normalized:
+    if coords_normalized.get():
         x = float(x) / 1000 * _shot_size[0]
         y = float(y) / 1000 * _shot_size[1]
     return int(round(float(x) * _screen_scale)), int(round(float(y) * _screen_scale))
@@ -1267,8 +1292,9 @@ def take_screenshot():
     _shot_size = shot.size
     buf = io.BytesIO()
     shot.save(buf, format='PNG')
-    pending_screenshots.append('data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode())
-    if coords_normalized:
+    if not queue_image('data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()):
+        return 'Screenshot taken, but this chat cannot show images.'
+    if coords_normalized.get():
         return ('Screenshot taken. It is attached as the next image. Give click x and y on a 0-1000 grid '
                 '(0,0 is the top-left corner, 1000,1000 the bottom-right), like your usual image coordinates.')
     return (f'Screenshot taken: {shot.size[0]}x{shot.size[1]} pixels.{cursor} It is attached as the next image. '

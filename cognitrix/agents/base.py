@@ -702,6 +702,7 @@ class AgentManager:
                     await run_job(slot_jobs[job_index], constrained=True)
 
             worker_count = min(MAX_CONCURRENT_TOOL_CALLS, len(slot_jobs))
+            coords_token = None
             # Desktop actions (click, type, screenshot) must run one at a time
             # and in the order the model gave them: "click the field, then
             # type" breaks when run in parallel, and Xlib connections aren't
@@ -712,7 +713,10 @@ class AgentManager:
             ):
                 worker_count = min(worker_count, 1)
                 from cognitrix.tools import misc as _misc
-                _misc.coords_normalized = str(getattr(self.agent.llm, 'provider', '')).lower() in ('google', 'gemini')
+                # Set before the worker tasks start so they inherit it.
+                coords_token = _misc.coords_normalized.set(
+                    str(getattr(self.agent.llm, 'provider', '')).lower() in ('google', 'gemini')
+                )
             worker_tasks = [
                 asyncio.create_task(worker()) for _ in range(worker_count)
             ]
@@ -720,8 +724,12 @@ class AgentManager:
                 asyncio.create_task(run_job(job, constrained=False))
                 for job in detached_jobs
             )
-            if worker_tasks:
-                await asyncio.gather(*worker_tasks)
+            try:
+                if worker_tasks:
+                    await asyncio.gather(*worker_tasks)
+            finally:
+                if coords_token is not None:
+                    _misc.coords_normalized.reset(coords_token)
 
             results = [results_by_index[i] for i in range(len(agent_tool_calls))]
             return {

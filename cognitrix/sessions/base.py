@@ -681,6 +681,8 @@ class Session(Model):
                                 str(self.id), str(agent.id), bound_context.user_id
                             )
                             execution_token = set_execution_context(bound_context)
+                            from cognitrix.tools import misc as _misc
+                            images_token, round_images = _misc.start_image_collection()
                             try:
                                 result: dict[Any, Any] | str = await agent.call_tools(
                                     response.tool_calls,
@@ -742,6 +744,7 @@ class Session(Model):
                                 reset_grant_sink(grant_token)
                                 reset_execution_context(execution_token)
                                 reset_session(artifact_token)
+                                _misc.end_image_collection(images_token)
                             called_tools = True
                             tool_rounds += 1
                             is_tool_result = (
@@ -756,11 +759,10 @@ class Session(Model):
                                     self.update_history(agent.process_prompt(result))
                                     # Screenshots from this round go in as images
                                     # right after the tool results.
-                                    from cognitrix.tools import misc as _misc
-                                    while _misc.pending_screenshots:
+                                    for image in round_images:
                                         self.update_history({
                                             'role': 'User', 'type': 'screenshot',
-                                            'content': _misc.pending_screenshots.pop(0),
+                                            'content': image,
                                         })
                                 active_tool_calls = []
                             if interface in ('web', 'ws', 'task'):

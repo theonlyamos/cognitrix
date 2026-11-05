@@ -38,10 +38,10 @@ class FakeGui:
 def gui(monkeypatch):
     fake = FakeGui()
     monkeypatch.setattr(misc, '_pyautogui', lambda: fake)
-    monkeypatch.setattr(misc, 'coords_normalized', False)
-    misc.pending_screenshots.clear()
+    token, images = misc.start_image_collection()
+    fake.images = images
     yield fake
-    misc.pending_screenshots.clear()
+    misc.end_image_collection(token)
 
 
 def test_desktop_tools_are_registered():
@@ -54,8 +54,8 @@ def test_desktop_tools_are_registered():
 async def test_screenshot_is_scaled_and_queued_as_an_image(gui):
     out = (await misc.take_screenshot.run()).content
     assert '1280x720' in out
-    assert len(misc.pending_screenshots) == 1
-    uri = misc.pending_screenshots[0]
+    assert len(gui.images) == 1
+    uri = gui.images[0]
     assert uri.startswith('data:image/png;base64,')
     img = Image.open(io.BytesIO(base64.b64decode(uri.split(',', 1)[1])))
     assert img.size == (1280, 720)
@@ -67,12 +67,38 @@ async def test_clicks_scale_back_to_the_screen(gui):
     assert gui.clicks == [(960, 540)]
 
 
-async def test_gemini_grid_coordinates_are_converted(gui, monkeypatch):
-    monkeypatch.setattr(misc, 'coords_normalized', True)
-    out = (await misc.take_screenshot.run()).content
-    assert '0-1000' in out
-    await misc.mouse_click.run(x=500, y=500)
+async def test_gemini_grid_coordinates_are_converted(gui):
+    token = misc.coords_normalized.set(True)
+    try:
+        out = (await misc.take_screenshot.run()).content
+        assert '0-1000' in out
+        await misc.mouse_click.run(x=500, y=500)
+    finally:
+        misc.coords_normalized.reset(token)
     assert gui.clicks == [(960, 540)]
+
+
+async def test_screenshot_without_a_collecting_chat_says_so(monkeypatch):
+    monkeypatch.setattr(misc, '_pyautogui', lambda: FakeGui())
+    out = (await misc.take_screenshot.run()).content
+    assert 'cannot show images' in out
+
+
+async def test_concurrent_chats_keep_their_own_images(monkeypatch):
+    monkeypatch.setattr(misc, '_pyautogui', lambda: FakeGui())
+
+    async def round_(delay):
+        token, images = misc.start_image_collection()
+        try:
+            await asyncio.sleep(delay)
+            await misc.take_screenshot.run()
+            await asyncio.sleep(0.02)
+            return len(images)
+        finally:
+            misc.end_image_collection(token)
+
+    a, b = await asyncio.gather(asyncio.create_task(round_(0)), asyncio.create_task(round_(0.01)))
+    assert (a, b) == (1, 1)
 
 
 def test_only_the_newest_screenshots_are_sent_as_images():
@@ -160,9 +186,10 @@ def mcp_client(monkeypatch):
 
     monkeypatch.setattr('cognitrix.mcp.client.get_dynamic_client', get_client)
     monkeypatch.setattr('cognitrix.mcp.registry.prepare_key', no_problem)
-    misc.pending_screenshots.clear()
+    token, images = misc.start_image_collection()
+    client.images = images
     yield client
-    misc.pending_screenshots.clear()
+    misc.end_image_collection(token)
 
 
 async def test_mcp_tools_accept_their_arguments(mcp_client):
@@ -177,7 +204,7 @@ async def test_mcp_tools_accept_their_arguments(mcp_client):
     out = (await wrapped.run(**params)).content
     assert mcp_client.calls == [('conn-1', 'browser_navigate', {'url': 'https://example.com'})]
     assert out == '### Page\n[Image attached as the next message]'
-    assert misc.pending_screenshots == ['data:image/png;base64,QUJD']
+    assert mcp_client.images == ['data:image/png;base64,QUJD']
 
 
 async def test_calls_to_one_mcp_server_run_in_order(monkeypatch):
