@@ -60,6 +60,7 @@ async def run_team(team_id: str, body: TeamRunRequest,
     """Create a task for this team and enqueue it. Async by design — poll
     GET /tasks/{id} + /tasks/{id}/runs, or register a callback_url webhook."""
     from cognitrix.api.routes.tasks import (
+        _active_run,
         _check_task_allowlists,
         _enqueue_task_start,
         _run_identity,

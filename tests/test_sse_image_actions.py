@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+import cognitrix.media.staging as staging
 import cognitrix.media.documents as document_service
 import cognitrix.media.service as media_service
-import cognitrix.media.staging as staging
 from cognitrix.artifacts import DocumentArtifact
 from cognitrix.media import (
     MediaAccessError,

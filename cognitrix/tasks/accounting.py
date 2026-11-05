@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import inspect
 import json
-import os
 import time
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any
+from decimal import Decimal
 
 from cognitrix.providers.limits import ConcurrencyLimiter, build_concurrency_limiter
 from cognitrix.tasks.budget import BudgetLedger, TokenReservation
@@ -23,7 +23,7 @@ UsageCallback = Callable[[dict[str, int | str]], Awaitable[None] | None]
 class TaskUsageCollector:
     """Task-local usage delta, isolated from concurrently running siblings."""
 
-    parent: TaskUsageCollector | None = None
+    parent: "TaskUsageCollector | None" = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     llm_calls: int = 0
@@ -102,7 +102,7 @@ def estimate_request_tokens(prompt: list[dict[str, Any]], max_output_tokens: int
 class _LLMCall:
     def __init__(
         self,
-        accounting: TaskAccounting,
+        accounting: "TaskAccounting",
         reservation: TokenReservation,
         slot: Any,
         prompt_estimate: int,

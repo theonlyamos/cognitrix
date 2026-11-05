@@ -6,15 +6,16 @@ import asyncio
 import logging
 import math
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
+from cognitrix.tasks.metrics import TaskRunMetricError
 from cognitrix.tasks.completion import (
     reconcile_terminal_task_statuses,
     recover_completion_notifications,
 )
-from cognitrix.tasks.metrics import TaskRunMetricError
 from cognitrix.tasks.repository import LeaseClaim, RunRepository
 from cognitrix.tasks.run import RUN_TIMESTAMP_FORMAT, TaskRun, TaskRunStatus
+
 
 DEFAULT_QUEUE_TIMEOUT_SECONDS = 300
 DEFAULT_RECOVERY_INTERVAL_SECONDS = 30.0
@@ -31,10 +32,10 @@ class _RecoveryAction:
 
 
 def _utc(value: datetime | None = None) -> datetime:
-    current = value or datetime.now(UTC)
+    current = value or datetime.now(timezone.utc)
     if current.tzinfo is None:
-        return current.replace(tzinfo=UTC)
-    return current.astimezone(UTC)
+        return current.replace(tzinfo=timezone.utc)
+    return current.astimezone(timezone.utc)
 
 
 def _timestamp(value: datetime) -> str:

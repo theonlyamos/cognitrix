@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.tasks.events import TaskRunEvent
+from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.tasks.repository import RunRepository
 from cognitrix.tasks.run import TaskRun, TaskRunHead, TaskRunStatus
 

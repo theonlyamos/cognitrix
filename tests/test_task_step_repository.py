@@ -13,28 +13,29 @@ the persistence boundary instead of mocks.
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
-from cognitrix.tasks.base import Task
-from cognitrix.tasks.events import TaskRunEvent
 from cognitrix.tasks.repository import (
     LeaseClaim,
     LeaseLost,
     RunRepository,
     RunStateConflict,
 )
+from cognitrix.tasks.base import Task
 from cognitrix.tasks.results import StepResult
-from cognitrix.tasks.run import TaskRun, TaskRunHead, TaskRunStatus
 from cognitrix.tasks.runtime import AgentRuntimeSnapshot, LLMRuntimeSnapshot
+from cognitrix.tasks.events import TaskRunEvent
+from cognitrix.tasks.run import TaskRun, TaskRunHead, TaskRunStatus
 from cognitrix.tasks.step import TaskRunStep, TaskRunStepStatus
 
-FUTURE_LEASE = datetime(2999, 1, 1, tzinfo=UTC).replace(
+
+FUTURE_LEASE = datetime(2999, 1, 1, tzinfo=timezone.utc).replace(
     tzinfo=None
 ).strftime("%Y-%m-%d %H:%M:%S")
-EXPIRED_LEASE = datetime(2000, 1, 1, tzinfo=UTC).replace(
+EXPIRED_LEASE = datetime(2000, 1, 1, tzinfo=timezone.utc).replace(
     tzinfo=None
 ).strftime("%Y-%m-%d %H:%M:%S")
 

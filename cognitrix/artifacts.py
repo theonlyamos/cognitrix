@@ -7,7 +7,7 @@ import contextvars
 import hashlib
 import inspect
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -50,7 +50,7 @@ class Artifact(Model):
     origin: str | None = 'generated'
     vision_storage_key: str | None = None
     thumbnail_storage_key: str | None = None
-    created_at: str | None = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+    created_at: str | None = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     mime_type: str = 'image/png'
     filename: str | None = None
     width: int | None = None
@@ -74,7 +74,7 @@ class DocumentArtifact(Model):
     generation: int = 0
     expires_at: str | None = None
     origin: str = 'uploaded'
-    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     mime_type: str = 'application/octet-stream'
     filename: str | None = None
     size_bytes: int = 0
@@ -197,7 +197,7 @@ class DocumentArtifact(Model):
         *,
         expires_before: str,
         limit: int,
-    ) -> list[DocumentArtifact]:
+    ) -> list['DocumentArtifact']:
         """Load one bounded, indexed batch of expired promotion rows."""
         bounded_limit = max(1, min(256, int(limit)))
         database = DBMS.Database
@@ -320,6 +320,7 @@ async def store_png(data: bytes, *, session_id: str | None = None, agent_id: str
                     model: str = '', width: int | None = None, height: int | None = None) -> Artifact:
     from cognitrix.media.service import media_assets
     from cognitrix.media.types import MediaOwnership
+
     from cognitrix.tools.utils import current_execution_context
 
     execution = current_execution_context()

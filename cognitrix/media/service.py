@@ -21,10 +21,10 @@ from cognitrix import artifacts as artifact_store
 from cognitrix.artifacts import Artifact, ref, variant_path
 from cognitrix.media.processing import (
     _ACCEPTED_FORMATS,
+    _ProcessedImage,
     _is_valid_thumbnail,
     _make_thumbnail,
     _process_image,
-    _ProcessedImage,
     _run_thread_joined,
     run_media_cpu,
 )

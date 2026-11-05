@@ -1,6 +1,6 @@
 """Durable repository contracts for requested and forced cancellation."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -38,7 +38,7 @@ async def _status_events(run_id: str) -> list[TaskRunEvent]:
 
 
 def test_force_cancel_ready_is_side_effect_free_and_uses_durable_timestamps():
-    now = datetime(2030, 1, 1, 12, 0, tzinfo=UTC)
+    now = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
 
     def timestamp(value: datetime) -> str:
         return value.replace(tzinfo=None).strftime(RUN_TIMESTAMP_FORMAT)
@@ -170,7 +170,7 @@ async def test_force_cancel_fences_worker_emits_once_and_releases_head(repositor
         ("run_status", {"status": "cancelling"})
     ]
 
-    grace_elapsed = (datetime.now(UTC) - timedelta(seconds=30)).replace(
+    grace_elapsed = (datetime.now(timezone.utc) - timedelta(seconds=30)).replace(
         tzinfo=None
     ).strftime(RUN_TIMESTAMP_FORMAT)
     await TaskRun.update_one(
@@ -213,7 +213,7 @@ async def test_force_cancel_is_allowed_when_worker_lease_already_expired(reposit
     claim = await repo.claim(created.id, owner="worker-a")
     assert claim is not None
     requested = await repo.request_cancel(created.id)
-    expired = (datetime.now(UTC) - timedelta(seconds=1)).replace(
+    expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).replace(
         tzinfo=None
     ).strftime(RUN_TIMESTAMP_FORMAT)
     await TaskRun.update_one(
@@ -238,7 +238,7 @@ async def test_force_cancel_losing_cas_preserves_terminal_winner_and_repairs_hea
     claim = await repo.claim(created.id, owner="worker-a")
     assert claim is not None
     await repo.request_cancel(created.id)
-    grace_elapsed = (datetime.now(UTC) - timedelta(seconds=30)).replace(
+    grace_elapsed = (datetime.now(timezone.utc) - timedelta(seconds=30)).replace(
         tzinfo=None
     ).strftime(RUN_TIMESTAMP_FORMAT)
     await TaskRun.update_one(

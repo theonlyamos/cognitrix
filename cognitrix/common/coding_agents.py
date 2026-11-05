@@ -29,9 +29,9 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 MODES = ('read_only', 'edit', 'full')
 DEFAULT_MODE = 'edit'

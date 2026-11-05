@@ -8,6 +8,7 @@ from cognitrix.tasks.results import StepResult
 from cognitrix.tasks.runtime import AgentRuntimeSnapshot
 from cognitrix.utils.tokens import estimate_tokens
 
+
 DEFAULT_DEPENDENCY_CONTEXT_CHARS = 12_000
 
 

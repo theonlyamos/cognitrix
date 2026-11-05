@@ -9,7 +9,7 @@ import logging
 import mimetypes
 import re
 import weakref
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cognitrix.artifacts import DocumentArtifact
@@ -50,7 +50,7 @@ def ownership_directory_prefix(ownership: MediaOwnership) -> str:
         raise MediaValidationError('Document ownership requires session, user, and agent')
     payload = (
         f'{ownership.session_id}\0{ownership.user_id}\0{ownership.agent_id}'
-    ).encode()
+    ).encode('utf-8')
     return f'd_{hashlib.sha256(payload).hexdigest()}_'
 
 
@@ -277,7 +277,7 @@ def _session_authority():
 
 
 def _expiry(now: datetime | None = None) -> str:
-    current = now or datetime.now(UTC)
+    current = now or datetime.now(timezone.utc)
     return (
         current + timedelta(seconds=DOCUMENT_PROMOTION_TTL_SECONDS)
     ).isoformat()
@@ -572,9 +572,9 @@ class DocumentAssetService:
 
     async def reconcile_expired(self, now: datetime | None = None) -> int:
         """Recover or remove expired pre-adoption document promotions."""
-        current = now or datetime.now(UTC)
+        current = now or datetime.now(timezone.utc)
         if current.tzinfo is None:
-            current = current.replace(tzinfo=UTC)
+            current = current.replace(tzinfo=timezone.utc)
         recovered = 0
         try:
             rows = await DocumentArtifact.reconciliation_candidates(
@@ -595,7 +595,7 @@ class DocumentAssetService:
                 logger.error('Retaining document with invalid promotion expiry')
                 continue
             if expires.tzinfo is None:
-                expires = expires.replace(tzinfo=UTC)
+                expires = expires.replace(tzinfo=timezone.utc)
             if expires > current:
                 continue
             prior_status = candidate.status

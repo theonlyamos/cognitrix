@@ -1,8 +1,9 @@
-import tomllib
 from pathlib import Path
+import tomllib
 
 import pytest
 from fastapi import HTTPException
+
 
 ROOT = Path(__file__).resolve().parents[1]
 

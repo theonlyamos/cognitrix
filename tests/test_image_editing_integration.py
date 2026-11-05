@@ -28,6 +28,7 @@ from cognitrix.tools.base import ToolManager
 from cognitrix.utils import sse
 from cognitrix.utils.llm_response import LLMResponse
 
+
 _PUBLIC_ARTIFACT_FIELDS = {
     "id", "mime_type", "filename", "width", "height", "origin",
 }

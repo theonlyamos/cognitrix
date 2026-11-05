@@ -309,6 +309,7 @@ async def test_unauthorized_and_missing_artifacts_have_identical_generic_404s(
     artifact_store,
 ):
     import cognitrix.api.routes.artifacts as route
+    from cognitrix.artifacts import Artifact
     from cognitrix.common.security import AuthContext
 
     artifact = _artifact(user_id='other-owner')

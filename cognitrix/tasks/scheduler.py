@@ -14,7 +14,7 @@ server time) and the resulting instant is converted back to naive UTC.
 
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from croniter import croniter
 
@@ -38,7 +38,7 @@ def normalize_schedule_at(value: str | None) -> str | None:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def validate_schedule(task: Task, *, respecified: bool, now: datetime | None = None) -> str | None:
@@ -81,9 +81,9 @@ def compute_next_run(task: Task, now: datetime | None = None) -> str | None:
         return (now + timedelta(seconds=task.schedule_interval)).strftime(FMT)
     if task.schedule_cron:
         local_tz = datetime.now().astimezone().tzinfo
-        local_now = now.replace(tzinfo=UTC).astimezone(local_tz)
+        local_now = now.replace(tzinfo=timezone.utc).astimezone(local_tz)
         nxt = croniter(task.schedule_cron, local_now).get_next(datetime)
-        return nxt.astimezone(UTC).replace(tzinfo=None).strftime(FMT)
+        return nxt.astimezone(timezone.utc).replace(tzinfo=None).strftime(FMT)
     return None
 
 

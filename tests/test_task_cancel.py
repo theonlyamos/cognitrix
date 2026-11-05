@@ -3,10 +3,9 @@
 import copy
 from types import SimpleNamespace
 
+import cognitrix.api.routes.tasks as task_routes
 import pytest
 from fastapi import HTTPException
-
-import cognitrix.api.routes.tasks as task_routes
 from cognitrix.common.security import AuthContext
 from cognitrix.tasks.base import Task, TaskStatus
 from cognitrix.tasks.run import TaskRun, TaskRunStatus

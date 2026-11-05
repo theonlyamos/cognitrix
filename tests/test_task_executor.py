@@ -211,8 +211,8 @@ def test_executor_assigns_each_ephemeral_attempt_a_unique_session_id(monkeypatch
 
 @pytest.mark.asyncio
 async def test_executor_exposes_canonical_durable_artifact_identity(monkeypatch):
-    from cognitrix.artifacts import Artifact
     from cognitrix.tasks import executor as module
+    from cognitrix.artifacts import Artifact
     from cognitrix.tools.utils import ToolExecutionContext
 
     class FakeSession:

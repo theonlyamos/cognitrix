@@ -224,7 +224,7 @@ class BudgetLedger:
             return await awaitable
         try:
             return await asyncio.wait_for(awaitable, timeout=max(0.001, effective))
-        except TimeoutError as exc:
+        except asyncio.TimeoutError as exc:
             # An operation-specific timeout is its caller's concern. If the
             # wall was the tighter bound, preserve the budget control signal.
             if wall is not None and (timeout is None or wall <= float(timeout)):

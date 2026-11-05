@@ -3,7 +3,7 @@ import inspect
 import json
 import logging
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -16,8 +16,8 @@ from cognitrix.artifacts import absolute_path, bound_task_run_artifact
 from cognitrix.common.security import AuthContext, crud_scope, get_auth_context, require
 from cognitrix.session_ownership import principal_key
 from cognitrix.tasks import Task
-from cognitrix.tasks.automation import WAKE_FIELDS, validate_automation_fields
 from cognitrix.tasks.base import TaskStatus
+from cognitrix.tasks.automation import WAKE_FIELDS, validate_automation_fields
 from cognitrix.tasks.budget import TaskBudget, stable_actor_key
 from cognitrix.tasks.events import event_payload, events_after, step_tool_calls
 from cognitrix.tasks.repository import (
@@ -33,7 +33,8 @@ from cognitrix.tasks.run import (
     TaskRunStatus,
     run_acl_allowed,
 )
-from cognitrix.tasks.scheduler import SCHEDULE_FIELDS, compute_next_run, normalize_schedule_at, validate_schedule
+from cognitrix.tasks.scheduler import (SCHEDULE_FIELDS, compute_next_run,
+                                       normalize_schedule_at, validate_schedule)
 from cognitrix.tasks.step import TaskRunStep
 
 from ...celery_worker import broker_available, ensure_local_worker, run_task
@@ -961,7 +962,7 @@ async def _enqueue_task_start(
                 'status': TaskRunStatus.FAILED.value,
                 'error_code': 'queue_publish_failed',
                 'error': 'task queue publication failed',
-                'completed_at': datetime.now(UTC).replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S'),
+                'completed_at': datetime.now(timezone.utc).replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S'),
             },
             expected_statuses={TaskRunStatus.QUEUED},
         )
@@ -1109,7 +1110,7 @@ async def toggle_schedule(task_id: str, body: ScheduleToggle,
                 raise HTTPException(status_code=403, detail="API key missing required scope: run (schedule)")
             _check_task_allowlists(ctx, task)
         if task.schedule_at and datetime.fromisoformat(task.schedule_at) <= \
-                datetime.now(UTC).replace(tzinfo=None):
+                datetime.now(timezone.utc).replace(tzinfo=None):
             raise HTTPException(status_code=422, detail="schedule_at is in the past; set a new time")
         requested_by, _actor_key = _run_identity(ctx)
         authority_kind, authority_id = _run_authority(ctx)
@@ -1293,7 +1294,7 @@ async def soft_delete_task(task: Task) -> None:
     """Tombstone a task and stop its schedule. Raises ActiveRunExists while a
     run is queued or running. Safe to repeat: a second call repairs a crash
     between the authoritative head tombstone and the Task row update."""
-    requested_deleted_at = task.deleted_at or datetime.now(UTC).replace(
+    requested_deleted_at = task.deleted_at or datetime.now(timezone.utc).replace(
         tzinfo=None
     ).strftime('%Y-%m-%d %H:%M:%S')
     head = await RunRepository().tombstone_task(

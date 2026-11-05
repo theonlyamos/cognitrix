@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
@@ -57,7 +57,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     else:
         expire = datetime.utcnow() + timedelta(minutes=15)
     # iat lets logout revoke every token issued before it.
-    to_encode.update({"exp": expire, "iat": int(datetime.now(UTC).timestamp())})
+    to_encode.update({"exp": expire, "iat": int(datetime.now(timezone.utc).timestamp())})
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
     return encoded_jwt
 

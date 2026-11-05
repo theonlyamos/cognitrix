@@ -16,6 +16,8 @@ from starlette.formparsers import MultiPartException, MultiPartParser
 
 from cognitrix.agents import Agent
 from cognitrix.agents import access as agent_access
+from cognitrix.safety.permissions import normalize_agent_level, normalize_tool_permissions
+from cognitrix.tools.base import ToolManager
 from cognitrix.common.security import (
     AuthContext,
     crud_scope,
@@ -25,9 +27,10 @@ from cognitrix.common.security import (
     redact_secrets,
     require,
 )
+from cognitrix.sessions import runs as chat_runs
+from cognitrix.sessions.base import Session
 from cognitrix.questions.broker import resolve_question
 from cognitrix.questions.models import QuestionAction
-from cognitrix.safety.permissions import normalize_agent_level, normalize_tool_permissions
 from cognitrix.session_ownership import (
     OwnershipConflict,
     OwnershipNotFound,
@@ -37,25 +40,23 @@ from cognitrix.session_ownership import (
     principal_key,
     require_active_owned,
 )
-from cognitrix.sessions import runs as chat_runs
-from cognitrix.sessions.base import Session
-from cognitrix.tasks.execution_mode import ExecutionMode, parse_execution_mode
-from cognitrix.tools.base import ToolManager
 from cognitrix.utils.sse import SSEManagerCapacityError, get_sse_manager
+from cognitrix.tasks.execution_mode import ExecutionMode, parse_execution_mode
 
 from ...media.staging import (
     MAX_UPLOAD_COUNT,
+    MAX_UPLOAD_FILE_BYTES,
     MAX_UPLOAD_TOTAL_BYTES,
     StagedAttachmentSet,
+    _decode_data_url as _staging_decode_data_url,
     cleanup_staged_attachments,
     stage_legacy_data_urls,
     stage_upload_files,
 )
-from ...media.staging import (
-    _decode_data_url as _staging_decode_data_url,
-)
+
 from ...providers import LLM
-from ...providers.base import ProviderKeyDestinationError, normalize_reasoning_effort
+from ...providers.base import normalize_reasoning_effort
+from ...providers.base import ProviderKeyDestinationError
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -868,7 +869,7 @@ async def generate(agent_id: str, body: GenerateRequest,
                     wsquery={}, tool_context=tool_context),
             timeout=CHAT_TIMEOUT,
         )
-    except TimeoutError:
+    except asyncio.TimeoutError:
         # The turn unwinds without persisting — save what we have so the
         # session survives (user message + any partial history).
         try:
@@ -902,7 +903,7 @@ def _stream_generate(session: Session, agent: Agent, message: str, tool_context)
                         wsquery={}, tool_context=tool_context),
                 timeout=CHAT_TIMEOUT,
             )
-        except TimeoutError:
+        except asyncio.TimeoutError:
             error['detail'] = 'Generation timed out'
         except Exception:
             logger.exception("Streaming generate failed for agent %s", agent.id)
@@ -979,13 +980,12 @@ async def agent_overview(agent_id: str, ctx: AuthContext = Depends(get_auth_cont
     """Activity for the agent page: chats, task runs, approvals, teams."""
     from datetime import datetime, timedelta
 
-    from cognitrix.agents.access import can_view
-    from cognitrix.agents.access import is_admin as _is_admin
+    from cognitrix.agents.access import can_view, is_admin as _is_admin
     from cognitrix.api.routes.sessions import _session_summary, _visible_remote_sessions
-    from cognitrix.api.routes.tasks import _run_visible
     from cognitrix.session_ownership import principal_key
     from cognitrix.tasks import approvals
     from cognitrix.tasks.base import Task
+    from cognitrix.api.routes.tasks import _run_visible
     from cognitrix.tasks.run import TaskRun, run_acl_allowed
     from cognitrix.teams.base import Team
 

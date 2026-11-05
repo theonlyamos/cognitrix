@@ -1,14 +1,15 @@
 import asyncio
-import threading
-import uuid
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import threading
 from types import SimpleNamespace
+import uuid
 
 import pytest
 
 from cognitrix.artifacts import DocumentArtifact
-from cognitrix.media import MediaOwnership, MediaValidationError, documents
+from cognitrix.media import MediaOwnership, MediaValidationError
+from cognitrix.media import documents
 from cognitrix.media.documents import DocumentAssetService
 from cognitrix.media.secure_fs import FileIdentity
 
@@ -80,7 +81,7 @@ def document_rows(monkeypatch):
             except (TypeError, ValueError):
                 continue
             if expiry.tzinfo is None:
-                expiry = expiry.replace(tzinfo=UTC)
+                expiry = expiry.replace(tzinfo=timezone.utc)
             if expiry <= cutoff:
                 due.append(row)
         due.sort(key=lambda row: (str(row.expires_at), str(row.id)))
@@ -550,7 +551,7 @@ async def test_expired_pending_document_deletes_file_then_row_then_lease(
     document = _document(ownership)
     document.status = 'pending'
     document.promotion_token = uuid.uuid4().hex
-    document.expires_at = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    document.expires_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     document.directory_identity = None
     document.file_identity = None
     document_rows[str(document.id)] = document
@@ -601,7 +602,7 @@ async def test_expired_ready_document_with_exact_history_marker_is_adopted(
     document = _document(ownership)
     document.status = 'ready'
     document.promotion_token = uuid.uuid4().hex
-    document.expires_at = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    document.expires_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     document_rows[str(document.id)] = document
     committed = []
 
@@ -653,7 +654,7 @@ async def test_document_adoption_blocks_clear_until_row_and_quota_are_committed(
     )
     document = _document(ownership)
     document.status = 'ready'
-    document.expires_at = (datetime.now(UTC) + timedelta(minutes=5)).isoformat()
+    document.expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
     document.generation = binding.generation
     document.promotion_token = uuid.uuid4().hex
     document_rows[str(document.id)] = document
@@ -836,7 +837,7 @@ async def test_reconciling_row_renews_lease_and_retries_after_worker_crash(
     document = _document(ownership)
     document.status = 'ready'
     document.promotion_token = uuid.uuid4().hex
-    base = datetime(2026, 1, 1, tzinfo=UTC)
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     document.expires_at = (base - timedelta(seconds=1)).isoformat()
     document_rows[str(document.id)] = document
     attempts = 0
@@ -887,7 +888,7 @@ async def test_reconciliation_claim_cas_prevents_duplicate_workers(
     document = _document(ownership)
     document.status = 'ready'
     document.promotion_token = uuid.uuid4().hex
-    document.expires_at = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    document.expires_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
     document_rows[str(document.id)] = document
     inspection_started = asyncio.Event()
     release_inspection = asyncio.Event()
@@ -932,7 +933,7 @@ async def test_reconciliation_processes_only_one_bounded_batch(
         document.status = 'ready'
         document.promotion_token = uuid.uuid4().hex
         document.expires_at = (
-            datetime.now(UTC) - timedelta(seconds=1)
+            datetime.now(timezone.utc) - timedelta(seconds=1)
         ).isoformat()
         document_rows[str(document.id)] = document
 

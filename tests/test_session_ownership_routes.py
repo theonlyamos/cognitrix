@@ -117,8 +117,7 @@ async def test_new_session_uses_server_id_and_claims_exact_principal_and_agent(t
 
 async def test_new_session_claim_failure_and_cancellation_are_fully_compensated(tmp_path, monkeypatch):
     from cognitrix.api.routes import sessions as routes
-    from cognitrix.session_ownership import SessionOwnership
-    from cognitrix.session_ownership import claim_new as real_claim
+    from cognitrix.session_ownership import SessionOwnership, claim_new as real_claim
     from cognitrix.sessions.base import Session
 
     await _initialize_routes_db(tmp_path)

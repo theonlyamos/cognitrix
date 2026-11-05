@@ -342,10 +342,11 @@ async def test_same_path_tool_calls_share_a_lock_and_others_do_not():
 @pytest.mark.asyncio
 async def test_parallel_edits_on_one_file_all_land(tmp_path, monkeypatch):
     from cognitrix.agents.base import AgentManager
-    from cognitrix.config import settings
     from cognitrix.models.agent import Agent
     from cognitrix.providers.base import LLM
     from cognitrix.tools.base import ToolManager
+
+    from cognitrix.config import settings
 
     monkeypatch.setattr(settings, 'tools_root', str(tmp_path))
     target = tmp_path / 'f.txt'

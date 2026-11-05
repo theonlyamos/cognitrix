@@ -3,7 +3,7 @@ import types
 import pytest
 
 import cognitrix.api.routes.agents as agent_routes
-from cognitrix.utils.sse import _SSE_MANAGERS, SSEManager
+from cognitrix.utils.sse import SSEManager, _SSE_MANAGERS
 
 
 class JsonRequest:
