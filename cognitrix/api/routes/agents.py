@@ -978,7 +978,7 @@ async def agent_options(_ctx: AuthContext = Depends(get_auth_context)):
 @agents_api.get('/{agent_id}/overview', dependencies=[Depends(jwt_only)])
 async def agent_overview(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
     """Activity for the agent page: chats, task runs, approvals, teams."""
-    from datetime import datetime, timedelta
+    from datetime import UTC, datetime, timedelta
 
     from cognitrix.agents.access import can_view, is_admin as _is_admin
     from cognitrix.api.routes.sessions import _session_summary, _visible_remote_sessions
@@ -992,7 +992,7 @@ async def agent_overview(agent_id: str, ctx: AuthContext = Depends(get_auth_cont
     agent = await _visible_agent_or_404(agent_id, ctx)
     agent_id = str(agent.id)
     user_key = agent_access.owner_key(ctx.user)
-    week_ago = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+    week_ago = (datetime.now(UTC) - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
 
     chats: list[dict] = []
     try:

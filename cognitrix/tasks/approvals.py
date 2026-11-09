@@ -17,7 +17,7 @@ import json
 import logging
 import os
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from odbms import Model
@@ -146,7 +146,7 @@ async def request_task_approval(ctx: dict, tool_name: str, params: dict[str, Any
                 status = EXPIRED
                 await TaskApproval.update_one(
                     {'id': row.id, 'status': PENDING},
-                    {'status': EXPIRED, 'decided_at': datetime.utcnow().isoformat()},
+                    {'status': EXPIRED, 'decided_at': datetime.now(UTC).replace(tzinfo=None).isoformat()},
                 )
                 fresh = await TaskApproval.get(row.id)
                 status = getattr(fresh, 'status', EXPIRED) if fresh is not None else EXPIRED
@@ -158,7 +158,7 @@ async def request_task_approval(ctx: dict, tool_name: str, params: dict[str, Any
         try:
             await TaskApproval.update_one(
                 {'id': row.id, 'status': PENDING},
-                {'status': EXPIRED, 'decided_at': datetime.utcnow().isoformat()},
+                {'status': EXPIRED, 'decided_at': datetime.now(UTC).replace(tzinfo=None).isoformat()},
             )
         except Exception:
             pass
@@ -181,7 +181,7 @@ async def decide(approval_id: str, run_id: str, approved: bool) -> TaskApproval 
     status = APPROVED if approved else DENIED
     await TaskApproval.update_one(
         {'id': approval_id, 'status': PENDING},
-        {'status': status, 'decided_at': datetime.utcnow().isoformat()},
+        {'status': status, 'decided_at': datetime.now(UTC).replace(tzinfo=None).isoformat()},
     )
     fresh = await TaskApproval.get(approval_id)
     return fresh if fresh is not None and fresh.status == status else None

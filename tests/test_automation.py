@@ -1,6 +1,6 @@
 """Always-on agents: notes, agent wake-ups, webhook triggers, notifications."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
@@ -153,7 +153,7 @@ async def test_schedule_next_check_arms_wake_with_run_authority(db, in_run):
     assert fresh.wake_reason == 'check the release page'
     assert (fresh.wake_requested_by, fresh.wake_authority_kind, fresh.wake_authority_id) == ('u1', 'jwt', 'u1')
     due = datetime.fromisoformat(fresh.wake_at)
-    assert timedelta(minutes=89) < due - datetime.utcnow() < timedelta(minutes=91)
+    assert timedelta(minutes=89) < due - datetime.now(UTC).replace(tzinfo=None) < timedelta(minutes=91)
 
     for minutes in (0, 43201):
         assert (await _call(schedule_next_check, minutes=minutes, reason='x')).error.code == 'invalid_minutes'

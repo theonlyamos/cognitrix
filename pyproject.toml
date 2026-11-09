@@ -98,7 +98,10 @@ pytest-cov = ">=5.0"
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+# No auto-fix: `ruff check` must never rewrite files on its own. Pass --fix
+# when you want that.
+fix = false
+
+[tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP"]
-fix = true
-show-fixes = true
 ignore = ["E501", "B008", "B904"]
