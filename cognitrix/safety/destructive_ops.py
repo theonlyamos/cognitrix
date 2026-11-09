@@ -102,7 +102,7 @@ _KNOWN_LOW = frozenset({
 # anything (including pressing "Send"), so it keeps asking.
 _DESKTOP_CONTROL = frozenset({
     'text_input', 'key_press', 'hot_key', 'mouse_click',
-    'mouse_double_click', 'mouse_right_click',
+    'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
 })
 
 # Handing a job to a coding agent CLI (Claude Code, Codex, ...): it edits

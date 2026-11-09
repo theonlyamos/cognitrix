@@ -609,7 +609,19 @@ class LLMManager:
     @staticmethod
     def format_query(llm: LLM, messages: list[dict[str, Any]]) -> list:
         formatted_messages = []
-        for fm in messages:
+        # Only the newest screenshots go in as images; older ones become a note.
+        shot_ids = [i for i, m in enumerate(messages) if m.get('type') == 'screenshot']
+        keep_shots = set(shot_ids[-3:])
+        for idx, fm in enumerate(messages):
+            if fm.get('type') == 'screenshot':
+                if idx in keep_shots and llm.is_multimodal:
+                    formatted_messages.append({'role': 'user', 'content': [
+                        {'type': 'text', 'text': 'Screenshot from take_screenshot:'},
+                        {'type': 'image_url', 'image_url': {'url': fm.get('content')}},
+                    ]})
+                else:
+                    formatted_messages.append({'role': 'user', 'content': '[older screenshot removed]'})
+                continue
             role = LLMManager._normalize_role(fm.get('role', 'user'))
             content = fm.get('content', '')
             msg_type = fm.get('type', 'text')

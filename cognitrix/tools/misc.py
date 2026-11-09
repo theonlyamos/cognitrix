@@ -312,8 +312,27 @@ def _pyautogui():
     every startup and can crash on import in a headless server/worker, yet is
     only used by the screen-automation tools. Cached by sys.modules after first
     import."""
+    if 'mouseinfo' not in sys.modules:
+        try:
+            import tkinter  # noqa: F401
+        except ImportError:
+            # pyautogui imports mouseinfo, which calls sys.exit() when tkinter
+            # is missing (common on Linux servers). mouseinfo is only for its
+            # own GUI, so a stub is safe.
+            import types
+            sys.modules['mouseinfo'] = types.ModuleType('mouseinfo')
     import pyautogui
     return pyautogui
+
+
+def _grab_screen():
+    """pyautogui's screenshot, falling back to PIL.ImageGrab (Linux without
+    gnome-screenshot or scrot)."""
+    try:
+        return _pyautogui().screenshot()
+    except Exception:
+        from PIL import ImageGrab
+        return ImageGrab.grab()
 
 def get_file_content(full_path: Path):
     with full_path.open('rt', encoding='utf-8', errors='replace') as file:
@@ -1208,6 +1227,19 @@ def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
 
         soup = BeautifulSoup(response.text, 'html.parser')
 
+        # Keep where links go, so the model can follow them instead of
+        # guessing URLs. Collected before nav/header are dropped.
+        links: list[str] = []
+        seen_links: set[str] = set()
+        for a in soup.find_all('a', href=True):
+            href = urljoin(current, a['href'])
+            label = a.get_text(' ', strip=True) or href
+            if href.startswith(('http://', 'https://')) and href not in seen_links:
+                seen_links.add(href)
+                links.append(f'- {label[:80]}: {href}')
+            a.replace_with(f'{label} ({href})' if label != href else href)
+        scripts_present = bool(soup.find('script'))
+
         for script in soup(['script', 'style', 'nav', 'footer', 'header']):
             script.decompose()
 
@@ -1218,6 +1250,12 @@ def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
 
         if len(text) > max_length:
             text = text[:max_length] + '\n... (truncated)'
+
+        if links:
+            text += '\n\nLinks on this page:\n' + '\n'.join(links[:60])
+        if scripts_present and len(text) < 200:
+            text += ('\n\nNote: this page builds its content with JavaScript, which WebFetch does not run. '
+                     'Use a browser tool to read it.')
 
         if include_images:
             images = [img.get('src') or img.get('data-src') for img in soup.find_all('img')]
@@ -1233,93 +1271,161 @@ def WebFetch(url: str, max_length: int = 5000, include_images: bool = False):
         return f"Error processing page: {str(e)}"
 
 
+# --- Desktop control -------------------------------------------------------
+# Screenshots are scaled down before the model sees them (vision models
+# downsample big images anyway, and full-HD frames cost ~2-3k tokens each).
+# The model then clicks in screenshot coordinates; we scale back to the screen.
+_SHOT_MAX_W, _SHOT_MAX_H = 1280, 800
+_screen_scale: float = 1.0
+# Images from the current tool round (screenshots, MCP image blocks). The
+# session opens a collection per round and adds them to its own chat after the
+# tool results. A context variable keeps concurrent chats apart.
+_round_images: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    'round_images', default=None
+)
+
+# Gemini models give image coordinates on a 0-1000 grid whatever they are
+# told, so for them we ask for that grid and convert it. Set per tool round.
+coords_normalized: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    'coords_normalized', default=False
+)
+_shot_size: tuple[int, int] = (_SHOT_MAX_W, _SHOT_MAX_H)
+
+
+def start_image_collection() -> tuple[contextvars.Token, list[str]]:
+    """Collect images queued by this tool round. Pass the token to
+    ``end_image_collection`` when the round ends."""
+    images: list[str] = []
+    return _round_images.set(images), images
+
+
+def end_image_collection(token: contextvars.Token) -> None:
+    _round_images.reset(token)
+
+
+def queue_image(data_uri: str) -> bool:
+    """Show an image to the model after this round's tool results. False when
+    no session is collecting (the image can't be shown)."""
+    images = _round_images.get()
+    if images is None:
+        return False
+    images.append(data_uri)
+    return True
+
+
+def _to_screen(x: int, y: int) -> tuple[int, int]:
+    if coords_normalized.get():
+        x = float(x) / 1000 * _shot_size[0]
+        y = float(y) / 1000 * _shot_size[1]
+    return int(round(float(x) * _screen_scale)), int(round(float(y) * _screen_scale))
+
+
 @tool(category='system')
 def take_screenshot():
-    """Use this tool to take a screenshot of the screen."""
-    screenshot = _pyautogui().screenshot()
+    """Take a screenshot of the screen. The image is shown to you right after this
+    tool's result. Give click coordinates in that image's pixels."""
+    global _screen_scale, _shot_size
+    import base64
+    import io
 
-    return ['image', screenshot]
+    shot = _grab_screen().convert('RGB')
+    w, h = shot.size
+    _screen_scale = max(w / _SHOT_MAX_W, h / _SHOT_MAX_H, 1.0)
+    if _screen_scale > 1.0:
+        shot = shot.resize((round(w / _screen_scale), round(h / _screen_scale)))
+    try:
+        cx, cy = _pyautogui().position()
+        cursor = f' Mouse pointer at ({round(cx / _screen_scale)}, {round(cy / _screen_scale)}).'
+    except Exception:
+        cursor = ''
+    _shot_size = shot.size
+    buf = io.BytesIO()
+    shot.save(buf, format='PNG')
+    if not queue_image('data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()):
+        return 'Screenshot taken, but this chat cannot show images.'
+    if coords_normalized.get():
+        return ('Screenshot taken. It is attached as the next image. Give click x and y on a 0-1000 grid '
+                '(0,0 is the top-left corner, 1000,1000 the bottom-right), like your usual image coordinates.')
+    return (f'Screenshot taken: {shot.size[0]}x{shot.size[1]} pixels.{cursor} It is attached as the next image. '
+            f'Give x and y as pixels in this image (x from 0 to {shot.size[0] - 1}, y from 0 to {shot.size[1] - 1}), '
+            'not as 0-1000 normalized values.')
+
 
 @tool(category='system')
 def text_input(text: str):
-    """Use this tool to take make text inputs.
+    """Type text at the current keyboard focus (click the field first).
     Args:
-        text (str): Text to input.
-
-    Returns:
-        str: Text input completed.
+        text (str): Text to type.
     """
-    _pyautogui().write(text, 0.15)
+    _pyautogui().write(text, 0.02)
+    return 'Text typed'
 
-    return 'Text input completed'
 
 @tool(category='system')
 def key_press(key: str):
-    """Use this tool to take make key presses.
+    """Press one key, e.g. enter, tab, esc, backspace, up, down, pagedown, f5.
     Args:
-        key (str): Name of key to press.
-
-    Returns:
-        str: Keypress completed.
+        key (str): Name of the key.
     """
     _pyautogui().press(key.lower())
+    return f'Pressed {key}'
 
-    return 'Keypress completed'
 
 @tool(category='system')
 def hot_key(hotkeys: list):
-    """Use this tool to take make hot key presses.
+    """Press keys together, e.g. ["ctrl", "l"] or ["alt", "tab"].
     Args:
-        hotkeys (list): list of keys to press together.
-
-    Returns:
-        str: Keypress completed.
+        hotkeys (list): Keys to press together.
     """
-    _pyautogui().hotkey(*hotkeys)
+    _pyautogui().hotkey(*[str(k).lower() for k in hotkeys])
+    return f"Pressed {'+'.join(hotkeys)}"
 
-    return 'Keypress completed'
 
 @tool(category='system')
 def mouse_click(x: int, y: int):
-    """Use this tool to take make mouse clicks.
+    """Left-click at (x, y) in the latest screenshot's coordinates.
     Args:
-        x (int): X coordinate of mouse click.
-        y (int): y coordinate of mouse click.
-
-    Returns:
-        str: Mouse click completed.
+        x (int): X coordinate in the screenshot.
+        y (int): Y coordinate in the screenshot.
     """
-    _pyautogui().click(x, y)
+    _pyautogui().click(*_to_screen(x, y))
+    return f'Clicked at ({x}, {y})'
 
-    return 'Mouse Click completed'
 
 @tool(category='system')
 def mouse_double_click(x: int, y: int):
-    """Use this tool to take make mouse double clicks.
+    """Double-click at (x, y) in the latest screenshot's coordinates.
     Args:
-        x (int): X coordinate of mouse click.
-        y (int): y coordinate of mouse click.
-
-    Returns:
-        str: Mouse double-click completed.
+        x (int): X coordinate in the screenshot.
+        y (int): Y coordinate in the screenshot.
     """
-    _pyautogui().doubleClick(x, y)
+    _pyautogui().doubleClick(*_to_screen(x, y))
+    return f'Double-clicked at ({x}, {y})'
 
-    return 'Mouse double-click completed.'
 
 @tool(category='system')
 def mouse_right_click(x: int, y: int):
-    """Use this tool to take make mouse right clicks.
+    """Right-click at (x, y) in the latest screenshot's coordinates.
     Args:
-        x (int): X coordinate of mouse click.
-        y (int): y coordinate of mouse click.
-
-    Returns:
-        str: Mouse right-click completed.
+        x (int): X coordinate in the screenshot.
+        y (int): Y coordinate in the screenshot.
     """
-    _pyautogui().rightClick(x, y)
+    _pyautogui().rightClick(*_to_screen(x, y))
+    return f'Right-clicked at ({x}, {y})'
 
-    return 'Mouse double-click completed.'
+
+@tool(category='system')
+def mouse_scroll(x: int, y: int, amount: int):
+    """Scroll with the mouse wheel over (x, y). Positive amount scrolls up, negative down.
+    Args:
+        x (int): X coordinate in the screenshot.
+        y (int): Y coordinate in the screenshot.
+        amount (int): Wheel clicks; about 3 per screenful of text.
+    """
+    sx, sy = _to_screen(x, y)
+    _pyautogui().scroll(int(amount), x=sx, y=sy)
+    return f'Scrolled {amount} at ({x}, {y})'
+
 
 @tool(category='system')
 async def create_agent(name: str, provider: str, description: str, tools: list[str], model: str | None = None, temperature: float | None = None, *, parent: Any | None = None):
