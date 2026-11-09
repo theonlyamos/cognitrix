@@ -77,7 +77,9 @@ def record_usage(usage: dict | None) -> None:
     sink = usage_sink.get()
     if sink is None or not usage:
         return
-    for key in ('prompt_tokens', 'completion_tokens'):
+    for key in ('prompt_tokens', 'completion_tokens', 'cached_tokens', 'cache_write_tokens'):
+        if key not in usage and key not in ('prompt_tokens', 'completion_tokens'):
+            continue
         try:
             sink[key] = sink.get(key, 0) + int(usage.get(key) or 0)
         except (TypeError, ValueError):
@@ -251,6 +253,25 @@ def _is_openai_reasoning_model(model: str) -> bool:
 
 
 _CLAUDE_VERSION = re.compile(r'^claude-(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?!\d)')
+
+
+def _model_context_window(provider: str, model: str) -> int:
+    """Context window for models known to differ from their provider's default.
+
+    0 when the model is not recognised, so the provider default applies.
+    Claude Opus/Sonnet 4.6 and later, and every 5.x model, read 1M tokens;
+    older ones (Haiku 4.5, Sonnet 4.5, claude-3) stay at 200k.
+    """
+    if provider != 'anthropic':
+        return 0
+    name = (model or '').lower().rsplit('/', 1)[-1]
+    m = _CLAUDE_VERSION.match(name)
+    if not m:
+        return 0
+    version = (int(m.group(1)), int(m.group(2) or 0))
+    if version >= (5, 0) or (version >= (4, 6) and 'haiku' not in name):
+        return 1_000_000
+    return 0
 
 
 def _anthropic_rejects_temperature(model: str) -> bool:
@@ -531,7 +552,7 @@ class LLM(Model):
     def get_context_window(self) -> int:
         if self.context_window > 0:
             return self.context_window
-        return _PROVIDER_CONTEXT_WINDOWS.get(self.provider, 128_000)
+        return _model_context_window(self.provider, self.model) or _PROVIDER_CONTEXT_WINDOWS.get(self.provider, 128_000)
 
     def format_query(self, messages: list[dict[str, Any]]) -> list:
         return LLMManager.format_query(self, messages)
@@ -787,6 +808,29 @@ class LLMManager:
             if effort:
                 completion_params['reasoning_effort'] = effort
             completion_params = _apply_provider_param_rules(llm, completion_params)
+
+            from cognitrix.providers import anthropic_native
+
+            if anthropic_native.can_handle(llm, response_format):
+                # Claude goes through Anthropic's own API so the prompt is
+                # cached between the steps of a turn. The OpenAI-shaped
+                # request above stays as the fallback if this one is refused.
+                native_headers = dict(llm.extra_headers) if llm.extra_headers else {}
+                native_base = 'https://' + anthropic_native.ANTHROPIC_HOST
+                if use_helicone:
+                    native_base = anthropic_native.HELICONE_ANTHROPIC_BASE
+                    native_headers['Helicone-Auth'] = f'Bearer {settings.get_api_key("helicone")}'
+                native_client = anthropic_native._client(native_base, llm.api_key, native_headers)
+                native_params = anthropic_native.build_params(llm, formatted_messages, formatted_tools, effort)
+                if stream:
+                    return anthropic_native.stream(
+                        native_client, native_params,
+                        lambda: LLMManager._handle_streaming_response(client, completion_params),
+                    )
+                return await anthropic_native.respond(
+                    native_client, native_params,
+                    lambda: LLMManager._handle_non_streaming_response(client, completion_params),
+                )
 
             if stream:
                 return LLMManager._handle_streaming_response(client, completion_params)

@@ -22,7 +22,7 @@ hiddenimports = collect_submodules('cognitrix')
 
 # Packages that load plugins, drivers or data files by name at runtime.
 for package in ('celery', 'kombu', 'billiard', 'uvicorn', 'chromadb', 'onnxruntime',
-                'tokenizers', 'odbms', 'mcp', 'sse_starlette', 'tiktoken', 'fitz', 'pymupdf'):
+                'tokenizers', 'odbms', 'mcp', 'sse_starlette', 'tiktoken', 'fitz', 'pymupdf', 'anthropic'):
     try:
         pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     except Exception:
@@ -31,7 +31,7 @@ for package in ('celery', 'kombu', 'billiard', 'uvicorn', 'chromadb', 'onnxrunti
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
 
-for dist in ('cognitrix', 'celery', 'kombu', 'fastapi', 'uvicorn', 'chromadb', 'openai', 'mcp'):
+for dist in ('cognitrix', 'celery', 'kombu', 'fastapi', 'uvicorn', 'chromadb', 'openai', 'mcp', 'anthropic'):
     try:
         datas += copy_metadata(dist)
     except Exception:
