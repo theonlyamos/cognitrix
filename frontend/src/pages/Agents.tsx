@@ -1,4 +1,7 @@
-import { Link } from 'react-router-dom';
+import { useRef, useState, type ChangeEvent } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { api, errorMessage } from '@/lib/api';
+import { agentFromFile } from '@/lib/agentImport';
 import { useResource } from '@/hooks/useResource';
 import { Button } from '@/lib/components/ui/button';
 import { PageHeader, LoadingState, ErrorState, EmptyState, Chevron } from '@/components/list-ui';
@@ -14,14 +17,36 @@ export default function Agents() {
   const { data, loading, error, refetch } = useResource<Agent[]>('/agents');
   // Drop phantom null-id rows (leftover default "Assistant" agents).
   const agents = (data ?? []).filter((a) => a.id);
+  const navigate = useNavigate();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [importError, setImportError] = useState('');
+
+  const importFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setImportError('');
+    try {
+      const res = await api.post<{ id: string }>('/agents', agentFromFile(await file.text()));
+      if (res.data?.id) navigate(`/agents/${res.data.id}`);
+      else refetch();
+    } catch (e) {
+      setImportError(errorMessage(e, e instanceof Error ? e.message : 'Could not import the agent.'));
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
       <PageHeader title="Agents" subtitle={`owner: you · private · ${agents.length} agent${agents.length === 1 ? "" : "s"} only you can see and run`}>
+        <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" aria-label="Agent file" onChange={importFile} />
+        <Button type="button" size="sm" variant="outline" onClick={() => fileInput.current?.click()}>Import</Button>
         <Button asChild size="sm">
           <Link to="/agents/new">+ New agent</Link>
         </Button>
       </PageHeader>
+      {importError && (
+        <p role="alert" className="border-b border-line px-6 py-2 text-[12.5px] text-danger-ink">{importError}</p>
+      )}
 
       <div className="flex-1 overflow-y-auto">
         {loading ? (

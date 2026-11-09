@@ -53,9 +53,9 @@ async def authenticate(email: str, password: str):
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
     # iat lets logout revoke every token issued before it.
     to_encode.update({"exp": expire, "iat": int(datetime.now(timezone.utc).timestamp())})
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
@@ -182,7 +182,7 @@ async def _stamp_last_used(key: APIKey) -> None:
     if prev is not None and now - prev < _LAST_USED_STAMP_INTERVAL:
         return
     _last_used_stamped[key.id] = now
-    stamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    stamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
     await APIKey.update_one({'id': key.id}, {'last_used_at': stamp})
 
 

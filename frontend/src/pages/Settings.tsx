@@ -15,6 +15,8 @@ import { CredentialsCard } from '@/components/CredentialsCard';
 import { ProviderKeys } from '@/components/settings/ProviderKeys';
 import { AppearanceSettings } from '@/components/settings/Appearance';
 import { MemorySettings } from '@/components/settings/Memory';
+import { UsageSettings } from '@/components/settings/Usage';
+import { PasswordChange } from '@/components/settings/PasswordChange';
 import {
   Group, SectionHeader, SettingRow, SubHeading, buttonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -23,7 +25,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'memory' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'memory' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -35,9 +37,10 @@ interface SectionMeta {
 }
 
 const SECTIONS: SectionMeta[] = [
-  { id: 'account', label: 'Account', group: 'GENERAL', keywords: 'profile email name sign out devices api keys' },
+  { id: 'account', label: 'Account', group: 'GENERAL', keywords: 'profile email name password export backup download data sign out devices api keys' },
   { id: 'appearance', label: 'Appearance', group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
   { id: 'models', label: 'Models and keys', group: 'AI', keywords: 'providers api key openai anthropic claude gemini google groq openrouter cerebras ollama' },
+  { id: 'usage', label: 'Usage', group: 'AI', keywords: 'cost spend tokens money bill price how much' },
   { id: 'memory', label: 'Memory', group: 'AI', keywords: 'remember memories personalization forget history what agents know about me' },
   { id: 'voice', label: 'Voice input', group: 'AI', keywords: 'mic microphone speech transcription dictation' },
   { id: 'apps', label: 'Connected apps', group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
@@ -96,6 +99,26 @@ function AccountSection() {
     }
   };
 
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const exportData = async () => {
+    setExporting(true);
+    setExportError('');
+    try {
+      const res = await api.get('/account/export', { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data as Blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `cognitrix-export-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(errorMessage(err, 'Could not export your data.'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <>
       <SectionHeader title="Account" description="Who you're signed in as." />
@@ -109,9 +132,19 @@ function AccountSection() {
             </span>
           )}
         />
+        <PasswordChange />
         <SettingRow label="Cognitrix API keys" detail="For scripts and other apps that call this engine">
           <Link to="/api-keys" className={buttonClass}>Manage</Link>
         </SettingRow>
+        <SettingRow
+          label="Export your data"
+          detail="One file with your agents, chats, tasks, teams and memories. Keys, passwords and saved sign-ins are left out."
+        >
+          <button type="button" onClick={exportData} disabled={exporting} className={buttonClass}>
+            {exporting ? 'Preparing…' : 'Download'}
+          </button>
+        </SettingRow>
+        {exportError && <p role="alert" className="px-3.5 pb-3 text-[12px] text-danger-ink">{exportError}</p>}
       </Group>
 
       <SubHeading className="mt-7">DANGER ZONE</SubHeading>
@@ -278,6 +311,8 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
       return (<><SectionHeader title="Appearance" description="How Cognitrix looks and behaves on this device." /><AppearanceSettings /></>);
     case 'models':
       return (<><SectionHeader title="Models and keys" description="API keys for the model providers your agents use." /><ProviderKeys /></>);
+    case 'usage':
+      return (<><SectionHeader title="Usage" description="How many tokens your agents used and roughly what that cost." /><UsageSettings /></>);
     case 'memory':
       return (
         <>

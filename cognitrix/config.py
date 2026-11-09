@@ -413,6 +413,7 @@ _SESSION_MIGRATION_COLUMNS = (
     ('group_chat', 'BOOLEAN'),
     ('started_by', 'TEXT'),
     ('incognito', 'BOOLEAN'),
+    ('title', 'TEXT'), ('pinned', 'BOOLEAN'), ('archived', 'BOOLEAN'),
 )
 
 _TASKRUN_INDEXES = (
@@ -749,6 +750,7 @@ async def _ensure_schema():
     from cognitrix.models.credential import Credential
     from cognitrix.models.mcp_server import MCPServer
     from cognitrix.models.memory import Memory, MemorySettings
+    from cognitrix.models.usage import UsageDay
     from cognitrix.models.voice_settings import VoiceSettings
     from cognitrix.session_ownership import SessionOwnership
     from cognitrix.tasks.events import TaskRunEvent
@@ -798,6 +800,7 @@ async def _ensure_schema():
         Credential,
         Memory,
         MemorySettings,
+        UsageDay,
     ):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)

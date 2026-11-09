@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense } from 'react';
+import { lazy, memo, Suspense, useState } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { MemoryNotice } from '@/components/MemoryNotice';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
@@ -28,6 +28,34 @@ interface ChatMessageRowProps {
   streaming: boolean;
   onEditSource?: (artifact: ToolArtifact) => void;
   selectedEditSourceId?: string;
+  /** Reword this message and send it again (the person's own messages). */
+  onEdit?: (message: ChatMessage) => void;
+  /** Ask for a new answer to the last question (the latest reply only). */
+  onRegenerate?: () => void;
+}
+
+const actionClass =
+  'min-h-11 px-1 font-mono text-[10.5px] text-fg-dim transition-colors hover:text-fg md:min-h-0';
+
+/** Reasoning the model streamed inside <think> tags is not part of the answer. */
+const withoutThinking = (text: string) => text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className={actionClass}
+      onClick={() => {
+        void navigator.clipboard?.writeText(withoutThinking(text)).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        }).catch(() => {});
+      }}
+    >
+      {copied ? 'copied' : 'copy'}
+    </button>
+  );
 }
 
 export const ChatMessageRow = memo(function ChatMessageRow({
@@ -36,6 +64,8 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   streaming,
   onEditSource,
   selectedEditSourceId,
+  onEdit,
+  onRegenerate,
 }: ChatMessageRowProps) {
   if (message.role === 'tool') {
     if (!message.tools?.length) return null;
@@ -105,7 +135,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   const isUser = message.role === 'user';
   const blockedUrl = isUser ? null : blockedEndpoint(message.content);
   return (
-    <div className="grid grid-cols-1 gap-2 border-b border-line px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
+    <div className="group/msg grid grid-cols-1 gap-2 border-b border-line px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
       <div
         className={cn('truncate pt-0.5 font-mono text-[11px] tracking-[0.06em]', isUser ? 'text-accent-ink' : 'text-fg-dim')}
         title={message.speaker}
@@ -140,6 +170,17 @@ export const ChatMessageRow = memo(function ChatMessageRow({
         {message.timestamp && (
           <div className="mt-2 font-mono text-[10.5px] text-fg-dim">
             <span className="opacity-70">at</span> {fmtTime(message.timestamp)}
+          </div>
+        )}
+        {message.content.trim() && !(isLast && streaming) && (
+          <div className="mt-1 flex items-center gap-3 opacity-100 transition-opacity md:opacity-0 md:group-hover/msg:opacity-100 md:group-focus-within/msg:opacity-100">
+            <CopyButton text={message.content} />
+            {isUser && onEdit && (
+              <button type="button" className={actionClass} onClick={() => onEdit(message)}>edit</button>
+            )}
+            {!isUser && onRegenerate && (
+              <button type="button" className={actionClass} onClick={onRegenerate}>regenerate</button>
+            )}
           </div>
         )}
       </div>

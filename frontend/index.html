@@ -3,18 +3,14 @@
 
 <head>
   <meta charset="UTF-8" />
-  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#0b0c0e" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f7f7f4" media="(prefers-color-scheme: light)" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cognitrix</title>
-  <!-- Apply theme before first paint to avoid a flash. -->
-  <script>
-    (function () {
-      var d = localStorage.getItem('darkMode');
-      var dark = d === 'true' || (d === null && window.matchMedia('(prefers-color-scheme: dark)').matches);
-      document.documentElement.classList.toggle('dark', dark);
-      if (localStorage.getItem('reduceMotion') === 'true') document.documentElement.classList.add('reduce-motion');
-    })();
-  </script>
+  <script src="/theme.js"></script>
   <link rel="preload" href="/fonts/space-grotesk-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/fonts/space-grotesk-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin />
 </head>

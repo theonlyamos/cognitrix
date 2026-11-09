@@ -3,11 +3,13 @@ import { ChatMessageRow } from '@/components/ChatMessageRow';
 import { useSession, type ChatMessage, type ToolArtifact } from '@/context/SessionContext';
 import { MobileSheet } from '@/components/MobileSheet';
 import { SelectionRow } from '@/components/SelectionRow';
+import { ChatRowMenu } from '@/components/ChatRowMenu';
+import { exportChat } from '@/lib/chatExport';
 import { useSSE, type SSEEvent } from '@/hooks/useSSE';
 import { useEventStream } from '@/hooks/useEventStream';
 import { fetchChatRuns, useChatRuns } from '@/hooks/useChatRuns';
 import { useResource } from '@/hooks/useResource';
-import { api } from '@/lib/api';
+import { api, errorMessage } from '@/lib/api';
 import { desktop } from '@/lib/desktop';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import ReasoningPicker from '@/components/ReasoningPicker';
@@ -40,7 +42,38 @@ interface ConvoSummary {
   message_count: number;
   /** Set when an agent started this chat. */
   started_by?: { agent_id: string; agent_name: string; session_id?: string | null } | null;
+  pinned?: boolean;
+  archived?: boolean;
 }
+
+/** A chat found by its title or by words in its messages. */
+interface ChatSearchHit {
+  id: string;
+  title: string;
+  agent_id: string;
+  updated_at?: string | null;
+  archived?: boolean;
+  snippet: string;
+}
+
+/** An earlier message being reworded; sending replaces it and what followed. */
+interface Rework {
+  turn: number;
+  index: number;
+  expected: string;
+}
+
+/** The note the server keeps after a turn with uploaded files. */
+const UPLOAD_NOTE = '[User uploaded files, readable with your file tools:]';
+const isUploadNote = (m: ChatMessage) => m.role === 'user' && m.content.startsWith(UPLOAD_NOTE);
+const isUserTurn = (m: ChatMessage) => m.role === 'user' && !!m.content.trim() && !isUploadNote(m);
+/** A turn sent with files or images can't be resent: the resend would lose them. */
+const carriesUploads = (all: ChatMessage[], index: number) => {
+  const message = all[index];
+  const next = all[index + 1];
+  return !!message?.artifacts?.length || /(^|\n)📎 /.test(message?.content || '')
+    || (!!next && next.role === 'user' && (isUploadNote(next) || !next.content.trim()));
+};
 
 /** One row of the combined chat list: a chat with an agent or a team. */
 interface ChatSummary extends ConvoSummary {
@@ -99,6 +132,8 @@ interface ApprovalRequest {
 export default function Home() {
   const { messages, addMessage, attachArtifactsToLatestUser: attachArtifactsToLatestUserFromSession, addArtifactsToLastUser, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, stopRunningTools, failRunningTools, clearMessages, setMessages } = useSession();
   const attachArtifactsToLatestUser = attachArtifactsToLatestUserFromSession ?? addArtifactsToLastUser;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [input, setInput] = useState('');
   const [waiting, setWaiting] = useState(false); // sent, before first token
   const [streaming, setStreaming] = useState(false); // actively streaming a reply
@@ -106,6 +141,12 @@ export default function Home() {
   const [stopError, setStopError] = useState<string | null>(null);
   const [planning, setPlanning] = useState<string | null>(null); // transient status (e.g. multi-step)
   const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
+  const [rework, setRework] = useState<Rework | null>(null);
+  const [reworkError, setReworkError] = useState<string | null>(null);
+  const [chatQuery, setChatQuery] = useState('');
+  const [chatHits, setChatHits] = useState<ChatSearchHit[] | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const mobileConversationsTriggerRef = useRef<HTMLButtonElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -322,8 +363,35 @@ export default function Home() {
     for (const c of convos || []) {
       if (!merged.some((m) => m.id === c.id)) merged.push({ ...c, kind: 'agent', agent_id: agentId, team_id: null });
     }
-    return merged.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+    return merged.sort((a, b) =>
+      Number(!!b.pinned) - Number(!!a.pinned)
+      || String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
   }, [allChatsData, convos, agentById, teamById, agentId]);
+  const archivedCount = useMemo(() => allChats.filter((c) => c.archived).length, [allChats]);
+  // The list shows live chats, or the archive when asked; typing narrows it
+  // by title straight away while the server looks through the messages.
+  const listedChats = useMemo(() => {
+    const words = chatQuery.trim().toLowerCase();
+    return allChats.filter((c) =>
+      (words ? c.title.toLowerCase().includes(words) : !!c.archived === showArchived));
+  }, [allChats, chatQuery, showArchived]);
+  useEffect(() => {
+    const words = chatQuery.trim();
+    if (words.length < 3) {
+      setChatHits(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      api.get<ChatSearchHit[]>('/sessions/search', { params: { q: words } })
+        .then((res) => { if (!cancelled) setChatHits(res.data); })
+        .catch(() => { if (!cancelled) setChatHits([]); });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [chatQuery]);
   // Chats running with other agents or teams aren't covered by this agent's
   // run polling, so re-read the combined list until they finish.
   const othersRunning = (allChatsData || []).some((c) => c.running && !(c.kind === 'agent' && c.agent_id === agentId));
@@ -560,6 +628,8 @@ export default function Home() {
     setQuestion(null);
     setIsStreaming(false);
     setFollowSid(null);
+    setRework(null);
+    setReworkError(null);
     clearComposerMedia();
   }, [clearComposerMedia, clearMessages, clearStopFallback, setIsStreaming]);
 
@@ -902,12 +972,32 @@ export default function Home() {
   type ExecutionMode = 'chat' | 'task';
 
   const send = useCallback(
-    async (text: string, executionMode: ExecutionMode = 'chat') => {
+    async (text: string, executionMode: ExecutionMode = 'chat', replace: Rework | null = rework) => {
       const msg = text.trim();
       const pending = attachmentsRef.current;
       const pendingEditSource = editSource;
       if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return;
       if (executionMode === 'task' && (pending.length > 0 || pendingEditSource !== null)) return;
+      if (replace) {
+        // Take the old message and everything after it out of the saved chat
+        // before the new wording goes in.
+        if (!activeSessionId) return;
+        try {
+          await api.post(`/sessions/${encodeURIComponent(activeSessionId)}/rewind`, {
+            turn: replace.turn,
+            expected: replace.expected,
+          });
+        } catch (error) {
+          const status = (error as { response?: { status?: number } })?.response?.status;
+          setReworkError(status === 409
+            ? errorMessage(error, 'This chat is still working. Stop it first.')
+            : 'That message could not be replaced. Reload the chat and try again.');
+          return;
+        }
+        setMessages(messagesRef.current.slice(0, replace.index));
+        setRework(null);
+        setReworkError(null);
+      }
       clearStopFallback();
       turnGenerationRef.current += 1;
       // Keep a record of what was attached in the visible user message.
@@ -969,7 +1059,7 @@ export default function Home() {
         finishTurn();
       }
     },
-    [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
+    [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
   );
 
   const stop = useCallback(async () => {
@@ -1011,6 +1101,50 @@ export default function Home() {
   }, [agentId, busy, clearStopFallback, finishTurn, loadConversation, stopping, streamId]);
 
   const isRunning = (id: string) => runningIds.has(id) || (busy && id === activeSessionId);
+
+  // Reword one of your own messages: it goes back into the box, and sending
+  // replaces it and every reply after it.
+  const startRework = useCallback((message: ChatMessage) => {
+    const all = messagesRef.current;
+    const index = all.findIndex((m) => m.id === message.id);
+    if (index < 0) return;
+    setRework({ turn: all.slice(0, index).filter(isUserTurn).length, index, expected: message.content });
+    setReworkError(null);
+    setInput(message.content.replace(/\n?📎 .*$/s, ''));
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
+
+  // Ask the last question again for a different answer.
+  const regenerate = useCallback(() => {
+    const all = messagesRef.current;
+    let index = all.length - 1;
+    while (index >= 0 && !isUserTurn(all[index])) index -= 1;
+    if (index < 0) return;
+    const question = all[index];
+    void send(question.content.replace(/\n?📎 .*$/s, ''), 'chat', {
+      turn: all.slice(0, index).filter(isUserTurn).length,
+      index,
+      expected: question.content,
+    });
+  }, [send]);
+
+  const updateChat = async (chat: ChatSummary, changes: { title?: string; pinned?: boolean; archived?: boolean }) => {
+    try {
+      await api.patch(`/sessions/${encodeURIComponent(chat.id)}`, changes);
+    } catch {
+      // The list is re-read below and shows what was actually saved.
+    }
+    refetchConvos({ silent: true });
+    void refetchAllChats({ silent: true });
+  };
+
+  const saveRename = () => {
+    const target = renaming && allChats.find((c) => c.id === renaming.id);
+    setRenaming(null);
+    if (target && renaming && renaming.title.trim() !== target.title) {
+      void updateChat(target, { title: renaming.title.trim() });
+    }
+  };
 
   // Leaving a conversation mid-turn keeps that turn running on the server.
   // This page moves to a fresh browser stream so it can start another turn
@@ -1127,6 +1261,19 @@ export default function Home() {
   };
 
   const empty = messages.length === 0;
+  // Saved one-to-one chats only, and never while a reply is on its way.
+  const canRework = !!activeSessionId && !busy && isConnected && !incognito;
+  let lastQuestionIndex = messages.length - 1;
+  while (lastQuestionIndex >= 0 && !isUserTurn(messages[lastQuestionIndex])) lastQuestionIndex -= 1;
+  const canRegenerate = lastQuestionIndex >= 0 && !carriesUploads(messages, lastQuestionIndex);
+  let lastReplyIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === 'assistant' && messages[i].content.trim()) {
+      lastReplyIndex = i;
+      break;
+    }
+    if (isUserTurn(messages[i])) break;
+  }
 
   const conversationPanel = (
     <>
@@ -1147,16 +1294,62 @@ export default function Home() {
           </Button>
         </div>
       </div>
+      {allChats.length > 0 && (
+        <div className="flex flex-none items-center gap-2 border-b border-line px-3 py-2">
+          <input
+            type="search"
+            value={chatQuery}
+            onChange={(e) => setChatQuery(e.target.value)}
+            placeholder="Search chats"
+            aria-label="Search chats"
+            className="min-h-11 min-w-0 flex-1 rounded border border-line bg-bg px-2 text-[13px] text-fg placeholder:text-fg-dim focus:border-accent focus:outline-none md:min-h-8"
+          />
+          {(archivedCount > 0 || showArchived) && !chatQuery.trim() && (
+            <button
+              type="button"
+              aria-pressed={showArchived}
+              onClick={() => setShowArchived((value) => !value)}
+              className="min-h-11 flex-none font-mono text-[10.5px] text-fg-dim hover:text-fg md:min-h-8"
+            >
+              {showArchived ? 'back' : `archived ${archivedCount}`}
+            </button>
+          )}
+        </div>
+      )}
       <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto">
         {allChats.length === 0 ? (
           <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no conversations yet</p>
+        ) : listedChats.length === 0 && !chatHits?.length ? (
+          <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">
+            {chatQuery.trim() ? 'no chats match' : showArchived ? 'no archived chats' : 'no conversations yet'}
+          </p>
         ) : (
-          allChats.map((c) => {
+          listedChats.map((c) => {
             const isTeam = c.kind === 'team';
             const who = isTeam ? teamById.get(c.team_id || '')?.name : agentById.get(c.agent_id || '')?.name;
             const selected = !picking && !isTeam && c.id === activeSessionId;
             const running = (!isTeam && c.agent_id === agentId) ? isRunning(c.id) : !!c.running;
             const title = (c.message_count === 0 && chatRuns.find((run) => run.session_id === c.id)?.prompt) || c.title;
+            if (renaming?.id === c.id) {
+              return (
+                <form
+                  key={c.id}
+                  className="flex min-h-11 items-center gap-2 border-b border-line px-3 py-2"
+                  onSubmit={(e) => { e.preventDefault(); saveRename(); }}
+                >
+                  <input
+                    autoFocus
+                    value={renaming.title}
+                    maxLength={120}
+                    aria-label="Chat name"
+                    onChange={(e) => setRenaming({ id: c.id, title: e.target.value })}
+                    onBlur={saveRename}
+                    onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(null); }}
+                    className="min-h-11 min-w-0 flex-1 rounded border border-accent bg-bg px-2 text-[13px] text-fg focus:outline-none md:min-h-8"
+                  />
+                </form>
+              );
+            }
             return (
               <SelectionRow
                 key={c.id}
@@ -1167,7 +1360,7 @@ export default function Home() {
                   selected ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
                 )}
                 buttonClassName="flex items-start gap-2.5 self-stretch px-4 py-2.5"
-                trailingAction={
+                trailingAction={isTeam ? (
                   <button
                     type="button"
                     onClick={() => void deleteConversation(c)}
@@ -1177,12 +1370,26 @@ export default function Home() {
                   >
                     ✕
                   </button>
-                }
+                ) : (
+                  <ChatRowMenu
+                    label={`More actions for ${c.title}`}
+                    actions={[
+                      { label: 'Rename', disabled: running, onSelect: () => setRenaming({ id: c.id, title: c.title }) },
+                      { label: c.pinned ? 'Unpin' : 'Pin to top', disabled: running, onSelect: () => void updateChat(c, { pinned: !c.pinned }) },
+                      { label: c.archived ? 'Move back to chats' : 'Archive', disabled: running, onSelect: () => void updateChat(c, { archived: !c.archived }) },
+                      { label: 'Export as Markdown', onSelect: () => void exportChat(c.id, c.title, who || 'agent').catch(() => {}) },
+                      { label: 'Delete', danger: true, disabled: running, onSelect: () => void deleteConversation(c) },
+                    ]}
+                  />
+                )}
               >
                 <span className="mt-0.5"><AgentBadge name={who || '?'} team={isTeam} size="sm" /></span>
                 <div className="min-w-0 flex-1">
                   {/* A new conversation has no saved messages (and so no title) until its first reply is done. */}
-                  <div className="truncate text-[13px]">{title}</div>
+                  <div className="truncate text-[13px]">
+                    {c.pinned && <span className="mr-1 font-mono text-[10px] text-accent-ink" title="Pinned" aria-label="Pinned">▲</span>}
+                    {title}
+                  </div>
                   {running ? (
                     <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px] text-accent" data-testid={`running-${c.id}`}>
                       <span aria-hidden className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />
@@ -1200,6 +1407,27 @@ export default function Home() {
               </SelectionRow>
             );
           })
+        )}
+        {chatHits && chatHits.some((hit) => hit.snippet && !listedChats.some((c) => c.id === hit.id)) && (
+          <>
+            <div className="border-b border-line px-4 py-1.5 font-mono text-[10px] tracking-[0.18em] text-fg-dim">IN MESSAGES</div>
+            {chatHits.filter((hit) => hit.snippet && !listedChats.some((c) => c.id === hit.id)).map((hit) => {
+              const chat = allChats.find((c) => c.id === hit.id);
+              if (!chat) return null;
+              return (
+                <SelectionRow
+                  key={`hit-${hit.id}`}
+                  selected={false}
+                  onSelect={() => openChat(chat)}
+                  className="min-h-11 border-b border-line transition-colors hover:bg-panel-2"
+                  buttonClassName="px-4 py-2.5"
+                >
+                  <div className="truncate text-[13px]">{hit.title}</div>
+                  <div className="mt-0.5 line-clamp-2 text-[11.5px] text-fg-dim">{hit.snippet}</div>
+                </SelectionRow>
+              );
+            })}
+          </>
         )}
       </div>
     </>
@@ -1329,6 +1557,8 @@ export default function Home() {
                   streaming={streaming && index === messages.length - 1 && message.role === 'assistant'}
                   onEditSource={selectArtifactEditSource}
                   selectedEditSourceId={editSource?.type === 'artifact' ? editSource.artifact.id : undefined}
+                  onEdit={canRework && isUserTurn(message) && !carriesUploads(messages, index) ? startRework : undefined}
+                  onRegenerate={canRework && index === lastReplyIndex && canRegenerate ? regenerate : undefined}
                 />
               ))}
 
@@ -1506,6 +1736,20 @@ export default function Home() {
                 </div>
               )}
               {voice.active && <VoiceBar voice={voice} />}
+              {(rework || reworkError) && (
+                <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-1.5 text-[12px] text-fg-dim" role="status">
+                  <span className={reworkError ? 'text-danger-ink' : undefined}>
+                    {reworkError || 'Editing an earlier message. Sending replaces it and every reply after it.'}
+                  </span>
+                  <button
+                    type="button"
+                    className="min-h-11 flex-none font-mono text-[10.5px] hover:text-fg md:min-h-0"
+                    onClick={() => { setRework(null); setReworkError(null); setInput(''); }}
+                  >
+                    cancel
+                  </button>
+                </div>
+              )}
               <textarea
                 ref={inputRef}
                 rows={1}

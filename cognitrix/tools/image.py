@@ -1,4 +1,4 @@
-"""Gemini image-generation and image-editing tool orchestration."""
+"""Image generation and editing: Gemini, or OpenAI when there is no Google key."""
 
 from __future__ import annotations
 
@@ -20,7 +20,41 @@ ASPECT_RATIOS = {
     '4:5', '5:4', '8:1', '9:16', '16:9', '21:9',
 }
 
-image_provider = GeminiImageProvider()
+
+
+class ImageProviderChoice:
+    """Gemini when a Google key is set, otherwise OpenAI when an OpenAI key is.
+    COGNITRIX_IMAGE_PROVIDER=openai or google picks one outright."""
+
+    @staticmethod
+    def _pick() -> str:
+        import os
+
+        from cognitrix.providers import openai_image
+        from cognitrix.providers.saved_keys import get_saved_key
+
+        forced = os.getenv('COGNITRIX_IMAGE_PROVIDER', '').strip().lower()
+        if forced in ('openai', 'google'):
+            return forced
+        if os.getenv('GOOGLE_API_KEY') or get_saved_key('google'):
+            return 'google'
+        return 'openai' if openai_image.api_key() else 'none'
+
+    async def generate(self, prompt, *, source, aspect_ratio):
+        choice = self._pick()
+        if choice == 'none':
+            raise GeminiImageError(
+                'missing_image_api_key',
+                'Image generation needs a Google or OpenAI API key (Settings > Models and keys)',
+            )
+        if choice == 'openai':
+            from cognitrix.providers.openai_image import OpenAIImageProvider
+
+            return await OpenAIImageProvider().generate(prompt, source=source, aspect_ratio=aspect_ratio)
+        return await GeminiImageProvider().generate(prompt, source=source, aspect_ratio=aspect_ratio)
+
+
+image_provider = ImageProviderChoice()
 
 
 def _current_media_ownership() -> MediaOwnership:
@@ -112,7 +146,7 @@ async def generate_image(prompt: str, source_artifact_id: str | None = None,
             {
                 'prompt': prompt_text,
                 'source_artifact_id': parent_artifact_id,
-                'model': MODEL,
+                'model': getattr(provider_image, 'model', None) or MODEL,
             },
             ownership,
         )

@@ -140,6 +140,50 @@ def manage_tools(args: Namespace):
 
 
 # =====================
+# Accounts
+# =====================
+async def set_account_password(email: str, password: str) -> str | None:
+    """Set a new password and sign the account out everywhere.
+    Returns an error message, or None when it worked."""
+    import time
+
+    from cognitrix.common.utils import Utils
+    from cognitrix.models import User
+
+    if len(password) < 8:
+        return 'Password must be at least 8 characters.'
+    user = await User.find_one({'email': email.strip()})
+    if not user:
+        return f'No account uses the email {email.strip()}.'
+    await User.update_one({'id': user.id}, {
+        'password': Utils.hash_password(password),
+        'tokens_valid_after': int(time.time()),
+    })
+    return None
+
+
+async def reset_password(args: Namespace):
+    """`cognitrix reset-password <email>`: the way back in after a forgotten password."""
+    import getpass
+    import sys
+
+    from cognitrix.config import initialize_database
+
+    password = args.password
+    if not password:
+        password = getpass.getpass('New password: ')
+        if getpass.getpass('Repeat it: ') != password:
+            print('The two passwords are different. Nothing was changed.')
+            sys.exit(1)
+    await initialize_database()
+    error = await set_account_password(args.email, password)
+    if error:
+        print(error)
+        sys.exit(1)
+    print(f'Password changed for {args.email.strip()}. Sign in again with the new one.')
+
+
+# =====================
 # Session Management
 # =====================
 async def list_sessions():

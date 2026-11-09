@@ -23,6 +23,8 @@ PROVIDER_STREAM_CHUNK_BYTES = 64 * 1024
 class ProviderImage:
     data: bytes
     reported_mime_type: str | None = None
+    model: str | None = None
+    """Set when it is not the Gemini model."""
 
 
 class GeminiImageError(ValueError):

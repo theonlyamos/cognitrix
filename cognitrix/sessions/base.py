@@ -185,6 +185,15 @@ class Session(Model):
     chats in it, it's left out of chat lists and history search, and it's
     deleted when the person leaves it (or after a day)."""
 
+    title: str | None = None
+    """A name the person gave this chat. None: the list shows its first message."""
+
+    pinned: bool | None = None
+    """Kept at the top of the chat list."""
+
+    archived: bool | None = None
+    """Hidden from the chat list until the person looks at archived chats."""
+
     started_by: dict[str, Any] | None = None
     """Set when an agent started this chat: {agent_id, agent_name, session_id
     (the chat it was started from), depth, report_back, exchanges}"""
@@ -448,12 +457,17 @@ class Session(Model):
 
     async def __call__(self, message: str | dict, agent: 'Agent', *args: Any, **kwargs: Any):
         # The action reviewer reads what this turn was asked to do.
+        from cognitrix import usage
         from cognitrix.safety.action_reviewer import _goal_text, turn_goal
 
         token = turn_goal.set(_goal_text(message))
+        # Model calls in this turn count toward this person's usage totals.
+        owner = self.user_id or getattr(kwargs.get('tool_context'), 'user_id', None)
+        usage_token = usage.set_owner(owner, getattr(agent, 'id', None))
         try:
             return await self._run_turn(message, agent, *args, **kwargs)
         finally:
+            usage.reset_owner(usage_token)
             turn_goal.reset(token)
 
     async def _run_turn(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws', 'compat'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None, tool_context=None, record_history: bool | None = None, persist_history: bool | None = None, compact_history: bool | None = None):

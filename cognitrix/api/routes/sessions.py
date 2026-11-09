@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from cognitrix.common.security import (
     AuthContext,
@@ -45,6 +45,27 @@ sessions_api = APIRouter(
     prefix='/sessions',
     dependencies=[Depends(crud_scope)],
 )
+
+
+class SessionUpdate(BaseModel):
+    """What a person can change about a chat from the chat list."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    # '' or None clears a custom name; the first message is shown again.
+    title: str | None = Field(default=None, max_length=120)
+    pinned: bool | None = None
+    archived: bool | None = None
+
+
+class SessionRewind(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    # 0-based position among the person's own text messages in this chat.
+    turn: int = Field(ge=0)
+    # What the page shows for that message; a mismatch means the page is out
+    # of step with the saved chat and nothing is removed.
+    expected: str | None = Field(default=None, max_length=200_000)
 
 
 class SessionCreate(BaseModel):
@@ -107,7 +128,7 @@ def _session_title(chat) -> str:
             and message.get('content')
         ):
             first_line = str(message['content']).strip().splitlines()[0]
-            return first_line[:60] + ('â€¦' if len(first_line) > 60 else '')
+            return first_line[:60] + ('…' if len(first_line) > 60 else '')
     return 'New conversation'
 
 
@@ -116,7 +137,10 @@ def _session_summary(session: Session) -> dict:
     data = session.json()
     return {
         'id': session.id,
-        'title': _session_title(session.chat),
+        'title': (getattr(session, 'title', None) or '').strip() or _session_title(session.chat),
+        'renamed': bool((getattr(session, 'title', None) or '').strip()),
+        'pinned': bool(getattr(session, 'pinned', False)),
+        'archived': bool(getattr(session, 'archived', False)),
         'datetime': session.datetime,
         'updated_at': data.get('updated_at'),
         'started_at': session.started_at,
@@ -409,6 +433,130 @@ async def all_chats(ctx: AuthContext = Depends(get_auth_context)):
 
     chats.sort(key=lambda c: str(c.get('updated_at') or ''), reverse=True)
     return chats
+
+
+SEARCH_MAX_RESULTS = 20
+
+
+@sessions_api.get('/search')
+async def search_chats(q: str = '', ctx: AuthContext = Depends(get_auth_context)):
+    """Find the caller's own chats by words in the title or the messages."""
+    from cognitrix.tools.chat_history import _snippet, _text_messages, _words
+
+    words = _words(q)
+    if not words:
+        return []
+    hits: list[tuple[int, str, dict[str, Any]]] = []
+    for session in await _owned_sessions(ctx):
+        if session.task_id or session.run_id or session.group_chat or getattr(session, 'incognito', False):
+            continue
+        summary = _session_summary(session)
+        title_hits = len(words & _words(summary['title']))
+        best: tuple[int, str] = (0, '')
+        for message in _text_messages(session):
+            found = len(words & _words(message['content']))
+            if found > best[0]:
+                best = (found, _snippet(message['content'], words))
+        if not title_hits and not best[0]:
+            continue
+        hits.append((title_hits * 2 + best[0], str(summary.get('updated_at') or ''), {
+            'id': summary['id'],
+            'title': summary['title'],
+            'agent_id': str(session.agent_id or ''),
+            'updated_at': summary.get('updated_at'),
+            'archived': summary['archived'],
+            'snippet': best[1],
+        }))
+    hits.sort(key=lambda h: (h[0], h[1]), reverse=True)
+    return [h[2] for h in hits[:SEARCH_MAX_RESULTS]]
+
+
+def _chat_is_running(ctx: AuthContext, session_id: str) -> bool:
+    from cognitrix.sessions import runs as chat_runs
+
+    run_key = str(getattr(ctx.user, 'id', None) or getattr(ctx.user, 'email', 'anon'))
+    run = chat_runs.get_run(run_key, session_id)
+    return bool(run and run.running)
+
+
+@sessions_api.patch('/{session_id}')
+async def update_session(
+    session_id: str,
+    body: SessionUpdate,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Rename, pin or archive one of the caller's chats."""
+    _, session = await _load_authorized_session(session_id, ctx)
+    if session.task_id or session.run_id:
+        raise _not_found()
+    # A running turn saves its own copy of the chat when it ends and would
+    # undo this change.
+    if _chat_is_running(ctx, session_id):
+        raise HTTPException(status_code=409, detail='This chat is still working. Try again when it finishes.')
+    changes = body.model_dump(exclude_unset=True)
+    if 'title' in changes:
+        session.title = (changes['title'] or '').strip() or None
+    if changes.get('pinned') is not None:
+        session.pinned = bool(changes['pinned'])
+    if changes.get('archived') is not None:
+        session.archived = bool(changes['archived'])
+    await session.save()
+    return _session_summary(session)
+
+
+@sessions_api.post('/{session_id}/rewind', dependencies=[Depends(jwt_only)])
+async def rewind_session(
+    session_id: str,
+    body: SessionRewind,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Drop one of the person's messages and everything after it, so it can
+    be sent again (regenerate) or reworded (edit). Returns the dropped text."""
+    _, session = await _load_authorized_session(session_id, ctx)
+    if session.task_id or session.run_id:
+        raise _not_found()
+    if _chat_is_running(ctx, session_id):
+        raise HTTPException(status_code=409, detail='This chat is still working. Stop it first.')
+    from cognitrix.media.documents import DOCUMENT_HISTORY_MARKER
+
+    chat = list(session.chat or [])
+
+    def is_user(message) -> bool:
+        return str(message.get('role', '')).lower() == 'user'
+
+    def is_upload_note(message) -> bool:
+        # Bookkeeping the app adds after a turn with uploads; not a message
+        # the person typed, so it is not a turn of its own.
+        return (
+            is_user(message)
+            and (message.get('type') != 'text'
+                 or str(message.get('content') or '').startswith(DOCUMENT_HISTORY_MARKER))
+        )
+
+    seen = -1
+    for index, message in enumerate(chat):
+        if (
+            is_user(message)
+            and message.get('type') == 'text'
+            and str(message.get('content') or '').strip()
+            and not is_upload_note(message)
+        ):
+            seen += 1
+            if seen == body.turn:
+                text = str(message['content'])
+                if body.expected is not None and not body.expected.strip().startswith(text.strip()):
+                    break
+                # Dropping the turn would drop its uploads, and the resend
+                # would not carry them.
+                if index + 1 < len(chat) and is_upload_note(chat[index + 1]):
+                    raise HTTPException(
+                        status_code=409,
+                        detail='This message has attachments, so it can\'t be edited or regenerated.',
+                    )
+                session.chat = chat[:index]
+                await session.save()
+                return {'message': text, 'message_count': len(session.chat)}
+    raise HTTPException(status_code=404, detail='That message is no longer in this chat.')
 
 
 @sessions_api.get('/{session_id}')

@@ -15,6 +15,8 @@ from cognitrix.common.security import (
     create_access_token,
     get_auth_context,
     get_current_user,
+    jwt_only,
+    verify_password,
 )
 from cognitrix.common.utils import Utils
 from cognitrix.models import User
@@ -93,6 +95,34 @@ async def signup(new_user: User):
 
     await new_user.save()
     return {"message": "User created successfully"}
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@auth_api.post("/password")
+async def change_password(body: PasswordChange, ctx: Annotated[AuthContext, Depends(jwt_only)]):
+    """Change the signed-in person's password. Every other device is signed
+    out; this one gets a fresh token back so it stays signed in."""
+    # The signed-in user object carries no password hash; read the stored row.
+    user = await User.find_one({'email': ctx.user.email})
+    if user is None or not verify_password(body.current_password, getattr(user, 'password', '') or ''):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose a password you are not already using")
+    await User.update_one({'id': user.id}, {
+        'password': Utils.hash_password(body.new_password),
+        'tokens_valid_after': int(time.time()),
+    })
+    access_token = create_access_token(
+        data={"sub": user.email},
+        expires_delta=timedelta(minutes=float(JWT_ACCESS_TOKEN_EXPIRE_MINUTES)),
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
 
 @auth_api.get("/user")
 async def get_user(user: Annotated[User, Depends(get_current_user)]):

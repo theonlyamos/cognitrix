@@ -106,6 +106,15 @@ export default function Login() {
               {loading && <span role="status" className="sr-only">Signing in…</span>}
             </form>
 
+            <details className="mt-5 text-sm text-fg-dim">
+              <summary className="cursor-pointer select-none hover:text-fg">Forgot your password?</summary>
+              <p className="mt-2 leading-relaxed">
+                Cognitrix has no email service to send a reset link. On the computer that runs it, open a terminal and run{' '}
+                <code className="rounded bg-panel-2 px-1 py-0.5 font-mono text-[12px] text-fg">cognitrix reset-password you@example.com</code>
+                {' '}to set a new one.
+              </p>
+            </details>
+
             <p className="mt-6 text-sm text-fg-dim">
               Don't have an account?{' '}
               <Link to="/signup" className="text-accent-ink font-medium hover:underline underline-offset-4">Create one</Link>
