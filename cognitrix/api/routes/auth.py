@@ -31,7 +31,13 @@ RESET_TOKEN_MINUTES = 60
 
 
 def _hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+    """What is stored for a reset or invitation link, so the link itself never is.
+
+    The links are 256 random bits, so there is nothing to guess; the
+    stretching is only so a copied database is no help either. The salt is
+    fixed because rows are looked up by this value.
+    """
+    return hashlib.pbkdf2_hmac('sha256', token.encode('utf-8'), b'cognitrix-link-token', 10_000).hex()
 
 
 def _reset_by_email_ready() -> bool:
@@ -174,7 +180,6 @@ async def _usable_invite(token: str | None, email: str):
 @auth_api.get("/options")
 async def auth_options(invite: str | None = None):
     """What the sign-in pages can offer. Public."""
-    from cognitrix.common import email as mailer
 
     valid_invite = False
     if invite:

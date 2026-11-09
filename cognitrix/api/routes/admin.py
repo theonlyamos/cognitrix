@@ -3,7 +3,6 @@ only, and browser sessions only (an API key can never manage accounts).
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import secrets
 import time
@@ -123,7 +122,9 @@ async def update_user(user_id: str, body: UserUpdate, ctx: AuthContext = Depends
 
 
 def _hash(token: str) -> str:
-    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+    from cognitrix.api.routes.auth import _hash_token
+
+    return _hash_token(token)
 
 
 def _invite_row(invite: Invite) -> dict:
