@@ -345,7 +345,7 @@ async def test_settings_check_tokens_hide_them_and_issue_a_link_code(db, monkeyp
     assert 'secret-token' not in json.dumps(data)
 
     listed = await channels.list_channels(_ctx('u1'))
-    assert [c['kind'] for c in listed['channels']] == ['telegram', 'slack']
+    assert [c['kind'] for c in listed['channels']] == ['telegram', 'slack', 'discord']
     assert 'secret-token' not in json.dumps(listed)
     other = await channels.list_channels(_ctx('u2'))
     assert other['channels'][0]['configured'] is False
@@ -495,3 +495,95 @@ async def test_relinking_stops_the_running_reply_and_sends_nothing_to_the_old_ch
         assert transport.sent == []
     finally:
         svc._service = None
+
+
+async def test_discord_transport_reads_dms_and_buttons_and_ignores_bots():
+    from cognitrix.channels.base import Button, Handlers
+    from cognitrix.channels.discord import INTENTS, DiscordTransport
+
+    transport = DiscordTransport('token')
+    transport._bot_user_id = '99'
+    calls = []
+
+    async def fake_call(method, path, auth=True, **body):
+        calls.append((method, path, auth, body))
+        return {'id': 'm7'}
+
+    transport._call = fake_call
+    got = []
+
+    async def collect(item):
+        got.append(item)
+
+    connected = []
+
+    async def on_connected():
+        connected.append(True)
+
+    handlers = Handlers(on_message=collect, on_button=collect, on_connected=on_connected)
+    await transport._dispatch('READY', {'user': {'id': '99'}}, handlers)
+    for message in (
+        {'channel_id': 'c1', 'author': {'id': '99', 'username': 'me'}, 'content': 'echo'},
+        {'channel_id': 'c1', 'author': {'id': '5', 'bot': True}, 'content': 'other bot'},
+        {'channel_id': 'c2', 'guild_id': 'g1', 'author': {'id': '7', 'username': 'ada'}, 'content': 'in a server'},
+        {'channel_id': 'c1', 'author': {'id': '7', 'username': 'ada', 'global_name': 'Ada'}, 'content': 'hi'},
+    ):
+        await transport._dispatch('MESSAGE_CREATE', message, handlers)
+    await transport._dispatch('INTERACTION_CREATE', {
+        'type': 3, 'id': 'i1', 'token': 'tok', 'channel_id': 'c1', 'user': {'id': '7'},
+        'data': {'custom_id': 'ta:1:1'}, 'message': {'id': 'm3'},
+    }, handlers)
+
+    assert connected == [True]
+    assert got == [
+        Incoming('c2', '7', 'ada', 'in a server', False),
+        Incoming('c1', '7', 'Ada', 'hi', True),
+        ButtonPress('c1', '7', 'ta:1:1', 'm3'),
+    ]
+    # The press is acknowledged before the work, without the bot token.
+    assert calls == [('POST', '/interactions/i1/tok/callback', False, {'type': 6})]
+
+    ref = await transport.send('c1', 'Approve?', [Button('Approve', 'ta:1:1', 'primary'), Button('Deny', 'ta:1:0', 'danger')])
+    assert ref == 'm7'
+    body = calls[-1][3]
+    assert [b['style'] for b in body['components'][0]['components']] == [1, 4]
+    assert body['allowed_mentions'] == {'parse': []}
+    assert INTENTS == 1 << 12
+
+
+async def test_discord_identifies_on_hello_and_reconnects_when_asked():
+    import json as _json
+
+    from cognitrix.channels.base import Handlers
+    from cognitrix.channels.discord import DiscordTransport
+
+    transport = DiscordTransport('token')
+
+    class Socket:
+        def __init__(self):
+            self.sent = []
+
+        async def send_str(self, text):
+            self.sent.append(_json.loads(text))
+
+    async def nothing(_item):
+        return None
+
+    ws = Socket()
+    handlers = Handlers(on_message=nothing, on_button=nothing)
+    assert await transport._on_event(ws, {'op': 10, 'd': {'heartbeat_interval': 41250}}, handlers) is True
+    assert ws.sent[0]['op'] == 2 and ws.sent[0]['d']['token'] == 'token'
+    assert await transport._on_event(ws, {'op': 0, 't': 'TYPING_START', 's': 4, 'd': {}}, handlers) is True
+    assert await transport._on_event(ws, {'op': 1}, handlers) is True
+    assert ws.sent[-1] == {'op': 1, 'd': 4}
+    assert await transport._on_event(ws, {'op': 7}, handlers) is False
+
+
+def test_discord_add_link_comes_from_the_token():
+    import base64
+
+    from cognitrix.api.routes.channels import _discord_app_id
+
+    head = base64.b64encode(b'123456789012345678').decode().rstrip('=')
+    assert _discord_app_id(f'{head}.abc.def') == '123456789012345678'
+    assert _discord_app_id('not-a-token') == ''

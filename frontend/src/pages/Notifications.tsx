@@ -7,6 +7,7 @@ import {
 } from '@/context/NotificationsContext';
 import { NotificationRow } from '@/components/NotificationPopover';
 import { isDesktop } from '@/lib/desktop';
+import { PushCard } from '@/components/PushCard';
 
 const EVENTS = Object.keys(EVENT_LABELS) as NotificationEvent[];
 
@@ -52,7 +53,6 @@ export default function Notifications() {
                   <th scope="col" className="px-4 py-3 text-left font-normal">EVENT</th>
                   <th scope="col" className="w-20 px-2 py-3 font-normal">IN APP</th>
                   <th scope="col" className="w-20 px-2 py-3 font-normal">{desktopApp ? 'DESKTOP' : 'BROWSER'}</th>
-                  <th scope="col" className="w-20 px-2 py-3 font-normal">PHONE</th>
                 </tr>
               </thead>
               <tbody>
@@ -74,9 +74,6 @@ export default function Notifications() {
                       <td className="px-2 py-3 text-center">
                         <Toggle label={`${meta.title} on ${desktopApp ? 'desktop' : 'browser'}`} checked={prefs[event].desktop} onChange={(v) => setPref(event, 'desktop', v)} />
                       </td>
-                      <td className="px-2 py-3 text-center">
-                        <span className="font-mono text-[11px] text-fg-dim" title="Phone pairing is coming in a later update">soon</span>
-                      </td>
                     </tr>
                   );
                 })}
@@ -92,6 +89,7 @@ export default function Notifications() {
               Allow browser notifications
             </button>
           )}
+          {!desktopApp && <PushCard />}
         </section>
 
         <section aria-labelledby="center-title" className="flex min-h-0 flex-col rounded-[14px] border border-line bg-panel">

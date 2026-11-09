@@ -1,7 +1,7 @@
 """Runs every connected chat app bot and links it to its owner's agents.
 
 * One background task per channel keeps the bot connected (Telegram long
-  polling, Slack Socket Mode) and restarts it after network errors.
+  polling, Slack Socket Mode, the Discord Gateway) and restarts it after network errors.
 * A message from the linked chat starts a chat turn with the channel's agent,
   in the same kind of conversation the web UI uses, so it also shows there.
   Risky tool calls and Ask User questions arrive as buttons in the chat.
@@ -39,7 +39,7 @@ from .formatting import split_text, strip_reasoning
 
 logger = logging.getLogger('cognitrix.log')
 
-KINDS = ('telegram', 'slack')
+KINDS = ('telegram', 'slack', 'discord')
 LINK_CODE_MINUTES = 30
 MAX_LINK_ATTEMPTS = 10
 DELIVERY_INTERVAL = 4.0
@@ -70,6 +70,9 @@ def make_transport(channel: ChatChannel) -> Transport:
     if channel.kind == 'slack':
         from .slack import SlackTransport
         return SlackTransport(channel.bot_token, channel.app_token)
+    if channel.kind == 'discord':
+        from .discord import DiscordTransport
+        return DiscordTransport(channel.bot_token)
     raise ValueError(f'Unknown chat app {channel.kind!r}')
 
 
@@ -85,8 +88,9 @@ HELP_TEXT = (
 
 
 def _prefix(kind: str) -> str:
-    # Slack treats "/word" as a slash command, so Slack users type "!word".
-    return '!' if kind == 'slack' else '/'
+    # Slack and Discord treat "/word" as their own slash command, so people
+    # type "!word" there.
+    return '!' if kind in ('slack', 'discord') else '/'
 
 
 def _params_preview(params: Any, limit: int = 600) -> str:

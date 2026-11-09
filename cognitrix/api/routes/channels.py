@@ -1,4 +1,4 @@
-"""Chat apps: connect a Telegram or Slack bot to chat with your agents.
+"""Chat apps: connect a Telegram, Slack or Discord bot to chat with your agents.
 
 ``GET /channels`` lists both apps with their state. ``PUT /channels/{kind}``
 saves tokens and options (tokens are checked with the app before saving).
@@ -75,6 +75,13 @@ def _payload(kind: str, row: ChatChannel | None) -> dict[str, Any]:
     link_url = ''
     if kind == 'telegram' and row.bot_name.startswith('@'):
         link_url = f'https://t.me/{row.bot_name[1:]}' + (f'?start={code}' if code else '')
+    if kind == 'discord' and row.bot_token:
+        # A bot token starts with the bot's user id in base64; the id makes
+        # the link that adds the bot to a server, which Discord requires
+        # before the bot can be messaged.
+        app_id = _discord_app_id(row.bot_token)
+        if app_id:
+            link_url = f'https://discord.com/oauth2/authorize?client_id={app_id}&scope=bot&permissions=0'
     return {
         'kind': kind,
         'configured': bool(row.bot_token),
@@ -95,6 +102,18 @@ def _payload(kind: str, row: ChatChannel | None) -> dict[str, Any]:
         'last_error': row.last_error,
         'connected': bool(service and service.is_connected(row.id)),
     }
+
+
+def _discord_app_id(token: str) -> str:
+    import base64
+    import binascii
+
+    head = token.split('.', 1)[0]
+    try:
+        app_id = base64.b64decode(head + '=' * (-len(head) % 4)).decode('ascii')
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return ''
+    return app_id if app_id.isdigit() else ''
 
 
 async def _reload(row: ChatChannel | None) -> None:

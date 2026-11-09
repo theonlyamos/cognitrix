@@ -131,6 +131,11 @@ async def request_task_approval(ctx: dict, tool_name: str, params: dict[str, Any
         op_hash=op_hash,
     )
     await row.save()
+    from cognitrix.common import webpush
+
+    webpush.send_soon(
+        user_id, 'Approval needed', f'A task wants to run {tool_name.replace("_", " ")}.',
+        url=f'/tasks/{row.task_id}' if row.task_id else '/inbox', tag=f'approval-{row.id}')
     await _emit(ctx, 'approval_requested', approval_payload(row))
 
     deadline = asyncio.get_running_loop().time() + approval_timeout_seconds()

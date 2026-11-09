@@ -87,6 +87,25 @@ async def reconcile_terminal_task_statuses(
     return repaired
 
 
+def _push_completion(task, run) -> None:
+    try:
+        from cognitrix.common import webpush
+
+        user_id = getattr(task, 'owner_id', None) or getattr(run, 'requested_by', None)
+        status = str(getattr(run.status, 'value', run.status))
+        if not user_id or status not in ('completed', 'failed'):
+            return
+        title = getattr(task, 'title', '') or 'A task'
+        webpush.send_soon(
+            str(user_id),
+            'Task finished' if status == 'completed' else 'Task failed',
+            title, url=f'/tasks/{run.task_id}', tag=f'run-{run.id}')
+    except Exception:
+        import logging
+
+        logging.getLogger('cognitrix.log').exception('Could not push a task result')
+
+
 async def deliver_completion_notification(
     run_id: str,
     *,
@@ -106,6 +125,10 @@ async def deliver_completion_notification(
     task = await Task.get(claimed.task_id)
     if task is None:
         task = SimpleNamespace(id=claimed.task_id)
+    # Tell the person's browsers once, on the first attempt only: the webhook
+    # below may be retried, a push must not be.
+    if int(getattr(claimed, 'completion_notification_attempts', 0) or 0) <= 1:
+        _push_completion(task, claimed)
     delivered = await notify_completion(task, claimed)
     await repository.finish_completion_notification(
         run_id,

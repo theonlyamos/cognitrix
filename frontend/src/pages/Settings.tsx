@@ -49,7 +49,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'voice', label: 'Voice', group: 'AI', keywords: 'input mic microphone speech transcription dictation spoken replies read aloud listen text to speech tts' },
   { id: 'apps', label: 'Connected apps', group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
   { id: 'access', label: 'Agent access', group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
-  { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack bot alerts approvals' },
+  { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack discord bot alerts approvals' },
   { id: 'people', label: 'People', group: 'SERVER', keywords: 'users admin invite invitation members roles disable accounts email smtp reset', adminOnly: true },
   { id: 'desktop', label: 'Desktop app', group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask', desktopOnly: true },
   { id: 'engine', label: 'Engine', group: 'THIS COMPUTER', keywords: 'server status restart log version database queue worker data folder' },
@@ -354,7 +354,7 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
         <>
           <SectionHeader
             title="Chat apps"
-            description="Chat with your agents from Telegram or Slack, and get alerts and task approvals there. You create the bot, so messages go only between your bot and this engine."
+            description="Chat with your agents from Telegram, Slack or Discord, and get alerts and task approvals there. You create the bot, so messages go only between your bot and this engine."
           />
           <ChatChannelsCard />
         </>

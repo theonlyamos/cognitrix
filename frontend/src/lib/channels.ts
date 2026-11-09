@@ -1,6 +1,6 @@
 import { api } from '@/lib/api';
 
-export type ChannelKind = 'telegram' | 'slack';
+export type ChannelKind = 'telegram' | 'slack' | 'discord';
 
 export interface ChatChannel {
   kind: ChannelKind;

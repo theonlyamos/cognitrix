@@ -1,4 +1,4 @@
-"""Chat apps (Telegram, Slack) a person connected so they can talk to their
+"""Chat apps (Telegram, Slack, Discord) a person connected so they can talk to their
 agents and get Inbox alerts and approvals there.
 
 Each person has at most one channel per kind. The bot token belongs to a bot
@@ -17,7 +17,7 @@ class ChatChannel(Model):
     user_id: str
     """Principal key of the person who owns the channel."""
     kind: str
-    """'telegram' or 'slack'."""
+    """'telegram', 'slack' or 'discord'."""
     bot_token: str = ''
     app_token: str = ''
     """Slack only: the app-level token (xapp-...) Socket Mode connects with."""
