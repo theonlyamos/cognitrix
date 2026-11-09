@@ -191,6 +191,19 @@ async def healthcheck():
     return await task_runtime_health()
 
 
+def _top_level_build_files() -> dict[str, str]:
+    """Request path -> file, for files directly in the build folder and its
+    icons folder. Pages (.html) are left to the SPA fallback."""
+    files: dict[str, str] = {}
+    for prefix, folder in (('', FRONTEND_BUILD_DIR), ('icons/', FRONTEND_BUILD_DIR / 'icons')):
+        if not folder.is_dir():
+            continue
+        for entry in folder.iterdir():
+            if entry.is_file() and entry.suffix != '.html':
+                files[prefix + entry.name] = str(entry)
+    return files
+
+
 # SPA fallback — MUST be registered last so real routes (api, /health, the
 # static mounts) aren't shadowed by this catch-all.
 @app.get("/{path:path}")
@@ -199,11 +212,11 @@ async def index(request: Request, path: str):
     if path == 'api' or path.startswith(('api/', 'v1/')) or path == 'v1':
         raise HTTPException(status_code=404, detail='Not Found')
     # Files at the top of the build (icons, the web app manifest, theme.js).
-    if path and not path.endswith('.html'):
-        build_root = FRONTEND_BUILD_DIR.resolve()
-        candidate = (build_root / path).resolve()
-        if candidate.is_relative_to(build_root) and candidate.is_file():
-            return FileResponse(candidate)
+    # Looked up among the files that are really there, so the requested path
+    # never becomes part of a file path.
+    static_file = _top_level_build_files().get(path)
+    if static_file is not None:
+        return FileResponse(static_file)
     index_file = FRONTEND_BUILD_DIR / 'index.html'
     if not index_file.is_file():
         raise HTTPException(status_code=404, detail='Frontend is not built (run `npm run build` in frontend/)')
