@@ -27,6 +27,7 @@ import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
 import type { PickTarget, PickerAgent, PickerTeam } from '@/lib/agentPicker';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
@@ -469,6 +470,19 @@ export default function Home() {
 
   const busy = waiting || streaming || question !== null;
   const busyRef = useRef(busy);
+  // Spoken replies: when a turn ends and "read replies aloud" is on, read the
+  // answer. Sending a new message stops whatever was being read.
+  const wasBusyRef = useRef(false);
+  useEffect(() => {
+    const wasBusy = wasBusyRef.current;
+    wasBusyRef.current = busy;
+    if (busy && !wasBusy) stopSpeaking();
+    if (!busy && wasBusy && question === null && getSpeechPrefs().autoRead) {
+      const last = messagesRef.current[messagesRef.current.length - 1];
+      if (last?.role === 'assistant' && last.content.trim()) void speakText(last.id, last.content);
+    }
+  }, [busy, question]);
+  useEffect(() => () => stopSpeaking(), []);
   busyRef.current = busy;
   const turnGenerationRef = useRef(0);
   const stopFallbackRef = useRef<number | null>(null);

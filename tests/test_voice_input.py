@@ -226,3 +226,49 @@ async def test_rate_limit(db, monkeypatch):
         audio._check_rate('u1')
     assert exc.value.status_code == 429
     audio._check_rate('u2')
+
+
+# ------------------------------------------------------------- spoken replies
+
+async def test_speech_options_follow_the_keys(db, monkeypatch):
+    from cognitrix.api.routes import audio
+
+    user = await _user()
+    options = await audio.speech_options(_ctx(user))
+    assert [p['ready'] for p in options['providers']] == [False, False]
+
+    monkeypatch.setenv('OPENAI_API_KEY', 'sk-test')
+    options = await audio.speech_options(_ctx(user))
+    assert {p['id']: p['ready'] for p in options['providers']} == {'openai': True, 'google': False}
+    assert 'alloy' in options['providers'][0]['voices']
+
+
+async def test_speech_needs_a_key_and_returns_audio(db, monkeypatch):
+    from cognitrix.api.routes import audio
+
+    user = await _user()
+    with pytest.raises(HTTPException) as refused:
+        await audio.create_speech(audio.SpeechRequest(text='Hello'), _ctx(user))
+    assert refused.value.status_code == 400
+
+    monkeypatch.setenv('OPENAI_API_KEY', 'sk-test')
+    seen = {}
+
+    async def fake_speak(text, *, provider, voice, api_key):
+        seen.update(text=text, provider=provider, voice=voice, api_key=api_key)
+        return b'ID3audio', 'audio/mpeg'
+
+    monkeypatch.setattr(audio, 'speak', fake_speak)
+    audio._recent_speech.clear()
+    response = await audio.create_speech(audio.SpeechRequest(text='Hello', voice='nova'), _ctx(user))
+    assert response.body == b'ID3audio' and response.media_type == 'audio/mpeg'
+    assert seen == {'text': 'Hello', 'provider': 'openai', 'voice': 'nova', 'api_key': 'sk-test'}
+
+
+def test_gemini_pcm_is_wrapped_as_wav():
+    from cognitrix.providers.speech import _rate_from_mime, pcm_to_wav
+    from cognitrix.providers.transcription import parse_wav
+
+    wav = pcm_to_wav(b'\x00\x00' * 24000, _rate_from_mime('audio/L16;codec=pcm;rate=24000'))
+    info = parse_wav(wav)
+    assert info.sample_rate == 24000 and round(info.seconds) == 1

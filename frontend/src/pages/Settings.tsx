@@ -17,6 +17,7 @@ import { AppearanceSettings } from '@/components/settings/Appearance';
 import { MemorySettings } from '@/components/settings/Memory';
 import { UsageSettings } from '@/components/settings/Usage';
 import { PasswordChange } from '@/components/settings/PasswordChange';
+import { SpokenRepliesSettings } from '@/components/settings/SpokenReplies';
 import { PeopleSettings } from '@/components/settings/People';
 import {
   Group, SectionHeader, SettingRow, SubHeading, buttonClass, quietButtonClass,
@@ -45,7 +46,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'models', label: 'Models and keys', group: 'AI', keywords: 'providers api key openai anthropic claude gemini google groq openrouter cerebras ollama' },
   { id: 'usage', label: 'Usage', group: 'AI', keywords: 'cost spend tokens money bill price how much' },
   { id: 'memory', label: 'Memory', group: 'AI', keywords: 'remember memories personalization forget history what agents know about me' },
-  { id: 'voice', label: 'Voice input', group: 'AI', keywords: 'mic microphone speech transcription dictation' },
+  { id: 'voice', label: 'Voice', group: 'AI', keywords: 'input mic microphone speech transcription dictation spoken replies read aloud listen text to speech tts' },
   { id: 'apps', label: 'Connected apps', group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
   { id: 'access', label: 'Agent access', group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
   { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack bot alerts approvals' },
@@ -330,8 +331,11 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
     case 'voice':
       return (
         <>
-          <SectionHeader title="Voice input" />
+          <SectionHeader title="Voice" description="Talk to your agents and have their replies read to you." />
+          <SubHeading>VOICE INPUT</SubHeading>
           <div className="rounded-[12px] border border-line bg-panel p-3.5"><VoiceSettingsCard /></div>
+          <SubHeading className="mt-7">SPOKEN REPLIES</SubHeading>
+          <SpokenRepliesSettings />
         </>
       );
     case 'apps':

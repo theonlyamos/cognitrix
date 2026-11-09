@@ -5,6 +5,7 @@ import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import {
   BlockedEndpointNotice, RefusedNotice, SignInNeededNotice, blockedEndpoint, isRefusal, signInNeeded,
 } from '@/components/SafetyNotices';
+import { speakText, stopSpeaking, useSpeechState } from '@/lib/speech';
 import { cn } from '@/lib/utils';
 
 const MarkdownMessage = lazy(() => import('@/components/MarkdownMessage'));
@@ -55,6 +56,26 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? 'copied' : 'copy'}
     </button>
+  );
+}
+
+/** Read a reply aloud, or stop reading it. */
+function ListenButton({ id, text }: { id: string; text: string }) {
+  const speech = useSpeechState();
+  const mine = speech.id === id;
+  const active = mine && speech.phase !== 'idle';
+  return (
+    <>
+      <button
+        type="button"
+        className={actionClass}
+        aria-pressed={active}
+        onClick={() => (active ? stopSpeaking() : void speakText(id, text))}
+      >
+        {active ? (speech.phase === 'loading' ? 'loading… stop' : 'stop') : 'listen'}
+      </button>
+      {mine && speech.error && <span role="alert" className="font-mono text-[10.5px] text-danger-ink">{speech.error}</span>}
+    </>
   );
 }
 
@@ -173,8 +194,9 @@ export const ChatMessageRow = memo(function ChatMessageRow({
           </div>
         )}
         {message.content.trim() && !(isLast && streaming) && (
-          <div className="mt-1 flex items-center gap-3 opacity-100 transition-opacity md:opacity-0 md:group-hover/msg:opacity-100 md:group-focus-within/msg:opacity-100">
+          <div className="mt-1 flex flex-wrap items-center gap-3 opacity-100 transition-opacity md:opacity-0 md:group-hover/msg:opacity-100 md:group-focus-within/msg:opacity-100">
             <CopyButton text={message.content} />
+            {!isUser && <ListenButton id={message.id} text={message.content} />}
             {isUser && onEdit && (
               <button type="button" className={actionClass} onClick={() => onEdit(message)}>edit</button>
             )}
