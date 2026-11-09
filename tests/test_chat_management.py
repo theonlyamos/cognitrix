@@ -154,3 +154,35 @@ async def test_rewind_can_keep_a_turn_and_its_uploads_to_answer_it_again(tmp_pat
     chat = (await Session.get(str(session.id))).chat
     assert chat[0]['content'] == 'Summarise it in French' and chat[0]['resume'] is True
     assert chat[1]['content'] == note['content']
+
+
+async def test_a_kept_turn_gets_its_files_granted_again(tmp_path):
+    """Regenerate or edit of a turn with a file: the file is readable again."""
+    from types import SimpleNamespace
+
+    from cognitrix.artifacts import DocumentArtifact
+    from cognitrix.media.documents import DOCUMENT_HISTORY_MARKER
+    from cognitrix.utils.sse import _kept_turn_document_ids
+
+    await _initialize_routes_db(tmp_path)
+    await DocumentArtifact.create_table()
+    mine = DocumentArtifact(session_id='s1', storage_key='uploads/a/f_1.txt', status='adopted')
+    pending = DocumentArtifact(session_id='s1', storage_key='uploads/a/f_2.txt', status='pending')
+    other = DocumentArtifact(session_id='s2', storage_key='uploads/b/f_3.txt', status='adopted')
+    for row in (mine, pending, other):
+        await row.save()
+
+    def note(*keys):
+        return {'role': 'User', 'type': 'text', 'content': '\n'.join([DOCUMENT_HISTORY_MARKER, *keys])}
+
+    older = {'role': 'User', 'type': 'text', 'content': 'earlier question'}
+    kept = {'role': 'User', 'type': 'text', 'content': 'what does it say?', 'resume': True}
+    session = SimpleNamespace(id='s1', chat=[
+        older, note('uploads/b/f_3.txt'), {'role': 'Assistant', 'type': 'text', 'content': 'ok'},
+        kept, note('uploads/a/f_1.txt', 'uploads/a/f_2.txt', 'uploads/b/f_3.txt'),
+    ])
+    # Only this turn's own, fully stored file of this chat.
+    assert await _kept_turn_document_ids(session) == (str(mine.id),)
+
+    kept.pop('resume')
+    assert await _kept_turn_document_ids(session) == ()
