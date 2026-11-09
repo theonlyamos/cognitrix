@@ -73,7 +73,23 @@ def _env_key(provider: str, suffix: str) -> str:
 usage_sink: ContextVar[dict | None] = ContextVar('cognitrix_usage_sink', default=None)
 
 
+def _usage_counts(raw: Any) -> dict[str, int]:
+    """Token counts from an OpenAI-style usage object, cache reads included."""
+    counts = {
+        'prompt_tokens': getattr(raw, 'prompt_tokens', 0) or 0,
+        'completion_tokens': getattr(raw, 'completion_tokens', 0) or 0,
+    }
+    details = getattr(raw, 'prompt_tokens_details', None)
+    cached = getattr(details, 'cached_tokens', None) if details is not None else None
+    if isinstance(cached, int) and cached > 0:
+        counts['cached_tokens'] = cached
+    return counts
+
+
 def record_usage(usage: dict | None) -> None:
+    from cognitrix import usage as usage_log
+
+    usage_log.log(usage)
     sink = usage_sink.get()
     if sink is None or not usage:
         return
@@ -751,7 +767,10 @@ class LLMManager:
         if tools is None:
             tools = []
         try:
+            from cognitrix import usage as usage_log
             from cognitrix.config import settings
+
+            usage_log.note_model(llm.provider, llm.model)
 
             # Groq and Ollama: direct. Others: Helicone.
             use_helicone = (
@@ -916,10 +935,7 @@ class LLMManager:
             async for chunk in stream:
                 chunk_usage = getattr(chunk, 'usage', None)
                 if chunk_usage:
-                    response.usage = {
-                        'prompt_tokens': chunk_usage.prompt_tokens or 0,
-                        'completion_tokens': chunk_usage.completion_tokens or 0,
-                    }
+                    response.usage = _usage_counts(chunk_usage)
                 if not chunk.choices:
                     continue
                 finish_reason = getattr(chunk.choices[0], 'finish_reason', None) or finish_reason
@@ -1047,10 +1063,7 @@ class LLMManager:
                 llm_resp.tool_calls = native_tool_calls
             resp_usage = getattr(response, 'usage', None)
             if resp_usage:
-                llm_resp.usage = {
-                    'prompt_tokens': resp_usage.prompt_tokens or 0,
-                    'completion_tokens': resp_usage.completion_tokens or 0,
-                }
+                llm_resp.usage = _usage_counts(resp_usage)
                 record_usage(llm_resp.usage)
             return llm_resp
         except ExecutionControlError:

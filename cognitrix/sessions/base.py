@@ -459,10 +459,16 @@ class Session(Model):
         # The action reviewer reads what this turn was asked to do.
         from cognitrix.safety.action_reviewer import _goal_text, turn_goal
 
+        from cognitrix import usage
+
         token = turn_goal.set(_goal_text(message))
+        # Model calls in this turn count toward this person's usage totals.
+        owner = self.user_id or getattr(kwargs.get('tool_context'), 'user_id', None)
+        usage_token = usage.set_owner(owner, getattr(agent, 'id', None))
         try:
             return await self._run_turn(message, agent, *args, **kwargs)
         finally:
+            usage.reset_owner(usage_token)
             turn_goal.reset(token)
 
     async def _run_turn(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws', 'compat'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None, tool_context=None, record_history: bool | None = None, persist_history: bool | None = None, compact_history: bool | None = None):

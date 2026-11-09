@@ -22,6 +22,7 @@ from ...api.routes.tasks import tasks_api, tasks_run_api
 from ...api.routes.team_chat import team_chat_api
 from ...api.routes.teams import teams_api, teams_run_api
 from ...api.routes.tools import tools_api
+from ...api.routes.usage import usage_api
 
 api_router.include_router(public_api)
 api_router.include_router(hooks_api)
@@ -51,5 +52,6 @@ api_router.include_router(mcp_api)
 api_router.include_router(apps_api)
 api_router.include_router(credentials_api)
 api_router.include_router(memories_api)
+api_router.include_router(usage_api)
 api_router.include_router(system_api)
 api_router.include_router(channels_api)
