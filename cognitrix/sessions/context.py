@@ -115,9 +115,67 @@ def _compact_past_turn(turn: list[dict[str, Any]]) -> list[dict[str, Any]]:
             kept.append(m)
         elif role == 'assistant' and m.get('tool_calls'):
             kept.append(m)
+        elif m.get('type') == 'progress_summary':
+            # Stands in for the folded tool rounds, which are gone from the
+            # prompt; dropping it would lose what those rounds found.
+            kept.append(m)
         else:
             kept.extend(_slim_past_turn([m]))
     return kept
+
+
+# A single long turn (dozens of tool calls) can outgrow the model's window on
+# its own. When it does, the oldest tool results in that turn are shortened;
+# the newest ones stay whole. Results are cut in blocks so the prompt prefix
+# stays the same for several rounds (provider prompt caches keep working).
+KEEP_RECENT_RESULTS = 8
+SHORTENED_RESULT_CHARS = 400
+SHORTEN_BLOCK = 8
+# After shortening, aim this far under the budget so the next rounds fit too.
+SHORTEN_TARGET = 0.75
+
+
+def _shorten(message: dict[str, Any]) -> dict[str, Any]:
+    content = message.get('content')
+    if not isinstance(content, str) or len(content) <= SHORTENED_RESULT_CHARS:
+        return message
+    return {**message, 'content': (
+        content[:SHORTENED_RESULT_CHARS]
+        + f"\n[Older tool result shortened to save room: {len(content)} chars in full. "
+        "You can no longer see the rest; run the tool again if you need it.]"
+    )}
+
+
+def fit_current_turn(turn: list[dict[str, Any]], budget_tokens: int) -> list[dict[str, Any]]:
+    """Shorten the oldest tool results of a turn that is over the budget.
+
+    Messages are copied, never changed in place, so the stored history keeps
+    the full results. The tool-call protocol stays valid: every result is
+    kept, only its text gets shorter.
+    """
+    if estimate_tokens(turn) <= budget_tokens:
+        return turn
+    tool_positions = [
+        i for i, m in enumerate(turn)
+        if str(m.get('role', '')).lower() == 'tool'
+        and isinstance(m.get('content'), str)
+        and len(m['content']) > SHORTENED_RESULT_CHARS
+    ]
+    candidates = tool_positions[:-KEEP_RECENT_RESULTS] if KEEP_RECENT_RESULTS else tool_positions
+    if not candidates:
+        return turn
+    target = budget_tokens * SHORTEN_TARGET
+    used = estimate_tokens(turn)
+    count = 0
+    for i in candidates:
+        if used <= target:
+            break
+        used -= estimate_tokens(turn[i]) - estimate_tokens(_shorten(turn[i]))
+        count += 1
+    # Round up to a whole block, so the cut point moves rarely.
+    count = min(len(candidates), -(-count // SHORTEN_BLOCK) * SHORTEN_BLOCK)
+    cut = set(candidates[:count])
+    return [_shorten(m) if i in cut else m for i, m in enumerate(turn)]
 
 
 def shape_history(
@@ -128,15 +186,20 @@ def shape_history(
     """Select history for the prompt under a token budget.
 
     The current (last) turn is kept whole — the tool-call protocol needs its
-    assistant tool_calls + tool results. The newest past turns keep their tool
+    assistant tool_calls + tool results — except that its oldest tool results
+    are shortened when the turn alone is over the budget. The newest past turns keep their tool
     exchanges with truncated results; older ones are slimmed to plain
     dialogue. Turns are added newest-first until the budget or turn cap is hit.
     """
+    # Messages folded into a progress summary by mid-turn compaction stay in
+    # the stored chat (the UI shows them) but never go back to the model.
+    chat = [m for m in chat if not m.get('folded')]
     turns = partition_turns(chat)
     if not turns:
         return []
 
     selected = [m for m in turns[-1] if m.get('type') != 'turn_timing']
+    selected = fit_current_turn(selected, budget_tokens)
     used = estimate_tokens(selected)
 
     past_added = 0
@@ -197,9 +260,12 @@ class SlidingWindowContextManager(BaseContextManager):
 
         llm = agent.llm
         # Reserve room for the model's output plus a safety margin.
+        # The 4-chars-per-token estimate runs low on some tokenizers (Claude
+        # counted ~10% more on long tool output in testing) and tool schemas
+        # aren't counted, so only 85% of the room is planned for.
         budget = max(
             2000,
-            llm.get_context_window() - estimate_tokens(system_content) - llm.max_tokens - 1000,
+            int((llm.get_context_window() - estimate_tokens(system_content) - llm.max_tokens - 1000) * 0.85),
         )
 
         recent_history = shape_history(session.chat, budget, max_past_turns=self.max_messages)
