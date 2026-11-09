@@ -19,7 +19,7 @@ import {
 
 interface AgentLite { id: string; name: string }
 
-const LABEL: Record<ChannelKind, string> = { telegram: 'Telegram', slack: 'Slack' };
+const LABEL: Record<ChannelKind, string> = { telegram: 'Telegram', slack: 'Slack', discord: 'Discord' };
 
 function StatusDot({ channel }: { channel: ChatChannel }) {
   const state = !channel.enabled
@@ -49,6 +49,20 @@ function Setup({ kind, manifest }: { kind: ChannelKind; manifest: Record<string,
         </li>
         <li>Pick a name and username. BotFather replies with a token like <span className="font-mono">123456:ABC…</span>.</li>
         <li>Paste the token below. Then send the bot the code Cognitrix shows you.</li>
+      </ol>
+    );
+  }
+  if (kind === 'discord') {
+    return (
+      <ol className="list-decimal space-y-1 pl-5 text-[12.5px] leading-relaxed text-fg-dim">
+        <li>
+          Open the{' '}
+          <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">Discord Developer Portal</a>,
+          choose New Application, then open its Bot page.
+        </li>
+        <li>Press Reset Token and copy the token. No extra permissions or intents are needed.</li>
+        <li>Paste the token below. Cognitrix then shows a link that adds the bot to one of your servers, which Discord needs before you can message it.</li>
+        <li>Send the bot a direct message with the code Cognitrix shows you.</li>
       </ol>
     );
   }
@@ -203,13 +217,17 @@ function ChannelPanel({
           ) : channel.link_code ? (
             <div className="rounded-[10px] border border-line bg-panel px-3 py-2.5 text-[12.5px]">
               <p className="text-fg-dim">
-                {kind === 'telegram' ? 'Open the bot and send this code' : 'Open the app in Slack (Apps › Cognitrix › Messages) and send this code'}:
+                {kind === 'telegram'
+                  ? 'Open the bot and send this code'
+                  : kind === 'discord'
+                    ? 'Add the bot to a server you are in, then send it this code in a direct message'
+                    : 'Open the app in Slack (Apps › Cognitrix › Messages) and send this code'}:
               </p>
               <div className="mt-1.5 flex flex-wrap items-center gap-3">
                 <span className="select-all font-mono text-[18px] tracking-[0.18em]" aria-label="Link code">{channel.link_code}</span>
                 {channel.link_url && (
                   <a href={channel.link_url} target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">
-                    Open {channel.bot_name} in Telegram
+                    {kind === 'discord' ? `Add ${channel.bot_name} to a server` : `Open ${channel.bot_name} in Telegram`}
                   </a>
                 )}
               </div>
@@ -290,6 +308,7 @@ function ChannelPanel({
 const BLURB: Record<ChannelKind, string> = {
   telegram: 'Chat with an agent from your own Telegram bot',
   slack: 'Chat in Slack DMs and approve tasks with buttons',
+  discord: 'Chat in Discord DMs and approve tasks with buttons',
 };
 
 function summary(channel: ChatChannel): string {
@@ -317,7 +336,7 @@ function ChannelRow({
     <div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-3">
         <span aria-hidden="true" className="grid h-7 w-7 flex-none place-items-center rounded-[7px] bg-panel-2 font-mono text-[11px] font-medium">
-          {channel.kind === 'telegram' ? 'TG' : 'SL'}
+          {channel.kind === 'telegram' ? 'TG' : channel.kind === 'discord' ? 'DC' : 'SL'}
         </span>
         <div className="min-w-0 flex-1 basis-[160px]">
           <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium">
@@ -358,7 +377,7 @@ function ChannelRow({
   );
 }
 
-/** Settings › Chat apps: talk to agents from Telegram or Slack and get
+/** Settings › Chat apps: talk to agents from Telegram, Slack or Discord and get
  *  Inbox alerts and approvals there. Bots connect out from the engine, so
  *  the desktop app needs no public address. */
 export function ChatChannelsCard() {

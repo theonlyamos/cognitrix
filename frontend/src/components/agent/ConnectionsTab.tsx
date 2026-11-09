@@ -7,7 +7,8 @@ import { listMcpServerTools, listMcpServers, type McpServer, type McpTestResult 
 import { appLabel } from '@/lib/apps';
 import type { TabProps, ToolLevel } from '@/lib/agentDraft';
 import { Segmented } from '@/components/settings/ui';
-import { Card, buttonClass, linkButtonClass } from '@/components/agent/ui';
+import { Card, Check, buttonClass, linkButtonClass } from '@/components/agent/ui';
+import type { KnowledgeCollection } from '@/pages/Knowledge';
 import { cn } from '@/lib/utils';
 
 const APP_LABEL: Record<string, string> = { telegram: 'Telegram', slack: 'Slack' };
@@ -27,6 +28,12 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
     listChannels().then((l) => setChannels(l.channels || [])).catch(() => setChannels([]));
     import('@/lib/api').then(({ api }) => api.get<{ id: string }[]>('/agents'))
       .then((r) => setFirstAgentId(r.data?.[0]?.id || '')).catch(() => {});
+  }, []);
+
+  const [collections, setCollections] = useState<KnowledgeCollection[] | null>(null);
+  useEffect(() => {
+    import('@/lib/api').then(({ api }) => api.get<KnowledgeCollection[]>('/knowledge'))
+      .then((r) => setCollections(Array.isArray(r.data) ? r.data : [])).catch(() => setCollections([]));
   }, []);
 
   const selected = draft.mcpServers;
@@ -56,6 +63,27 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
 
   return (
     <div className="flex flex-col gap-[18px]">
+      <Card title="Knowledge" description="Document collections this agent may search and quote from.">
+        <div className="overflow-hidden rounded-lg border border-line">
+          {collections === null ? (
+            <p className="px-3.5 py-3 text-[13px] text-fg-dim">Loading…</p>
+          ) : collections.length === 0 ? (
+            <p className="px-3.5 py-3 text-[13px] text-fg-dim">
+              No collections yet. <Link to="/knowledge" className="text-accent-ink hover:underline">Create one on the Knowledge page</Link>.
+            </p>
+          ) : collections.map((c) => (
+            <div key={c.id} className="border-t border-line px-3.5 py-2.5 first:border-t-0">
+              <Check
+                checked={draft.knowledge.includes(c.id)}
+                onChange={(on) => update({ knowledge: on ? [...draft.knowledge, c.id] : draft.knowledge.filter((id) => id !== c.id) })}
+                label={c.name}
+                detail={`${c.documents.length} document${c.documents.length === 1 ? '' : 's'}`}
+              />
+            </div>
+          ))}
+        </div>
+      </Card>
+
       <Card title="Apps and MCP servers" description="Apps you connected and servers you added in Settings. Turn on the ones this agent may use.">
         <div className="overflow-hidden rounded-lg border border-line">
           {servers === null ? (

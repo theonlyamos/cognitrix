@@ -16,14 +16,15 @@ import time
 from collections import defaultdict, deque
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel, Field
 
 from cognitrix.agents import access as agent_access
 from cognitrix.common.secret_box import seal, unseal_or_empty
 from cognitrix.common.security import AuthContext, get_auth_context, jwt_only
 from cognitrix.models.voice_settings import VoiceSettings
 
+from ...providers.speech import MAX_SPEECH_CHARS, SPEECH_PROVIDERS, SpeechError, speak
 from ...providers.transcription import (
     MAX_AUDIO_BYTES,
     MAX_AUDIO_SECONDS,
@@ -205,3 +206,57 @@ async def create_transcription(
     except TranscriptionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return {'text': text, 'provider': provider, 'model': model}
+
+
+# ------------------------------------------------------------- spoken replies
+
+SPEECH_RATE_LIMIT_PER_MINUTE = 30
+_recent_speech: dict[str, deque[float]] = defaultdict(deque)
+
+
+class SpeechRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_SPEECH_CHARS)
+    provider: str = ''
+    """'' means the first provider with a key."""
+    voice: str = ''
+
+
+def _speech_key(row: VoiceSettings | None, provider: str) -> str:
+    return _keys(row).get(provider) or server_key(provider)
+
+
+@audio_api.get('/speech/options')
+async def speech_options(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """Which services can read replies aloud for this person. The app can
+    always fall back to the voices built into the browser."""
+    row = await _load(_user_key(ctx))
+    return {
+        'max_chars': MAX_SPEECH_CHARS,
+        'providers': [
+            {'id': p.id, 'label': p.label, 'voices': list(p.voices), 'ready': bool(_speech_key(row, p.id))}
+            for p in SPEECH_PROVIDERS.values()
+        ],
+    }
+
+
+@audio_api.post('/speech')
+async def create_speech(body: SpeechRequest, ctx: AuthContext = Depends(get_auth_context)) -> Response:
+    user_key = _user_key(ctx)
+    row = await _load(user_key)
+    provider = body.provider.strip().lower()
+    if not provider:
+        provider = next((p for p in SPEECH_PROVIDERS if _speech_key(row, p)), '')
+    if provider not in SPEECH_PROVIDERS:
+        raise HTTPException(status_code=400, detail='No speech service is set up. Add an OpenAI or Gemini key under Settings, Voice.')
+    now = time.monotonic()
+    recent = _recent_speech[user_key]
+    while recent and now - recent[0] > 60:
+        recent.popleft()
+    if len(recent) >= SPEECH_RATE_LIMIT_PER_MINUTE:
+        raise HTTPException(status_code=429, detail='Too many read-aloud requests. Wait a minute and try again.')
+    recent.append(now)
+    try:
+        audio, mime = await speak(body.text, provider=provider, voice=body.voice, api_key=_speech_key(row, provider))
+    except SpeechError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return Response(content=audio, media_type=mime, headers={'Cache-Control': 'no-store'})

@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { Field } from '@/components/form';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import OAuthButtons from '@/components/OAuthButtons';
+import { useT } from '@/lib/i18n';
 
 const GRID = {
   backgroundImage:
@@ -21,20 +22,29 @@ export default function Signup() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const t = useT();
+  const invite = useSearchParams()[0].get('invite') || '';
+  const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    api.get('/auth/options', { params: invite ? { invite } : undefined })
+      .then(({ data }) => setOpen(data.signup_open !== false))
+      .catch(() => {});
+  }, [invite]);
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!name.trim()) return setError('Enter your name.');
-    if (password.length < 8) return setError('Password must be at least 8 characters.');
-    if (password !== confirm) return setError('Passwords do not match.');
+    if (!name.trim()) return setError(t('signup.nameRequired'));
+    if (password.length < 8) return setError(t('auth.passwordTooShort'));
+    if (password !== confirm) return setError(t('auth.passwordMismatch'));
 
     setLoading(true);
     try {
-      await api.post('/auth/signup', { name, email, password });
+      await api.post('/auth/signup', { name, email, password }, { params: invite ? { invite } : undefined });
       navigate('/');
     } catch (err) {
-      setError(errorMessage(err, 'Unable to create account.'));
+      setError(errorMessage(err, t('signup.failed')));
     } finally {
       setLoading(false);
     }
@@ -55,10 +65,10 @@ export default function Signup() {
         </div>
         <div className="relative max-w-md">
           <h2 className="text-4xl font-bold leading-[1.05] tracking-tight">
-            Your agents,<br />one console.
+            {t('signup.heroTitle1')}<br />{t('signup.heroTitle2')}
           </h2>
           <p className="mt-4 text-fg-dim max-w-sm">
-            Create an account to build agents, run multi-step tasks, and coordinate teams — with tools and approval built in.
+            {t('signup.heroBody')}
           </p>
         </div>
         <div className="relative font-mono text-[11px] text-fg-dim space-y-1.5">
@@ -76,34 +86,41 @@ export default function Signup() {
 
         <div className="flex flex-1 items-center px-6 pb-12">
           <div className="w-full max-w-sm mx-auto lg:mx-0 lg:ml-16 animate-rise">
-            <p className="font-mono text-[11px] tracking-[0.18em] text-accent-ink">CREATE ACCOUNT</p>
-            <h1 className="mt-2 text-3xl font-bold tracking-tight">Get started</h1>
-            <p className="mt-2 text-fg-dim">Set up your workspace in a few seconds.</p>
+            <p className="font-mono text-[11px] tracking-[0.18em] text-accent-ink">{t('signup.kicker')}</p>
+            <h1 className="mt-2 text-3xl font-bold tracking-tight">{t('signup.title')}</h1>
+            <p className="mt-2 text-fg-dim">
+              {invite && open ? t('signup.invited') : t('signup.subtitle')}
+            </p>
+            {!open && (
+              <p role="alert" className="mt-4 border-l-2 border-danger bg-danger/5 px-3 py-2 text-[13px] text-danger-ink">
+                {invite ? t('signup.inviteExpired') : t('signup.closed')}
+              </p>
+            )}
 
             <OAuthButtons mode="signup" />
             <form onSubmit={handleSignup} className="mt-8 space-y-4">
-              <Field label="NAME"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ada Lovelace" required autoComplete="name" autoFocus /></Field>
-              <Field label="EMAIL"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required autoComplete="email" /></Field>
-              <Field label="PASSWORD" hint="at least 8 characters"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required autoComplete="new-password" /></Field>
-              <Field label="CONFIRM"><Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••" required autoComplete="new-password" /></Field>
+              <Field label={t('auth.name')}><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ada Lovelace" required autoComplete="name" autoFocus /></Field>
+              <Field label={t('auth.email')}><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required autoComplete="email" /></Field>
+              <Field label={t('auth.password')} hint={t('auth.passwordHint')}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required autoComplete="new-password" /></Field>
+              <Field label={t('auth.confirm')}><Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••" required autoComplete="new-password" /></Field>
 
               {error && <p role="alert" className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>}
 
               <Button type="submit" disabled={loading} className="w-full">
-                {loading ? <span className="inline-flex items-center gap-2"><Spinner /> Creating…</span> : <>Create account <span aria-hidden>→</span></>}
+                {loading ? <span className="inline-flex items-center gap-2"><Spinner /> {t('signup.submitting')}</span> : <>{t('signup.submit')} <span aria-hidden>→</span></>}
               </Button>
-              {loading && <span role="status" className="sr-only">Creating…</span>}
+              {loading && <span role="status" className="sr-only">{t('signup.submitting')}</span>}
             </form>
 
             <p className="mt-6 text-sm text-fg-dim">
-              Already have an account?{' '}
-              <Link to="/" className="text-accent-ink font-medium hover:underline underline-offset-4">Sign in</Link>
+              {t('signup.haveAccount')}{' '}
+              <Link to="/" className="text-accent-ink font-medium hover:underline underline-offset-4">{t('signup.signIn')}</Link>
             </p>
           </div>
         </div>
 
         <footer className="px-6 pb-6 font-mono text-[10.5px] text-fg-dim lg:ml-16">
-          by creating an account you agree to the terms &amp; privacy policy
+          {t('signup.terms')}
         </footer>
       </main>
     </div>

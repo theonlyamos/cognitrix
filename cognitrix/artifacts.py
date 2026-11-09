@@ -84,6 +84,27 @@ class DocumentArtifact(Model):
     directory_identity: str | None = None
     file_identity: str | None = None
 
+    async def save(self):
+        """Insert the row the first time, update it afterwards.
+
+        A document gets its id before it is stored (the id is part of its
+        promotion record). The base ``save`` takes any id to mean "this row
+        exists" and only updates, so a new document was never written and
+        every upload of a file to a chat failed.
+        """
+        database = DBMS.Database
+        if database is None:
+            raise RuntimeError('Database not initialized')
+        if await type(self).get(self.id) is None:
+            rowid = await database.insert_one(
+                self.table_name(), self.normalise(self.model_dump(), 'params'))
+            # SQLite's insert drops string ids; put ours on the new row.
+            if getattr(database, 'dbms', '') == 'sqlite' and isinstance(rowid, int):
+                await database.update_one(
+                    self.table_name(), {'rowid': rowid}, {'id': str(self.id)})
+            return self
+        return await super().save()
+
     @classmethod
     async def create_table(cls):
         """Create durable document metadata and its recovery-critical indexes."""

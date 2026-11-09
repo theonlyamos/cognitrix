@@ -48,6 +48,8 @@ async def authenticate(email: str, password: str):
         return False
     if not verify_password(password, user.password):
         return False
+    if getattr(user, 'disabled', None):
+        return False
     return user
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
@@ -192,7 +194,7 @@ async def _resolve_api_key(secret: str) -> AuthContext:
     if key is None or key.revoked or key.is_expired():
         raise _credentials_401
     user = await User.get(key.user_id)
-    if user is None:
+    if user is None or getattr(user, 'disabled', None):
         raise _credentials_401
     from .rate_limit import check_rate_limit
     check_rate_limit(key)
@@ -211,7 +213,7 @@ async def _resolve_jwt(token: str) -> AuthContext:
     if not isinstance(email, str):
         raise _credentials_401
     user = await get_user(email=email)
-    if user is None or token_revoked(payload, user):
+    if user is None or token_revoked(payload, user) or getattr(user, 'disabled', None):
         raise _credentials_401
     if getattr(user, 'password', None):
         del user.password

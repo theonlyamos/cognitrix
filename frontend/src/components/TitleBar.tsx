@@ -13,6 +13,7 @@ const SECTIONS: [string, string][] = [
   ['/teams', 'Teams'],
   ['/tasks', 'Tasks'],
   ['/automations', 'Automations'],
+  ['/knowledge', 'Knowledge'],
   ['/notifications', 'Notifications'],
   ['/settings', 'Settings'],
   ['/api-keys', 'API keys'],

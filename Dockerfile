@@ -46,6 +46,17 @@ RUN pip install -e .
 
 COPY deploy/supervisord.conf /etc/supervisor/cognitrix.conf
 
+# Run the app as an unprivileged user. The entry script starts as root just
+# to hand the data volume to that user, then drops to it. Under supervisord
+# the web and worker programs run as that user (see deploy/supervisord.conf).
+RUN groupadd --system --gid 10001 cognitrix \
+    && useradd --system --uid 10001 --gid cognitrix --create-home --home-dir /home/cognitrix cognitrix \
+    && mkdir -p /home/cognitrix/.cognitrix \
+    && chown -R cognitrix:cognitrix /home/cognitrix \
+    && chmod +x /app/deploy/entrypoint.sh
+ENV HOME=/home/cognitrix
+ENTRYPOINT ["/app/deploy/entrypoint.sh"]
+
 EXPOSE 8000
 
 # Fly supplies the external Redis URLs through secrets. Compose overrides CMD

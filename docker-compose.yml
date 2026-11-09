@@ -1,6 +1,7 @@
 # Cognitrix: web (FastAPI + in-process scheduler) + dedicated Celery worker,
 # with Redis as the broker. Web and worker share the SQLite app DB over a named
-# volume mounted at /root/.cognitrix.
+# volume mounted at /home/cognitrix/.cognitrix. The containers run as the
+# unprivileged "cognitrix" user; the entry script hands the volume to it.
 #
 #   cp .env.example .env      # fill in provider keys + JWT_SECRET_KEY
 #   docker compose up --build
@@ -18,7 +19,7 @@ x-app: &app
     CELERY_BROKER_URL: redis://redis:6379/0
     COGNITRIX_ENV: production          # requires JWT_SECRET_KEY (fail-fast)
   volumes:
-    - cognitrix-data:/root/.cognitrix  # shared SQLite DB, jwt_secret, mcp.json
+    - cognitrix-data:/home/cognitrix/.cognitrix  # shared SQLite DB, jwt_secret, mcp.json
   depends_on:
     redis:
       condition: service_healthy

@@ -27,6 +27,7 @@ import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
 import type { PickTarget, PickerAgent, PickerTeam } from '@/lib/agentPicker';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
@@ -61,6 +62,8 @@ interface Rework {
   turn: number;
   index: number;
   expected: string;
+  /** The turn was sent with files or images: keep it and them, redo the answer. */
+  keep?: boolean;
 }
 
 /** The note the server keeps after a turn with uploaded files. */
@@ -467,6 +470,19 @@ export default function Home() {
 
   const busy = waiting || streaming || question !== null;
   const busyRef = useRef(busy);
+  // Spoken replies: when a turn ends and "read replies aloud" is on, read the
+  // answer. Sending a new message stops whatever was being read.
+  const wasBusyRef = useRef(false);
+  useEffect(() => {
+    const wasBusy = wasBusyRef.current;
+    wasBusyRef.current = busy;
+    if (busy && !wasBusy) stopSpeaking();
+    if (!busy && wasBusy && question === null && getSpeechPrefs().autoRead) {
+      const last = messagesRef.current[messagesRef.current.length - 1];
+      if (last?.role === 'assistant' && last.content.trim()) void speakText(last.id, last.content);
+    }
+  }, [busy, question]);
+  useEffect(() => () => stopSpeaking(), []);
   busyRef.current = busy;
   const turnGenerationRef = useRef(0);
   const stopFallbackRef = useRef<number | null>(null);
@@ -986,6 +1002,7 @@ export default function Home() {
           await api.post(`/sessions/${encodeURIComponent(activeSessionId)}/rewind`, {
             turn: replace.turn,
             expected: replace.expected,
+            ...(replace.keep ? { keep: true, text: msg } : {}),
           });
         } catch (error) {
           const status = (error as { response?: { status?: number } })?.response?.status;
@@ -994,7 +1011,18 @@ export default function Home() {
             : 'That message could not be replaced. Reload the chat and try again.');
           return;
         }
-        setMessages(messagesRef.current.slice(0, replace.index));
+        if (replace.keep) {
+          // The message and its uploads stay; only its wording may change.
+          const all = messagesRef.current;
+          let end = replace.index + 1;
+          while (end < all.length && all[end].role === 'user' && (isUploadNote(all[end]) || !all[end].content.trim())) end += 1;
+          const label = /(\n|^)📎 .*$/s.exec(all[replace.index].content)?.[0] ?? '';
+          setMessages(all.slice(0, end).map((m, i) => (
+            i === replace.index ? { ...m, content: `${msg}${label && !label.startsWith('\n') && msg ? '\n' : ''}${label}` } : m
+          )));
+        } else {
+          setMessages(messagesRef.current.slice(0, replace.index));
+        }
         setRework(null);
         setReworkError(null);
       }
@@ -1004,7 +1032,7 @@ export default function Home() {
       const shown = pending.length
         ? `${msg}${msg ? '\n' : ''}📎 ${pending.map((a) => a.name).join(', ')}`
         : msg;
-      addMessage('user', shown);
+      if (!replace?.keep) addMessage('user', shown);
       setInput('');
       setAttachments([]);
       setEditSource(null);
@@ -1108,7 +1136,12 @@ export default function Home() {
     const all = messagesRef.current;
     const index = all.findIndex((m) => m.id === message.id);
     if (index < 0) return;
-    setRework({ turn: all.slice(0, index).filter(isUserTurn).length, index, expected: message.content });
+    setRework({
+      turn: all.slice(0, index).filter(isUserTurn).length,
+      index,
+      expected: message.content,
+      keep: carriesUploads(all, index),
+    });
     setReworkError(null);
     setInput(message.content.replace(/\n?📎 .*$/s, ''));
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -1125,6 +1158,7 @@ export default function Home() {
       turn: all.slice(0, index).filter(isUserTurn).length,
       index,
       expected: question.content,
+      keep: carriesUploads(all, index),
     });
   }, [send]);
 
@@ -1265,7 +1299,7 @@ export default function Home() {
   const canRework = !!activeSessionId && !busy && isConnected && !incognito;
   let lastQuestionIndex = messages.length - 1;
   while (lastQuestionIndex >= 0 && !isUserTurn(messages[lastQuestionIndex])) lastQuestionIndex -= 1;
-  const canRegenerate = lastQuestionIndex >= 0 && !carriesUploads(messages, lastQuestionIndex);
+  const canRegenerate = lastQuestionIndex >= 0;
   let lastReplyIndex = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i].role === 'assistant' && messages[i].content.trim()) {
@@ -1557,7 +1591,7 @@ export default function Home() {
                   streaming={streaming && index === messages.length - 1 && message.role === 'assistant'}
                   onEditSource={selectArtifactEditSource}
                   selectedEditSourceId={editSource?.type === 'artifact' ? editSource.artifact.id : undefined}
-                  onEdit={canRework && isUserTurn(message) && !carriesUploads(messages, index) ? startRework : undefined}
+                  onEdit={canRework && isUserTurn(message) ? startRework : undefined}
                   onRegenerate={canRework && index === lastReplyIndex && canRegenerate ? regenerate : undefined}
                 />
               ))}

@@ -113,7 +113,7 @@ describe('AppLayout', () => {
       'md:h-9',
       'md:w-9',
     );
-    expect(within(navigation).getByRole('button', { name: 'SIGN OUT' })).toHaveClass(
+    expect(within(navigation).getByRole('button', { name: 'Sign out' })).toHaveClass(
       'h-11',
       'md:h-9',
     );

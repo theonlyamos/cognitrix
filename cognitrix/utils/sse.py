@@ -60,6 +60,40 @@ _ATTACHMENT_UNAVAILABLE = (
 )
 
 
+async def _kept_turn_document_ids(session) -> tuple[str, ...]:
+    """Files of the turn that edit or regenerate kept (see the rewind route).
+
+    A file is only readable in the turn it was attached to. When that turn is
+    answered again, its files have to be granted again, from the server's own
+    record of what the turn carried, never from anything the client sends.
+    """
+    from cognitrix.artifacts import DocumentArtifact
+    from cognitrix.media.document_capabilities import MAX_TURN_DOCUMENT_CAPABILITIES
+    from cognitrix.media.documents import DOCUMENT_HISTORY_MARKER
+
+    chat = list(getattr(session, 'chat', None) or [])
+    start = next(
+        (i for i in range(len(chat) - 1, max(len(chat) - 13, -1), -1)
+         if isinstance(chat[i], dict) and chat[i].get('resume')),
+        None,
+    )
+    if start is None:
+        return ()
+    keys: list[str] = []
+    for item in chat[start + 1:]:
+        if not isinstance(item, dict) or str(item.get('role', '')).lower() != 'user':
+            break
+        lines = str(item.get('content') or '').splitlines() if item.get('type') == 'text' else []
+        if lines and lines[0] == DOCUMENT_HISTORY_MARKER:
+            keys.extend(line.strip() for line in lines[1:] if line.strip())
+    if not keys:
+        return ()
+    rows = await DocumentArtifact.find({'session_id': str(session.id)}) or []
+    adopted = {row.storage_key: str(row.id) for row in rows if row.status == 'adopted'}
+    ids = [adopted[key] for key in keys if key in adopted]
+    return tuple(dict.fromkeys(ids))[:MAX_TURN_DOCUMENT_CAPABILITIES]
+
+
 async def _settle_mutation(operation):
     """Join one started database mutation before cancellation escapes."""
     mutation = asyncio.create_task(operation)
@@ -719,6 +753,8 @@ class SSEManager:
             fresh_document_ids = tuple(
                 str(item['id']) for item in documents if item.get('id')
             )
+            if staged is None and not adopted_document_ids:
+                adopted_document_ids = await _kept_turn_document_ids(session)
             document_capabilities = await load_turn_document_capabilities(
                 ownership,
                 fresh_document_ids=fresh_document_ids,

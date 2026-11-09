@@ -198,6 +198,32 @@ class Session(Model):
     """Set when an agent started this chat: {agent_id, agent_name, session_id
     (the chat it was started from), depth, report_back, exchanges}"""
 
+    async def save(self) -> Self:
+        """Save, then refresh this chat's row in the chat-list index."""
+        result = await super().save()
+        from cognitrix.sessions import index as chat_index
+
+        await chat_index.record(self)
+        return result
+
+    @classmethod
+    async def update_one(cls, conditions: dict[str, Any], data: dict[str, Any]) -> int:
+        result = await super().update_one(conditions, data)
+        if conditions.get('id'):
+            from cognitrix.sessions import index as chat_index
+
+            await chat_index.refresh(str(conditions['id']))
+        return result
+
+    @classmethod
+    async def delete_many(cls, conditions: dict[str, Any], cascade: bool = False):
+        result = await super().delete_many(conditions, cascade)
+        if conditions.get('id'):
+            from cognitrix.sessions import index as chat_index
+
+            await chat_index.forget(conditions['id'])
+        return result
+
     @classmethod
     async def load(cls, session_id: str) -> Self:
         """Load an existing session or create a new one if it doesn't exist"""
@@ -223,6 +249,9 @@ class Session(Model):
         if not session:
             return False
         await Model.delete(session)
+        from cognitrix.sessions import index as chat_index
+
+        await chat_index.forget(session_id)
         return True
 
 
@@ -557,6 +586,19 @@ class Session(Model):
             except Exception:
                 logger.debug('Memory tools unavailable', exc_info=True)
 
+        # Search Knowledge is offered only to agents that were given at least
+        # one document collection.
+        try:
+            if getattr(agent, 'knowledge', None) and not any(
+                str(getattr(t, 'name', '')).lower() == 'search knowledge' for t in agent.tools
+            ):
+                from cognitrix.tools.base import ToolManager
+                knowledge_tool = ToolManager.get_by_name('search_knowledge')
+                if knowledge_tool:
+                    agent = agent.model_copy(update={'tools': [*agent.tools, knowledge_tool]})
+        except Exception:
+            logger.debug('Search Knowledge tool unavailable', exc_info=True)
+
         # Bash's background mode and the Coding Agent tool need the two
         # background helpers; agents that have either get them for the turn
         # without changing the saved agent.
@@ -577,7 +619,19 @@ class Session(Model):
         if wsquery is None:
             wsquery = {}
         if record_history:
-            self.update_history(agent.process_prompt(message))
+            entry = agent.process_prompt(message)
+            # Regenerate or edit of a turn that keeps its uploads: the message
+            # is already in the history (marked by the rewind), so update it
+            # in place and answer it again without adding a second copy.
+            kept = next(
+                (m for m in reversed(self.chat[-12:]) if isinstance(m, dict) and m.get('resume')),
+                None,
+            ) if isinstance(entry, dict) and not attachments else None
+            if kept is not None:
+                kept.pop('resume', None)
+                kept['content'] = entry.get('content', kept.get('content'))
+            else:
+                self.update_history(entry)
             # User uploads ride alongside the text turn as immutable artifact
             # references and confined tool-root-relative document paths.
             if attachments:

@@ -977,3 +977,37 @@ async def test_cancelled_document_storage_join_does_not_replace_cancellation():
 
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.asyncio
+async def test_a_new_document_row_is_written_to_a_real_database(tmp_path):
+    """The id is set before the first save, which the base model reads as
+    "already stored": the row has to be inserted all the same."""
+    from odbms import DBMS
+
+    from cognitrix.config import _patch_odbms_sqlite
+
+    await DBMS.initialize_async('sqlite', database=str(tmp_path / 'documents.db'))
+    _patch_odbms_sqlite()
+    await DocumentArtifact.create_table()
+
+    document = DocumentArtifact(
+        session_id='session-1', user_id='user-1', agent_id='agent-1',
+        storage_key='uploads/a/b.txt', status='intent', promotion_token='token', generation=2,
+    )
+    await document.save()
+    stored = await DocumentArtifact.get(document.id)
+    assert stored is not None and stored.status == 'intent' and stored.generation == 2
+
+    # The promotion step's compare-and-set finds the row.
+    changed = await DocumentArtifact.update_one(
+        {'id': str(document.id), 'status': 'intent', 'promotion_token': 'token', 'generation': 2},
+        {'status': 'pending'},
+    )
+    assert int(changed or 0) == 1
+
+    # A second save updates instead of inserting again.
+    document.status = 'adopted'
+    await document.save()
+    rows = await DocumentArtifact.find({'session_id': 'session-1'})
+    assert [row.status for row in rows] == ['adopted']

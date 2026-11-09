@@ -36,6 +36,7 @@ export interface AgentRecord {
   reviewer?: { mode?: string; provider?: string; model?: string; max_allow?: string };
   coding_agents?: { clis?: string[]; max_mode?: string };
   credentials?: string[] | null;
+  knowledge?: string[] | null;
   can_create_sub_agents?: boolean;
   sub_agent_model?: string;
   automation?: { self_checkins?: boolean; max_runs_per_day?: number | null };
@@ -68,6 +69,7 @@ export interface AgentDraft {
   canRequestFolders: boolean;
   mcpServers: string[];
   credentials: string[] | null;
+  knowledge: string[];
   canCreateSubAgents: boolean;
   subAgentModel: string;
   selfCheckins: boolean;
@@ -103,6 +105,7 @@ export function draftFrom(agent: AgentRecord): AgentDraft {
     canRequestFolders: agent.can_request_folders ?? true,
     mcpServers: [...(agent.mcp_servers || [])],
     credentials: Array.isArray(agent.credentials) ? [...agent.credentials] : null,
+    knowledge: Array.isArray(agent.knowledge) ? [...agent.knowledge] : [],
     canCreateSubAgents: agent.can_create_sub_agents ?? true,
     subAgentModel: agent.sub_agent_model || '',
     selfCheckins: auto.self_checkins ?? true,
@@ -165,6 +168,7 @@ export function payloadFrom(id: string, draft: AgentDraft, catalog: ToolInfo[], 
     can_request_folders: draft.canRequestFolders,
     mcp_servers: draft.mcpServers,
     credentials: draft.credentials,
+    knowledge: draft.knowledge,
     can_create_sub_agents: draft.canCreateSubAgents,
     sub_agent_model: draft.subAgentModel.trim(),
     automation,
@@ -198,6 +202,7 @@ export function promptSummary(draft: AgentDraft, teamLine: string): string {
   if (asks.length) tools += ` Ask first: ${asks.join(', ')}.`;
   if (never.length) tools += ` Never: ${never.join(', ')} (hidden from the model).`;
   lines.push(tools);
+  if (draft.knowledge.length) lines.push(`Knowledge: search ${draft.knowledge.length} document collection${draft.knowledge.length === 1 ? '' : 's'} before answering what they cover.`);
   if (draft.mcpServers.length) lines.push(`MCP servers: ${draft.mcpServers.length} connected.`);
   if (teamLine) lines.push(teamLine);
   return lines.join('\n');

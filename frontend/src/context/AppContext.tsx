@@ -10,6 +10,8 @@ interface User {
   id?: string;
   name: string;
   email: string;
+  /** May manage the people on a shared server. */
+  is_admin?: boolean;
 }
 
 interface UserContextType {

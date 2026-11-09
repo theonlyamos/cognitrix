@@ -66,6 +66,10 @@ class SessionRewind(BaseModel):
     # What the page shows for that message; a mismatch means the page is out
     # of step with the saved chat and nothing is removed.
     expected: str | None = Field(default=None, max_length=200_000)
+    keep: bool = False
+    """Keep the message and its uploads and drop only what came after it, so
+    it can be answered again. ``text`` then replaces its wording."""
+    text: str | None = None
 
 
 class SessionCreate(BaseModel):
@@ -390,46 +394,68 @@ async def all_chats(ctx: AuthContext = Depends(get_auth_context)):
         run = chat_runs.get_run(run_key, session_id)
         return bool(run and run.running)
 
-    await _sweep_incognito(ctx)
-    chats: list[dict[str, Any]] = []
-    for session in await _owned_sessions(ctx):
-        if session.task_id or session.run_id or session.group_chat or getattr(session, 'incognito', False):
-            continue
-        chats.append({
-            **_session_summary(session),
-            'kind': 'agent',
-            'agent_id': str(session.agent_id or ''),
-            'team_id': None,
-            'running': running(str(session.id)),
-        })
+    # Read from the chat index (one small row per chat), never from the
+    # sessions themselves: a session row carries its whole message history.
+    from cognitrix.session_ownership import OwnershipState
+    from cognitrix.sessions import index as chat_index
 
-    # Group chats are browser-only (their routes are JWT-only).
-    if ctx.api_key is None:
-        teams: dict[str, Any] = {}
-        for session in await Session.find({'user_id': user_id}):
-            if not session.group_chat or not session.team_id:
+    bindings = {
+        binding.session_id: binding
+        for binding in await SessionOwnership.find({'user_id': user_id})
+        if binding.state == OwnershipState.ACTIVE
+    }
+    rows = await chat_index.rows_for(user_id, sorted(bindings))
+    await _sweep_incognito(ctx, rows)
+    chats: list[dict[str, Any]] = []
+    teams: dict[str, Any] = {}
+    for row in rows:
+        if row.incognito:
+            continue
+        if row.kind == chat_index.KIND_TEAM:
+            # Group chats are browser-only (their routes are JWT-only).
+            if ctx.api_key is not None or not row.team_id:
                 continue
-            team_id = str(session.team_id)
-            if team_id not in teams:
-                team = await Team.get(team_id)
-                teams[team_id] = team if team is not None and can_view(team, user_id) else None
-            if teams[team_id] is None:
+            if row.team_id not in teams:
+                team = await Team.get(row.team_id)
+                teams[row.team_id] = team if team is not None and can_view(team, user_id) else None
+            if teams[row.team_id] is None:
                 continue
-            last = next(
-                (e.get('timestamp') for e in reversed(session.chat or []) if e.get('timestamp')),
-                None,
-            )
             chats.append({
-                'id': session.id,
-                'title': group_chat.chat_title(session.chat or []),
-                # Same clock as the agent rows, so the list sorts fairly.
-                'updated_at': session.json().get('updated_at') or last,
-                'message_count': len(session.chat or []),
+                'id': row.session_id,
+                'title': row.title,
+                'updated_at': row.changed,
+                'message_count': row.message_count,
                 'kind': 'team',
                 'agent_id': None,
-                'team_id': team_id,
-                'running': running(str(session.id)),
+                'team_id': row.team_id,
+                'running': running(row.session_id),
             })
+            continue
+        # Access comes from the live binding, not from the index row.
+        binding = bindings.get(row.session_id)
+        if binding is None or not ctx.agent_allowed(binding.agent_id):
+            continue
+        chats.append({
+            'id': row.session_id,
+            'title': row.custom_title or row.title,
+            'renamed': bool(row.custom_title),
+            'pinned': row.pinned,
+            'archived': row.archived,
+            'datetime': row.started,
+            'updated_at': row.changed,
+            'started_at': None,
+            'completed_at': None,
+            'task_id': None,
+            'run_id': None,
+            'step_index': None,
+            'step_title': None,
+            'message_count': row.message_count,
+            'started_by': row.started_by,
+            'kind': 'agent',
+            'agent_id': row.agent_id or str(binding.agent_id or ''),
+            'team_id': None,
+            'running': running(row.session_id),
+        })
 
     chats.sort(key=lambda c: str(c.get('updated_at') or ''), reverse=True)
     return chats
@@ -546,12 +572,22 @@ async def rewind_session(
                 text = str(message['content'])
                 if body.expected is not None and not body.expected.strip().startswith(text.strip()):
                     break
+                if body.keep:
+                    end = index + 1
+                    while end < len(chat) and is_upload_note(chat[end]):
+                        end += 1
+                    kept = {**message, 'resume': True}
+                    if body.text is not None and body.text.strip():
+                        kept['content'] = body.text.strip()
+                    session.chat = [*chat[:index], kept, *chat[index + 1:end]]
+                    await session.save()
+                    return {'message': str(kept['content']), 'message_count': len(session.chat)}
                 # Dropping the turn would drop its uploads, and the resend
                 # would not carry them.
                 if index + 1 < len(chat) and is_upload_note(chat[index + 1]):
                     raise HTTPException(
                         status_code=409,
-                        detail='This message has attachments, so it can\'t be edited or regenerated.',
+                        detail='This message has attachments. Ask again with keep to hold on to them.',
                     )
                 session.chat = chat[:index]
                 await session.save()
@@ -637,26 +673,24 @@ async def delete_session(
 INCOGNITO_MAX_AGE = timedelta(hours=24)
 
 
-async def _sweep_incognito(ctx: AuthContext) -> None:
+async def _sweep_incognito(ctx: AuthContext, rows) -> None:
     """Delete this person's incognito chats left for more than a day (the
-    browser normally deletes one as soon as the person leaves it)."""
-    user_id = principal_key(ctx.user)
+    browser normally deletes one as soon as the person leaves it). ``rows``
+    are their chat-index rows."""
     cutoff = datetime.now() - INCOGNITO_MAX_AGE
-    for session in await Session.find({'user_id': user_id}):
-        if not getattr(session, 'incognito', False):
-            continue
-        updated = getattr(session, 'updated_at', None)
-        if isinstance(updated, str):
-            try:
-                updated = datetime.fromisoformat(updated)
-            except ValueError:
-                updated = None
-        if isinstance(updated, datetime) and updated.replace(tzinfo=None) > cutoff:
+    for row in rows:
+        if not row.incognito:
             continue
         try:
-            await _delete_owned(str(session.id), ctx)
+            updated = datetime.fromisoformat(row.changed) if row.changed else None
+        except ValueError:
+            updated = None
+        if updated is not None and updated.replace(tzinfo=None) > cutoff:
+            continue
+        try:
+            await _delete_owned(row.session_id, ctx)
         except Exception:
-            logger.debug('Could not delete old incognito chat %s', session.id, exc_info=True)
+            logger.debug('Could not delete old incognito chat %s', row.session_id, exc_info=True)
 
 
 async def _delete_owned(session_id: str, ctx: AuthContext) -> None:

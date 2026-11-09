@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
 import { api, errorMessage } from '@/lib/api';
@@ -6,6 +6,7 @@ import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import OAuthButtons from '@/components/OAuthButtons';
+import { useT } from '@/lib/i18n';
 
 const GRID = {
   backgroundImage:
@@ -20,6 +21,25 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login } = useUser();
   const navigate = useNavigate();
+  const t = useT();
+  const [options, setOptions] = useState({ signup_open: true, password_reset_by_email: false });
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotState, setForgotState] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
+
+  useEffect(() => {
+    api.get('/auth/options').then(({ data }) => setOptions((o) => ({ ...o, ...data }))).catch(() => {});
+  }, []);
+
+  const sendReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotState('sending');
+    try {
+      await api.post('/auth/forgot', { email: forgotEmail || email });
+      setForgotState('sent');
+    } catch {
+      setForgotState('failed');
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,7 +50,7 @@ export default function Login() {
       login(data.user, data.access_token);
       navigate('/home');
     } catch (err) {
-      setError(errorMessage(err, 'Incorrect email or password.'));
+      setError(errorMessage(err, t('login.wrong')));
     } finally {
       setLoading(false);
     }
@@ -52,10 +72,10 @@ export default function Login() {
 
         <div className="relative max-w-md">
           <h2 className="text-4xl font-bold leading-[1.05] tracking-tight">
-            Run agents<br />like you mean it.
+            {t('login.heroTitle1')}<br />{t('login.heroTitle2')}
           </h2>
           <p className="mt-4 text-fg-dim max-w-sm">
-            Build, run and orchestrate LLM agents — chat, multi-step tasks and teams — from one keyboard-first console.
+            {t('login.heroBody')}
           </p>
         </div>
 
@@ -75,19 +95,19 @@ export default function Login() {
 
         <div className="flex flex-1 items-center px-6 pb-16">
           <div className="w-full max-w-sm mx-auto lg:mx-0 lg:ml-16 animate-rise">
-            <p className="font-mono text-[11px] tracking-[0.18em] text-accent-ink">SIGN IN</p>
-            <h1 className="mt-2 text-3xl font-bold tracking-tight">Welcome back</h1>
-            <p className="mt-2 text-fg-dim">Sign in to continue to your workspace.</p>
+            <p className="font-mono text-[11px] tracking-[0.18em] text-accent-ink">{t('login.kicker')}</p>
+            <h1 className="mt-2 text-3xl font-bold tracking-tight">{t('login.title')}</h1>
+            <p className="mt-2 text-fg-dim">{t('login.subtitle')}</p>
 
             <OAuthButtons mode="signin" />
             <form onSubmit={handleLogin} className="mt-8 space-y-5">
               <div className="space-y-1.5">
-                <label htmlFor="email" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">EMAIL</label>
+                <label htmlFor="email" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">{t('auth.email')}</label>
                 <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com" required autoComplete="email" autoFocus />
               </div>
               <div className="space-y-1.5">
-                <label htmlFor="password" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">PASSWORD</label>
+                <label htmlFor="password" className="block font-mono text-[11px] tracking-[0.12em] text-fg-dim">{t('auth.password')}</label>
                 <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••" required autoComplete="current-password" />
               </div>
@@ -98,32 +118,54 @@ export default function Login() {
 
               <Button type="submit" disabled={loading} className="w-full">
                 {loading ? (
-                  <span className="inline-flex items-center gap-2"><Spinner /> Signing in…</span>
+                  <span className="inline-flex items-center gap-2"><Spinner /> {t('login.submitting')}</span>
                 ) : (
-                  <>Sign in <span aria-hidden>→</span></>
+                  <>{t('login.submit')} <span aria-hidden>→</span></>
                 )}
               </Button>
-              {loading && <span role="status" className="sr-only">Signing in…</span>}
+              {loading && <span role="status" className="sr-only">{t('login.submitting')}</span>}
             </form>
 
             <details className="mt-5 text-sm text-fg-dim">
-              <summary className="cursor-pointer select-none hover:text-fg">Forgot your password?</summary>
-              <p className="mt-2 leading-relaxed">
-                Cognitrix has no email service to send a reset link. On the computer that runs it, open a terminal and run{' '}
-                <code className="rounded bg-panel-2 px-1 py-0.5 font-mono text-[12px] text-fg">cognitrix reset-password you@example.com</code>
-                {' '}to set a new one.
-              </p>
+              <summary className="cursor-pointer select-none hover:text-fg">{t('login.forgot')}</summary>
+              {options.password_reset_by_email ? (
+                forgotState === 'sent' ? (
+                  <p role="status" className="mt-2 leading-relaxed">
+                    {t('login.forgot.sent')}
+                  </p>
+                ) : (
+                  <form onSubmit={sendReset} className="mt-2 space-y-2" aria-label="Reset password by email">
+                    <Input type="email" required aria-label="Your account email" placeholder="you@example.com"
+                      value={forgotEmail || email} onChange={(e) => setForgotEmail(e.target.value)} autoComplete="email" />
+                    <Button type="submit" variant="outline" disabled={forgotState === 'sending'} className="w-full">
+                      {forgotState === 'sending' ? t('login.forgot.sending') : t('login.forgot.send')}
+                    </Button>
+                    {forgotState === 'failed' && (
+                      <p role="alert" className="font-mono text-[12px] text-danger-ink">{t('login.forgot.failed')}</p>
+                    )}
+                  </form>
+                )
+              ) : (
+                <p className="mt-2 leading-relaxed">
+                  {t('login.forgot.noEmail')}{' '}
+                  <code className="rounded bg-panel-2 px-1 py-0.5 font-mono text-[12px] text-fg">cognitrix reset-password you@example.com</code>.
+                </p>
+              )}
             </details>
 
-            <p className="mt-6 text-sm text-fg-dim">
-              Don't have an account?{' '}
-              <Link to="/signup" className="text-accent-ink font-medium hover:underline underline-offset-4">Create one</Link>
-            </p>
+            {options.signup_open ? (
+              <p className="mt-6 text-sm text-fg-dim">
+                {t('login.noAccount')}{' '}
+                <Link to="/signup" className="text-accent-ink font-medium hover:underline underline-offset-4">{t('login.create')}</Link>
+              </p>
+            ) : (
+              <p className="mt-6 text-sm text-fg-dim">{t('login.inviteOnly')}</p>
+            )}
           </div>
         </div>
 
         <footer className="px-6 pb-6 font-mono text-[10.5px] text-fg-dim lg:ml-16">
-          by signing in you agree to the terms & privacy policy
+          {t('login.terms')}
         </footer>
       </main>
     </div>

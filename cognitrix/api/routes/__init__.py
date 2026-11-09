@@ -1,9 +1,11 @@
 from ...api.routes.account import account_api
+from ...api.routes.admin import admin_api
 from ...api.routes.agents import agents_api, agents_invoke_api
 from ...api.routes.api_keys import api_keys_api
 from ...api.routes.mcp import mcp_api
 from ...api.routes.connected_apps import apps_api
 from ...api.routes.credentials import credentials_api
+from ...api.routes.knowledge import knowledge_api
 from ...api.routes.memories import memories_api
 from ...api.routes.artifacts import artifacts_api
 from ...api.routes.automations import automations_api, hooks_api
@@ -23,6 +25,7 @@ from ...api.routes.tasks import tasks_api, tasks_run_api
 from ...api.routes.team_chat import team_chat_api
 from ...api.routes.teams import teams_api, teams_run_api
 from ...api.routes.tools import tools_api
+from ...api.routes.push import push_api
 from ...api.routes.usage import usage_api
 
 api_router.include_router(public_api)
@@ -54,6 +57,9 @@ api_router.include_router(apps_api)
 api_router.include_router(credentials_api)
 api_router.include_router(memories_api)
 api_router.include_router(usage_api)
+api_router.include_router(push_api)
 api_router.include_router(account_api)
+api_router.include_router(knowledge_api)
+api_router.include_router(admin_api)
 api_router.include_router(system_api)
 api_router.include_router(channels_api)

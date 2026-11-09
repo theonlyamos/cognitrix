@@ -38,6 +38,8 @@ async def _initialize_routes_db(tmp_path):
     _patch_odbms_sqlite()
     await Session.create_table()
     await SessionOwnership._create_table_async()
+    from cognitrix.sessions.index import ChatIndex
+    await ChatIndex._create_table_async()
 
 
 async def _owned_session(user_id: str, agent_id: str, **fields):

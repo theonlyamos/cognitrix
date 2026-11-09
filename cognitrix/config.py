@@ -374,6 +374,8 @@ _TASK_MIGRATION_COLUMNS = (
 _USER_MIGRATION_COLUMNS = (
     ('tokens_valid_after', 'INTEGER'),
     ('onboarded_at', 'INTEGER'),
+    ('role', 'TEXT'), ('disabled', 'BOOLEAN'),
+    ('reset_token_hash', 'TEXT'), ('reset_expires', 'INTEGER'),
 )
 
 _MCP_SERVER_MIGRATION_COLUMNS = (
@@ -403,7 +405,7 @@ _AGENT_MIGRATION_COLUMNS = (
     ('description', 'TEXT'), ('reviewer', 'TEXT'), ('coding_agents', 'TEXT'),
     ('credentials', 'TEXT'), ('can_create_sub_agents', 'BOOLEAN'),
     ('sub_agent_model', 'TEXT'), ('automation', 'TEXT'),
-    ('memory', 'TEXT'),
+    ('memory', 'TEXT'), ('knowledge', 'TEXT'),
 )
 
 _SESSION_MIGRATION_COLUMNS = (
@@ -750,7 +752,11 @@ async def _ensure_schema():
     from cognitrix.models.credential import Credential
     from cognitrix.models.mcp_server import MCPServer
     from cognitrix.models.memory import Memory, MemorySettings
+    from cognitrix.knowledge.models import KnowledgeCollection, KnowledgeDocument
+    from cognitrix.models.invite import Invite
+    from cognitrix.models.push_subscription import PushSubscription
     from cognitrix.models.usage import UsageDay
+    from cognitrix.sessions.index import ChatIndex
     from cognitrix.models.voice_settings import VoiceSettings
     from cognitrix.session_ownership import SessionOwnership
     from cognitrix.tasks.events import TaskRunEvent
@@ -801,6 +807,10 @@ async def _ensure_schema():
         Memory,
         MemorySettings,
         UsageDay,
+        ChatIndex,
+        KnowledgeCollection,
+        KnowledgeDocument,
+        Invite, PushSubscription,
     ):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)

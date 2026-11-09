@@ -9,6 +9,7 @@ import { isDesktop } from '@/lib/desktop';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
 import OAuthComplete from '@/pages/OAuthComplete';
+import ResetPassword from '@/pages/ResetPassword';
 import '@/app.css';
 
 // Code-split the authenticated app; auth pages + shell stay eager for first paint.
@@ -26,6 +27,7 @@ const TeamPage = lazy(() => import('@/pages/TeamPage'));
 const ApiKeys = lazy(() => import('@/pages/ApiKeys'));
 const Inbox = lazy(() => import('@/pages/Inbox'));
 const Automations = lazy(() => import('@/pages/Automations'));
+const Knowledge = lazy(() => import('@/pages/Knowledge'));
 const Notifications = lazy(() => import('@/pages/Notifications'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const QuickAsk = lazy(() => import('@/pages/QuickAsk'));
@@ -65,6 +67,7 @@ function AppRoutes() {
         <Route path="/" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
         <Route path="/oauth/complete" element={<OAuthComplete />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         {/* The desktop app's Alt+Space window: no app shell around it. */}
         <Route path="/quick" element={<ProtectedRoute><QuickAsk /></ProtectedRoute>} />
 
@@ -87,6 +90,7 @@ function AppRoutes() {
           <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/automations" element={<Automations />} />
+          <Route path="/knowledge" element={<Knowledge />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/settings/:section" element={<Settings />} />

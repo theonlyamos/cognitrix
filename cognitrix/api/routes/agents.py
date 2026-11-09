@@ -458,6 +458,12 @@ async def save_agent(request: Request, agent: Agent,
         agent.owner_id = user_key
 
     await _check_mcp_servers(agent)
+    if agent.knowledge:
+        # Only the owner's own document collections can be given to an agent.
+        from cognitrix import knowledge as knowledge_base
+
+        owned = {str(row.id) for row in await knowledge_base.collections(str(agent.owner_id or user_key))}
+        agent.knowledge = [c for c in dict.fromkeys(agent.knowledge) if c in owned]
     _check_folders(agent, data, existing)
     _check_policy(agent, data, existing)
     try:

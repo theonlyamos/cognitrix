@@ -1,9 +1,13 @@
+import asyncio
+import hashlib
+import logging
 import os
+import secrets
 import time
 from datetime import timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -20,6 +24,37 @@ from cognitrix.common.security import (
 )
 from cognitrix.common.utils import Utils
 from cognitrix.models import User
+
+logger = logging.getLogger('cognitrix.log')
+
+RESET_TOKEN_MINUTES = 60
+
+
+def _hash_token(token: str) -> str:
+    """What is stored for a reset or invitation link, so the link itself never is.
+
+    The links are 256 random bits, so there is nothing to guess; the
+    stretching is only so a copied database is no help either. The salt is
+    fixed because rows are looked up by this value.
+    """
+    return hashlib.pbkdf2_hmac('sha256', token.encode('utf-8'), b'cognitrix-link-token', 10_000).hex()
+
+
+def _reset_by_email_ready() -> bool:
+    """Reset links need a mail server and this server's own address."""
+    from cognitrix.common import email as mailer
+
+    return mailer.configured() and bool(mailer.public_url())
+
+
+async def _signup_open() -> bool:
+    allow = os.getenv('COGNITRIX_ALLOW_SIGNUP', '').strip().lower()
+    if allow in ('0', 'false', 'no'):
+        return False
+    if allow in ('1', 'true', 'yes'):
+        return True
+    return not await User.find_one({})
+
 
 auth_api = APIRouter(
     prefix='/auth'
@@ -50,24 +85,22 @@ async def login(form_data: LoginForm):
     user_data = user.json()
     # Never return the password hash to the client.
     if isinstance(user_data, dict):
-        user_data.pop('password', None)
+        for secret in ('password', 'reset_token_hash', 'reset_expires'):
+            user_data.pop(secret, None)
+        from cognitrix.agents.access import is_admin
+
+        user_data['is_admin'] = await is_admin(user)
 
     return JSONResponse({"user": user_data, "access_token": access_token, "token_type": "bearer"})
 
 @auth_api.post("/signup")
-async def signup(new_user: User):
+async def signup(new_user: User, request: Request):
     # Registration is closed by default once the first account exists: the
     # first person to sign up (the owner, and the default admin) always can,
     # so a fresh install still works. COGNITRIX_ALLOW_SIGNUP=true opens it to
     # everyone; =false closes it even for the first account.
-    allow = os.getenv('COGNITRIX_ALLOW_SIGNUP', '').strip().lower()
-    if allow in ('0', 'false', 'no'):
-        open_signup = False
-    elif allow in ('1', 'true', 'yes'):
-        open_signup = True
-    else:
-        open_signup = not await User.find_one({})
-    if not open_signup:
+    invite = await _usable_invite(request.query_params.get('invite'), new_user.email)
+    if not await _signup_open() and invite is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Open registration is disabled"
@@ -92,9 +125,133 @@ async def signup(new_user: User):
         )
     hashed_password = Utils.hash_password(new_user.password)
     new_user.password = hashed_password
+    # Never from the request body: these are set by the server only.
+    new_user.role = invite.role if invite is not None else None
+    new_user.disabled = None
+    new_user.reset_token_hash = None
+    new_user.reset_expires = None
+    new_user.tokens_valid_after = None
 
-    await new_user.save()
+    if invite is not None and not await _claim_invite(invite, new_user.email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This invitation was already used"
+        )
+    try:
+        await new_user.save()
+    except BaseException:
+        if invite is not None:
+            from cognitrix.models.invite import Invite
+
+            await Invite.update_one({'id': invite.id}, {'used_at': None, 'used_by': None})
+        raise
     return {"message": "User created successfully"}
+
+
+_INVITE_CLAIMS = asyncio.Lock()
+
+
+async def _claim_invite(invite, email: str) -> bool:
+    """Mark the invitation used, once. Two sign-ups racing on one link: one wins."""
+    from cognitrix.models.invite import Invite
+
+    async with _INVITE_CLAIMS:
+        fresh = await Invite.get(invite.id)
+        if fresh is None or fresh.used_at:
+            return False
+        await Invite.update_one({'id': invite.id}, {'used_at': int(time.time()), 'used_by': email})
+        return True
+
+
+async def _usable_invite(token: str | None, email: str):
+    """The invite this token names, if it is unused, unexpired and meant for this email."""
+    if not token:
+        return None
+    from cognitrix.models.invite import Invite
+
+    invite = await Invite.find_one({'token_hash': _hash_token(token)})
+    if invite is None or invite.used_at or int(invite.expires_at or 0) < int(time.time()):
+        return None
+    if invite.email and invite.email.strip().lower() != str(email or '').strip().lower():
+        return None
+    return invite
+
+
+@auth_api.get("/options")
+async def auth_options(invite: str | None = None):
+    """What the sign-in pages can offer. Public."""
+
+    valid_invite = False
+    if invite:
+        from cognitrix.models.invite import Invite
+
+        row = await Invite.find_one({'token_hash': _hash_token(invite)})
+        valid_invite = bool(row and not row.used_at and int(row.expires_at or 0) >= int(time.time()))
+    return {
+        'signup_open': await _signup_open() or valid_invite,
+        'password_reset_by_email': _reset_by_email_ready(),
+    }
+
+
+class ForgotPassword(BaseModel):
+    email: str
+
+
+class ResetPassword(BaseModel):
+    token: str
+    new_password: str
+
+
+@auth_api.post("/forgot")
+async def forgot_password(body: ForgotPassword, request: Request):
+    """Email a reset link. Always answers the same, so it never reveals
+    whether an address has an account."""
+    from cognitrix.common import email as mailer
+
+    answer = {"message": "If that address has an account, a reset link is on its way."}
+    if not _reset_by_email_ready():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is not set up on this server")
+    user = await User.find_one({'email': body.email.strip()})
+    if user is None or getattr(user, 'disabled', None):
+        return answer
+    # One link every two minutes per account is plenty.
+    expires = int(getattr(user, 'reset_expires', None) or 0)
+    if expires - RESET_TOKEN_MINUTES * 60 > time.time() - 120:
+        return answer
+    token = secrets.token_urlsafe(32)
+    await User.update_one({'id': user.id}, {
+        'reset_token_hash': _hash_token(token),
+        'reset_expires': int(time.time()) + RESET_TOKEN_MINUTES * 60,
+    })
+    # Never from the request: its Host header is whatever the caller sent.
+    base = mailer.public_url()
+    try:
+        await mailer.send(
+            user.email,
+            'Reset your Cognitrix password',
+            f"Hello {user.name},\n\nOpen this link to choose a new password. It works once and "
+            f"expires in {RESET_TOKEN_MINUTES} minutes.\n\n{base}/reset-password?token={token}\n\n"
+            "If you did not ask for this, you can ignore this email.\n",
+        )
+    except mailer.EmailError as exc:
+        logger.warning('Could not send a password reset email: %s', exc)
+    return answer
+
+
+@auth_api.post("/reset")
+async def reset_password(body: ResetPassword):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
+    user = await User.find_one({'reset_token_hash': _hash_token(body.token)}) if body.token else None
+    if user is None or int(getattr(user, 'reset_expires', None) or 0) < int(time.time()):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This reset link has expired or was already used")
+    await User.update_one({'id': user.id}, {
+        'password': Utils.hash_password(body.new_password),
+        'tokens_valid_after': int(time.time()),
+        'reset_token_hash': None,
+        'reset_expires': None,
+    })
+    return {"message": "Password changed. Sign in with the new one."}
 
 class PasswordChange(BaseModel):
     current_password: str
@@ -126,7 +283,13 @@ async def change_password(body: PasswordChange, ctx: Annotated[AuthContext, Depe
 
 @auth_api.get("/user")
 async def get_user(user: Annotated[User, Depends(get_current_user)]):
-    return user
+    from cognitrix.agents.access import is_admin
+
+    data = user.json()
+    for secret in ('password', 'reset_token_hash', 'reset_expires'):
+        data.pop(secret, None)
+    data['is_admin'] = await is_admin(user)
+    return data
 
 @auth_api.post("/refresh")
 async def refresh(ctx: Annotated[AuthContext, Depends(get_auth_context)]):

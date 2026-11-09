@@ -19,6 +19,8 @@ const COMMANDS: &[&str] = &[
     "save_session",
     "clear_session",
     "test_notification",
+    "check_for_update",
+    "install_update",
 ];
 
 fn main() {

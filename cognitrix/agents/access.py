@@ -37,6 +37,10 @@ def can_view(agent: Any, user_key: str | None) -> bool:
 
 
 async def is_admin(user: Any) -> bool:
+    # A role set on the People page wins over the older rules below.
+    role = str(getattr(user, 'role', None) or '').lower()
+    if role in ('admin', 'member'):
+        return role == 'admin'
     email = str(getattr(user, 'email', '') or '').strip().lower()
     configured = os.getenv('COGNITRIX_ADMIN_EMAILS', '')
     admins = {e.strip().lower() for e in configured.split(',') if e.strip()}

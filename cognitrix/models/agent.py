@@ -122,6 +122,9 @@ class Agent(Model):
     credentials: list[str] | None = None
     """Saved sign-ins this agent may use by name. None means all of the owner's."""
 
+    knowledge: list[str] | None = None
+    """Ids of the owner's knowledge collections this agent may search."""
+
     can_create_sub_agents: bool = True
     """Whether the agent may create short-lived helper agents."""
 
@@ -164,6 +167,20 @@ class Agent(Model):
             except ValueError:
                 return {}
         return value if isinstance(value, dict) else {}
+
+    @field_validator('knowledge', mode='before')
+    @classmethod
+    def _knowledge_default(cls, value):
+        if value in (None, ''):
+            return None
+        if isinstance(value, str):
+            import json
+
+            try:
+                value = json.loads(value)
+            except ValueError:
+                return None
+        return [str(item) for item in value] if isinstance(value, list) else None
 
     @field_validator('credentials', mode='before')
     @classmethod

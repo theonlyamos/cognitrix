@@ -455,6 +455,11 @@ async def create_notification(
         session_id=session_id,
     )
     await row.save()
+    from cognitrix.common import webpush
+
+    webpush.send_soon(
+        str(user_id), row.title, row.message,
+        url=link if link and link.startswith('/') else '/inbox', tag=f'note-{row.id}')
     return row
 
 
