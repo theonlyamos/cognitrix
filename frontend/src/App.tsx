@@ -9,6 +9,7 @@ import { isDesktop } from '@/lib/desktop';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
 import OAuthComplete from '@/pages/OAuthComplete';
+import ResetPassword from '@/pages/ResetPassword';
 import '@/app.css';
 
 // Code-split the authenticated app; auth pages + shell stay eager for first paint.
@@ -66,6 +67,7 @@ function AppRoutes() {
         <Route path="/" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
         <Route path="/oauth/complete" element={<OAuthComplete />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         {/* The desktop app's Alt+Space window: no app shell around it. */}
         <Route path="/quick" element={<ProtectedRoute><QuickAsk /></ProtectedRoute>} />
 

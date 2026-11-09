@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
 import { api, errorMessage } from '@/lib/api';
@@ -20,6 +20,24 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login } = useUser();
   const navigate = useNavigate();
+  const [options, setOptions] = useState({ signup_open: true, password_reset_by_email: false });
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotState, setForgotState] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
+
+  useEffect(() => {
+    api.get('/auth/options').then(({ data }) => setOptions((o) => ({ ...o, ...data }))).catch(() => {});
+  }, []);
+
+  const sendReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotState('sending');
+    try {
+      await api.post('/auth/forgot', { email: forgotEmail || email });
+      setForgotState('sent');
+    } catch {
+      setForgotState('failed');
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,17 +126,39 @@ export default function Login() {
 
             <details className="mt-5 text-sm text-fg-dim">
               <summary className="cursor-pointer select-none hover:text-fg">Forgot your password?</summary>
-              <p className="mt-2 leading-relaxed">
-                Cognitrix has no email service to send a reset link. On the computer that runs it, open a terminal and run{' '}
-                <code className="rounded bg-panel-2 px-1 py-0.5 font-mono text-[12px] text-fg">cognitrix reset-password you@example.com</code>
-                {' '}to set a new one.
-              </p>
+              {options.password_reset_by_email ? (
+                forgotState === 'sent' ? (
+                  <p role="status" className="mt-2 leading-relaxed">
+                    If that address has an account, a reset link is on its way. It works for one hour.
+                  </p>
+                ) : (
+                  <form onSubmit={sendReset} className="mt-2 space-y-2" aria-label="Reset password by email">
+                    <Input type="email" required aria-label="Your account email" placeholder="you@example.com"
+                      value={forgotEmail || email} onChange={(e) => setForgotEmail(e.target.value)} autoComplete="email" />
+                    <Button type="submit" variant="outline" disabled={forgotState === 'sending'} className="w-full">
+                      {forgotState === 'sending' ? 'Sending…' : 'Email me a reset link'}
+                    </Button>
+                    {forgotState === 'failed' && (
+                      <p role="alert" className="font-mono text-[12px] text-danger-ink">Could not send the link. Try again in a minute.</p>
+                    )}
+                  </form>
+                )
+              ) : (
+                <p className="mt-2 leading-relaxed">
+                  This server has no email service to send a reset link. Ask an admin to set a new password for you, or on the computer that runs it, open a terminal and run{' '}
+                  <code className="rounded bg-panel-2 px-1 py-0.5 font-mono text-[12px] text-fg">cognitrix reset-password you@example.com</code>.
+                </p>
+              )}
             </details>
 
-            <p className="mt-6 text-sm text-fg-dim">
-              Don't have an account?{' '}
-              <Link to="/signup" className="text-accent-ink font-medium hover:underline underline-offset-4">Create one</Link>
-            </p>
+            {options.signup_open ? (
+              <p className="mt-6 text-sm text-fg-dim">
+                Don't have an account?{' '}
+                <Link to="/signup" className="text-accent-ink font-medium hover:underline underline-offset-4">Create one</Link>
+              </p>
+            ) : (
+              <p className="mt-6 text-sm text-fg-dim">New here? Ask an admin of this server for an invitation link.</p>
+            )}
           </div>
         </div>
 

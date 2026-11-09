@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
@@ -21,6 +21,14 @@ export default function Signup() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const invite = useSearchParams()[0].get('invite') || '';
+  const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    api.get('/auth/options', { params: invite ? { invite } : undefined })
+      .then(({ data }) => setOpen(data.signup_open !== false))
+      .catch(() => {});
+  }, [invite]);
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,7 +39,7 @@ export default function Signup() {
 
     setLoading(true);
     try {
-      await api.post('/auth/signup', { name, email, password });
+      await api.post('/auth/signup', { name, email, password }, { params: invite ? { invite } : undefined });
       navigate('/');
     } catch (err) {
       setError(errorMessage(err, 'Unable to create account.'));
@@ -78,7 +86,16 @@ export default function Signup() {
           <div className="w-full max-w-sm mx-auto lg:mx-0 lg:ml-16 animate-rise">
             <p className="font-mono text-[11px] tracking-[0.18em] text-accent-ink">CREATE ACCOUNT</p>
             <h1 className="mt-2 text-3xl font-bold tracking-tight">Get started</h1>
-            <p className="mt-2 text-fg-dim">Set up your workspace in a few seconds.</p>
+            <p className="mt-2 text-fg-dim">
+              {invite && open ? "You've been invited. Set up your account below." : 'Set up your workspace in a few seconds.'}
+            </p>
+            {!open && (
+              <p role="alert" className="mt-4 border-l-2 border-danger bg-danger/5 px-3 py-2 text-[13px] text-danger-ink">
+                {invite
+                  ? 'This invitation has expired or was already used. Ask the admin for a new one.'
+                  : 'Sign-up is closed on this server. Ask an admin for an invitation link.'}
+              </p>
+            )}
 
             <OAuthButtons mode="signup" />
             <form onSubmit={handleSignup} className="mt-8 space-y-4">

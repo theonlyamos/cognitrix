@@ -17,6 +17,7 @@ import { AppearanceSettings } from '@/components/settings/Appearance';
 import { MemorySettings } from '@/components/settings/Memory';
 import { UsageSettings } from '@/components/settings/Usage';
 import { PasswordChange } from '@/components/settings/PasswordChange';
+import { PeopleSettings } from '@/components/settings/People';
 import {
   Group, SectionHeader, SettingRow, SubHeading, buttonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -25,7 +26,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'memory' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'memory' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'people' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -34,6 +35,8 @@ interface SectionMeta {
   /** Extra words the settings search matches. */
   keywords: string;
   desktopOnly?: boolean;
+  /** Shown only to admins of a shared server. */
+  adminOnly?: boolean;
 }
 
 const SECTIONS: SectionMeta[] = [
@@ -46,6 +49,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'apps', label: 'Connected apps', group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
   { id: 'access', label: 'Agent access', group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
   { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack bot alerts approvals' },
+  { id: 'people', label: 'People', group: 'SERVER', keywords: 'users admin invite invitation members roles disable accounts email smtp reset', adminOnly: true },
   { id: 'desktop', label: 'Desktop app', group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask', desktopOnly: true },
   { id: 'engine', label: 'Engine', group: 'THIS COMPUTER', keywords: 'server status restart log version database queue worker data folder' },
 ];
@@ -351,6 +355,13 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
           <ChatChannelsCard />
         </>
       );
+    case 'people':
+      return (
+        <>
+          <SectionHeader title="People" description="Who has an account on this server, what they used, and invitations for new people." />
+          <PeopleSettings />
+        </>
+      );
     case 'desktop': return <DesktopSection />;
     case 'engine': return <EngineSection desktopApp={desktopApp} />;
   }
@@ -386,8 +397,13 @@ export default function Settings() {
   const { section } = useParams<{ section?: string }>();
   const location = useLocation();
   const [query, setQuery] = useState('');
+  const { user } = useUser();
+  const admin = Boolean(user?.is_admin) && !desktopApp;
 
-  const visible = useMemo(() => SECTIONS.filter((s) => desktopApp || !s.desktopOnly), [desktopApp]);
+  const visible = useMemo(
+    () => SECTIONS.filter((s) => (desktopApp || !s.desktopOnly) && (admin || !s.adminOnly)),
+    [desktopApp, admin],
+  );
   const shown = visible.filter((s) => matches(s, query));
   const active = visible.find((s) => s.id === section);
 

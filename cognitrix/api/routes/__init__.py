@@ -1,4 +1,5 @@
 from ...api.routes.account import account_api
+from ...api.routes.admin import admin_api
 from ...api.routes.agents import agents_api, agents_invoke_api
 from ...api.routes.api_keys import api_keys_api
 from ...api.routes.mcp import mcp_api
@@ -57,5 +58,6 @@ api_router.include_router(memories_api)
 api_router.include_router(usage_api)
 api_router.include_router(account_api)
 api_router.include_router(knowledge_api)
+api_router.include_router(admin_api)
 api_router.include_router(system_api)
 api_router.include_router(channels_api)

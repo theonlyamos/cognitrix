@@ -374,6 +374,8 @@ _TASK_MIGRATION_COLUMNS = (
 _USER_MIGRATION_COLUMNS = (
     ('tokens_valid_after', 'INTEGER'),
     ('onboarded_at', 'INTEGER'),
+    ('role', 'TEXT'), ('disabled', 'BOOLEAN'),
+    ('reset_token_hash', 'TEXT'), ('reset_expires', 'INTEGER'),
 )
 
 _MCP_SERVER_MIGRATION_COLUMNS = (
@@ -751,6 +753,7 @@ async def _ensure_schema():
     from cognitrix.models.mcp_server import MCPServer
     from cognitrix.models.memory import Memory, MemorySettings
     from cognitrix.knowledge.models import KnowledgeCollection, KnowledgeDocument
+    from cognitrix.models.invite import Invite
     from cognitrix.models.usage import UsageDay
     from cognitrix.sessions.index import ChatIndex
     from cognitrix.models.voice_settings import VoiceSettings
@@ -806,6 +809,7 @@ async def _ensure_schema():
         ChatIndex,
         KnowledgeCollection,
         KnowledgeDocument,
+        Invite,
     ):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)
