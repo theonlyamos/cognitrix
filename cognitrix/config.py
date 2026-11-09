@@ -403,7 +403,7 @@ _AGENT_MIGRATION_COLUMNS = (
     ('description', 'TEXT'), ('reviewer', 'TEXT'), ('coding_agents', 'TEXT'),
     ('credentials', 'TEXT'), ('can_create_sub_agents', 'BOOLEAN'),
     ('sub_agent_model', 'TEXT'), ('automation', 'TEXT'),
-    ('memory', 'TEXT'),
+    ('memory', 'TEXT'), ('knowledge', 'TEXT'),
 )
 
 _SESSION_MIGRATION_COLUMNS = (
@@ -750,6 +750,7 @@ async def _ensure_schema():
     from cognitrix.models.credential import Credential
     from cognitrix.models.mcp_server import MCPServer
     from cognitrix.models.memory import Memory, MemorySettings
+    from cognitrix.knowledge.models import KnowledgeCollection, KnowledgeDocument
     from cognitrix.models.usage import UsageDay
     from cognitrix.sessions.index import ChatIndex
     from cognitrix.models.voice_settings import VoiceSettings
@@ -803,6 +804,8 @@ async def _ensure_schema():
         MemorySettings,
         UsageDay,
         ChatIndex,
+        KnowledgeCollection,
+        KnowledgeDocument,
     ):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)

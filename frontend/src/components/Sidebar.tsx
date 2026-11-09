@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Inbox as InboxIcon, MessageSquare as MessageSquareIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon, Users as UsersIcon, Settings as SettingsIcon, KeyRound as KeyRoundIcon, type LucideIcon } from 'lucide-react';
+import { Inbox as InboxIcon, MessageSquare as MessageSquareIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon, Users as UsersIcon, BookOpen as BookOpenIcon, Settings as SettingsIcon, KeyRound as KeyRoundIcon, type LucideIcon } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
@@ -21,6 +21,7 @@ const NAV = [
   { path: '/tasks', label: 'Tasks', icon: icon(ListChecksIcon) },
   { path: '/automations', label: 'Automations', icon: icon(ZapIcon) },
   { path: '/teams', label: 'Teams', icon: icon(UsersIcon) },
+  { path: '/knowledge', label: 'Knowledge', icon: icon(BookOpenIcon) },
   { path: '/settings', label: 'Settings', icon: icon(SettingsIcon) },
   { path: '/api-keys', label: 'API Keys', icon: icon(KeyRoundIcon) },
 ];

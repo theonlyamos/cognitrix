@@ -586,6 +586,19 @@ class Session(Model):
             except Exception:
                 logger.debug('Memory tools unavailable', exc_info=True)
 
+        # Search Knowledge is offered only to agents that were given at least
+        # one document collection.
+        try:
+            if getattr(agent, 'knowledge', None) and not any(
+                str(getattr(t, 'name', '')).lower() == 'search knowledge' for t in agent.tools
+            ):
+                from cognitrix.tools.base import ToolManager
+                knowledge_tool = ToolManager.get_by_name('search_knowledge')
+                if knowledge_tool:
+                    agent = agent.model_copy(update={'tools': [*agent.tools, knowledge_tool]})
+        except Exception:
+            logger.debug('Search Knowledge tool unavailable', exc_info=True)
+
         # Bash's background mode and the Coding Agent tool need the two
         # background helpers; agents that have either get them for the turn
         # without changing the saved agent.

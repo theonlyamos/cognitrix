@@ -5,6 +5,7 @@ from cognitrix.tools.chats import check_chat, message_chat, start_chat
 from cognitrix.tools.folders import request_folder
 from cognitrix.tools.http import http_request, list_credentials
 from cognitrix.tools.image import generate_image
+from cognitrix.tools.knowledge import search_knowledge
 from cognitrix.tools.management import assign_task, create_new_team, create_task, delete_task, update_task
 from cognitrix.tools.mcp import list_mcp_tools, run_mcp_tool
 from cognitrix.tools.memory import memory
