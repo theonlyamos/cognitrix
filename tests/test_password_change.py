@@ -18,8 +18,11 @@ async def _user(password='old-password'):
 
 
 def _ctx(user):
+    from types import SimpleNamespace
+
     from cognitrix.common.security import AuthContext
-    return AuthContext(user=user)
+    # As in a real request: the signed-in user carries no password hash.
+    return AuthContext(user=SimpleNamespace(id=user.id, email=user.email, name=user.name))
 
 
 async def test_change_needs_the_current_password_and_signs_out_other_devices(tmp_path):

@@ -287,6 +287,9 @@ async def test_legacy_team_session_list_filters_task_run_acl(monkeypatch):
     assert response.json() == [{
         "id": ordinary.id,
         "title": "New conversation",
+        "renamed": False,
+        "pinned": False,
+        "archived": False,
         "datetime": ordinary.datetime,
         "updated_at": ordinary.json().get("updated_at"),
         "started_at": ordinary.started_at,

@@ -105,8 +105,9 @@ class PasswordChange(BaseModel):
 async def change_password(body: PasswordChange, ctx: Annotated[AuthContext, Depends(jwt_only)]):
     """Change the signed-in person's password. Every other device is signed
     out; this one gets a fresh token back so it stays signed in."""
-    user = ctx.user
-    if not verify_password(body.current_password, user.password or ''):
+    # The signed-in user object carries no password hash; read the stored row.
+    user = await User.find_one({'email': ctx.user.email})
+    if user is None or not verify_password(body.current_password, getattr(user, 'password', '') or ''):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
     if len(body.new_password) < 8:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")

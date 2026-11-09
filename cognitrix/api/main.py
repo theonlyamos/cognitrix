@@ -1,10 +1,11 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 
 import aiofiles
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import FRONTEND_BUILD_DIR, initialize_database, settings
@@ -107,6 +108,68 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+
+# What a page served by this engine may load and run. Everything the app needs
+# ships with it, so scripts come only from the engine itself; images may come
+# from anywhere because agents' replies link to them. COGNITRIX_CSP=off drops
+# the header, any other value replaces the policy. The desktop app is left
+# alone: its window talks to the shell in ways a strict policy can block.
+_DEFAULT_CSP = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob: https: http:; "
+    "media-src 'self' data: blob:; "
+    "font-src 'self' data:; "
+    "connect-src 'self' ws: wss:; "
+    "worker-src 'self' blob:; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
+
+def _content_security_policy() -> str:
+    configured = os.environ.get('COGNITRIX_CSP', '').strip()
+    if configured.lower() in ('off', '0', 'false', 'none'):
+        return ''
+    if configured:
+        return configured
+    return '' if os.environ.get('COGNITRIX_DESKTOP') == '1' else _DEFAULT_CSP
+
+
+class SecurityHeaders:
+    """Plain ASGI middleware (not BaseHTTPMiddleware, which gets in the way of
+    the streaming endpoints)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            return await self.app(scope, receive, send)
+        # The interactive API docs load their own scripts from a CDN.
+        docs_page = scope.get('path', '') in ('/docs', '/redoc', '/docs/oauth2-redirect')
+
+        async def send_with_headers(message):
+            if message['type'] == 'http.response.start':
+                headers = list(message.get('headers') or [])
+                present = {name.lower() for name, _ in headers}
+                extra = [(b'x-content-type-options', b'nosniff'), (b'referrer-policy', b'same-origin')]
+                content_type = next((value for name, value in headers if name.lower() == b'content-type'), b'')
+                policy = _content_security_policy()
+                if policy and not docs_page and content_type.startswith(b'text/html'):
+                    extra.append((b'content-security-policy', policy.encode('latin-1', 'ignore')))
+                headers.extend(item for item in extra if item[0] not in present)
+                message = {**message, 'headers': headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+app.add_middleware(SecurityHeaders)
+
 app.include_router(api_router)
 # OpenAI-compatible shim at the app root (/v1). MUST be registered before the
 # SPA catch-all below, or GET /v1/models would be served index.html with 200.
@@ -135,6 +198,12 @@ async def index(request: Request, path: str):
     # Unknown API paths are real 404s, not the SPA's index.html with a 200.
     if path == 'api' or path.startswith(('api/', 'v1/')) or path == 'v1':
         raise HTTPException(status_code=404, detail='Not Found')
+    # Files at the top of the build (icons, the web app manifest, theme.js).
+    if path and not path.endswith('.html'):
+        build_root = FRONTEND_BUILD_DIR.resolve()
+        candidate = (build_root / path).resolve()
+        if candidate.is_relative_to(build_root) and candidate.is_file():
+            return FileResponse(candidate)
     index_file = FRONTEND_BUILD_DIR / 'index.html'
     if not index_file.is_file():
         raise HTTPException(status_code=404, detail='Frontend is not built (run `npm run build` in frontend/)')

@@ -457,9 +457,8 @@ class Session(Model):
 
     async def __call__(self, message: str | dict, agent: 'Agent', *args: Any, **kwargs: Any):
         # The action reviewer reads what this turn was asked to do.
-        from cognitrix.safety.action_reviewer import _goal_text, turn_goal
-
         from cognitrix import usage
+        from cognitrix.safety.action_reviewer import _goal_text, turn_goal
 
         token = turn_goal.set(_goal_text(message))
         # Model calls in this turn count toward this person's usage totals.

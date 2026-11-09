@@ -37,7 +37,7 @@ interface SectionMeta {
 }
 
 const SECTIONS: SectionMeta[] = [
-  { id: 'account', label: 'Account', group: 'GENERAL', keywords: 'profile email name password sign out devices api keys' },
+  { id: 'account', label: 'Account', group: 'GENERAL', keywords: 'profile email name password export backup download data sign out devices api keys' },
   { id: 'appearance', label: 'Appearance', group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
   { id: 'models', label: 'Models and keys', group: 'AI', keywords: 'providers api key openai anthropic claude gemini google groq openrouter cerebras ollama' },
   { id: 'usage', label: 'Usage', group: 'AI', keywords: 'cost spend tokens money bill price how much' },
@@ -99,6 +99,26 @@ function AccountSection() {
     }
   };
 
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const exportData = async () => {
+    setExporting(true);
+    setExportError('');
+    try {
+      const res = await api.get('/account/export', { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data as Blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `cognitrix-export-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(errorMessage(err, 'Could not export your data.'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <>
       <SectionHeader title="Account" description="Who you're signed in as." />
@@ -116,6 +136,15 @@ function AccountSection() {
         <SettingRow label="Cognitrix API keys" detail="For scripts and other apps that call this engine">
           <Link to="/api-keys" className={buttonClass}>Manage</Link>
         </SettingRow>
+        <SettingRow
+          label="Export your data"
+          detail="One file with your agents, chats, tasks, teams and memories. Keys, passwords and saved sign-ins are left out."
+        >
+          <button type="button" onClick={exportData} disabled={exporting} className={buttonClass}>
+            {exporting ? 'Preparing…' : 'Download'}
+          </button>
+        </SettingRow>
+        {exportError && <p role="alert" className="px-3.5 pb-3 text-[12px] text-danger-ink">{exportError}</p>}
       </Group>
 
       <SubHeading className="mt-7">DANGER ZONE</SubHeading>
