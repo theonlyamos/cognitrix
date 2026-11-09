@@ -10,6 +10,7 @@ mod notify;
 mod session;
 mod settings;
 mod tray;
+mod update;
 
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -405,6 +406,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec![MINIMIZED_FLAG]),
@@ -432,6 +434,7 @@ pub fn run() {
                 log::warn!("Alt+Space is taken by another app, quick ask has no hotkey: {e}");
             }
             engine::start(&handle);
+            update::watch(&handle);
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -464,6 +467,8 @@ pub fn run() {
             save_session,
             clear_session,
             test_notification,
+            update::check_for_update,
+            update::install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the Cognitrix desktop app");

@@ -41,6 +41,27 @@ and `cognitrix-macos` artifacts, and a published release gets the installers
 attached. It runs on PRs that touch the desktop code, on releases, and from
 the Actions tab.
 
+### Self-update
+
+The app can update itself from GitHub releases once update signing is set up.
+This is Tauri's own update signature, separate from Windows and Apple code
+signing. Do it once:
+
+1. On your computer run `npx tauri signer generate -w cognitrix-update.key` in
+   `desktop/`. It prints a public key and writes the private key to the file.
+2. In the GitHub repository settings add the private key file's contents as
+   the secret `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+   if you set a password), and the public key as the variable
+   `TAURI_UPDATER_PUBKEY`.
+3. Keep the private key safe. Apps only accept updates signed with it, so if
+   it is lost, people have to install the next version by hand.
+
+From the next release on, the workflow attaches signed update files and a
+`latest.json`, and installed apps offer the update under Settings, Desktop
+app. Apps installed from a release made before this was set up, `.deb` and
+`.rpm` installs, and local builds don't update themselves: they show a link
+to the releases page instead.
+
 The builds aren't code-signed yet. Windows SmartScreen asks for "Run anyway".
 macOS says the app "is damaged" when it's downloaded unsigned: run
 `xattr -cr /Applications/Cognitrix.app` once after installing.

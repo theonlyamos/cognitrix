@@ -1,6 +1,7 @@
 import { useTheme, type ThemeMode } from '@/context/ThemeContext';
 import { setReduceMotion, setSendKey, useReduceMotion, useSendKey, type SendKey } from '@/lib/preferences';
 import { Toggle } from '@/pages/Notifications';
+import { LANGUAGES, getLanguageChoice, setLanguage, useLanguage, useT, type LanguageCode, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { Group, Segmented, SettingRow } from './ui';
 
@@ -24,22 +25,25 @@ function Preview({ kind }: { kind: 'light' | 'dark' }) {
   );
 }
 
-const MODES: { value: ThemeMode; label: string }[] = [
-  { value: 'system', label: 'System' },
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
+const MODES: { value: ThemeMode; label: MessageKey }[] = [
+  { value: 'system', label: 'appearance.theme.system' },
+  { value: 'light', label: 'appearance.theme.light' },
+  { value: 'dark', label: 'appearance.theme.dark' },
 ];
 
 export function AppearanceSettings() {
   const { mode, setMode } = useTheme();
   const sendKey = useSendKey();
   const reduceMotion = useReduceMotion();
+  const t = useT();
+  useLanguage();
+  const choice = getLanguageChoice();
 
   return (
     <Group>
       <div className="p-3.5">
-        <div className="mb-2.5 text-[13.5px] font-medium">Theme</div>
-        <div role="radiogroup" aria-label="Theme" className="grid grid-cols-3 gap-2.5">
+        <div className="mb-2.5 text-[13.5px] font-medium">{t('appearance.theme')}</div>
+        <div role="radiogroup" aria-label={t('appearance.theme')} className="grid grid-cols-3 gap-2.5">
           {MODES.map((m) => (
             <button
               key={m.value}
@@ -62,21 +66,32 @@ export function AppearanceSettings() {
                   <Preview kind={m.value} />
                 )}
               </span>
-              <span className="mt-1.5 block text-[12.5px]">{m.label}</span>
+              <span className="mt-1.5 block text-[12.5px]">{t(m.label)}</span>
             </button>
           ))}
         </div>
       </div>
-      <SettingRow label="Send messages with" detail={sendKey === 'enter' ? 'Shift+Enter adds a new line' : 'Enter adds a new line'}>
+      <SettingRow label={t('appearance.language')} detail={t('appearance.language.detail')}>
+        <select
+          aria-label={t('appearance.language')}
+          value={choice}
+          onChange={(e) => setLanguage(e.target.value as LanguageCode | '')}
+          className="h-9 rounded-lg border border-line bg-panel-2 px-2 text-[12.5px] outline-none focus:border-accent md:h-8"
+        >
+          <option value="">{t('appearance.language.auto')}</option>
+          {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.name}</option>)}
+        </select>
+      </SettingRow>
+      <SettingRow label={t('appearance.sendWith')} detail={t(sendKey === 'enter' ? 'appearance.sendWith.shiftEnter' : 'appearance.sendWith.enter')}>
         <Segmented<SendKey>
-          label="Send messages with"
+          label={t('appearance.sendWith')}
           value={sendKey}
           onChange={setSendKey}
           options={[{ value: 'enter', label: 'Enter' }, { value: 'ctrl-enter', label: 'Ctrl+Enter' }]}
         />
       </SettingRow>
-      <SettingRow label="Reduce motion" detail="Turns off animations and smooth scrolling">
-        <Toggle label="Reduce motion" checked={reduceMotion} onChange={setReduceMotion} />
+      <SettingRow label={t('appearance.reduceMotion')} detail={t('appearance.reduceMotion.detail')}>
+        <Toggle label={t('appearance.reduceMotion')} checked={reduceMotion} onChange={setReduceMotion} />
       </SettingRow>
     </Group>
   );

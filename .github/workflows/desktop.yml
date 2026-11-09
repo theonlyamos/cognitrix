@@ -87,8 +87,25 @@ jobs:
       - name: Build installers
         working-directory: desktop
         shell: bash
+        env:
+          # Self-update: with the signing key (a secret) and its public half
+          # (a repository variable) set, the build also makes signed update
+          # files and the app can update itself. Without them the build is
+          # the same as before and the app says it can't self-update.
+          UPDATE_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          UPDATE_SIGNING_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          UPDATE_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
         run: |
           npm ci --no-audit --no-fund
+          config=()
+          if [ -n "$UPDATE_SIGNING_KEY" ] && [ -n "$UPDATE_PUBLIC_KEY" ]; then
+            export TAURI_SIGNING_PRIVATE_KEY="$UPDATE_SIGNING_KEY"
+            export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$UPDATE_SIGNING_KEY_PASSWORD"
+            printf '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"%s"}}}' "$UPDATE_PUBLIC_KEY" > updater.conf.json
+            config=(--config updater.conf.json)
+          else
+            echo "::notice::No update signing key is set, so this build can't update itself (see desktop/README.md)."
+          fi
           if [ "$RUNNER_OS" = Linux ]; then
             # linuxdeploy (AppImage) checks every ELF file in the bundle,
             # including the engine's vendored .so files (pillow.libs,
@@ -96,7 +113,7 @@ jobs:
             # command sees the extra path.
             export LD_LIBRARY_PATH=$(find "$PWD/src-tauri/engine" -name '*.so*' -printf '%h\n' | sort -u | paste -sd:)
           fi
-          npx tauri build --bundles ${{ matrix.bundles }}
+          npx tauri build --bundles ${{ matrix.bundles }} "${config[@]}"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -114,4 +131,31 @@ jobs:
           shopt -s nullglob
           files=()
           for pattern in $FILES; do files+=($pattern); done
+          # Signed update files, when this build made them.
+          while IFS= read -r file; do files+=("$file"); done < <(
+            find desktop/src-tauri/target/release/bundle -type f \( -name '*.sig' -o -name '*.app.tar.gz' \))
           gh release upload "${{ github.event.release.tag_name }}" "${files[@]}" --clobber --repo "${{ github.repository }}"
+
+  # Installed apps read latest.json from the newest release to learn that a
+  # newer version exists. It lists the signed installers the builds attached.
+  update-manifest:
+    name: update manifest
+    needs: build
+    if: always() && github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish latest.json
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mkdir sigs
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sig' --dir sigs || true
+          if ! ls sigs/*.sig >/dev/null 2>&1; then
+            echo "::notice::This release has no signed installers, so no update manifest was published."
+            exit 0
+          fi
+          python3 desktop/scripts/make_update_manifest.py "$TAG" "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG" sigs
+          gh release upload "$TAG" sigs/latest.json --clobber --repo "$GITHUB_REPOSITORY"

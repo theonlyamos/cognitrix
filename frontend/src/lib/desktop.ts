@@ -78,7 +78,19 @@ export const desktop = {
   saveSession: (token: string) => invokeDesktop<void>('save_session', { token }),
   clearSession: () => invokeDesktop<void>('clear_session'),
   hideQuickAsk: () => invokeDesktop<void>('hide_quick_ask'),
+  checkForUpdate: () => invokeDesktop<UpdateInfo>('check_for_update'),
+  /** Downloads, installs and restarts the app. Rejects with the reason. */
+  installUpdate: () => invokeDesktop<void>('install_update'),
 };
+
+export interface UpdateInfo {
+  /** This build can update itself (a signed release build). */
+  enabled: boolean;
+  current: string;
+  /** The newer version, when there is one. */
+  available: string | null;
+  notes: string | null;
+}
 
 export interface SystemNotice {
   title: string;

@@ -3,8 +3,9 @@ import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-route
 import { api, errorMessage } from '@/lib/api';
 import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
-import { desktop, isDesktop, type DesktopSettings } from '@/lib/desktop';
+import { desktop, isDesktop, type DesktopSettings, type UpdateInfo } from '@/lib/desktop';
 import { Toggle } from '@/pages/Notifications';
+import { useT, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useSystemInfo } from '@/hooks/useSystemInfo';
 import { VoiceSettingsCard } from '@/components/VoiceSettingsCard';
@@ -51,7 +52,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'access', label: 'Agent access', group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
   { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack discord bot alerts approvals' },
   { id: 'people', label: 'People', group: 'SERVER', keywords: 'users admin invite invitation members roles disable accounts email smtp reset', adminOnly: true },
-  { id: 'desktop', label: 'Desktop app', group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask', desktopOnly: true },
+  { id: 'desktop', label: 'Desktop app', group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
   { id: 'engine', label: 'Engine', group: 'THIS COMPUTER', keywords: 'server status restart log version database queue worker data folder' },
 ];
 
@@ -220,6 +221,73 @@ function AccessSection({ desktopApp }: { desktopApp: boolean }) {
   );
 }
 
+const RELEASES_URL = 'https://github.com/theonlyamos/cognitrix/releases/latest';
+const reason = (err: unknown, fallback: string) =>
+  (typeof err === 'string' ? err : err instanceof Error ? err.message : fallback);
+
+/** Settings › Desktop app: the installed version and the button that updates it. */
+function UpdateRow() {
+  const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [state, setState] = useState<'idle' | 'checking' | 'installing'>('checking');
+  const [error, setError] = useState<string | null>(null);
+  const [checked, setChecked] = useState(false);
+
+  const check = async (byHand: boolean) => {
+    setState('checking');
+    setError(null);
+    try {
+      setInfo(await desktop.checkForUpdate());
+      setChecked(byHand);
+    } catch (err) {
+      setError(reason(err, "Couldn't check for updates."));
+    } finally {
+      setState('idle');
+    }
+  };
+
+  useEffect(() => { void check(false); }, []);
+
+  const install = async () => {
+    setState('installing');
+    setError(null);
+    try {
+      await desktop.installUpdate();
+    } catch (err) {
+      setError(reason(err, "The update couldn't be installed."));
+      setState('idle');
+    }
+  };
+
+  const detail = !info
+    ? 'Checking…'
+    : !info.enabled
+      ? "This build doesn't update itself. Download new versions from the releases page."
+      : info.available
+        ? `Version ${info.available} is ready. Installing restarts the app and the engine.`
+        : checked ? 'You have the newest version.' : 'Cognitrix checks for new versions twice a day.';
+
+  return (
+    <>
+      <SettingRow label={`Version ${info?.current ?? '…'}`} detail={detail}>
+        {info && !info.enabled && (
+          <button type="button" onClick={() => void desktop.openExternal(RELEASES_URL)} className={buttonClass}>Open releases</button>
+        )}
+        {info?.enabled && !info.available && (
+          <button type="button" onClick={() => void check(true)} disabled={state !== 'idle'} className={buttonClass}>
+            {state === 'checking' ? 'Checking…' : 'Check for updates'}
+          </button>
+        )}
+        {info?.enabled && info.available && (
+          <button type="button" onClick={() => void install()} disabled={state !== 'idle'} className={buttonClass}>
+            {state === 'installing' ? 'Installing…' : 'Install and restart'}
+          </button>
+        )}
+      </SettingRow>
+      {error && <p role="alert" className="px-3.5 py-2 text-[12.5px] text-danger-ink">{error}</p>}
+    </>
+  );
+}
+
 function DesktopSection() {
   const { prefs, error, update } = useDesktopPrefs(true);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -260,6 +328,7 @@ function DesktopSection() {
           <SettingRow label="Quick ask hotkey" detail="Opens a small ask box from anywhere">
             <kbd className="rounded border border-line px-2 py-0.5 font-mono text-[11.5px]">{prefs.quick_ask_shortcut.replace('+', ' ')}</kbd>
           </SettingRow>
+          <UpdateRow />
         </Group>
       )}
       {error && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{error}</p>}
@@ -309,11 +378,21 @@ function EngineSection({ desktopApp }: { desktopApp: boolean }) {
   );
 }
 
+function AppearanceSection() {
+  const t = useT();
+  return (
+    <>
+      <SectionHeader title={t('settings.section.appearance')} description={t('appearance.description')} />
+      <AppearanceSettings />
+    </>
+  );
+}
+
 function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean }) {
   switch (id) {
     case 'account': return <AccountSection />;
     case 'appearance':
-      return (<><SectionHeader title="Appearance" description="How Cognitrix looks and behaves on this device." /><AppearanceSettings /></>);
+      return <AppearanceSection />;
     case 'models':
       return (<><SectionHeader title="Models and keys" description="API keys for the model providers your agents use." /><ProviderKeys /></>);
     case 'usage':
@@ -372,6 +451,7 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
 }
 
 function SearchBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const t = useT();
   return (
     <label className="flex h-10 items-center gap-2 rounded-lg border border-line bg-bg px-2.5 text-fg-dim focus-within:border-accent md:h-9">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -381,8 +461,8 @@ function SearchBox({ value, onChange }: { value: string; onChange: (v: string) =
         type="search"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Search settings"
-        aria-label="Search settings"
+        placeholder={t('settings.search')}
+        aria-label={t('settings.search')}
         className="min-w-0 flex-1 bg-transparent text-[13px] text-fg outline-none placeholder:text-fg-dim"
       />
     </label>
@@ -401,6 +481,7 @@ export default function Settings() {
   const { section } = useParams<{ section?: string }>();
   const location = useLocation();
   const [query, setQuery] = useState('');
+  const t = useT();
   const { user } = useUser();
   const admin = Boolean(user?.is_admin) && !desktopApp;
 
@@ -408,7 +489,9 @@ export default function Settings() {
     () => SECTIONS.filter((s) => (desktopApp || !s.desktopOnly) && (admin || !s.adminOnly)),
     [desktopApp, admin],
   );
-  const shown = visible.filter((s) => matches(s, query));
+  const shown = visible.filter(
+    (s) => matches(s, query) || t(`settings.section.${s.id}` as MessageKey).toLowerCase().includes(query.trim().toLowerCase()),
+  );
   const active = visible.find((s) => s.id === section);
 
   // Scroll a #anchor inside the section into view once it renders.
@@ -432,8 +515,13 @@ export default function Settings() {
   // Wide screens with no section picked show the first one.
   const current = active ?? visible[0];
   const groups = Array.from(new Set(shown.map((s) => s.group)));
-  const groupLabel = (g: string) => (g === 'THIS COMPUTER' && !desktopApp ? 'SYSTEM' : g);
-  const labelFor = (s: SectionMeta) => (s.id === 'engine' && !desktopApp ? 'Server' : s.label);
+  const GROUP_KEY: Record<string, MessageKey> = {
+    GENERAL: 'settings.group.general', AI: 'settings.group.ai', AGENTS: 'settings.group.agents',
+    SERVER: 'settings.group.server', 'THIS COMPUTER': 'settings.group.computer',
+  };
+  const groupLabel = (g: string) => t(g === 'THIS COMPUTER' && !desktopApp ? 'settings.group.system' : GROUP_KEY[g]);
+  const labelFor = (s: SectionMeta) =>
+    t(s.id === 'engine' && !desktopApp ? 'settings.section.server' : (`settings.section.${s.id}` as MessageKey));
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 bg-bg text-fg">
@@ -445,7 +533,7 @@ export default function Settings() {
           active ? 'hidden' : 'flex w-full flex-col px-4 py-5',
         )}
       >
-        <h1 className="mb-3 ml-10 px-1 text-[22px] font-semibold md:sr-only">Settings</h1>
+        <h1 className="mb-3 ml-10 px-1 text-[22px] font-semibold md:sr-only">{t('settings.title')}</h1>
         <div className="mb-2 md:mx-1">
           <SearchBox value={query} onChange={setQuery} />
         </div>
@@ -472,7 +560,7 @@ export default function Settings() {
             </div>
           </div>
         ))}
-        {shown.length === 0 && <p className="px-2.5 pt-4 text-[13px] text-fg-dim">No settings match “{query}”.</p>}
+        {shown.length === 0 && <p className="px-2.5 pt-4 text-[13px] text-fg-dim">{t('settings.noMatch', { query })}</p>}
       </nav>
 
       <main
@@ -482,7 +570,7 @@ export default function Settings() {
         <div className="w-full max-w-[780px] px-9 py-6 max-md:px-4 max-md:py-4">
           {active && (
             <Link to="/settings" className="mb-3 ml-11 inline-flex h-9 items-center gap-1.5 text-[13px] text-fg-dim hover:text-fg md:hidden">
-              <span aria-hidden="true">←</span> Settings
+              <span aria-hidden="true">←</span> {t('settings.title')}
             </Link>
           )}
           <SectionBody key={current.id} id={current.id} desktopApp={desktopApp} />

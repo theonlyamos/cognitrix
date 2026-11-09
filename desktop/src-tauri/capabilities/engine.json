@@ -35,6 +35,8 @@
     "allow-get-saved-session",
     "allow-save-session",
     "allow-clear-session",
-    "allow-test-notification"
+    "allow-test-notification",
+    "allow-check-for-update",
+    "allow-install-update"
   ]
 }

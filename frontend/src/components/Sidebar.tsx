@@ -5,6 +5,7 @@ import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import { isDesktop } from '@/lib/desktop';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { useT, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
 type IconProps = { className?: string };
@@ -14,16 +15,16 @@ type IconProps = { className?: string };
 // automations, people for teams, a gear for settings and a key for API keys.
 const icon = (Icon: LucideIcon) => (p: IconProps) => <Icon {...p} strokeWidth={1.9} aria-hidden="true" />;
 
-const NAV = [
-  { path: '/inbox', label: 'Inbox', icon: icon(InboxIcon) },
-  { path: '/home', label: 'Chat', icon: icon(MessageSquareIcon) },
-  { path: '/agents', label: 'Agents', icon: icon(BotIcon) },
-  { path: '/tasks', label: 'Tasks', icon: icon(ListChecksIcon) },
-  { path: '/automations', label: 'Automations', icon: icon(ZapIcon) },
-  { path: '/teams', label: 'Teams', icon: icon(UsersIcon) },
-  { path: '/knowledge', label: 'Knowledge', icon: icon(BookOpenIcon) },
-  { path: '/settings', label: 'Settings', icon: icon(SettingsIcon) },
-  { path: '/api-keys', label: 'API Keys', icon: icon(KeyRoundIcon) },
+const NAV: { path: string; label: MessageKey; icon: (p: IconProps) => JSX.Element }[] = [
+  { path: '/inbox', label: 'nav.inbox', icon: icon(InboxIcon) },
+  { path: '/home', label: 'nav.chat', icon: icon(MessageSquareIcon) },
+  { path: '/agents', label: 'nav.agents', icon: icon(BotIcon) },
+  { path: '/tasks', label: 'nav.tasks', icon: icon(ListChecksIcon) },
+  { path: '/automations', label: 'nav.automations', icon: icon(ZapIcon) },
+  { path: '/teams', label: 'nav.teams', icon: icon(UsersIcon) },
+  { path: '/knowledge', label: 'nav.knowledge', icon: icon(BookOpenIcon) },
+  { path: '/settings', label: 'nav.settings', icon: icon(SettingsIcon) },
+  { path: '/api-keys', label: 'nav.apiKeys', icon: icon(KeyRoundIcon) },
 ];
 
 interface SidebarProps {
@@ -33,6 +34,7 @@ interface SidebarProps {
 
 export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps) {
   const location = useLocation();
+  const t = useT();
   const { user, logout } = useUser();
   const waiting = useOptionalNotifications()?.inbox.length ?? 0;
   // The desktop app opens with the slim icon rail from the designs; the web
@@ -80,7 +82,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
 
       {/* Nav */}
       <nav className={cn('flex flex-col gap-0.5 px-2.5 py-3', collapsed && 'md:px-2')}>
-        <div className={cn('px-2 pb-1.5 pt-2 font-mono text-[10px] tracking-[0.16em] text-fg-dim', collapsed && 'md:hidden')}>WORKSPACE</div>
+        <div className={cn('px-2 pb-1.5 pt-2 font-mono text-[10px] tracking-[0.16em] text-fg-dim', collapsed && 'md:hidden')}>{t('nav.workspace')}</div>
         {NAV.map((item) => {
           const active = isActive(item.path);
           return (
@@ -89,7 +91,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
               to={item.path}
               aria-current={active ? 'page' : undefined}
               onClick={onNavigate}
-              title={collapsed ? item.label : undefined}
+              title={collapsed ? t(item.label) : undefined}
               className={cn(
                 'group relative flex min-h-11 items-center gap-3 rounded px-2.5 py-2 text-[14px] font-medium transition-colors md:min-h-0',
                 collapsed && 'md:justify-center md:gap-0 md:px-0',
@@ -105,11 +107,11 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
                   </span>
                 )}
               </span>
-              <span className={cn('flex-1', collapsed && 'md:hidden')}>{item.label}</span>
+              <span className={cn('flex-1', collapsed && 'md:hidden')}>{t(item.label)}</span>
               {item.path === '/inbox' && waiting > 0 && (
                 <span className={cn('rounded-full bg-[#ffb86b]/15 px-1.5 font-mono text-[10.5px] text-[#c77a26] dark:text-[#ffb86b]', collapsed && 'md:hidden')}>
                   {waiting}
-                  <span className="sr-only"> waiting</span>
+                  <span className="sr-only"> {t('nav.waiting')}</span>
                 </span>
               )}
             </Link>
@@ -134,21 +136,21 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
           <button
             type="button"
             onClick={logout}
-            title={collapsed ? 'Sign out' : undefined}
+            title={collapsed ? t('nav.signOut') : undefined}
             className={cn(
               'flex h-11 flex-1 items-center justify-center gap-2 rounded border border-line font-mono text-[11px] tracking-[0.04em] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:h-9',
               collapsed && 'md:w-9 md:flex-none',
             )}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
-            <span className={cn(collapsed && 'md:hidden')}>SIGN OUT</span>
+            <span className={cn('uppercase', collapsed && 'md:hidden')}>{t('nav.signOut')}</span>
           </button>
         </div>
 
         <button
           type="button"
           onClick={toggle}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
           className={cn(
             'mt-1.5 hidden h-8 w-full items-center justify-center gap-2 rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:flex',
             !collapsed && 'font-mono text-[10.5px] tracking-[0.08em]',
@@ -157,7 +159,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cn('transition-transform', collapsed && 'rotate-180')}>
             <path d="M15 6l-6 6 6 6" />
           </svg>
-          {!collapsed && 'COLLAPSE'}
+          {!collapsed && <span className="uppercase">{t('nav.collapse')}</span>}
         </button>
       </div>
     </aside>
