@@ -413,6 +413,7 @@ _SESSION_MIGRATION_COLUMNS = (
     ('group_chat', 'BOOLEAN'),
     ('started_by', 'TEXT'),
     ('incognito', 'BOOLEAN'),
+    ('title', 'TEXT'), ('pinned', 'BOOLEAN'), ('archived', 'BOOLEAN'),
 )
 
 _TASKRUN_INDEXES = (

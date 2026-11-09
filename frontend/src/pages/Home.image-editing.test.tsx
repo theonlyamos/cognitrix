@@ -270,7 +270,8 @@ describe('Home image editing transport', () => {
       await userEvent.click(screen.getByRole('button', { name: '+ new' }));
     }],
     ['active conversation deletion', async () => {
-      await userEvent.click(screen.getByRole('button', { name: 'Delete conversation Current' }));
+      await userEvent.click(screen.getByRole('button', { name: 'More actions for Current' }));
+      await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     }],
   ])('revokes a pending preview exactly once on %s', async (_scenario, runLifecycle) => {
     vi.stubGlobal('confirm', vi.fn(() => true));
@@ -327,7 +328,8 @@ describe('Home image editing transport', () => {
     ] }];
     renderHome();
     await userEvent.click(await screen.findByRole('button', { name: 'Use source.png as edit source' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Delete conversation Current' }));
+    await userEvent.click(screen.getByRole('button', { name: 'More actions for Current' }));
+      await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     await waitFor(() => expect(apiDelete).toHaveBeenCalledWith('/sessions/conversation-1'));
     expect(screen.queryByText('Editing image')).not.toBeInTheDocument();
   });

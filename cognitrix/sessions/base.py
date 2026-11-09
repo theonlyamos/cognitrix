@@ -185,6 +185,15 @@ class Session(Model):
     chats in it, it's left out of chat lists and history search, and it's
     deleted when the person leaves it (or after a day)."""
 
+    title: str | None = None
+    """A name the person gave this chat. None: the list shows its first message."""
+
+    pinned: bool | None = None
+    """Kept at the top of the chat list."""
+
+    archived: bool | None = None
+    """Hidden from the chat list until the person looks at archived chats."""
+
     started_by: dict[str, Any] | None = None
     """Set when an agent started this chat: {agent_id, agent_name, session_id
     (the chat it was started from), depth, report_back, exchanges}"""
