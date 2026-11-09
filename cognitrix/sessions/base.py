@@ -606,7 +606,19 @@ class Session(Model):
         if wsquery is None:
             wsquery = {}
         if record_history:
-            self.update_history(agent.process_prompt(message))
+            entry = agent.process_prompt(message)
+            # Regenerate or edit of a turn that keeps its uploads: the message
+            # is already in the history (marked by the rewind), so update it
+            # in place and answer it again without adding a second copy.
+            kept = next(
+                (m for m in reversed(self.chat[-12:]) if isinstance(m, dict) and m.get('resume')),
+                None,
+            ) if isinstance(entry, dict) and not attachments else None
+            if kept is not None:
+                kept.pop('resume', None)
+                kept['content'] = entry.get('content', kept.get('content'))
+            else:
+                self.update_history(entry)
             # User uploads ride alongside the text turn as immutable artifact
             # references and confined tool-root-relative document paths.
             if attachments:

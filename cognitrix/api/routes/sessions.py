@@ -66,6 +66,10 @@ class SessionRewind(BaseModel):
     # What the page shows for that message; a mismatch means the page is out
     # of step with the saved chat and nothing is removed.
     expected: str | None = Field(default=None, max_length=200_000)
+    keep: bool = False
+    """Keep the message and its uploads and drop only what came after it, so
+    it can be answered again. ``text`` then replaces its wording."""
+    text: str | None = None
 
 
 class SessionCreate(BaseModel):
@@ -568,12 +572,22 @@ async def rewind_session(
                 text = str(message['content'])
                 if body.expected is not None and not body.expected.strip().startswith(text.strip()):
                     break
+                if body.keep:
+                    end = index + 1
+                    while end < len(chat) and is_upload_note(chat[end]):
+                        end += 1
+                    kept = {**message, 'resume': True}
+                    if body.text is not None and body.text.strip():
+                        kept['content'] = body.text.strip()
+                    session.chat = [*chat[:index], kept, *chat[index + 1:end]]
+                    await session.save()
+                    return {'message': str(kept['content']), 'message_count': len(session.chat)}
                 # Dropping the turn would drop its uploads, and the resend
                 # would not carry them.
                 if index + 1 < len(chat) and is_upload_note(chat[index + 1]):
                     raise HTTPException(
                         status_code=409,
-                        detail='This message has attachments, so it can\'t be edited or regenerated.',
+                        detail='This message has attachments. Ask again with keep to hold on to them.',
                     )
                 session.chat = chat[:index]
                 await session.save()

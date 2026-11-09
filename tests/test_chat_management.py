@@ -131,3 +131,26 @@ async def test_rewind_skips_upload_notes_and_keeps_turns_with_attachments(tmp_pa
     # The upload note is not a turn: the second question is turn 1.
     result = await routes.rewind_session(sid, routes.SessionRewind(turn=1, expected='By how much?'), ctx)
     assert result == {'message': 'By how much?', 'message_count': 3}
+
+
+async def test_rewind_can_keep_a_turn_and_its_uploads_to_answer_it_again(tmp_path):
+    from cognitrix.api.routes import sessions as routes
+    from cognitrix.media.documents import DOCUMENT_HISTORY_MARKER
+
+    await _initialize_routes_db(tmp_path)
+    note = {'role': 'User', 'type': 'text', 'content': f'{DOCUMENT_HISTORY_MARKER}\nuploads/u/s/report.pdf'}
+    session = await _owned_session('user-1', 'agent-1', chat=[
+        {'role': 'user', 'type': 'text', 'content': 'Summarise this file'},
+        note,
+        {'role': 'assistant', 'type': 'text', 'content': 'It says sales rose.'},
+    ])
+    result = await routes.rewind_session(
+        str(session.id),
+        routes.SessionRewind(turn=0, expected='Summarise this file', keep=True, text='Summarise it in French'),
+        _ctx('user-1'),
+    )
+    assert result == {'message': 'Summarise it in French', 'message_count': 2}
+    from cognitrix.sessions.base import Session
+    chat = (await Session.get(str(session.id))).chat
+    assert chat[0]['content'] == 'Summarise it in French' and chat[0]['resume'] is True
+    assert chat[1]['content'] == note['content']
