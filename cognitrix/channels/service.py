@@ -149,6 +149,11 @@ class ChannelService:
         if channel is not None and channel.enabled and channel.bot_token:
             self._start_runner(channel_id)
 
+    async def cancel_user_turns(self, user_key: str) -> None:
+        """Stop every running reply of one person's channels (account disabled)."""
+        for channel in await ChatChannel.find({'user_id': str(user_key)}) or []:
+            await self.cancel_turn(channel.id)
+
     async def cancel_turn(self, channel_id: str) -> None:
         """Stop the running reply, e.g. because the chat it answers was unlinked."""
         turn = self._turns.pop(channel_id, None)
@@ -256,9 +261,25 @@ class ChannelService:
     def _is_owner(self, channel: ChatChannel, chat_id: str, sender_id: str) -> bool:
         return bool(channel.chat_id) and chat_id == channel.chat_id and sender_id == channel.peer_id
 
+    async def _owner_active(self, channel: ChatChannel) -> bool:
+        """The channel's person still has a working account.
+
+        Disabling someone has to cut off their bots too: a linked chat acts
+        as that person without a password.
+        """
+        from cognitrix.models import User
+
+        user = await User.get(channel.user_id) or await User.find_one({'email': channel.user_id})
+        return not (user is not None and getattr(user, 'disabled', None))
+
     async def _on_message(self, channel_id: str, msg: Incoming) -> None:
         channel = await ChatChannel.get(channel_id)
         if channel is None or not msg.text.strip():
+            return
+        if not await self._owner_active(channel):
+            await self.cancel_turn(channel.id)
+            if msg.private:
+                await self._reply(channel, msg.chat_id, 'This account is disabled.')
             return
         if not channel.chat_id:
             await self._try_link(channel, msg)
@@ -552,6 +573,9 @@ class ChannelService:
         if not self._is_owner(channel, press.chat_id, press.sender_id):
             await transport.answer_button(press, 'Only the linked account can answer this.')
             return
+        if not await self._owner_active(channel):
+            await transport.answer_button(press, 'This account is disabled.')
+            return
         kind, _, rest = press.data.partition(':')
         item_id, _, choice = rest.rpartition(':')
         outcome = ''
@@ -655,6 +679,8 @@ class ChannelService:
             if not channel.chat_id or channel.id not in self._connected:
                 continue
             try:
+                if not await self._owner_active(channel):
+                    continue
                 seen = await self._delivered_set(channel.id)
                 notes, rows = await self._pending_items(channel)
                 if channel.send_alerts:

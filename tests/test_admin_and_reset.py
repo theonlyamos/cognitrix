@@ -147,3 +147,47 @@ def test_smtp_message(monkeypatch):
     mailer._send('ada@example.com', 'Hi', 'Body')
     assert calls == [('connect', 'smtp.example.com', 587), ('starttls',), ('login', 'robot@example.com'),
                      ('send', 'ada@example.com', 'robot@example.com', 'Hi')]
+
+
+async def test_an_open_invite_admits_only_one_of_two_racing_signups(people):
+    import asyncio
+    import secrets
+
+    from cognitrix.api.routes import admin, auth
+    from cognitrix.models import User
+
+    invite = await admin.create_invite(admin.InviteBody(), _ctx(people.ada))
+
+    async def join(email):
+        try:
+            await auth.signup(User(name='New', email=email, password=secrets.token_urlsafe(12)),
+                              _request(invite['token']))
+            return True
+        except HTTPException:
+            return False
+
+    results = await asyncio.gather(join('one@example.com'), join('two@example.com'))
+    assert sorted(results) == [False, True]
+    created = [u.email for u in await User.all() if u.email in ('one@example.com', 'two@example.com')]
+    assert len(created) == 1
+    assert (await admin.list_invites(_ctx(people.ada)))[0]['used_by'] == created[0]
+
+
+async def test_reset_links_never_use_the_address_the_caller_sent(people, monkeypatch):
+    """Mail server set but no public address: no link is built from the Host header."""
+    from cognitrix.api.routes import auth
+    from cognitrix.common import email as mailer
+
+    sent = []
+
+    async def fake_send(to, subject, body):
+        sent.append(body)
+
+    monkeypatch.setenv('COGNITRIX_SMTP_HOST', 'smtp.example.com')
+    monkeypatch.delenv('COGNITRIX_PUBLIC_URL', raising=False)
+    monkeypatch.setattr(mailer, 'send', fake_send)
+    assert (await auth.auth_options())['password_reset_by_email'] is False
+    request = SimpleNamespace(query_params={}, base_url='https://evil.example/')
+    with pytest.raises(HTTPException):
+        await auth.forgot_password(auth.ForgotPassword(email='bob@example.com'), request)
+    assert sent == []

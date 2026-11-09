@@ -116,3 +116,21 @@ async def test_tool_searches_only_what_the_agent_was_given(kb):
 
     nothing = await search_knowledge.run(query='leave', parent=SimpleNamespace(owner_id='user-1', knowledge=[]))
     assert 'no document collections' in str(nothing)
+
+
+async def test_a_document_deleted_while_being_read_leaves_no_passages(kb, monkeypatch):
+    """Delete during ingestion: nothing of the document may stay searchable."""
+    from cognitrix import knowledge
+    from cognitrix.knowledge import store
+    from cognitrix.knowledge.models import KnowledgeDocument
+
+    collection = await knowledge.create_collection('u1', 'Notes')
+    real_add = store.add
+
+    async def add_after_delete(collection_id, document_id, name, pieces):
+        await KnowledgeDocument.delete_many({'id': document_id})
+        return await real_add(collection_id, document_id, name, pieces)
+
+    monkeypatch.setattr(store, 'add', add_after_delete)
+    await knowledge.add_document(collection, 'gone.txt', b'The vault code is 4417.', wait=True)
+    assert await knowledge.search('u1', [str(collection.id)], 'vault code') == []

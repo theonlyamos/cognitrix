@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import os
@@ -31,6 +32,13 @@ RESET_TOKEN_MINUTES = 60
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def _reset_by_email_ready() -> bool:
+    """Reset links need a mail server and this server's own address."""
+    from cognitrix.common import email as mailer
+
+    return mailer.configured() and bool(mailer.public_url())
 
 
 async def _signup_open() -> bool:
@@ -118,12 +126,35 @@ async def signup(new_user: User, request: Request):
     new_user.reset_expires = None
     new_user.tokens_valid_after = None
 
-    await new_user.save()
-    if invite is not None:
-        from cognitrix.models.invite import Invite
+    if invite is not None and not await _claim_invite(invite, new_user.email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This invitation was already used"
+        )
+    try:
+        await new_user.save()
+    except BaseException:
+        if invite is not None:
+            from cognitrix.models.invite import Invite
 
-        await Invite.update_one({'id': invite.id}, {'used_at': int(time.time()), 'used_by': new_user.email})
+            await Invite.update_one({'id': invite.id}, {'used_at': None, 'used_by': None})
+        raise
     return {"message": "User created successfully"}
+
+
+_INVITE_CLAIMS = asyncio.Lock()
+
+
+async def _claim_invite(invite, email: str) -> bool:
+    """Mark the invitation used, once. Two sign-ups racing on one link: one wins."""
+    from cognitrix.models.invite import Invite
+
+    async with _INVITE_CLAIMS:
+        fresh = await Invite.get(invite.id)
+        if fresh is None or fresh.used_at:
+            return False
+        await Invite.update_one({'id': invite.id}, {'used_at': int(time.time()), 'used_by': email})
+        return True
 
 
 async def _usable_invite(token: str | None, email: str):
@@ -153,7 +184,7 @@ async def auth_options(invite: str | None = None):
         valid_invite = bool(row and not row.used_at and int(row.expires_at or 0) >= int(time.time()))
     return {
         'signup_open': await _signup_open() or valid_invite,
-        'password_reset_by_email': mailer.configured(),
+        'password_reset_by_email': _reset_by_email_ready(),
     }
 
 
@@ -173,7 +204,7 @@ async def forgot_password(body: ForgotPassword, request: Request):
     from cognitrix.common import email as mailer
 
     answer = {"message": "If that address has an account, a reset link is on its way."}
-    if not mailer.configured():
+    if not _reset_by_email_ready():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is not set up on this server")
     user = await User.find_one({'email': body.email.strip()})
     if user is None or getattr(user, 'disabled', None):
@@ -187,7 +218,8 @@ async def forgot_password(body: ForgotPassword, request: Request):
         'reset_token_hash': _hash_token(token),
         'reset_expires': int(time.time()) + RESET_TOKEN_MINUTES * 60,
     })
-    base = mailer.public_url() or str(request.base_url).rstrip('/')
+    # Never from the request: its Host header is whatever the caller sent.
+    base = mailer.public_url()
     try:
         await mailer.send(
             user.email,

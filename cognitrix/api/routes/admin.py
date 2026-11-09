@@ -112,6 +112,13 @@ async def update_user(user_id: str, body: UserUpdate, ctx: AuthContext = Depends
     if changes:
         await User.update_one({'id': user.id}, changes)
         _audit(ctx, 'changed ' + ', '.join(k for k in changes if k not in ('tokens_valid_after',)), user.email)
+        if changes.get('disabled'):
+            # Their linked chat apps act as them without a password.
+            from cognitrix.channels.service import get_service
+
+            service = get_service()
+            if service is not None:
+                await service.cancel_user_turns(agent_access.owner_key(user))
     return await _project(await User.get(user_id), str(ctx.user.id))
 
 

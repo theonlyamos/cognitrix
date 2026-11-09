@@ -587,3 +587,23 @@ def test_discord_add_link_comes_from_the_token():
     head = base64.b64encode(b'123456789012345678').decode().rstrip('=')
     assert _discord_app_id(f'{head}.abc.def') == '123456789012345678'
     assert _discord_app_id('not-a-token') == ''
+
+
+async def test_a_disabled_person_cannot_use_their_linked_chat(db):
+    from cognitrix.models import User
+
+    person = User(name='Bob', email='bob@example.com', password='x' * 12)
+    await person.save()
+    person = await User.find_one({'email': 'bob@example.com'})
+    channel = await _channel(user=str(person.id), chat_id='c1', peer_id='p1')
+    service, transport = await _service(channel)
+    await User.update_one({'id': person.id}, {'disabled': True})
+
+    await service._on_message(channel.id, _msg('run the report'))
+    assert transport.sent[-1][1] == 'This account is disabled.'
+    assert channel.id not in service._turns
+
+    await service._on_button(channel.id, ButtonPress(
+        chat_id='c1', sender_id='p1', data='ta:abc:1', message_ref='1'))
+    assert transport.acks == ['This account is disabled.']
+    assert await service.deliver_once() == 0

@@ -74,6 +74,14 @@ async def _ingest(document_id: str, collection_id: str, name: str, data: bytes) 
         text = await asyncio.get_running_loop().run_in_executor(None, extract.to_text, name, data)
         pieces = extract.passages(text)
         await store.add(collection_id, document_id, name, pieces)
+        # Deleted while it was being read: take the passages back out, or
+        # agents could still quote a document nobody can see or remove.
+        if await KnowledgeDocument.get(document_id) is None:
+            if await KnowledgeCollection.get(collection_id) is None:
+                await store.remove_collection(collection_id)
+            else:
+                await store.remove_document(collection_id, document_id)
+            return
         await KnowledgeDocument.update_one({'id': document_id}, {
             'status': 'ready', 'error': '', 'passages': len(pieces), 'characters': len(text),
         })
