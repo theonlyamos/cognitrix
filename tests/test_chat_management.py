@@ -106,3 +106,28 @@ async def test_a_running_chat_is_left_alone(tmp_path, monkeypatch):
         with pytest.raises(HTTPException) as exc_info:
             await call
         assert exc_info.value.status_code == 409
+
+
+async def test_rewind_skips_upload_notes_and_keeps_turns_with_attachments(tmp_path):
+    from cognitrix.api.routes import sessions as routes
+    from cognitrix.media.documents import DOCUMENT_HISTORY_MARKER
+
+    await _initialize_routes_db(tmp_path)
+    chat = [
+        {'role': 'user', 'type': 'text', 'content': 'Summarise this file'},
+        {'role': 'User', 'type': 'text', 'content': f'{DOCUMENT_HISTORY_MARKER}\nuploads/u/s/report.pdf'},
+        {'role': 'assistant', 'type': 'text', 'content': 'It says sales rose.'},
+        {'role': 'user', 'type': 'text', 'content': 'By how much?'},
+        {'role': 'assistant', 'type': 'text', 'content': 'Ten percent.'},
+    ]
+    session = await _owned_session('user-1', 'agent-1', chat=chat)
+    sid, ctx = str(session.id), _ctx('user-1')
+
+    # The turn with the upload stays as it is.
+    with pytest.raises(HTTPException) as exc_info:
+        await routes.rewind_session(sid, routes.SessionRewind(turn=0, expected='Summarise this file'), ctx)
+    assert exc_info.value.status_code == 409
+
+    # The upload note is not a turn: the second question is turn 1.
+    result = await routes.rewind_session(sid, routes.SessionRewind(turn=1, expected='By how much?'), ctx)
+    assert result == {'message': 'By how much?', 'message_count': 3}

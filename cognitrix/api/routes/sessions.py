@@ -517,19 +517,43 @@ async def rewind_session(
         raise _not_found()
     if _chat_is_running(ctx, session_id):
         raise HTTPException(status_code=409, detail='This chat is still working. Stop it first.')
+    from cognitrix.media.documents import DOCUMENT_HISTORY_MARKER
+
+    chat = list(session.chat or [])
+
+    def is_user(message) -> bool:
+        return str(message.get('role', '')).lower() == 'user'
+
+    def is_upload_note(message) -> bool:
+        # Bookkeeping the app adds after a turn with uploads; not a message
+        # the person typed, so it is not a turn of its own.
+        return (
+            is_user(message)
+            and (message.get('type') != 'text'
+                 or str(message.get('content') or '').startswith(DOCUMENT_HISTORY_MARKER))
+        )
+
     seen = -1
-    for index, message in enumerate(session.chat or []):
+    for index, message in enumerate(chat):
         if (
-            str(message.get('role', '')).lower() == 'user'
+            is_user(message)
             and message.get('type') == 'text'
             and str(message.get('content') or '').strip()
+            and not is_upload_note(message)
         ):
             seen += 1
             if seen == body.turn:
                 text = str(message['content'])
                 if body.expected is not None and not body.expected.strip().startswith(text.strip()):
                     break
-                session.chat = list(session.chat[:index])
+                # Dropping the turn would drop its uploads, and the resend
+                # would not carry them.
+                if index + 1 < len(chat) and is_upload_note(chat[index + 1]):
+                    raise HTTPException(
+                        status_code=409,
+                        detail='This message has attachments, so it can\'t be edited or regenerated.',
+                    )
+                session.chat = chat[:index]
                 await session.save()
                 return {'message': text, 'message_count': len(session.chat)}
     raise HTTPException(status_code=404, detail='That message is no longer in this chat.')

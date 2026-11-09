@@ -9,7 +9,7 @@ import { useSSE, type SSEEvent } from '@/hooks/useSSE';
 import { useEventStream } from '@/hooks/useEventStream';
 import { fetchChatRuns, useChatRuns } from '@/hooks/useChatRuns';
 import { useResource } from '@/hooks/useResource';
-import { api } from '@/lib/api';
+import { api, errorMessage } from '@/lib/api';
 import { desktop } from '@/lib/desktop';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import ReasoningPicker from '@/components/ReasoningPicker';
@@ -63,7 +63,17 @@ interface Rework {
   expected: string;
 }
 
-const isUserTurn = (m: ChatMessage) => m.role === 'user' && !!m.content.trim();
+/** The note the server keeps after a turn with uploaded files. */
+const UPLOAD_NOTE = '[User uploaded files, readable with your file tools:]';
+const isUploadNote = (m: ChatMessage) => m.role === 'user' && m.content.startsWith(UPLOAD_NOTE);
+const isUserTurn = (m: ChatMessage) => m.role === 'user' && !!m.content.trim() && !isUploadNote(m);
+/** A turn sent with files or images can't be resent: the resend would lose them. */
+const carriesUploads = (all: ChatMessage[], index: number) => {
+  const message = all[index];
+  const next = all[index + 1];
+  return !!message?.artifacts?.length || /(^|\n)📎 /.test(message?.content || '')
+    || (!!next && next.role === 'user' && (isUploadNote(next) || !next.content.trim()));
+};
 
 /** One row of the combined chat list: a chat with an agent or a team. */
 interface ChatSummary extends ConvoSummary {
@@ -980,7 +990,7 @@ export default function Home() {
         } catch (error) {
           const status = (error as { response?: { status?: number } })?.response?.status;
           setReworkError(status === 409
-            ? 'This chat is still working. Stop it first.'
+            ? errorMessage(error, 'This chat is still working. Stop it first.')
             : 'That message could not be replaced. Reload the chat and try again.');
           return;
         }
@@ -1253,6 +1263,9 @@ export default function Home() {
   const empty = messages.length === 0;
   // Saved one-to-one chats only, and never while a reply is on its way.
   const canRework = !!activeSessionId && !busy && isConnected && !incognito;
+  let lastQuestionIndex = messages.length - 1;
+  while (lastQuestionIndex >= 0 && !isUserTurn(messages[lastQuestionIndex])) lastQuestionIndex -= 1;
+  const canRegenerate = lastQuestionIndex >= 0 && !carriesUploads(messages, lastQuestionIndex);
   let lastReplyIndex = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i].role === 'assistant' && messages[i].content.trim()) {
@@ -1544,8 +1557,8 @@ export default function Home() {
                   streaming={streaming && index === messages.length - 1 && message.role === 'assistant'}
                   onEditSource={selectArtifactEditSource}
                   selectedEditSourceId={editSource?.type === 'artifact' ? editSource.artifact.id : undefined}
-                  onEdit={canRework ? startRework : undefined}
-                  onRegenerate={canRework && index === lastReplyIndex ? regenerate : undefined}
+                  onEdit={canRework && isUserTurn(message) && !carriesUploads(messages, index) ? startRework : undefined}
+                  onRegenerate={canRework && index === lastReplyIndex && canRegenerate ? regenerate : undefined}
                 />
               ))}
 
