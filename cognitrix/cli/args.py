@@ -3,7 +3,7 @@ CLI argument parsing and configuration.
 """
 import argparse
 
-from .handlers import manage_agents, manage_tools
+from .handlers import manage_agents, manage_tools, reset_password
 from .handlers_skills import manage_skills
 from .utils import str_or_file
 
@@ -47,6 +47,14 @@ def get_arguments():
     skills_parser.add_argument('--arg', action='append', dest='skill_args', default=[],
                              help='Skill arguments as key=value (can be repeated, e.g., --arg file_path=doc.pdf --arg depth=short)')
     skills_parser.set_defaults(func=manage_skills)
+
+    # Forgotten password: whoever can run commands on this machine can set a new one.
+    reset_parser = subparsers.add_parser(
+        'reset-password', help="Set a new password for an account (for a forgotten password)")
+    reset_parser.add_argument('email', type=str, help='Email address of the account')
+    reset_parser.add_argument('--password', type=str, default='',
+                              help='The new password. Leave out to be asked for it.')
+    reset_parser.set_defaults(func=reset_password)
 
     # Main arguments
     parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')

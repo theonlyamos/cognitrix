@@ -16,6 +16,7 @@ import { ProviderKeys } from '@/components/settings/ProviderKeys';
 import { AppearanceSettings } from '@/components/settings/Appearance';
 import { MemorySettings } from '@/components/settings/Memory';
 import { UsageSettings } from '@/components/settings/Usage';
+import { PasswordChange } from '@/components/settings/PasswordChange';
 import {
   Group, SectionHeader, SettingRow, SubHeading, buttonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -36,7 +37,7 @@ interface SectionMeta {
 }
 
 const SECTIONS: SectionMeta[] = [
-  { id: 'account', label: 'Account', group: 'GENERAL', keywords: 'profile email name sign out devices api keys' },
+  { id: 'account', label: 'Account', group: 'GENERAL', keywords: 'profile email name password sign out devices api keys' },
   { id: 'appearance', label: 'Appearance', group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
   { id: 'models', label: 'Models and keys', group: 'AI', keywords: 'providers api key openai anthropic claude gemini google groq openrouter cerebras ollama' },
   { id: 'usage', label: 'Usage', group: 'AI', keywords: 'cost spend tokens money bill price how much' },
@@ -111,6 +112,7 @@ function AccountSection() {
             </span>
           )}
         />
+        <PasswordChange />
         <SettingRow label="Cognitrix API keys" detail="For scripts and other apps that call this engine">
           <Link to="/api-keys" className={buttonClass}>Manage</Link>
         </SettingRow>

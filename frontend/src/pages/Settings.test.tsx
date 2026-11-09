@@ -151,4 +151,24 @@ describe('isSendKey', () => {
     expect(isSendKey(press({ metaKey: true }), 'ctrl-enter')).toBe(true);
     expect(isSendKey(press({ key: 'a' }), 'enter')).toBe(false);
   });
+
+  it('changes the password and keeps this device signed in', async () => {
+    const { api } = await import('@/lib/api');
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: { access_token: 'fresh-token' } });
+    renderAt('/settings/account');
+    fireEvent.click(screen.getByRole('button', { name: 'Change' }));
+    fireEvent.change(screen.getByLabelText('Current password'), { target: { value: 'old-password' } });
+    fireEvent.change(screen.getByLabelText('New password'), { target: { value: 'new-password-1' } });
+    fireEvent.change(screen.getByLabelText('Repeat new password'), { target: { value: 'different' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save password' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('different');
+    expect(post).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Repeat new password'), { target: { value: 'new-password-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save password' }));
+    expect(await screen.findByText(/Password changed/)).toBeInTheDocument();
+    expect(post).toHaveBeenCalledWith('/auth/password', { current_password: 'old-password', new_password: 'new-password-1' });
+    expect(localStorage.getItem('token')).toBe('fresh-token');
+    post.mockRestore();
+  });
 });
