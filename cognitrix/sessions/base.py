@@ -198,6 +198,32 @@ class Session(Model):
     """Set when an agent started this chat: {agent_id, agent_name, session_id
     (the chat it was started from), depth, report_back, exchanges}"""
 
+    async def save(self) -> Self:
+        """Save, then refresh this chat's row in the chat-list index."""
+        result = await super().save()
+        from cognitrix.sessions import index as chat_index
+
+        await chat_index.record(self)
+        return result
+
+    @classmethod
+    async def update_one(cls, conditions: dict[str, Any], data: dict[str, Any]) -> int:
+        result = await super().update_one(conditions, data)
+        if conditions.get('id'):
+            from cognitrix.sessions import index as chat_index
+
+            await chat_index.refresh(str(conditions['id']))
+        return result
+
+    @classmethod
+    async def delete_many(cls, conditions: dict[str, Any], cascade: bool = False):
+        result = await super().delete_many(conditions, cascade)
+        if conditions.get('id'):
+            from cognitrix.sessions import index as chat_index
+
+            await chat_index.forget(conditions['id'])
+        return result
+
     @classmethod
     async def load(cls, session_id: str) -> Self:
         """Load an existing session or create a new one if it doesn't exist"""
@@ -223,6 +249,9 @@ class Session(Model):
         if not session:
             return False
         await Model.delete(session)
+        from cognitrix.sessions import index as chat_index
+
+        await chat_index.forget(session_id)
         return True
 
 

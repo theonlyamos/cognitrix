@@ -751,6 +751,7 @@ async def _ensure_schema():
     from cognitrix.models.mcp_server import MCPServer
     from cognitrix.models.memory import Memory, MemorySettings
     from cognitrix.models.usage import UsageDay
+    from cognitrix.sessions.index import ChatIndex
     from cognitrix.models.voice_settings import VoiceSettings
     from cognitrix.session_ownership import SessionOwnership
     from cognitrix.tasks.events import TaskRunEvent
@@ -801,6 +802,7 @@ async def _ensure_schema():
         Memory,
         MemorySettings,
         UsageDay,
+        ChatIndex,
     ):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)
