@@ -20,7 +20,7 @@ primary_region = 'lhr'
 
 [[mounts]]
   source = 'cognitrix_data'
-  destination = '/root/.cognitrix'
+  destination = '/home/cognitrix/.cognitrix'
 
 [http_service]
   internal_port = 8000
