@@ -67,8 +67,8 @@ export const desktop = {
   pickWorkingFolder: () => invokeDesktop<string | null>('pick_working_folder'),
   /** Native notification; clicking it opens `path` in the main window.
    *  Resolves true when one was shown. */
-  notify: (title: string, body: string, path?: string, urgent?: boolean) =>
-    invokeDesktop<boolean>('desktop_notify', { title, body, path: path ?? null, urgent: urgent ?? false }),
+  notify: (title: string, body: string, path?: string, urgent?: boolean, approval?: string) =>
+    invokeDesktop<boolean>('desktop_notify', { title, body, path: path ?? null, urgent: urgent ?? false, approval: approval ?? null }),
   /** Rejects with the reason when the OS won't show it. */
   testNotification: () => invokeDesktop<void>('test_notification'),
   showMain: (path?: string) => invokeDesktop<void>('show_main_window', { path: path ?? null }),
@@ -99,21 +99,26 @@ export interface SystemNotice {
   href?: string;
   /** Approvals and questions: stays on screen until the person acts. */
   urgent?: boolean;
+  /** Browser notifications with the same tag replace each other. */
+  tag?: string;
+  /** An approval's id: Windows shows Approve and Deny buttons, which the
+   *  shell reports back as a `notification-action` event. */
+  approval?: string;
 }
 
 /** Show a system notification: a native Windows toast in the desktop app,
  *  the browser's Notification API on the web (only if the person already
  *  allowed it). Resolves true when one was shown. */
-export async function systemNotify({ title, body, href, urgent }: SystemNotice): Promise<boolean> {
+export async function systemNotify({ title, body, href, urgent, tag, approval }: SystemNotice): Promise<boolean> {
   if (isDesktop()) {
     try {
-      return Boolean(await desktop.notify(title, body, href, urgent));
+      return Boolean(await desktop.notify(title, body, href, urgent, approval));
     } catch {
       return false;
     }
   }
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    const n = new Notification(title, { body });
+    const n = new Notification(title, { body, ...(tag ? { tag } : {}) });
     if (href) {
       n.onclick = () => {
         window.focus();

@@ -10,6 +10,8 @@ import { parseChatEntries, toChatMessages, fmtRelative, type BackendChatEntry } 
 import { cn } from '@/lib/utils';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
+import { useApprovalSeen } from '@/hooks/useApprovalSeen';
+import { setViewingChat } from '@/lib/chatPresence';
 
 interface Member { id: string; name: string; handle: string; lead: boolean; provider?: string | null; model?: string | null }
 interface ChatSummary { id: string; title: string; updated_at?: string | null; running: boolean }
@@ -76,6 +78,11 @@ export default function TeamChat() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [question, setQuestion] = useState<QuestionRequest | null>(null);
+  useApprovalSeen(approvals);
+  useEffect(() => {
+    setViewingChat(chatId);
+    return () => setViewingChat(null);
+  }, [chatId]);
   const [follow, setFollow] = useState<{ sid: string; runId: string } | null>(null);
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -204,6 +211,11 @@ export default function TeamChat() {
       case 'approval_request': {
         const req = event as unknown as ApprovalRequest;
         if (req.request_id) setApprovals((prev) => (prev.some((a) => a.request_id === req.request_id) ? prev : [...prev, req]));
+        break;
+      }
+      case 'approval_resolved': {
+        const rid = (event as { request_id?: string }).request_id;
+        if (rid) setApprovals((prev) => prev.filter((a) => a.request_id !== rid));
         break;
       }
       case 'question_request': {

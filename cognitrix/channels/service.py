@@ -522,6 +522,7 @@ class ChannelService:
         typing = asyncio.create_task(self._keep_typing(channel))
         approval_token = web_turn_ctx.set({
             'emit': emit, 'session_id': str(session.id), 'bypass': False, 'user_key': channel.user_id,
+            'agent_name': agent.name, 'origin': f'channel:{channel.id}',
         })
         question_token = question_turn_ctx.set(QuestionTurnContext(
             emit=emit, session_id=str(session.id),
@@ -585,6 +586,8 @@ class ChannelService:
             from cognitrix.safety.approval_gate import resolve_web_approval
 
             ok = resolve_web_approval(item_id, approved=choice == '1', user_key=channel.user_id)
+            if ok:
+                await self._close_delivery(channel.id, 'chat_approval', item_id)
             outcome = ('Approved.' if choice == '1' else 'Denied.') if ok else 'This request has already ended.'
         elif kind == 'q':
             outcome = await self._answer_question(channel, item_id, choice)
@@ -669,8 +672,32 @@ class ChannelService:
             cache[task_id] = getattr(task, 'title', '') or ''
         return cache[task_id]
 
+    async def _deliver_chat_approvals(self, channel: ChatChannel, seen: set[tuple[str, str]]) -> int:
+        """Approvals from chats nobody answered on the chat page in time."""
+        from cognitrix.safety import approval_alerts
+
+        sent = 0
+        for rid, entry in approval_alerts.due_chat_approvals(channel.user_id):
+            if ('chat_approval', rid) in seen:
+                continue
+            if entry.get('origin') == f'channel:{channel.id}':
+                # This chat started the turn and already has the buttons.
+                await self._record(channel.id, 'chat_approval', rid, closed=True)
+                continue
+            body = (f'Approval needed: {approval_alerts.headline(entry)} '
+                    f'({entry.get("risk_level", "")} risk).\n'
+                    f'```\n{_params_preview(entry.get("params"))}\n```')
+            ref = await self._reply(channel, channel.chat_id, body, [
+                Button('Approve', f'ca:{rid}:1', 'primary'),
+                Button('Deny', f'ca:{rid}:0', 'danger'),
+            ])
+            await self._record(channel.id, 'chat_approval', rid, ref)
+            sent += 1
+        return sent
+
     async def deliver_once(self) -> int:
         """Send new alerts and approvals to every linked, connected channel."""
+        from cognitrix.safety import approval_alerts
         from cognitrix.tasks import approvals
 
         sent = 0
@@ -710,13 +737,21 @@ class ChannelService:
                         ])
                         await self._record(channel.id, 'approval', str(row.id), ref)
                         sent += 1
+                    sent += await self._deliver_chat_approvals(channel, seen)
                 # Approvals answered elsewhere: drop their buttons.
                 for delivery in await ChannelDelivery.find(
-                        {'channel_id': channel.id, 'item_kind': 'approval', 'closed': False}) or []:
-                    row = await approvals.TaskApproval.get(delivery.item_id)
-                    if row is not None and row.status == approvals.PENDING:
+                        {'channel_id': channel.id, 'closed': False}) or []:
+                    if delivery.item_kind == 'chat_approval':
+                        if approval_alerts.still_pending(delivery.item_id):
+                            continue
+                        status = 'answered'
+                    elif delivery.item_kind == 'approval':
+                        row = await approvals.TaskApproval.get(delivery.item_id)
+                        if row is not None and row.status == approvals.PENDING:
+                            continue
+                        status = getattr(row, 'status', 'gone')
+                    else:
                         continue
-                    status = getattr(row, 'status', 'gone')
                     transport = self._transports.get(channel.id)
                     if transport is not None and delivery.message_ref:
                         original = self._button_text.pop(

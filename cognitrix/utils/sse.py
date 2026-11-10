@@ -816,6 +816,7 @@ class SSEManager:
                     'session_id': session.id,
                     'bypass': bypass,
                     'user_key': self.user_key,
+                    'agent_name': getattr(self.agent, 'name', '') or '',
                 })
                 question_token = question_turn_ctx.set(QuestionTurnContext(
                     emit=emit,

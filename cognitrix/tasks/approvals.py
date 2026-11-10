@@ -133,9 +133,13 @@ async def request_task_approval(ctx: dict, tool_name: str, params: dict[str, Any
     await row.save()
     from cognitrix.common import webpush
 
+    from cognitrix.safety import approval_alerts
+
     webpush.send_soon(
-        user_id, 'Approval needed', f'A task wants to run {tool_name.replace("_", " ")}.',
-        url=f'/tasks/{row.task_id}' if row.task_id else '/inbox', tag=f'approval-{row.id}')
+        user_id, f'Approval needed: a task wants to run {approval_alerts.tool_label(tool_name)}',
+        approval_alerts.params_preview(params, 300),
+        url=f'/tasks/{row.task_id}' if row.task_id else '/inbox', tag=f'approval-{row.id}',
+        extra=approval_alerts.push_actions('task', str(row.id), str(user_id), str(row.run_id)))
     await _emit(ctx, 'approval_requested', approval_payload(row))
 
     deadline = asyncio.get_running_loop().time() + approval_timeout_seconds()
