@@ -24,10 +24,22 @@ full-screen tools (`take_screenshot`, `mouse_click`, `text_input`, ...) still wo
 | `scroll_window(window_id, direction="down", amount=3, element?)` | Scroll the window or one control | no |
 
 "Asks first" follows the approval policy in `cognitrix/safety/destructive_ops.py`:
-looking, opening an app and scrolling are harmless; anything that presses,
+looking and scrolling are harmless; opening an app, and anything that presses,
 types or changes text can press "Send" in any app, so it asks like the
 full-screen desktop tools do (and "remember for this chat" applies).
-Per-app Allow/Always/Deny approvals are planned for later.
+
+### Answering once per app
+
+The approval card for a click, typing, key press or `set_text` names the app
+and adds two buttons: **allow <App> in this chat** and **always allow <App>**.
+"Always" is saved for the person (not the agent) and shows up under
+Settings > Agent access > Apps agents can use, where each app is Always allow,
+Ask or Never. "Never" refuses the action without asking. The CLI prompt has
+the same choice (`a`).
+
+An app answer never covers `open_app`, an action that takes over the screen,
+or an agent whose own level or tool setting says to ask or block. Code:
+`cognitrix/computer/apps.py`, `GET`/`PUT /computer/apps`.
 
 Coordinates are pixels of the window screenshot the model was shown (it is
 scaled to fit 1280x800), or a 0-1000 grid for Gemini, the same as `take_screenshot`.

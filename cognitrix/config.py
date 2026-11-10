@@ -756,6 +756,7 @@ async def _ensure_schema():
     from cognitrix.knowledge.models import KnowledgeCollection, KnowledgeDocument
     from cognitrix.models.invite import Invite
     from cognitrix.models.push_subscription import PushSubscription
+    from cognitrix.models.computer_app import ComputerAppPermission
     from cognitrix.models.usage import UsageDay
     from cognitrix.sessions.index import ChatIndex
     from cognitrix.models.voice_settings import VoiceSettings
@@ -811,7 +812,7 @@ async def _ensure_schema():
         ChatIndex,
         KnowledgeCollection,
         KnowledgeDocument,
-        Invite, PushSubscription,
+        Invite, PushSubscription, ComputerAppPermission,
     ):
         try:
             create = getattr(model, '_create_table_async', None) or getattr(model, 'create_table', None)

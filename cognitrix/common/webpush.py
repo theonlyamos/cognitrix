@@ -190,9 +190,13 @@ async def _post(subscription, payload: bytes, client: httpx.AsyncClient) -> int:
     return response.status_code
 
 
-async def send_to_user(user_id: str, title: str, body: str = '', *, url: str = '/inbox', tag: str = '') -> int:
+async def send_to_user(user_id: str, title: str, body: str = '', *, url: str = '/inbox', tag: str = '',
+                       extra: dict | None = None) -> int:
     """Push to every browser this person switched on. Returns how many accepted it.
-    Browsers that unsubscribed are forgotten. Never raises."""
+    Browsers that unsubscribed are forgotten. Never raises.
+
+    ``extra`` adds fields the service worker understands: ``actions`` (buttons),
+    ``action_token`` (what the buttons send back) and ``require_interaction``."""
     if not enabled() or not user_id:
         return 0
     from cognitrix.models.push_subscription import PushSubscription
@@ -204,12 +208,19 @@ async def send_to_user(user_id: str, title: str, body: str = '', *, url: str = '
         return 0
     if not rows:
         return 0
-    payload = json.dumps({
+    message: dict = {
         'title': _clip(title, 120) or 'Cognitrix',
         'body': _clip(body, 400),
         'url': url if url.startswith('/') and not url.startswith('//') else '/inbox',
         'tag': tag[:60],
-    }).encode('utf-8')[:MAX_PAYLOAD_BYTES]
+    }
+    for key in ('actions', 'action_token', 'require_interaction'):
+        if extra and extra.get(key):
+            message[key] = extra[key]
+    payload = json.dumps(message).encode('utf-8')
+    if len(payload) > MAX_PAYLOAD_BYTES:
+        message['body'] = _clip(body, 120)
+        payload = json.dumps(message).encode('utf-8')[:MAX_PAYLOAD_BYTES]
     sent = 0
     async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
         for row in rows:
@@ -229,7 +240,8 @@ async def send_to_user(user_id: str, title: str, body: str = '', *, url: str = '
     return sent
 
 
-def send_soon(user_id: str, title: str, body: str = '', *, url: str = '/inbox', tag: str = '') -> None:
+def send_soon(user_id: str, title: str, body: str = '', *, url: str = '/inbox', tag: str = '',
+              extra: dict | None = None) -> None:
     """Fire-and-forget ``send_to_user`` from code that must not wait on it."""
     if not enabled() or not user_id:
         return
@@ -237,6 +249,6 @@ def send_soon(user_id: str, title: str, body: str = '', *, url: str = '/inbox', 
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    task = loop.create_task(send_to_user(user_id, title, body, url=url, tag=tag))
+    task = loop.create_task(send_to_user(user_id, title, body, url=url, tag=tag, extra=extra))
     _background.add(task)
     task.add_done_callback(_background.discard)

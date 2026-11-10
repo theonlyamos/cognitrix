@@ -10,6 +10,8 @@ import { parseChatEntries, toChatMessages, fmtRelative, type BackendChatEntry } 
 import { cn } from '@/lib/utils';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
+import { useApprovalSeen } from '@/hooks/useApprovalSeen';
+import { setViewingChat } from '@/lib/chatPresence';
 
 interface Member { id: string; name: string; handle: string; lead: boolean; provider?: string | null; model?: string | null }
 interface ChatSummary { id: string; title: string; updated_at?: string | null; running: boolean }
@@ -25,6 +27,8 @@ interface ApprovalRequest {
   details?: string;
   /** A full-shell command: the card offers "allow all commands in this chat". */
   full_shell?: boolean;
+  /** A background action in an app window: the card offers to stop asking about that app. */
+  app?: { key: string; label: string };
 }
 
 interface RunEvent {
@@ -76,6 +80,11 @@ export default function TeamChat() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [question, setQuestion] = useState<QuestionRequest | null>(null);
+  useApprovalSeen(approvals);
+  useEffect(() => {
+    setViewingChat(chatId);
+    return () => setViewingChat(null);
+  }, [chatId]);
   const [follow, setFollow] = useState<{ sid: string; runId: string } | null>(null);
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -206,6 +215,11 @@ export default function TeamChat() {
         if (req.request_id) setApprovals((prev) => (prev.some((a) => a.request_id === req.request_id) ? prev : [...prev, req]));
         break;
       }
+      case 'approval_resolved': {
+        const rid = (event as { request_id?: string }).request_id;
+        if (rid) setApprovals((prev) => prev.filter((a) => a.request_id !== rid));
+        break;
+      }
       case 'question_request': {
         const req = event as unknown as QuestionRequest;
         if (req.request_id && req.prompt && Array.isArray(req.options)) setQuestion(req);
@@ -282,10 +296,10 @@ export default function TeamChat() {
     }
   }, [chatId, loadInfo, running, setParams, teamId]);
 
-  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false) => {
+  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always') => {
     setApprovals((prev) => prev.filter((a) => a.request_id !== requestId));
     try {
-      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}) });
+      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}), ...(rememberApp ? { remember_app: rememberApp } : {}) });
     } catch {
       /* the turn times out server-side if this never lands */
     }
@@ -468,6 +482,12 @@ export default function TeamChat() {
               <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">approve for session</button>
               {a.full_shell && (
                 <button onClick={() => respondApproval(a.request_id, true, true, true)} title="Run every shell command in this chat without asking, until the app restarts" className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">allow all commands in this chat</button>
+              )}
+              {a.app && (
+                <>
+                  <button onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={`Let agents click and type in ${a.app.label} in the background for the rest of this chat`} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">allow {a.app.label} in this chat</button>
+                  <button onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={`Never ask again before agents click and type in ${a.app.label} in the background. Change it in Settings, Agent access.`} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">always allow {a.app.label}</button>
+                </>
               )}
               <button onClick={() => respondApproval(a.request_id, false)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:min-h-0">deny</button>
             </div>
