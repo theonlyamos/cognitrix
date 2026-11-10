@@ -1901,7 +1901,7 @@ def coding_agent(
     parent: Any | None = None,
 ) -> str:
     """Hand a coding job to a coding agent installed on this computer (Claude
-    Code, Codex or Gemini CLI). It works on its own in a folder, in the
+    Code, Codex, Gemini CLI or GitHub Copilot CLI). It works on its own in a folder, in the
     background, and you read its result later.
 
     Use it for larger coding work you'd rather delegate than do step by step:
@@ -1917,8 +1917,9 @@ def coding_agent(
 
     Args:
         task (str): What the coding agent should do, in full.
-        agent (str, optional): 'claude' (Claude Code), 'codex', 'gemini', or
-            'auto' (the first one installed, in that order). 'list' shows
+        agent (str, optional): 'claude' (Claude Code), 'codex', 'gemini',
+            'copilot' (GitHub Copilot CLI), or 'auto' (the first one
+            installed, in that order). 'list' shows
             what's installed.
         mode (str, optional): 'read_only' (reads and answers, no changes),
             'edit' (default: may edit files in the folder) or 'full' (may also

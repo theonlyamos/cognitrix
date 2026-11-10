@@ -14,6 +14,7 @@ import { ConnectedAppsCard } from '@/components/ConnectedAppsCard';
 import { ChatChannelsCard } from '@/components/ChatChannelsCard';
 import { CredentialsCard } from '@/components/CredentialsCard';
 import { ProviderKeys } from '@/components/settings/ProviderKeys';
+import { ChatGPTPlanCard } from '@/components/settings/ChatGPTPlan';
 import { AppearanceSettings } from '@/components/settings/Appearance';
 import { MemorySettings } from '@/components/settings/Memory';
 import { UsageSettings } from '@/components/settings/Usage';
@@ -44,7 +45,7 @@ interface SectionMeta {
 const SECTIONS: SectionMeta[] = [
   { id: 'account', label: 'Account', group: 'GENERAL', keywords: 'profile email name password export backup download data sign out devices api keys' },
   { id: 'appearance', label: 'Appearance', group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
-  { id: 'models', label: 'Models and keys', group: 'AI', keywords: 'providers api key openai anthropic claude gemini google groq openrouter cerebras ollama' },
+  { id: 'models', label: 'Models and keys', group: 'AI', keywords: 'providers api key chatgpt plan subscription plus pro openai anthropic claude gemini google groq openrouter cerebras ollama' },
   { id: 'usage', label: 'Usage', group: 'AI', keywords: 'cost spend tokens money bill price how much' },
   { id: 'memory', label: 'Memory', group: 'AI', keywords: 'remember memories personalization forget history what agents know about me' },
   { id: 'voice', label: 'Voice', group: 'AI', keywords: 'input mic microphone speech transcription dictation spoken replies read aloud listen text to speech tts' },
@@ -394,7 +395,7 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
     case 'appearance':
       return <AppearanceSection />;
     case 'models':
-      return (<><SectionHeader title="Models and keys" description="API keys for the model providers your agents use." /><ProviderKeys /></>);
+      return (<><SectionHeader title="Models and keys" description="Your ChatGPT plan, and API keys for the model providers your agents use." /><ChatGPTPlanCard /><ProviderKeys /></>);
     case 'usage':
       return (<><SectionHeader title="Usage" description="How many tokens your agents used and roughly what that cost." /><UsageSettings /></>);
     case 'memory':

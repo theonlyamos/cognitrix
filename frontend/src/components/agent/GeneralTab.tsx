@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import ModelPicker from '@/components/ModelPicker';
 import { BASE_URLS, MODELS, PROVIDERS, PROVIDER_LABELS, ignoresTemperature } from '@/lib/providers';
+import PlanNote from '@/components/PlanNote';
 import { REASONING_LEVELS } from '@/lib/reasoning';
 import { handleFor, payloadFrom, promptSummary, type TabProps } from '@/lib/agentDraft';
 import { Card, Check, Eyebrow, buttonClass, inputClass, linkButtonClass } from '@/components/agent/ui';
@@ -94,6 +95,7 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
             <label htmlFor={ids.model}>Model</label>
             <ModelPicker id={ids.model} provider={draft.provider} value={draft.model} onChange={(model) => update({ model })} className="font-normal" />
           </div>
+          {draft.provider === 'chatgpt' && <div className="md:col-span-2"><PlanNote provider={draft.provider} /></div>}
           <label htmlFor={ids.reasoning} className={labelClass}>
             Reasoning
             <select id={ids.reasoning} value={draft.reasoning} onChange={(e) => update({ reasoning: e.target.value })} className={inputClass}>

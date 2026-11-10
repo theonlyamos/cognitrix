@@ -11,6 +11,7 @@ import { Field, PageForm } from '@/components/form';
 import { cn } from '@/lib/utils';
 import { REASONING_LEVELS } from '@/lib/reasoning';
 import { BASE_URLS, MODELS, PROVIDERS, PROVIDER_LABELS, ignoresTemperature } from '@/lib/providers';
+import PlanNote from '@/components/PlanNote';
 import { listMcpServers, type McpServer } from '@/lib/mcp';
 import FolderChips from '@/components/FolderChips';
 import ModelPicker from '@/components/ModelPicker';
@@ -220,6 +221,7 @@ export default function AgentPage() {
           <ModelPicker provider={provider} value={model} onChange={setModel} />
         </Field>
       </div>
+      <PlanNote provider={provider} />
 
       <Field label="TEMPERATURE" hint={noTemperature ? 'not used' : temperature.toFixed(2)}>
         <input
@@ -231,7 +233,9 @@ export default function AgentPage() {
         />
         {noTemperature && (
           <p className="mt-1.5 text-[12px] text-fg-dim">
-            This Claude model sets its own temperature, so this setting isn't sent. Use the reasoning level to tune it.
+            {provider === 'chatgpt'
+              ? "The ChatGPT plan doesn't take a temperature, so this setting isn't sent. Use the reasoning level to tune it."
+              : "This Claude model sets its own temperature, so this setting isn't sent. Use the reasoning level to tune it."}
           </p>
         )}
       </Field>
@@ -262,7 +266,7 @@ export default function AgentPage() {
           Hands coding jobs to a coding agent on this computer, which works in the background in the working folder. Every run waits for your approval.{' '}
           {systemInfo && (systemInfo.coding_agents?.length
             ? <>Installed: <span className="font-mono text-[12px] text-fg">{systemInfo.coding_agents.join(', ')}</span>.</>
-            : 'None installed yet: install Claude Code, Codex or Gemini CLI and sign in once.')}
+            : 'None installed yet: install Claude Code, Codex, Gemini CLI or GitHub Copilot CLI and sign in once.')}
         </p>
       )}
       <Field label={`TOOLS · ${selected.size} selected`} composite>

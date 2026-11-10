@@ -2,11 +2,16 @@
 // setup. Keep PROVIDERS in step with SETUP_PROVIDERS in
 // cognitrix/api/routes/onboarding.py, and BASE_URLS with the backend's
 // _DEFAULT_BASE_URLS in cognitrix/providers/base.py.
-export const PROVIDERS = ['openrouter', 'openai', 'anthropic', 'google', 'groq', 'cerebras', 'ollama'];
+export const PROVIDERS = ['openrouter', 'openai', 'chatgpt', 'anthropic', 'google', 'groq', 'cerebras', 'ollama'];
+
+/** Providers that run on a signed-in plan instead of an API key
+ *  (Settings › Models and keys › Use your ChatGPT plan). */
+export const PLAN_PROVIDERS = new Set(['chatgpt']);
 
 export const PROVIDER_LABELS: Record<string, string> = {
   openrouter: 'OpenRouter',
   openai: 'OpenAI',
+  chatgpt: 'ChatGPT plan',
   anthropic: 'Anthropic',
   google: 'Google Gemini',
   groq: 'Groq',
@@ -25,6 +30,8 @@ export const MODELS: Record<string, string[]> = {
     'anthropic/claude-opus-5.5', 'openai/gpt-oss-120b',
   ],
   openai: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano'],
+  // The live list (your plan's models) is added by the model picker.
+  chatgpt: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-5.5'],
   anthropic: [
     'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1',
     'claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5',
@@ -49,6 +56,7 @@ export const KEY_URLS: Record<string, string> = {
 export const BASE_URLS: Record<string, string> = {
   openrouter: 'https://openrouter.ai/api/v1',
   openai: 'https://api.openai.com/v1',
+  chatgpt: 'https://api.openai.com/v1',
   anthropic: 'https://api.anthropic.com/v1',
   google: 'https://generativelanguage.googleapis.com/v1beta/openai/v1',
   groq: 'https://api.groq.com/openai/v1',
@@ -59,6 +67,8 @@ export const BASE_URLS: Record<string, string> = {
 // Claude Opus 4.7 and every later Claude model reject `temperature`; the
 // backend drops it for them (_anthropic_rejects_temperature in base.py).
 export function ignoresTemperature(provider: string, model: string): boolean {
+  // The ChatGPT plan route takes no temperature.
+  if (provider === 'chatgpt') return true;
   if (provider !== 'anthropic') return false;
   const m = /^claude-(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(
     model.trim().toLowerCase().split('/').pop() || '',

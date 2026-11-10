@@ -7,12 +7,15 @@ import { Select } from '@/lib/components/ui/select';
 import { Field } from '@/components/form';
 import ModelPicker from '@/components/ModelPicker';
 import { AGENTS_CHANGED_EVENT, MODELS, PROVIDER_LABELS } from '@/lib/providers';
+import { SignInWaiting, useChatGPTSignIn } from '@/components/settings/ChatGPTPlan';
 
 interface ProviderOption {
   id: string;
   needs_key: boolean;
   has_key: boolean;
   default_model: string;
+  /** Connected by signing in (ChatGPT plan), not with a key. */
+  sign_in?: boolean;
 }
 
 export interface OnboardingStatus {
@@ -25,6 +28,7 @@ export interface OnboardingStatus {
 function keyNote(option: ProviderOption | undefined): string {
   if (!option) return '';
   if (!option.needs_key) return 'no key needed';
+  if (option.sign_in) return option.has_key ? 'signed in' : 'needs sign-in';
   return option.has_key ? 'key found' : 'needs a key';
 }
 
@@ -67,9 +71,12 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
   const [apiKey, setApiKey] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<'create' | 'skip' | null>(null);
+  const [planConnected, setPlanConnected] = useState(false);
+  const planSignIn = useChatGPTSignIn(() => setPlanConnected(true));
 
   const option = status.providers.find((p) => p.id === provider);
-  const askForKey = Boolean(option?.needs_key && !option.has_key);
+  const needsPlanSignIn = Boolean(option?.sign_in && !option.has_key && !planConnected);
+  const askForKey = Boolean(option?.needs_key && !option.has_key && !option.sign_in);
 
   const changeProvider = (next: string) => {
     setProvider(next);
@@ -91,6 +98,7 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
   const create = async () => {
     if (!name.trim()) return setError('Give your assistant a name.');
     if (!model.trim()) return setError('Choose a model.');
+    if (needsPlanSignIn) return setError('Continue with ChatGPT first, or pick another provider.');
     if (askForKey && !apiKey.trim()) return setError(`Paste your ${PROVIDER_LABELS[provider] || provider} API key, or pick a provider with a key.`);
     setError('');
     setBusy('create');
@@ -161,7 +169,7 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
                 {status.providers.map((p) => (
                   <option key={p.id} value={p.id}>
                     {PROVIDER_LABELS[p.id] || p.id}
-                    {p.needs_key && p.has_key ? ' ✓' : ''}
+                    {p.needs_key && (p.has_key || (p.sign_in && planConnected)) ? ' ✓' : ''}
                   </option>
                 ))}
               </Select>
@@ -189,6 +197,28 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
               <span className="font-mono text-[11.5px]">{provider.toUpperCase()}_API_KEY</span> to the engine's .env
               file (Settings shows where it is).
             </p>
+          )}
+          {option?.sign_in && (
+            <div className="-mt-1 space-y-2 rounded border border-line bg-panel-2 py-3 text-[12.5px] leading-relaxed text-fg-dim">
+              <p className="px-3.5">
+                {needsPlanSignIn
+                  ? 'Runs on your ChatGPT Plus or Pro plan instead of an API key. Sign in to connect it.'
+                  : 'Using ChatGPT plan. You can cap what Cognitrix uses in ChatGPT settings.'}
+              </p>
+              {needsPlanSignIn && !planSignIn.flowId && (
+                <div className="px-3.5">
+                  <button
+                    type="button"
+                    onClick={() => void planSignIn.start(false)}
+                    className="inline-flex h-9 items-center rounded-lg bg-[#0d0d0d] px-3.5 text-[12.5px] font-medium text-white hover:bg-[#2a2a2a] dark:bg-white dark:text-[#0d0d0d]"
+                  >
+                    Continue with ChatGPT
+                  </button>
+                </div>
+              )}
+              <SignInWaiting signIn={planSignIn} />
+              {planSignIn.error && <p role="alert" className="px-3.5 text-danger-ink">{planSignIn.error}</p>}
+            </div>
           )}
           {provider === 'ollama' && (
             <p className="-mt-2 text-[12px] leading-relaxed text-fg-dim">

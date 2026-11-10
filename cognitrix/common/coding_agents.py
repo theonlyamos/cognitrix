@@ -1,7 +1,7 @@
 """Coding agent CLIs that Cognitrix agents can hand work to.
 
 An agent with the Coding Agent tool can give a coding job to a coding agent
-installed on this computer (Claude Code, Codex, Gemini CLI). The CLI runs
+installed on this computer (Claude Code, Codex, Gemini CLI, GitHub Copilot CLI). The CLI runs
 headless in a working folder, in the background, through the same registry as
 ``Bash(run_in_background=true)``, so its output is read with Bash Output and
 it is stopped with Kill Shell.
@@ -20,7 +20,11 @@ Modes map to each CLI's own permission settings:
 - ``full``: no limits. The CLI can run any command without asking.
 
 The CLIs sign in with their own login (``claude login``, ``codex login``,
-``gemini``) or the usual API key variables in the environment.
+``gemini``, ``copilot login``) or the usual API key variables in the
+environment. That is also how an agent can use a Claude, ChatGPT, Gemini or
+Copilot plan: the plan's own CLI runs unmodified and signs in itself, which
+each provider allows, while handing a plan's sign-in to Cognitrix's own model
+calls is only allowed for ChatGPT (see providers/chatgpt_plan.py).
 """
 
 from __future__ import annotations
@@ -76,6 +80,19 @@ def _gemini_args(mode: str, model: str | None) -> list[str]:
     return args
 
 
+def _copilot_args(mode: str, model: str | None) -> list[str]:
+    # The task comes in on stdin. With no allow rule, -p mode denies any tool
+    # that would need approval, so read_only adds none.
+    args = ['-s', '--no-color', '--no-ask-user', '--no-auto-update']
+    if mode == 'edit':
+        args += ['--allow-tool', 'write']
+    elif mode == 'full':
+        args += ['--allow-all']
+    if model:
+        args += ['--model', model]
+    return args
+
+
 CLIS: dict[str, CodingAgentCLI] = {
     'claude': CodingAgentCLI(
         key='claude', label='Claude Code', program='claude',
@@ -107,15 +124,27 @@ CLIS: dict[str, CodingAgentCLI] = {
             'full': 'auto-approves everything (yolo)',
         },
     ),
+    'copilot': CodingAgentCLI(
+        key='copilot', label='GitHub Copilot CLI', program='copilot',
+        install_hint='npm install -g @github/copilot, then run `copilot login` (needs a Copilot plan)',
+        build=_copilot_args,
+        mode_notes={
+            'read_only': 'reads and answers; tools that need approval are denied',
+            'edit': 'may write files; shell commands are denied',
+            'full': 'every tool, path and URL allowed',
+        },
+    ),
 }
 
 # Order tried when the agent asks for 'auto'.
-PREFERENCE = ('claude', 'codex', 'gemini')
+PREFERENCE = ('claude', 'codex', 'gemini', 'copilot')
 
 _ALIASES = {
     'claude': 'claude', 'claude_code': 'claude', 'claude code': 'claude', 'claude-code': 'claude',
     'codex': 'codex', 'openai codex': 'codex', 'codex cli': 'codex', 'codex-cli': 'codex',
     'gemini': 'gemini', 'gemini cli': 'gemini', 'gemini-cli': 'gemini', 'gemini_cli': 'gemini',
+    'copilot': 'copilot', 'github copilot': 'copilot', 'copilot cli': 'copilot', 'copilot-cli': 'copilot',
+    'github copilot cli': 'copilot', 'gh copilot': 'copilot',
 }
 
 

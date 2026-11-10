@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { Group, Segmented, SubHeading } from '@/components/settings/ui';
+import { CHATGPT_USAGE_URL } from '@/lib/chatgptPlan';
 
 interface Totals {
   calls: number;
@@ -159,6 +160,12 @@ export function UsageSettings() {
               ? 'Costs are estimates from public list prices, so your provider’s bill is the final word.'
               : 'Costs are not shown because model prices could not be loaded.'}
             {showCost && total.unpriced_tokens > 0 && ` ${formatTokens(total.unpriced_tokens)} tokens went to models with no known price and are not in the cost.`}
+            {data?.by_model.some((m) => m.provider === 'chatgpt') && (
+              <>
+                {' '}ChatGPT plan use is counted at no cost here because it comes out of your plan.{' '}
+                <a href={CHATGPT_USAGE_URL} target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">Manage usage</a>
+              </>
+            )}
           </p>
         </>
       )}

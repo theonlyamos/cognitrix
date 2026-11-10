@@ -137,7 +137,8 @@ def _candidates(provider: str, model: str) -> list[str]:
 
 def cost(prices: dict[str, dict[str, float]], provider: str, model: str, counts: dict[str, int]) -> float | None:
     """Dollars for these token counts, or None when the model has no known price."""
-    if (provider or '').lower() == 'ollama':
+    if (provider or '').lower() in ('ollama', 'chatgpt'):
+        # Local models, and a ChatGPT plan (usage comes out of the plan).
         return 0.0
     entry = next((prices[name] for name in _candidates(provider, model) if name in prices), None)
     if entry is None:
