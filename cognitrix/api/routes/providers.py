@@ -204,6 +204,11 @@ async def provider_models(provider: str, refresh: bool = False,
     provider = provider.strip().lower()
     if provider == 'chatgpt':
         return await _plan_models(refresh)
+    from cognitrix.providers import harness
+
+    if harness.is_harness(provider):
+        # The CLI picks from what its own sign-in allows; the picker's list stands.
+        return {'models': [], 'live': False, 'reason': 'This coding agent uses its own models'}
     provider = _known(provider)
     cached = _models_cache.get(provider)
     if cached and not refresh and time.monotonic() - cached[0] < _MODELS_TTL:

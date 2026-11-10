@@ -1,4 +1,5 @@
 import { folderName, type WorkFolder } from '@/lib/folders';
+import { isHarness } from '@/lib/providers';
 
 export type AgentLevel = 'auto' | 'ask' | 'allow';
 export type ToolLevel = 'auto' | 'allow' | 'ask' | 'deny';
@@ -26,6 +27,7 @@ export interface AgentRecord {
     max_tokens?: number | null;
     base_url?: string | null;
     reasoning_effort?: string | null;
+    harness_mode?: string | null;
   };
   tools?: ToolInfo[];
   mcp_servers?: string[];
@@ -52,6 +54,8 @@ export interface AgentDraft {
   provider: string;
   model: string;
   reasoning: string;
+  /** For agents on a coding agent CLI: read_only, edit or full. */
+  harnessMode: string;
   temperature: number;
   maxTokens: string;
   baseUrl: string;
@@ -88,6 +92,7 @@ export function draftFrom(agent: AgentRecord): AgentDraft {
     provider: agent.llm?.provider || 'openai',
     model: agent.llm?.model || '',
     reasoning: agent.llm?.reasoning_effort || '',
+    harnessMode: agent.llm?.harness_mode || 'edit',
     temperature: agent.llm?.temperature ?? 0.4,
     maxTokens: agent.llm?.max_tokens ? String(agent.llm.max_tokens) : '',
     baseUrl: agent.llm?.base_url || '',
@@ -152,6 +157,7 @@ export function payloadFrom(id: string, draft: AgentDraft, catalog: ToolInfo[], 
       model: draft.model.trim(),
       temperature: draft.temperature,
       reasoning_effort: draft.reasoning,
+      ...(isHarness(draft.provider) ? { harness_mode: draft.harnessMode } : {}),
       ...(draft.baseUrl ? { base_url: draft.baseUrl } : {}),
       ...(draft.maxTokens ? { max_tokens: Number(draft.maxTokens) } : {}),
     },

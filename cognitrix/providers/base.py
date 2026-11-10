@@ -205,6 +205,19 @@ def _resolve_runtime_config(provider: str, overrides: dict[str, Any] | None = No
     if effective_provider == 'chatgpt':
         return _chatgpt_plan_config(overrides)
 
+    from cognitrix.providers import harness
+
+    if harness.is_harness(effective_provider):
+        # A coding agent CLI that signs itself in (harness.py): no key, no URL.
+        return {
+            'provider': effective_provider,
+            'base_url': '',
+            'api_key': harness.PLACEHOLDER_KEY,
+            'model': overrides.get('model') or '',
+            'temperature': DEFAULT_TEMPERATURE,
+            'max_tokens': overrides.get('max_tokens') or DEFAULT_MAX_TOKENS,
+        }
+
     base_url = (
         overrides.get('base_url')
         or os.getenv(_env_key(effective_provider, 'BASE_URL'))
@@ -560,6 +573,9 @@ def _malformed_arguments_error(name: str, raw: Any, truncated: bool) -> str:
     )
 
 
+_HARNESS_KEY = 'signed-in-cli'  # harness.PLACEHOLDER_KEY
+
+
 class LLM(Model):
     """
     Provider-agnostic LLM backed by OpenAI-compatible API.
@@ -581,6 +597,8 @@ class LLM(Model):
     extra_headers: dict[str, str] = Field(default_factory=dict)
     extra_body: dict[str, Any] = Field(default_factory=dict)
     response_format: dict[str, Any] | None = None
+    harness_mode: str = ''
+    """For a coding agent CLI provider (harness.py): read_only, edit (default) or full."""
     reasoning_effort: str = ''
     """How hard the model thinks: none, minimal, low, medium, high or xhigh.
     Empty = the provider's default. Sent as the OpenAI `reasoning_effort` param."""
@@ -590,8 +608,9 @@ class LLM(Model):
             overrides = {k: v for k, v in data.items() if v is not None and v != ''}
             resolved = _resolve_runtime_config(provider or data.get('provider', 'openrouter'), overrides)
             data = {**resolved, **overrides}
-            if resolved.get('provider') == 'chatgpt':
-                # The plan's token only goes to OpenAI: ignore any saved base URL or key.
+            if resolved.get('provider') == 'chatgpt' or resolved.get('api_key') == _HARNESS_KEY:
+                # The plan's token only goes to OpenAI, and a CLI signs itself in:
+                # ignore any saved base URL or key.
                 data.update(base_url=resolved['base_url'], api_key=resolved['api_key'])
         super().__init__(**data)
         if provider and 'provider' not in data:
@@ -803,6 +822,16 @@ class LLMManager:
             from cognitrix.config import settings
 
             usage_log.note_model(llm.provider, llm.model)
+
+            from cognitrix.providers import harness
+
+            if harness.is_harness(llm.provider):
+                # A coding agent CLI signed in on this computer runs the turn.
+                effort = normalize_reasoning_effort(turn_reasoning_effort.get() or llm.reasoning_effort)
+                messages = LLMManager.format_query(llm, prompt)
+                if stream:
+                    return harness.stream(llm, messages, effort)
+                return await harness.respond(llm, messages, effort)
 
             if llm.provider == 'chatgpt':
                 # A ChatGPT plan: OpenAI's Responses API with the signed-in

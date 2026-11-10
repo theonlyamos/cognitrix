@@ -4,6 +4,30 @@
 // _DEFAULT_BASE_URLS in cognitrix/providers/base.py.
 export const PROVIDERS = ['openrouter', 'openai', 'chatgpt', 'anthropic', 'google', 'groq', 'cerebras', 'ollama'];
 
+/** Coding agent CLIs an agent can run on, signed in on this computer with the
+ *  person's own plan or key (cognitrix/providers/harness.py HARNESSES). */
+export const HARNESS_PROVIDERS = ['claude-code', 'codex', 'gemini-cli', 'copilot-cli', 'opencode'];
+
+export function isHarness(provider: string): boolean {
+  return HARNESS_PROVIDERS.includes(provider);
+}
+
+/** How to install and sign in to each CLI (keep in step with HARNESSES). */
+export const HARNESS_INSTALL: Record<string, string> = {
+  'claude-code': 'npm install -g @anthropic-ai/claude-code, then run `claude` once and sign in',
+  codex: 'npm install -g @openai/codex, then run `codex login` (Sign in with ChatGPT)',
+  'gemini-cli': 'npm install -g @google/gemini-cli, then run `gemini` once and sign in',
+  'copilot-cli': 'npm install -g @github/copilot, then run `copilot login` (needs a Copilot plan)',
+  opencode: 'npm install -g opencode-ai, then run `opencode auth login`',
+};
+
+/** What a CLI agent may do to the files in its working folder. */
+export const HARNESS_MODES = [
+  { value: 'read_only', label: 'Read only', detail: 'Reads files and answers. Changes nothing.' },
+  { value: 'edit', label: 'Edit files', detail: 'Can change files in the working folder.' },
+  { value: 'full', label: 'Full access', detail: 'Can also run any command without asking. Use with care.' },
+];
+
 /** Providers that run on a signed-in plan instead of an API key
  *  (Settings › Models and keys › Use your ChatGPT plan). */
 export const PLAN_PROVIDERS = new Set(['chatgpt']);
@@ -17,6 +41,11 @@ export const PROVIDER_LABELS: Record<string, string> = {
   groq: 'Groq',
   cerebras: 'Cerebras',
   ollama: 'Ollama (local)',
+  'claude-code': 'Claude Code',
+  codex: 'Codex',
+  'gemini-cli': 'Gemini CLI',
+  'copilot-cli': 'GitHub Copilot CLI',
+  opencode: 'OpenCode',
 };
 
 // Recent models per provider, newest and most useful first. The first one is
@@ -40,6 +69,12 @@ export const MODELS: Record<string, string[]> = {
   groq: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'],
   cerebras: ['gpt-oss-120b', 'zai-glm-4.7'],
   ollama: ['llama3.2', 'gpt-oss:20b', 'qwen3', 'mistral'],
+  // Coding agent CLIs: an empty model uses the CLI's own default.
+  'claude-code': ['sonnet', 'opus', 'haiku'],
+  codex: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-5.5'],
+  'gemini-cli': ['gemini-3.6-flash', 'gemini-3.1-pro', 'gemini-3.5-flash'],
+  'copilot-cli': ['auto', 'claude-sonnet-5-5', 'gpt-6.1-sol'],
+  opencode: ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5', 'github-copilot/gpt-5.5'],
 };
 
 // Where to create an API key for each provider.
@@ -67,8 +102,8 @@ export const BASE_URLS: Record<string, string> = {
 // Claude Opus 4.7 and every later Claude model reject `temperature`; the
 // backend drops it for them (_anthropic_rejects_temperature in base.py).
 export function ignoresTemperature(provider: string, model: string): boolean {
-  // The ChatGPT plan route takes no temperature.
-  if (provider === 'chatgpt') return true;
+  // The ChatGPT plan route and the coding agent CLIs take no temperature.
+  if (provider === 'chatgpt' || HARNESS_PROVIDERS.includes(provider)) return true;
   if (provider !== 'anthropic') return false;
   const m = /^claude-(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(
     model.trim().toLowerCase().split('/').pop() || '',

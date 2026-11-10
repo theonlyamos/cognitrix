@@ -2,7 +2,8 @@ import { useId, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import ModelPicker from '@/components/ModelPicker';
-import { BASE_URLS, MODELS, PROVIDERS, PROVIDER_LABELS, ignoresTemperature } from '@/lib/providers';
+import { BASE_URLS, HARNESS_PROVIDERS, MODELS, PROVIDERS, PROVIDER_LABELS, ignoresTemperature, isHarness } from '@/lib/providers';
+import HarnessNote from '@/components/HarnessNote';
 import PlanNote from '@/components/PlanNote';
 import { REASONING_LEVELS } from '@/lib/reasoning';
 import { handleFor, payloadFrom, promptSummary, type TabProps } from '@/lib/agentDraft';
@@ -88,7 +89,12 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
           <label htmlFor={ids.provider} className={labelClass}>
             Provider
             <select id={ids.provider} value={draft.provider} onChange={(e) => changeProvider(e.target.value)} className={inputClass}>
-              {[...new Set([...PROVIDERS, draft.provider])].map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
+              <optgroup label="Model providers">
+                {[...new Set([...PROVIDERS, ...(isHarness(draft.provider) ? [] : [draft.provider])])].map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
+              </optgroup>
+              <optgroup label="Coding agents on this computer">
+                {HARNESS_PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
+              </optgroup>
             </select>
           </label>
           <div className={labelClass}>
@@ -96,6 +102,11 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
             <ModelPicker id={ids.model} provider={draft.provider} value={draft.model} onChange={(model) => update({ model })} className="font-normal" />
           </div>
           {draft.provider === 'chatgpt' && <div className="md:col-span-2"><PlanNote provider={draft.provider} /></div>}
+          {isHarness(draft.provider) && (
+            <div className="md:col-span-2">
+              <HarnessNote provider={draft.provider} mode={draft.harnessMode} onModeChange={(harnessMode) => update({ harnessMode })} selectClass={inputClass} />
+            </div>
+          )}
           <label htmlFor={ids.reasoning} className={labelClass}>
             Reasoning
             <select id={ids.reasoning} value={draft.reasoning} onChange={(e) => update({ reasoning: e.target.value })} className={inputClass}>

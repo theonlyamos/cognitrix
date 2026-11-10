@@ -768,6 +768,18 @@ class Session(Model):
                     response: LLMResponse = LLMResponse()
                     called_tools: bool = False
 
+                    # A coding agent CLI provider runs in this chat's folder
+                    # and resumes its own session (providers/harness.py).
+                    from cognitrix.providers import harness as _harness
+                    if _harness.is_harness(agent.llm.provider):
+                        from cognitrix.tools.utils import ToolExecutionContext as _TEC
+                        _ctx = tool_context or _TEC()
+                        _harness.turn.set(_harness.TurnInfo(
+                            session_id=str(self.id) if persist_history or record_history else None,
+                            folders=tuple(inherited_folders or turn_folders or ()),
+                            host_process_mode=_ctx.host_process_mode,
+                        ))
+
                     # The prompt is now a complete history, not a single message
                     llm_result = await agent.llm(prompt, stream=stream, tools=active_tools)
 

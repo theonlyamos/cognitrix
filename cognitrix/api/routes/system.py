@@ -19,6 +19,7 @@ async def system_info(_ctx: AuthContext = Depends(get_auth_context)) -> dict[str
     folders on this machine."""
     from cognitrix import celery_worker
     from cognitrix.common import coding_agents
+    from cognitrix.providers import harness
     from cognitrix.config import settings
 
     return {
@@ -29,6 +30,8 @@ async def system_info(_ctx: AuthContext = Depends(get_auth_context)) -> dict[str
         'database': settings.db_type,
         # Coding agent CLIs found on PATH, for the Coding Agent tool.
         'coding_agents': list(coding_agents.installed()),
+        # The same CLIs as agent providers (providers/harness.py).
+        'harnesses': list(harness.installed()),
         'task_queue': 'filesystem' if celery_worker.USE_FILESYSTEM_BROKER else 'redis',
         'worker_running': celery_worker.local_worker_running()
         if celery_worker.USE_FILESYSTEM_BROKER else None,
