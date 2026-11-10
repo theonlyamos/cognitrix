@@ -725,6 +725,20 @@ async def approval_endpoint(request: Request, user=Depends(get_current_user)):
     return {"status": "resolved"}
 
 
+@agents_api.post("/approval/seen", dependencies=[Depends(jwt_only)])
+async def approval_seen_endpoint(request: Request, user=Depends(get_current_user)):
+    """The open chat page is showing this approval card to the person, so it
+    isn't also sent to their phone or chat apps."""
+    data = await request.json()
+    request_id = data.get("request_id") if isinstance(data, dict) else None
+    if not isinstance(request_id, str) or not request_id:
+        raise HTTPException(status_code=400, detail="request_id is required")
+    from cognitrix.safety.approval_alerts import mark_seen
+    if not mark_seen(request_id, _user_key(user)):
+        raise HTTPException(status_code=404, detail="Approval request not found or already resolved.")
+    return {"status": "seen"}
+
+
 @agents_api.post('/question', dependencies=[Depends(jwt_only)])
 async def question_endpoint(request: Request, user=Depends(get_current_user)):
     """Resolve one pending interactive question for the authenticated owner."""

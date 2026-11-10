@@ -28,6 +28,8 @@ import { AgentBadge, StartChat } from '@/components/StartChat';
 import type { PickTarget, PickerAgent, PickerTeam } from '@/lib/agentPicker';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
+import { setViewingChat } from '@/lib/chatPresence';
+import { useApprovalSeen } from '@/hooks/useApprovalSeen';
 
 const SUGGESTIONS = [
   'Summarize the benefits of unit testing.',
@@ -272,6 +274,8 @@ export default function Home() {
     try { localStorage.setItem('chatReasoningEffort', value); } catch { /* not persisted */ }
   };
 
+  useApprovalSeen(approvals);
+
   const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false) => {
     setApprovals((prev) => prev.filter((a) => a.request_id !== requestId));
     try {
@@ -439,6 +443,12 @@ export default function Home() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeSessionId;
+
+  // Approvals and questions from the chat on screen don't also notify.
+  useEffect(() => {
+    setViewingChat(activeSessionId);
+    return () => setViewingChat(null);
+  }, [activeSessionId]);
 
   // ── Incognito ──
   // Picked before a new chat's first message. The chat isn't listed, doesn't
@@ -852,6 +862,12 @@ export default function Home() {
               prev.some((a) => a.request_id === req.request_id) ? prev : [...prev, req],
             );
           }
+          break;
+        }
+        case 'approval_resolved': {
+          // Answered here, from a notification, the Inbox or a chat app.
+          const rid = (event as { request_id?: string }).request_id;
+          if (rid) setApprovals((prev) => prev.filter((a) => a.request_id !== rid));
           break;
         }
         case 'question_request': {

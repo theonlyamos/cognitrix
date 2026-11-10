@@ -3,6 +3,8 @@ import { api } from '@/lib/api';
 import { desktop, isDesktop, onDesktopEvent, systemNotify, type EngineStatus } from '@/lib/desktop';
 import { usePolling } from '@/hooks/usePolling';
 import { useUser } from '@/context/AppContext';
+import { isLookingAtChat } from '@/lib/chatPresence';
+import { answerApproval, approvalPreview, approvalTitle } from '@/lib/approvals';
 
 /** Events the app can notify about. Matches the rows on the Notifications screen. */
 export type NotificationEvent =
@@ -16,7 +18,7 @@ export type NotificationEvent =
   | 'engine';
 
 export const EVENT_LABELS: Record<NotificationEvent, { title: string; detail: string; alwaysInApp?: boolean }> = {
-  approval: { title: 'Approval needed', detail: 'A task is paused on a risky step', alwaysInApp: true },
+  approval: { title: 'Approval needed', detail: 'A chat or task is waiting on a risky step', alwaysInApp: true },
   question: { title: 'Agent asks a question', detail: 'A chat is waiting for your answer', alwaysInApp: true },
   agent_alert: { title: 'Agent alert', detail: 'An agent used Notify Me, usually from an automation' },
   chat_reply: { title: 'Chat reply', detail: 'An agent finished replying while you were in another window' },
@@ -53,11 +55,22 @@ export interface AppNotification {
   href?: string;
   createdAt: number;
   read: boolean;
+  /** Same tag as the push message for this item, so the browser shows one. */
+  tag?: string;
+  /** An approval's id: the Windows notification gets Approve and Deny buttons. */
+  approvalId?: string;
 }
 
 export interface InboxApproval {
   kind: 'approval';
+  /** 'chat' when a chat turn is waiting on it; task runs leave it out. */
+  source?: 'chat' | 'task';
   id: string;
+  /** Chat approvals: the chat, where it opens, and which agent asks. */
+  session_id?: string;
+  href?: string;
+  agent_name?: string;
+  full_shell?: boolean;
   run_id: string;
   task_id: string | null;
   step_index: number | null;
@@ -167,6 +180,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
   const seenInbox = useRef<Set<string> | null>(null);
+  const inboxRef = useRef<InboxItem[]>([]);
   const taskStatus = useRef<Map<string, string> | null>(null);
 
   // Switch to the new account's history when the sign-in changes.
@@ -212,7 +226,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       return;
     }
     const urgent = n.event === 'approval' || n.event === 'question';
-    void systemNotify({ title: n.title, body: n.body, href: n.href, urgent }).then((shown) => {
+    void systemNotify({ title: n.title, body: n.body, href: n.href, urgent, tag: n.tag, approval: n.approvalId }).then((shown) => {
       // In the desktop app a Windows notification replaces the in-app toast
       // (it's still listed under the bell). On the web, or when Windows
       // notifications are off, the in-app toast shows as before.
@@ -227,15 +241,25 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       setInbox(items);
       setInboxLoaded(true);
       // First load only records what's there; later loads notify on new items.
+      // An approval or question from the chat on screen waits: it notifies
+      // if the person leaves that chat without answering.
+      const deferred = new Set<string>();
       if (seenInbox.current) {
         for (const item of items) {
           if (seenInbox.current.has(item.id)) continue;
           if (item.kind === 'approval') {
+            // The chat is on screen: its card is right there.
+            if (item.source === 'chat' && isLookingAtChat(item.session_id)) {
+              deferred.add(item.id);
+              continue;
+            }
             push({
               event: 'approval',
-              title: `Approval needed: ${item.tool_name}`,
-              body: item.task_title ? `${item.task_title} is paused until you answer.` : 'A task run is paused until you answer.',
-              href: '/inbox',
+              title: `Approval needed: ${approvalTitle(item)}`,
+              body: approvalPreview(item) || (item.task_title ? `${item.task_title} is paused until you answer.` : 'Paused until you answer.'),
+              href: item.source === 'chat' ? item.href || '/inbox' : '/inbox',
+              tag: `approval-${item.id}`,
+              approvalId: item.id,
             });
           } else if (item.kind === 'notification') {
             push({
@@ -245,6 +269,10 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
               href: '/inbox',
             });
           } else {
+            if (isLookingAtChat(item.session_id)) {
+              deferred.add(item.id);
+              continue;
+            }
             push({
               event: 'question',
               title: 'An agent asked a question',
@@ -254,7 +282,14 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           }
         }
       }
-      seenInbox.current = new Set(items.map((i) => i.id));
+      seenInbox.current = new Set(items.map((i) => i.id).filter((id) => !deferred.has(id)));
+      // A toast for an approval answered elsewhere has nothing left to do.
+      const waiting = new Set(items.map((i) => i.id));
+      setToasts((list) => {
+        const kept = list.filter((t) => !t.approvalId || waiting.has(t.approvalId));
+        return kept.length === list.length ? list : kept;
+      });
+      inboxRef.current = items;
     } catch {
       /* signed out or engine restarting: try again on the next tick */
     }
@@ -305,6 +340,22 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     }).then((fn) => (stop = fn));
     return () => stop?.();
   }, [push]);
+
+  // Approve / Deny pressed on a Windows notification.
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let stop: (() => void) | undefined;
+    void onDesktopEvent<{ approval: string; approved: boolean }>('notification-action', ({ approval, approved }) => {
+      const item = inboxRef.current.find((i): i is InboxApproval => i.kind === 'approval' && i.id === approval);
+      if (!item) return;
+      answerApproval(item, approved)
+        .catch(() => {
+          push({ event: 'approval', title: 'That approval has already ended', body: 'It was answered elsewhere or timed out.', href: '/inbox' });
+        })
+        .finally(() => void refreshInbox());
+    }).then((fn) => (stop = fn));
+    return () => stop?.();
+  }, [push, refreshInbox]);
 
   const markAllRead = useCallback(() => setNotifications((list) => list.map((n) => ({ ...n, read: true }))), []);
   const markRead = useCallback((id: string) => setNotifications((list) => list.map((n) => (n.id === id ? { ...n, read: true } : n))), []);

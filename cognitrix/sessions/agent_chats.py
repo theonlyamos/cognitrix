@@ -133,34 +133,22 @@ async def _turn(
     from cognitrix.api.routes.agents import CHAT_TIMEOUT
     from cognitrix.questions.broker import QuestionTurnContext, question_turn_ctx
     from cognitrix.safety.approval_gate import web_turn_ctx
-    from cognitrix.tasks.automation import create_notification
     from cognitrix.tools.utils import ToolExecutionContext, signed_in_host_process_mode
 
     sid = str(session.id)
-    asked_approval = False
 
     async def output(payload: Any = None, *args, **kwargs) -> None:
         if isinstance(payload, dict):
             run.record({**payload, 'session_id': sid})
 
     async def emit(event: dict[str, Any]) -> None:
-        nonlocal asked_approval
+        # Nobody may be looking at this chat: an approval it asks for is
+        # listed in the Inbox and sent as a notification (approval_alerts).
         run.record({**event, 'session_id': sid})
-        if event.get('type') == 'approval_request' and not asked_approval:
-            # Nobody may be looking at this chat: say so in the Inbox once.
-            asked_approval = True
-            try:
-                await create_notification(
-                    user_key, f'{agent.name} needs your approval',
-                    f'A chat an agent started wants to run {event.get("tool_name") or "a tool"}. '
-                    'Open the chat to approve or deny it.',
-                    session_id=sid,
-                )
-            except Exception:
-                logger.exception('Could not send the approval alert for chat %s', sid)
 
     approval_token = web_turn_ctx.set({
         'emit': emit, 'session_id': sid, 'bypass': False, 'user_key': user_key,
+        'agent_name': getattr(agent, 'name', '') or '',
     })
     question_token = question_turn_ctx.set(QuestionTurnContext(
         emit=emit, session_id=sid, stream_id=f'agent-chat-{sid}', user_key=user_key,
