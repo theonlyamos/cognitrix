@@ -13,6 +13,7 @@ import { McpServersCard } from '@/components/McpServersCard';
 import { ConnectedAppsCard } from '@/components/ConnectedAppsCard';
 import { ChatChannelsCard } from '@/components/ChatChannelsCard';
 import { CredentialsCard } from '@/components/CredentialsCard';
+import { ComputerAppsCard } from '@/components/ComputerAppsCard';
 import { ProviderKeys } from '@/components/settings/ProviderKeys';
 import { ChatGPTPlanCard } from '@/components/settings/ChatGPTPlan';
 import { AppearanceSettings } from '@/components/settings/Appearance';
@@ -217,6 +218,11 @@ function AccessSection({ desktopApp }: { desktopApp: boolean }) {
       <SubHeading className="mt-7">SAVED SIGN-INS</SubHeading>
       <div id="saved-sign-ins" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
         <CredentialsCard />
+      </div>
+
+      <SubHeading className="mt-7">APPS AGENTS CAN USE</SubHeading>
+      <div id="computer-apps" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
+        <ComputerAppsCard />
       </div>
     </>
   );

@@ -14,6 +14,7 @@ from cognitrix.errors import ExecutionControlError
 from cognitrix.models import Agent, Message, Tool
 from cognitrix.models.tool import MCPTool
 from cognitrix.providers.base import LLM
+from cognitrix.computer import apps as computer_apps
 from cognitrix.safety.approval_gate import OPERATION_BLOCKED_PREFIX, ApprovalGate, ToolCall
 from cognitrix.safety.destructive_ops import (
     _RISK_ORDER,
@@ -146,6 +147,18 @@ def _truncate_tool_result(content: str) -> str:
         content[:MAX_TOOL_RESULT_CHARS]
         + f"\n[truncated {dropped} chars — re-run the tool with a narrower range if you need more]"
     )
+
+
+def _approval_owner(interface: str) -> str | None:
+    """The person whose saved answers apply to this turn (None = the CLI)."""
+    from cognitrix.safety.approval_gate import web_turn_ctx
+
+    owner = (web_turn_ctx.get(None) or {}).get('user_key')
+    if not owner and interface == 'task':
+        from cognitrix.tasks.approvals import task_turn_ctx
+
+        owner = (task_turn_ctx.get(None) or {}).get('user_id')
+    return str(owner) if owner else None
 
 
 _DESKTOP_TOOL_NAMES = frozenset({
@@ -616,6 +629,31 @@ class AgentManager:
                         ),
                     )
                     continue
+
+                # Background computer use: the person's standing answer for
+                # the app the action is in ("always allow Notepad", "never
+                # in Outlook"). "Never" wins over every other setting.
+                app = computer_apps.app_of_call(assigned_tool.name, args)
+                if app:
+                    app_level = await computer_apps.level(_approval_owner(interface), app)
+                    if app_level == 'deny':
+                        results_by_index[i] = _tool_result_entry(
+                            tc_id,
+                            ToolOutcome.failure(
+                                'permission_denied',
+                                f"{OPERATION_BLOCKED_PREFIX}: the person set {computer_apps.app_label(app)} "
+                                "to never be used by agents. Don't try it again.",
+                                denied=True,
+                            ),
+                        )
+                        continue
+                    if decision.action == 'ask' and decision.source == 'policy':
+                        if app_level == 'allow':
+                            decision = ToolDecision(
+                                'run', risk, 'app',
+                                f"{computer_apps.app_label(app)} is always allowed for background actions")
+                        else:
+                            tool_call.app = app
 
                 # A full-shell Bash command runs only when a person approved
                 # it (now, or for this session), so the gate must ask them even
