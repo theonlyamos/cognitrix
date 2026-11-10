@@ -17,7 +17,8 @@ providers_api = APIRouter(
     dependencies=[Depends(crud_scope)],
 )
 
-# Same list as the frontend's PROVIDERS and onboarding's SETUP_PROVIDERS.
+# Same list as the frontend's PROVIDERS and onboarding's SETUP_PROVIDERS, less
+# 'chatgpt', which signs in instead of taking a key (the /chatgpt/plan routes).
 KEY_PROVIDERS = ('openrouter', 'openai', 'anthropic', 'google', 'groq', 'cerebras', 'ollama')
 KEYLESS = frozenset({'ollama'})
 TEST_TIMEOUT = 12
@@ -200,6 +201,14 @@ async def provider_models(provider: str, refresh: bool = False,
     """
     import time
 
+    provider = provider.strip().lower()
+    if provider == 'chatgpt':
+        return await _plan_models(refresh)
+    from cognitrix.providers import harness
+
+    if harness.is_harness(provider):
+        # The CLI picks from what its own sign-in allows; the picker's list stands.
+        return {'models': [], 'live': False, 'reason': 'This coding agent uses its own models'}
     provider = _known(provider)
     cached = _models_cache.get(provider)
     if cached and not refresh and time.monotonic() - cached[0] < _MODELS_TTL:
@@ -212,6 +221,125 @@ async def provider_models(provider: str, refresh: bool = False,
         return {'models': [], 'live': False, 'reason': f"Couldn't list {provider} models"}
     _models_cache[provider] = (time.monotonic(), models)
     return {'models': models, 'live': True}
+
+
+# --- ChatGPT plan (Sign in with ChatGPT) ---------------------------------------
+# A ChatGPT Plus/Pro plan in place of an API key; see providers/chatgpt_plan.py.
+
+def _plan_error(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+async def _plan_admin(ctx: AuthContext) -> None:
+    if not await is_admin(ctx.user):
+        raise HTTPException(status_code=403, detail='Only an admin can connect a ChatGPT plan to this engine.')
+
+
+async def _plan_models(refresh: bool) -> dict[str, Any]:
+    import time
+
+    from cognitrix.providers import chatgpt_plan
+
+    cached = _models_cache.get('chatgpt')
+    if cached and not refresh and time.monotonic() - cached[0] < _MODELS_TTL:
+        return {'models': cached[1], 'live': True}
+    try:
+        models = [m['slug'] for m in await chatgpt_plan.list_models()]
+    except Exception:  # noqa: BLE001 - the picker falls back to its own list
+        logging.getLogger(__name__).info('Listing ChatGPT plan models failed', exc_info=True)
+        return {'models': [], 'live': False, 'reason': "Couldn't list your ChatGPT plan's models"}
+    _models_cache['chatgpt'] = (time.monotonic(), models)
+    return {'models': models, 'live': True}
+
+
+@providers_api.get('/chatgpt/plan')
+async def chatgpt_plan_status(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.agents.access import owner_key
+    from cognitrix.providers import chatgpt_plan
+
+    info = await asyncio.to_thread(chatgpt_plan.status)
+    owner = info.pop('owner_id', None)
+    info['yours'] = bool(owner) and owner == owner_key(ctx.user)
+    info['can_edit'] = await is_admin(ctx.user)
+    return info
+
+
+class PlanSignIn(BaseModel):
+    new_account: bool = False
+
+
+@providers_api.post('/chatgpt/plan/sign-in')
+async def chatgpt_plan_sign_in(body: PlanSignIn, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.agents.access import owner_key
+    from cognitrix.providers import chatgpt_plan
+
+    await _plan_admin(ctx)
+    try:
+        return await chatgpt_plan.start_sign_in(owner_key(ctx.user), new_account=body.new_account)
+    except chatgpt_plan.ChatGPTPlanError as exc:
+        raise _plan_error(exc) from exc
+
+
+@providers_api.get('/chatgpt/plan/flows/{flow_id}')
+async def chatgpt_plan_flow(flow_id: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.agents.access import owner_key
+    from cognitrix.providers import chatgpt_plan
+
+    found = chatgpt_plan.flow_status(flow_id, owner_key(ctx.user))
+    if found is None:
+        raise HTTPException(status_code=404, detail='That sign-in has ended. Start again.')
+    return found
+
+
+class PastedAddress(BaseModel):
+    url: str
+
+
+@providers_api.post('/chatgpt/plan/flows/{flow_id}/address')
+async def chatgpt_plan_pasted(flow_id: str, body: PastedAddress, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Finish a sign-in from the address the browser ended up on.
+
+    Used when the engine runs on another computer, so the browser's
+    127.0.0.1 page can't reach it.
+    """
+    from cognitrix.agents.access import owner_key
+    from cognitrix.providers import chatgpt_plan
+
+    try:
+        found = await chatgpt_plan.finish_from_pasted_url(flow_id, owner_key(ctx.user), body.url)
+    except chatgpt_plan.ChatGPTPlanError as exc:
+        raise _plan_error(exc) from exc
+    if found is None:
+        raise HTTPException(status_code=404, detail='That sign-in has ended. Start again.')
+    return found
+
+
+@providers_api.delete('/chatgpt/plan')
+async def chatgpt_plan_sign_out(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.providers import chatgpt_plan
+
+    await _plan_admin(ctx)
+    warning = None
+    try:
+        await chatgpt_plan.sign_out()
+    except chatgpt_plan.ChatGPTPlanError as exc:
+        warning = str(exc)
+    _models_cache.pop('chatgpt', None)
+    return {'ok': True, 'warning': warning}
+
+
+@providers_api.post('/chatgpt/plan/test')
+async def chatgpt_plan_test(_ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.providers import chatgpt_plan
+
+    try:
+        models = await chatgpt_plan.list_models()
+    except chatgpt_plan.ChatGPTPlanError as exc:
+        return {'ok': False, 'message': str(exc)}
+    except Exception as exc:  # noqa: BLE001 - reported to the person
+        return {'ok': False, 'message': f"Couldn't reach ChatGPT: {type(exc).__name__}."}
+    count = len(models)
+    return {'ok': True, 'message': f'Works. {count} models on your plan.' if count else 'Works.'}
 
 
 @providers_api.get('/{provider_name}')

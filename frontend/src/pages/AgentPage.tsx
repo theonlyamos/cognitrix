@@ -10,7 +10,9 @@ import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm } from '@/components/form';
 import { cn } from '@/lib/utils';
 import { REASONING_LEVELS } from '@/lib/reasoning';
-import { BASE_URLS, MODELS, PROVIDERS, PROVIDER_LABELS, ignoresTemperature } from '@/lib/providers';
+import { BASE_URLS, HARNESS_PROVIDERS, MODELS, PROVIDERS, PROVIDER_LABELS, ignoresTemperature, isHarness } from '@/lib/providers';
+import HarnessNote from '@/components/HarnessNote';
+import PlanNote from '@/components/PlanNote';
 import { listMcpServers, type McpServer } from '@/lib/mcp';
 import FolderChips from '@/components/FolderChips';
 import ModelPicker from '@/components/ModelPicker';
@@ -38,7 +40,7 @@ interface AgentData {
   id?: string;
   name?: string;
   system_prompt?: string;
-  llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number; reasoning_effort?: string };
+  llm?: { provider?: string; model?: string; temperature?: number; base_url?: string; max_tokens?: number; reasoning_effort?: string; harness_mode?: string };
   tools?: Tool[];
   mcp_servers?: string[];
   folders?: WorkFolder[] | null;
@@ -62,6 +64,7 @@ export default function AgentPage() {
   const [model, setModel] = useState('gemini-3.5-flash');
   const [temperature, setTemperature] = useState(0.4);
   const [reasoning, setReasoning] = useState('');
+  const [harnessMode, setHarnessMode] = useState('edit');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [maxTokens, setMaxTokens] = useState('');
@@ -93,6 +96,7 @@ export default function AgentPage() {
     setModel(existing.llm?.model || '');
     setTemperature(existing.llm?.temperature ?? 0.4);
     setReasoning(existing.llm?.reasoning_effort || '');
+    setHarnessMode(existing.llm?.harness_mode || 'edit');
     setSystemPrompt(existing.system_prompt || '');
     setSelected(new Set((existing.tools || []).map((t) => t.name)));
     setMaxTokens(existing.llm?.max_tokens ? String(existing.llm.max_tokens) : '');
@@ -159,6 +163,7 @@ export default function AgentPage() {
           model: model.trim(),
           temperature,
           reasoning_effort: reasoning,
+          ...(isHarness(provider) ? { harness_mode: harnessMode } : {}),
           ...(baseUrl ? { base_url: baseUrl } : {}),
           ...(maxTokens ? { max_tokens: Number(maxTokens) } : {}),
         },
@@ -213,13 +218,20 @@ export default function AgentPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="PROVIDER">
           <Select value={provider} onChange={(e) => changeProvider(e.target.value)}>
-            {PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
+            <optgroup label="Model providers">
+              {PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
+            </optgroup>
+            <optgroup label="Coding agents on this computer">
+              {HARNESS_PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
+            </optgroup>
           </Select>
         </Field>
         <Field label="MODEL" required>
           <ModelPicker provider={provider} value={model} onChange={setModel} />
         </Field>
       </div>
+      <PlanNote provider={provider} />
+      <HarnessNote provider={provider} mode={harnessMode} onModeChange={setHarnessMode} selectClass="h-11 w-full rounded border border-line bg-bg px-3 text-sm font-normal text-fg md:h-10" />
 
       <Field label="TEMPERATURE" hint={noTemperature ? 'not used' : temperature.toFixed(2)}>
         <input
@@ -231,7 +243,11 @@ export default function AgentPage() {
         />
         {noTemperature && (
           <p className="mt-1.5 text-[12px] text-fg-dim">
-            This Claude model sets its own temperature, so this setting isn't sent. Use the reasoning level to tune it.
+            {isHarness(provider)
+              ? `${PROVIDER_LABELS[provider]} picks its own settings, so this isn't sent. Codex and Copilot CLI take the reasoning level.`
+              : provider === 'chatgpt'
+              ? "The ChatGPT plan doesn't take a temperature, so this setting isn't sent. Use the reasoning level to tune it."
+              : "This Claude model sets its own temperature, so this setting isn't sent. Use the reasoning level to tune it."}
           </p>
         )}
       </Field>
@@ -262,7 +278,7 @@ export default function AgentPage() {
           Hands coding jobs to a coding agent on this computer, which works in the background in the working folder. Every run waits for your approval.{' '}
           {systemInfo && (systemInfo.coding_agents?.length
             ? <>Installed: <span className="font-mono text-[12px] text-fg">{systemInfo.coding_agents.join(', ')}</span>.</>
-            : 'None installed yet: install Claude Code, Codex or Gemini CLI and sign in once.')}
+            : 'None installed yet: install Claude Code, Codex, Gemini CLI or GitHub Copilot CLI and sign in once.')}
         </p>
       )}
       <Field label={`TOOLS · ${selected.size} selected`} composite>

@@ -489,6 +489,9 @@ async def save_agent(request: Request, agent: Agent,
     try:
         if 'reasoning_effort' in llm_data:
             llm_data['reasoning_effort'] = normalize_reasoning_effort(llm_data['reasoning_effort'])
+        if llm_data.get('harness_mode') is not None:
+            from ...providers.harness import normalize_mode
+            llm_data['harness_mode'] = normalize_mode(llm_data['harness_mode'])
         llm = LLM(**llm_data)
     except ProviderKeyDestinationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

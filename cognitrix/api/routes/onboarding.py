@@ -43,7 +43,9 @@ MAX_NAME_LENGTH = 60
 # Providers offered in the setup dialog, in the order we suggest them when
 # more than one has a key. Keep in step with PROVIDERS in
 # frontend/src/lib/providers.ts.
-SETUP_PROVIDERS = ('anthropic', 'openai', 'google', 'openrouter', 'groq', 'cerebras', 'ollama')
+SETUP_PROVIDERS = ('anthropic', 'openai', 'chatgpt', 'google', 'openrouter', 'groq', 'cerebras', 'ollama')
+# Providers that run on a signed-in plan (Settings › Models and keys) instead of a key.
+PLAN_PROVIDERS = frozenset({'chatgpt'})
 # Providers that run without an API key.
 KEYLESS_PROVIDERS = frozenset({'ollama'})
 
@@ -58,6 +60,11 @@ class AssistantSetup(BaseModel):
 
 def _has_server_key(provider: str) -> bool:
     from cognitrix.config import settings
+
+    if provider in PLAN_PROVIDERS:
+        from cognitrix.providers import chatgpt_plan
+
+        return bool(chatgpt_plan.status().get('signed_in'))
 
     from cognitrix.providers.saved_keys import get_saved_key
 
@@ -84,6 +91,8 @@ def _provider_options() -> list[dict[str, Any]]:
             'needs_key': needs_key,
             'has_key': needs_key and _has_server_key(provider),
             'default_model': _default_model(provider),
+            # Connected by signing in, not by pasting a key.
+            'sign_in': provider in PLAN_PROVIDERS,
         })
     return options
 
@@ -145,7 +154,13 @@ def _build_llm(setup: AssistantSetup) -> LLM:
         'base_url': os.getenv(f'{provider.upper()}_BASE_URL') or _DEFAULT_BASE_URLS.get(provider, ''),
     }
     api_key = (setup.api_key or '').strip()
-    if api_key:
+    if provider in PLAN_PROVIDERS:
+        if not _has_server_key(provider):
+            raise HTTPException(
+                status_code=400,
+                detail='Connect your ChatGPT account first (Continue with ChatGPT), or pick another provider.',
+            )
+    elif api_key:
         llm_data['api_key'] = api_key
     elif provider not in KEYLESS_PROVIDERS and not _has_server_key(provider):
         raise HTTPException(
