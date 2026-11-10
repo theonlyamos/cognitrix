@@ -143,7 +143,7 @@ class Backend(Protocol):
     def post_click(self, window_id: int, x: int, y: int, button: str, double: bool) -> None: ...
     def post_text(self, window_id: int, text: str) -> None: ...
     def post_key(self, window_id: int, key: str) -> None: ...
-    def post_scroll(self, window_id: int, x: int, y: int, amount: int) -> None: ...
+    def post_scroll(self, window_id: int, x: int, y: int, amount: int, horizontal: bool = False) -> None: ...
     def fingerprint(self, window_id: int) -> str: ...
     def give_back_focus(self, window_id: int) -> bool: ...
     def wake(self, window_id: int) -> None: ...  # optional
@@ -195,6 +195,8 @@ class Driver:
     def __init__(self, backend: Backend):
         self.backend = backend
         self._snapshots: dict[int, Snapshot] = {}
+        # (viewer, window) -> the snapshot id that viewer last looked at
+        self._seen: dict[tuple[Any, int], str] = {}
         self._locks: dict[int, threading.Lock] = {}
         self._locks_guard = threading.Lock()
         self._listeners: list[Callable[[ActionEvent], None]] = []
@@ -295,8 +297,10 @@ class Driver:
         return last
 
     # -- reading ----------------------------------------------------------
-    def look(self, window_id: int, query: str | None = None, limit: int = 60):
-        """Screenshot + numbered elements. Returns (image, snapshot, shown, note)."""
+    def look(self, window_id: int, query: str | None = None, limit: int = 60, viewer: Any = None):
+        """Screenshot + numbered elements. Returns (image, snapshot, shown, note).
+        `viewer` names the caller (an agent): its later actions are refused when
+        someone else's look has replaced the snapshot it saw."""
         win = self._window(window_id, acting=False)
         notes = [self.backend.prepare(win.id)]
         image, origin, cap_note = self.backend.capture(win.id)
@@ -316,6 +320,8 @@ class Driver:
         scale = max(size[0] / _SHOT_MAX_W, size[1] / _SHOT_MAX_H, 1.0)
         snap = Snapshot(f's{next(_snapshot_ids)}', win.id, elements, origin, size, scale)
         self._snapshots[win.id] = snap
+        if viewer is not None:
+            self._seen[(viewer, win.id)] = snap.id
         if image is not None and scale > 1.0:
             image = image.resize((round(size[0] / scale), round(size[1] / scale)))
         shown = list(enumerate(elements))
@@ -324,10 +330,26 @@ class Driver:
             shown = [(i, e) for i, e in shown if q in e.name.lower() or q in (e.value or '').lower()]
         return image, snap, shown[:max(1, int(limit))], ' '.join(n for n in notes if n)
 
-    def _element(self, window_id: int, index: int, snapshot_id: str | None) -> tuple[Snapshot, Element]:
+    def _snapshot(self, window_id: int, viewer: Any = None) -> Snapshot:
+        """The window's latest snapshot, refused when this viewer hasn't seen it."""
         snap = self._snapshots.get(int(window_id))
         if snap is None:
-            raise Stale('Look at the window first (look_at_window) to get element numbers.')
+            raise Stale('Look at the window first (look_at_window).')
+        if viewer is not None and self._seen.get((viewer, int(window_id))) != snap.id:
+            raise Stale('This window has been looked at again since your last look, so your element numbers '
+                        'and coordinates are out of date. Look at the window again (look_at_window).')
+        return snap
+
+    @staticmethod
+    def _moved(win: WindowInfo, snap: Snapshot) -> tuple[int, int]:
+        """How far the window moved since the snapshot; a resized window is stale."""
+        if (win.rect[2] - win.rect[0], win.rect[3] - win.rect[1]) != tuple(snap.size):
+            raise Stale('The window was resized since your last look. Look at it again (look_at_window).')
+        return win.rect[0] - snap.origin[0], win.rect[1] - snap.origin[1]
+
+    def _element(self, window_id: int, index: int, snapshot_id: str | None,
+                 viewer: Any = None) -> tuple[Snapshot, Element]:
+        snap = self._snapshot(window_id, viewer)
         if snapshot_id and snapshot_id != snap.id:
             raise Stale(f'Element numbers from {snapshot_id} are out of date; use the latest look ({snap.id}).')
         if not 0 <= int(index) < len(snap.elements):
@@ -388,9 +410,9 @@ class Driver:
 
     # -- actions ----------------------------------------------------------
     def act_on_element(self, window_id: int, index: int, action: str = 'click',
-                       snapshot_id: str | None = None) -> ActionResult:
+                       snapshot_id: str | None = None, viewer: Any = None) -> ActionResult:
         def body(win: WindowInfo) -> ActionResult:
-            _, element = self._element(win.id, index, snapshot_id)
+            snap, element = self._element(win.id, index, snapshot_id, viewer)
             if not element.enabled:
                 return ActionResult(FAILED, f'Element {index} ({element.role} {element.name!r}) is disabled.')
             chosen = _pick_action(element, action)
@@ -406,7 +428,8 @@ class Driver:
             before_fp = self.backend.fingerprint(win.id)
             if chosen == 'pixel':
                 cx, cy = _center(element.rect)
-                self.backend.post_click(win.id, cx, cy, 'left', False)
+                dx, dy = self._moved(win, snap)
+                self.backend.post_click(win.id, cx + dx, cy + dy, 'left', False)
             else:
                 self.backend.perform(element, chosen)
             after_fp = self._settled_fingerprint(win.id, before_fp)
@@ -421,14 +444,14 @@ class Driver:
         return self._act(window_id, f'element:{action}', body)
 
     def set_text(self, window_id: int, text: str, index: int | None = None,
-                 snapshot_id: str | None = None) -> ActionResult:
+                 snapshot_id: str | None = None, viewer: Any = None) -> ActionResult:
         def body(win: WindowInfo) -> ActionResult:
             if index is None:
                 element = self.backend.focused_element(win.id)
                 if element is None:
                     return ActionResult(FAILED, 'No text field has focus in that window; give an element number.')
             else:
-                _, element = self._element(win.id, index, snapshot_id)
+                _, element = self._element(win.id, index, snapshot_id, viewer)
             if 'set_value' not in element.actions:
                 return ActionResult(FAILED, f'{element.role} {element.name!r} does not accept text directly; '
                                     'use type_in_window instead.')
@@ -446,11 +469,9 @@ class Driver:
         return self._act(window_id, 'set_text', body)
 
     def click_point(self, window_id: int, x: float, y: float, button: str = 'left',
-                    double: bool = False) -> ActionResult:
+                    double: bool = False, viewer: Any = None) -> ActionResult:
         """Click at (x, y) in the latest look's image coordinates."""
-        snap = self._snapshots.get(int(window_id))
-        if snap is None:
-            raise Stale('Look at the window first (look_at_window) so coordinates match its image.')
+        snap = self._snapshot(window_id, viewer)
         px, py = round(x * snap.scale), round(y * snap.scale)
         if not (0 <= px < snap.size[0] and 0 <= py < snap.size[1]):
             raise DriverError(f'({x}, {y}) is outside the window image.')
@@ -468,7 +489,9 @@ class Driver:
                 else:
                     hit = None
             if hit is None:
-                self.backend.post_click(win.id, sx, sy, button, double)
+                # The window may have been moved since the look.
+                dx, dy = self._moved(win, snap)
+                self.backend.post_click(win.id, sx + dx, sy + dy, button, double)
                 how = f'{"double-" if double else ""}{button} click at ({x}, {y})'
             after_fp = self._settled_fingerprint(win.id, before_fp)
             if after_fp != before_fp:
@@ -478,9 +501,9 @@ class Driver:
         return self._act(window_id, 'click', body, (sx, sy))
 
     def type_text(self, window_id: int, text: str, x: float | None = None,
-                  y: float | None = None) -> ActionResult:
+                  y: float | None = None, viewer: Any = None) -> ActionResult:
         if x is not None and y is not None:
-            focus = self.click_point(window_id, x, y)
+            focus = self.click_point(window_id, x, y, viewer=viewer)
             if focus.status == NEEDS_SCREEN:
                 return focus
 
@@ -538,7 +561,8 @@ class Driver:
         return self._act(window_id, f'key:{keys}', body)
 
     def scroll(self, window_id: int, direction: str = 'down', amount: int = 3,
-               index: int | None = None, snapshot_id: str | None = None) -> ActionResult:
+               index: int | None = None, snapshot_id: str | None = None,
+               viewer: Any = None) -> ActionResult:
         direction = direction.lower()
         if direction not in ('up', 'down', 'left', 'right'):
             raise DriverError('direction must be up, down, left or right.')
@@ -547,7 +571,7 @@ class Driver:
             before_fp = self.backend.fingerprint(win.id)
             target = None
             if index is not None:
-                _, target = self._element(win.id, index, snapshot_id)
+                _, target = self._element(win.id, index, snapshot_id, viewer)
             else:
                 snap = self._snapshots.get(win.id)
                 scrollable = [e for e in (snap.elements if snap else []) if 'scroll' in e.actions]
@@ -564,8 +588,13 @@ class Driver:
             else:
                 rect = target.rect if target is not None else win.rect
                 cx, cy = _center(rect)
-                sign = 1 if direction in ('up', 'left') else -1
-                self.backend.post_scroll(win.id, cx, cy, sign * int(amount))
+                latest = self._snapshots.get(win.id)
+                if target is not None and latest is not None:
+                    dx, dy = self._moved(win, latest)
+                    cx, cy = cx + dx, cy + dy
+                # Wheel deltas: positive is up, or right on the horizontal wheel.
+                sign = 1 if direction in ('up', 'right') else -1
+                self.backend.post_scroll(win.id, cx, cy, sign * int(amount), direction in ('left', 'right'))
             if self._settled_fingerprint(win.id, before_fp) != before_fp:
                 return ActionResult(CONFIRMED, f'Scrolled {direction}; the window changed.')
             return ActionResult(UNVERIFIED, f'Scrolled {direction}, but nothing visible changed (maybe already at '

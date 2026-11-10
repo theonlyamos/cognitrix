@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+from typing import Any
 
 from cognitrix.computer import ActionResult, DriverError, Unsupported, get_driver
 from cognitrix.tools.misc import coords_normalized, queue_image
@@ -22,6 +23,13 @@ def _run(fn):
 
 def _done(result: ActionResult):
     return result.text()
+
+
+def _viewer(parent: Any) -> Any:
+    """Who is acting, so one agent's look can't be confused with another's."""
+    if parent is None:
+        return None
+    return getattr(parent, 'id', None) or id(parent)
 
 
 def _image_point(driver, window_id: int, x: float, y: float) -> tuple[float, float]:
@@ -75,7 +83,7 @@ def open_app(target: str):
 
 
 @tool(category='system')
-def look_at_window(window_id: int, find: str | None = None, max_elements: int = 60):
+def look_at_window(window_id: int, find: str | None = None, max_elements: int = 60, *, parent: Any | None = None):
     """Look at one app window: you get its screenshot (attached after this result, even if other windows
     cover it) and a numbered list of its controls. Use those numbers with click_element and set_text, which
     are more reliable than clicking pixels. Look again after acting, because numbers change.
@@ -85,7 +93,7 @@ def look_at_window(window_id: int, find: str | None = None, max_elements: int = 
         max_elements (int, optional): Most controls to list (default 60).
     """
     def go(driver):
-        image, snap, shown, note = driver.look(window_id, find, max_elements)
+        image, snap, shown, note = driver.look(window_id, find, max_elements, viewer=_viewer(parent))
         win = driver.backend.window(int(window_id))
         title = win.title if win else ''
         lines = [f'Window {window_id} {title!r}, snapshot {snap.id}.']
@@ -123,7 +131,7 @@ def look_at_window(window_id: int, find: str | None = None, max_elements: int = 
 
 
 @tool(category='system')
-def click_element(window_id: int, element: int, action: str = 'click'):
+def click_element(window_id: int, element: int, action: str = 'click', *, parent: Any | None = None):
     """Act on a control from your latest look_at_window of that window, in the background.
     action "click" presses buttons and links and opens list items; use "select" to only select an item,
     "toggle" for checkboxes, "expand" to open or close menus, dropdowns and tree nodes.
@@ -132,22 +140,23 @@ def click_element(window_id: int, element: int, action: str = 'click'):
         element (int): Control number from look_at_window.
         action (str, optional): click, select, toggle or expand. Default click.
     """
-    return _run(lambda d: _done(d.act_on_element(window_id, element, action)))
+    return _run(lambda d: _done(d.act_on_element(window_id, element, action, viewer=_viewer(parent))))
 
 
 @tool(category='system')
-def set_text(window_id: int, text: str, element: int | None = None):
+def set_text(window_id: int, text: str, element: int | None = None, *, parent: Any | None = None):
     """Put text into a text field in the background, replacing what it holds. Prefer this over typing.
     Args:
         window_id (int): Window id.
         text (str): The full text the field should contain.
         element (int, optional): Control number of the field from look_at_window; default is the focused field.
     """
-    return _run(lambda d: _done(d.set_text(window_id, text, element)))
+    return _run(lambda d: _done(d.set_text(window_id, text, element, viewer=_viewer(parent))))
 
 
 @tool(category='system')
-def click_in_window(window_id: int, x: int, y: int, button: str = 'left', double: bool = False):
+def click_in_window(window_id: int, x: int, y: int, button: str = 'left', double: bool = False, *,
+                    parent: Any | None = None):
     """Click a point in a window's latest look_at_window screenshot, in the background. Use click_element
     when the target is in the control list.
     Args:
@@ -159,12 +168,13 @@ def click_in_window(window_id: int, x: int, y: int, button: str = 'left', double
     """
     def go(driver):
         ix, iy = _image_point(driver, window_id, x, y)
-        return _done(driver.click_point(window_id, ix, iy, button, double))
+        return _done(driver.click_point(window_id, ix, iy, button, double, viewer=_viewer(parent)))
     return _run(go)
 
 
 @tool(category='system')
-def type_in_window(window_id: int, text: str, x: int | None = None, y: int | None = None):
+def type_in_window(window_id: int, text: str, x: int | None = None, y: int | None = None, *,
+                   parent: Any | None = None):
     """Type text into a window in the background, at its focused field or after clicking (x, y) in its
     screenshot. Use set_text instead when the field is in the control list. If the result says the app needs
     the screen, ask the person before using text_input, which takes over their keyboard.
@@ -178,7 +188,7 @@ def type_in_window(window_id: int, text: str, x: int | None = None, y: int | Non
         ix = iy = None
         if x is not None and y is not None:
             ix, iy = _image_point(driver, window_id, x, y)
-        return _done(driver.type_text(window_id, text, ix, iy))
+        return _done(driver.type_text(window_id, text, ix, iy, viewer=_viewer(parent)))
     return _run(go)
 
 
@@ -195,7 +205,8 @@ def press_key_in_window(window_id: int, keys: str):
 
 
 @tool(category='system')
-def scroll_window(window_id: int, direction: str = 'down', amount: int = 3, element: int | None = None):
+def scroll_window(window_id: int, direction: str = 'down', amount: int = 3, element: int | None = None, *,
+                  parent: Any | None = None):
     """Scroll a window, or one of its scrollable controls, in the background.
     Args:
         window_id (int): Window id.
@@ -203,4 +214,4 @@ def scroll_window(window_id: int, direction: str = 'down', amount: int = 3, elem
         amount (int, optional): Steps to scroll (default 3).
         element (int, optional): Control number of the area to scroll; default is the main scrollable area.
     """
-    return _run(lambda d: _done(d.scroll(window_id, direction, amount, element)))
+    return _run(lambda d: _done(d.scroll(window_id, direction, amount, element, viewer=_viewer(parent))))

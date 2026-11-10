@@ -109,8 +109,8 @@ class FakeBackend:
     def post_key(self, wid, key, mods=()):
         self.posted.append(('key', wid, key, tuple(mods)))
 
-    def post_scroll(self, wid, x, y, amount):
-        self.posted.append(('scroll', wid, x, y, amount))
+    def post_scroll(self, wid, x, y, amount, horizontal=False):
+        self.posted.append(('scroll', wid, x, y, amount, horizontal))
 
     def fingerprint(self, wid):
         return fingerprint_of(self.windows[wid].title, self.trees[wid])
@@ -313,3 +313,41 @@ def test_tools_are_registered_and_classified():
     for name in ('open_app', 'click_element', 'set_text', 'click_in_window', 'type_in_window', 'press_key_in_window'):
         assert ToolManager.get_by_name(name) is not None, name
         assert detector.analyze(name, {}).risk_level is RiskLevel.MEDIUM
+
+
+def test_another_viewers_look_makes_numbers_stale(driver, fake):
+    driver.look(1, viewer='agent-a')
+    driver.look(1, viewer='agent-b')
+    with pytest.raises(Stale):
+        driver.act_on_element(1, 0, viewer='agent-a')
+    with pytest.raises(Stale):
+        driver.click_point(1, 5, 5, viewer='agent-a')
+    assert driver.act_on_element(1, 0, viewer='agent-b').status in (CONFIRMED, UNVERIFIED)
+    driver.look(1, viewer='agent-a')
+    assert driver.act_on_element(1, 0, viewer='agent-a').status in (CONFIRMED, UNVERIFIED)
+
+
+def test_pixel_click_follows_a_moved_window(driver, fake):
+    driver.look(2)
+    w = fake.windows[2]
+    fake.windows[2] = WindowInfo(2, w.title, w.app, w.pid, rect=(500, 400, 1300, 1000))
+    fake.trees[2] = []  # nothing to hit-test, so the click is posted
+    driver.click_point(2, 20, 30, 'right')
+    assert fake.posted[-1][:4] == ('click', 2, 520, 430)
+    # A resized window needs a fresh look.
+    fake.windows[2] = WindowInfo(2, w.title, w.app, w.pid, rect=(500, 400, 1400, 1000))
+    with pytest.raises(Stale):
+        driver.click_point(2, 20, 30, 'right')
+
+
+def test_fallback_scroll_keeps_its_axis(driver, fake):
+    fake.trees[2] = []
+    driver.look(2)
+    driver.scroll(2, 'down', 2)
+    assert fake.posted[-1][4:] == (-2, False)
+    driver.scroll(2, 'up', 2)
+    assert fake.posted[-1][4:] == (2, False)
+    driver.scroll(2, 'right', 2)
+    assert fake.posted[-1][4:] == (2, True)
+    driver.scroll(2, 'left', 2)
+    assert fake.posted[-1][4:] == (-2, True)

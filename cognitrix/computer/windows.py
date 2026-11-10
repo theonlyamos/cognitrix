@@ -59,6 +59,7 @@ for _fn, _args, _res in [
     ('MapVirtualKeyW', [wt.UINT, wt.UINT], wt.UINT),
     ('VkKeyScanW', [wt.WCHAR], ctypes.c_short),
     ('SetForegroundWindow', [wt.HWND], wt.BOOL),
+    ('IsChild', [wt.HWND, wt.HWND], wt.BOOL),
     ('AttachThreadInput', [wt.DWORD, wt.DWORD, wt.BOOL], wt.BOOL),
     ('SwitchToThisWindow', [wt.HWND, wt.BOOL], None),
     ('GetKeyboardState', [ctypes.c_void_p], wt.BOOL),
@@ -549,8 +550,13 @@ class WindowsBackend:
     # -- posted input -----------------------------------------------------
     def _focus_hwnd(self, hwnd: int) -> int:
         info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
-        if user32.GetGUIThreadInfo(_thread(hwnd), ctypes.byref(info)) and info.hwndFocus:
-            return int(info.hwndFocus)
+        if not (user32.GetGUIThreadInfo(_thread(hwnd), ctypes.byref(info)) and info.hwndFocus):
+            return 0
+        focus = int(info.hwndFocus)
+        # Windows sharing a GUI thread share its focus, so the focused control
+        # may sit in another window (maybe the one the person is typing in).
+        if focus == int(hwnd) or user32.IsChild(hwnd, focus):
+            return focus
         return 0
 
     def _deepest_child(self, hwnd: int, sx: int, sy: int) -> tuple[int, int, int]:
@@ -614,10 +620,12 @@ class WindowsBackend:
             user32.PostMessageW(target, WM_CHAR, {0x0D: 13, 0x09: 9, 0x08: 8, 0x1B: 27}[vk], down)
         user32.PostMessageW(target, WM_KEYUP, vk, up)
 
-    def post_scroll(self, window_id: int, x: int, y: int, amount: int) -> None:
+    def post_scroll(self, window_id: int, x: int, y: int, amount: int, horizontal: bool = False) -> None:
+        # Positive amount scrolls up, or right when horizontal.
         target, _, _ = self._deepest_child(int(window_id), x, y)
         wparam = ((amount * 120) & 0xFFFF) << 16
-        user32.PostMessageW(target, WM_MOUSEWHEEL, wparam, (y & 0xFFFF) << 16 | (x & 0xFFFF))
+        message = WM_MOUSEHWHEEL if horizontal else WM_MOUSEWHEEL
+        user32.PostMessageW(target, message, wparam, (y & 0xFFFF) << 16 | (x & 0xFFFF))
 
     def wake(self, window_id: int) -> None:
         """Ask Chromium/Electron for their page accessibility tree, which they
