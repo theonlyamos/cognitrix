@@ -925,7 +925,10 @@ _USAGE_LIMIT_CODES = {'subscription_sharing_usage_limit_exceeded'}
 _RETRY_LATER_CODES = {'subscription_sharing_usage_unavailable', 'subscription_sharing_user_unavailable'}
 
 
-def _error_message(code: str, detail: str = '') -> str:
+def _error_message(code: str, detail: str = '', client: Any = None) -> str:
+    if client is not None:
+        # The same Responses request on an OpenAI API key (see base.py).
+        return f'OpenAI request failed{" (" + code + ")" if code else ""}{": " + detail if detail else ""}.'
     if code in _USAGE_LIMIT_CODES:
         return (f'Your ChatGPT plan has reached its usage limit for Cognitrix. '
                 f'Check or raise it at {USAGE_URL}, or switch this agent to an API key provider.')
@@ -962,8 +965,12 @@ def _client(token: str):
     return AsyncOpenAI(api_key=token, base_url=API_BASE, max_retries=0, timeout=600)
 
 
-async def _open_stream(params: dict[str, Any]):
-    """responses.create(stream=True) with refresh-on-401 and bounded retries."""
+async def _open_stream(params: dict[str, Any], client: Any = None):
+    """responses.create(stream=True) with refresh-on-401 and bounded retries.
+
+    With ``client`` (an AsyncOpenAI set up with an API key) the request goes
+    out on that key instead of the signed-in plan.
+    """
     import openai
 
     from cognitrix.providers import base
@@ -976,10 +983,14 @@ async def _open_stream(params: dict[str, Any]):
         attempt += 1
         if attempt > 1 and accounting is not None:
             await accounting.begin_provider_retry()
-        token = await access_token(force_refresh=refreshed and attempt > 1)
         try:
+            if client is not None:
+                return await client.responses.create(**params)
+            token = await access_token(force_refresh=refreshed and attempt > 1)
             return await _client(token).responses.create(**params)
         except openai.AuthenticationError:
+            if client is not None:
+                raise ChatGPTPlanError('OpenAI refused the API key. Check it in Settings › Models and keys.')
             if refreshed:
                 raise ChatGPTPlanError('ChatGPT refused this sign-in. Sign in again in Settings › Models and keys.')
             refreshed = True
@@ -991,7 +1002,7 @@ async def _open_stream(params: dict[str, Any]):
             transient = (status is not None and status >= 500 and code not in _USAGE_LIMIT_CODES) or (
                 status == 429 and code not in _USAGE_LIMIT_CODES)
             if not transient or attempt >= base._MAX_ATTEMPTS:
-                raise ChatGPTPlanError(_error_message(code, detail)) from exc
+                raise ChatGPTPlanError(_error_message(code, detail, client)) from exc
             if accounting is not None:
                 await accounting.finish_failed_provider_attempt()
             delay = base._retry_delay(exc, attempt)
@@ -999,7 +1010,8 @@ async def _open_stream(params: dict[str, Any]):
             await asyncio.sleep(delay)
         except (openai.APIConnectionError, openai.APITimeoutError) as exc:
             if attempt >= base._MAX_ATTEMPTS:
-                raise ChatGPTPlanError(f"Couldn't reach ChatGPT: {type(exc).__name__}.") from exc
+                who = 'OpenAI' if client is not None else 'ChatGPT'
+                raise ChatGPTPlanError(f"Couldn't reach {who}: {type(exc).__name__}.") from exc
             if accounting is not None:
                 await accounting.finish_failed_provider_attempt()
             await asyncio.sleep(base._retry_delay(exc, attempt))
@@ -1023,16 +1035,21 @@ def _usage(raw: Any) -> dict[str, int]:
     return counts
 
 
-async def stream(llm: Any, params: dict[str, Any]) -> AsyncIterator[LLMResponse]:
-    """A streamed reply, yielded the way base.py's OpenAI stream handler does."""
+async def stream(llm: Any, params: dict[str, Any], client: Any = None) -> AsyncIterator[LLMResponse]:
+    """A streamed reply, yielded the way base.py's OpenAI stream handler does.
+
+    ``client`` sends it on an OpenAI API key instead of the plan (base.py
+    does this for OpenAI models that only take tools on the Responses API).
+    """
     from cognitrix.providers.base import _malformed_arguments_error, record_usage
 
     try:
         from cognitrix import usage as usage_log
 
-        owner = usage_log._owner.get()
-        check_owner((owner or {}).get('user_id'))
-        events = await _open_stream(params)
+        if client is None:
+            owner = usage_log._owner.get()
+            check_owner((owner or {}).get('user_id'))
+        events = await _open_stream(params, client)
         response = LLMResponse()
         in_reasoning = False
         calls: list[dict[str, Any]] = []
@@ -1074,11 +1091,13 @@ async def stream(llm: Any, params: dict[str, Any]) -> AsyncIterator[LLMResponse]
                     finish_reason = 'length' if reason == 'max_output_tokens' else 'content_filter'
             elif kind == 'response.failed':
                 err = _field(_field(event, 'response'), 'error')
-                failure = _error_message(str(_field(err, 'code', '') or ''), str(_field(err, 'message', '') or ''))
+                failure = _error_message(str(_field(err, 'code', '') or ''), str(_field(err, 'message', '') or ''),
+                                         client)
             elif kind == 'error':
-                failure = _error_message(str(_field(event, 'code', '') or ''), str(_field(event, 'message', '') or ''))
+                failure = _error_message(str(_field(event, 'code', '') or ''), str(_field(event, 'message', '') or ''),
+                                         client)
         if failure or (not completed and finish_reason is None):
-            raise ChatGPTPlanError(failure or 'The ChatGPT reply stopped before it finished.')
+            raise ChatGPTPlanError(failure or 'The reply stopped before it finished.')
         truncated = finish_reason == 'length'
         parsed = []
         for call in calls:
@@ -1116,10 +1135,10 @@ async def stream(llm: Any, params: dict[str, Any]) -> AsyncIterator[LLMResponse]
         yield err
 
 
-async def respond(llm: Any, params: dict[str, Any]) -> LLMResponse:
+async def respond(llm: Any, params: dict[str, Any], client: Any = None) -> LLMResponse:
     """One whole reply. The plan route only streams, so this reads the stream."""
     last: LLMResponse | None = None
-    async for item in stream(llm, params):
+    async for item in stream(llm, params, client):
         last = item
     if last is None:
         msg = 'ChatGPT sent no reply.'

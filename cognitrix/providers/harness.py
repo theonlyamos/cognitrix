@@ -45,11 +45,14 @@ from pathlib import Path
 from typing import Any
 
 from cognitrix.errors import ExecutionControlError
+from cognitrix.providers.harness_bridge import Bridge, lendable
 from cognitrix.utils.llm_response import LLMResponse
 
 logger = logging.getLogger('cognitrix.log')
 
-MODES = ('read_only', 'edit', 'full')
+MODES = ('read_only', 'ask', 'edit', 'full')
+ASK_HARNESSES = frozenset({'claude-code'})
+"""CLIs that can hand their permission prompts to Cognitrix ('ask' mode)."""
 DEFAULT_MODE = 'edit'
 TURN_TIMEOUT = 60 * 60
 MAX_TRANSCRIPT_CHARS = 60_000
@@ -65,6 +68,12 @@ class TurnInfo:
     session_id: str | None
     folders: tuple[Any, ...]
     host_process_mode: Any
+    tools: tuple[dict[str, Any], ...] = ()
+    """The agent's own tools (model-call format) to lend the CLI over MCP."""
+    call_tool: Any = None
+    """async (tool name, arguments) -> (text, worked?), run through the agent's usual checks."""
+    approve: Any = None
+    """async (the CLI's tool name, its input) -> (allowed?, why not): asks the person."""
 
 
 turn: contextvars.ContextVar[TurnInfo | None] = contextvars.ContextVar('harness_turn', default=None)
@@ -90,15 +99,15 @@ HARNESSES: dict[str, Harness] = {
     'claude-code': Harness(
         'claude-code', 'Claude Code', 'claude',
         'npm install -g @anthropic-ai/claude-code, then run `claude` once and sign in',
-        ('sonnet', 'opus', 'haiku', 'claude-sonnet-5-5', 'claude-opus-5-5'), False),
+        ('sonnet', 'opus', 'haiku', 'claude-fable-5-2', 'claude-sonnet-5-5', 'claude-opus-5-5'), False),
     'codex': Harness(
         'codex', 'Codex', 'codex',
         'npm install -g @openai/codex, then run `codex login` (Sign in with ChatGPT)',
-        ('gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-5.5'), False),
+        ('gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-5.5'), False),
     'gemini-cli': Harness(
         'gemini-cli', 'Gemini CLI', 'gemini',
         'npm install -g @google/gemini-cli, then run `gemini` once and sign in',
-        ('gemini-3.6-flash', 'gemini-3.1-pro', 'gemini-3.5-flash'), True),
+        ('gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-4-carbon', 'gemini-3.5-flash'), True),
     'copilot-cli': Harness(
         'copilot-cli', 'GitHub Copilot CLI', 'copilot',
         'npm install -g @github/copilot, then run `copilot login` (needs a Copilot plan)',
@@ -218,6 +227,16 @@ def first_message(instructions: str, earlier: list[dict[str, Any]], new_message:
     return '\n\n'.join(parts)
 
 
+def tools_note(label: str, names: list[str]) -> str:
+    """Tells the CLI, once per CLI session, what the lent tools are for."""
+    shown = ', '.join(names[:40]) + (' and more' if len(names) > 40 else '')
+    return (
+        f'You also have Cognitrix tools from the MCP server "cognitrix": {shown}. Use them for anything '
+        "about the person's Cognitrix workspace (their memory, tasks, other agents, connected apps, "
+        f'notifications, knowledge). Keep using your own {label} tools for files and commands.\n\n'
+    )
+
+
 # --- remembered CLI sessions -----------------------------------------------------
 
 _store_lock = threading.Lock()
@@ -270,13 +289,40 @@ def remember(chat_id: str | None, key: str, model: str, cwd: str, session: str, 
 # --- command lines ---------------------------------------------------------------
 
 def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
-                  resume: str | None, new_session: str | None, cwd: str) -> tuple[list[str], dict[str, str]]:
-    """(argv, extra environment). The message itself always goes on stdin."""
+                  resume: str | None, new_session: str | None, cwd: str,
+                  tools_url: str | None = None, settings_file: str | None = None,
+                  ) -> tuple[list[str], dict[str, str]]:
+    """(argv, extra environment). The message itself always goes on stdin.
+
+    ``tools_url`` is the turn's MCP server with the agent's Cognitrix tools
+    (harness_bridge.py). 'ask' mode needs it, and falls back to 'edit' without.
+    CLIs that take MCP servers as JSON get it in ``settings_file``, written
+    here: JSON in an argument doesn't survive the .cmd wrappers on Windows.
+    """
+    from cognitrix.providers.harness_bridge import APPROVE_TOOL, SERVER_NAME
+
     env: dict[str, str] = {}
+    if mode == 'ask' and not (tools_url and key in ASK_HARNESSES):
+        mode = 'edit'
     if key == 'claude-code':
-        permission = {'read_only': 'plan', 'edit': 'acceptEdits', 'full': 'bypassPermissions'}[mode]
+        if tools_url and not settings_file:
+            tools_url, mode = None, ('edit' if mode == 'ask' else mode)
+        permission = {'read_only': 'plan', 'ask': 'default', 'edit': 'acceptEdits',
+                      'full': 'bypassPermissions'}[mode]
+        if mode == 'read_only' and tools_url:
+            # Plan mode refuses MCP tools too. Without it, and with nobody to
+            # ask, Claude Code still refuses edits and commands that change things.
+            permission = 'default'
         argv = [program, '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
                 '--permission-mode', permission]
+        if mode == 'read_only' and tools_url:
+            argv += ['--disallowedTools', 'Edit', 'Write', 'NotebookEdit']
+        if tools_url:
+            Path(settings_file).write_text(json.dumps(
+                {'mcpServers': {SERVER_NAME: {'type': 'http', 'url': tools_url}}}), encoding='utf-8')
+            argv += ['--mcp-config', settings_file, '--allowedTools', f'mcp__{SERVER_NAME}']
+        if mode == 'ask':
+            argv += ['--permission-prompt-tool', f'mcp__{SERVER_NAME}__{APPROVE_TOOL}']
         if model:
             argv += ['--model', model]
         if resume:
@@ -293,6 +339,12 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
             argv += ['-m', model]
         if effort in ('minimal', 'low', 'medium', 'high', 'xhigh'):
             argv += ['-c', f'model_reasoning_effort="{effort}"']
+        if tools_url:
+            # Cognitrix does its own asking for these tools, so Codex needn't.
+            # No quotes (they don't survive .cmd wrappers): Codex reads a value
+            # that isn't valid TOML as a plain string.
+            argv += ['-c', f'mcp_servers.{SERVER_NAME}.url={tools_url}',
+                     '-c', f'mcp_servers.{SERVER_NAME}.default_tools_approval_mode=approve']
         if resume:
             argv += [resume]
         return argv + ['-'], env
@@ -302,6 +354,12 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
         if model:
             argv += ['-m', model]
         argv += ['--resume', resume] if resume else ['--session-id', new_session or str(uuid.uuid4())]
+        if tools_url and settings_file:
+            # Gemini CLI takes MCP servers from settings files only; this one
+            # sits under its lowest-priority "system defaults".
+            Path(settings_file).write_text(json.dumps(
+                {'mcpServers': {SERVER_NAME: {'httpUrl': tools_url, 'trust': True}}}), encoding='utf-8')
+            env['GEMINI_CLI_SYSTEM_DEFAULTS_PATH'] = settings_file
         return argv, env
     if key == 'copilot-cli':
         argv = [program, '--output-format', 'json', '--no-color', '--no-ask-user', '--no-auto-update',
@@ -310,6 +368,12 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
             argv += ['--allow-tool', 'write']
         elif mode == 'full':
             argv += ['--allow-all']
+        if tools_url and settings_file:
+            Path(settings_file).write_text(json.dumps(
+                {'mcpServers': {SERVER_NAME: {'type': 'http', 'url': tools_url, 'tools': ['*']}}}), encoding='utf-8')
+            argv += ['--additional-mcp-config', '@' + settings_file]
+            if mode != 'full':
+                argv += ['--allow-tool', SERVER_NAME]
         if model:
             argv += ['--model', model]
         if effort in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh'):
@@ -321,7 +385,10 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
             'edit': {'edit': 'allow', 'bash': 'deny'},
             'full': {'edit': 'allow', 'bash': 'allow', 'webfetch': 'allow'},
         }[mode]
-        env['OPENCODE_CONFIG_CONTENT'] = json.dumps({'permission': permission})
+        config: dict[str, Any] = {'permission': permission}
+        if tools_url:
+            config['mcp'] = {SERVER_NAME: {'type': 'remote', 'url': tools_url, 'enabled': True, 'oauth': False}}
+        env['OPENCODE_CONFIG_CONTENT'] = json.dumps(config)
         argv = [program, 'run', '--format', 'json', '--dir', cwd]
         if model:
             argv += ['-m', model]
@@ -573,6 +640,8 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
     harness = HARNESSES[key]
     response = LLMResponse()
     proc: subprocess.Popen | None = None
+    bridge: Any = None
+    settings_file: str | None = None
     in_reasoning = False
 
     def fail(msg: str) -> LLMResponse:
@@ -624,8 +693,34 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
             resume, text = None, first_message(instructions, earlier, new_message)
         new_session = str(uuid.uuid4()) if harness.resumes_with_new_id and not resume else None
 
+        # Lend the CLI this agent's own tools for the turn (harness_bridge.py).
+        lent = lendable(list(info.tools)) if info is not None and info.call_tool is not None else []
+        asking = mode == 'ask' and key in ASK_HARNESSES and info is not None and info.approve is not None
+        if lent or asking:
+            try:
+                bridge = await Bridge(
+                    tools=lent, call_tool=info.call_tool, approve=info.approve if asking else None,
+                    context=contextvars.copy_context(),
+                ).start()
+            except Exception as exc:  # noqa: BLE001 - the turn still works without them
+                logger.warning('Could not lend tools to %s: %s', harness.label, exc)
+                bridge = None
+        if mode == 'ask' and not (asking and bridge is not None):
+            # Nobody to ask. 'edit' lets the CLI change files in the folder and
+            # refuses whatever it would have asked about.
+            mode = 'edit'
+        if bridge is not None and key in ('claude-code', 'gemini-cli', 'copilot-cli'):
+            # In the data folder: Gemini CLI refuses settings from a shared temp folder.
+            folder = _store_file().parent
+            folder.mkdir(parents=True, exist_ok=True)
+            settings_file = str(folder / f'.cli-tools-{uuid.uuid4().hex}.json')
+        if bridge is not None and lent and not resume:
+            text = tools_note(harness.label, bridge.tool_names()) + text
+
         argv, env_extra = build_command(key, program, mode=mode, model=model, effort=effort,
-                                        resume=resume, new_session=new_session, cwd=cwd)
+                                        resume=resume, new_session=new_session, cwd=cwd,
+                                        tools_url=bridge.url if bridge is not None else None,
+                                        settings_file=settings_file)
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
         proc = _spawn(argv, text, cwd, env_extra, loop, queue)
@@ -714,6 +809,13 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
     finally:
         if proc is not None:
             _stop(proc)
+        if bridge is not None:
+            await bridge.stop()
+        if settings_file:
+            try:
+                os.unlink(settings_file)
+            except OSError:
+                pass
 
 
 async def respond(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> LLMResponse:

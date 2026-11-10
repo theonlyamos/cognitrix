@@ -459,6 +459,25 @@ def _retry_delay(error: Exception, attempt: int) -> float:
 _NO_REASONING_WITH_TOOLS: set[str] = set()
 
 
+_OPENAI_GPT = re.compile(r'^gpt-(\d+)')
+
+
+def _wants_responses_api(llm: Any) -> bool:
+    """OpenAI's own API, on a model that needs /v1/responses to use tools well.
+
+    GPT-6 and later refuse function tools on /chat/completions unless reasoning
+    is off, and some (gpt-6.1-sol) can't turn it off at all. Any model seen
+    refusing the pair is sent this way too, so it keeps reasoning.
+    """
+    if str(llm.provider).lower() != 'openai':
+        return False
+    if (llm.base_url or '').rstrip('/') != _DEFAULT_BASE_URLS['openai']:
+        return False
+    model = str(llm.model or '').lower()
+    match = _OPENAI_GPT.match(model)
+    return bool(match and int(match.group(1)) >= 6) or model in _NO_REASONING_WITH_TOOLS
+
+
 REASONING_EFFORTS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh')
 
 # A per-turn override from the chat window; wins over the agent's setting.
@@ -878,6 +897,20 @@ class LLMManager:
             else:
                 default_headers = dict(llm.extra_headers) if llm.extra_headers else None
                 client = _get_or_create_client(llm.base_url, llm.api_key, default_headers)
+
+            if tools and _wants_responses_api(llm):
+                # Newer OpenAI models only reason while using tools on the
+                # Responses API; chat completions refuses the pair.
+                from cognitrix.providers import chatgpt_plan
+
+                effort = normalize_reasoning_effort(turn_reasoning_effort.get() or llm.reasoning_effort)
+                api_params = chatgpt_plan.build_params(
+                    llm, LLMManager.format_query(llm, prompt), tools, effort,
+                    kwds.get('response_format', llm.response_format),
+                )
+                if stream:
+                    return chatgpt_plan.stream(llm, api_params, client)
+                return await chatgpt_plan.respond(llm, api_params, client)
             formatted_messages = LLMManager.format_query(llm, prompt)
             formatted_tools = tools if tools else None
 

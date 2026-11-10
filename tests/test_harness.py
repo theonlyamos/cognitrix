@@ -308,3 +308,236 @@ def test_missing_cli_says_how_to_install(workdir, tmp_path, monkeypatch):
     monkeypatch.setenv('COGNITRIX_CLAUDE_CODE_PATH', str(tmp_path / 'nope'))
     _, last = asyncio.run(_run(_llm(), [{'role': 'user', 'content': 'Hi'}], Folder(str(tmp_path), WRITE, 'w', True)))
     assert 'not installed here' in last.error and 'npm install -g @anthropic-ai/claude-code' in last.error
+
+
+# --- lending Cognitrix's tools to the CLI (harness_bridge.py) -------------------------
+
+def _tool_dict(name, **props):
+    return {'type': 'function', 'function': {
+        'name': name, 'description': f'{name} tool',
+        'parameters': {'type': 'object', 'properties': props}}}
+
+
+def test_lendable_leaves_out_what_the_cli_does_itself():
+    from cognitrix.providers.harness_bridge import lendable
+
+    tools = lendable([_tool_dict('Memory'), _tool_dict('Bash'), _tool_dict('Read'), _tool_dict('Coding_Agent'),
+                      _tool_dict('Update Task'), _tool_dict('Memory'), {'bad': 1}])
+    assert [t['name'] for t in tools] == ['Memory', 'Update_Task']
+    assert tools[1]['source_name'] == 'Update Task'
+
+
+def test_commands_carry_the_tools_server(tmp_path):
+    url = 'http://127.0.0.1:1/mcp/tok'
+    cfg = str(tmp_path / 'cfg.json')
+    claude, _ = _cmd('claude-code', mode='ask', tools_url=url, settings_file=cfg)
+    assert claude[claude.index('--mcp-config') + 1] == cfg
+    assert json.loads((tmp_path / 'cfg.json').read_text())['mcpServers']['cognitrix']['url'] == url
+    assert claude[claude.index('--permission-mode') + 1] == 'default'
+    assert claude[claude.index('--permission-prompt-tool') + 1] == 'mcp__cognitrix__approve'
+    assert claude[claude.index('--allowedTools') + 1] == 'mcp__cognitrix'
+    # Plan mode would refuse the lent tools, so read only is enforced another way.
+    read_only, _ = _cmd('claude-code', mode='read_only', tools_url=url, settings_file=cfg)
+    assert read_only[read_only.index('--permission-mode') + 1] == 'default'
+    assert '--disallowedTools' in read_only and '--permission-prompt-tool' not in read_only
+    # Nobody to ask without the server: 'ask' becomes 'edit'.
+    alone, _ = _cmd('claude-code', mode='ask')
+    assert alone[alone.index('--permission-mode') + 1] == 'acceptEdits'
+
+    codex, _ = _cmd('codex', mode='ask', tools_url=url)
+    assert f'mcp_servers.cognitrix.url={url}' in codex
+    assert 'mcp_servers.cognitrix.default_tools_approval_mode=approve' in codex
+    assert codex[codex.index('--sandbox') + 1] == 'workspace-write'
+
+    copilot, _ = _cmd('copilot-cli', tools_url=url, settings_file=cfg)
+    assert copilot[copilot.index('--additional-mcp-config') + 1] == '@' + cfg
+    assert json.loads((tmp_path / 'cfg.json').read_text())['mcpServers']['cognitrix']['tools'] == ['*']
+    assert copilot[-2:] == ['--allow-tool', 'cognitrix']
+
+    _, env = _cmd('opencode', tools_url=url)
+    assert json.loads(env['OPENCODE_CONFIG_CONTENT'])['mcp']['cognitrix']['url'] == url
+
+
+def test_gemini_gets_the_tools_server_in_a_settings_file(tmp_path):
+    path = tmp_path / 'g.json'
+    _, env = _cmd('gemini-cli', tools_url='http://127.0.0.1:1/mcp/t', settings_file=str(path))
+    assert env['GEMINI_CLI_SYSTEM_DEFAULTS_PATH'] == str(path)
+    assert json.loads(path.read_text())['mcpServers']['cognitrix'] == {
+        'httpUrl': 'http://127.0.0.1:1/mcp/t', 'trust': True}
+
+
+async def _rpc(url, method, params=None, id_=1):
+    import httpx
+
+    async with httpx.AsyncClient(trust_env=False) as client:
+        response = await client.post(
+            url, json={'jsonrpc': '2.0', 'id': id_, 'method': method, 'params': params or {}},
+            headers={'Accept': 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-06-18'})
+    return response
+
+
+async def test_bridge_serves_tools_and_keeps_the_turn_context():
+    import contextvars
+
+    from cognitrix.providers.harness_bridge import Bridge, lendable
+
+    who = contextvars.ContextVar('who', default='nobody')
+    asked = []
+
+    async def call(name, args):
+        return f'{name} {args} for {who.get()}', args.get('ok', True)
+
+    async def approve(name, params):
+        asked.append((name, params))
+        return 'rm' not in params.get('command', ''), 'No.'
+
+    who.set('amos')
+    bridge = await Bridge(tools=lendable([_tool_dict('Update Task', ok={'type': 'boolean'})]), call_tool=call,
+                          approve=approve, context=contextvars.copy_context()).start()
+    who.set('someone else')
+    try:
+        listed = (await _rpc(bridge.url, 'tools/list')).json()['result']['tools']
+        assert [t['name'] for t in listed] == ['Update_Task', 'approve']
+        ran = (await _rpc(bridge.url, 'tools/call', {'name': 'Update_Task', 'arguments': {}})).json()['result']
+        assert ran['content'][0]['text'] == 'Update Task {} for amos' and not ran['isError']
+        failed = (await _rpc(bridge.url, 'tools/call', {'name': 'Update_Task', 'arguments': {'ok': False}})).json()
+        assert failed['result']['isError']
+        missing = (await _rpc(bridge.url, 'tools/call', {'name': 'Bash', 'arguments': {}})).json()['result']
+        assert missing['isError']
+        yes = (await _rpc(bridge.url, 'tools/call', {'name': 'approve', 'arguments': {
+            'tool_name': 'Bash', 'input': {'command': 'ls'}}})).json()['result']
+        assert json.loads(yes['content'][0]['text']) == {'behavior': 'allow', 'updatedInput': {'command': 'ls'}}
+        no = (await _rpc(bridge.url, 'tools/call', {'name': 'approve', 'arguments': {
+            'tool_name': 'Bash', 'input': {'command': 'rm -rf x'}}})).json()['result']
+        assert json.loads(no['content'][0]['text']) == {'behavior': 'deny', 'message': 'No.'}
+        # Only the address with this turn's token works.
+        assert (await _rpc(bridge.url + 'x', 'tools/list')).status_code == 404
+        assert (await _rpc(bridge.url.rsplit('/', 1)[0], 'tools/list')).status_code == 404
+    finally:
+        await bridge.stop()
+    import httpx
+    with pytest.raises(httpx.HTTPError):
+        await _rpc(bridge.url, 'tools/list')
+
+
+FAKE_TOOL_USER = textwrap.dedent('''\
+    import json, sys, urllib.request
+    sys.stdin.read()
+    argv = sys.argv[1:]
+    url = json.load(open(argv[argv.index('--mcp-config') + 1]))['mcpServers']['cognitrix']['url']
+    def rpc(method, params):
+        req = urllib.request.Request(url, data=json.dumps(
+            {'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}).encode(), headers={
+            'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream',
+            'MCP-Protocol-Version': '2025-06-18'})
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        return json.loads(opener.open(req, timeout=20).read())['result']
+    names = [t['name'] for t in rpc('tools/list', {})['tools']]
+    got = rpc('tools/call', {'name': 'Lookup', 'arguments': {'q': 'colour'}})
+    said = 'Tools: ' + ','.join(names) + '. Lookup said: ' + got['content'][0]['text']
+    if '--permission-prompt-tool' in argv:
+        asked = rpc('tools/call', {'name': 'approve', 'arguments': {'tool_name': 'Bash', 'input': {'command': 'make'}}})
+        said += ' Asked: ' + json.loads(asked['content'][0]['text'])['behavior']
+    def out(o):
+        print(json.dumps(o), flush=True)
+    out({'type': 'system', 'subtype': 'init', 'session_id': 's'})
+    out({'type': 'result', 'subtype': 'success', 'session_id': 's', 'result': said, 'usage': {}})
+''')
+
+
+async def test_a_chat_turn_lends_the_agents_tools_and_asks_first(workdir, tmp_path, monkeypatch):
+    from cognitrix.models.agent import Agent
+    from cognitrix.models.tool import Tool
+    from cognitrix.providers.base import LLM
+    from cognitrix.safety.approval_gate import ApprovalResult
+    from cognitrix.sessions.base import Session
+    from cognitrix.tools.resilient_tool_wrapper import ToolResult
+    from cognitrix.tools.utils import ToolExecutionContext
+
+    script = tmp_path / 'fake.py'
+    script.write_text(FAKE_TOOL_USER)
+    if os.name == 'nt':
+        launcher = tmp_path / 'claude.cmd'
+        launcher.write_text(f'@"{sys.executable}" "{script}" %*\n')
+    else:
+        launcher = tmp_path / 'claude'
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n')
+        launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv('COGNITRIX_CLAUDE_CODE_PATH', str(launcher))
+
+    lookup = Tool(name='Lookup', description='Look something up', parameters={'q': 'str'})
+    shell = Tool(name='Bash', description='Shell', parameters={})
+    agent = Agent(name='Pip', system_prompt='Test', tools=[lookup, shell],
+                  llm=LLM(provider='claude-code', model='sonnet', harness_mode='ask'))
+    session = Session(agent_id=str(agent.id))
+    ran, asked, events = [], [], []
+
+    async def fake_run_tool(self, tool, params, **kwargs):
+        ran.append((tool.name, dict(params)))
+        return ToolResult(success=True, data='teal')
+
+    async def fake_check(self, tool_call, risk, interface='cli', **kwargs):
+        asked.append((tool_call.tool_name, tool_call.params, kwargs.get('person_only')))
+        return ApprovalResult(approved=True)
+
+    async def no_save(self):
+        return None
+
+    async def sink(event):
+        events.append(event)
+
+    monkeypatch.setattr('cognitrix.agents.base.ToolManager.get_by_name', staticmethod(lambda name: None))
+    monkeypatch.setattr('cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool', fake_run_tool)
+    monkeypatch.setattr('cognitrix.safety.approval_gate.ApprovalGate.check_approval', fake_check)
+    monkeypatch.setattr(Session, 'save', no_save)
+
+    context = ToolExecutionContext(host_process_mode=HostProcessMode.TRUSTED_LOCAL,
+                                   folders=(Folder(str(tmp_path), WRITE, 'work', True),))
+    await session('What is my favourite colour?', agent, 'web', True, sink, {'type': 'chat', 'action': 'x'}, True,
+                  tool_context=context)
+
+    said = ''.join(str(e.get('content') or '') for e in events if e.get('type') == 'chat')
+    assert 'Tools: Lookup,approve.' in said  # Bash stays the CLI's own
+    assert 'Lookup said: teal' in said and 'Asked: allow' in said
+    assert ran == [('Lookup', {'q': 'colour'})]
+    assert asked == [('Claude Code: Bash', {'command': 'make'}, True)]
+    cards = [(e['status'], e['tool_name']) for e in events if e.get('type') == 'tool']
+    assert cards == [('started', 'Lookup'), ('completed', 'Lookup')]
+
+
+async def test_file_changes_in_the_working_folder_are_not_asked_about(tmp_path, monkeypatch):
+    from cognitrix.agents.base import AgentManager
+    from cognitrix.models.agent import Agent
+    from cognitrix.providers.base import LLM
+    from cognitrix.safety.approval_gate import ApprovalResult
+
+    asked = []
+
+    async def fake_check(self, tool_call, risk, interface='cli', **kwargs):
+        asked.append((tool_call.tool_name, risk.risk_level.value, kwargs.get('person_only')))
+        return ApprovalResult(approved=False)
+
+    monkeypatch.setattr('cognitrix.safety.approval_gate.ApprovalGate.check_approval', fake_check)
+    manager = AgentManager(Agent(name='Pip', system_prompt='T', tools=[],
+                                 llm=LLM(provider='claude-code', model='sonnet')))
+    folders = (Folder(str(tmp_path), WRITE, 'work', True),)
+    inside = await manager.approve_cli_action('Claude Code', 'Write', {'file_path': str(tmp_path / 'a.txt')},
+                                              'web', folders)
+    outside = await manager.approve_cli_action('Claude Code', 'Edit', {'file_path': str(tmp_path.parent / 'b.txt')},
+                                               'web', folders)
+    secret = await manager.approve_cli_action('Claude Code', 'Bash', {'command': 'cat .env'}, 'web', folders)
+    assert inside == (True, '')
+    assert outside[0] is False and secret[0] is False
+    assert asked == [('Claude Code: Edit', 'medium', False), ('Claude Code: Bash', 'high', True)]
+
+
+def test_newer_openai_models_use_the_responses_api_for_tools():
+    from cognitrix.providers import base
+    from cognitrix.providers.base import LLM
+
+    assert base._wants_responses_api(LLM(provider='openai', model='gpt-6.1-sol', api_key='k'))
+    assert not base._wants_responses_api(LLM(provider='openai', model='gpt-5.5', api_key='k'))
+    # Other OpenAI-compatible servers keep chat completions.
+    assert not base._wants_responses_api(
+        LLM(provider='openai', model='gpt-6.1-sol', api_key='k', base_url='http://localhost:1234/v1'))
+    assert not base._wants_responses_api(LLM(provider='openrouter', model='openai/gpt-6.1-sol', api_key='k'))
