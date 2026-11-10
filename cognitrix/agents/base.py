@@ -151,6 +151,9 @@ def _truncate_tool_result(content: str) -> str:
 _DESKTOP_TOOL_NAMES = frozenset({
     'take_screenshot', 'text_input', 'key_press', 'hot_key', 'mouse_click',
     'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
+    # background computer use (cognitrix/computer): one at a time, in order
+    'list_windows', 'open_app', 'look_at_window', 'click_element', 'set_text',
+    'click_in_window', 'type_in_window', 'press_key_in_window', 'scroll_window',
 })
 
 

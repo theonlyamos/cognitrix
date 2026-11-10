@@ -910,6 +910,19 @@ files = [
 markers = {main = "os_name == \"nt\" or platform_system == \"Windows\"", dev = "sys_platform == \"win32\""}
 
 [[package]]
+name = "comtypes"
+version = "1.5.0"
+description = "Pure Python COM package"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+markers = "sys_platform == \"win32\""
+files = [
+    {file = "comtypes-1.5.0-py3-none-any.whl", hash = "sha256:c648ed3b243b1eb3b7cb893a873d1b35104ca1c8922061f4b1efafeb255bacb5"},
+    {file = "comtypes-1.5.0.tar.gz", hash = "sha256:831ddb867bc17bc89cac525b4f32132ebd4bef1ffe6432406ec9f5d858c1a122"},
+]
+
+[[package]]
 name = "coverage"
 version = "7.15.0"
 description = "Code coverage measurement for Python"
@@ -5572,4 +5585,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "70c4cd65f944e0929a76acd5eec4267103b4830a31513f2afa8354b4b96c0460"
+content-hash = "141b84d148de332e24d70adc5664143bf9663f1793393c902694ba4b16cd352a"

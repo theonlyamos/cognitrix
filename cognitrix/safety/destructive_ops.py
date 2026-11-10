@@ -97,15 +97,20 @@ _KNOWN_LOW = frozenset({
     'memory', 'search_chats', 'read_chat',
     # asking the person a question, images, screenshots
     'ask_user', 'ask_question', 'generate_image', 'take_screenshot',
+    # background computer use: looking, opening an app, scrolling
+    'list_windows', 'look_at_window', 'open_app', 'scroll_window',
     # background shells: reading output or stopping a shell the agent started
     'bash_output', 'kill_shell',
 })
 
 # Desktop control acts on the person's live screen, where a click can do
 # anything (including pressing "Send"), so it keeps asking.
+# Background window actions (cognitrix/computer) leave the person's screen
+# alone but can still press any button in any app, so they ask the same way.
 _DESKTOP_CONTROL = frozenset({
     'text_input', 'key_press', 'hot_key', 'mouse_click',
     'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
+    'click_element', 'set_text', 'click_in_window', 'type_in_window', 'press_key_in_window',
 })
 
 # Handing a job to a coding agent CLI (Claude Code, Codex, ...): it edits
