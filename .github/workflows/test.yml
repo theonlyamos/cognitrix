@@ -79,11 +79,6 @@ jobs:
         run: poetry install --with dev
       - name: Test
         run: poetry run pytest -q tests/test_windows_encoding.py tests/test_agent_tools.py tests/test_turn_loop.py tests/test_shell_tool.py tests/test_background_computer_use.py
-      # Background computer use against real Notepad/Calculator/Explorer windows.
-      # Hosted runners may lack some apps or an interactive desktop, so this
-      # step reports but doesn't fail the job.
-      - name: Background computer use (live desktop)
-        continue-on-error: true
-        env:
-          COGNITRIX_LIVE_DESKTOP: '1'
-        run: poetry run pytest -q -rs tests/test_background_computer_use_live.py
+      # The live desktop tests (tests/test_background_computer_use_live.py) stay
+      # local: hosted runners have Server's classic Notepad and Calculator and no
+      # person's window in front, so those checks don't apply there.
