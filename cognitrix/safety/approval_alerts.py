@@ -181,11 +181,22 @@ def read_action_token(token: str) -> dict[str, str] | None:
             'user_key': str(data.get('u') or '')}
 
 
+async def _account_active(user_key: str) -> bool:
+    """The token's person still has an enabled account: disabling someone
+    cuts off notifications they were already sent."""
+    from cognitrix.models import User
+
+    if not user_key:
+        return False
+    user = await User.get(user_key) or await User.find_one({'email': user_key})
+    return user is not None and not getattr(user, 'disabled', None)
+
+
 async def answer_with_token(token: str, approved: bool) -> str:
     """Answer an approval from a notification button. Returns 'approved',
     'denied', 'gone' (already answered or ended) or 'invalid'."""
     data = read_action_token(token)
-    if data is None:
+    if data is None or not await _account_active(data['user_key']):
         return 'invalid'
     if data['kind'] == 'chat':
         from cognitrix.safety.approval_gate import resolve_web_approval

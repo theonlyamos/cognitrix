@@ -49,6 +49,16 @@ def pushes(monkeypatch):
     return sent
 
 
+async def _user(user_id='u1', **kw):
+    from cognitrix.models import User
+
+    await User._create_table_async()
+    row = await User(email=f'{user_id}@example.com', password='x', name=user_id, **kw).save()
+    # Saving with an id of our own is taken as an update, so set it after.
+    await User.update_one({'id': row.id}, {'id': user_id})
+    return await User.get(user_id)
+
+
 async def _ask(user='u1', **ctx):
     """Start a chat approval; returns (request_id, task awaiting its result)."""
     emitted = []
@@ -91,6 +101,8 @@ async def test_a_waiting_chat_approval_is_listed_in_the_inbox(db):
 
 async def test_push_goes_out_with_buttons_and_the_button_answers(db, pushes):
     from cognitrix.api.routes import push
+
+    await _user('u1')
 
     rid, task = await _ask()
     for _ in range(50):
@@ -154,6 +166,7 @@ async def test_a_task_approval_push_can_be_answered_from_its_buttons(db, monkeyp
     monkeypatch.setattr(webpush, 'send_soon', lambda user, title, body='', **kw: seen.append(kw))
     monkeypatch.setattr(approvals, 'approval_timeout_seconds', lambda: 0.5)
     monkeypatch.setattr(approvals, '_poll_interval', lambda: 0.02)
+    await _user('u1')
     ctx = {'run_id': 'r1', 'task_id': 't1', 'user_id': 'u1'}
     waiting = asyncio.create_task(approvals.request_task_approval(ctx, 'Delete File', {'path': 'x'}, _risk()))
     for _ in range(50):
@@ -259,4 +272,26 @@ async def test_it_is_pushed_once_the_person_leaves_the_chat(db, pushes, monkeypa
     assert len(pushes) == 1
     from cognitrix.safety.approval_gate import resolve_web_approval
     resolve_web_approval(rid, approved=True)
+    await task
+
+
+async def test_a_disabled_account_cannot_answer_from_a_notification(db, pushes):
+    from cognitrix.api.routes import push
+    from cognitrix.models import User
+    from cognitrix.safety import approval_alerts
+
+    user = await _user('u1')
+    rid, task = await _ask()
+    token = approval_alerts.action_token('chat', rid, 'u1')
+    await User.update_one({'id': user.id}, {'disabled': True})
+    with pytest.raises(HTTPException) as refused:
+        await push.approval_action(push.ApprovalActionBody(token=token, approved=True))
+    assert refused.value.status_code == 403
+    assert approval_alerts.still_pending(rid)
+    # Nor one that no longer exists.
+    ghost = approval_alerts.action_token('chat', rid, 'nobody')
+    with pytest.raises(HTTPException):
+        await push.approval_action(push.ApprovalActionBody(token=ghost, approved=True))
+    from cognitrix.safety.approval_gate import resolve_web_approval
+    resolve_web_approval(rid, approved=False)
     await task
