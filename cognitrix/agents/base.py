@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any, Optional, TypeAlias
 
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 from cognitrix.common.encoding import status_print
+from cognitrix.computer import apps as computer_apps
 from cognitrix.errors import ExecutionControlError
 from cognitrix.models import Agent, Message, Tool
 from cognitrix.models.tool import MCPTool
 from cognitrix.providers.base import LLM
-from cognitrix.computer import apps as computer_apps
 from cognitrix.safety.approval_gate import OPERATION_BLOCKED_PREFIX, ApprovalGate, ToolCall
 from cognitrix.safety.destructive_ops import (
     _RISK_ORDER,
