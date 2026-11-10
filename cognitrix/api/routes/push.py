@@ -96,3 +96,22 @@ async def test(ctx: AuthContext = Depends(jwt_only)) -> dict[str, int]:
             status_code=400,
             detail='No browser accepted the test. Turn push off and on again on this device.')
     return {'sent': sent}
+
+
+class ApprovalActionBody(BaseModel):
+    token: str = Field(min_length=20, max_length=2000)
+    approved: bool
+
+
+@push_api.post('/approval')
+async def approval_action(body: ApprovalActionBody) -> dict[str, str]:
+    """Approve or Deny pressed on a notification. The service worker has no
+    sign-in, so the signed token the notification carries is the proof."""
+    from cognitrix.safety import approval_alerts
+
+    outcome = await approval_alerts.answer_with_token(body.token, body.approved)
+    if outcome == 'invalid':
+        raise HTTPException(status_code=403, detail='This notification has expired. Open Cognitrix to answer.')
+    if outcome == 'gone':
+        raise HTTPException(status_code=409, detail='This request was already answered or has ended.')
+    return {'status': outcome}

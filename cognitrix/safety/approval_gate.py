@@ -5,8 +5,11 @@ import hashlib
 import json
 import logging
 import os
+import time
+import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
@@ -423,11 +426,29 @@ class ApprovalGate:
             )
 
         _web_request_counter += 1
-        request_id = f"web-approval-{_web_request_counter}"
+        # Random, so an id never repeats after a restart: chat apps remember
+        # which approvals they were sent by id.
+        request_id = f"web-approval-{uuid.uuid4().hex}"
         future = asyncio.get_running_loop().create_future()
+        session_id = str(ctx.get('session_id') or '')
         _WEB_PENDING[request_id] = {
             'future': future, 'user_key': ctx.get('user_key'), 'person_only': person_only,
+            # What the Inbox, notifications and chat apps show about it.
+            'tool_name': tool_call.tool_name,
+            'params': tool_call.params,
+            'risk_level': risk.risk_level.value,
+            'details': risk.details,
+            'session_id': session_id,
+            'agent_name': str(ctx.get('agent_name') or ''),
+            'href': str(ctx.get('href') or (f'/home?chat={session_id}' if session_id else '/inbox')),
+            # A chat app that started the turn already shows the buttons.
+            'origin': str(ctx.get('origin') or ''),
+            'created': time.monotonic(),
+            'created_at': datetime.now(UTC).isoformat().replace('+00:00', 'Z'),
+            'seen_at': None,  # last time an open chat page showed the card
         }
+        from cognitrix.safety import approval_alerts
+        approval_alerts.schedule(request_id)
 
         try:
             await emit({
@@ -451,6 +472,13 @@ class ApprovalGate:
             return ApprovalResult(approved=False, error=str(e))
         finally:
             _WEB_PENDING.pop(request_id, None)
+            # It may have been answered from a notification or a chat app:
+            # tell an open chat page to drop the card.
+            try:
+                await emit({'type': 'approval_resolved', 'request_id': request_id,
+                            'session_id': ctx.get('session_id')})
+            except Exception:
+                pass
 
     async def _websocket_approval(
         self,

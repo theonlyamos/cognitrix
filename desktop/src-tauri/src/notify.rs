@@ -23,6 +23,33 @@ pub struct Notice<'a> {
     pub path: Option<String>,
     /// Approvals and questions stay on screen until the person acts.
     pub urgent: bool,
+    /// An approval's id: the toast gets Approve and Deny buttons. Pressing
+    /// one sends `notification-action` to the main window, which answers it
+    /// with the signed-in session, without bringing the window forward.
+    pub approval: Option<String>,
+}
+
+/// What the Approve and Deny buttons tell the window.
+#[derive(Clone, serde::Serialize)]
+pub struct ApprovalAction {
+    pub approval: String,
+    pub approved: bool,
+}
+
+/// Approval ids are short and made of letters, digits, `-` and `_`.
+pub fn clean_approval(id: Option<String>) -> Option<String> {
+    id.filter(|id| {
+        !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    })
+}
+
+/// Hand an Approve/Deny press to the main window.
+#[allow(dead_code)]
+fn send_action(app: &AppHandle, approval: &str, approved: bool) {
+    use tauri::{Emitter, Manager};
+    if let Some(main) = app.get_webview_window(crate::MAIN) {
+        let _ = main.emit("notification-action", ApprovalAction { approval: approval.to_owned(), approved });
+    }
 }
 
 /// Only in-app routes are accepted: a leading slash, no scheme or host.
@@ -55,6 +82,7 @@ pub fn test(app: &AppHandle) -> Result<(), String> {
             body: "You'll see approvals, questions, replies and finished tasks here.",
             path: Some("/settings/desktop".into()),
             urgent: false,
+            approval: None,
         },
     )
 }
@@ -161,14 +189,22 @@ mod platform {
             // only honours that when the toast has a button.
             toast = toast.scenario(Scenario::Reminder).duration(Duration::Long);
         }
+        if notice.approval.is_some() {
+            toast = toast.add_button("Approve", "approve").add_button("Deny", "deny");
+        }
         if notice.path.is_some() {
             toast = toast.add_button(if notice.urgent { "Review" } else { "Open" }, "open");
         }
         let handle = app.clone();
         let path = notice.path;
+        let approval = notice.approval;
         toast
-            .on_activated(move |_action| {
-                crate::show_main(&handle, path.clone());
+            .on_activated(move |action| {
+                match (action.as_deref(), approval.as_deref()) {
+                    (Some("approve"), Some(id)) => super::send_action(&handle, id, true),
+                    (Some("deny"), Some(id)) => super::send_action(&handle, id, false),
+                    _ => crate::show_main(&handle, path.clone()),
+                }
                 Ok(())
             })
             .show()

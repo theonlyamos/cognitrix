@@ -62,8 +62,9 @@ def _pending_questions(user_key: str) -> list[dict[str, Any]]:
 @system_api.get('/inbox')
 async def inbox(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
     """Everything waiting on the signed-in person: approvals parked by task
-    runs (answered with POST /tasks/{task_id}/runs/{run_id}/approvals/{id})
-    and questions from chats that are still open."""
+    runs (answered with POST /tasks/{task_id}/runs/{run_id}/approvals/{id}),
+    approvals from chats that are still waiting (``source: 'chat'``, answered
+    with POST /agents/approval) and questions from chats that are still open."""
     from cognitrix.tasks import approvals
     from cognitrix.tasks.base import Task
 
@@ -99,5 +100,8 @@ async def inbox(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
             'task_title': titles.get(task_id, ''),
         })
     items.sort(key=lambda item: item.get('created_at') or '', reverse=True)
+    from cognitrix.safety.approval_alerts import pending_chat_approvals
+    # Approvals from chats come first: a turn is waiting on them right now.
+    items[:0] = pending_chat_approvals(user_key)
     items.extend(_pending_questions(user_key))
     return {'items': items, 'count': len(items)}

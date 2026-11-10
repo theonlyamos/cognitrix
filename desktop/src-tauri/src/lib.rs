@@ -177,7 +177,7 @@ pub(crate) fn toggle_quick_ask(app: &AppHandle) {
 pub(crate) fn notify(app: &AppHandle, title: &str, body: &str, path: Option<&str>) -> bool {
     notify::show(
         app,
-        notify::Notice { title, body, path: notify::clean_path(path.map(str::to_owned)), urgent: false },
+        notify::Notice { title, body, path: notify::clean_path(path.map(str::to_owned)), urgent: false, approval: None },
     )
 }
 
@@ -357,10 +357,17 @@ async fn desktop_notify(
     body: String,
     path: Option<String>,
     urgent: Option<bool>,
+    approval: Option<String>,
 ) -> bool {
     notify::show(
         &app,
-        notify::Notice { title: &title, body: &body, path: notify::clean_path(path), urgent: urgent.unwrap_or(false) },
+        notify::Notice {
+            title: &title,
+            body: &body,
+            path: notify::clean_path(path),
+            urgent: urgent.unwrap_or(false),
+            approval: notify::clean_approval(approval),
+        },
     )
 }
 

@@ -4,6 +4,7 @@ import { api, errorMessage } from '@/lib/api';
 import { useNotifications, type InboxApproval, type InboxItem, type InboxNotification, type InboxQuestion } from '@/context/NotificationsContext';
 import { LoadingState } from '@/components/list-ui';
 import { cn } from '@/lib/utils';
+import { answerApproval } from '@/lib/approvals';
 
 function itemTitle(item: InboxItem): string {
   if (item.kind === 'approval') return `Run ${item.tool_name}`;
@@ -12,6 +13,7 @@ function itemTitle(item: InboxItem): string {
 }
 
 function itemSource(item: InboxItem): string {
+  if (item.kind === 'approval' && item.source === 'chat') return `${item.agent_name || 'Agent'} · chat`;
   if (item.kind === 'approval') {
     const step = item.step_index != null ? ` · step ${item.step_index + 1}` : '';
     return `${item.task_title || 'Task run'}${step}`;
@@ -59,12 +61,13 @@ function ApprovalDetail({ item, onDone }: { item: InboxApproval; onDone: () => v
   const [busy, setBusy] = useState<'approve' | 'deny' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const fromChat = item.source === 'chat';
   const decide = async (approved: boolean) => {
-    if (!item.task_id) return;
+    if (!fromChat && !item.task_id) return;
     setBusy(approved ? 'approve' : 'deny');
     setError(null);
     try {
-      await api.post(`/tasks/${item.task_id}/runs/${item.run_id}/approvals/${item.id}`, { approved });
+      await answerApproval(item, approved);
       onDone();
     } catch (err) {
       setError(errorMessage(err, 'Could not send your answer.'));
@@ -90,7 +93,7 @@ function ApprovalDetail({ item, onDone }: { item: InboxApproval; onDone: () => v
       <div>
         <div className="font-mono text-[10.5px] tracking-[0.14em] text-[#b4691a] dark:text-[#ffb86b]">APPROVAL NEEDED</div>
         <div className="mt-1 font-mono text-[12px] text-fg-dim">{itemSource(item)}</div>
-        <h2 className="mt-2 text-[20px] font-semibold leading-snug">The agent wants to run {item.tool_name}</h2>
+        <h2 className="mt-2 text-[20px] font-semibold leading-snug">{fromChat ? `${item.agent_name || 'The agent'} wants to run ${item.tool_name}` : `The agent wants to run ${item.tool_name}`}</h2>
         {item.details && <p className="mt-2 text-[13.5px] leading-relaxed text-fg-dim">{item.details}</p>}
       </div>
       <CallPreview approval={item} />
@@ -114,15 +117,20 @@ function ApprovalDetail({ item, onDone }: { item: InboxApproval; onDone: () => v
         </button>
         <span className="font-mono text-[11px] text-fg-dim">A / D</span>
         <span className="flex-1" />
-        {item.task_id && (
+        {fromChat && item.href ? (
+          <Link to={item.href} className="text-[13px] text-accent-ink hover:underline">
+            Open chat
+          </Link>
+        ) : item.task_id && (
           <Link to={`/tasks/${item.task_id}`} className="text-[13px] text-accent-ink hover:underline">
             Open task
           </Link>
         )}
       </div>
       <p className="text-[12.5px] leading-relaxed text-fg-dim">
-        The same approval shows on the task page, so you can answer in either place. Until then the run stays paused and
-        never continues on its own. Unanswered approvals expire after 30 minutes and count as denied.
+        {fromChat
+          ? 'The same request shows in the chat, so you can answer in either place. The agent waits until you do.'
+          : 'The same approval shows on the task page, so you can answer in either place. Until then the run stays paused and never continues on its own. Unanswered approvals expire after 30 minutes and count as denied.'}
       </p>
     </div>
   );
@@ -266,6 +274,7 @@ export default function Inbox() {
 
   const selected = useMemo(() => inbox.find((i) => i.id === selectedId) ?? inbox[0] ?? null, [inbox, selectedId]);
   const approvals = inbox.filter((i) => i.kind === 'approval').length;
+  const waitingWord = approvals === 1 ? 'approval' : 'approvals';
 
   const done = () => {
     setSelectedId(null);
@@ -283,7 +292,7 @@ export default function Inbox() {
           <p className="mt-1 text-[12.5px] text-fg-dim">
             {inbox.length === 0
               ? 'Nothing is waiting on you.'
-              : `${inbox.length} waiting${approvals ? ` · ${approvals} run${approvals === 1 ? '' : 's'} paused` : ''}`}
+              : `${inbox.length} waiting${approvals ? ` · ${approvals} ${waitingWord}` : ''}`}
           </p>
         </div>
         <ul className="flex-1 overflow-y-auto p-2">

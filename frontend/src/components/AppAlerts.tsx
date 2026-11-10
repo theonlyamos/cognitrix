@@ -22,7 +22,7 @@ function Toast({ n, onDismiss }: { n: AppNotification; onDismiss: () => void }) 
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-semibold">{n.title}</div>
-          <div className="mt-1 text-[12.5px] leading-relaxed text-fg-dim">{n.body}</div>
+          <div className="mt-1 text-[12.5px] leading-relaxed text-fg-dim break-words line-clamp-3">{n.body}</div>
         </div>
         <button type="button" aria-label="Dismiss" onClick={onDismiss} className="grid h-6 w-6 flex-none place-items-center rounded text-fg-dim hover:text-fg">
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0 0 10" stroke="currentColor" /></svg>
