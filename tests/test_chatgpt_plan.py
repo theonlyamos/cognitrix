@@ -280,7 +280,7 @@ def _events(*events):
         for e in events:
             yield e
 
-    async def open_stream(params):
+    async def open_stream(params, client=None):
         return gen()
     return open_stream
 
@@ -366,3 +366,30 @@ def test_flow_expires(workdir):
         return cp.flow_status(flow['flow_id'], 'owner-1')
 
     assert asyncio.run(run())['status'] == 'error'
+
+
+async def test_api_key_route_skips_the_plan_checks(workdir, monkeypatch):
+    """base.py sends newer OpenAI models here with an API key client."""
+    _save_session(owner_id='someone-else')
+    seen = []
+
+    class Responses:
+        async def create(self, **params):
+            seen.append(params)
+
+            async def gen():
+                yield {'type': 'response.output_text.delta', 'delta': 'Hi'}
+                yield {'type': 'response.completed', 'response': {'usage': {'input_tokens': 1, 'output_tokens': 1}}}
+            return gen()
+
+    class Client:
+        responses = Responses()
+
+    async def no_token(**kwargs):
+        raise AssertionError('the plan token must not be used')
+
+    monkeypatch.setattr(cp, 'access_token', no_token)
+    out = await cp.respond(None, {'model': 'gpt-6.1-sol'}, Client())
+    assert out.llm_response == 'Hi' and out.error is None
+    assert seen == [{'model': 'gpt-6.1-sol'}]
+    assert cp._error_message('rate_limit', 'Slow down', Client()) == 'OpenAI request failed (rate_limit): Slow down.'

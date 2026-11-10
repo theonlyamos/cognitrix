@@ -428,6 +428,83 @@ class AgentManager:
         return next((tool for tool in self.agent.tools
                      if tool.name.casefold().replace('_', ' ') == normalized), None)
 
+    async def approve_cli_action(
+        self,
+        label: str,
+        tool_name: str,
+        params: dict[str, Any],
+        interface: str = 'cli',
+        folders: tuple = (),
+    ) -> tuple[bool, str]:
+        """Ask about something a coding agent CLI wants to do with its own tools.
+
+        The CLI (providers/harness.py, 'ask' mode) only sends what its own
+        rules don't already allow. File changes inside a writable working
+        folder run; commands always go to a person, like Cognitrix's own full
+        shell; anything else the CLI asks about is asked as medium risk.
+        """
+        import os
+        from pathlib import Path
+
+        from cognitrix.common.folders import folder_for, is_blocked, lexical_path
+        from cognitrix.common.shell import mentions_secret
+
+        params = params if isinstance(params, dict) else {}
+        name = str(tool_name or '').strip()
+        kind = name.casefold()
+        command = params.get('command')
+        target = params.get('file_path') or params.get('notebook_path') or params.get('path')
+        person_only = False
+        if isinstance(command, str) and command.strip():
+            person_only = True
+            risk = RiskAssessment(
+                RiskLevel.HIGH if mentions_secret(command) else RiskLevel.MEDIUM, ['shell'],
+                f'{label} wants to run this command with its own shell',
+            )
+            shown = {'command': command}
+        elif kind in ('edit', 'write', 'multiedit', 'notebookedit') and isinstance(target, str):
+            # Like folders.resolve_path: the path as written and the place it
+            # really leads (through any links) must both be writable folders.
+            inside, read_only = False, False
+            try:
+                lexical = lexical_path(target)
+                resolved = Path(os.path.realpath(os.fspath(lexical)))
+                folder = folder_for(lexical, folders or None)
+                real_folder = folder_for(resolved, folders or None)
+                if folder is not None and real_folder is not None:
+                    read_only = not (folder.writable and real_folder.writable)
+                    protected = is_blocked(resolved) and not is_blocked(real_folder.root)
+                    inside = not read_only and not protected
+            except Exception:  # noqa: BLE001 - an odd path is asked about
+                inside = False
+            if inside:
+                return True, ''
+            where = 'in a read only folder' if read_only else 'outside the working folders'
+            risk = RiskAssessment(RiskLevel.MEDIUM, ['file_write'], f'{label} wants to change a file {where}')
+            shown = {'file_path': target}
+        else:
+            risk = RiskAssessment(RiskLevel.MEDIUM, ['coding_agent'], f"{label} wants to use its '{name}' tool")
+            shown = {k: v for k, v in params.items() if isinstance(v, (str, int, float, bool))}
+
+        from cognitrix.safety import action_reviewer
+
+        reviewer_token = action_reviewer.agent_settings.set(dict(getattr(self.agent, 'reviewer', None) or {}))
+        try:
+            approval = await self.approval_gate.check_approval(
+                tool_call=ToolCall(tool_name=f'{label}: {name}', params=shown),
+                risk=risk,
+                interface=interface,
+                scope=str(self.agent.id),
+                person_only=person_only,
+            )
+        finally:
+            action_reviewer.agent_settings.reset(reviewer_token)
+        if approval.approved:
+            return True, ''
+        if approval.error == 'approval_required':
+            return False, 'This needs a person to approve it, and nobody is here to ask. Do not try it again.'
+        return False, "The person said no. Don't try it again another way."
+
     async def call_tools(
         self,
         tool_calls: dict[str, Any] | list[dict[str, Any]],

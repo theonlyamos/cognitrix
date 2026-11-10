@@ -780,6 +780,14 @@ class Session(Model):
                             session_id=f'{self.id}:{agent.id}' if persist_history or record_history else None,
                             folders=tuple(inherited_folders or turn_folders or ()),
                             host_process_mode=_ctx.host_process_mode,
+                            tools=tuple(formatted_tools),
+                            call_tool=self._cli_tool_caller(
+                                agent, interface, output, tool_context, turn_folders, inherited_folders,
+                                record_history),
+                            approve=lambda name, params: agent.manager.approve_cli_action(
+                                _harness.HARNESSES[agent.llm.provider.lower()].label, name, params,
+                                interface=interface, folders=tuple(inherited_folders or turn_folders or ()),
+                            ),
                         ))
 
                     # The prompt is now a complete history, not a single message
@@ -1206,6 +1214,76 @@ class Session(Model):
             raise
         except Exception as e:
             logger.exception(e)
+
+    def _cli_tool_caller(self, agent: 'Agent', interface: str, output: Callable, tool_context,
+                         turn_folders: list, inherited_folders: tuple, record_history: bool | None = False):
+        """Runs one of the agent's tools for a coding agent CLI (providers/harness.py).
+
+        The CLI calls it over MCP while its turn runs. The call goes through
+        the same permission and approval checks, and shows the same tool cards,
+        as a tool call from any other model. Returns (text, worked?, images).
+        """
+        import uuid as _uuid
+
+        async def call(name: str, arguments: dict[str, Any]) -> tuple[str, bool, list[str]]:
+            from cognitrix.artifacts import reset_session, set_session
+            from cognitrix.common.folders import reset_grant_sink, set_grant_sink
+            from cognitrix.tools import misc as _misc
+            from cognitrix.tools.utils import (
+                ToolExecutionContext,
+                reset_execution_context,
+                set_execution_context,
+            )
+
+            tcid = f'cli_{_uuid.uuid4().hex[:16]}'
+            shows_cards = interface in ('web', 'ws', 'task')
+            if shows_cards:
+                await output({'type': 'tool', 'status': 'started', 'tool_name': name,
+                              'tool_call_id': tcid, 'params': _tool_preview(arguments)})
+            bound = tool_context or ToolExecutionContext()
+            if turn_folders and not bound.folders:
+                import dataclasses as _dc
+                bound = _dc.replace(bound, folders=tuple(turn_folders))
+            grant_token = set_grant_sink(
+                self._folder_grant_sink(turn_folders) if turn_folders and not inherited_folders else None
+            )
+            artifact_token = set_session(str(self.id), str(agent.id), bound.user_id)
+            execution_token = set_execution_context(bound)
+            images_token, images = _misc.start_image_collection()
+            item: dict[str, Any] = {}
+            tool_call = {'name': name, 'tool_call_id': tcid, 'arguments': arguments}
+            try:
+                result = await agent.call_tools([tool_call], interface=interface)
+                if isinstance(result, dict) and result.get('result'):
+                    item = result['result'][0]
+                    if record_history:
+                        # The call and its result go in together, so calls the
+                        # CLI runs side by side stay paired. Reloading the
+                        # chat rebuilds the tool cards from these.
+                        self.update_history({
+                            'role': 'assistant', 'name': agent.name, 'type': 'tool_calls',
+                            'content': '', 'tool_calls': [tool_call],
+                        })
+                        self.update_history(agent.process_prompt(result))
+            finally:
+                reset_grant_sink(grant_token)
+                reset_execution_context(execution_token)
+                reset_session(artifact_token)
+                _misc.end_image_collection(images_token)
+                if shows_cards:
+                    outcome = item.get('outcome')
+                    worked = (outcome.get('status') == 'success') if isinstance(outcome, dict) \
+                        else item.get('success') is True
+                    preview = outcome.get('text', item.get('data', '')) if isinstance(outcome, dict) \
+                        else item.get('data', 'Stopped')
+                    await output({
+                        'type': 'tool', 'status': 'completed' if worked else 'error', 'tool_name': name,
+                        'tool_call_id': tcid, 'result': _tool_preview(preview), 'outcome': outcome,
+                        'artifacts': (outcome or {}).get('artifacts', []),
+                    })
+            return str(item.get('data', '')), item.get('success') is True, list(images)
+
+        return call
 
     def _turn_folders(self, agent: 'Agent', interface: str) -> list:
         """This chat's working folders, copying the agent's defaults on first use.

@@ -24,9 +24,16 @@ export const HARNESS_INSTALL: Record<string, string> = {
 /** What a CLI agent may do to the files in its working folder. */
 export const HARNESS_MODES = [
   { value: 'read_only', label: 'Read only', detail: 'Reads files and answers. Changes nothing.' },
+  {
+    value: 'ask', label: 'Ask first',
+    detail: 'Changes files in the working folder, and shows you an Approve/Deny card before it runs a command or touches anything outside it.',
+  },
   { value: 'edit', label: 'Edit files', detail: 'Can change files in the working folder.' },
   { value: 'full', label: 'Full access', detail: 'Can also run any command without asking. Use with care.' },
 ];
+
+/** CLIs that can send their permission prompts to Cognitrix (ASK_HARNESSES in harness.py). */
+export const ASK_HARNESSES = ['claude-code'];
 
 /** Providers that run on a signed-in plan instead of an API key
  *  (Settings › Models and keys › Use your ChatGPT plan). */
@@ -55,24 +62,31 @@ export const PROVIDER_LABELS: Record<string, string> = {
 // Settings.get_default_model in cognitrix/config.py.
 export const MODELS: Record<string, string[]> = {
   openrouter: [
-    'google/gemini-3.6-flash', 'anthropic/claude-sonnet-5.5', 'openai/gpt-5.5',
-    'anthropic/claude-opus-5.5', 'openai/gpt-oss-120b',
+    'google/gemini-3.6-flash', 'anthropic/claude-sonnet-5.5', 'openai/gpt-6.1-sol',
+    'anthropic/claude-opus-5.5', 'anthropic/claude-fable-5.2', 'google/gemini-3.8-flash',
+    'google/gemini-4-carbon', 'openai/gpt-6.1-terra', 'openai/gpt-5.5', 'openai/gpt-oss-120b',
   ],
-  openai: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano'],
+  openai: [
+    'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
+    'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4-mini',
+  ],
   // The live list (your plan's models) is added by the model picker.
-  chatgpt: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-5.5'],
+  chatgpt: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.5'],
   anthropic: [
-    'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1',
-    'claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5',
+    'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2', 'claude-haiku-5-5', 'claude-fable-5-1',
+    'claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-8', 'claude-sonnet-4-6',
   ],
-  google: ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro'],
+  google: [
+    'gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-4-carbon', 'gemini-4-argon',
+    'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview',
+  ],
   groq: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'],
   cerebras: ['gpt-oss-120b', 'zai-glm-4.7'],
   ollama: ['llama3.2', 'gpt-oss:20b', 'qwen3', 'mistral'],
   // Coding agent CLIs: an empty model uses the CLI's own default.
-  'claude-code': ['sonnet', 'opus', 'haiku'],
-  codex: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-5.5'],
-  'gemini-cli': ['gemini-3.6-flash', 'gemini-3.1-pro', 'gemini-3.5-flash'],
+  'claude-code': ['sonnet', 'opus', 'haiku', 'claude-fable-5-2'],
+  codex: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-5.5'],
+  'gemini-cli': ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-4-carbon', 'gemini-3.5-flash'],
   'copilot-cli': ['auto', 'claude-sonnet-5-5', 'gpt-6.1-sol'],
   opencode: ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5', 'github-copilot/gpt-5.5'],
 };
