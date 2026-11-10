@@ -154,6 +154,20 @@ async def test_get_task_shows_details_runs_and_fenced_result(store):
 
 
 @pytest.mark.asyncio
+async def test_get_task_finds_last_result_behind_many_failures(store):
+    from cognitrix.tools.management import get_task
+    store['tasks'].append(_task())
+    failures = [_run(f'f{i}', TaskRunStatus.FAILED) for i in range(30)]
+    store['runs']['task-1'] = failures + [_run('good', result='Last good digest')]
+    with _as_user():
+        out = await get_task.run('task-1', runs=3)
+        none = await get_task.run('task-1', runs=0)
+    assert '- run good' not in out.outcome.text
+    assert 'Result of run good' in out.outcome.text and 'Last good digest' in out.outcome.text
+    assert 'Last good digest' in none.outcome.text
+
+
+@pytest.mark.asyncio
 async def test_get_task_hides_other_peoples_runs_on_shared_task(store, monkeypatch):
     from cognitrix.tools.management import get_task
     store['tasks'].append(_task(owner_id=None))

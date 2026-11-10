@@ -473,7 +473,9 @@ class _RunViewer:
         return await self.admin()
 
 
-async def _visible_runs(task: Any, viewer: _RunViewer, limit: int) -> list[Any]:
+async def _visible_runs(task: Any, viewer: _RunViewer, limit: int,
+                        status: str | None = None) -> list[Any]:
+    """Newest-first runs the caller may see (only ``status`` ones if given)."""
     from cognitrix.api.routes.tasks import _task_run_rows
     runs: list[Any] = []
     offset = 0
@@ -483,6 +485,8 @@ async def _visible_runs(task: Any, viewer: _RunViewer, limit: int) -> list[Any]:
             break
         offset += len(batch)
         for run in batch:
+            if status and _plain(run.status) != status:
+                continue
             if await viewer.may_see(task, run):
                 runs.append(run)
                 if len(runs) == limit:
@@ -605,7 +609,12 @@ async def get_task(task_ref: str, runs: int = 5) -> ToolOutcome:
         body.append('Recent runs (newest first):\n' + '\n'.join(f'- {_run_line(r)}' for r in recent))
     elif runs:
         body.append('No runs yet.')
+    # The last good result may be older than the runs shown, e.g. after a
+    # string of failures, so look it up on its own.
     finished = next((r for r in recent if _plain(r.status) == 'completed'), None)
+    if finished is None:
+        found = await _visible_runs(task, viewer, 1, status='completed')
+        finished = found[0] if found else None
     text = _result_text(finished) if finished is not None else ''
     if text:
         body.append(untrusted_text_block(f'Result of run {finished.id}', text, _RESULT_CHARS))
