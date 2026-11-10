@@ -908,6 +908,10 @@ class LLMManager:
                     llm, LLMManager.format_query(llm, prompt), tools, effort,
                     kwds.get('response_format', llm.response_format),
                 )
+                # The plan route refuses an output limit; a key takes one. It
+                # covers the model's reasoning too, so it is never set tiny.
+                if llm.max_tokens:
+                    api_params['max_output_tokens'] = max(int(llm.max_tokens), 16)
                 if stream:
                     return chatgpt_plan.stream(llm, api_params, client)
                 return await chatgpt_plan.respond(llm, api_params, client)

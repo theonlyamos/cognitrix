@@ -33,8 +33,8 @@ OWN_TOOLS = frozenset({
     'open_file', 'coding_agent', 'request_folder',
 })
 
-ToolCaller = Callable[[str, dict[str, Any]], Awaitable[tuple[str, bool]]]
-"""(tool name, arguments) -> (text for the model, worked?)."""
+ToolCaller = Callable[[str, dict[str, Any]], Awaitable[tuple]]
+"""(tool name, arguments) -> (text for the model, worked?[, images as data: URIs])."""
 Approver = Callable[[str, dict[str, Any]], Awaitable[tuple[bool, str]]]
 """(the CLI's tool name, its input) -> (allowed?, why not)."""
 
@@ -133,15 +133,22 @@ class Bridge:
             if known is None:
                 return types.CallToolResult(
                     content=[types.TextContent(type='text', text=f"There is no tool named '{name}'.")], is_error=True)
+            images: list[str] = []
             try:
-                text, ok = await bridge._in_turn(bridge.call_tool(known['source_name'], args))
+                text, ok, *rest = await bridge._in_turn(bridge.call_tool(known['source_name'], args))
+                images = list(rest[0]) if rest and rest[0] else []
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - reported to the model
                 logger.exception('Tool %s failed for a coding agent: %s', name, exc)
                 text, ok = f'{name} failed: {exc}', False
-            return types.CallToolResult(content=[types.TextContent(type='text', text=text or '(no output)')],
-                                        is_error=not ok)
+            content: list[Any] = [types.TextContent(type='text', text=text or '(no output)')]
+            for uri in images:
+                # Screenshots and other pictures a tool wants the model to see.
+                match = re.match(r'^data:(image/[\w.+-]+);base64,(.+)$', str(uri), re.DOTALL)
+                if match:
+                    content.append(types.ImageContent(type='image', mime_type=match.group(1), data=match.group(2)))
+            return types.CallToolResult(content=content, is_error=not ok)
 
         server = Server(SERVER_NAME, version='1', on_list_tools=list_tools, on_call_tool=call_tool)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

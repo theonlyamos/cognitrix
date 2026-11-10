@@ -385,6 +385,8 @@ async def test_bridge_serves_tools_and_keeps_the_turn_context():
     asked = []
 
     async def call(name, args):
+        if args.get('image'):
+            return 'A screenshot', True, ['data:image/png;base64,QUJD', 'not an image']
         return f'{name} {args} for {who.get()}', args.get('ok', True)
 
     async def approve(name, params):
@@ -400,6 +402,8 @@ async def test_bridge_serves_tools_and_keeps_the_turn_context():
         assert [t['name'] for t in listed] == ['Update_Task', 'approve']
         ran = (await _rpc(bridge.url, 'tools/call', {'name': 'Update_Task', 'arguments': {}})).json()['result']
         assert ran['content'][0]['text'] == 'Update Task {} for amos' and not ran['isError']
+        shot = (await _rpc(bridge.url, 'tools/call', {'name': 'Update_Task', 'arguments': {'image': True}})).json()
+        assert shot['result']['content'][1] == {'type': 'image', 'mimeType': 'image/png', 'data': 'QUJD'}
         failed = (await _rpc(bridge.url, 'tools/call', {'name': 'Update_Task', 'arguments': {'ok': False}})).json()
         assert failed['result']['isError']
         missing = (await _rpc(bridge.url, 'tools/call', {'name': 'Bash', 'arguments': {}})).json()['result']
@@ -504,6 +508,12 @@ async def test_a_chat_turn_lends_the_agents_tools_and_asks_first(workdir, tmp_pa
     assert asked == [('Claude Code: Bash', {'command': 'make'}, True)]
     cards = [(e['status'], e['tool_name']) for e in events if e.get('type') == 'tool']
     assert cards == [('started', 'Lookup'), ('completed', 'Lookup')]
+    # Kept in the chat so the cards come back after a reload.
+    kinds = [(m.get('role'), m.get('type')) for m in session.chat]
+    called = next(m for m in session.chat if m.get('tool_calls'))
+    assert called['tool_calls'][0]['name'] == 'Lookup'
+    assert kinds.index(('assistant', 'tool_calls')) < len(kinds) - 1
+    assert any(m.get('tool_call_id') == called['tool_calls'][0]['tool_call_id'] for m in session.chat)
 
 
 async def test_file_changes_in_the_working_folder_are_not_asked_about(tmp_path, monkeypatch):
@@ -531,6 +541,19 @@ async def test_file_changes_in_the_working_folder_are_not_asked_about(tmp_path, 
     assert inside == (True, '')
     assert outside[0] is False and secret[0] is False
     assert asked == [('Claude Code: Edit', 'medium', False), ('Claude Code: Bash', 'high', True)]
+
+    # A link inside the folder that leads out of it is asked about too.
+    if os.name != 'nt':
+        work, elsewhere = tmp_path / 'work', tmp_path / 'elsewhere'
+        work.mkdir()
+        elsewhere.mkdir()
+        (work / 'link').symlink_to(elsewhere)
+        asked.clear()
+        linked = await manager.approve_cli_action(
+            'Claude Code', 'Write', {'file_path': str(work / 'link' / 'x.txt')}, 'web',
+            (Folder(str(work), WRITE, 'work', True),))
+        assert linked[0] is False and asked == [
+            ('Claude Code: Write', 'medium', False)]
 
 
 def test_newer_openai_models_use_the_responses_api_for_tools():

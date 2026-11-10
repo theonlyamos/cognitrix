@@ -443,7 +443,10 @@ class AgentManager:
         folder run; commands always go to a person, like Cognitrix's own full
         shell; anything else the CLI asks about is asked as medium risk.
         """
-        from cognitrix.common.folders import folder_for, lexical_path
+        import os
+        from pathlib import Path
+
+        from cognitrix.common.folders import folder_for, is_blocked, lexical_path
         from cognitrix.common.shell import mentions_secret
 
         params = params if isinstance(params, dict) else {}
@@ -460,13 +463,23 @@ class AgentManager:
             )
             shown = {'command': command}
         elif kind in ('edit', 'write', 'multiedit', 'notebookedit') and isinstance(target, str):
+            # Like folders.resolve_path: the path as written and the place it
+            # really leads (through any links) must both be writable folders.
+            inside, read_only = False, False
             try:
-                folder = folder_for(lexical_path(target), folders or None)
+                lexical = lexical_path(target)
+                resolved = Path(os.path.realpath(os.fspath(lexical)))
+                folder = folder_for(lexical, folders or None)
+                real_folder = folder_for(resolved, folders or None)
+                if folder is not None and real_folder is not None:
+                    read_only = not (folder.writable and real_folder.writable)
+                    protected = is_blocked(resolved) and not is_blocked(real_folder.root)
+                    inside = not read_only and not protected
             except Exception:  # noqa: BLE001 - an odd path is asked about
-                folder = None
-            if folder is not None and folder.writable:
+                inside = False
+            if inside:
                 return True, ''
-            where = 'a read only folder' if folder is not None else 'outside the working folders'
+            where = 'in a read only folder' if read_only else 'outside the working folders'
             risk = RiskAssessment(RiskLevel.MEDIUM, ['file_write'], f'{label} wants to change a file {where}')
             shown = {'file_path': target}
         else:
