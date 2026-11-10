@@ -50,6 +50,7 @@ const TRIGGER_LABEL: Record<string, string> = {
   schedule: '⏱ schedule',
   wake: '↺ self-check',
   webhook: '⚡ webhook',
+  agent: '◆ started by an agent',
 };
 
 // next_run_at is naive UTC — parse with an explicit Z, never as local time.
