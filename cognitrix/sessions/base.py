@@ -775,7 +775,9 @@ class Session(Model):
                         from cognitrix.tools.utils import ToolExecutionContext as _TEC
                         _ctx = tool_context or _TEC()
                         _harness.turn.set(_harness.TurnInfo(
-                            session_id=str(self.id) if persist_history or record_history else None,
+                            # Per chat and agent: teammates in a group chat share the
+                            # chat id and must not resume each other's CLI session.
+                            session_id=f'{self.id}:{agent.id}' if persist_history or record_history else None,
                             folders=tuple(inherited_folders or turn_folders or ()),
                             host_process_mode=_ctx.host_process_mode,
                         ))

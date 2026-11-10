@@ -192,6 +192,10 @@ def test_remembered_sessions_match_harness_model_and_folder(workdir):
     assert h.remembered('chat1', 'codex', 'other', '/w') is None
     assert h.remembered('chat1', 'claude-code', 'm', '/w') is None
     assert h.remembered(None, 'codex', 'm', '/w') is None
+    # Group chat teammates on the same CLI keep separate sessions.
+    h.remember('chat1:agent-b', 'codex', 'm', '/w', 'th-b', 1)
+    assert h.remembered('chat1:agent-a', 'codex', 'm', '/w') is None
+    assert h.remembered('chat1', 'codex', 'm', '/w')['session'] == 'th'
 
 
 # --- running a turn ---------------------------------------------------------------

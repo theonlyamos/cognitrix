@@ -238,6 +238,23 @@ async def test_refresh_rotates_tokens(workdir, monkeypatch):
     assert len(sent) == 1
 
 
+async def test_sign_out_during_refresh_stays_signed_out(workdir, monkeypatch):
+    _save_session()
+
+    def post(url, data=None, **kw):
+        # The person signs out while the token request is on the wire.
+        with cp._lock:
+            stored = cp._read()
+            stored.pop('session', None)
+            cp._write(stored)
+        return _Resp(200, {'access_token': 'new', 'refresh_token': 'rt-new', 'expires_in': 3600})
+
+    monkeypatch.setattr(httpx, 'post', post)
+    with pytest.raises(cp.NotSignedIn):
+        await cp.access_token()
+    assert cp._session() is None
+
+
 async def test_dead_refresh_token_asks_to_sign_in_again(workdir, monkeypatch):
     _save_session()
     monkeypatch.setattr(httpx, 'post', lambda *a, **k: _Resp(400, {'error': 'refresh_token_reused'}))

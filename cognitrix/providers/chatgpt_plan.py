@@ -548,8 +548,18 @@ async def sign_out() -> None:
     """Revoke the renewable session and forget the tokens.
 
     The registration (client id per account) and the host id are kept, so
-    signing in again does not register a new app.
+    signing in again does not register a new app. Holds the refresh lock so
+    a renewal running at the same time can't bring the session back.
     """
+    lock = _FileLock()
+    await asyncio.to_thread(lock.acquire)
+    try:
+        await _sign_out_locked()
+    finally:
+        lock.release()
+
+
+async def _sign_out_locked() -> None:
     session = _session()
     revoked = True
     if session and session.get('refresh_token'):
@@ -645,6 +655,7 @@ def _refresh_blocking(stale_token: str, force: bool) -> str:
             return session['access_token']
         if not force and session.get('expires_at', 0) > time.time() and time.time() < session.get('earliest_refresh_at', 0):
             return session['access_token']
+        used_refresh = session.get('refresh_token')
         try:
             response = httpx.post(TOKEN_URL, data={
                 'grant_type': 'refresh_token',
@@ -685,6 +696,11 @@ def _refresh_blocking(stale_token: str, force: bool) -> str:
             session['id_token'] = body['id_token']
         with _lock:
             data = _read()
+            current = data.get('session')
+            # A sign-out or new sign-in while this refresh ran wins: don't bring
+            # back a session that is no longer the stored one.
+            if not isinstance(current, dict) or current.get('refresh_token') != used_refresh:
+                raise NotSignedIn('The ChatGPT sign-in changed while it was being renewed. Try again.')
             data['session'] = session
             _write(data)
         return session['access_token']
