@@ -14,7 +14,7 @@ full-screen tools (`take_screenshot`, `mouse_click`, `text_input`, ...) still wo
 | Tool | What it does | Asks first? |
 |------|--------------|-------------|
 | `list_windows(search?)` | Open app windows with their ids; says which can't be controlled and why | no |
-| `open_app(target)` | Opens an app, file or folder without taking focus; returns the new window | no |
+| `open_app(target)` | Opens an app, file or folder without taking focus; returns the new window | yes (it can start any program) |
 | `look_at_window(window_id, find?, max_elements=60)` | Screenshot of that window (attached as an image, even when covered) plus numbered controls | no |
 | `click_element(window_id, element, action="click")` | Press/open (`click`), `select`, `toggle` or `expand` a control | yes |
 | `set_text(window_id, text, element?)` | Put text into a field (replaces its contents) | yes |

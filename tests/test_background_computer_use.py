@@ -307,9 +307,9 @@ def test_tools_are_registered_and_classified():
     from cognitrix.tools.base import ToolManager
 
     detector = DestructiveOpDetector()
-    for name in ('list_windows', 'open_app', 'look_at_window', 'scroll_window'):
+    for name in ('list_windows', 'look_at_window', 'scroll_window'):
         assert ToolManager.get_by_name(name) is not None, name
         assert detector.analyze(name, {}).risk_level is RiskLevel.LOW
-    for name in ('click_element', 'set_text', 'click_in_window', 'type_in_window', 'press_key_in_window'):
+    for name in ('open_app', 'click_element', 'set_text', 'click_in_window', 'type_in_window', 'press_key_in_window'):
         assert ToolManager.get_by_name(name) is not None, name
         assert detector.analyze(name, {}).risk_level is RiskLevel.MEDIUM

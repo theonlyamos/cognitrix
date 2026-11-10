@@ -97,8 +97,8 @@ _KNOWN_LOW = frozenset({
     'memory', 'search_chats', 'read_chat',
     # asking the person a question, images, screenshots
     'ask_user', 'ask_question', 'generate_image', 'take_screenshot',
-    # background computer use: looking, opening an app, scrolling
-    'list_windows', 'look_at_window', 'open_app', 'scroll_window',
+    # background computer use: looking and scrolling
+    'list_windows', 'look_at_window', 'scroll_window',
     # background shells: reading output or stopping a shell the agent started
     'bash_output', 'kill_shell',
 })
@@ -111,6 +111,8 @@ _DESKTOP_CONTROL = frozenset({
     'text_input', 'key_press', 'hot_key', 'mouse_click',
     'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
     'click_element', 'set_text', 'click_in_window', 'type_in_window', 'press_key_in_window',
+    # open_app starts any program or script, like a shell command would
+    'open_app',
 })
 
 # Handing a job to a coding agent CLI (Claude Code, Codex, ...): it edits
