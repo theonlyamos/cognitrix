@@ -1044,6 +1044,27 @@ async def start_task_run(task_id: str, body: TaskRunRequest | None = None,
     }
 
 
+async def cancel_active_run(task: Task, run: TaskRun) -> TaskRun:
+    """Stop a task's active run (callers check access first). Shared by the
+    cancel route and the Cancel Task Run agent tool."""
+    repository = RunRepository()
+    if run.status == TaskRunStatus.CANCELLING:
+        # A repeated request force-finalizes and advances the lease
+        # generation, fencing a worker that failed to stop cooperatively.
+        authoritative = await repository.force_cancel(run.id)
+    else:
+        # Queued runs terminalize immediately; running runs enter the
+        # cooperative CANCELLING state with a durable status event.
+        authoritative = await repository.request_cancel(run.id)
+    if authoritative.status == TaskRunStatus.CANCELLED:
+        task.status = TaskStatus.CANCELLED
+        await Task.update_one(
+            {'id': task.id},
+            {'status': TaskStatus.CANCELLED.value},
+        )
+    return authoritative
+
+
 @tasks_run_api.post('/{task_id}/cancel')
 async def cancel_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)):
     task = await _visible_task(task_id, ctx)
@@ -1056,22 +1077,7 @@ async def cancel_task(task_id: str, ctx: AuthContext = Depends(get_auth_context)
                 status_code=403,
                 detail='Not allowed to access this task run',
             )
-        repository = RunRepository()
-        if run.status == TaskRunStatus.CANCELLING:
-            # A repeated request force-finalizes and advances the lease
-            # generation, fencing a worker that failed to stop cooperatively.
-            authoritative = await repository.force_cancel(run.id)
-        else:
-            # Queued runs terminalize immediately; running runs enter the
-            # cooperative CANCELLING state with a durable status event.
-            authoritative = await repository.request_cancel(run.id)
-        if authoritative.status == TaskRunStatus.CANCELLED:
-            task.status = TaskStatus.CANCELLED
-            await Task.update_one(
-                {'id': task.id},
-                {'status': TaskStatus.CANCELLED.value},
-            )
-        return _public_run_projection(authoritative)
+        return _public_run_projection(await cancel_active_run(task, run))
 
     _check_task_allowlists(ctx, task)
 

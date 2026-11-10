@@ -85,6 +85,9 @@ _KNOWN_LOW = frozenset({
     # agents, teams, tasks, skills, mcp discovery
     'list_agents', 'create_agent', 'call_agent', 'create_new_team',
     'create_task', 'assign_task', 'load_skill', 'list_mcp_tools',
+    # looking at tasks, and starting or stopping a run (a stopped run can be
+    # resumed; the run's own risky tool calls still ask)
+    'list_tasks', 'get_task', 'start_task', 'cancel_task_run',
     'run_mcp_tool',  # the MCP action itself is checked in the agent loop
     # always-on agents: notes and alerts go to the run's own owner
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',

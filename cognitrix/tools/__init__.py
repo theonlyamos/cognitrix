@@ -6,7 +6,17 @@ from cognitrix.tools.folders import request_folder
 from cognitrix.tools.http import http_request, list_credentials
 from cognitrix.tools.image import generate_image
 from cognitrix.tools.knowledge import search_knowledge
-from cognitrix.tools.management import assign_task, create_new_team, create_task, delete_task, update_task
+from cognitrix.tools.management import (
+    assign_task,
+    cancel_task_run,
+    create_new_team,
+    create_task,
+    delete_task,
+    get_task,
+    list_tasks,
+    start_task,
+    update_task,
+)
 from cognitrix.tools.mcp import list_mcp_tools, run_mcp_tool
 from cognitrix.tools.memory import memory
 from cognitrix.tools.misc import (
@@ -53,7 +63,8 @@ __all__ = [
     'Search',
     'Tavily_Search',
     'open_file',
-    'create_agent', 'call_agent', 'create_new_team', 'create_task', 'assign_task', 'update_task', 'delete_task', 'generate_image', 'list_agents',
+    'create_agent', 'call_agent', 'create_new_team', 'create_task', 'assign_task', 'update_task', 'delete_task',
+    'list_tasks', 'get_task', 'start_task', 'cancel_task_run', 'generate_image', 'list_agents',
     'bash', 'bash_output', 'kill_shell', 'coding_agent',
     'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool',
     'load_skill', 'ask_user',
