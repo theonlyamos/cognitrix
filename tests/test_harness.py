@@ -476,7 +476,7 @@ async def test_a_chat_turn_lends_the_agents_tools_and_asks_first(workdir, tmp_pa
         ran.append((tool.name, dict(params)))
         return ToolResult(success=True, data='teal')
 
-    async def fake_check(self, tool_call, risk, interface='cli', **kwargs):
+    async def fake_check(tool_call, risk, interface='cli', **kwargs):
         asked.append((tool_call.tool_name, tool_call.params, kwargs.get('person_only')))
         return ApprovalResult(approved=True)
 
@@ -488,7 +488,8 @@ async def test_a_chat_turn_lends_the_agents_tools_and_asks_first(workdir, tmp_pa
 
     monkeypatch.setattr('cognitrix.agents.base.ToolManager.get_by_name', staticmethod(lambda name: None))
     monkeypatch.setattr('cognitrix.tools.resilient_tool_wrapper.ResilientToolManager.run_tool', fake_run_tool)
-    monkeypatch.setattr('cognitrix.safety.approval_gate.ApprovalGate.check_approval', fake_check)
+    from cognitrix.agents.base import AgentManager as _Manager
+    monkeypatch.setattr(_Manager.approval_gate, 'check_approval', fake_check)
     monkeypatch.setattr(Session, 'save', no_save)
 
     context = ToolExecutionContext(host_process_mode=HostProcessMode.TRUSTED_LOCAL,
@@ -513,11 +514,12 @@ async def test_file_changes_in_the_working_folder_are_not_asked_about(tmp_path, 
 
     asked = []
 
-    async def fake_check(self, tool_call, risk, interface='cli', **kwargs):
+    async def fake_check(tool_call, risk, interface='cli', **kwargs):
         asked.append((tool_call.tool_name, risk.risk_level.value, kwargs.get('person_only')))
         return ApprovalResult(approved=False)
 
-    monkeypatch.setattr('cognitrix.safety.approval_gate.ApprovalGate.check_approval', fake_check)
+    from cognitrix.agents.base import AgentManager as _Manager
+    monkeypatch.setattr(_Manager.approval_gate, 'check_approval', fake_check)
     manager = AgentManager(Agent(name='Pip', system_prompt='T', tools=[],
                                  llm=LLM(provider='claude-code', model='sonnet')))
     folders = (Folder(str(tmp_path), WRITE, 'work', True),)
