@@ -61,7 +61,10 @@ def _assert_ours_not_in_front(driver, ids):
 
 @pytest.fixture(autouse=True)
 def _start_fg(driver):
-    driver.start_fg = driver.backend.foreground()
+    from cognitrix.computer.windows import user32
+    time.sleep(1)  # a window closed by the previous test may still be "in front"
+    fg = driver.backend.foreground()
+    driver.start_fg = fg if fg and user32.IsWindow(fg) and driver.backend.window(fg) else 0
 
 
 def _skip_if_running(driver, app):
