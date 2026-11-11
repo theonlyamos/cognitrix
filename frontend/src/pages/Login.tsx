@@ -48,7 +48,7 @@ export default function Login() {
     try {
       const { data } = await api.post('/auth/login', { username: email, password });
       login(data.user, data.access_token);
-      navigate('/home');
+      navigate('/dashboard');
     } catch (err) {
       setError(errorMessage(err, t('login.wrong')));
     } finally {

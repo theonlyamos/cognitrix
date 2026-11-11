@@ -250,6 +250,8 @@ async def _task_projection(task: Task) -> dict:
     if latest is None:
         data['run_id'] = None
         data['run_status'] = None
+        data['run_started_at'] = None
+        data['run_completed_at'] = None
         return data
     return _task_projection_for_run(task, latest, data=data)
 
@@ -272,6 +274,9 @@ def _task_projection_for_run(
     }[latest.status]
     data['run_id'] = latest.id
     data['run_status'] = latest.status
+    # When the latest run started and ended, for activity lists (dashboard).
+    data['run_started_at'] = latest.started_at or latest.queued_at
+    data['run_completed_at'] = latest.completed_at
     data['status'] = task_status
     return data
 

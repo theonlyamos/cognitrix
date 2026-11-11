@@ -26,6 +26,7 @@ import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
 import type { PickTarget, PickerAgent, PickerTeam } from '@/lib/agentPicker';
+import { takeChatDraft } from '@/lib/chatDraft';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
 import { setViewingChat } from '@/lib/chatPresence';
@@ -143,7 +144,7 @@ export default function Home() {
   const attachArtifactsToLatestUser = attachArtifactsToLatestUserFromSession ?? addArtifactsToLastUser;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(takeChatDraft);
   const [waiting, setWaiting] = useState(false); // sent, before first token
   const [streaming, setStreaming] = useState(false); // actively streaming a reply
   const [stopping, setStopping] = useState(false);

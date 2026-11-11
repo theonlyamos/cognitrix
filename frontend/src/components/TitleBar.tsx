@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { Settings as SettingsIcon } from 'lucide-react';
 
 const SECTIONS: [string, string][] = [
+  ['/dashboard', 'Dashboard'],
   ['/home', 'Chat'],
   ['/inbox', 'Inbox'],
   ['/agents', 'Agents'],
