@@ -183,11 +183,22 @@ def driver(fake):
     return d
 
 
-async def test_tools_say_windows_only_elsewhere(monkeypatch):
-    monkeypatch.setattr(computer.sys, 'platform', 'linux')
+async def test_tools_say_so_where_there_is_no_driver(monkeypatch):
+    monkeypatch.setattr(computer.sys, 'platform', 'sunos5')
     monkeypatch.setattr(computer, '_driver', None)
     out = (await tools.list_windows.run()).content
-    assert 'only available on Windows' in out
+    assert 'only available on Windows and Linux' in out
+
+
+async def test_linux_without_a_desktop_session_says_so(monkeypatch):
+    monkeypatch.setattr(computer.sys, 'platform', 'linux')
+    monkeypatch.setattr(computer, '_driver', None)
+    monkeypatch.delenv('DISPLAY', raising=False)
+    monkeypatch.delenv('WAYLAND_DISPLAY', raising=False)
+    monkeypatch.delenv('XDG_SESSION_TYPE', raising=False)
+    assert 'needs a desktop session' in (await tools.list_windows.run()).content
+    monkeypatch.setenv('XDG_SESSION_TYPE', 'wayland')
+    assert 'Wayland' in (await tools.list_windows.run()).content
 
 
 def test_element_numbers_are_tied_to_the_latest_snapshot(driver, fake):
@@ -451,3 +462,27 @@ def test_use_screen_waits_for_the_person_to_pause(driver, fake):
     result = driver.type_text(2, 'hello', use_screen=True)
     assert result.status == FAILED and 'using the keyboard' in result.message
     assert not any(p[0].startswith('screen') for p in fake.posted)
+
+
+def test_linux_reads_shortcuts_from_accessibility_key_bindings():
+    from cognitrix.computer.linux import _accelerator
+    assert _accelerator('s;<Alt>f:s;<Control>s') == 'ctrl+s'
+    assert _accelerator('<Primary><Shift>b') == 'ctrl+shift+b'
+    assert _accelerator('<Alt>F4') == 'alt+f4'
+    assert _accelerator('n') == '' and _accelerator('') == ''
+
+
+def test_mac_backend_is_off_until_switched_on(monkeypatch):
+    monkeypatch.setattr(computer.sys, 'platform', 'darwin')
+    monkeypatch.setattr(computer, '_driver', None)
+    monkeypatch.delenv('COGNITRIX_MAC_BACKGROUND', raising=False)
+    with pytest.raises(computer.Unsupported):
+        computer.get_driver()
+
+
+def test_mac_menu_shortcuts():
+    from cognitrix.computer.macos import _menu_shortcut
+    assert _menu_shortcut('S', 0) == 'cmd+s'
+    assert _menu_shortcut('S', 1) == 'cmd+shift+s'
+    assert _menu_shortcut('F', 4) == 'ctrl+cmd+f'
+    assert _menu_shortcut('T', 8) == '' and _menu_shortcut(None, 0) == ''

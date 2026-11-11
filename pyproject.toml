@@ -70,6 +70,8 @@ celery = {extras = ["redis"], version = "^5.4.0"}
 pywin32 = {version = ">=310", markers = "sys_platform == 'win32'"}
 # UI Automation for background computer use (cognitrix/computer).
 comtypes = {version = ">=1.4", markers = "sys_platform == 'win32'"}
+# Accessibility API for the experimental macOS backend (Quartz comes with pyautogui).
+pyobjc-framework-applicationservices = {version = ">=10", markers = "sys_platform == 'darwin'"}
 pyyaml = "^6.0"
 
 # MCP (Model Context Protocol)
