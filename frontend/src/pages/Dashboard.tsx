@@ -310,6 +310,7 @@ export default function Dashboard() {
     void chats.refetch({ silent: true });
     void tasks.refetch({ silent: true });
     void runs.refetch({ silent: true });
+    void automations.refetch({ silent: true });
   }, 15000, true);
 
   const now = Date.now();
@@ -555,7 +556,7 @@ export default function Dashboard() {
                     {chatList.slice(0, 6).map((c) => {
                       const agent = c.agent_id ? agentById.get(c.agent_id) : undefined;
                       const name = c.kind === 'team' ? 'Team chat' : agent?.name || 'Agent';
-                      const href = c.kind === 'team' && c.team_id ? `/teams/${c.team_id}/chat` : `/home?chat=${encodeURIComponent(c.id)}`;
+                      const href = c.kind === 'team' && c.team_id ? `/teams/${c.team_id}/chat?chat=${encodeURIComponent(c.id)}` : `/home?chat=${encodeURIComponent(c.id)}`;
                       return (
                         <li key={c.id}>
                           <Link to={href} className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-panel-2/60">
