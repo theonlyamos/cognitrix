@@ -6,19 +6,32 @@ import base64
 import io
 from typing import Any
 
-from cognitrix.computer import ActionResult, DriverError, Unsupported, get_driver
+from cognitrix.computer import ActionResult, Actor, DriverError, Unsupported, current_actor, get_driver
 from cognitrix.tools.misc import coords_normalized, queue_image
 from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import ToolOutcome
 
 
-def _run(fn):
+def _actor(parent: Any) -> Actor:
+    """The calling agent and chat, for the on-screen agent cursor and its Stop."""
+    from cognitrix.tools.utils import current_execution_context
+
+    ctx = current_execution_context()
+    agent_id = getattr(parent, 'id', None) or ctx.agent_id
+    return Actor(agent_id=str(agent_id) if agent_id else None, agent=getattr(parent, 'name', None),
+                 session_id=ctx.session_id, user_id=ctx.user_id)
+
+
+def _run(fn, parent: Any = None):
+    token = current_actor.set(_actor(parent))
     try:
         return fn(get_driver())
     except Unsupported as exc:
         return ToolOutcome.failure('unsupported', str(exc))
     except DriverError as exc:
         return ToolOutcome.failure('computer_use', str(exc))
+    finally:
+        current_actor.reset(token)
 
 
 def _done(result: ActionResult):
@@ -127,7 +140,7 @@ def look_at_window(window_id: int, find: str | None = None, max_elements: int = 
         elif not total:
             lines.append('(no readable controls; use the screenshot and click_in_window)')
         return '\n'.join(lines)
-    return _run(go)
+    return _run(go, parent)
 
 
 @tool(category='system')
@@ -144,7 +157,7 @@ def click_element(window_id: int, element: int, action: str = 'click', use_scree
             for a moment and use the real mouse and keyboard, then put things back. The person is asked first.
     """
     return _run(lambda d: _done(d.act_on_element(window_id, element, action, viewer=_viewer(parent),
-                                                 use_screen=use_screen)))
+                                                 use_screen=use_screen)), parent)
 
 
 @tool(category='system')
@@ -155,7 +168,7 @@ def set_text(window_id: int, text: str, element: int | None = None, *, parent: A
         text (str): The full text the field should contain.
         element (int, optional): Control number of the field from look_at_window; default is the focused field.
     """
-    return _run(lambda d: _done(d.set_text(window_id, text, element, viewer=_viewer(parent))))
+    return _run(lambda d: _done(d.set_text(window_id, text, element, viewer=_viewer(parent))), parent)
 
 
 @tool(category='system')
@@ -176,7 +189,7 @@ def click_in_window(window_id: int, x: int, y: int, button: str = 'left', double
         ix, iy = _image_point(driver, window_id, x, y)
         return _done(driver.click_point(window_id, ix, iy, button, double, viewer=_viewer(parent),
                                         use_screen=use_screen))
-    return _run(go)
+    return _run(go, parent)
 
 
 @tool(category='system')
@@ -198,11 +211,11 @@ def type_in_window(window_id: int, text: str, x: int | None = None, y: int | Non
         if x is not None and y is not None:
             ix, iy = _image_point(driver, window_id, x, y)
         return _done(driver.type_text(window_id, text, ix, iy, viewer=_viewer(parent), use_screen=use_screen))
-    return _run(go)
+    return _run(go, parent)
 
 
 @tool(category='system')
-def press_key_in_window(window_id: int, keys: str, use_screen: bool = False):
+def press_key_in_window(window_id: int, keys: str, use_screen: bool = False, *, parent: Any | None = None):
     """Press a key or shortcut in a window in the background, e.g. "enter", "tab", "down", "ctrl+s", "ctrl+w".
     Prefer a shortcut over opening a menu (menus in modern apps take the screen). Browsers and Electron apps
     need use_screen=true for keys; clicking their controls works in the background.
@@ -212,7 +225,7 @@ def press_key_in_window(window_id: int, keys: str, use_screen: bool = False):
         use_screen (bool, optional): Only after a result said this needs the screen: bring the window to the front
             for a moment and use the real mouse and keyboard, then put things back. The person is asked first.
     """
-    return _run(lambda d: _done(d.press_key(window_id, keys, use_screen=use_screen)))
+    return _run(lambda d: _done(d.press_key(window_id, keys, use_screen=use_screen)), parent)
 
 
 @tool(category='system')
@@ -225,4 +238,4 @@ def scroll_window(window_id: int, direction: str = 'down', amount: int = 3, elem
         amount (int, optional): Steps to scroll (default 3).
         element (int, optional): Control number of the area to scroll; default is the main scrollable area.
     """
-    return _run(lambda d: _done(d.scroll(window_id, direction, amount, element, viewer=_viewer(parent))))
+    return _run(lambda d: _done(d.scroll(window_id, direction, amount, element, viewer=_viewer(parent))), parent)

@@ -320,6 +320,11 @@ function DesktopSection() {
           <SettingRow label="Keep running in the tray when closed" detail="Tasks keep running while the window is closed">
             <Toggle label="Keep running in the tray when closed" checked={prefs.close_to_tray} onChange={(v) => update({ close_to_tray: v })} />
           </SettingRow>
+          {prefs.agent_cursor !== undefined && (
+            <SettingRow label="Show the agent cursor" detail="Shows where an agent clicks and types in other apps, with a Stop button">
+              <Toggle label="Show the agent cursor" checked={prefs.agent_cursor} onChange={(v) => update({ agent_cursor: v })} />
+            </SettingRow>
+          )}
           <SettingRow
             label={onWindows ? 'Windows notifications' : 'System notifications'}
             detail={<>Choose which events under <Link to="/notifications" className="text-accent-ink hover:underline">Notifications</Link></>}

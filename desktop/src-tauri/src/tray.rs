@@ -30,6 +30,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let restart = MenuItem::with_id(app, "restart", "Restart engine", true, None::<&str>)?;
     let logs = MenuItem::with_id(app, "logs", "Open engine log", true, None::<&str>)?;
+    let stop_agents = MenuItem::with_id(app, "stop-agents", "Stop agents using the computer", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Cognitrix", true, None::<&str>)?;
     let separator = || PredefinedMenuItem::separator(app);
     let menu = Menu::with_items(
@@ -44,6 +45,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             &separator()?,
             &autostart,
             &separator()?,
+            &stop_agents,
             &restart,
             &logs,
             &separator()?,
@@ -70,6 +72,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 set_autostart_tick(app, crate::autostart_enabled(app));
             }
             "restart" => engine::restart(app),
+            "stop-agents" => {
+                if let Err(e) = crate::overlay::stop(app, None) {
+                    log::warn!("could not stop the agents: {e}");
+                }
+            }
             "logs" => crate::open_engine_log(app),
             "quit" => app.exit(0),
             _ => {}

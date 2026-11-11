@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cognitrix agent cursor</title>
+<style>
+  /* A transparent, click-through window over every monitor (src-tauri/src/overlay.rs).
+     The app calls window.agentAction({x, y, click, label, agent, agent_id}) with
+     coordinates in this page's pixels. */
+  html, body { margin: 0; width: 100%; height: 100%; background: transparent; overflow: hidden; }
+  body { font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif; pointer-events: none; }
+  #cursor { position: absolute; left: 0; top: 0; transform: translate(-100px, -100px); opacity: 0;
+            transition: transform 420ms cubic-bezier(.2, .8, .2, 1), opacity 200ms; will-change: transform; }
+  #cursor svg { display: block; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .45)); }
+  #label { position: absolute; left: 22px; top: 22px; white-space: nowrap; max-width: 420px; overflow: hidden;
+           text-overflow: ellipsis; padding: 4px 10px; border-radius: 11px; font-size: 12.5px; font-weight: 600;
+           color: #0b0c0e; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
+  .ripple { position: absolute; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%;
+            border: 3px solid var(--c); opacity: .9; animation: ripple 650ms ease-out forwards; }
+  @keyframes ripple { from { transform: scale(.25); opacity: .95; } to { transform: scale(1.6); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    #cursor { transition: opacity 200ms; }
+    .ripple { animation: none; opacity: .6; }
+  }
+</style>
+</head>
+<body>
+<div id="cursor" aria-hidden="true">
+  <svg width="26" height="30" viewBox="0 0 26 30">
+    <path id="arrow" d="M2 2 L2 24 L8.5 18 L12.8 27.5 L16.6 25.8 L12.4 16.6 L21 16.6 Z"
+          fill="#c6f24e" stroke="#0b0c0e" stroke-width="2" stroke-linejoin="round"/>
+  </svg>
+  <div id="label"></div>
+</div>
+<script>
+  const cursor = document.getElementById('cursor');
+  const arrow = document.getElementById('arrow');
+  const label = document.getElementById('label');
+  let at = null;
+
+  // Each agent gets its own colour, the same every time.
+  function colour(key) {
+    let h = 0;
+    for (const ch of String(key || 'agent')) h = (h * 31 + ch.codePointAt(0)) % 360;
+    return `hsl(${h} 85% 62%)`;
+  }
+
+  window.agentAction = function (a) {
+    const c = colour(a.agent_id || a.agent);
+    arrow.setAttribute('fill', c);
+    label.style.background = c;
+    label.textContent = a.agent ? `${a.agent} · ${a.label}` : a.label;
+    if (typeof a.x === 'number' && typeof a.y === 'number') {
+      at = [a.x, a.y];
+      cursor.style.transform = `translate(${a.x}px, ${a.y}px)`;
+      if (a.click) {
+        // Ripple once the pointer has arrived.
+        setTimeout(() => {
+          const r = document.createElement('div');
+          r.className = 'ripple';
+          r.style.setProperty('--c', c);
+          r.style.left = `${at[0]}px`;
+          r.style.top = `${at[1]}px`;
+          document.body.appendChild(r);
+          setTimeout(() => r.remove(), 700);
+        }, 380);
+      }
+    }
+    cursor.style.opacity = at ? '1' : '0';
+  };
+</script>
+</body>
+</html>

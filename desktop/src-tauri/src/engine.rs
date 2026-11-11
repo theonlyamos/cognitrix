@@ -58,6 +58,9 @@ pub struct EngineStatus {
 
 pub struct Engine {
     child: Mutex<Option<Child>>,
+    /// Random per app run: the engine only serves the agent cursor feed
+    /// (overlay.rs) to a caller that sends it.
+    token: String,
     status: Mutex<EngineStatus>,
     /// Bumped on every start/stop so stale watcher threads exit.
     generation: AtomicU64,
@@ -69,6 +72,7 @@ impl Engine {
     pub fn new() -> Self {
         Self {
             child: Mutex::new(None),
+            token: random_token(),
             status: Mutex::new(EngineStatus {
                 status: Status::Starting,
                 url: None,
@@ -85,6 +89,35 @@ impl Engine {
     pub fn status(&self) -> EngineStatus {
         self.status.lock().unwrap().clone()
     }
+}
+
+fn random_token() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    // RandomState is seeded from the OS's random source.
+    (0..2u64)
+        .map(|i| {
+            let mut hasher = RandomState::new().build_hasher();
+            hasher.write_u64(i);
+            hasher.write_u128(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0),
+            );
+            format!("{:016x}", hasher.finish())
+        })
+        .collect()
+}
+
+/// The token for the agent cursor feed. An engine the app didn't start
+/// (COGNITRIX_ENGINE_URL) needs the same COGNITRIX_DESKTOP_TOKEN set for both.
+pub fn desktop_token(app: &AppHandle) -> Option<String> {
+    let engine = app.state::<Engine>();
+    if engine.status().external {
+        return std::env::var("COGNITRIX_DESKTOP_TOKEN").ok().filter(|t| !t.is_empty());
+    }
+    Some(engine.token.clone())
 }
 
 pub fn log_path(app: &AppHandle) -> PathBuf {
@@ -221,6 +254,7 @@ fn start_blocking(app: &AppHandle) {
         .arg(std::process::id().to_string())
         .arg("--working-folder")
         .arg(&working_folder)
+        .env("COGNITRIX_DESKTOP_TOKEN", &engine.token)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
         .stderr(log_err.map(Stdio::from).unwrap_or_else(Stdio::null));

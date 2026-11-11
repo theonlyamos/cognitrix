@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-overlay-stop"
+description = "Enables the overlay_stop command without any pre-configured scope."
+commands.allow = ["overlay_stop"]
+
+[[permission]]
+identifier = "deny-overlay-stop"
+description = "Denies the overlay_stop command without any pre-configured scope."
+commands.deny = ["overlay_stop"]

@@ -15,6 +15,7 @@ Only Windows has a backend today; elsewhere ``get_driver()`` raises
 """
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import itertools
 import logging
@@ -122,12 +123,64 @@ class ActionResult:
 
 
 @dataclass
+class Actor:
+    """Who is acting: set by the tools for each call (see current_actor)."""
+    agent_id: str | None = None
+    agent: str | None = None  # display name
+    session_id: str | None = None
+    user_id: str | None = None
+
+
+current_actor: contextvars.ContextVar[Actor | None] = contextvars.ContextVar('computer_actor', default=None)
+
+
+@dataclass
 class ActionEvent:
     """Emitted before each action, e.g. for an on-screen agent cursor."""
     window_id: int
     action: str
     x: int | None = None  # screen coordinates, when the action has a point
     y: int | None = None
+    label: str = ''  # e.g. "Clicking Save in Notepad"
+    agent: str | None = None
+    agent_id: str | None = None
+    session_id: str | None = None
+    user_id: str | None = None
+
+
+# Listeners for every driver (the desktop app's agent cursor subscribes here).
+_global_listeners: list[Callable[[ActionEvent], None]] = []
+
+
+def add_global_listener(callback: Callable[[ActionEvent], None]) -> None:
+    _global_listeners.append(callback)
+
+
+def remove_global_listener(callback: Callable[[ActionEvent], None]) -> None:
+    if callback in _global_listeners:
+        _global_listeners.remove(callback)
+
+
+_VERBS = {'click': 'Clicking', 'element': 'Clicking', 'screen': 'Clicking', 'set_text': 'Writing',
+          'type': 'Typing', 'key': 'Pressing', 'scroll': 'Scrolling'}
+
+
+def _app_label(win: WindowInfo) -> str:
+    """'Notepad' from 'notes.txt - Notepad', else the exe name."""
+    if ' - ' in win.title:
+        return win.title.rsplit(' - ', 1)[-1].strip()
+    return win.title.strip() or win.app.rsplit('.', 1)[0]
+
+
+def describe_action(action: str, win: WindowInfo, target: str | None = None) -> str:
+    kind = action.split(':')[0]
+    if kind == 'screen' and ':' in action:
+        kind = action.split(':')[1]
+    verb = _VERBS.get(kind, 'Working')
+    if kind == 'key' and ':' in action:
+        verb = f'Pressing {action.rsplit(":", 1)[-1]}'
+    what = f' {target[:40]}' if target else ''
+    return f'{verb}{what} in {_app_label(win)}'
 
 
 class Backend(Protocol):
@@ -207,6 +260,7 @@ class Driver:
     settle_s = 0.25  # wait before reading an action's effect back
     lock_timeout_s = 15.0
     open_watch_s = 2.0  # how long open() watches for a late focus grab
+    stop_hold_s = 600.0  # how long Stop on the agent cursor keeps that agent off the computer
     screen_idle_s = 1.0  # use_screen waits for the person to pause this long...
     screen_wait_s = 6.0  # ...for at most this long
 
@@ -218,6 +272,7 @@ class Driver:
         self._locks: dict[int, threading.Lock] = {}
         self._locks_guard = threading.Lock()
         self._listeners: list[Callable[[ActionEvent], None]] = []
+        self._stopped: dict[str, float] = {}  # agent id -> when the person pressed Stop
 
     # -- hooks ------------------------------------------------------------
     def add_listener(self, callback: Callable[[ActionEvent], None]) -> None:
@@ -227,8 +282,27 @@ class Driver:
         if callback in self._listeners:
             self._listeners.remove(callback)
 
+    def stop_agent(self, agent_id: str) -> None:
+        """The person pressed Stop on the agent cursor: refuse that agent's
+        next actions for a while."""
+        self._stopped[str(agent_id)] = time.monotonic()
+
+    def _check_stopped(self) -> None:
+        actor = current_actor.get()
+        when = self._stopped.get(str(actor.agent_id)) if actor and actor.agent_id else None
+        if when is not None and time.monotonic() - when < self.stop_hold_s:
+            raise Blocked('The person pressed Stop on the agent cursor. Do not use the computer again in '
+                          'this task unless they ask you to.')
+
+    def _announce(self, win: WindowInfo, action: str, point: tuple[int, int] | None = None,
+                  target: str | None = None) -> None:
+        actor = current_actor.get() or Actor()
+        self._emit(ActionEvent(win.id, action, *(point or (None, None)), label=describe_action(action, win, target),
+                               agent=actor.agent, agent_id=actor.agent_id, session_id=actor.session_id,
+                               user_id=actor.user_id))
+
     def _emit(self, event: ActionEvent) -> None:
-        for callback in list(self._listeners):
+        for callback in list(self._listeners) + list(_global_listeners):
             try:
                 callback(event)
             except Exception:
@@ -397,8 +471,10 @@ class Driver:
         if not lock.acquire(timeout=self.lock_timeout_s):
             raise Busy('Another action is using this window right now. Try again in a moment.')
         try:
+            self._check_stopped()
             win = self._window(window_id)
-            self._emit(ActionEvent(win.id, action, *(point or (None, None))))
+            if not action.startswith(('element', 'screen:click')) or point:
+                self._announce(win, action, point)
             fg_before = self.backend.foreground()
             try:
                 result = body(win)
@@ -471,6 +547,11 @@ class Driver:
                        use_screen: bool = False) -> ActionResult:
         def body(win: WindowInfo) -> ActionResult:
             snap, element = self._element(win.id, index, snapshot_id, viewer)
+            if element.rect[2] > element.rect[0]:
+                dx, dy = self._moved(win, snap)
+                cx, cy = _center(element.rect)
+                self._announce(win, f'{"screen" if use_screen else "element"}:{action}', (cx + dx, cy + dy),
+                               element.name or element.role)
             if not element.enabled:
                 return ActionResult(FAILED, f'Element {index} ({element.role} {element.name!r}) is disabled.')
             if use_screen:

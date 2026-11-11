@@ -92,8 +92,34 @@ Results also say when the foreground window changed during the action
   the person's window and the result says so.
 - **Locks**: one action per window at a time (other windows can be driven in
   parallel); within one agent turn the desktop tools already run one by one.
-- **Overlay hook**: `Driver.add_listener(callback)` receives an `ActionEvent`
-  (window id, action, screen x/y) before each action, for a future on-screen agent cursor.
+- **Action events**: before each action the driver emits an `ActionEvent` (window id,
+  action, screen x/y, a label like "Clicking Save in Notepad", and the acting agent and
+  chat) to `Driver.add_listener` and `add_global_listener` callbacks. The desktop app's
+  agent cursor is built on them (below).
+
+## The agent cursor (desktop app)
+
+The desktop app draws where agents act, so the person can see it and stop it:
+
+- The app starts the engine with a random `COGNITRIX_DESKTOP_TOKEN`. With that token
+  (header `X-Cognitrix-Desktop-Token`) it reads `GET /api/v1/computer/overlay/events`,
+  a server-sent event feed of agent actions (`cognitrix/computer/overlay.py`,
+  `cognitrix/api/routes/computer_overlay.py`). Without the token both endpoints 404.
+- `desktop/src-tauri/src/overlay.rs` draws them in two windows, created on the first
+  action and hidden after a few idle seconds:
+  - **agent-cursor** (`splash/overlay.html`): transparent, click-through, never
+    activated, over every monitor; a pointer in the agent's colour glides to each
+    action, with a click ripple and "Agent · what it's doing".
+  - **agent-stop** (`splash/stop.html`): a small pill at the top of the main monitor
+    that can be clicked without taking focus. **Stop** calls
+    `POST /api/v1/computer/overlay/stop`: the driver refuses that agent's actions for
+    10 minutes (the model is told the person pressed Stop) and its chat turn is
+    stopped. The tray menu has "Stop agents using the computer" for all of them.
+- Both windows are left out of screen captures (`WDA_EXCLUDEFROMCAPTURE`) and are
+  tool windows of Cognitrix itself, so `take_screenshot` and `list_windows` never see them.
+- Settings → Desktop app → "Show the agent cursor" turns it off.
+- With monitors at different scaling, the pointer can be a few pixels off on the
+  monitors that don't share the main window's scale (one window spans them all).
 
 ## What works in the background
 

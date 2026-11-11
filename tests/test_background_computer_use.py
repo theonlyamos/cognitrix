@@ -486,3 +486,72 @@ def test_mac_menu_shortcuts():
     assert _menu_shortcut('S', 1) == 'cmd+shift+s'
     assert _menu_shortcut('F', 4) == 'ctrl+cmd+f'
     assert _menu_shortcut('T', 8) == '' and _menu_shortcut(None, 0) == ''
+
+
+# -- agent cursor feed (cognitrix/computer/overlay.py) -------------------------
+
+async def test_overlay_feed_carries_who_does_what_where(driver, fake):
+    import asyncio
+
+    from cognitrix.computer import Actor, current_actor, overlay
+
+    queue = overlay.hub.subscribe()
+    try:
+        driver.look(1)
+
+        def act():
+            token = current_actor.set(Actor(agent_id='a1', agent='Researcher', session_id='s1', user_id='u1'))
+            try:
+                driver.act_on_element(1, 0)
+            finally:
+                current_actor.reset(token)
+        await asyncio.to_thread(act)
+        event = await asyncio.wait_for(queue.get(), 2)
+    finally:
+        overlay.hub.unsubscribe(queue)
+    assert event['agent'] == 'Researcher' and event['agent_id'] == 'a1'
+    assert event['label'] == "Clicking One in Calc" and (event['x'], event['y']) == (160, 110)
+    assert overlay.hub.last_seen['a1'] == ('u1', 's1')
+
+
+def test_overlay_stop_keeps_the_agent_off_and_stops_its_chat(driver, fake, monkeypatch):
+    from cognitrix.computer import Actor, current_actor, overlay
+    from cognitrix.sessions import runs
+
+    stopped_runs = []
+    monkeypatch.setattr(computer, 'get_driver', lambda: driver)
+    monkeypatch.setattr(runs, 'stop_run', lambda user, session: stopped_runs.append((user, session)) or True)
+    overlay.hub.last_seen['a2'] = ('u2', 's2')
+    assert overlay.stop('a2') == ['a2']
+    assert stopped_runs == [('u2', 's2')]
+    driver.look(1)
+    token = current_actor.set(Actor(agent_id='a2'))
+    try:
+        with pytest.raises(Blocked, match='pressed Stop'):
+            driver.act_on_element(1, 0)
+    finally:
+        current_actor.reset(token)
+    other = current_actor.set(Actor(agent_id='someone-else'))
+    try:
+        assert driver.act_on_element(1, 2, 'toggle').status == CONFIRMED  # other agents carry on
+    finally:
+        current_actor.reset(other)
+
+
+def test_overlay_endpoints_need_the_desktop_token(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from cognitrix.api.routes.computer_overlay import overlay_api
+
+    app = FastAPI()
+    app.include_router(overlay_api)
+    client = TestClient(app)
+    monkeypatch.delenv('COGNITRIX_DESKTOP_TOKEN', raising=False)
+    assert client.post('/computer/overlay/stop', json={}).status_code == 404
+    monkeypatch.setenv('COGNITRIX_DESKTOP_TOKEN', 'secret-token')
+    assert client.post('/computer/overlay/stop', json={},
+                       headers={'X-Cognitrix-Desktop-Token': 'wrong'}).status_code == 404
+    monkeypatch.setattr('cognitrix.computer.overlay.stop', lambda agent_id=None: [])
+    ok = client.post('/computer/overlay/stop', json={}, headers={'X-Cognitrix-Desktop-Token': 'secret-token'})
+    assert ok.status_code == 200 and ok.json() == {'stopped': []}

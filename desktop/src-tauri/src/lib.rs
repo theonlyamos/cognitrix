@@ -7,6 +7,7 @@
 
 mod engine;
 mod notify;
+mod overlay;
 mod session;
 mod settings;
 mod tray;
@@ -32,7 +33,7 @@ const MINIMIZED_FLAG: &str = "--minimized";
 /// Chromium from slowing timers in a hidden window: the app usually sits in
 /// the tray, and the UI's polling is what notices approvals, questions and
 /// finished tasks and raises their notifications.
-const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+pub(crate) const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
     --disable-background-timer-throttling --disable-renderer-backgrounding \
     --disable-backgrounding-occluded-windows";
 
@@ -277,6 +278,7 @@ struct DesktopSettingsView {
     data_folder: String,
     quick_ask_shortcut: String,
     version: String,
+    agent_cursor: bool,
 }
 
 fn settings_view(app: &AppHandle) -> DesktopSettingsView {
@@ -289,6 +291,7 @@ fn settings_view(app: &AppHandle) -> DesktopSettingsView {
         data_folder: settings::data_folder(app).display().to_string(),
         quick_ask_shortcut: "Alt+Space".into(),
         version: app.package_info().version.to_string(),
+        agent_cursor: prefs.agent_cursor,
     }
 }
 
@@ -302,6 +305,7 @@ struct DesktopSettingsPatch {
     close_to_tray: Option<bool>,
     notify_desktop: Option<bool>,
     start_with_windows: Option<bool>,
+    agent_cursor: Option<bool>,
 }
 
 #[tauri::command]
@@ -312,6 +316,9 @@ fn set_desktop_settings(app: AppHandle, patch: DesktopSettingsPatch) -> Result<D
     }
     if let Some(value) = patch.notify_desktop {
         prefs.notify_desktop = value;
+    }
+    if let Some(value) = patch.agent_cursor {
+        prefs.agent_cursor = value;
     }
     settings::save(&app, &prefs)?;
     if let Some(enable) = patch.start_with_windows {
@@ -397,6 +404,12 @@ fn show_main_window(app: AppHandle, path: Option<String>) {
     show_main(&app, path);
 }
 
+/// The Stop button on the agent cursor's pill (stop.html).
+#[tauri::command]
+async fn overlay_stop(app: AppHandle, agent_id: Option<String>) -> Result<(), String> {
+    overlay::stop(&app, agent_id)
+}
+
 #[tauri::command]
 fn hide_quick_ask(app: AppHandle) {
     if let Some(quick) = app.get_webview_window(QUICK) {
@@ -441,6 +454,7 @@ pub fn run() {
                 log::warn!("Alt+Space is taken by another app, quick ask has no hotkey: {e}");
             }
             engine::start(&handle);
+            overlay::watch(&handle);
             update::watch(&handle);
             Ok(())
         })
@@ -470,6 +484,7 @@ pub fn run() {
             desktop_notify,
             show_main_window,
             hide_quick_ask,
+            overlay_stop,
             get_saved_session,
             save_session,
             clear_session,
