@@ -111,9 +111,8 @@ Tested live on Windows 11 (see `tests/test_background_computer_use_live.py`):
 
 - **Typing and keys in Chromium/Electron apps** (browsers, VS Code, Slack) and
   most games/canvas apps: they ignore posted keystrokes, so for example a typed URL
-  can't be submitted with Enter. The tools say `needs_screen` right away; the agent
-  should ask before falling back to `text_input`, which takes over the keyboard.
-  Clicking links and buttons still works in the background.
+  can't be submitted with Enter. The tools say `needs_screen` right away and point to
+  `use_screen=true` (below). Clicking links and buttons still works in the background.
 - **Scrolling and setting fields in Chromium** go through accessibility patterns,
   which briefly pull the window forward; focus is handed back and the result says so.
 - **Opening modern (WinUI) menus**, e.g. Notepad's File menu, activates the app, and
@@ -123,6 +122,29 @@ Tested live on Windows 11 (see `tests/test_background_computer_use_live.py`):
   clicking the field first (pass `x`, `y`) or `set_text` fixes it.
 - **Notepad saves after `set_text`** aren't visible in the window (it doesn't mark
   the tab as modified), so Ctrl+S reports `unverified` though the file is written.
+
+## Using the screen for a moment (`use_screen`)
+
+`click_element`, `click_in_window`, `type_in_window` and `press_key_in_window` take
+`use_screen=true` for the cases above, so the agent never has to switch to the
+full-screen tools for one window. The driver then:
+
+1. waits until the person has not touched the keyboard or mouse for a second
+   (up to 6 s; otherwise it doesn't take the screen at all),
+2. brings only that window to the front (after a zero-distance mouse move, since
+   Windows lets only the process behind the latest input take the foreground),
+3. clicks or types with real input (`SendInput`; typing at 30 ms per character,
+   because faster typing loses characters to browser autocomplete), checking before
+   every character that the window is still in front, and stopping if the person
+   switched windows,
+4. puts the pointer and the person's foreground window back, and verifies the effect
+   (text read back from the field where possible).
+
+Every `use_screen=true` call is classified as `screen_takeover` (see
+`cognitrix/safety/destructive_ops.py`): it asks the person, and a per-app
+"always allow" never covers it. Tested live in a throwaway Brave window: typing
+into Wikipedia's search box and submitting it, typing a URL and Enter in the address
+bar, and Alt+Left.
 
 ## Never controlled
 

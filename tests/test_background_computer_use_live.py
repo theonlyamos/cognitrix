@@ -305,3 +305,153 @@ def test_covered_window_capture(driver, opened, tmp_path):
     # The person's foreground window (if any overlaps) did not change.
     assert user32.GetForegroundWindow() not in opened
     assert re.search(r'File Explorer|' + re.escape(tmp_path.name), driver.backend.window(win.id).title)
+
+
+# -- use_screen: takes the screen for a moment ---------------------------------
+
+def _wait_until_idle(driver, seconds=5, limit=120):
+    """Only take the screen while nobody is using the keyboard or mouse."""
+    for _ in range(limit):
+        if driver.backend.idle_seconds() >= seconds:
+            return
+        time.sleep(1)
+    pytest.skip('the person kept using the computer; not taking the screen')
+
+
+def _screen_step(driver, fn):
+    """Run one use_screen action and check the pointer and the person's window come back."""
+    _wait_until_idle(driver)
+    fg, cursor = driver.backend.foreground(), driver.backend.cursor_pos()
+    result = fn()
+    assert 'screen was used' in result.message or result.status == 'failed', result
+    if driver.backend.idle_seconds() > 1:  # nobody moved the mouse meanwhile
+        assert driver.backend.cursor_pos() == cursor
+        if fg and driver.backend.window(fg):
+            assert driver.backend.foreground() == fg
+    return result
+
+
+def _center_of(snap, element):
+    return (((element.rect[0] + element.rect[2]) / 2 - snap.origin[0]) / snap.scale,
+            ((element.rect[1] + element.rect[3]) / 2 - snap.origin[1]) / snap.scale)
+
+
+def test_browser_typing_with_the_screen(driver, opened, tmp_path):
+    import shutil
+    browser = next((p for p in _BROWSERS if os.path.exists(p)), None)
+    if browser is None:
+        pytest.skip('no Chromium browser installed')
+    profile = tmp_path / 'profile'
+    win = driver.open(browser, timeout_s=25, args=(
+        f'--user-data-dir="{profile}" --no-first-run --no-default-browser-check '
+        '--new-window https://en.wikipedia.org/wiki/Special:Search'))
+    assert win is not None and win.kind == 'chromium'
+    opened.append(win.id)
+    try:
+        for _ in range(40):
+            if 'Search' in driver.backend.window(win.id).title:
+                break
+            time.sleep(0.5)
+        time.sleep(2)
+        # Background typing is refused, pointing at use_screen.
+        refused = driver.type_text(win.id, 'x')
+        assert refused.status == 'needs_screen' and 'use_screen=true' in refused.message
+        _, snap, _, _ = driver.look(win.id)
+        box = next(e for e in snap.elements if e.role in ('Edit', 'ComboBox') and 'earch' in e.name
+                   and e.name != 'Address and search bar' and e.rect[1] > snap.origin[1] + 120)
+        x, y = _center_of(snap, box)
+        result = _screen_step(driver, lambda: driver.type_text(win.id, 'Background process', x, y,
+                                                               use_screen=True))
+        assert result.status == 'confirmed', result  # read back from the search box
+        start = driver.backend.window(win.id).title
+        # Submit by clicking back into the box and typing a new line (Enter).
+        _, snap, _, _ = driver.look(win.id)
+        box = next(e for e in snap.elements if e.role in ('Edit', 'ComboBox') and 'earch' in e.name
+                   and e.name != 'Address and search bar' and e.rect[1] > snap.origin[1] + 120)
+        x, y = _center_of(snap, box)
+        _screen_step(driver, lambda: driver.type_text(win.id, '\n', x, y, use_screen=True))
+        for _ in range(20):
+            if driver.backend.window(win.id).title != start:
+                break
+            time.sleep(0.5)
+        assert driver.backend.window(win.id).title != start  # the search ran
+        # A URL typed into the address bar, submitted with a new line.
+        _, snap, _, _ = driver.look(win.id)
+        x, y = _center_of(snap, snap.elements[_index(snap, 'Edit', 'Address and search bar')])
+        _screen_step(driver, lambda: driver.type_text(win.id, 'https://example.com/\n', x, y, use_screen=True))
+        for _ in range(20):
+            if 'Example Domain' in driver.backend.window(win.id).title:
+                break
+            time.sleep(0.5)
+        assert 'Example Domain' in driver.backend.window(win.id).title
+        _screen_step(driver, lambda: driver.press_key(win.id, 'alt+left', use_screen=True))
+        for _ in range(20):
+            if 'Example Domain' not in driver.backend.window(win.id).title:
+                break
+            time.sleep(0.5)
+        assert 'Example Domain' not in driver.backend.window(win.id).title  # went back
+    finally:
+        from cognitrix.computer.windows import user32
+        user32.PostMessageW(win.id, 0x0010, 0, 0)
+        for _ in range(40):
+            if not user32.IsWindow(win.id):
+                break
+            time.sleep(0.25)
+        time.sleep(2)
+        shutil.rmtree(profile, ignore_errors=True)
+
+
+@pytest.mark.xfail(reason="A fresh VS Code profile opens onboarding pages and its file editor hides its text "
+                          "from UI Automation, so the test can't reliably find and check the editor yet; "
+                          "screen typing itself is covered by the browser test.", strict=False)
+def test_vscode_typing_with_the_screen(driver, opened, tmp_path):
+    import shutil
+    code = os.path.expandvars(r'%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe')
+    if not os.path.exists(code):
+        pytest.skip('VS Code is not installed')
+    profile, extensions, path = tmp_path / 'profile', tmp_path / 'ext', tmp_path / 'typed.txt'
+    path.write_text('', encoding='utf-8')
+    win = driver.open(code, timeout_s=30, args=(
+        f'--user-data-dir="{profile}" --extensions-dir="{extensions}" --new-window '
+        f'--disable-workspace-trust "{path}"'))
+    assert win is not None and win.kind == 'chromium'
+    opened.append(win.id)
+    try:
+        for _ in range(40):
+            if 'typed.txt' in driver.backend.window(win.id).title:
+                break
+            time.sleep(0.5)
+        time.sleep(3)
+        _, snap, _, _ = driver.look(win.id)
+        # A fresh profile opens with onboarding pages: click through them in the background.
+        for _ in range(4):
+            steps = [i for i, e in enumerate(snap.elements) if e.name.lower() in
+                     ('continue without signing in', 'get started', 'skip', 'skip for now')]
+            if not steps:
+                break
+            driver.act_on_element(win.id, steps[0])
+            time.sleep(1.5)
+            _, snap, _, _ = driver.look(win.id)
+        # The file's editor is the biggest editor area (the chat box is another one).
+        editor = max((e for e in snap.elements if e.role == 'Edit' and e.name.startswith('The editor')
+                      and e.rect[2] > e.rect[0]), key=lambda e: (e.rect[2] - e.rect[0]) * (e.rect[3] - e.rect[1]))
+        x, y = _center_of(snap, editor)
+        result = _screen_step(driver, lambda: driver.type_text(win.id, 'Typed by Cognitrix with the screen.',
+                                                               x, y, use_screen=True))
+        assert result.status != 'failed', result
+        _screen_step(driver, lambda: driver.press_key(win.id, 'ctrl+s', use_screen=True))
+        for _ in range(20):
+            if path.read_text(encoding='utf-8') == 'Typed by Cognitrix with the screen.':
+                break
+            time.sleep(0.5)
+        assert path.read_text(encoding='utf-8') == 'Typed by Cognitrix with the screen.'
+    finally:
+        from cognitrix.computer.windows import user32
+        user32.PostMessageW(win.id, 0x0010, 0, 0)
+        for _ in range(40):
+            if not user32.IsWindow(win.id):
+                break
+            time.sleep(0.25)
+        time.sleep(2)
+        shutil.rmtree(profile, ignore_errors=True)
+        shutil.rmtree(extensions, ignore_errors=True)

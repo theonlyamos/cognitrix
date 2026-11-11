@@ -147,6 +147,15 @@ class Backend(Protocol):
     def fingerprint(self, window_id: int) -> str: ...
     def give_back_focus(self, window_id: int) -> bool: ...
     def wake(self, window_id: int) -> None: ...  # optional
+    # Real input for use_screen (takes the screen for a moment).
+    def bring_to_front(self, window_id: int) -> bool: ...
+    def idle_seconds(self) -> float: ...  # since the person's last keyboard/mouse input
+    def cursor_pos(self) -> tuple[int, int]: ...
+    def set_cursor_pos(self, x: int, y: int) -> None: ...
+    # send_* stop and return False as soon as still_ok() is False.
+    def send_click(self, x: int, y: int, button: str, double: bool, still_ok: Callable[[], bool]) -> bool: ...
+    def send_text(self, text: str, still_ok: Callable[[], bool]) -> bool: ...
+    def send_key(self, key: str, mods: tuple[str, ...], still_ok: Callable[[], bool]) -> bool: ...
 
 
 # Executables the agent never drives in the background.
@@ -181,6 +190,12 @@ def blocked_reason(app: str, kind: str = 'win32', title: str = '', own: bool = F
     return None
 
 
+SCREEN_RETRY = (' To do it anyway, retry with use_screen=true: that brings the window to the front for a '
+                'moment and uses the real mouse and keyboard, and the person is asked first.')
+SCREEN_USED = ' The screen was used for a moment; the pointer and the foreground window were put back.'
+SCREEN_ABORTED = ('Stopped: another window came to the front (the person may be using the computer), so the '
+                  'rest was not sent. Look at the window to see what happened.')
+
 _snapshot_ids = itertools.count(1)
 _SHOT_MAX_W, _SHOT_MAX_H = 1280, 800
 
@@ -191,6 +206,8 @@ class Driver:
     settle_s = 0.25  # wait before reading an action's effect back
     lock_timeout_s = 15.0
     open_watch_s = 2.0  # how long open() watches for a late focus grab
+    screen_idle_s = 1.0  # use_screen waits for the person to pause this long...
+    screen_wait_s = 6.0  # ...for at most this long
 
     def __init__(self, backend: Backend):
         self.backend = backend
@@ -263,14 +280,22 @@ class Driver:
             self.backend.launch(target, args)
         else:
             self.backend.launch(target)
-        stem = target.replace('\\', '/').rstrip('/').rsplit('/', 1)[-1].rsplit('.', 1)[0].lower()
+        base = target.replace('\\', '/').rstrip('/').rsplit('/', 1)[-1].lower()
+        stem = base.rsplit('.', 1)[0]
         deadline = time.monotonic() + timeout_s
+        gone: set[int] = set()
         while time.monotonic() < deadline:
             time.sleep(0.4)
             now = self.backend.list_windows()
-            new = [w for w in now if w.id not in before and w.title]
+            new = [w for w in now if w.id not in before and w.id not in gone and w.title]
+            # Prefer a window of the program that was started (not a splash or helper).
+            new.sort(key=lambda w: w.app != base)
             if new:
-                return self._settled_window(new[0], stem, deadline)
+                win = self._settled_window(new[0], stem, deadline)
+                if win is not None:
+                    return win
+                gone.add(new[0].id)  # a short-lived window (e.g. a splash screen); keep looking
+                continue
             # Apps that reuse a window (e.g. a new tab) only change its title.
             renamed = [w for w in now if w.id in before and before[w.id] != w.title
                        and stem and stem in w.title.lower()]
@@ -278,7 +303,7 @@ class Driver:
                 return renamed[0]
         return None
 
-    def _settled_window(self, win: WindowInfo, stem: str, deadline: float) -> WindowInfo:
+    def _settled_window(self, win: WindowInfo, stem: str, deadline: float) -> WindowInfo | None:
         """Apps set their final title a moment after the window appears (e.g.
         'Notepad' then 'file.txt - Notepad'). Wait for the file name, or for the
         title to stop changing."""
@@ -287,7 +312,7 @@ class Driver:
             time.sleep(0.3)
             fresh = self.backend.window(win.id)
             if fresh is None:
-                return last
+                return None  # it closed again
             if stem and stem in fresh.title.lower():
                 return fresh
             if fresh.title != last.title:
@@ -408,13 +433,59 @@ class Driver:
             if after != before or time.monotonic() >= deadline:
                 return after
 
+    def _with_screen(self, win: WindowInfo, send: Callable[[Callable[[], bool]], bool]) -> ActionResult | None:
+        """Bring one window to the front, run `send` with real input, then put
+        the pointer and the person's foreground window back. `send` gets a
+        still_ok() check and stops when another window takes the front.
+        Returns a result when nothing (or not everything) could be sent."""
+        b = self.backend
+        deadline = time.monotonic() + self.screen_wait_s
+        while b.idle_seconds() < self.screen_idle_s:
+            if time.monotonic() >= deadline:
+                return ActionResult(FAILED, 'The person is using the keyboard or mouse right now, so the screen '
+                                    'was not taken. Try again in a moment.')
+            time.sleep(0.2)
+        fg_before, cursor = b.foreground(), b.cursor_pos()
+        if not b.bring_to_front(win.id):
+            return ActionResult(FAILED, "Couldn't bring the window to the front, so nothing was sent.")
+
+        def still_ok() -> bool:
+            fg = b.foreground()
+            if fg == win.id:
+                return True
+            other = b.window(fg) if fg else None
+            return other is not None and other.pid == win.pid  # the app's own menus and dialogs
+
+        try:
+            done = send(still_ok)
+        finally:
+            b.set_cursor_pos(*cursor)
+            if fg_before and fg_before != win.id:
+                b.give_back_focus(fg_before)
+        return None if done else ActionResult(FAILED, SCREEN_ABORTED)
+
     # -- actions ----------------------------------------------------------
     def act_on_element(self, window_id: int, index: int, action: str = 'click',
-                       snapshot_id: str | None = None, viewer: Any = None) -> ActionResult:
+                       snapshot_id: str | None = None, viewer: Any = None,
+                       use_screen: bool = False) -> ActionResult:
         def body(win: WindowInfo) -> ActionResult:
             snap, element = self._element(win.id, index, snapshot_id, viewer)
             if not element.enabled:
                 return ActionResult(FAILED, f'Element {index} ({element.role} {element.name!r}) is disabled.')
+            if use_screen:
+                if element.rect[2] <= element.rect[0]:
+                    return ActionResult(FAILED, f'Element {index} has no position on screen to click.')
+                cx, cy = _center(element.rect)
+                dx, dy = self._moved(win, snap)
+                before_fp = self.backend.fingerprint(win.id)
+                stopped = self._with_screen(
+                    win, lambda ok: self.backend.send_click(cx + dx, cy + dy, 'left', False, ok))
+                if stopped:
+                    return stopped
+                what = f'clicked {element.role} {element.name!r} with the screen'
+                if self._settled_fingerprint(win.id, before_fp) != before_fp:
+                    return ActionResult(CONFIRMED, f'{what}; the window changed.' + SCREEN_USED)
+                return ActionResult(UNVERIFIED, f'{what}, but nothing visible changed.' + SCREEN_USED)
             chosen = _pick_action(element, action)
             if win.kind == 'chromium' and action == 'click' and element.rect[2] > element.rect[0]:
                 # Chromium pulls its window to the front on accessibility
@@ -424,7 +495,7 @@ class Driver:
                 return ActionResult(
                     NEEDS_SCREEN if action == 'click' else FAILED,
                     f'Element {index} ({element.role} {element.name!r}) has no {action} action'
-                    + ('; try click_in_window on it.' if action == 'click' else '.'))
+                    + ('; try click_in_window on it.' + SCREEN_RETRY if action == 'click' else '.'))
             before_fp = self.backend.fingerprint(win.id)
             if chosen == 'pixel':
                 cx, cy = _center(element.rect)
@@ -441,7 +512,7 @@ class Driver:
                 return ActionResult(CONFIRMED, f'{what}; the window changed. Look again to see it.')
             return ActionResult(UNVERIFIED, f'{what} was sent but nothing visible changed. '
                                 'Look at the window to check.')
-        return self._act(window_id, f'element:{action}', body)
+        return self._act(window_id, f'{"screen" if use_screen else "element"}:{action}', body)
 
     def set_text(self, window_id: int, text: str, index: int | None = None,
                  snapshot_id: str | None = None, viewer: Any = None) -> ActionResult:
@@ -464,12 +535,13 @@ class Driver:
                 # Some fields (e.g. a rename box) disappear once the value is committed.
                 return ActionResult(UNVERIFIED, 'The field closed after the change; look at the window to check.')
             if win.kind == 'chromium':
-                return ActionResult(NEEDS_SCREEN, 'This app did not accept the text in the background.')
+                return ActionResult(NEEDS_SCREEN, 'This app did not accept the text in the background. Use '
+                                    'type_in_window on the field instead.' + SCREEN_RETRY)
             return ActionResult(FAILED, f'The field reads {(after.value or "")[:80]!r}, not the new text.')
         return self._act(window_id, 'set_text', body)
 
     def click_point(self, window_id: int, x: float, y: float, button: str = 'left',
-                    double: bool = False, viewer: Any = None) -> ActionResult:
+                    double: bool = False, viewer: Any = None, use_screen: bool = False) -> ActionResult:
         """Click at (x, y) in the latest look's image coordinates."""
         snap = self._snapshot(window_id, viewer)
         px, py = round(x * snap.scale), round(y * snap.scale)
@@ -479,6 +551,16 @@ class Driver:
 
         def body(win: WindowInfo) -> ActionResult:
             before_fp = self.backend.fingerprint(win.id)
+            if use_screen:
+                dx, dy = self._moved(win, snap)
+                stopped = self._with_screen(
+                    win, lambda ok: self.backend.send_click(sx + dx, sy + dy, button, double, ok))
+                if stopped:
+                    return stopped
+                how = f'{"double-" if double else ""}{button} click at ({x}, {y}) with the screen'
+                if self._settled_fingerprint(win.id, before_fp) != before_fp:
+                    return ActionResult(CONFIRMED, f'{how}; the window changed.' + SCREEN_USED)
+                return ActionResult(UNVERIFIED, f'{how}, but nothing visible changed.' + SCREEN_USED)
             hit = None if (button != 'left' or double or win.kind == 'chromium') else _hit(snap.elements, sx, sy)
             if hit is not None:
                 live = self.backend.element_state(hit)
@@ -497,11 +579,13 @@ class Driver:
             if after_fp != before_fp:
                 return ActionResult(CONFIRMED, f'{how}; the window changed. Look again to see it.')
             return ActionResult(UNVERIFIED, f'{how} was sent but nothing visible changed. Look at the window '
-                                'to check; if it should have reacted, this app may need the screen.')
-        return self._act(window_id, 'click', body, (sx, sy))
+                                'to check; if it should have reacted, this app may need the screen.' + SCREEN_RETRY)
+        return self._act(window_id, 'screen:click' if use_screen else 'click', body, (sx, sy))
 
     def type_text(self, window_id: int, text: str, x: float | None = None,
-                  y: float | None = None, viewer: Any = None) -> ActionResult:
+                  y: float | None = None, viewer: Any = None, use_screen: bool = False) -> ActionResult:
+        if use_screen:
+            return self._type_on_screen(window_id, text, x, y, viewer)
         if x is not None and y is not None:
             focus = self.click_point(window_id, x, y, viewer=viewer)
             if focus.status == NEEDS_SCREEN:
@@ -510,7 +594,7 @@ class Driver:
         def body(win: WindowInfo) -> ActionResult:
             if win.kind == 'chromium':
                 return ActionResult(NEEDS_SCREEN, 'Typing into this app (Chromium/Electron) only works with the '
-                                    'screen. Try set_text on a field, or ask before using text_input.')
+                                    'screen. Try set_text on a field.' + SCREEN_RETRY)
             field_el = self.backend.focused_element(win.id)
             before_value = field_el.value if field_el is not None else None
             before_fp = self.backend.fingerprint(win.id)
@@ -530,16 +614,77 @@ class Driver:
                                 'click the field first (pass x and y) if it was not focused.')
         return self._act(window_id, 'type', body)
 
-    def press_key(self, window_id: int, keys: str) -> ActionResult:
+    def _type_on_screen(self, window_id: int, text: str, x: float | None, y: float | None,
+                        viewer: Any) -> ActionResult:
+        point = None
+        if x is not None and y is not None:
+            snap = self._snapshot(window_id, viewer)
+            point = (snap.origin[0] + round(x * snap.scale), snap.origin[1] + round(y * snap.scale))
+
+        def body(win: WindowInfo) -> ActionResult:
+            if point is None:
+                field_el = self.backend.focused_element(win.id)
+            else:
+                # The field under the point, to read the text back afterwards.
+                fields = [e for e in self._snapshots[win.id].elements if e.value is not None
+                          and e.rect[0] <= point[0] < e.rect[2] and e.rect[1] <= point[1] < e.rect[3]]
+                field_el = min(fields, key=_area) if fields else None
+            before_value = field_el.value if field_el is not None else None
+            before_fp = self.backend.fingerprint(win.id)
+
+            def send(ok: Callable[[], bool]) -> bool:
+                if point is not None:
+                    dx, dy = self._moved(win, self._snapshots[win.id])
+                    if not self.backend.send_click(point[0] + dx, point[1] + dy, 'left', False, ok):
+                        return False
+                    time.sleep(0.4)  # let the field take focus before typing
+                return self.backend.send_text(text, ok)
+
+            stopped = self._with_screen(win, send)
+            if stopped:
+                return stopped
+            # Text ending in a new line submits it, which usually changes the field again.
+            if field_el is not None and not text.endswith('\n'):
+                after = self.backend.element_state(field_el)
+                if after is not None and after.value is not None:
+                    if text.strip() in after.value and text.strip() not in (before_value or ''):
+                        return ActionResult(CONFIRMED, f'Typed with the screen; the text is in {after.role} '
+                                            f'{after.name!r}.' + SCREEN_USED)
+                    if after.value != (before_value or ''):
+                        # It changed, but not to the text (e.g. characters were lost).
+                        return ActionResult(FAILED, f'Typed with the screen, but {after.role} {after.name!r} '
+                                            f'reads {after.value[:80]!r}. Look at the window and try again.'
+                                            + SCREEN_USED)
+                    # An unchanged value may just be a field that doesn't expose its text
+                    # (e.g. VS Code's editor): judge by the window below.
+            if self._settled_fingerprint(win.id, before_fp) != before_fp:
+                return ActionResult(CONFIRMED, 'Typed with the screen; the window changed. Look again to check '
+                                    'the text.' + SCREEN_USED)
+            return ActionResult(UNVERIFIED, 'Typed with the screen, but nothing visible changed. Look at the '
+                                'window to check.' + SCREEN_USED)
+        return self._act(window_id, 'screen:type', body, point)
+
+    def press_key(self, window_id: int, keys: str, use_screen: bool = False) -> ActionResult:
         combo = [k.strip().lower() for k in keys.replace(' ', '').split('+') if k.strip()]
         if not combo:
             raise DriverError('Give a key, e.g. "enter" or "ctrl+s".')
         mods, key = combo[:-1], combo[-1]
 
         def body(win: WindowInfo) -> ActionResult:
+            if use_screen:
+                before_fp = self.backend.fingerprint(win.id)
+                stopped = self._with_screen(win, lambda ok: self.backend.send_key(
+                    key, tuple(_KEY_ALIASES.get(m, m) for m in mods), ok))
+                if stopped:
+                    return stopped
+                if self._settled_fingerprint(win.id, before_fp) != before_fp:
+                    return ActionResult(CONFIRMED, f'Pressed {keys} with the screen; the window changed.'
+                                        + SCREEN_USED)
+                return ActionResult(UNVERIFIED, f'Pressed {keys} with the screen, but nothing visible changed.'
+                                    + SCREEN_USED)
             if win.kind == 'chromium':
                 return ActionResult(NEEDS_SCREEN, 'Keys can only be pressed in this app (Chromium/Electron) with '
-                                    'the screen. Click a control with click_element instead, or ask first.')
+                                    'the screen. Click a control with click_element instead.' + SCREEN_RETRY)
             before_fp = self.backend.fingerprint(win.id)
             target = _accelerator(self.backend.elements(win.id), mods, key) if mods else None
             if target is not None:
@@ -550,7 +695,7 @@ class Driver:
                     self.backend.post_key(win.id, key, tuple(_KEY_ALIASES.get(m, m) for m in mods))
                 except (RuntimeError, ValueError) as exc:
                     return ActionResult(NEEDS_SCREEN, f"{keys} can't be sent in the background here ({exc}). "
-                                        'Look for the command as an element instead.')
+                                        'Look for the command as an element instead.' + SCREEN_RETRY)
                 how = f'pressed {keys}'
             else:
                 self.backend.post_key(win.id, key)
@@ -558,7 +703,7 @@ class Driver:
             if self._settled_fingerprint(win.id, before_fp) != before_fp:
                 return ActionResult(CONFIRMED, f'{how}; the window changed.')
             return ActionResult(UNVERIFIED, f'{how}, but nothing visible changed. Look at the window to check.')
-        return self._act(window_id, f'key:{keys}', body)
+        return self._act(window_id, f'{"screen:" if use_screen else ""}key:{keys}', body)
 
     def scroll(self, window_id: int, direction: str = 'down', amount: int = 3,
                index: int | None = None, snapshot_id: str | None = None,

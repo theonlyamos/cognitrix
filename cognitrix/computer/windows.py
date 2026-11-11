@@ -63,6 +63,10 @@ for _fn, _args, _res in [
     ('AttachThreadInput', [wt.DWORD, wt.DWORD, wt.BOOL], wt.BOOL),
     ('SwitchToThisWindow', [wt.HWND, wt.BOOL], None),
     ('GetKeyboardState', [ctypes.c_void_p], wt.BOOL),
+    ('GetCursorPos', [ctypes.POINTER(wt.POINT)], wt.BOOL),
+    ('SetCursorPos', [ctypes.c_int, ctypes.c_int], wt.BOOL),
+    ('BringWindowToTop', [wt.HWND], wt.BOOL),
+    ('SendInput', [wt.UINT, ctypes.c_void_p, ctypes.c_int], wt.UINT),
     ('SendMessageTimeoutW', [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM, wt.UINT, wt.UINT,
                              ctypes.POINTER(ctypes.c_size_t)], wt.LPARAM),
     ('SetKeyboardState', [ctypes.c_void_p], wt.BOOL),
@@ -104,6 +108,50 @@ class _GUITHREADINFO(ctypes.Structure):
 
 
 user32.GetGUIThreadInfo.argtypes = [wt.DWORD, ctypes.POINTER(_GUITHREADINFO)]
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [('dx', wt.LONG), ('dy', wt.LONG), ('mouseData', wt.DWORD), ('dwFlags', wt.DWORD),
+                ('time', wt.DWORD), ('dwExtraInfo', ctypes.c_size_t)]
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [('wVk', wt.WORD), ('wScan', wt.WORD), ('dwFlags', wt.DWORD), ('time', wt.DWORD),
+                ('dwExtraInfo', ctypes.c_size_t)]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [('mi', _MOUSEINPUT), ('ki', _KEYBDINPUT)]
+
+
+class _INPUT(ctypes.Structure):
+    _fields_ = [('type', wt.DWORD), ('u', _INPUTUNION)]
+
+
+class _LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [('cbSize', wt.UINT), ('dwTime', wt.DWORD)]
+
+
+user32.GetLastInputInfo.argtypes = [ctypes.POINTER(_LASTINPUTINFO)]
+kernel32.GetTickCount.restype = wt.DWORD
+
+_INPUT_MOUSE, _INPUT_KEYBOARD = 0, 1
+_KEYUP, _UNICODE, _EXTENDED = 0x0002, 0x0004, 0x0001
+_MOUSE_FLAGS = {'left': (0x0002, 0x0004), 'right': (0x0008, 0x0010), 'middle': (0x0020, 0x0040)}
+_EXTENDED_VK = frozenset({0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E})
+
+
+def _send(*inputs: _INPUT) -> None:
+    array = (_INPUT * len(inputs))(*inputs)
+    user32.SendInput(len(inputs), array, ctypes.sizeof(_INPUT))
+
+
+def _key_input(vk: int = 0, scan: int = 0, flags: int = 0) -> _INPUT:
+    return _INPUT(type=_INPUT_KEYBOARD, u=_INPUTUNION(ki=_KEYBDINPUT(wVk=vk, wScan=scan, dwFlags=flags)))
+
+
+def _mouse_input(flags: int) -> _INPUT:
+    return _INPUT(type=_INPUT_MOUSE, u=_INPUTUNION(mi=_MOUSEINPUT(dwFlags=flags)))
 
 # Shell surfaces that aren't app windows.
 _SHELL_CLASSES = frozenset({'Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'Progman', 'WorkerW',
@@ -638,6 +686,79 @@ class WindowsBackend:
         result = ctypes.c_size_t()
         for target in targets:
             user32.SendMessageTimeoutW(target, 0x003D, 0, -4, 0x0002, 500, ctypes.byref(result))  # OBJID_CLIENT
+
+    # -- real input (use_screen) -------------------------------------------
+    def bring_to_front(self, window_id: int) -> bool:
+        hwnd = int(window_id)
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        # Windows only lets the process behind the latest input take the
+        # foreground: a zero-distance mouse move makes that us, changing nothing.
+        _send(_mouse_input(0x0001))  # MOUSEEVENTF_MOVE, dx = dy = 0
+        user32.BringWindowToTop(hwnd)
+        return self.give_back_focus(hwnd)
+
+    def idle_seconds(self) -> float:
+        info = _LASTINPUTINFO(cbSize=ctypes.sizeof(_LASTINPUTINFO))
+        if not user32.GetLastInputInfo(ctypes.byref(info)):
+            return 0.0
+        return ((kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000
+
+    def cursor_pos(self) -> tuple[int, int]:
+        _dpi_aware()
+        point = wt.POINT()
+        user32.GetCursorPos(ctypes.byref(point))
+        return point.x, point.y
+
+    def set_cursor_pos(self, x: int, y: int) -> None:
+        _dpi_aware()
+        user32.SetCursorPos(int(x), int(y))
+
+    def send_click(self, x: int, y: int, button: str, double: bool, still_ok) -> bool:
+        _dpi_aware()
+        down, up = _MOUSE_FLAGS.get(button, _MOUSE_FLAGS['left'])
+        user32.SetCursorPos(int(x), int(y))
+        for _ in range(2 if double else 1):
+            if not still_ok():
+                return False
+            _send(_mouse_input(down), _mouse_input(up))
+            time.sleep(0.05)
+        return True
+
+    def send_text(self, text: str, still_ok) -> bool:
+        units = text.replace('\r\n', '\n').encode('utf-16-le')
+        for i in range(0, len(units), 2):
+            if not still_ok():
+                return False
+            unit = int.from_bytes(units[i:i + 2], 'little')
+            if unit == 0x0A:
+                _send(_key_input(0x0D), _key_input(0x0D, flags=_KEYUP))
+            else:
+                _send(_key_input(scan=unit, flags=_UNICODE), _key_input(scan=unit, flags=_UNICODE | _KEYUP))
+            time.sleep(0.03)  # faster typing loses characters in browsers (e.g. to autocomplete)
+        return True
+
+    def send_key(self, key: str, mods: tuple[str, ...], still_ok) -> bool:
+        vk = _VK.get(key)
+        if vk is None and len(key) == 1:
+            vk = user32.VkKeyScanW(key) & 0xFF
+        if not vk:
+            raise ValueError(f'Unknown key {key!r}')
+        mod_vks = [_MOD_VK[m][0] for m in mods]
+        if not still_ok():
+            return False
+        flags = _EXTENDED if vk in _EXTENDED_VK else 0
+        pressed: list[int] = []
+        try:
+            for mod in mod_vks:
+                _send(_key_input(mod))
+                pressed.append(mod)
+            _send(_key_input(vk, flags=flags), _key_input(vk, flags=flags | _KEYUP))
+        finally:
+            # Never leave a modifier held down on the person's keyboard.
+            for mod in reversed(pressed):
+                _send(_key_input(mod, flags=_KEYUP))
+        return True
 
     def give_back_focus(self, window_id: int) -> bool:
         """Return the foreground to the person's window after an app grabbed it.

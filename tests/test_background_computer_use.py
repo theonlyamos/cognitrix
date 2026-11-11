@@ -119,6 +119,56 @@ class FakeBackend:
         self.fg = wid
         return True
 
+    # real input (use_screen)
+    cursor = (5, 5)
+    steal_after = None  # foreground switches to this window id after N sent units
+
+    idle = 10.0
+
+    def idle_seconds(self):
+        return self.idle
+
+    def bring_to_front(self, wid):
+        self.fg = wid
+        self.screen_log = getattr(self, 'screen_log', []) + [('front', wid)]
+        return True
+
+    def cursor_pos(self):
+        return self.cursor
+
+    def set_cursor_pos(self, x, y):
+        self.cursor = (x, y)
+
+    def _tick(self, still_ok):
+        self.sent = getattr(self, 'sent', 0) + 1
+        if self.steal_after is not None and self.sent > self.steal_after:
+            self.fg = 99
+        return still_ok()
+
+    def send_click(self, x, y, button, double, still_ok):
+        self.cursor = (x, y)
+        if not self._tick(still_ok):
+            return False
+        self.posted.append(('screen-click', x, y, button, double))
+        return True
+
+    def send_text(self, text, still_ok):
+        for ch in text:
+            if not self._tick(still_ok):
+                return False
+            self.posted.append(('screen-char', ch))
+            doc = self.trees.get(self.fg, [None])[0] if self.fg in self.trees else None
+            if doc is not None and doc.value is not None:
+                doc.value += ch
+        return True
+
+    def send_key(self, key, mods, still_ok):
+        if not self._tick(still_ok):
+            return False
+        self.posted.append(('screen-key', key, tuple(mods)))
+        self.windows[self.fg].title += '!'
+        return True
+
 
 @pytest.fixture
 def fake():
@@ -351,3 +401,53 @@ def test_fallback_scroll_keeps_its_axis(driver, fake):
     assert fake.posted[-1][4:] == (2, True)
     driver.scroll(2, 'left', 2)
     assert fake.posted[-1][4:] == (-2, True)
+
+
+def test_use_screen_types_then_puts_pointer_and_focus_back(driver, fake):
+    result = driver.type_text(2, 'hello', use_screen=True)
+    assert result.status == CONFIRMED and 'screen was used' in result.message
+    assert [p[1] for p in fake.posted if p[0] == 'screen-char'] == list('hello')
+    assert fake.fg == 99 and fake.cursor == (5, 5)  # the person's window and pointer are back
+
+
+def test_use_screen_stops_when_the_person_takes_the_front(driver, fake):
+    fake.steal_after = 2
+    result = driver.type_text(3, 'hello', use_screen=True)
+    assert result.status == FAILED and 'Stopped' in result.message
+    assert [p[1] for p in fake.posted if p[0] == 'screen-char'] == ['h', 'e']  # nothing after the switch
+    assert fake.cursor == (5, 5)
+
+
+def test_use_screen_clicks_and_keys(driver, fake):
+    driver.look(1)
+    result = driver.click_point(1, 600, 400, use_screen=True)
+    assert ('screen-click', 1300, 850, 'left', False) in fake.posted
+    assert fake.fg == 99 and fake.cursor == (5, 5)
+    assert 'screen was used' in result.message
+    result = driver.press_key(3, 'ctrl+l', use_screen=True)
+    assert result.status == CONFIRMED and ('screen-key', 'l', ('ctrl',)) in fake.posted
+
+
+def test_needs_screen_results_point_to_use_screen(driver, fake):
+    result = driver.type_text(3, 'hello')
+    assert result.status == NEEDS_SCREEN and 'use_screen=true' in result.message
+    assert not any(p[0].startswith('screen') for p in fake.posted)
+
+
+def test_use_screen_always_asks_and_is_never_allowed_per_app():
+    from cognitrix.computer import apps
+    from cognitrix.safety.destructive_ops import DestructiveOpDetector, RiskLevel
+
+    risk = DestructiveOpDetector().analyze('type_in_window', {'window_id': 3, 'text': 'x', 'use_screen': True})
+    assert risk.risk_level is RiskLevel.MEDIUM and 'screen_takeover' in risk.categories
+    assert apps.app_of_call('type_in_window', {'window_id': 3, 'use_screen': True}) is None
+    plain = DestructiveOpDetector().analyze('type_in_window', {'window_id': 3, 'text': 'x'})
+    assert 'screen_takeover' not in plain.categories
+
+
+def test_use_screen_waits_for_the_person_to_pause(driver, fake):
+    driver.screen_wait_s = 0.3
+    fake.idle = 0.0  # the person keeps typing
+    result = driver.type_text(2, 'hello', use_screen=True)
+    assert result.status == FAILED and 'using the keyboard' in result.message
+    assert not any(p[0].startswith('screen') for p in fake.posted)

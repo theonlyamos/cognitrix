@@ -133,6 +133,10 @@ _WRITE_TOOLS = frozenset({'write', 'write_file', 'overwrite_file'})
 _FOLDER_REQUEST_TOOLS = frozenset({'request_folder'})
 
 
+def _truthy(value: Any) -> bool:
+    return value is True or str(value).strip().lower() in ('true', '1', 'yes')
+
+
 def _normalise(name: str) -> str:
     return re.sub(r'[\s\-]+', '_', str(name or '').strip()).lower()
 
@@ -284,6 +288,13 @@ class DestructiveOpDetector:
             return RiskAssessment(
                 RiskLevel.MEDIUM, ['folder_access'],
                 f"Wants {access} access to the folder '{params.get('path', '')}'",
+            )
+        if name in _DESKTOP_CONTROL and _truthy(params.get('use_screen')):
+            # Takes over the person's real mouse and keyboard for a moment.
+            # Never covered by a per-app "always allow".
+            return RiskAssessment(
+                RiskLevel.MEDIUM, ['desktop_control', 'screen_takeover'],
+                f"'{tool_name}' takes over your screen, mouse and keyboard for a moment",
             )
         if name in _DESKTOP_CONTROL:
             return RiskAssessment(

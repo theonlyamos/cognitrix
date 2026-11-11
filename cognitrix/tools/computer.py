@@ -131,7 +131,8 @@ def look_at_window(window_id: int, find: str | None = None, max_elements: int = 
 
 
 @tool(category='system')
-def click_element(window_id: int, element: int, action: str = 'click', *, parent: Any | None = None):
+def click_element(window_id: int, element: int, action: str = 'click', use_screen: bool = False, *,
+                  parent: Any | None = None):
     """Act on a control from your latest look_at_window of that window, in the background.
     action "click" presses buttons and links and opens list items; use "select" to only select an item,
     "toggle" for checkboxes, "expand" to open or close menus, dropdowns and tree nodes.
@@ -139,8 +140,11 @@ def click_element(window_id: int, element: int, action: str = 'click', *, parent
         window_id (int): Window id.
         element (int): Control number from look_at_window.
         action (str, optional): click, select, toggle or expand. Default click.
+        use_screen (bool, optional): Only after a result said this needs the screen: bring the window to the front
+            for a moment and use the real mouse and keyboard, then put things back. The person is asked first.
     """
-    return _run(lambda d: _done(d.act_on_element(window_id, element, action, viewer=_viewer(parent))))
+    return _run(lambda d: _done(d.act_on_element(window_id, element, action, viewer=_viewer(parent),
+                                                 use_screen=use_screen)))
 
 
 @tool(category='system')
@@ -155,8 +159,8 @@ def set_text(window_id: int, text: str, element: int | None = None, *, parent: A
 
 
 @tool(category='system')
-def click_in_window(window_id: int, x: int, y: int, button: str = 'left', double: bool = False, *,
-                    parent: Any | None = None):
+def click_in_window(window_id: int, x: int, y: int, button: str = 'left', double: bool = False,
+                    use_screen: bool = False, *, parent: Any | None = None):
     """Click a point in a window's latest look_at_window screenshot, in the background. Use click_element
     when the target is in the control list.
     Args:
@@ -165,43 +169,50 @@ def click_in_window(window_id: int, x: int, y: int, button: str = 'left', double
         y (int): Y in the window screenshot.
         button (str, optional): left or right. Default left.
         double (bool, optional): Double-click. Default false.
+        use_screen (bool, optional): Only after a result said this needs the screen: bring the window to the front
+            for a moment and use the real mouse and keyboard, then put things back. The person is asked first.
     """
     def go(driver):
         ix, iy = _image_point(driver, window_id, x, y)
-        return _done(driver.click_point(window_id, ix, iy, button, double, viewer=_viewer(parent)))
+        return _done(driver.click_point(window_id, ix, iy, button, double, viewer=_viewer(parent),
+                                        use_screen=use_screen))
     return _run(go)
 
 
 @tool(category='system')
-def type_in_window(window_id: int, text: str, x: int | None = None, y: int | None = None, *,
-                   parent: Any | None = None):
+def type_in_window(window_id: int, text: str, x: int | None = None, y: int | None = None,
+                   use_screen: bool = False, *, parent: Any | None = None):
     """Type text into a window in the background, at its focused field or after clicking (x, y) in its
-    screenshot. Use set_text instead when the field is in the control list. If the result says the app needs
-    the screen, ask the person before using text_input, which takes over their keyboard.
+    screenshot. Use set_text instead when the field is in the control list. Browsers and Electron apps need
+    use_screen=true to type; end the text with a new line (or press_key_in_window "enter") to submit.
     Args:
         window_id (int): Window id.
         text (str): Text to type.
         x (int, optional): Click here first (screenshot coordinates) to focus the field.
         y (int, optional): Click here first (screenshot coordinates) to focus the field.
+        use_screen (bool, optional): Only after a result said this needs the screen: bring the window to the front
+            for a moment and use the real mouse and keyboard, then put things back. The person is asked first.
     """
     def go(driver):
         ix = iy = None
         if x is not None and y is not None:
             ix, iy = _image_point(driver, window_id, x, y)
-        return _done(driver.type_text(window_id, text, ix, iy, viewer=_viewer(parent)))
+        return _done(driver.type_text(window_id, text, ix, iy, viewer=_viewer(parent), use_screen=use_screen))
     return _run(go)
 
 
 @tool(category='system')
-def press_key_in_window(window_id: int, keys: str):
+def press_key_in_window(window_id: int, keys: str, use_screen: bool = False):
     """Press a key or shortcut in a window in the background, e.g. "enter", "tab", "down", "ctrl+s", "ctrl+w".
     Prefer a shortcut over opening a menu (menus in modern apps take the screen). Browsers and Electron apps
-    don't take keys in the background; click their controls instead.
+    need use_screen=true for keys; clicking their controls works in the background.
     Args:
         window_id (int): Window id.
         keys (str): Key name, or keys joined with + for a shortcut.
+        use_screen (bool, optional): Only after a result said this needs the screen: bring the window to the front
+            for a moment and use the real mouse and keyboard, then put things back. The person is asked first.
     """
-    return _run(lambda d: _done(d.press_key(window_id, keys)))
+    return _run(lambda d: _done(d.press_key(window_id, keys, use_screen=use_screen)))
 
 
 @tool(category='system')
