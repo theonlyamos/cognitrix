@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -24,6 +24,8 @@ import { AgentBadge } from '@/components/StartChat';
 import { formatCost, formatTokens } from '@/components/settings/Usage';
 import { parseUtc, timeAgo, timeUntil } from '@/lib/agentDraft';
 import { CHAT_DRAFT_KEY } from '@/lib/chatDraft';
+import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
+import { insertTranscript } from '@/lib/voice';
 import { cn } from '@/lib/utils';
 
 interface Agent {
@@ -353,6 +355,14 @@ export default function Dashboard() {
 
   // Quick ask: opens a fresh chat with the picked agent, the question typed in.
   const [ask, setAsk] = useState('');
+  const askRef = useRef<HTMLInputElement>(null);
+  // Voice: the transcript goes into the ask bar, ready to edit or send.
+  const voice = useVoiceInput({
+    onText: (text) => {
+      setAsk((current) => insertTranscript(current, text).value);
+      requestAnimationFrame(() => askRef.current?.focus());
+    },
+  });
   const [askAgent, setAskAgent] = useState(() => {
     try {
       return localStorage.getItem('selectedAgentId') || '';
@@ -420,6 +430,12 @@ export default function Dashboard() {
             onSubmit={startAsk}
             className="mt-6 flex items-center gap-2 rounded-[16px] border border-line bg-panel p-2 pl-4 shadow-[0_1px_0_rgba(0,0,0,0.02),0_8px_24px_-16px_rgba(0,0,0,0.25)] transition-colors focus-within:border-fg-dim/60"
           >
+            {voice.active ? (
+              <div className="min-w-0 flex-1">
+                <VoiceBar voice={voice} />
+              </div>
+            ) : (
+              <>
             <MessageSquare className="hidden h-[17px] w-[17px] flex-none text-fg-dim sm:block" strokeWidth={1.9} aria-hidden="true" />
             <label htmlFor="dash-ask" className="sr-only">
               Ask an agent
@@ -428,9 +444,13 @@ export default function Dashboard() {
               id="dash-ask"
               value={ask}
               onChange={(e) => setAsk(e.target.value)}
+              ref={askRef}
               placeholder={agentList.length ? 'Ask anything, or hand off a job…' : 'Create an agent to start chatting'}
               className="min-w-0 flex-1 bg-transparent py-2 text-[15px] outline-none placeholder:text-fg-dim"
             />
+                <MicButton voice={voice} className="flex-none" />
+              </>
+            )}
             {agentList.length > 0 && (
               <>
                 <label htmlFor="dash-ask-agent" className="sr-only">
@@ -458,6 +478,7 @@ export default function Dashboard() {
               <ArrowUp className="h-[18px] w-[18px]" strokeWidth={2.2} aria-hidden="true" />
             </button>
           </form>
+          <VoiceNotice voice={voice} />
 
           {/* Stats */}
           <section aria-label="At a glance" className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">

@@ -3,6 +3,8 @@ import { API_BASE } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
 import MarkdownMessage from '@/components/MarkdownMessage';
 import { desktop, onDesktopEvent } from '@/lib/desktop';
+import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
+import { insertTranscript } from '@/lib/voice';
 
 interface AgentLite {
   id: string;
@@ -50,6 +52,15 @@ export default function QuickAsk() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Voice: the transcript goes into the box, ready to edit or send.
+  const voice = useVoiceInput({
+    onText: (text) => {
+      setQuestion((current) => insertTranscript(current, text).value);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    },
+  });
+  const voiceActive = useRef(false);
+  voiceActive.current = voice.active;
 
   useEffect(() => {
     if (!agentId && agents?.length) setAgentId(agents[0].id);
@@ -63,7 +74,8 @@ export default function QuickAsk() {
       inputRef.current?.select();
     }).then((fn) => (stop = fn));
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') void desktop.hideQuickAsk();
+      // While recording, Escape cancels the recording instead.
+      if (e.key === 'Escape' && !voiceActive.current) void desktop.hideQuickAsk();
     };
     document.addEventListener('keydown', onKey);
     return () => {
@@ -144,6 +156,12 @@ export default function QuickAsk() {
         <span className="grid h-7 w-7 flex-none place-items-center rounded-lg bg-accent text-accent-foreground">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
         </span>
+        {voice.active ? (
+          <div className="min-w-0 flex-1">
+            <VoiceBar voice={voice} />
+          </div>
+        ) : (
+          <>
         <label htmlFor="quick-ask-input" className="sr-only">Ask Cognitrix</label>
         <input
           id="quick-ask-input"
@@ -155,6 +173,9 @@ export default function QuickAsk() {
           autoComplete="off"
           className="min-w-0 flex-1 border-0 bg-transparent text-[17px] outline-none placeholder:text-fg-dim"
         />
+            <MicButton voice={voice} className="flex-none" />
+          </>
+        )}
         <label htmlFor="quick-ask-agent" className="sr-only">Agent</label>
         <select
           id="quick-ask-agent"
@@ -182,6 +203,7 @@ export default function QuickAsk() {
         {answer && <MarkdownMessage content={answer} />}
         {busy && !answer && <p className="text-fg-dim">Thinking…</p>}
         {error && <p role="alert" className="text-danger-ink">{error}</p>}
+        <VoiceNotice voice={voice} />
       </div>
 
       <div className="flex flex-none gap-5 bg-bg/60 px-4 py-2 pl-[58px] font-mono text-[11px] text-fg-dim">
