@@ -2,6 +2,7 @@
 // exactly these keys (src/lib/i18n.test.ts checks it).
 const en = {
   'nav.workspace': 'WORKSPACE',
+  'nav.dashboard': 'Dashboard',
   'nav.inbox': 'Inbox',
   'nav.chat': 'Chat',
   'nav.agents': 'Agents',

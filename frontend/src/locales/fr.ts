@@ -2,6 +2,7 @@ import type { Messages } from './en';
 
 const fr: Messages = {
   'nav.workspace': 'ESPACE DE TRAVAIL',
+  'nav.dashboard': 'Tableau de bord',
   'nav.inbox': 'Boîte de réception',
   'nav.chat': 'Discussion',
   'nav.agents': 'Agents',

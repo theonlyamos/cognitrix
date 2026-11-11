@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Inbox as InboxIcon, MessageSquare as MessageSquareIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon, Users as UsersIcon, BookOpen as BookOpenIcon, Settings as SettingsIcon, KeyRound as KeyRoundIcon, type LucideIcon } from 'lucide-react';
+import { LayoutDashboard as DashboardIcon, Inbox as InboxIcon, MessageSquare as MessageSquareIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon, Users as UsersIcon, BookOpen as BookOpenIcon, Settings as SettingsIcon, KeyRound as KeyRoundIcon, type LucideIcon } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
@@ -16,6 +16,7 @@ type IconProps = { className?: string };
 const icon = (Icon: LucideIcon) => (p: IconProps) => <Icon {...p} strokeWidth={1.9} aria-hidden="true" />;
 
 const NAV: { path: string; label: MessageKey; icon: (p: IconProps) => JSX.Element }[] = [
+  { path: '/dashboard', label: 'nav.dashboard', icon: icon(DashboardIcon) },
   { path: '/inbox', label: 'nav.inbox', icon: icon(InboxIcon) },
   { path: '/home', label: 'nav.chat', icon: icon(MessageSquareIcon) },
   { path: '/agents', label: 'nav.agents', icon: icon(BotIcon) },

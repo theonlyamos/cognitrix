@@ -14,6 +14,7 @@ import '@/app.css';
 
 // Code-split the authenticated app; auth pages + shell stay eager for first paint.
 const Home = lazy(() => import('@/pages/Home'));
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const Agents = lazy(() => import('@/pages/Agents'));
 const AgentDetail = lazy(() => import('@/pages/AgentDetail'));
 const AgentPage = lazy(() => import('@/pages/AgentPage'));
@@ -56,7 +57,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading, waitingForServer } = useUser();
   if (isLoading) return <DesktopFrame><LoadingScreen waitingForServer={waitingForServer} /></DesktopFrame>;
-  if (user) return <Navigate to="/home" replace />;
+  if (user) return <Navigate to="/dashboard" replace />;
   return <DesktopFrame>{children}</DesktopFrame>;
 }
 
@@ -73,6 +74,7 @@ function AppRoutes() {
 
         {/* Persistent shell: Sidebar mounts once, pages render in the Outlet. */}
         <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/home" element={<Home />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/agents/new" element={<AgentPage />} />

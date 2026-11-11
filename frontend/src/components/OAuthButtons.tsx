@@ -62,7 +62,7 @@ export default function OAuthButtons({ mode }: { mode: 'signin' | 'signup' }) {
   const finish = async (token: string) => {
     setToken(token);
     await checkAuth();
-    navigate('/home', { replace: true });
+    navigate('/dashboard', { replace: true });
   };
 
   const start = async (provider: Provider) => {

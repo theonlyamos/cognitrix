@@ -17,7 +17,7 @@ export default function OAuthComplete() {
       return;
     }
     setToken(token);
-    void checkAuth().then(() => navigate('/home', { replace: true }));
+    void checkAuth().then(() => navigate('/dashboard', { replace: true }));
   }, [checkAuth, navigate]);
 
   return (
