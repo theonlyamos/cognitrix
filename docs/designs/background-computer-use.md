@@ -1,13 +1,14 @@
-# Background computer use (Windows)
+# Background computer use
 
 Agents can work in app windows **without taking over the person's screen**: no
 mouse movement, no keyboard input to whatever the person is typing in, and the
 foreground window stays where it is. The driver lives in `cognitrix/computer/`
-(platform-neutral logic in `__init__.py`, the Windows backend in `windows.py`);
-the agent tools are in `cognitrix/tools/computer.py`.
+(platform-neutral logic in `__init__.py`, one backend per system: `windows.py`,
+`linux.py`); the agent tools are in `cognitrix/tools/computer.py`.
 
-On macOS and Linux the tools answer "only available on Windows for now"; the
-full-screen tools (`take_screenshot`, `mouse_click`, `text_input`, ...) still work there.
+Windows and Linux (X11 sessions) are supported. Elsewhere the tools say so and the
+full-screen tools (`take_screenshot`, `mouse_click`, `text_input`, ...) still work.
+Most of this page describes Windows; see [Linux](#linux) for what differs.
 
 ## Tools
 
@@ -129,6 +130,40 @@ Tested live on Windows 11 (see `tests/test_background_computer_use_live.py`):
 Terminals and consoles (use the shell tool), Cognitrix's own windows, known
 password managers, Windows security prompts, and apps running as administrator
 (Windows blocks input to them from normal apps anyway).
+
+## Linux
+
+`cognitrix/computer/linux.py` uses two system libraries through ctypes, so
+nothing extra is installed: `libatspi` (the accessibility bus) and `libX11`.
+
+- **Needs** an X11 session with the accessibility bus running (it is on GNOME,
+  KDE, Xfce, Cinnamon and MATE by default). **Wayland is not supported**: it
+  doesn't let one app list, read or send input to another app's window, so the
+  tools say so and the full-screen tools are the way there.
+- **Controls** are read and used through AT-SPI: buttons, check boxes, radio
+  buttons, tabs, menu items (including ones in closed menus, with their
+  shortcuts), text fields, sliders and scroll bars. None of it brings the
+  window forward. GTK and Qt apps answer; Chromium and Electron only when
+  started with `--force-renderer-accessibility`.
+- **Typing** goes into the field at its caret through AT-SPI, after
+  `click_in_window`/`type_in_window(x, y)` put the caret in it. A shortcut
+  such as `ctrl+s` runs the menu item that carries it.
+- **Screenshots** come from the Composite extension, so a covered or partly
+  off-screen window still reads correctly. A minimized window has no picture
+  (restoring it would bring it forward) but its controls still work.
+- **Sent clicks, keys and wheel turns** (`XSendEvent`) are ignored by GTK 3+,
+  Qt 5+ and Chromium, and accepted by older toolkits. So a click on a spot
+  with no control, a bare key such as `tab`, and wheel scrolling usually come
+  back `unverified` on modern apps: use the controls instead.
+- **Never controlled**: terminals, password managers, password and
+  authentication prompts, Cognitrix's own windows, and windows of another
+  user (for example root).
+
+Live test (opens GTK's widget demo; works on a virtual display):
+
+```sh
+COGNITRIX_LIVE_DESKTOP=1 pytest tests/test_background_computer_use_linux_live.py
+```
 
 ## Running the live tests
 

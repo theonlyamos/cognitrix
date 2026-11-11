@@ -33,7 +33,7 @@ NEEDS_SCREEN = 'needs_screen'
 FAILED = 'failed'
 
 UNSUPPORTED_MESSAGE = (
-    'Background computer use is only available on Windows for now. '
+    'Background computer use is only available on Windows and Linux (X11) for now. '
     'Use take_screenshot, mouse_click and text_input to control the screen instead.'
 )
 
@@ -659,10 +659,14 @@ _driver_guard = threading.Lock()
 
 def get_driver() -> Driver:
     global _driver
-    if sys.platform != 'win32':
-        raise Unsupported(UNSUPPORTED_MESSAGE)
     with _driver_guard:
         if _driver is None:
-            from cognitrix.computer.windows import WindowsBackend
-            _driver = Driver(WindowsBackend())
+            if sys.platform == 'win32':
+                from cognitrix.computer.windows import WindowsBackend
+                _driver = Driver(WindowsBackend())
+            elif sys.platform.startswith('linux'):
+                from cognitrix.computer.linux import LinuxBackend
+                _driver = Driver(LinuxBackend())  # raises Unsupported without an X11 session
+            else:
+                raise Unsupported(UNSUPPORTED_MESSAGE)
         return _driver
