@@ -99,6 +99,11 @@ def _header(message: dict[str, Any], name: str) -> str:
     return ''
 
 
+def _in_inbox(labels: Any) -> bool:
+    labels = set(labels or [])
+    return 'INBOX' in labels and not labels & {'DRAFT', 'SENT', 'SPAM', 'TRASH'}
+
+
 def _matches(mail: dict[str, str], match: str) -> bool:
     match = match.strip().lower()
     return not match or match in mail['from'].lower() or match in mail['subject'].lower()
@@ -123,6 +128,7 @@ async def new_mail(token: str, cursor: str | None, match: str = '') -> tuple[str
             return await baseline(), [], 0
 
         ids: list[str] = []
+        unlabelled: set[str] = set()  # Gmail may list a message without its labels
         latest = cursor
         page: str | None = None
         for _ in range(MAX_HISTORY_PAGES):
@@ -140,10 +146,14 @@ async def new_mail(token: str, cursor: str | None, match: str = '') -> tuple[str
             for record in data.get('history') or []:
                 for added in record.get('messagesAdded') or []:
                     message = added.get('message') or {}
-                    labels = set(message.get('labelIds') or [])
-                    if 'INBOX' in labels and not labels & {'DRAFT', 'SENT', 'SPAM', 'TRASH'}:
-                        if message.get('id') and message['id'] not in ids:
-                            ids.append(str(message['id']))
+                    message_id = str(message.get('id') or '')
+                    if not message_id or message_id in ids:
+                        continue
+                    if 'labelIds' not in message:
+                        unlabelled.add(message_id)  # judged once it has been fetched
+                    elif not _in_inbox(message['labelIds']):
+                        continue
+                    ids.append(message_id)
             page = data.get('nextPageToken')
             if not page:
                 break
@@ -162,6 +172,8 @@ async def new_mail(token: str, cursor: str | None, match: str = '') -> tuple[str
                 continue  # deleted or moved since
             if status != 200:
                 raise _refused(status, data)
+            if message_id in unlabelled and not _in_inbox(data.get('labelIds')):
+                continue
             mail = {
                 'id': str(data.get('id') or message_id),
                 'thread_id': str(data.get('threadId') or ''),
@@ -231,8 +243,15 @@ async def poll_mail_triggers(now: datetime | None = None) -> int:
         if 'no such table' in str(exc).lower():
             return 0
         raise
+    from cognitrix.tasks.base import Task
+
     for trigger in triggers:
         if not trigger.enabled or (trigger.checked_at and trigger.checked_at > due_before):
+            continue
+        task = await Task.get(trigger.task_id)
+        if task is None or task.deleted_at:
+            # Its task is gone: stop reading the owner's mail for it.
+            await TaskTrigger.update_one({'id': trigger.id}, {'enabled': False})
             continue
         # Claim the check, so two processes never read the same mail twice.
         # (A trigger that was never checked has no value to compare against.)

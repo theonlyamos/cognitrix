@@ -772,7 +772,7 @@ async def test_new_mail_queues_one_event_for_the_task(db, monkeypatch):
 async def test_mail_check_problems_are_shown_to_the_owner(db, monkeypatch):
     from cognitrix.api.routes import automations
     from cognitrix.models.mcp_server import MCPServer
-    from cognitrix.tasks.automation import TaskTrigger
+    from cognitrix.tasks.automation import TaskTrigger, TriggerEvent
     from cognitrix.tasks.base import Task
     from cognitrix.tasks.mail_triggers import poll_mail_triggers
 
@@ -802,3 +802,20 @@ async def test_mail_check_problems_are_shown_to_the_owner(db, monkeypatch):
     assert await poll_mail_triggers(NOW + timedelta(minutes=9)) == 0
     after = await TaskTrigger.get(made['id'])
     assert after.error is None and after.cursor == '500'
+
+    # Gmail may list a new message without its labels: it is fetched and judged then.
+    for message_id, labels in (('bare-in', ['INBOX']), ('bare-sent', ['SENT'])):
+        box['history'].append({'messagesAdded': [{'message': {'id': message_id, 'threadId': 't'}}]})
+        web.on('GET', f'{GMAIL}/messages/{message_id}', lambda r, i=message_id, lab=labels: httpx.Response(200, json={
+            'id': i, 'labelIds': lab, 'snippet': '', 'payload': {'headers': [{'name': 'Subject', 'value': i}]}}))
+    box['history_id'] = '501'
+    assert await poll_mail_triggers(NOW + timedelta(minutes=12)) == 1
+    event = (await TriggerEvent.find({'task_id': task.id}))[0]
+    assert [m['id'] for m in json.loads(event.payload)['new_messages']] == ['bare-in']
+
+    # A deleted task's trigger is turned off instead of reading mail for nothing.
+    await Task.update_one({'id': task.id}, {'deleted_at': '2030-06-01 12:00:00'})
+    asked = len(web.made('GET', f'{GMAIL}/history'))
+    assert await poll_mail_triggers(NOW + timedelta(minutes=15)) == 0
+    assert len(web.made('GET', f'{GMAIL}/history')) == asked
+    assert (await TaskTrigger.get(made['id'])).enabled is False
