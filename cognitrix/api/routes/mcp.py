@@ -30,7 +30,7 @@ from pydantic import BaseModel
 
 from cognitrix.agents.access import is_admin, owner_key
 from cognitrix.common.security import AuthContext, jwt_only
-from cognitrix.mcp import registry
+from cognitrix.mcp import apps, registry
 from cognitrix.mcp.server_manager import MCPServerConfig
 from cognitrix.models.mcp_server import MCPServer
 
@@ -320,7 +320,7 @@ async def test_server(server_ref: str, ctx: AuthContext = Depends(jwt_only)):
         if config.auth_type != 'oauth':
             problem = "Couldn't connect. Check the address, headers or command."
         return {'connected': False, 'tools': [], 'error': problem}
-    tools = await client.list_tools(config.key) or []
+    tools = await apps.list_tools(client, config)
     return {'connected': True, 'tools': [_tool_row(config, t) for t in tools], 'error': None}
 
 
@@ -355,5 +355,5 @@ async def server_tools(server_ref: str, ctx: AuthContext = Depends(jwt_only)):
     problem = await registry.prepare(client, config)
     if problem:
         return {'connected': False, 'tools': [], 'error': problem}
-    tools = await client.list_tools(config.key) or []
+    tools = await apps.list_tools(client, config)
     return {'connected': True, 'tools': [_tool_row(config, t) for t in tools], 'error': None}

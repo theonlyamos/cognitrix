@@ -77,7 +77,7 @@ def create_mcp_tool_wrapper(
             # Filter out None values for optional parameters
             filtered_args = {k: v for k, v in kwargs.items() if v is not None}
 
-            result = await client.call_tool(connection_key, tool_name, filtered_args)
+            result = await _call(client, connection_key, tool_name, filtered_args)
             if not result:
                 return "Tool call completed with no result"
             if isinstance(result, str):
@@ -132,6 +132,21 @@ def create_mcp_tool_wrapper(
 
     return wrapped_tool
 
+async def _call(client: Any, connection_key: str, tool_name: str, arguments: dict[str, Any]) -> Any:
+    """Call a tool by connection key; built-in and Composio tools aren't MCP calls."""
+    from cognitrix.mcp import apps
+    from cognitrix.mcp.registry import config_from_row
+    from cognitrix.models.mcp_server import MCPServer
+
+    try:
+        row = await MCPServer.get(connection_key)
+    except Exception:
+        row = None
+    if row is None:
+        return await client.call_tool(connection_key, tool_name, arguments)
+    return await apps.call_tool(client, config_from_row(row), tool_name, arguments)
+
+
 def _sign_in_tool(server_name: str, message: str) -> Tool:
     """Stand-in for an app whose sign-in has to be renewed."""
     unique_name = _NAME_SANITIZE.sub('_', f"{server_name}_sign_in_needed")
@@ -175,7 +190,8 @@ async def sync_mcp_tools_for_agent(agent) -> list[Tool]:
                         # app doesn't exist.
                         new_tools.append(_sign_in_tool(config.name, problem))
                     continue
-                tools_list = await client.list_tools(config.key)
+                from cognitrix.mcp import apps
+                tools_list = await apps.list_tools(client, config)
                 if not tools_list:
                     continue
 

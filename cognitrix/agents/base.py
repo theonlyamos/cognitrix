@@ -23,7 +23,13 @@ from cognitrix.safety.destructive_ops import (
     RiskLevel,
     mcp_tool_risk,
 )
-from cognitrix.safety.permissions import ToolDecision, decide_tool_call, needs_person, visible_tools
+from cognitrix.safety.permissions import (
+    ToolDecision,
+    apply_target_level,
+    decide_tool_call,
+    needs_person,
+    visible_tools,
+)
 from cognitrix.tools.base import ToolManager
 from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
 from cognitrix.tools.utils import ToolCallResult, ToolOutcome
@@ -619,6 +625,11 @@ class AgentManager:
                 # Per-agent and per-tool permission levels, on top of the
                 # default risk policy (see cognitrix/safety/permissions.py).
                 decision = decide_tool_call(self.agent, assigned_tool, args, risk, runtime_tool=tool)
+                # Run Mcp Tool runs some other tool: that tool's own setting
+                # (agent page, Connections) wins over the default policy.
+                target_level, target_name = await self._mcp_target_level(assigned_tool, args)
+                if target_level != 'auto' and decision.action != 'block':
+                    decision = apply_target_level(decision, target_level, target_name, risk)
                 if decision.action == 'block':
                     results_by_index[i] = _tool_result_entry(
                         tc_id,
@@ -909,6 +920,7 @@ class AgentManager:
         tool_name = str(args.get('tool_name') or '')
         annotations = None
         try:
+            from cognitrix.mcp import apps
             from cognitrix.mcp.client import get_dynamic_client
             from cognitrix.mcp.registry import agent_servers, matches
 
@@ -916,7 +928,7 @@ class AgentManager:
             if config is None:
                 return None  # the tool itself refuses servers the agent can't use
             client = await get_dynamic_client()
-            annotations = (client.tool_annotations.get(config.key) or {}).get(tool_name)
+            annotations = await apps.annotations(client, config, tool_name)
         except Exception:
             logger.exception("Could not check MCP tool annotations")
         risk = mcp_tool_risk(tool_name, annotations)
@@ -924,6 +936,30 @@ class AgentManager:
             return None
         risk.details = f"{risk.details} (MCP server '{server}')"
         return risk
+
+    async def _mcp_target_level(self, tool: Any, args: dict) -> tuple[str, str]:
+        """The person's Allow / Ask / Off setting for the app tool a Run Mcp Tool call runs.
+
+        Returns (level, the tool's name in permission settings); level is
+        ``auto`` when nothing is set or the call isn't Run Mcp Tool.
+        """
+        name = str(getattr(tool, 'name', '') or '').strip().lower().replace(' ', '_')
+        if getattr(tool, 'category', None) != 'mcp' or name != 'run_mcp_tool':
+            return 'auto', ''
+        try:
+            from cognitrix.mcp.registry import agent_servers, matches
+            from cognitrix.mcp.tools import wrapper_name
+            from cognitrix.safety.permissions import tool_level
+
+            server = str(args.get('server') or '')
+            config = next((c for c in await agent_servers(self.agent) if matches(c, server)), None)
+            if config is None:
+                return 'auto', ''
+            target = wrapper_name(config.name, str(args.get('tool_name') or ''))
+            return tool_level(self.agent, target), target
+        except Exception:
+            logger.exception("Could not read the app tool's permission level")
+            return 'auto', ''
 
     def add_tool(self, tool: Tool):
         if tool not in self.agent.tools:

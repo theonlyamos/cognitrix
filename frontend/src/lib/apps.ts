@@ -12,7 +12,22 @@ export interface AppConnection {
   /** Who it's signed in as: an email address or a GitHub login. */
   account: string;
   enabled: boolean;
+  /** Extra permissions turned on for this app (see `CatalogApp.options`). */
+  options?: string[];
+  /** Turned on, but the sign-in doesn't cover them yet: reconnect to grant. */
+  pending_options?: string[];
 }
+
+/** An extra permission a person can turn on for an app, e.g. sending email. */
+export interface AppOption {
+  id: string;
+  label: string;
+  description: string;
+  /** True when turning it on needs a new sign-in to grant it. */
+  needs_sign_in: boolean;
+}
+
+export type Provider = 'google' | 'github' | 'slack';
 
 export interface CatalogApp {
   id: string;
@@ -20,13 +35,77 @@ export interface CatalogApp {
   description: string;
   category: string;
   auth: 'provider' | 'discover';
-  provider: 'google' | 'github' | null;
+  provider: Provider | null;
   /** False until the server has the provider's OAuth app (see `setup`). */
   available: boolean;
   setup: string;
   /** Set when a personal access token works instead of signing in. */
   token_help: string | null;
+  options?: AppOption[];
   connection: AppConnection | null;
+}
+
+/** An app connected through the person's own Composio account. */
+export interface ComposioConnection {
+  server_id: string;
+  slug: string;
+  name: string;
+  status: AppStatus;
+  account: string;
+  enabled: boolean;
+}
+
+export interface ComposioState {
+  has_key: boolean;
+  /** The end of the saved key, e.g. "…abcd". */
+  hint: string | null;
+  connections: ComposioConnection[];
+}
+
+export interface ComposioToolkit {
+  slug: string;
+  name: string;
+  description: string;
+  logo: string;
+  categories: string[];
+  tools_count: number;
+  /** False when Composio can't sign in to it without your own OAuth app. */
+  connectable: boolean;
+  connection: ComposioConnection | null;
+}
+
+/** One line of a "test connection" result. `ok` null means it couldn't tell. */
+export interface Check {
+  label: string;
+  ok: boolean | null;
+  detail: string;
+}
+
+export interface CheckResult {
+  ok: boolean;
+  checks: Check[];
+  tools?: number;
+}
+
+export interface SetupStep {
+  title: string;
+  body: string;
+  link?: { label: string; url: string };
+  copy?: { label: string; text: string };
+}
+
+/** What an admin needs to register this server with Google, GitHub or Slack. */
+export interface ProviderSetup {
+  id: Provider;
+  label: string;
+  source: 'env' | 'saved' | 'none';
+  can_edit: boolean;
+  client_id: string;
+  env_vars: string[];
+  redirect_uri: string;
+  redirect_problem: string | null;
+  apps: string[];
+  steps: SetupStep[];
 }
 
 export interface AppList {
@@ -35,6 +114,7 @@ export interface AppList {
   custom: AppConnection[];
   is_admin: boolean;
   callback_urls: Record<string, string>;
+  composio?: ComposioState;
 }
 
 export interface SignInStart {
@@ -60,6 +140,57 @@ export async function connectWithToken(appId: string, token: string): Promise<Ap
 
 export async function disconnectApp(appId: string): Promise<void> {
   await api.post(`/mcp/apps/${encodeURIComponent(appId)}/disconnect`);
+}
+
+export async function setAppOptions(appId: string, options: string[]): Promise<AppConnection> {
+  return (await api.put<AppConnection>(`/mcp/apps/${encodeURIComponent(appId)}/options`, { options })).data;
+}
+
+export async function testApp(appId: string): Promise<CheckResult> {
+  return (await api.post<CheckResult>(`/mcp/apps/${encodeURIComponent(appId)}/test`)).data;
+}
+
+export async function getSetupGuide(): Promise<ProviderSetup[]> {
+  return (await api.get<{ providers: ProviderSetup[] }>('/mcp/apps/setup')).data.providers;
+}
+
+export async function saveProviderClient(provider: Provider, clientId: string, clientSecret: string): Promise<ProviderSetup> {
+  return (await api.put<ProviderSetup>(`/mcp/apps/setup/${provider}`, { client_id: clientId, client_secret: clientSecret })).data;
+}
+
+export async function removeProviderClient(provider: Provider): Promise<ProviderSetup> {
+  return (await api.delete<ProviderSetup>(`/mcp/apps/setup/${provider}`)).data;
+}
+
+export async function testProviderClient(provider: Provider): Promise<CheckResult> {
+  return (await api.post<CheckResult>(`/mcp/apps/setup/${provider}/test`)).data;
+}
+
+export async function saveComposioKey(apiKey: string): Promise<{ has_key: boolean; hint: string | null }> {
+  return (await api.put('/mcp/composio/key', { api_key: apiKey })).data;
+}
+
+export async function removeComposioKey(): Promise<void> {
+  await api.delete('/mcp/composio/key');
+}
+
+export async function searchComposioApps(query: string, cursor?: string | null): Promise<{
+  toolkits: ComposioToolkit[];
+  next_cursor: string | null;
+}> {
+  return (await api.get('/mcp/composio/apps', { params: { query, ...(cursor ? { cursor } : {}) } })).data;
+}
+
+export async function startComposioSignIn(slug: string, name: string): Promise<SignInStart> {
+  return (await api.post<SignInStart>(`/mcp/composio/apps/${encodeURIComponent(slug)}/connect`, { name })).data;
+}
+
+export async function disconnectComposioApp(serverId: string): Promise<void> {
+  await api.post(`/mcp/composio/connections/${encodeURIComponent(serverId)}/disconnect`);
+}
+
+export async function testComposioApp(serverId: string): Promise<CheckResult> {
+  return (await api.post<CheckResult>(`/mcp/composio/connections/${encodeURIComponent(serverId)}/test`)).data;
 }
 
 export async function signOutServer(serverId: string): Promise<void> {
@@ -143,4 +274,5 @@ const CATALOG_NAMES: Record<string, string> = {
   notion: 'Notion',
   linear: 'Linear',
   sentry: 'Sentry',
+  slack: 'Slack',
 };

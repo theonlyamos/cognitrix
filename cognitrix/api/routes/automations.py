@@ -26,6 +26,8 @@ from cognitrix.tasks import Task
 from cognitrix.tasks.automation import (
     DISPATCHED,
     EVENT_MAX_BYTES,
+    MAIL_KIND,
+    MATCH_MAX_CHARS,
     MAX_PENDING_EVENTS,
     MAX_TRIGGERS_PER_TASK,
     NOTES_MAX_CHARS,
@@ -82,12 +84,16 @@ async def cancel_wake(task_id: str, ctx: AuthContext = Depends(get_auth_context)
 # --- triggers -----------------------------------------------------------------------
 
 class TriggerCreate(BaseModel):
-    name: str = 'Webhook'
+    name: str = ''
+    kind: str = 'webhook'
+    """"webhook" (a secret URL) or "gmail" (new mail in your connected Gmail)."""
+    match: str = ''
 
 
 class TriggerPatch(BaseModel):
     name: str | None = None
     enabled: bool | None = None
+    match: str | None = None
 
 
 async def _owned_trigger(task_id: str, trigger_id: str, ctx: AuthContext) -> tuple[Task, TaskTrigger]:
@@ -126,6 +132,32 @@ async def create_trigger(task_id: str, body: TriggerCreate, ctx: AuthContext = D
     token, token_hash = new_trigger_token()
     requested_by, _actor = _run_identity(ctx)
     authority_kind, authority_id = _run_authority(ctx)
+    kind = (body.kind or 'webhook').strip().lower()
+    if kind == MAIL_KIND:
+        from cognitrix.tasks.mail_triggers import gmail_connection
+
+        gmail = await gmail_connection(_user_key(ctx))
+        if gmail is None or (gmail.status or '') != 'connected':
+            raise HTTPException(status_code=422, detail='Connect Gmail in Settings › Connected apps first')
+        if any(row.kind == MAIL_KIND for row in existing):
+            raise HTTPException(status_code=422, detail='This task already starts on new mail')
+        trigger = TaskTrigger(
+            task_id=str(task.id),
+            owner_id=_user_key(ctx),
+            name=(body.name or '').strip()[:80] or f'New mail in {gmail.account or "Gmail"}',
+            kind=MAIL_KIND,
+            # Never usable as a URL: the receiver only serves webhook triggers.
+            token_hash=token_hash,
+            source_id=str(gmail.id),
+            match=body.match.strip()[:MATCH_MAX_CHARS],
+            requested_by=requested_by,
+            authority_kind=authority_kind,
+            authority_id=authority_id,
+        )
+        await trigger.save()
+        return public_trigger(trigger)
+    if kind != 'webhook':
+        raise HTTPException(status_code=422, detail='Unknown kind of trigger')
     trigger = TaskTrigger(
         task_id=str(task.id),
         owner_id=_user_key(ctx),
@@ -144,6 +176,8 @@ async def create_trigger(task_id: str, body: TriggerCreate, ctx: AuthContext = D
 async def rotate_trigger(task_id: str, trigger_id: str, ctx: AuthContext = Depends(get_auth_context)):
     """Replace the trigger's secret; the old URL stops working at once."""
     _task, trigger = await _owned_trigger(task_id, trigger_id, ctx)
+    if trigger.kind != 'webhook':
+        raise HTTPException(status_code=422, detail='Only webhook triggers have a URL')
     token, token_hash = new_trigger_token()
     await TaskTrigger.update_one({'id': trigger.id}, {'token_hash': token_hash, 'token_hint': token[-4:]})
     trigger.token_hash, trigger.token_hint = token_hash, token[-4:]
@@ -157,9 +191,14 @@ async def update_trigger(task_id: str, trigger_id: str, body: TriggerPatch,
     updates: dict[str, Any] = {}
     if body.name is not None:
         updates['name'] = body.name.strip()[:80] or 'Webhook'
+    if body.match is not None and trigger.kind == MAIL_KIND:
+        updates['match'] = body.match.strip()[:MATCH_MAX_CHARS]
     if body.enabled is not None:
         updates['enabled'] = body.enabled
         if body.enabled:
+            # Mail that arrived while it was off doesn't start runs later.
+            if trigger.kind == MAIL_KIND:
+                updates.update(cursor=None, error=None)
             # Re-enabling hands the trigger the current owner's authority.
             requested_by, _actor = _run_identity(ctx)
             authority_kind, authority_id = _run_authority(ctx)
@@ -175,7 +214,7 @@ async def update_trigger(task_id: str, trigger_id: str, body: TriggerPatch,
 @automations_api.delete('/tasks/{task_id}/triggers/{trigger_id}')
 async def delete_trigger(task_id: str, trigger_id: str, ctx: AuthContext = Depends(get_auth_context)):
     _task, trigger = await _owned_trigger(task_id, trigger_id, ctx)
-    await TaskTrigger.remove({'id': trigger.id})
+    await TaskTrigger.delete_many({'id': trigger.id})
     for event in await TriggerEvent.find({'trigger_id': trigger.id, 'status': PENDING}) or []:
         await TriggerEvent.update_one({'id': event.id, 'status': PENDING},
                                       {'status': 'dropped', 'error': 'trigger deleted'})
@@ -196,7 +235,8 @@ async def receive_hook(trigger_id: str, token: str, request: Request, background
     """Anyone holding the secret URL may queue one run of the task."""
     trigger = await TaskTrigger.get(trigger_id)
     # One answer for unknown, wrong-secret and disabled, so the URL can't be probed.
-    if trigger is None or not token_matches(trigger, token) or not trigger.enabled:
+    if (trigger is None or trigger.kind != 'webhook' or not token_matches(trigger, token)
+            or not trigger.enabled):
         raise HTTPException(status_code=404, detail='Not Found')
     task = await _visible_task(trigger.task_id)
     if task is None:

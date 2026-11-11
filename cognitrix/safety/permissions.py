@@ -234,6 +234,22 @@ def decide_tool_call(
     return ToolDecision('run', risk, 'policy')
 
 
+def apply_target_level(decision: ToolDecision, level: str, name: str, risk: RiskAssessment) -> ToolDecision:
+    """Apply the person's setting for the app tool that a Run Mcp Tool call runs.
+
+    Agents reach connected apps through one tool (Run Mcp Tool), so the
+    per-tool levels set on the agent's Connections tab are keyed by the app
+    tool's own name and applied here, on top of ``decide_tool_call``.
+    """
+    if level == 'deny':
+        return ToolDecision('block', risk, 'tool', f"'{name}' is set to never run for this agent")
+    if level == 'allow':
+        return ToolDecision('run', risk, 'tool', f"'{name}' is always allowed for this agent")
+    if level == 'ask':
+        return ToolDecision('ask', _asking(risk, 'You asked to approve this tool first'), 'tool')
+    return decision
+
+
 def default_behavior(tool: Any) -> str:
     """What the default policy does with a tool, for the agent form.
 

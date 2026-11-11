@@ -16,6 +16,11 @@ registration and the tokens; see ``cognitrix/mcp/oauth.py``. ``status`` is
 "connected", "needs_reauth" (the sign-in expired or was revoked) or "" (never
 signed in, or signed out).
 
+Apps reached through Composio (``cognitrix/mcp/composio.py``) are rows as well,
+with ``auth_type`` "composio" and ``catalog_id`` "composio:<toolkit>". The
+person's Composio API key sits on one more row, ``catalog_id`` "composio",
+which is never offered to agents.
+
 Persistence rule: instance ``save()`` once at creation, ``update_one`` after.
 """
 from odbms import Model
@@ -44,7 +49,9 @@ class MCPServer(Model):
     status: str | None = None
     account: str | None = None
     """Who the app is signed in as, e.g. an email address or GitHub login."""
+    options: list[str] = []
+    """Extra permissions the person turned on (``catalog.AppOption`` ids)."""
 
-    @validator('args', pre=True)
+    @validator('args', 'options', pre=True)
     def _coerce_null_list(cls, value):
         return [] if value is None else value
