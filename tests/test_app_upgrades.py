@@ -202,8 +202,9 @@ async def test_setup_guide_is_for_admins_and_fills_in_this_server(db):
     manifest = json.loads(next(s['copy']['text'] for s in slack['steps'] if s.get('copy')))
     assert manifest['oauth_config']['redirect_urls'] == [slack['redirect_uri']]
     assert 'chat:write' in manifest['oauth_config']['scopes']['user']
-    google_text = json.dumps(by_id['google']['steps'])
-    assert 'gmailmcp.googleapis.com' in google_text and 'calendar.events' in google_text
+    copies = [s['copy']['text'] for s in by_id['google']['steps'] if s.get('copy')]
+    assert any('gmailmcp.googleapis.com' in text.split() for text in copies)  # the gcloud command
+    assert any('https://www.googleapis.com/auth/calendar.events' in text.splitlines() for text in copies)
     # Slack won't take a plain http address; Google only for localhost.
     local = await connected_apps.app_setup_guide(_request('http://127.0.0.1:48210'), _ctx(admin))
     problems = {p['id']: p['redirect_problem'] for p in local['providers']}

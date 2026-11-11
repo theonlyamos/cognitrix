@@ -335,7 +335,7 @@ async def _check_flow(owner: str, server_id: str) -> tuple[str, str | None]:
             try:
                 await _call(await api_key(owner), 'DELETE', f'/api/v3.1/connected_accounts/{previous}')
             except ComposioError:
-                logger.debug('Could not remove the replaced Composio account %s', previous)
+                logger.debug('Could not remove the replaced Composio account')
         return 'done', None
     if status in ('FAILED', 'EXPIRED', 'REVOKED', 'INACTIVE'):
         return 'error', "The sign-in didn't finish. Please try again."
@@ -357,7 +357,7 @@ async def disconnect(owner: str, server_id: str) -> None:
             try:
                 await _call(key, 'DELETE', f'/api/v3.1/connected_accounts/{account_id}')
             except ComposioError:
-                logger.debug('Could not remove the Composio account %s', account_id)
+                logger.debug('Could not remove a Composio account while disconnecting')
     _tools_cache.pop(str(row.id), None)
     await MCPServer.delete_many({'id': row.id})
 
