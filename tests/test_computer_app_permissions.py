@@ -141,3 +141,34 @@ async def test_remember_app_needs_an_app_and_an_approval(db):
     resolve_web_approval(event['request_id'], approved=False, user_key='u1', remember_app='always')
     assert not (await task).approved
     assert await computer_apps.level('u1', 'notepad.exe') == 'ask'
+
+
+async def test_a_screen_takeover_is_asked_every_time(monkeypatch):
+    """No remembered answer or chat auto-approve stands in for the person."""
+    from cognitrix.safety.approval_gate import ApprovalGate, ApprovalResult, ToolCall, web_turn_ctx
+    from cognitrix.safety.destructive_ops import DestructiveOpDetector
+
+    call = ToolCall('type_in_window', {'window_id': 1, 'text': 'hi', 'use_screen': True})
+    risk = DestructiveOpDetector().analyze(call.tool_name, call.params)
+    assert 'screen_takeover' in risk.categories
+
+    gate = ApprovalGate()
+    asked = []
+
+    async def cli(tool_call, risk, timeout):
+        asked.append(tool_call)
+        return ApprovalResult(approved=True, remember=True, permanent=True)
+
+    monkeypatch.setattr(gate, '_cli_approval', cli)
+    monkeypatch.setattr(gate, '_save_permanent_cache', lambda: None)
+    for _ in range(2):
+        assert (await gate.check_approval(call, risk, interface='cli', scope='a1')).approved
+    assert len(asked) == 2 and not gate.session_cache and not gate.permanent_cache
+
+    # Auto-approve in the browser doesn't answer it either: with nobody to ask it is refused.
+    token = web_turn_ctx.set({'bypass': True, 'session_id': 's1', 'user_key': 'u1'})
+    try:
+        result = await gate.check_approval(call, risk, interface='web', scope='a1')
+    finally:
+        web_turn_ctx.reset(token)
+    assert not result.approved and not result.auto

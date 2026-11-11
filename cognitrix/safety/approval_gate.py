@@ -247,17 +247,21 @@ class ApprovalGate:
         # Cache keys are scoped so approvals don't leak across agents/users.
         scoped = f"{scope or 'global'}:{self._hash_operation(tool_call)}"
 
-        if not person_only and scoped in self.permanent_cache:
+        # Taking over the person's screen, mouse and keyboard is asked every
+        # time: no remembered answer, auto-approve or reviewer stands in.
+        always_ask = 'screen_takeover' in (risk.categories or [])
+
+        if not person_only and not always_ask and scoped in self.permanent_cache:
             return ApprovalResult(approved=True, cached=True)
 
         # "Approve for session" is a person's answer, so it also covers the
         # full shell for the same command in this session.
-        if scoped in self.session_cache:
+        if not always_ask and scoped in self.session_cache:
             return ApprovalResult(approved=True, cached=True, remember=True)
 
         # The person allowed background actions in this app for this chat.
         app_key = self._app_key(tool_call, interface)
-        if app_key and not person_only and app_key in self.session_cache:
+        if app_key and not person_only and not always_ask and app_key in self.session_cache:
             return ApprovalResult(approved=True, cached=True, remember=True)
 
         # The person allowed every full-shell command in this chat.
@@ -269,10 +273,10 @@ class ApprovalGate:
         # A call a person already refused goes back to the person.
         web_ctx = web_turn_ctx.get(None)
         bypass = (
-            not person_only
+            not person_only and not always_ask
             and interface in ('web', 'ws', 'websocket') and web_ctx and web_ctx.get('bypass')
         )
-        if not bypass and scoped not in self.session_denied:
+        if not bypass and not always_ask and scoped not in self.session_denied:
             reviewed = await self._review(tool_call, risk, interface)
             if reviewed is not None:
                 return reviewed
@@ -288,7 +292,7 @@ class ApprovalGate:
         if interface == 'cli':
             result = await self._cli_approval(tool_call, risk, timeout)
         elif interface in ('web', 'ws', 'websocket'):
-            result = await self._web_approval(tool_call, risk, timeout, person_only=person_only)
+            result = await self._web_approval(tool_call, risk, timeout, person_only=person_only, must_ask=always_ask)
         else:
             return ApprovalResult(approved=False, error=f"Unknown interface: {interface}")
 
@@ -303,6 +307,8 @@ class ApprovalGate:
             self.session_cache.add(scoped)
             if getattr(result, 'remember_shell', False) and shell_key:
                 self.session_cache.add(shell_key)
+        elif result.approved and always_ask:
+            self.session_denied.discard(scoped)
         elif result.approved:
             self.session_denied.discard(scoped)
             if app_key and result.remember_app in ('chat', 'always'):
@@ -459,6 +465,7 @@ class ApprovalGate:
         risk: RiskAssessment,
         timeout: float,
         person_only: bool = False,
+        must_ask: bool = False,
     ) -> ApprovalResult:
         """Interactive approval over the SSE chat stream.
 
@@ -471,7 +478,7 @@ class ApprovalGate:
         ctx = web_turn_ctx.get(None)
 
         if (
-            ctx and ctx.get('bypass') and not person_only
+            ctx and ctx.get('bypass') and not person_only and not must_ask
             and _normal_name(tool_call.tool_name) not in _NEVER_AUTO_APPROVED
         ):
             # Auto-approve tool calls only — the bash whitelist / sandbox-shell
@@ -527,6 +534,8 @@ class ApprovalGate:
                 # A full-shell command: the card offers "allow all commands
                 # in this chat".
                 'full_shell': person_only,
+                # Asked every time (a screen takeover): no "for session" button.
+                **({'always_ask': True} if must_ask else {}),
                 # A background action in an app window: the card offers
                 # "allow <app> in this chat" and "always allow <app>".
                 **({'app': {'key': tool_call.app, 'label': _app_label(tool_call.app)}} if tool_call.app else {}),
