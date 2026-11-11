@@ -16,10 +16,17 @@ export interface AutomationTaskFields {
 export interface TaskTriggerRow {
   id: string;
   name: string;
+  /** "webhook" (the default) or "gmail" for new mail in the owner's Gmail. */
+  kind?: string;
   enabled: boolean;
   token_hint: string;
   last_fired_at: string | null;
   fire_count: number;
+  /** Mail triggers: only mail whose sender or subject contains this. */
+  match?: string;
+  checked_at?: string | null;
+  /** Mail triggers: why the last check failed, in words for the owner. */
+  error?: string | null;
 }
 
 interface CreatedTrigger extends TaskTriggerRow {
@@ -47,7 +54,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">{children}</h3>;
 }
 
-/** Notes, the agent's next check, and webhook triggers for one task. */
+/** Notes, the agent's next check, and webhook and new-mail triggers for one task. */
 export function AutomationPanel({
   taskId,
   task,
@@ -63,6 +70,7 @@ export function AutomationPanel({
   const [triggers, setTriggers] = useState<TaskTriggerRow[]>([]);
   const [events, setEvents] = useState<TriggerEventRow[]>([]);
   const [newName, setNewName] = useState('');
+  const [mailMatch, setMailMatch] = useState('');
   const [created, setCreated] = useState<CreatedTrigger | null>(null);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -137,6 +145,13 @@ export function AutomationPanel({
       await load();
     }, 'Could not create the webhook.');
 
+  const addMailTrigger = () =>
+    act('add-mail', async () => {
+      await api.post(`/tasks/${taskId}/triggers`, { kind: 'gmail', match: mailMatch.trim() });
+      setMailMatch('');
+      await load();
+    }, 'Could not start watching for new mail.');
+
   const rotate = (id: string) =>
     act(`rotate:${id}`, async () => {
       const { data } = await api.post<CreatedTrigger>(`/tasks/${taskId}/triggers/${id}/rotate`);
@@ -149,14 +164,14 @@ export function AutomationPanel({
     act(`toggle:${row.id}`, async () => {
       await api.patch(`/tasks/${taskId}/triggers/${row.id}`, { enabled: !row.enabled });
       await load();
-    }, 'Could not update the webhook.');
+    }, 'Could not update the trigger.');
 
   const remove = (id: string) =>
     act(`delete:${id}`, async () => {
       await api.delete(`/tasks/${taskId}/triggers/${id}`);
       if (created?.id === id) setCreated(null);
       await load();
-    }, 'Could not delete the webhook.');
+    }, 'Could not delete the trigger.');
 
   const copy = async (text: string) => {
     try {
@@ -221,10 +236,10 @@ export function AutomationPanel({
       </div>
 
       <div className="flex flex-col gap-2">
-        <SectionTitle>WEBHOOK TRIGGERS</SectionTitle>
+        <SectionTitle>TRIGGERS</SectionTitle>
         <p className="text-[12.5px] text-fg-dim">
-          A POST to a trigger's secret URL starts a run, and the request body is passed to the agents. When a run is already going,
-          events wait their turn.
+          A POST to a webhook's secret URL starts a run, and the request body is passed to the agents. New mail in your connected
+          Gmail can start a run too. When a run is already going, events wait their turn.
         </p>
 
         {created && (
@@ -247,11 +262,19 @@ export function AutomationPanel({
 
         {triggers.length > 0 && (
           <ul className="flex flex-col divide-y divide-line rounded-[10px] border border-line">
-            {triggers.map((row) => (
+            {triggers.map((row) => {
+              const mail = row.kind === 'gmail';
+              return (
               <li key={row.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
                 <span className={cn('h-1.5 w-1.5 rounded-full', row.enabled ? 'bg-accent' : 'bg-fg-dim')} aria-hidden />
                 <span className="text-[13px] font-medium">{row.name}</span>
-                <span className="font-mono text-[11px] text-fg-dim">…{row.token_hint}</span>
+                {mail ? (
+                  <span className="font-mono text-[11px] text-fg-dim">
+                    {row.match ? `only mail matching "${row.match}"` : 'all new mail'}
+                  </span>
+                ) : (
+                  <span className="font-mono text-[11px] text-fg-dim">…{row.token_hint}</span>
+                )}
                 <span className="font-mono text-[11px] text-fg-dim">
                   {row.fire_count} run{row.fire_count === 1 ? '' : 's'}
                   {row.last_fired_at ? ` · last ${utcToLocal(row.last_fired_at)}` : ''}
@@ -260,14 +283,20 @@ export function AutomationPanel({
                 <Button size="sm" variant="ghost" onClick={() => toggle(row)} disabled={busy !== null}>
                   {row.enabled ? 'Turn off' : 'Turn on'}
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => rotate(row.id)} disabled={busy !== null}>
-                  New URL
-                </Button>
+                {!mail && (
+                  <Button size="sm" variant="ghost" onClick={() => rotate(row.id)} disabled={busy !== null}>
+                    New URL
+                  </Button>
+                )}
                 <Button size="sm" variant="ghost" className="hover:text-danger-ink" onClick={() => remove(row.id)} disabled={busy !== null}>
                   Delete
                 </Button>
+                {mail && row.error && (
+                  <p role="alert" className="w-full pl-3.5 text-[12px] text-danger-ink">{row.error}</p>
+                )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
 
@@ -289,6 +318,28 @@ export function AutomationPanel({
           />
           <Button size="sm" type="submit" disabled={busy === 'add'}>
             {busy === 'add' ? 'Adding…' : '+ Add webhook'}
+          </Button>
+        </form>
+
+        <form
+          className="flex flex-wrap gap-2"
+          aria-label="Start on new mail"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void addMailTrigger();
+          }}
+        >
+          <label htmlFor="trigger-mail-match" className="sr-only">Only mail whose sender or subject contains</label>
+          <input
+            id="trigger-mail-match"
+            value={mailMatch}
+            onChange={(e) => setMailMatch(e.target.value)}
+            placeholder="Only mail from or about… (optional), e.g. invoice"
+            maxLength={200}
+            className="h-9 min-w-0 flex-1 rounded-[9px] border border-line bg-bg px-3 text-[13px] outline-none focus:border-accent"
+          />
+          <Button size="sm" type="submit" variant="outline" disabled={busy === 'add-mail'}>
+            {busy === 'add-mail' ? 'Adding…' : '+ Start on new Gmail'}
           </Button>
         </form>
 

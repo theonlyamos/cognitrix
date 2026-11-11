@@ -8,14 +8,21 @@ import {
   connectWithToken,
   disconnectApp,
   listApps,
+  setAppOptions,
   signInWithBrowser,
   signOutServer,
   startAppSignIn,
   startServerSignIn,
+  testApp,
   type AppConnection,
   type AppList,
   type CatalogApp,
+  type CheckResult,
+  type Provider,
 } from '@/lib/apps';
+import { AppSetupGuide } from '@/components/apps/AppSetupGuide';
+import { CheckList } from '@/components/apps/CheckList';
+import { ComposioSection } from '@/components/apps/ComposioSection';
 import { Group, StatusPill, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 
 const TILE: Record<string, string> = {
@@ -26,7 +33,10 @@ const TILE: Record<string, string> = {
   'google-docs': 'bg-[#4285f4]/15 text-[#1967d2] dark:text-[#8ab4f8]',
   'google-sheets': 'bg-[#0f9d58]/15 text-[#0b8043] dark:text-[#81c995]',
   'google-slides': 'bg-[#f4b400]/20 text-[#b06000] dark:text-[#fdd663]',
+  slack: 'bg-[#4a154b]/15 text-[#4a154b] dark:text-[#e0b3e2]',
 };
+
+const PROVIDER_NAMES: Record<Provider, string> = { google: 'Google', github: 'GitHub', slack: 'Slack' };
 
 function AppTile({ id, name }: { id: string; name: string }) {
   const letters = name.replace(/^Google /, '').slice(0, 2);
@@ -46,8 +56,8 @@ function Status({ connection }: { connection: AppConnection | null }) {
   return <StatusPill tone="ok">connected</StatusPill>;
 }
 
-/** Settings › Connected apps: sign in to GitHub, Google apps and other hosted
- *  MCP servers, so agents can use them. Each connection is yours alone. */
+/** Settings › Connected apps: sign in to GitHub, Google apps, Slack and other
+ *  hosted MCP servers, so agents can use them. Each connection is yours alone. */
 export function ConnectedAppsCard() {
   const [list, setList] = useState<AppList | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -57,6 +67,8 @@ export function ConnectedAppsCard() {
   const [token, setToken] = useState('');
   const [adding, setAdding] = useState(false);
   const [custom, setCustom] = useState({ name: '', url: '' });
+  const [results, setResults] = useState<Record<string, CheckResult>>({});
+  const [guide, setGuide] = useState<Provider | null>(null);
 
   const load = () =>
     listApps()
@@ -93,6 +105,23 @@ export function ConnectedAppsCard() {
   const connect = (app: CatalogApp) => run(app.id, () => signInWithBrowser(() => startAppSignIn(app.id)));
   const reconnectCustom = (c: AppConnection) => run(c.server_id, () => signInWithBrowser(() => startServerSignIn(c.server_id)));
 
+  const test = (app: CatalogApp) =>
+    run(app.id, async () => {
+      const result = await testApp(app.id);
+      setResults((cur) => ({ ...cur, [app.id]: result }));
+    });
+
+  const toggleOption = (app: CatalogApp, optionId: string, on: boolean) =>
+    run(app.id, async () => {
+      const current = app.connection?.options || [];
+      await setAppOptions(app.id, on ? [...current, optionId] : current.filter((o) => o !== optionId));
+    });
+
+  const openGuide = (provider: Provider) => {
+    setGuide(provider);
+    requestAnimationFrame(() => document.getElementById('app-setup')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }));
+  };
+
   const saveToken = (app: CatalogApp) => (e: FormEvent) => {
     e.preventDefault();
     void run(app.id, async () => {
@@ -128,7 +157,8 @@ export function ConnectedAppsCard() {
           <SubHeading>{group.toUpperCase()}</SubHeading>
           {list.is_admin && list.apps.some((a) => (a.category || 'Other') === group && a.provider === 'google' && a.available) && (
             <p className="-mt-1 mb-2 text-[12px] leading-relaxed text-fg-dim">
-              Google's app servers are in preview. Turn on each app's MCP API (for example "Gmail MCP API") in the Google Cloud project that owns <span className="font-mono">GOOGLE_CLIENT_ID</span>.
+              Google's app servers are in preview. Each app needs its MCP API (for example "Gmail MCP API") turned on in your Google Cloud project.{' '}
+              <button type="button" onClick={() => openGuide('google')} className="underline underline-offset-2 hover:text-fg">See the steps</button>
             </p>
           )}
           <Group>
@@ -151,9 +181,14 @@ export function ConnectedAppsCard() {
                     </div>
                     <div className="flex flex-none flex-wrap items-center gap-2">
                       {on && !stale ? (
-                        <button type="button" disabled={working} onClick={() => void run(app.id, () => disconnectApp(app.id))} className={quietButtonClass}>
-                          Disconnect
-                        </button>
+                        <>
+                          <button type="button" disabled={working} aria-label={`Test ${app.name}`} onClick={() => void test(app)} className={quietButtonClass}>
+                            Test
+                          </button>
+                          <button type="button" disabled={working} onClick={() => void run(app.id, () => disconnectApp(app.id))} className={quietButtonClass}>
+                            Disconnect
+                          </button>
+                        </>
                       ) : (
                         <>
                           {app.token_help && (
@@ -174,12 +209,43 @@ export function ConnectedAppsCard() {
                   </div>
                   {!app.available && list.is_admin && (
                     <p className="mt-2 text-[12px] leading-relaxed text-fg-dim">
-                      {app.setup}
-                      {app.provider && list.callback_urls[app.provider] && (
-                        <> Its redirect URI is <span className="break-all font-mono">{list.callback_urls[app.provider]}</span>.</>
-                      )}
+                      {app.provider ? (
+                        <>
+                          {PROVIDER_NAMES[app.provider]} sign-in isn't set up for this server yet.{' '}
+                          <button type="button" onClick={() => openGuide(app.provider as Provider)} className="underline underline-offset-2 hover:text-fg">
+                            Set up {PROVIDER_NAMES[app.provider]}
+                          </button>
+                        </>
+                      ) : app.setup}
                     </p>
                   )}
+                  {on && (app.options || []).map((option) => {
+                    const chosen = (conn.options || []).includes(option.id);
+                    const pending = chosen && !stale && (conn.pending_options || []).includes(option.id);
+                    return (
+                      <div key={option.id} className="mt-2.5 flex flex-wrap items-start gap-x-3 gap-y-1.5 pl-12 max-sm:pl-0">
+                        <label className="flex min-w-0 flex-1 basis-[220px] cursor-pointer items-start gap-2 text-[12.5px]">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 h-3.5 w-3.5 flex-none accent-[var(--accent)]"
+                            checked={chosen}
+                            disabled={working}
+                            onChange={(e) => void toggleOption(app, option.id, e.target.checked)}
+                          />
+                          <span>
+                            {option.label}
+                            <span className="block text-[12px] leading-snug text-fg-dim">{option.description}</span>
+                          </span>
+                        </label>
+                        {pending && (
+                          <button type="button" disabled={working} onClick={() => void connect(app)} className={buttonClass}>
+                            {working ? 'Waiting for sign-in…' : 'Reconnect to allow'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {results[app.id] && on && <CheckList result={results[app.id]} label={`${app.name} test`} />}
                   {tokenFor === app.id && (
                     <form onSubmit={saveToken(app)} className="mt-3 flex flex-wrap items-end gap-2" aria-label={`${app.name} token`}>
                       <div className="min-w-[220px] flex-1">
@@ -257,6 +323,10 @@ export function ConnectedAppsCard() {
         )}
         {errors.custom && <p role="alert" className="mt-2 text-[12px] text-danger-ink">{errors.custom}</p>}
       </section>
+
+      {list.composio && <ComposioSection state={list.composio} onChanged={load} />}
+
+      {list.is_admin && <AppSetupGuide open={guide} onOpen={setGuide} onChanged={load} />}
     </div>
   );
 }

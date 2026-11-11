@@ -71,6 +71,7 @@ async def _reconstruct_agent_mcp_tools(agent: Agent, names: set[str]) -> dict[st
     if not names or not getattr(agent, "mcp_servers", None):
         return {}
     try:
+        from cognitrix.mcp import apps
         from cognitrix.mcp.client import get_dynamic_client
         from cognitrix.mcp.registry import agent_servers, ensure_connected
         from cognitrix.mcp.tools import create_mcp_tool_wrapper
@@ -81,7 +82,7 @@ async def _reconstruct_agent_mcp_tools(agent: Agent, names: set[str]) -> dict[st
         for config in await agent_servers(agent):
             if not await ensure_connected(client, config):
                 continue
-            for tool_info in await client.list_tools(config.key) or []:
+            for tool_info in await apps.list_tools(client, config):
                 candidate = create_mcp_tool_wrapper(config.name, tool_info, config.key)
                 if candidate.name in names:
                     rebuilt[candidate.name] = candidate

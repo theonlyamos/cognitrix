@@ -65,6 +65,12 @@ PROVIDER_ENDPOINTS = {
         'authorize': 'https://github.com/login/oauth/authorize',
         'token': 'https://github.com/login/oauth/access_token',
     },
+    # User tokens for Slack's MCP server (docs.slack.dev/ai/slack-mcp-server).
+    'slack': {
+        'authorize': 'https://slack.com/oauth/v2_user/authorize',
+        'token': 'https://slack.com/api/oauth.v2.user.access',
+        'revoke': 'https://slack.com/api/auth.revoke',
+    },
 }
 
 MCP_PROTOCOL_VERSION = '2025-06-18'
@@ -355,7 +361,7 @@ async def start_sign_in(
         authorize, token_endpoint = endpoints['authorize'], endpoints['token']
         redirect = provider_callback_url(base_url, app.provider or '')
         client = {'client_id': creds[0], 'client_secret': creds[1], 'auth_method': 'client_secret_post'}
-        scope = ' '.join(app.scopes)
+        scope = ' '.join(catalog.scopes_for(app, row))
         resource = None
         params.update(app.extra_params)
         if app.provider == 'google' and getattr(row, 'account', None):
@@ -424,6 +430,39 @@ async def start_sign_in(
     return {'flow_id': flow.flow_id, 'authorize_url': f'{authorize}{separator}{urlencode(params)}'}
 
 
+def register_external_flow(flow_id: str, user_key: str, server_id: str, name: str, *, check: Any) -> None:
+    """Track a sign-in that finishes somewhere else (an app connected through Composio).
+
+    ``check(user_key, server_id)`` is awaited each time the UI polls while the
+    flow is pending and returns ``(status, error)``.
+    """
+    _prune()
+    _results[flow_id] = {'status': 'pending', 'error': None, 'user': str(user_key), 'server_id': server_id,
+                         'created': time.time(), 'check': check, 'app_name': name}
+
+
+async def poll_flow(flow_id: str, user_key: str | None = None) -> dict[str, Any] | None:
+    """``flow_status``, after asking an external sign-in how it is going.
+
+    ``user_key`` None is for the browser coming back from the sign-in: the
+    flow id is the only secret it has.
+    """
+    _prune()
+    result = _results.get(flow_id)
+    if result is None or (user_key is not None and result['user'] != str(user_key)):
+        return None
+    check = result.get('check')
+    if check is not None and result['status'] == 'pending':
+        try:
+            status, error = await check(result['user'], result['server_id'])
+        except Exception:
+            logger.exception('Could not check a pending app sign-in')
+            status, error = 'pending', None
+        result['status'], result['error'] = status, error
+    return {'status': result['status'], 'error': result['error'], 'server_id': result['server_id'],
+            'app_name': result.get('app_name') or ''}
+
+
 def flow_status(flow_id: str, user_key: str) -> dict[str, Any] | None:
     _prune()
     result = _results.get(flow_id)
@@ -460,7 +499,9 @@ def _tokens_from(data: dict[str, Any], previous: dict[str, Any] | None = None) -
         # Many servers only send a refresh token the first time.
         'refresh_token': data.get('refresh_token') or previous.get('refresh_token'),
         'expires_at': expires_at,
-        'scope': data.get('scope') or previous.get('scope'),
+        # Slack names the granted scopes under authed_user.
+        'scope': (data.get('scope') or (data.get('authed_user') or {}).get('scope')
+                  or previous.get('scope')),
         'token_type': data.get('token_type') or 'Bearer',
     }
 
@@ -475,6 +516,10 @@ async def _account_label(provider: str | None, access_token: str) -> str:
             if provider == 'github':
                 info = (await client.get('https://api.github.com/user')).json()
                 return str(info.get('login') or '')
+            if provider == 'slack':
+                info = (await client.post('https://slack.com/api/auth.test')).json()
+                user, team = str(info.get('user') or ''), str(info.get('team') or '')
+                return f'{user} in {team}' if user and team else user or team
     except (httpx.HTTPError, ValueError, AttributeError):
         pass
     return ''
@@ -618,6 +663,14 @@ async def _refresh(row: Any, data: dict[str, Any]) -> dict[str, Any]:
     data = {**data, 'tokens': _tokens_from(payload, tokens)}
     await _save(str(row.id), data, status='connected')
     return data
+
+
+def granted_scopes(row: Any) -> set[str]:
+    """The scopes the app granted at the last sign-in (empty when it didn't say)."""
+    scope = (load(row).get('tokens') or {}).get('scope') or ''
+    if isinstance(scope, list):
+        return {str(s) for s in scope}
+    return {s for s in str(scope).replace(',', ' ').split() if s}
 
 
 def _stale(tokens: dict[str, Any]) -> bool:

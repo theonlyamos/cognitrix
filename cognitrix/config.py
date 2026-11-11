@@ -381,11 +381,16 @@ _USER_MIGRATION_COLUMNS = (
 
 _MCP_SERVER_MIGRATION_COLUMNS = (
     ('auth_type', 'TEXT'), ('catalog_id', 'TEXT'), ('oauth', 'TEXT'),
-    ('status', 'TEXT'), ('account', 'TEXT'),
+    ('status', 'TEXT'), ('account', 'TEXT'), ('options', 'TEXT'),
 )
 
 _NOTIFICATION_MIGRATION_COLUMNS = (
     ('link', 'TEXT'),
+)
+
+_TRIGGER_MIGRATION_COLUMNS = (
+    ('source_id', 'TEXT'), ('cursor', 'TEXT'), ('checked_at', 'TEXT'),
+    ('match', 'TEXT'), ('error', 'TEXT'),
 )
 
 _TEAM_MIGRATION_COLUMNS = (
@@ -653,6 +658,7 @@ async def _migrate_relational_task_schema(database) -> None:
         ('users', _USER_MIGRATION_COLUMNS),
         ('mcpservers', _MCP_SERVER_MIGRATION_COLUMNS),
         ('agentnotifications', _NOTIFICATION_MIGRATION_COLUMNS),
+        ('tasktriggers', _TRIGGER_MIGRATION_COLUMNS),
     ):
         for column, ctype in columns:
             clause = (
@@ -868,6 +874,7 @@ async def _ensure_schema():
         ('users', _USER_MIGRATION_COLUMNS),
         ('mcpservers', _MCP_SERVER_MIGRATION_COLUMNS),
         ('agentnotifications', _NOTIFICATION_MIGRATION_COLUMNS),
+        ('tasktriggers', _TRIGGER_MIGRATION_COLUMNS),
     ):
         try:
             cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')

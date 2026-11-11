@@ -86,7 +86,10 @@ async def _database_servers() -> list[MCPServerConfig]:
     except Exception:
         logger.exception("Could not read MCP servers from the database")
         return []
-    return [config_from_row(row) for row in rows]
+    from cognitrix.mcp import composio
+
+    # The row that only holds someone's Composio API key is not a server.
+    return [config_from_row(row) for row in rows if not composio.is_account(row)]
 
 
 def _file_servers() -> list[MCPServerConfig]:
@@ -168,6 +171,10 @@ def sign_in_message(name: str, reason: str = 'expired') -> str:
 
 async def prepare(client: Any, config: MCPServerConfig) -> str | None:
     """Connect to ``config`` if needed. None when ready, else why not (for the agent)."""
+    from cognitrix.mcp import composio
+
+    if composio.is_app(config):
+        return await composio.prepare(config)  # called over REST: nothing to connect
     if config.auth_type == 'oauth' and config.id:
         return await _prepare_oauth(client, config)
     if client.is_connected(config.key):
