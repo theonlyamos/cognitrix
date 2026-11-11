@@ -22,6 +22,8 @@ pub struct DesktopSettings {
     /// Set once the app has turned on "Launch at startup" by itself on its
     /// first run, so turning it off later sticks.
     pub autostart_initialized: bool,
+    /// Draw a pointer where agents click and type in other apps (overlay.rs).
+    pub agent_cursor: bool,
 }
 
 impl Default for DesktopSettings {
@@ -32,6 +34,7 @@ impl Default for DesktopSettings {
             working_folder: None,
             preferred_port: 48210,
             autostart_initialized: false,
+            agent_cursor: true,
         }
     }
 }

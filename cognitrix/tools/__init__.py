@@ -2,6 +2,17 @@ from cognitrix.tools.automation import notify_me, read_notes, schedule_next_chec
 from cognitrix.tools.base import Tool
 from cognitrix.tools.chat_history import read_chat, search_chats
 from cognitrix.tools.chats import check_chat, message_chat, start_chat
+from cognitrix.tools.computer import (
+    click_element,
+    click_in_window,
+    list_windows,
+    look_at_window,
+    open_app,
+    press_key_in_window,
+    scroll_window,
+    set_text,
+    type_in_window,
+)
 from cognitrix.tools.folders import request_folder
 from cognitrix.tools.http import http_request, list_credentials
 from cognitrix.tools.image import generate_image
@@ -74,4 +85,6 @@ __all__ = [
     'memory', 'search_chats', 'read_chat',
     'take_screenshot', 'text_input', 'key_press', 'hot_key',
     'mouse_click', 'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
+    'list_windows', 'open_app', 'look_at_window', 'click_element', 'set_text',
+    'click_in_window', 'type_in_window', 'press_key_in_window', 'scroll_window',
 ]

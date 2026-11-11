@@ -19,6 +19,8 @@ export interface DesktopSettings {
   close_to_tray: boolean;
   notify_desktop: boolean;
   start_with_windows: boolean;
+  /** Draw a pointer where agents click and type in other apps (desktop app 0.6+). */
+  agent_cursor?: boolean;
   working_folder: string;
   data_folder: string;
   quick_ask_shortcut: string;
@@ -62,7 +64,7 @@ export const desktop = {
   openFolder: (kind: 'logs' | 'data' | 'working') => invokeDesktop<void>('open_folder', { kind }),
   openExternal: (url: string) => invokeDesktop<void>('open_external', { url }),
   getSettings: () => invokeDesktop<DesktopSettings>('get_desktop_settings'),
-  setSettings: (patch: Partial<Pick<DesktopSettings, 'close_to_tray' | 'notify_desktop' | 'start_with_windows'>>) =>
+  setSettings: (patch: Partial<Pick<DesktopSettings, 'close_to_tray' | 'notify_desktop' | 'start_with_windows' | 'agent_cursor'>>) =>
     invokeDesktop<DesktopSettings>('set_desktop_settings', { patch }),
   pickWorkingFolder: () => invokeDesktop<string | null>('pick_working_folder'),
   /** Native notification; clicking it opens `path` in the main window.

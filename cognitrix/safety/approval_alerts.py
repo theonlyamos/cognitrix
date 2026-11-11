@@ -102,6 +102,7 @@ def public_item(request_id: str, entry: dict) -> dict[str, Any]:
         'risk_level': entry.get('risk_level') or '',
         'details': entry.get('details') or '',
         'full_shell': bool(entry.get('person_only')),
+        'app': entry.get('app') or '',
         'status': 'pending',
         'created_at': entry.get('created_at') or '',
         'task_title': '',

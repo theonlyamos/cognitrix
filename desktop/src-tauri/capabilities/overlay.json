@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "agent-cursor",
+  "description": "The agent cursor's Stop pill (stop.html, bundled with the app): it can only ask the app to stop the agent. The cursor window itself calls no commands.",
+  "windows": [
+    "agent-stop"
+  ],
+  "permissions": [
+    "allow-overlay-stop"
+  ]
+}

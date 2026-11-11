@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional, TypeAlias
 
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 from cognitrix.common.encoding import status_print
+from cognitrix.computer import apps as computer_apps
 from cognitrix.errors import ExecutionControlError
 from cognitrix.models import Agent, Message, Tool
 from cognitrix.models.tool import MCPTool
@@ -148,9 +149,24 @@ def _truncate_tool_result(content: str) -> str:
     )
 
 
+def _approval_owner(interface: str) -> str | None:
+    """The person whose saved answers apply to this turn (None = the CLI)."""
+    from cognitrix.safety.approval_gate import web_turn_ctx
+
+    owner = (web_turn_ctx.get(None) or {}).get('user_key')
+    if not owner and interface == 'task':
+        from cognitrix.tasks.approvals import task_turn_ctx
+
+        owner = (task_turn_ctx.get(None) or {}).get('user_id')
+    return str(owner) if owner else None
+
+
 _DESKTOP_TOOL_NAMES = frozenset({
     'take_screenshot', 'text_input', 'key_press', 'hot_key', 'mouse_click',
     'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
+    # background computer use (cognitrix/computer): one at a time, in order
+    'list_windows', 'open_app', 'look_at_window', 'click_element', 'set_text',
+    'click_in_window', 'type_in_window', 'press_key_in_window', 'scroll_window',
 })
 
 
@@ -614,12 +630,40 @@ class AgentManager:
                     )
                     continue
 
+                # Background computer use: the person's standing answer for
+                # the app the action is in ("always allow Notepad", "never
+                # in Outlook"). "Never" wins over every other setting.
+                app = computer_apps.app_of_call(assigned_tool.name, args)
+                if app:
+                    app_level = await computer_apps.level(_approval_owner(interface), app)
+                    if app_level == 'deny':
+                        results_by_index[i] = _tool_result_entry(
+                            tc_id,
+                            ToolOutcome.failure(
+                                'permission_denied',
+                                f"{OPERATION_BLOCKED_PREFIX}: the person set {computer_apps.app_label(app)} "
+                                "to never be used by agents. Don't try it again.",
+                                denied=True,
+                            ),
+                        )
+                        continue
+                    if decision.action == 'ask' and decision.source == 'policy':
+                        if app_level == 'allow':
+                            decision = ToolDecision(
+                                'run', risk, 'app',
+                                f"{computer_apps.app_label(app)} is always allowed for background actions")
+                        else:
+                            tool_call.app = app
+
                 # A full-shell Bash command runs only when a person approved
                 # it (now, or for this session), so the gate must ask them even
                 # when the chat's auto-approve is on.
                 full_shell = needs_person((assigned_tool, tool), args)
                 if full_shell and decision.action == 'run':
                     decision = ToolDecision('ask', risk, decision.source, decision.reason)
+                # So does anything that takes over the person's screen.
+                if decision.action == 'run' and 'screen_takeover' in (decision.risk.categories or []):
+                    decision = ToolDecision('ask', decision.risk, decision.source, decision.reason)
 
                 if decision.action == 'ask':
                     risk = decision.risk

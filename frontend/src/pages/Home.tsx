@@ -132,6 +132,10 @@ interface ApprovalRequest {
   details?: string;
   /** A full-shell command: the card offers "allow all commands in this chat". */
   full_shell?: boolean;
+  /** A background action in an app window: the card offers to stop asking about that app. */
+  app?: { key: string; label: string };
+  /** Takes over the screen: asked every time, so nothing to remember. */
+  always_ask?: boolean;
 }
 
 export default function Home() {
@@ -276,10 +280,10 @@ export default function Home() {
 
   useApprovalSeen(approvals);
 
-  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false) => {
+  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always') => {
     setApprovals((prev) => prev.filter((a) => a.request_id !== requestId));
     try {
-      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}) });
+      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}), ...(rememberApp ? { remember_app: rememberApp } : {}) });
     } catch {
       /* best-effort — the turn times out server-side if this never lands */
     }
@@ -1657,9 +1661,15 @@ export default function Home() {
               )}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <button onClick={() => respondApproval(a.request_id, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent-ink md:min-h-0">approve</button>
-                <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">approve for session</button>
+                {!a.always_ask && <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">approve for session</button>}
                 {a.full_shell && (
                   <button onClick={() => respondApproval(a.request_id, true, true, true)} title="Run every shell command in this chat without asking, until the app restarts" className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">allow all commands in this chat</button>
+                )}
+                {a.app && (
+                  <>
+                    <button onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={`Let agents click and type in ${a.app.label} in the background for the rest of this chat`} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">allow {a.app.label} in this chat</button>
+                    <button onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={`Never ask again before agents click and type in ${a.app.label} in the background. Change it in Settings, Agent access.`} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">always allow {a.app.label}</button>
+                  </>
                 )}
                 <button onClick={() => respondApproval(a.request_id, false)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:min-h-0">deny</button>
               </div>

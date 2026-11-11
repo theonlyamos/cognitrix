@@ -97,15 +97,22 @@ _KNOWN_LOW = frozenset({
     'memory', 'search_chats', 'read_chat',
     # asking the person a question, images, screenshots
     'ask_user', 'ask_question', 'generate_image', 'take_screenshot',
+    # background computer use: looking and scrolling
+    'list_windows', 'look_at_window', 'scroll_window',
     # background shells: reading output or stopping a shell the agent started
     'bash_output', 'kill_shell',
 })
 
 # Desktop control acts on the person's live screen, where a click can do
 # anything (including pressing "Send"), so it keeps asking.
+# Background window actions (cognitrix/computer) leave the person's screen
+# alone but can still press any button in any app, so they ask the same way.
 _DESKTOP_CONTROL = frozenset({
     'text_input', 'key_press', 'hot_key', 'mouse_click',
     'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
+    'click_element', 'set_text', 'click_in_window', 'type_in_window', 'press_key_in_window',
+    # open_app starts any program or script, like a shell command would
+    'open_app',
 })
 
 # Handing a job to a coding agent CLI (Claude Code, Codex, ...): it edits
@@ -124,6 +131,10 @@ _WRITE_TOOLS = frozenset({'write', 'write_file', 'overwrite_file'})
 
 # Giving an agent a folder (or write access to one) is the person's call.
 _FOLDER_REQUEST_TOOLS = frozenset({'request_folder'})
+
+
+def _truthy(value: Any) -> bool:
+    return value is True or str(value).strip().lower() in ('true', '1', 'yes')
 
 
 def _normalise(name: str) -> str:
@@ -277,6 +288,13 @@ class DestructiveOpDetector:
             return RiskAssessment(
                 RiskLevel.MEDIUM, ['folder_access'],
                 f"Wants {access} access to the folder '{params.get('path', '')}'",
+            )
+        if name in _DESKTOP_CONTROL and _truthy(params.get('use_screen')):
+            # Takes over the person's real mouse and keyboard for a moment.
+            # Never covered by a per-app "always allow".
+            return RiskAssessment(
+                RiskLevel.MEDIUM, ['desktop_control', 'screen_takeover'],
+                f"'{tool_name}' takes over your screen, mouse and keyboard for a moment",
             )
         if name in _DESKTOP_CONTROL:
             return RiskAssessment(

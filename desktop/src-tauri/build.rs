@@ -15,6 +15,7 @@ const COMMANDS: &[&str] = &[
     "desktop_notify",
     "show_main_window",
     "hide_quick_ask",
+    "overlay_stop",
     "get_saved_session",
     "save_session",
     "clear_session",

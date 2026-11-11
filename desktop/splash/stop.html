@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cognitrix agent</title>
+<style>
+  /* The agent cursor's Stop pill (src-tauri/src/overlay.rs). Clicking it doesn't
+     take focus from the app you're in. The app calls window.agentActive(a). */
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  body { font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif; display: flex; }
+  .pill { flex: 1; margin: 2px; display: flex; align-items: center; gap: 10px; padding: 0 6px 0 14px;
+          border-radius: 20px; background: #111315; border: 1px solid rgba(255, 255, 255, .12); color: #f4f4f2;
+          font-size: 13px; box-shadow: 0 4px 14px rgba(0, 0, 0, .45); user-select: none; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #c6f24e; flex: none; }
+  .text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  button { height: 30px; padding: 0 14px; border-radius: 15px; border: 0; background: #ff6b5e; color: #0b0c0e;
+           font: inherit; font-weight: 600; cursor: pointer; }
+  button:hover { background: #ff8a80; }
+  button:focus-visible { outline: 2px solid #f4f4f2; outline-offset: 2px; }
+  button:disabled { opacity: .6; cursor: default; }
+</style>
+</head>
+<body>
+<div class="pill" role="status">
+  <span class="dot" id="dot"></span>
+  <span class="text" id="text">An agent is using the computer</span>
+  <button type="button" id="stop">Stop</button>
+</div>
+<script>
+  let agentId = null;
+  const text = document.getElementById('text');
+  const dot = document.getElementById('dot');
+  const stop = document.getElementById('stop');
+
+  function colour(key) {
+    let h = 0;
+    for (const ch of String(key || 'agent')) h = (h * 31 + ch.codePointAt(0)) % 360;
+    return `hsl(${h} 85% 62%)`;
+  }
+
+  window.agentActive = function (a) {
+    agentId = a.agent_id || null;
+    dot.style.background = colour(a.agent_id || a.agent);
+    text.textContent = `${a.agent || 'An agent'} is using the computer`;
+    stop.disabled = false;
+    stop.textContent = 'Stop';
+  };
+
+  stop.addEventListener('click', async () => {
+    stop.disabled = true;
+    stop.textContent = 'Stopping…';
+    try {
+      await window.__TAURI_INTERNALS__.invoke('overlay_stop', { agentId });
+    } catch (e) {
+      stop.disabled = false;
+      stop.textContent = 'Stop';
+      text.textContent = "Couldn't stop it: " + e;
+    }
+  });
+</script>
+</body>
+</html>
