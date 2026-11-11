@@ -130,6 +130,7 @@ async def new_mail(token: str, cursor: str | None, match: str = '') -> tuple[str
         ids: list[str] = []
         unlabelled: set[str] = set()  # Gmail may list a message without its labels
         latest = cursor
+        last_read = cursor  # the last history record actually read
         page: str | None = None
         for _ in range(MAX_HISTORY_PAGES):
             params: dict[str, Any] = {
@@ -144,6 +145,7 @@ async def new_mail(token: str, cursor: str | None, match: str = '') -> tuple[str
                 raise _refused(status, data)
             latest = str(data.get('historyId') or latest)
             for record in data.get('history') or []:
+                last_read = str(record.get('id') or last_read)
                 for added in record.get('messagesAdded') or []:
                     message = added.get('message') or {}
                     message_id = str(message.get('id') or '')
@@ -157,6 +159,9 @@ async def new_mail(token: str, cursor: str | None, match: str = '') -> tuple[str
             page = data.get('nextPageToken')
             if not page:
                 break
+        if page:
+            # More than we read in one go: carry on from here next time, not from now.
+            latest = last_read
 
         mails: list[dict[str, str]] = []
         skipped = 0

@@ -681,7 +681,10 @@ def _gmail_web(monkeypatch):
         if box['history_status'] != 200:
             return httpx.Response(box['history_status'], json={'error': {'message': 'gone'}})
         assert request.url.params['labelId'] == 'INBOX'
-        return httpx.Response(200, json={'history': box['history'], 'historyId': box['history_id']})
+        body = {'history': box['history'], 'historyId': box['history_id']}
+        if box.get('next_page'):
+            body['nextPageToken'] = box['next_page']
+        return httpx.Response(200, json=body)
 
     web.on('GET', f'{GMAIL}/history', history)
     return web, box
@@ -813,9 +816,19 @@ async def test_mail_check_problems_are_shown_to_the_owner(db, monkeypatch):
     event = (await TriggerEvent.find({'task_id': task.id}))[0]
     assert [m['id'] for m in json.loads(event.payload)['new_messages']] == ['bare-in']
 
+    # A backlog longer than one check reads: the place kept is the last record read, not "now".
+    box['history'] = [{'id': '640', 'messagesAdded': []}]
+    box['history_id'] = '900'
+    box['next_page'] = 'more'
+    assert await poll_mail_triggers(NOW + timedelta(minutes=15)) == 0
+    assert (await TaskTrigger.get(made['id'])).cursor == '640'
+    box['next_page'] = None
+    assert await poll_mail_triggers(NOW + timedelta(minutes=18)) == 0
+    assert (await TaskTrigger.get(made['id'])).cursor == '900'
+
     # A deleted task's trigger is turned off instead of reading mail for nothing.
     await Task.update_one({'id': task.id}, {'deleted_at': '2030-06-01 12:00:00'})
     asked = len(web.made('GET', f'{GMAIL}/history'))
-    assert await poll_mail_triggers(NOW + timedelta(minutes=15)) == 0
+    assert await poll_mail_triggers(NOW + timedelta(minutes=21)) == 0
     assert len(web.made('GET', f'{GMAIL}/history')) == asked
     assert (await TaskTrigger.get(made['id'])).enabled is False
