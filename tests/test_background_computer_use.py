@@ -370,3 +370,19 @@ def test_linux_reads_shortcuts_from_accessibility_key_bindings():
     assert _accelerator('<Primary><Shift>b') == 'ctrl+shift+b'
     assert _accelerator('<Alt>F4') == 'alt+f4'
     assert _accelerator('n') == '' and _accelerator('') == ''
+
+
+def test_mac_backend_is_off_until_switched_on(monkeypatch):
+    monkeypatch.setattr(computer.sys, 'platform', 'darwin')
+    monkeypatch.setattr(computer, '_driver', None)
+    monkeypatch.delenv('COGNITRIX_MAC_BACKGROUND', raising=False)
+    with pytest.raises(computer.Unsupported):
+        computer.get_driver()
+
+
+def test_mac_menu_shortcuts():
+    from cognitrix.computer.macos import _menu_shortcut
+    assert _menu_shortcut('S', 0) == 'cmd+s'
+    assert _menu_shortcut('S', 1) == 'cmd+shift+s'
+    assert _menu_shortcut('F', 4) == 'ctrl+cmd+f'
+    assert _menu_shortcut('T', 8) == '' and _menu_shortcut(None, 0) == ''

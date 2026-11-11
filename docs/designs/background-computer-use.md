@@ -4,9 +4,10 @@ Agents can work in app windows **without taking over the person's screen**: no
 mouse movement, no keyboard input to whatever the person is typing in, and the
 foreground window stays where it is. The driver lives in `cognitrix/computer/`
 (platform-neutral logic in `__init__.py`, one backend per system: `windows.py`,
-`linux.py`); the agent tools are in `cognitrix/tools/computer.py`.
+`linux.py`, `macos.py`); the agent tools are in `cognitrix/tools/computer.py`.
 
-Windows and Linux (X11 sessions) are supported. Elsewhere the tools say so and the
+Windows and Linux (X11 sessions) are supported, macOS is experimental and off by
+default. Elsewhere the tools say so and the
 full-screen tools (`take_screenshot`, `mouse_click`, `text_input`, ...) still work.
 Most of this page describes Windows; see [Linux](#linux) for what differs.
 
@@ -164,6 +165,16 @@ Live test (opens GTK's widget demo; works on a virtual display):
 ```sh
 COGNITRIX_LIVE_DESKTOP=1 pytest tests/test_background_computer_use_linux_live.py
 ```
+
+## macOS (experimental)
+
+`cognitrix/computer/macos.py` is written from Apple's documentation and **has
+not been run on a Mac yet**, so it stays off until `COGNITRIX_MAC_BACKGROUND=1`
+is set. It reads and uses controls and menu-bar items through the Accessibility
+API, captures one window (also when covered), and sends clicks and keys to one
+app with `CGEventPostToPid`, which leaves the real pointer alone. It needs the
+Accessibility permission, and Screen Recording for pictures. Treat the first
+run on a Mac as a test run.
 
 ## Running the live tests
 
