@@ -203,8 +203,10 @@ async def test_setup_guide_is_for_admins_and_fills_in_this_server(db):
     assert manifest['oauth_config']['redirect_urls'] == [slack['redirect_uri']]
     assert 'chat:write' in manifest['oauth_config']['scopes']['user']
     copies = [s['copy']['text'] for s in by_id['google']['steps'] if s.get('copy')]
-    assert any('gmailmcp.googleapis.com' in text.split() for text in copies)  # the gcloud command
-    assert any('https://www.googleapis.com/auth/calendar.events' in text.splitlines() for text in copies)
+    from cognitrix.mcp import setup as app_setup
+    words = {w for text in copies for w in text.split()}
+    assert set(app_setup.GOOGLE_APIS) <= words  # the gcloud command names every API
+    assert set(app_setup.all_scopes('google')) <= words and any(w.endswith('/calendar.events') for w in words)
     # Slack won't take a plain http address; Google only for localhost.
     local = await connected_apps.app_setup_guide(_request('http://127.0.0.1:48210'), _ctx(admin))
     problems = {p['id']: p['redirect_problem'] for p in local['providers']}
