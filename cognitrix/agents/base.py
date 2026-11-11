@@ -661,6 +661,9 @@ class AgentManager:
                 full_shell = needs_person((assigned_tool, tool), args)
                 if full_shell and decision.action == 'run':
                     decision = ToolDecision('ask', risk, decision.source, decision.reason)
+                # So does anything that takes over the person's screen.
+                if decision.action == 'run' and 'screen_takeover' in (decision.risk.categories or []):
+                    decision = ToolDecision('ask', decision.risk, decision.source, decision.reason)
 
                 if decision.action == 'ask':
                     risk = decision.risk

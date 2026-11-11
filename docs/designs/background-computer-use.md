@@ -39,6 +39,10 @@ Settings > Agent access > Apps agents can use, where each app is Always allow,
 Ask or Never. "Never" refuses the action without asking. The CLI prompt has
 the same choice (`a`).
 
+An action with `use_screen=true` takes over the real mouse and keyboard for a
+moment, so it is asked every time: no "approve for session", saved answer,
+chat auto-approve or reviewer stands in for the person.
+
 An app answer never covers `open_app`, an action that takes over the screen,
 or an agent whose own level or tool setting says to ask or block. Code:
 `cognitrix/computer/apps.py`, `GET`/`PUT /computer/apps`.
