@@ -602,9 +602,12 @@ class Session(Model):
         # system prompt for this turn (skills/personal.py).
         if owner:
             try:
+                from cognitrix.safety.permissions import guest_run
                 from cognitrix.skills import personal
 
-                personal.personal_skills_ctx.set(await personal.summaries(str(owner)))
+                # Not for a guest: someone else asking in a shared channel.
+                personal.personal_skills_ctx.set(
+                    [] if guest_run.get() else await personal.summaries(str(owner)))
             except Exception:
                 logger.debug('Personal skills unavailable', exc_info=True)
 

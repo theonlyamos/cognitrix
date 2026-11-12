@@ -52,11 +52,13 @@ async def load_skill(skill_name: str, context: str = "same") -> str:
     manifest = None
     own_names: list[str] = []
     try:
+        from cognitrix.safety.permissions import guest_run
         from cognitrix.skills import personal
         from cognitrix.tools.utils import current_execution_context
 
-        owner = current_execution_context().user_id
-        own = await personal.get(owner, skill_name)
+        # A guest (someone else asking in a shared channel) only gets shared skills.
+        owner = None if guest_run.get() else current_execution_context().user_id
+        own = await personal.get(owner, skill_name) if owner else None
         if own is not None:
             manifest = personal.manifest_of(own)
         else:

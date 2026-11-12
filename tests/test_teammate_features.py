@@ -483,6 +483,15 @@ async def test_personal_skills_are_loaded_only_by_their_owner(db, skills):
     assert BODY in await load('u2')
     assert 'not found' in await load('u1')
 
+    # A guest in a shared channel runs as the owner, but never gets the owner's own skills.
+    from cognitrix.safety.permissions import guest_run
+
+    token = guest_run.set(True)
+    try:
+        assert (await load('u2')).endswith('not found. Available skills: []')
+    finally:
+        guest_run.reset(token)
+
     # someone else's skill can't be read, changed, deleted or shared
     for call in (skill_routes.delete_my_skill, skill_routes.share_my_skill):
         with pytest.raises(HTTPException) as exc:
