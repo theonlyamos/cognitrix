@@ -1,6 +1,7 @@
 """Sharing an agent with roles, chat app mentions (Slack channels, Microsoft
 Teams), and meeting notes from recordings."""
 
+import asyncio
 import json
 import time
 from types import SimpleNamespace
@@ -801,3 +802,37 @@ async def test_whatsapp_settings_webhook_handshake_and_closed_window(db, monkeyp
     assert await service.deliver_once() == 1 and await service.deliver_once() == 0
     assert len(transport.sent) == 1 and len(await ChannelDelivery.find({'channel_id': row.id})) == 1
     assert channel_service.WEBHOOK_KINDS == ('teams', 'whatsapp')
+
+
+async def test_a_guest_cannot_answer_a_question_from_the_owners_turn(db, monkeypatch):
+    from cognitrix.channels.base import Incoming
+    from cognitrix.questions import broker
+
+    row, service, transport, sessions = await _mention_rig(answer_others=True)
+    key = f'{row.id}|C9|13.1'
+    answered = []
+
+    async def resolve(request_id, user_key, action, **kw):
+        answered.append((request_id, kw.get('text')))
+        return True
+
+    monkeypatch.setattr(broker, 'resolve_question', resolve)
+    hold = asyncio.Event()
+
+    async def running():
+        await hold.wait()
+
+    service._turns[key] = asyncio.create_task(running())
+    service._questions[key] = 'q1'  # asked by the owner's own turn
+    await service._on_message(row.id, Incoming('C9', 'UOTHER', 'Kofi', 'yes, delete it all', False, True, '13.1'))
+    assert answered == [] and 'Still working' in transport.sent[-1][2]
+    await service._on_message(row.id, Incoming('C9', 'UOWNER', 'Ama', 'no, keep it', False, True, '13.1'))
+    assert answered == [('q1', 'no, keep it')]
+
+    # A question from a guest's own (read-only) turn can be answered by a guest.
+    service._questions[key] = 'q2'
+    service._guest_turns.add(key)
+    await service._on_message(row.id, Incoming('C9', 'UOTHER', 'Kofi', 'the second one', False, True, '13.1'))
+    assert answered[-1] == ('q2', 'the second one')
+    hold.set()
+    await service._turns[key]

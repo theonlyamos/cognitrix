@@ -141,6 +141,8 @@ class ChannelService:
         self._turns: dict[str, asyncio.Task] = {}
         self._questions: dict[str, str] = {}
         """channel id -> request id of an Ask User question waiting for a reply."""
+        self._guest_turns: set[str] = set()
+        """Thread keys whose running turn was started by someone other than the linked person."""
         self._button_text: dict[tuple[str, str, str], str] = {}
         """(channel id, chat id, message ref) -> text of a message with buttons."""
         self._link_failures: dict[str, int] = {}
@@ -390,7 +392,9 @@ class ChannelService:
                 turn.cancel()
             return
         pending = self._questions.get(key)
-        if pending:
+        # A question from the person's own turn is theirs to answer: a guest's
+        # words must never steer a turn that has the person's full powers.
+        if pending and (not guest or key in self._guest_turns):
             from cognitrix.questions.broker import resolve_question
             from cognitrix.questions.models import QuestionAction
 
@@ -596,6 +600,7 @@ class ChannelService:
                 # These context variables live in this turn's own task.
                 read_only_run.set(GUEST_REASON)
                 guest_run.set(True)
+                self._guest_turns.add(key)
                 text = (f'[{sender_name or "Someone"} asked this in a shared {channel.kind.capitalize()} channel. '
                         f'They are not {person}. Answer from what you can look up; you cannot change anything '
                         f'for them, and do not share private details about {person}.]\n\n{text}')
@@ -705,6 +710,7 @@ class ChannelService:
             question_turn_ctx.reset(question_token)
             typing.cancel()
             self._questions.pop(key, None)
+            self._guest_turns.discard(key)
             run.finish(terminal)
             try:
                 await flush()
