@@ -9,7 +9,14 @@ Admins are the users listed in COGNITRIX_ADMIN_EMAILS (comma-separated). When
 that is unset, the first user who signed up is the admin, so a single-user
 install keeps working without extra setup.
 
-Tasks and teams follow the same rules through their own owner_id field.
+An owner can share an agent with other people on the server
+(``Agent.shared_with``: user key, or ``*`` for everyone, to a role). "use"
+lets them see it and chat with it; "edit" also lets them change its
+instructions, model, tools and approval rules. Only the owner manages
+sharing, connections, folders, check-ins and deletion. Whoever chats with a
+shared agent uses the apps and model key its owner connected to it.
+
+Tasks and teams follow the ownership rules through their own owner_id field.
 """
 from __future__ import annotations
 
@@ -31,9 +38,36 @@ def is_shared(agent: Any) -> bool:
     return not _owner(agent)
 
 
+EVERYONE = '*'
+ROLE_USE = 'use'
+ROLE_EDIT = 'edit'
+SHARE_ROLES = (ROLE_USE, ROLE_EDIT)
+
+
+def shares(agent: Any) -> dict[str, str]:
+    """Who an agent is shared with: user key (or ``*``) to role."""
+    raw = getattr(agent, 'shared_with', None)
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items() if str(v) in SHARE_ROLES and str(k)}
+
+
+def share_role(agent: Any, user_key: str | None) -> str | None:
+    """The role sharing gives this person on the agent, or None."""
+    if not user_key:
+        return None
+    given = shares(agent)
+    roles = {given.get(str(user_key)), given.get(EVERYONE)}
+    if ROLE_EDIT in roles:
+        return ROLE_EDIT
+    return ROLE_USE if ROLE_USE in roles else None
+
+
 def can_view(agent: Any, user_key: str | None) -> bool:
     owner = _owner(agent)
-    return not owner or (user_key is not None and owner == user_key)
+    if not owner or (user_key is not None and owner == user_key):
+        return True
+    return share_role(agent, user_key) is not None
 
 
 async def is_admin(user: Any) -> bool:
@@ -65,11 +99,25 @@ async def is_admin(user: Any) -> bool:
     return owner_key(first) == owner_key(user)
 
 
-async def can_edit(agent: Any, user: Any) -> bool:
+async def can_manage(agent: Any, user: Any) -> bool:
+    """Owner-level control: sharing, connections, folders, check-ins, deleting."""
     owner = _owner(agent)
     if owner:
         return owner == owner_key(user)
     return await is_admin(user)
+
+
+async def can_edit(agent: Any, user: Any) -> bool:
+    if await can_manage(agent, user):
+        return True
+    return bool(_owner(agent)) and share_role(agent, owner_key(user)) == ROLE_EDIT
+
+
+async def my_role(agent: Any, user: Any) -> str:
+    """'owner', 'edit' or 'use': what this person may do with an agent they can see."""
+    if await can_manage(agent, user):
+        return 'owner'
+    return ROLE_EDIT if await can_edit(agent, user) else ROLE_USE
 
 
 async def visible_agents(user_key: str | None) -> list:

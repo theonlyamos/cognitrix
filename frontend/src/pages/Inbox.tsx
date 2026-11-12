@@ -328,7 +328,7 @@ function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () 
   const [name, setName] = useState(item.name);
   const [description, setDescription] = useState(item.description);
   const [body, setBody] = useState(item.body);
-  const [busy, setBusy] = useState<'approve' | 'reject' | 'save' | null>(null);
+  const [busy, setBusy] = useState<'approve' | 'share' | 'reject' | 'save' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const edited = name !== item.name || description !== item.description || body !== item.body;
@@ -337,7 +337,7 @@ function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () 
     await api.patch(`/skill-drafts/${item.id}`, { name, description, body });
   };
 
-  const run = async (action: 'approve' | 'reject' | 'save') => {
+  const run = async (action: 'approve' | 'share' | 'reject' | 'save') => {
     setBusy(action);
     setError(null);
     setSaved(false);
@@ -348,7 +348,8 @@ function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () 
         setBusy(null);
         return;
       }
-      await api.post(`/skill-drafts/${item.id}/${action}`);
+      if (action === 'reject') await api.post(`/skill-drafts/${item.id}/reject`);
+      else await api.post(`/skill-drafts/${item.id}/approve`, { everyone: action === 'share' });
       onDone();
     } catch (err) {
       setError(errorMessage(err, 'Could not save that.'));
@@ -364,7 +365,7 @@ function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () 
         <div className="mt-1 font-mono text-[12px] text-fg-dim">{itemSource(item)}</div>
         <h2 className="mt-2 text-[20px] font-semibold leading-snug">Save “{item.name}” as a skill?</h2>
         <p className="mt-2 text-[13.5px] leading-relaxed text-fg-dim">
-          A skill is a set of instructions your agents can load when a job like this comes up again. Read it, fix anything that's off, then approve it. Until then nothing uses it.
+          A skill is a set of instructions your agents can load when a job like this comes up again. Read it, fix anything that's off, then save it. Until then nothing uses it.
         </p>
       </div>
       <label className="flex flex-col gap-1.5 text-[13px] font-medium">
@@ -382,10 +383,14 @@ function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () 
       </label>
       {error && <p role="alert" className="text-[13px] text-danger-ink">{error}</p>}
       <div className="flex flex-wrap items-center gap-2">
-        {item.can_approve && (
-          <button type="button" disabled={busy !== null} onClick={() => void run('approve')}
-            className="h-10 rounded-[9px] bg-accent px-5 text-[13.5px] font-semibold text-accent-foreground disabled:opacity-60">
-            {busy === 'approve' ? 'Saving…' : 'Approve and save skill'}
+        <button type="button" disabled={busy !== null} onClick={() => void run('approve')}
+          className="h-10 rounded-[9px] bg-accent px-5 text-[13.5px] font-semibold text-accent-foreground disabled:opacity-60">
+          {busy === 'approve' ? 'Saving…' : 'Save to my skills'}
+        </button>
+        {item.can_share && (
+          <button type="button" disabled={busy !== null} onClick={() => void run('share')}
+            className="h-10 rounded-[9px] border border-line px-5 text-[13.5px] disabled:opacity-60">
+            {busy === 'share' ? 'Saving…' : 'Save for everyone'}
           </button>
         )}
         {edited && (
@@ -404,11 +409,11 @@ function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () 
           <Link to={`/home?chat=${encodeURIComponent(item.session_id)}`} className="text-[13px] text-accent-ink hover:underline">Open the chat it came from</Link>
         )}
       </div>
-      {!item.can_approve && (
-        <p className="text-[12.5px] leading-relaxed text-fg-dim">
-          Skills are shared by every agent on this server, so an admin has to approve this one. They see it in their inbox too.
-        </p>
-      )}
+      <p className="text-[12.5px] leading-relaxed text-fg-dim">
+        Your own skills are only used in your chats and tasks. {item.can_share
+          ? 'Saving for everyone lets every agent on this server load it.'
+          : 'An admin can share a skill with everyone on this server.'} Manage them in <Link to="/settings/skills" className="text-accent-ink hover:underline">Settings › Skills</Link>.
+      </p>
     </div>
   );
 }

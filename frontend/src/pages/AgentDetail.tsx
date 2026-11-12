@@ -8,6 +8,7 @@ import { PROVIDER_LABELS } from '@/lib/providers';
 import { cn } from '@/lib/utils';
 import {
   TABS,
+  tabsFor,
   draftFrom,
   draftProblem,
   handleFor,
@@ -30,6 +31,7 @@ import FoldersTab from '@/components/agent/FoldersTab';
 import ConnectionsTab from '@/components/agent/ConnectionsTab';
 import TasksTab from '@/components/agent/TasksTab';
 import TeamsTab from '@/components/agent/TeamsTab';
+import SharingTab from '@/components/agent/SharingTab';
 
 const TAB_VIEWS: Record<TabId, (props: TabProps) => JSX.Element> = {
   overview: OverviewTab,
@@ -40,6 +42,7 @@ const TAB_VIEWS: Record<TabId, (props: TabProps) => JSX.Element> = {
   connections: ConnectionsTab,
   tasks: TasksTab,
   teams: TeamsTab,
+  sharing: SharingTab,
 };
 
 const isTab = (value: string | undefined): value is TabId => TABS.some((t) => t.id === value);
@@ -92,7 +95,9 @@ export default function AgentDetail() {
   }, [tabParam, ready]);
 
   if (tabParam === 'edit') return <Navigate to={`/agents/${agentId}/general`} replace />;
-  const tab: TabId = isTab(tabParam) ? tabParam : 'overview';
+  const role = agent?.my_role || 'owner';
+  const tabs = tabsFor(role);
+  const tab: TabId = isTab(tabParam) && tabs.some((t) => t.id === tabParam) ? tabParam : 'overview';
   const goTo = (next: TabId) => navigate(next === 'overview' ? `/agents/${agentId}` : `/agents/${agentId}/${next}`);
 
   const save = async () => {
@@ -143,8 +148,8 @@ export default function AgentDetail() {
     const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
     if (!step && e.key !== 'Home' && e.key !== 'End') return;
     e.preventDefault();
-    const nextIndex = e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : (index + step + TABS.length) % TABS.length;
-    const next = TABS[nextIndex].id;
+    const nextIndex = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (index + step + tabs.length) % tabs.length;
+    const next = tabs[nextIndex].id;
     goTo(next);
     tabRefs.current[next]?.focus();
   };
@@ -162,7 +167,7 @@ export default function AgentDetail() {
 
   const mobileActions: MobileHeaderAction[] = [
     { key: 'task', label: 'New task', to: `/tasks/new?agentId=${encodeURIComponent(agent.id)}` },
-    { key: 'delete', label: 'Delete agent', destructive: true, onSelect: remove },
+    ...(role === 'owner' ? [{ key: 'delete', label: 'Delete agent', destructive: true, onSelect: remove }] : []),
   ];
   const running = overview?.stats.running_chats || 0;
   const View = TAB_VIEWS[tab];
@@ -212,9 +217,18 @@ export default function AgentDetail() {
               {agent.description && <p className="mt-1 text-[13.5px] text-fg-dim">{agent.description}</p>}
             </div>
           </div>
+          {role !== 'owner' && (
+            <p role="note" className="mt-4 rounded-md border border-line bg-panel px-3.5 py-2.5 text-[13px] leading-relaxed text-fg-dim">
+              <strong className="font-medium text-fg">Shared with you.</strong>{' '}
+              {role === 'edit'
+                ? 'You can chat with this agent and change its instructions, model, tools and approval rules.'
+                : 'You can chat with this agent and give it tasks, but not change it.'}{' '}
+              It uses the model key and apps its owner connected. Your chats with it stay yours.
+            </p>
+          )}
 
           <div role="tablist" aria-label="Agent sections" className="-mx-4 mt-5 flex gap-1 overflow-x-auto border-b border-line px-4 md:mx-0 md:px-0">
-            {TABS.map((t, i) => (
+            {tabs.map((t, i) => (
               <button
                 key={t.id}
                 ref={(el) => { tabRefs.current[t.id] = el; }}

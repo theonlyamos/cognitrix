@@ -30,8 +30,12 @@ async def _agent(agent_id: str, ctx: AuthContext, *, edit: bool = False):
     agent = await agent_access.find_visible_agent(_me(ctx), agent_id=agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail='Agent not found')
-    if edit and not await agent_access.can_edit(agent, ctx.user):
-        raise HTTPException(status_code=403, detail='Only an admin can change a shared agent')
+    if edit and not await agent_access.can_manage(agent, ctx.user):
+        # Check-ins run as the agent's owner, so only the owner sets them up.
+        raise HTTPException(
+            status_code=403,
+            detail="Only this agent's owner can change its check-ins" if agent.owner_id
+            else 'Only an admin can change a shared agent')
     return agent
 
 
@@ -84,7 +88,9 @@ async def _standing_view(agent: Any, ctx: AuthContext) -> dict[str, Any]:
 
 @assistant_api.get('/agents/{agent_id}/standing')
 async def get_standing(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
-    return await _standing_view(await _agent(agent_id, ctx), ctx)
+    agent = await _agent(agent_id, ctx)
+    # A brief and its notes are the owner's; sharing the agent doesn't show them.
+    return await _standing_view(await _agent(agent_id, ctx, edit=True) if agent.owner_id else agent, ctx)
 
 
 class StandingBody(BaseModel):
@@ -257,15 +263,17 @@ async def dismiss_offer(offer_id: str, ctx: AuthContext = Depends(get_auth_conte
 async def _draft_view(row: drafts.SkillDraft, ctx: AuthContext, admin: bool) -> dict[str, Any]:
     data = drafts.public_draft(row)
     data['mine'] = str(row.user_id) == _me(ctx)
-    data['can_approve'] = admin
+    data['can_approve'] = True
+    # Saving for everyone writes a shared skill, which only an admin may do.
+    data['can_share'] = admin
     return data
 
 
 @assistant_api.get('/skill-drafts')
 async def list_drafts(ctx: AuthContext = Depends(get_auth_context)):
-    """My drafts waiting for review; an admin also sees everyone's."""
+    """My skill drafts waiting for review."""
     admin = await agent_access.is_admin(ctx.user)
-    rows = await drafts.drafts_of(None if admin else _me(ctx))
+    rows = await drafts.drafts_of(_me(ctx))
     rows.sort(key=lambda row: str(row.json().get('created_at') or ''), reverse=True)
     return [await _draft_view(row, ctx, admin) for row in rows]
 
@@ -287,7 +295,9 @@ async def draft_from_chat(body: DraftFromChat, ctx: AuthContext = Depends(get_au
         raise HTTPException(status_code=409, detail="This chat's agent no longer exists")
     try:
         name, description, text = await drafts.draft_from_chat(agent.llm, session.chat)
-        if await drafts.skill_exists(name):
+        from cognitrix.skills import personal
+
+        if await personal.name_taken(_me(ctx), name):
             name = drafts.slug(f'{name}-{str(session.id)[:4]}')
         row = await drafts.create_draft(
             _me(ctx), name, description, text,
@@ -306,7 +316,7 @@ async def draft_from_chat(body: DraftFromChat, ctx: AuthContext = Depends(get_au
 async def _draft(draft_id: str, ctx: AuthContext) -> tuple[drafts.SkillDraft, bool]:
     row = await drafts.SkillDraft.get(draft_id)
     admin = await agent_access.is_admin(ctx.user)
-    if row is None or not (admin or str(row.user_id) == _me(ctx)):
+    if row is None or str(row.user_id) != _me(ctx):
         raise HTTPException(status_code=404, detail='Draft not found')
     if row.status != drafts.PENDING:
         raise HTTPException(status_code=409, detail='This draft was already reviewed')
@@ -337,20 +347,26 @@ async def edit_draft(draft_id: str, body: DraftEdit, ctx: AuthContext = Depends(
     return await _draft_view(row, ctx, admin)
 
 
+class DraftApproval(BaseModel):
+    everyone: bool = False
+    """Save as a shared skill every agent on the server can load (admins only)."""
+
+
 @assistant_api.post('/skill-drafts/{draft_id}/approve')
-async def approve_draft(draft_id: str, ctx: AuthContext = Depends(get_auth_context)):
+async def approve_draft(draft_id: str, body: DraftApproval | None = None,
+                        ctx: AuthContext = Depends(get_auth_context)):
     row, admin = await _draft(draft_id, ctx)
-    if not admin:
-        # Skills are used by every agent on this server.
-        raise HTTPException(status_code=403, detail='Only an admin can add skills. Ask one to review this draft.')
+    everyone = bool(body and body.everyone)
+    if everyone and not admin:
+        raise HTTPException(status_code=403, detail='Only an admin can save a skill for everyone.')
     try:
-        manifest = await drafts.approve(row, _me(ctx))
+        saved = await drafts.approve(row, _me(ctx), everyone=everyone)
     except drafts.DraftError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except Exception as exc:
         logger.exception('Could not save skill %s', row.name)
         raise HTTPException(status_code=422, detail=f"Couldn't save the skill: {exc}") from None
-    return {'status': drafts.APPROVED, 'name': manifest.name}
+    return {'status': drafts.APPROVED, 'name': saved.name, 'scope': 'everyone' if everyone else 'mine'}
 
 
 @assistant_api.post('/skill-drafts/{draft_id}/reject')

@@ -1,7 +1,7 @@
 """Shared types for chat app transports.
 
 A transport owns the connection to one bot (Telegram long polling, Slack
-Socket Mode). It turns what arrives into ``Incoming`` / ``ButtonPress`` and
+Socket Mode; Teams calls the engine instead). It turns what arrives into ``Incoming`` / ``ButtonPress`` and
 hands them to the service; the service answers through ``send`` / ``edit``.
 Neither side needs a public URL, so this works from the desktop app too.
 """
@@ -19,6 +19,11 @@ class ChannelConflictError(RuntimeError):
     """Another program is reading this bot's messages."""
 
 
+class ChannelUndeliverable(RuntimeError):
+    """The app won't deliver this message, and trying again won't help
+    (WhatsApp outside its 24 hour reply window)."""
+
+
 @dataclass(frozen=True)
 class Button:
     label: str
@@ -34,6 +39,10 @@ class Incoming:
     sender_name: str
     text: str
     private: bool = True
+    mention: bool = False
+    """The bot was @mentioned in a shared channel or group chat."""
+    thread_id: str = ''
+    """The thread to answer in, for apps where a channel id alone isn't one."""
 
 
 @dataclass(frozen=True)
@@ -75,8 +84,11 @@ class Transport:
         """Receive messages until cancelled. Raises on fatal errors."""
         raise NotImplementedError
 
-    async def send(self, chat_id: str, text: str, buttons: list[Button] | None = None) -> str:
-        """Send Markdown text; returns a reference ``edit`` accepts."""
+    async def send(self, chat_id: str, text: str, buttons: list[Button] | None = None,
+                   thread_id: str = '') -> str:
+        """Send Markdown text; returns a reference ``edit`` accepts.
+
+        ``thread_id`` puts the message in a thread, where the app has them."""
         raise NotImplementedError
 
     async def edit(self, chat_id: str, message_ref: str, text: str) -> None:

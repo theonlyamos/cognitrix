@@ -4,6 +4,7 @@ passwords and saved sign-ins are never part of it. Browser sessions only.
 """
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
@@ -12,6 +13,8 @@ from fastapi.responses import JSONResponse
 from cognitrix.agents import access as agent_access
 from cognitrix.common.security import AuthContext, jwt_only, redact_secrets
 from cognitrix.config import VERSION
+
+logger = logging.getLogger('cognitrix.log')
 
 account_api = APIRouter(prefix='/account')
 
@@ -75,6 +78,23 @@ async def export_my_data(ctx: AuthContext = Depends(jwt_only)):
     names = {str(agent.id): agent.name for agent in agents}
     memories = [saved.project(row, names) for row in await saved.list_memories(owner)]
 
+    meetings: list[dict] = []
+    skills: list[dict] = []
+    try:
+        from cognitrix.meetings.notes import MeetingNote
+        from cognitrix.skills import personal
+
+        meetings = [
+            {'id': str(m.id), 'title': m.title, 'filename': m.filename, 'transcript': m.transcript, 'notes': m.notes}
+            for m in await MeetingNote.find({'user_id': owner}) or []
+        ]
+        skills = [
+            {'name': row.name, 'description': row.description, 'body': row.body}
+            for row in await personal.skills_of(owner)
+        ]
+    except Exception:
+        logger.exception('Could not add meetings and skills to a data export')
+
     stamp = datetime.now(UTC)
     payload = {
         'cognitrix_export': 1,
@@ -86,6 +106,8 @@ async def export_my_data(ctx: AuthContext = Depends(jwt_only)):
         'tasks': redact_secrets(tasks),
         'teams': redact_secrets(teams),
         'memories': memories,
+        'meetings': meetings,
+        'skills': skills,
     }
     from fastapi.encoders import jsonable_encoder
 

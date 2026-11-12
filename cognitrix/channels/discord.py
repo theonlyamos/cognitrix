@@ -193,7 +193,8 @@ class DiscordTransport(Transport):
             for b in buttons[:5]
         ]}]
 
-    async def send(self, chat_id: str, text: str, buttons: list[Button] | None = None) -> str:
+    async def send(self, chat_id: str, text: str, buttons: list[Button] | None = None,
+                   thread_id: str = '') -> str:
         # No pings from model output, whatever it writes.
         result = await self._call('POST', f'/channels/{chat_id}/messages', content=text[:2000] or '…',
                                   components=self._components(buttons), allowed_mentions={'parse': []})

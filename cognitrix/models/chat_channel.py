@@ -17,10 +17,18 @@ class ChatChannel(Model):
     user_id: str
     """Principal key of the person who owns the channel."""
     kind: str
-    """'telegram', 'slack' or 'discord'."""
+    """'telegram', 'slack', 'discord', 'teams' or 'whatsapp'."""
     bot_token: str = ''
     app_token: str = ''
-    """Slack only: the app-level token (xapp-...) Socket Mode connects with."""
+    """Slack: the app-level token (xapp-...) Socket Mode connects with.
+    Teams: ``<Microsoft App ID>|<tenant id>`` (``bot_token`` is the client secret).
+    WhatsApp: ``<phone number id>|<app secret>`` (``bot_token`` is the access token)."""
+    service_url: str = ''
+    """Teams only: where the Bot Framework last told us to send replies."""
+    answer_others: bool = False
+    """In shared channels, also answer people other than the linked person.
+    Their questions run read-only (the agent can look things up, not change
+    anything) in a chat without the owner's memories."""
     bot_name: str = ''
     """The bot's handle as the chat app reports it (Telegram username, Slack bot name)."""
     agent_id: str = ''
@@ -50,6 +58,34 @@ class ChatChannel(Model):
     @validator('enabled', 'send_alerts', 'send_approvals', pre=True)
     def _null_bool(cls, value):
         return True if value is None else value
+
+    @validator('answer_others', pre=True)
+    def _null_false(cls, value):
+        return bool(value)
+
+    @validator('service_url', pre=True)
+    def _null_text(cls, value):
+        return value or ''
+
+
+class ChannelThread(Model):
+    """The conversation behind one thread in a shared channel where the bot
+    was @mentioned, so a follow-up mention in the same thread continues it."""
+
+    channel_id: str
+    chat_id: str
+    thread_id: str = ''
+    session_id: str
+    guest: bool = False
+    """Started by someone other than the linked person."""
+
+    @validator('guest', pre=True)
+    def _null_guest(cls, value):
+        return bool(value)
+
+    @validator('thread_id', pre=True)
+    def _null_thread(cls, value):
+        return value or ''
 
 
 class ChannelDelivery(Model):

@@ -598,6 +598,19 @@ class Session(Model):
             except Exception:
                 logger.debug('Propose Skill tool unavailable', exc_info=True)
 
+        # The person's own skills are listed next to the shared ones in the
+        # system prompt for this turn (skills/personal.py).
+        if owner:
+            try:
+                from cognitrix.safety.permissions import guest_run
+                from cognitrix.skills import personal
+
+                # Not for a guest: someone else asking in a shared channel.
+                personal.personal_skills_ctx.set(
+                    [] if guest_run.get() else await personal.summaries(str(owner)))
+            except Exception:
+                logger.debug('Personal skills unavailable', exc_info=True)
+
         # Search Knowledge is offered only to agents that were given at least
         # one document collection.
         try:
