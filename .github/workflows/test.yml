@@ -14,6 +14,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build runtime image
         run: docker build --tag cognitrix:test .
+      - name: Build the agents' sandbox computer image
+        run: docker build --file sandbox/desktop/Dockerfile --tag cognitrix-desktop:test .
+      - name: Sandbox image starts a desktop
+        run: |
+          docker run -d --name sbx -e COGNITRIX_SANDBOX_TOKEN=ci-token -p 127.0.0.1:8790:8790 \
+            --cap-drop ALL --security-opt no-new-privileges --shm-size 1g cognitrix-desktop:test
+          for i in $(seq 1 30); do curl -fsS 127.0.0.1:8790/health && break; sleep 1; done
+          curl -fsS -X POST -H 'Authorization: Bearer ci-token' 127.0.0.1:8790/desktops/ci | tee /tmp/desk.json
+          grep -q '"running": true' /tmp/desk.json
+          curl -fsS -X POST -H 'Authorization: Bearer ci-token' -H 'Content-Type: application/json' \
+            -d '{"method":"status"}' 127.0.0.1:8790/desktops/ci/call | grep -q '"ok": true'
+          docker rm -f sbx
 
   test:
     runs-on: ubuntu-latest

@@ -17,6 +17,8 @@ import { AGENTS_CHANGED_EVENT } from '@/lib/providers';
 import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
+import { ComputerPanel } from '@/components/ComputerPanel';
+import { sandboxStatus } from '@/lib/sandbox';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { insertTranscript } from '@/lib/voice';
@@ -332,6 +334,14 @@ export default function Home() {
   // per-(user, agent) manager on the backend).
   const { data: agentsData, loading: agentsLoading, refetch: refetchAgents } = useResource<(PickerAgent & { folders?: WorkFolder[] | null })[]>('/agents');
   const agents = useMemo(() => (agentsData || []).filter((a) => a.id), [agentsData]);
+  // The agents' sandboxed computer (one desktop per agent), when the server has it on.
+  const [sandboxOn, setSandboxOn] = useState(false);
+  const [computerOpen, setComputerOpen] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    sandboxStatus().then((s) => alive && setSandboxOn(s.enabled)).catch(() => alive && setSandboxOn(false));
+    return () => { alive = false; };
+  }, []);
   const [agentId, setAgentId] = useState<string>(() => localStorage.getItem('selectedAgentId') || '');
 
   // The first-run setup made the user's assistant: list it and switch to it.
@@ -519,7 +529,9 @@ export default function Home() {
   const draftFoldersRef = useRef<WorkFolder[] | null>(null);
   draftFoldersRef.current = draftFolders;
   useEffect(() => {
-    folderInfo().then(setFolderSetup).catch(() => setFolderSetup(null));
+    let alive = true;
+    folderInfo().then((info) => alive && setFolderSetup(info)).catch(() => alive && setFolderSetup(null));
+    return () => { alive = false; };
   }, []);
   const agentFolders = useMemo<WorkFolder[]>(() => {
     const agent = agents.find((a) => a.id === agentId);
@@ -1526,7 +1538,18 @@ export default function Home() {
       )}
 
       {/* Chat column */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {sandboxOn && !computerOpen && (
+          <button
+            type="button"
+            onClick={() => setComputerOpen(true)}
+            className="absolute right-3 top-2 z-10 hidden items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 py-1 text-[12px] text-fg-dim hover:bg-panel-2 hover:text-fg md:inline-flex"
+            title="Watch the agents' computer and take over"
+          >
+            <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5" /><path d="M8 20h8M12 16v4" /></svg>
+            Computer
+          </button>
+        )}
         {/* Top bar: phones only (menu + chat list buttons). On desktop it
             shows only while the event stream is down, for the reconnect button. */}
         {isConnected && <h1 className="hidden sr-only md:block">{picking || !activeSessionId ? 'New chat' : 'Chat'}</h1>}
@@ -1961,6 +1984,16 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {computerOpen && (
+        <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l">
+          <ComputerPanel
+            agents={agents.map((a) => ({ id: String(a.id), name: a.name }))}
+            focusAgentId={agentId}
+            onClose={() => setComputerOpen(false)}
+          />
+        </aside>
+      )}
     </div>
   );
 }

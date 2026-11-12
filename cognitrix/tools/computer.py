@@ -22,10 +22,18 @@ def _actor(parent: Any) -> Actor:
                  session_id=ctx.session_id, user_id=ctx.user_id)
 
 
+def _driver(actor: Actor):
+    """The agent's desktop in the user's sandbox when that is on, else this machine."""
+    from cognitrix.computer.sandbox.client import sandbox_driver, sandbox_mode
+
+    return sandbox_driver(actor) if sandbox_mode() else get_driver()
+
+
 def _run(fn, parent: Any = None):
-    token = current_actor.set(_actor(parent))
+    actor = _actor(parent)
+    token = current_actor.set(actor)
     try:
-        return fn(get_driver())
+        return fn(_driver(actor))
     except Unsupported as exc:
         return ToolOutcome.failure('unsupported', str(exc))
     except DriverError as exc:
@@ -239,3 +247,22 @@ def scroll_window(window_id: int, direction: str = 'down', amount: int = 3, elem
         element (int, optional): Control number of the area to scroll; default is the main scrollable area.
     """
     return _run(lambda d: _done(d.scroll(window_id, direction, amount, element, viewer=_viewer(parent))), parent)
+
+
+@tool(category='system')
+def ask_to_take_over(reason: str, *, parent: Any | None = None):
+    """Ask the person to take over your computer for a step only they should do: signing in, a 2FA code, a
+    CAPTCHA, a payment or anything private. They are asked with your reason, do it on your screen, and this
+    returns once they hand it back. Only for the sandboxed computer.
+    Args:
+        reason (str): What you need them to do, in one short sentence, e.g. "Sign in to your bank".
+    """
+    from cognitrix.computer.sandbox.client import sandbox_mode
+
+    if not sandbox_mode():
+        return ToolOutcome.failure('unsupported', 'This only works on the sandboxed computer. Ask the person in '
+                                   'the chat instead.')
+    # Runs only after the person answered the request (see destructive_ops,
+    # category 'person_takeover'): by then they have handed the computer back.
+    return ('The person handed the computer back. Look at the window again (look_at_window) before you '
+            'continue, because things may have changed.')

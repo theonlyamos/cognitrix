@@ -52,6 +52,8 @@ class _Hub:
             self._feeds = [(loop, q) for loop, q in self._feeds if q is not queue]
 
     def _on_event(self, event: ActionEvent) -> None:
+        if event.desktop:
+            return  # it happened in the agents' sandbox, not on this screen
         if event.agent_id:
             self.last_seen[event.agent_id] = (event.user_id, event.session_id)
         payload = _payload(event)

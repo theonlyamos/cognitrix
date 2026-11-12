@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from ctypes import POINTER, byref, c_char_p, c_double, c_int, c_long, c_uint, c_ulong, c_void_p
 from typing import Any
 
@@ -84,6 +85,8 @@ _KEYSYMS = {
     'pageup': 'Prior', 'pagedown': 'Next', 'space': 'space', 'insert': 'Insert', 'menu': 'Menu',
 }
 _MOD_MASKS = {'shift': 1, 'ctrl': 4, 'alt': 8, 'win': 64, 'super': 64, 'meta': 64, 'cmd': 64}
+_MOD_KEYSYMS = {'shift': b'Shift_L', 'ctrl': b'Control_L', 'alt': b'Alt_L', 'win': b'Super_L',
+                'super': b'Super_L', 'meta': b'Super_L', 'cmd': b'Super_L'}
 
 
 # ------------------------------------------------------------------ Xlib
@@ -129,6 +132,11 @@ class _XEvent(ctypes.Union):
     _fields_ = [('input', _XInputEvent), ('client', _XClientMessage), ('pad', c_long * 24)]
 
 
+class _XScreenSaverInfo(ctypes.Structure):
+    _fields_ = [('window', c_ulong), ('state', c_int), ('kind', c_int), ('til_or_since', c_ulong),
+                ('idle', c_ulong), ('event_mask', c_ulong)]
+
+
 _ERROR_HANDLER = ctypes.CFUNCTYPE(c_int, c_void_p, c_void_p)
 
 
@@ -167,6 +175,12 @@ class _X:
         sig('XKeysymToKeycode', c_uint, c_void_p, c_ulong)
         sig('XkbKeycodeToKeysym', c_ulong, c_void_p, c_uint, c_int, c_int)
         sig('XSetErrorHandler', c_void_p, _ERROR_HANDLER)
+        sig('XQueryPointer', c_int, c_void_p, c_ulong, POINTER(c_ulong), POINTER(c_ulong), POINTER(c_int),
+            POINTER(c_int), POINTER(c_int), POINTER(c_int), POINTER(c_uint))
+        sig('XRaiseWindow', c_int, c_void_p, c_ulong)
+        sig('XDisplayKeycodes', c_int, c_void_p, POINTER(c_int), POINTER(c_int))
+        sig('XGetKeyboardMapping', POINTER(c_ulong), c_void_p, ctypes.c_ubyte, c_int, POINTER(c_int))
+        sig('XChangeKeyboardMapping', c_int, c_void_p, c_int, c_int, POINTER(c_ulong), c_int)
         lib.XInitThreads()
         self.dpy = lib.XOpenDisplay(None)
         if not self.dpy:
@@ -186,6 +200,29 @@ class _X:
             a, b = c_int(), c_int()
             if comp.XCompositeQueryExtension(self.dpy, byref(a), byref(b)):
                 self.composite = comp
+        except (OSError, AttributeError):
+            pass
+        # Real input (use_screen). Optional: without it only background input works.
+        self.xtest = None
+        try:
+            xtest = _load('Xtst')
+            xtest.XTestFakeMotionEvent.argtypes = [c_void_p, c_int, c_int, c_int, c_ulong]
+            xtest.XTestFakeButtonEvent.argtypes = [c_void_p, c_uint, c_int, c_ulong]
+            xtest.XTestFakeKeyEvent.argtypes = [c_void_p, c_uint, c_int, c_ulong]
+            a, b, c, d = c_int(), c_int(), c_int(), c_int()
+            xtest.XTestQueryExtension.argtypes = [c_void_p] + [POINTER(c_int)] * 4
+            if xtest.XTestQueryExtension(self.dpy, byref(a), byref(b), byref(c), byref(d)):
+                self.xtest = xtest
+        except (OSError, AttributeError):
+            pass
+        self.xss = None
+        try:
+            xss = _load('Xss')
+            xss.XScreenSaverAllocInfo.restype = c_void_p
+            xss.XScreenSaverQueryInfo.argtypes = [c_void_p, c_ulong, c_void_p]
+            self.xss_info = xss.XScreenSaverAllocInfo()
+            if self.xss_info:
+                self.xss = xss
         except (OSError, AttributeError):
             pass
 
@@ -954,3 +991,148 @@ class LinuxBackend:
                 except ValueError:
                     continue  # no key for this character on the layout
             self.x.lib.XSync(self.x.dpy, 0)
+
+    # -- real input (use_screen) ------------------------------------------
+    # The X Test extension sends input as if from the real mouse and keyboard,
+    # which every toolkit accepts (sent events are ignored by GTK3, Qt and
+    # Chromium). On a person's desktop the driver only uses it after asking;
+    # in a sandbox the screen belongs to the agent.
+    def _xtest(self):
+        if self.x.xtest is None:
+            raise RuntimeError('real input needs the X Test extension (libXtst), which is not available here')
+        return self.x.xtest
+
+    def idle_seconds(self) -> float:
+        """Seconds since the last keyboard or mouse input on this display."""
+        with self._guard:
+            xss = self.x.xss
+            if xss is None or not xss.XScreenSaverQueryInfo(self.x.dpy, self.x.root, self.x.xss_info):
+                return float('inf')  # can't tell: assume nobody is typing
+            # XScreenSaverInfo: window, state, kind, til_or_since, idle, event_mask
+            idle_ms = ctypes.cast(self.x.xss_info, POINTER(_XScreenSaverInfo)).contents.idle
+            return idle_ms / 1000.0
+
+    def cursor_pos(self) -> tuple[int, int]:
+        with self._guard:
+            root, child = c_ulong(), c_ulong()
+            rx, ry, wx, wy, mask = c_int(), c_int(), c_int(), c_int(), c_uint()
+            self.x.lib.XQueryPointer(self.x.dpy, self.x.root, byref(root), byref(child), byref(rx), byref(ry),
+                                     byref(wx), byref(wy), byref(mask))
+            return rx.value, ry.value
+
+    def set_cursor_pos(self, x: int, y: int) -> None:
+        with self._guard:
+            self._xtest().XTestFakeMotionEvent(self.x.dpy, -1, int(x), int(y), 0)
+            self.x.lib.XSync(self.x.dpy, 0)
+
+    def bring_to_front(self, window_id: int) -> bool:
+        with self._guard:
+            self.x.lib.XRaiseWindow(self.x.dpy, int(window_id))
+            self.x.lib.XSync(self.x.dpy, 0)
+        return self.give_back_focus(int(window_id))  # _NET_ACTIVE_WINDOW as a pager
+
+    def send_click(self, x: int, y: int, button: str, double: bool, still_ok: Callable[[], bool]) -> bool:
+        number = {'left': 1, 'middle': 2, 'right': 3}.get(button, 1)
+        xt = self._xtest()
+        with self._guard:
+            xt.XTestFakeMotionEvent(self.x.dpy, -1, int(x), int(y), 0)
+            self.x.lib.XSync(self.x.dpy, 0)
+        for _ in range(2 if double else 1):
+            if not still_ok():
+                return False
+            with self._guard:
+                xt.XTestFakeButtonEvent(self.x.dpy, number, 1, 0)
+                xt.XTestFakeButtonEvent(self.x.dpy, number, 0, 0)
+                self.x.lib.XSync(self.x.dpy, 0)
+            time.sleep(0.03)
+        return True
+
+    def _keycode_for(self, keysym: int) -> tuple[int, bool, bool]:
+        """(keycode, needs shift, was remapped). A character with no key on
+        the layout is put on a spare keycode for the moment."""
+        lib, dpy = self.x.lib, self.x.dpy
+        code = lib.XKeysymToKeycode(dpy, keysym)
+        if code:
+            shift = (lib.XkbKeycodeToKeysym(dpy, code, 0, 0) != keysym
+                     and lib.XkbKeycodeToKeysym(dpy, code, 0, 1) == keysym)
+            return code, shift, False
+        spare = self._spare_keycode()
+        if not spare:
+            raise ValueError('this keyboard layout has no key for it')
+        syms = (c_ulong * 2)(keysym, keysym)
+        lib.XChangeKeyboardMapping(dpy, spare, 2, syms, 1)
+        lib.XSync(dpy, 0)
+        time.sleep(0.02)  # let clients see the new mapping
+        return spare, False, True
+
+    def _spare_keycode(self) -> int:
+        cached = getattr(self, '_spare', None)
+        if cached is not None:
+            return cached
+        lib, dpy = self.x.lib, self.x.dpy
+        low, high = c_int(), c_int()
+        lib.XDisplayKeycodes(dpy, byref(low), byref(high))
+        per = c_int()
+        table = lib.XGetKeyboardMapping(dpy, low.value, high.value - low.value + 1, byref(per))
+        spare = 0
+        if table:
+            for code in range(high.value, low.value - 1, -1):
+                row = (code - low.value) * per.value
+                if not any(table[row + i] for i in range(per.value)):
+                    spare = code
+                    break
+            lib.XFree(table)
+        self._spare = spare
+        return spare
+
+    def _tap(self, keysym: int, mods: tuple[int, ...] = ()) -> None:
+        xt, dpy = self._xtest(), self.x.dpy
+        code, shift, remapped = self._keycode_for(keysym)
+        held = list(mods)
+        if shift:
+            held.append(self.x.lib.XKeysymToKeycode(dpy, self.x.lib.XStringToKeysym(b'Shift_L')))
+        for m in held:
+            xt.XTestFakeKeyEvent(dpy, m, 1, 0)
+        xt.XTestFakeKeyEvent(dpy, code, 1, 0)
+        xt.XTestFakeKeyEvent(dpy, code, 0, 0)
+        for m in reversed(held):
+            xt.XTestFakeKeyEvent(dpy, m, 0, 0)
+        self.x.lib.XSync(dpy, 0)
+        if remapped:
+            time.sleep(0.02)  # the app reads the mapping when it handles the key
+
+    def send_text(self, text: str, still_ok: Callable[[], bool]) -> bool:
+        for char in text:
+            if not still_ok():
+                return False
+            if char == '\n':
+                keysym = self.x.lib.XStringToKeysym(b'Return')
+            elif char == '\t':
+                keysym = self.x.lib.XStringToKeysym(b'Tab')
+            else:
+                keysym = ord(char) if ord(char) < 0x100 else 0x01000000 | ord(char)
+            with self._guard:
+                self._tap(keysym)
+            time.sleep(0.008)
+        return True
+
+    def send_key(self, key: str, mods: tuple[str, ...], still_ok: Callable[[], bool]) -> bool:
+        if not still_ok():
+            return False
+        key = key.lower()
+        name = _KEYSYMS.get(key) or (key.upper() if re.fullmatch(r'f\d{1,2}', key) else key)
+        with self._guard:
+            lib, dpy = self.x.lib, self.x.dpy
+            keysym = lib.XStringToKeysym(name.encode())
+            if not keysym and len(key) == 1:
+                keysym = ord(key)
+            if not keysym:
+                raise ValueError(f"unknown key '{key}'")
+            codes = []
+            for mod in mods:
+                if mod not in _MOD_KEYSYMS:
+                    raise ValueError(f"unknown modifier '{mod}'")
+                codes.append(lib.XKeysymToKeycode(dpy, lib.XStringToKeysym(_MOD_KEYSYMS[mod])))
+            self._tap(keysym, tuple(codes))
+        return True
+

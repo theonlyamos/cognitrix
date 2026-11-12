@@ -1,0 +1,12 @@
+#!/bin/sh
+# Chromium with accessibility on and this desktop's own profile.
+PROFILE="$HOME/.profiles/${DESKTOP_NAME:-main}/chromium"
+mkdir -p "$PROFILE"
+# A container that was stopped hard leaves Chromium's profile lock behind, and
+# Chromium then refuses the profile. Nothing else uses this desktop's
+# profile, so a lock with no Chromium running for it is stale.
+if ! pgrep -f -- "--user-data-dir=$PROFILE" >/dev/null 2>&1; then
+    rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonSocket" "$PROFILE/SingletonCookie"
+fi
+exec /usr/bin/chromium --force-renderer-accessibility --no-sandbox --no-first-run --no-default-browser-check \
+    --password-store=basic --user-data-dir="$PROFILE" "$@"

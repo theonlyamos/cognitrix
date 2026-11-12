@@ -18,11 +18,20 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  // noVNC (the agents' computer live screen) uses top-level await; every
+  // browser and webview the app supports runs it.
+  build: {
+    target: ['es2022', 'chrome89', 'edge89', 'firefox89', 'safari15'],
+  },
+  optimizeDeps: {
+    esbuildOptions: { target: 'es2022' },
+  },
   server: {
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        ws: true, // the agents' computer live screen
       },
     },
   },
