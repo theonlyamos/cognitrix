@@ -31,6 +31,7 @@ import { cn } from '@/lib/utils';
 interface Agent {
   id: string;
   name: string;
+  automation?: { standing?: { primary?: boolean } } | null;
   llm?: { provider?: string | null; model?: string | null } | null;
 }
 
@@ -125,13 +126,15 @@ function howItRuns(a: AutomationRow): string {
 
 function inboxTitle(item: InboxItem): string {
   if (item.kind === 'approval') return `Run ${item.tool_name}`;
-  if (item.kind === 'notification') return item.title;
+  if (item.kind === 'notification' || item.kind === 'offer') return item.title;
+  if (item.kind === 'skill_draft') return `Review the skill "${item.name}"`;
   return String(item.question.prompt || 'An agent asked a question');
 }
 
 function inboxSource(item: InboxItem): string {
   if (item.kind === 'approval') return item.source === 'chat' ? `${item.agent_name || 'Agent'} · chat` : item.task_title || 'Task run';
   if (item.kind === 'notification') return item.task_title || 'Agent';
+  if (item.kind === 'offer' || item.kind === 'skill_draft') return item.agent_name || 'Agent';
   return 'Chat';
 }
 
@@ -145,6 +148,8 @@ const KIND_STYLE: Record<InboxItem['kind'], { label: string; className: string }
   approval: { label: 'APPROVAL', className: 'bg-[#ffb86b]/15 text-[#b4691a] dark:text-[#ffb86b]' },
   question: { label: 'QUESTION', className: 'bg-[#7cc4ff]/15 text-[#1f6f8b] dark:text-[#7cc4ff]' },
   notification: { label: 'ALERT', className: 'bg-accent/15 text-accent-ink' },
+  offer: { label: 'OFFER', className: 'bg-ok/15 text-ok' },
+  skill_draft: { label: 'SKILL', className: 'bg-[#b48cff]/15 text-[#6b46c1] dark:text-[#c9b0ff]' },
 };
 
 /* ------------------------------------------------------------------ pieces */
@@ -370,7 +375,9 @@ export default function Dashboard() {
       return '';
     }
   });
-  const pickedAgent = agentById.get(askAgent) ? askAgent : agentList[0]?.id ?? '';
+  // Nothing picked before: the main assistant, when one is chosen.
+  const mainAgent = agentList.find((a) => a.automation?.standing?.primary) ?? agentList[0];
+  const pickedAgent = agentById.get(askAgent) ? askAgent : mainAgent?.id ?? '';
   const startAsk = (e: FormEvent) => {
     e.preventDefault();
     if (!pickedAgent) {

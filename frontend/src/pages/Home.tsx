@@ -1193,6 +1193,23 @@ export default function Home() {
     void refetchAllChats({ silent: true });
   };
 
+  // Ask the chat's agent to write up how it did the job as a reusable
+  // skill. The draft waits in the Inbox; nothing changes until it's approved.
+  const saveAsSkill = async (chat: ChatSummary) => {
+    notifications?.push({ event: 'agent_alert', title: 'Writing a skill from this chat…', body: chat.title });
+    try {
+      await api.post('/skill-drafts', { session_id: chat.id });
+      // The inbox announces the new draft itself.
+      void notifications?.refreshInbox();
+    } catch (err) {
+      notifications?.push({
+        event: 'agent_alert',
+        title: "Couldn't write a skill from this chat",
+        body: errorMessage(err, 'Try again in a moment.'),
+      });
+    }
+  };
+
   const saveRename = () => {
     const target = renaming && allChats.find((c) => c.id === renaming.id);
     setRenaming(null);
@@ -1433,6 +1450,7 @@ export default function Home() {
                       { label: c.pinned ? 'Unpin' : 'Pin to top', disabled: running, onSelect: () => void updateChat(c, { pinned: !c.pinned }) },
                       { label: c.archived ? 'Move back to chats' : 'Archive', disabled: running, onSelect: () => void updateChat(c, { archived: !c.archived }) },
                       { label: 'Export as Markdown', onSelect: () => void exportChat(c.id, c.title, who || 'agent').catch(() => {}) },
+                      { label: 'Save as skill', disabled: running, onSelect: () => void saveAsSkill(c) },
                       { label: 'Delete', danger: true, disabled: running, onSelect: () => void deleteConversation(c) },
                     ]}
                   />

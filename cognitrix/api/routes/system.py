@@ -99,6 +99,21 @@ async def inbox(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
             **public_notification(row),
             'task_title': titles.get(task_id, ''),
         })
+    # Offers from standing assistants, and skills learned from work that
+    # wait for review (an admin reviews everyone's).
+    from cognitrix.agents.access import is_admin
+    from cognitrix.skills import drafts
+    from cognitrix.tasks import standing
+
+    for offer in await standing.offers_for(user_key):
+        if offer.status == standing.OFFER_PENDING:
+            items.append({'kind': 'offer', **standing.public_offer(offer)})
+    admin = await is_admin(ctx.user)
+    for draft in await drafts.drafts_of(None if admin else user_key):
+        items.append({
+            'kind': 'skill_draft', **drafts.public_draft(draft),
+            'mine': str(draft.user_id) == user_key, 'can_approve': admin,
+        })
     items.sort(key=lambda item: item.get('created_at') or '', reverse=True)
     from cognitrix.safety.approval_alerts import pending_chat_approvals
     # Approvals from chats come first: a turn is waiting on them right now.

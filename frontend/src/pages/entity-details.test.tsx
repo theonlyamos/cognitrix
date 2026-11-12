@@ -212,7 +212,7 @@ describe('entity detail routes', () => {
     expect(screen.getByRole('heading', { name: 'Agent One' })).toBeInTheDocument();
     expect(screen.getByText('gpt-4o')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getAllByRole('tab')).toHaveLength(7);
+    expect(screen.getAllByRole('tab')).toHaveLength(8);
     expect(screen.getByText('1 chat running')).toBeInTheDocument();
     expect(screen.getByText('Weekly report')).toBeInTheDocument();
     expect(screen.getByText('leads Team One')).toBeInTheDocument();

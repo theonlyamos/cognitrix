@@ -157,3 +157,31 @@ async def notify_me(title: str, message: str) -> ToolOutcome:
     else:
         return ToolOutcome.failure('no_owner', 'There is nobody signed in to notify')
     return ToolOutcome.success('Notification sent.')
+
+
+@tool(category=AUTOMATION_TOOL_CATEGORY, retryable=False, max_attempts=1,
+      approval_mode='assigned_only')
+async def offer_help(title: str, why: str, plan: str) -> ToolOutcome:
+    """Offer to take a piece of work off the person's hands. It shows in their Inbox with Accept and Dismiss.
+    title: a few words, e.g. "Draft replies to 3 unanswered client emails".
+    why: what you noticed and why it is worth doing, in a sentence or two.
+    plan: exactly what you will do if they accept, written so you can follow it later without this check-in's context.
+    Only works during a standing assistant's check-in. Offer only what is clearly useful; don't repeat an offer."""
+    from cognitrix.tasks import standing
+
+    title = str(title or '').strip()[:standing.OFFER_TITLE_MAX]
+    why = str(why or '').strip()[:standing.OFFER_DETAILS_MAX]
+    plan = str(plan or '').strip()[:standing.OFFER_PLAN_MAX]
+    if not title or not plan:
+        return ToolOutcome.failure('offer_incomplete', 'An offer needs a title and a plan')
+    try:
+        task, run = await _current_task()
+    except _NotInTask as exc:
+        return _not_in_task(exc)
+    agent = await standing.standing_agent(task)
+    if agent is None:
+        return ToolOutcome.failure('not_a_check_in', 'Offers can only be made during a standing check-in.')
+    result = await standing.create_offer(task, run, agent, title, why, plan)
+    if isinstance(result, str):
+        return ToolOutcome.failure('offer_refused', result)
+    return ToolOutcome.success('Offer sent. The person will accept or dismiss it in their Inbox.')

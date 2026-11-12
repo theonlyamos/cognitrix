@@ -408,7 +408,7 @@ class AgentRuntimeSnapshot(BaseModel):
     can_request_folders: bool = True
     # The agent's permission levels (see cognitrix/safety/permissions.py).
     permission_level: Literal["auto", "ask", "allow"] = "auto"
-    tool_permissions: tuple[tuple[str, Literal["allow", "ask", "deny"]], ...] = ()
+    tool_permissions: tuple[tuple[str, Literal["allow", "ask", "told", "handoff", "deny"]], ...] = ()
     # Other per-agent limits that tools and the reviewer read at run time
     # (see AGENT_POLICY_FIELDS).
     agent_policy: dict[str, Any] = Field(default_factory=dict)

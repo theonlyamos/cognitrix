@@ -122,6 +122,24 @@ class TestPlanGeneration(TestStructuredPlanner):
         assert plan.task_analysis == 'Test analysis'
 
     @pytest.mark.asyncio
+    async def test_plan_may_name_tools_every_step_gets(self, planner, mock_llm, mock_agents, mock_tools, sample_plan_dict):
+        """A tool every step has anyway is dropped from the plan, not refused."""
+        from cognitrix.planning.structured_planner import PlanningError
+
+        sample_plan_dict['steps'][0]['required_tools'] = ['search', 'Read Notes']
+        mock_response = MagicMock()
+        mock_response.llm_response = json.dumps(sample_plan_dict)
+        mock_llm.return_value = mock_response
+
+        with pytest.raises(PlanningError):
+            await planner.create_plan(
+                task="Check in", available_agents=mock_agents, available_tools=mock_tools)
+        plan = await planner.create_plan(
+            task="Check in", available_agents=mock_agents, available_tools=mock_tools,
+            always_available=['Read Notes'])
+        assert plan.steps[0].required_tools == ['search']
+
+    @pytest.mark.asyncio
     async def test_create_plan_with_markdown_json(self, planner, mock_llm, mock_agents, mock_tools, sample_plan_dict):
         """Test plan generation with markdown-wrapped JSON."""
         mock_response = MagicMock()

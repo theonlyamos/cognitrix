@@ -28,6 +28,8 @@ from cognitrix.safety.permissions import (
     apply_target_level,
     decide_tool_call,
     needs_person,
+    read_only_block,
+    read_only_run,
     visible_tools,
 )
 from cognitrix.tools.base import ToolManager
@@ -624,13 +626,23 @@ class AgentManager:
 
                 # Per-agent and per-tool permission levels, on top of the
                 # default risk policy (see cognitrix/safety/permissions.py).
-                decision = decide_tool_call(self.agent, assigned_tool, args, risk, runtime_tool=tool)
+                decision = decide_tool_call(
+                    self.agent, assigned_tool, args, risk, runtime_tool=tool, interface=interface)
                 # Run Mcp Tool runs some other tool: that tool's own setting
                 # (agent page, Connections) wins over the default policy.
                 target_level, target_name = await self._mcp_target_level(assigned_tool, args)
                 if target_level != 'auto' and decision.action != 'block':
-                    decision = apply_target_level(decision, target_level, target_name, risk)
+                    decision = apply_target_level(
+                        decision, target_level, target_name, risk, interface=interface)
+                # A standing assistant's check-in may look but not change.
+                mcp_reads = None
+                if read_only_run.get() and getattr(assigned_tool, 'category', None) in ('mcp', 'mcp_dynamic'):
+                    mcp_reads = await self._mcp_only_reads(assigned_tool, args)
+                decision = read_only_block(
+                    decision, assigned_tool, args, runtime_tool=tool, mcp_reads=mcp_reads)
                 if decision.action == 'block':
+                    if decision.handoff:
+                        await self._hand_off(assigned_tool, args, interface)
                     results_by_index[i] = _tool_result_entry(
                         tc_id,
                         ToolOutcome.failure(
@@ -936,6 +948,63 @@ class AgentManager:
             return None
         risk.details = f"{risk.details} (MCP server '{server}')"
         return risk
+
+    async def _mcp_only_reads(self, tool: Any, args: dict) -> bool:
+        """Whether an action on a connected app only reads (for read-only runs)."""
+        from cognitrix.safety.destructive_ops import mcp_only_reads
+
+        name = str(getattr(tool, 'name', '') or '').strip().lower().replace(' ', '_')
+        if getattr(tool, 'category', None) == 'mcp_dynamic':
+            # A wrapper built as "always ask" deletes or sends.
+            return getattr(tool, 'approval_mode', None) != 'always' and mcp_only_reads(name, None)
+        if name != 'run_mcp_tool':
+            return False
+        server = str(args.get('server') or '')
+        tool_name = str(args.get('tool_name') or '')
+        annotations = None
+        try:
+            from cognitrix.mcp import apps
+            from cognitrix.mcp.client import get_dynamic_client
+            from cognitrix.mcp.registry import agent_servers, matches
+
+            config = next((c for c in await agent_servers(self.agent) if matches(c, server)), None)
+            if config is None:
+                return False
+            client = await get_dynamic_client()
+            annotations = await apps.annotations(client, config, tool_name)
+        except Exception:
+            logger.exception("Could not check MCP tool annotations")
+        return mcp_only_reads(tool_name, annotations)
+
+    async def _hand_off(self, tool: Any, args: dict, interface: str) -> None:
+        """Leave a "hand off to me" action in the person's Inbox, ready to do."""
+        try:
+            from cognitrix.safety.approval_gate import web_turn_ctx
+            from cognitrix.tasks.automation import create_notification
+            from cognitrix.tools.utils import current_execution_context
+
+            ctx = current_execution_context()
+            owner = _approval_owner(interface) or ctx.user_id
+            if not owner:
+                return
+            name = str(getattr(tool, 'name', '') or 'an action')
+            from cognitrix.credentials import redact, redaction_map_for
+
+            shown = redact(
+                json.dumps(args, indent=2, default=str, ensure_ascii=False),
+                await redaction_map_for(str(owner)))
+            session_id = (web_turn_ctx.get(None) or {}).get('session_id') or ctx.session_id
+            await create_notification(
+                str(owner),
+                f'Yours to do: {name}',
+                f"{getattr(self.agent, 'name', 'Your agent')} prepared this but you chose to do "
+                f"'{name}' yourself.\n\n{shown}",
+                task_id=ctx.task_id, run_id=ctx.run_id,
+                session_id=None if ctx.task_id else session_id,
+                link=None if ctx.task_id or not session_id else f'/home?chat={session_id}',
+            )
+        except Exception:
+            logger.exception('Could not leave a hand-off in the Inbox')
 
     async def _mcp_target_level(self, tool: Any, args: dict) -> tuple[str, str]:
         """The person's Allow / Ask / Off setting for the app tool a Run Mcp Tool call runs.

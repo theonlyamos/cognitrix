@@ -202,3 +202,42 @@ def _get_parent_last_message(parent) -> str:
             pass
 
     return ""
+
+
+@tool(name='propose_skill', category='skills', approval_mode='assigned_only')
+async def propose_skill(name: str, description: str, instructions: str) -> str:
+    """Propose saving how you did a job as a reusable skill. The person reviews it before it is used.
+    Use it when the person asks you to remember how to do something, or after a multi-step job that
+    worked and is likely to come up again. Don't propose skills for one-off or trivial work.
+    name: 2 to 5 lowercase words joined by dashes.
+    description: one sentence saying when to use the skill.
+    instructions: Markdown with the steps (naming the tools that worked), the decision rules, what the
+    result should look like, and which actions need the person's approval. Generalise: no one-off names,
+    dates or values, and never any passwords or keys."""
+    from cognitrix.skills import drafts
+    from cognitrix.tools.utils import current_execution_context
+
+    ctx = current_execution_context()
+    if not ctx.user_id:
+        return 'Error: there is nobody signed in to review a skill.'
+    if ctx.api_key_id:
+        return 'Error: skills can only be proposed in a chat with a signed-in person.'
+    try:
+        clean_name = drafts.slug(name)
+        if clean_name and await drafts.skill_exists(clean_name):
+            return f"Error: a skill called '{clean_name}' already exists. Pick another name."
+        agent_name = ''
+        if ctx.agent_id:
+            from cognitrix.models.agent import Agent
+
+            agent = await Agent.find_one({'id': str(ctx.agent_id)})
+            agent_name = str(getattr(agent, 'name', '') or '')
+        row = await drafts.create_draft(
+            str(ctx.user_id), name, description, instructions,
+            agent_id=str(ctx.agent_id) if ctx.agent_id else None, agent_name=agent_name,
+            session_id=None if ctx.task_id else ctx.session_id,
+        )
+    except drafts.DraftError as exc:
+        return f'Error: {exc}'
+    return (f"Skill draft '{row.name}' is waiting for the person's review in their Inbox. "
+            'It is not usable until they approve it; tell them it is there.')

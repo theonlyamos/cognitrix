@@ -91,6 +91,8 @@ _KNOWN_LOW = frozenset({
     'run_mcp_tool',  # the MCP action itself is checked in the agent loop
     # always-on agents: notes and alerts go to the run's own owner
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',
+    # an offer or a skill draft only waits in the person's Inbox for a yes
+    'offer_help', 'propose_skill',
     # chats agents start: their own risky tool calls still ask in that chat
     'start_chat', 'check_chat', 'message_chat',
     # saved memories: each change shows in the chat with Undo
@@ -235,6 +237,22 @@ def _read_only_folder_note(params: dict) -> str:
         f" (runs in '{folder.label}', which is read only: approving lets this "
         "command change files there)"
     )
+
+
+def mcp_only_reads(tool_name: str, annotations: dict | None) -> bool:
+    """True when an action on a connected app clearly changes nothing.
+
+    Stricter than ``mcp_tool_risk``: an undoable change is still a change.
+    The server has to mark the tool read-only, or its name has to say it
+    reads and nothing else.
+    """
+    notes = annotations if isinstance(annotations, dict) else {}
+    if notes.get('readOnlyHint'):
+        return True
+    if notes.get('readOnlyHint') is False or notes.get('destructiveHint') is True:
+        return False
+    words = _words(tool_name)
+    return bool(words & READ_VERBS) and not words & (CHANGE_VERBS | DESTRUCTIVE_VERBS | OUTWARD_VERBS)
 
 
 def mcp_tool_risk(tool_name: str, annotations: dict | None) -> RiskAssessment:

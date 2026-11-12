@@ -428,6 +428,11 @@ def _check_policy(agent: Agent, data: dict, existing: Agent | None) -> None:
             raise HTTPException(
                 status_code=400, detail=f'max_runs_per_day must be between 1 and {MAX_RUNS_PER_DAY_LIMIT}')
         cleaned['max_runs_per_day'] = cap
+    # Standing-assistant settings have their own endpoint
+    # (routes/assistant.py); an agent save never changes them.
+    stored = getattr(existing, 'automation', None) if existing is not None else None
+    if isinstance(stored, dict) and isinstance(stored.get('standing'), dict):
+        cleaned['standing'] = stored['standing']
     agent.automation = cleaned
     from cognitrix.memory.saved import memory_policy
 
@@ -1141,6 +1146,16 @@ async def delete_agent(agent_id: str, ctx: AuthContext = Depends(get_auth_contex
 
     # delete_many avoids the odbms sqlite `delete_one` bug (emits DELETE … LIMIT,
     # which SQLite rejects); an id filter still deletes exactly one row.
+    # A standing assistant's check-ins end with the agent.
+    try:
+        from cognitrix.api.routes.tasks import soft_delete_task
+        from cognitrix.tasks import standing
+
+        home = await standing.home_task(agent)
+        if home is not None:
+            await soft_delete_task(home)
+    except Exception:
+        logger.exception('Could not remove the check-ins of agent %s', agent_id)
     await Agent.delete_many({'id': agent_id})
     return {"message": "Agent deleted successfully"}
 

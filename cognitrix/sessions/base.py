@@ -586,6 +586,18 @@ class Session(Model):
             except Exception:
                 logger.debug('Memory tools unavailable', exc_info=True)
 
+        # Propose Skill lets an agent suggest saving how it did a job; the
+        # person reviews the draft before it is used (skills/drafts.py).
+        if interface in ('web', 'ws') and owner and not self.task_id and not getattr(self, 'incognito', False):
+            try:
+                if not any(str(getattr(t, 'name', '')).lower() == 'propose skill' for t in agent.tools):
+                    from cognitrix.tools.base import ToolManager
+                    draft_tool = ToolManager.get_by_name('propose_skill')
+                    if draft_tool:
+                        agent = agent.model_copy(update={'tools': [*agent.tools, draft_tool]})
+            except Exception:
+                logger.debug('Propose Skill tool unavailable', exc_info=True)
+
         # Search Knowledge is offered only to agents that were given at least
         # one document collection.
         try:

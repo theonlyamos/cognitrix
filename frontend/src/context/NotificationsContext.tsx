@@ -20,7 +20,7 @@ export type NotificationEvent =
 export const EVENT_LABELS: Record<NotificationEvent, { title: string; detail: string; alwaysInApp?: boolean }> = {
   approval: { title: 'Approval needed', detail: 'A chat or task is waiting on a risky step', alwaysInApp: true },
   question: { title: 'Agent asks a question', detail: 'A chat is waiting for your answer', alwaysInApp: true },
-  agent_alert: { title: 'Agent alert', detail: 'An agent used Notify Me, usually from an automation' },
+  agent_alert: { title: 'Agent alert', detail: 'An agent used Notify Me, offered to help, or drafted a skill for review' },
   chat_reply: { title: 'Chat reply', detail: 'An agent finished replying while you were in another window' },
   task_finished: { title: 'Task finished', detail: 'Only when the window isn’t focused' },
   task_failed: { title: 'Task failed', detail: 'With the reason and a link to retry' },
@@ -114,7 +114,34 @@ export interface InboxNotification {
   task_title: string;
 }
 
-export type InboxItem = InboxApproval | InboxQuestion | InboxNotification;
+/** Something a standing assistant offered to do (agent page, Check-ins). */
+export interface InboxOffer {
+  kind: 'offer';
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  title: string;
+  details: string;
+  plan: string;
+  created_at: string | null;
+}
+
+/** A skill learned from work, waiting for review before agents can use it. */
+export interface InboxSkillDraft {
+  kind: 'skill_draft';
+  id: string;
+  agent_id: string | null;
+  agent_name: string;
+  session_id: string | null;
+  name: string;
+  description: string;
+  body: string;
+  mine: boolean;
+  can_approve: boolean;
+  created_at: string | null;
+}
+
+export type InboxItem = InboxApproval | InboxQuestion | InboxNotification | InboxOffer | InboxSkillDraft;
 
 interface TaskSummary {
   id: string;
@@ -266,6 +293,21 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
               event: 'agent_alert',
               title: item.title,
               body: item.message || (item.task_title ? `From ${item.task_title}` : 'Open the inbox to see it.'),
+              href: '/inbox',
+            });
+          } else if (item.kind === 'offer') {
+            push({
+              event: 'agent_alert',
+              title: `${item.agent_name || 'Your assistant'} offers: ${item.title}`,
+              body: item.details || 'Open the inbox to accept or dismiss it.',
+              href: '/inbox',
+              tag: `offer-${item.id}`,
+            });
+          } else if (item.kind === 'skill_draft') {
+            push({
+              event: 'agent_alert',
+              title: `Skill to review: ${item.name}`,
+              body: item.description || 'Open the inbox to review it.',
               href: '/inbox',
             });
           } else {

@@ -1,4 +1,4 @@
-from cognitrix.tools.automation import notify_me, read_notes, schedule_next_check, update_notes
+from cognitrix.tools.automation import notify_me, offer_help, read_notes, schedule_next_check, update_notes
 from cognitrix.tools.base import Tool
 from cognitrix.tools.chat_history import read_chat, search_chats
 from cognitrix.tools.chats import check_chat, message_chat, start_chat
@@ -57,7 +57,7 @@ from cognitrix.tools.misc import (
     text_input,
 )
 from cognitrix.tools.question import ask_user
-from cognitrix.tools.skill_tool import load_skill
+from cognitrix.tools.skill_tool import load_skill, propose_skill
 from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import ToolCallResult
 
@@ -78,8 +78,8 @@ __all__ = [
     'list_tasks', 'get_task', 'start_task', 'cancel_task_run', 'generate_image', 'list_agents',
     'bash', 'bash_output', 'kill_shell', 'coding_agent',
     'ToolCallResult', 'list_mcp_tools', 'run_mcp_tool',
-    'load_skill', 'ask_user',
-    'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',
+    'load_skill', 'propose_skill', 'ask_user',
+    'read_notes', 'update_notes', 'schedule_next_check', 'notify_me', 'offer_help',
     'request_folder',
     'start_chat', 'check_chat', 'message_chat',
     'memory', 'search_chats', 'read_chat',
