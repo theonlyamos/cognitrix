@@ -338,7 +338,9 @@ export default function Home() {
   const [sandboxOn, setSandboxOn] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
   useEffect(() => {
-    sandboxStatus().then((s) => setSandboxOn(s.enabled)).catch(() => setSandboxOn(false));
+    let alive = true;
+    sandboxStatus().then((s) => alive && setSandboxOn(s.enabled)).catch(() => alive && setSandboxOn(false));
+    return () => { alive = false; };
   }, []);
   const [agentId, setAgentId] = useState<string>(() => localStorage.getItem('selectedAgentId') || '');
 
@@ -527,7 +529,9 @@ export default function Home() {
   const draftFoldersRef = useRef<WorkFolder[] | null>(null);
   draftFoldersRef.current = draftFolders;
   useEffect(() => {
-    folderInfo().then(setFolderSetup).catch(() => setFolderSetup(null));
+    let alive = true;
+    folderInfo().then((info) => alive && setFolderSetup(info)).catch(() => alive && setFolderSetup(null));
+    return () => { alive = false; };
   }, []);
   const agentFolders = useMemo<WorkFolder[]>(() => {
     const agent = agents.find((a) => a.id === agentId);
