@@ -154,7 +154,7 @@ class Agent(Model):
     def _sub_agents_default(cls, value):
         return True if value is None else value
 
-    @field_validator('reviewer', 'coding_agents', 'automation', 'memory', mode='before')
+    @field_validator('reviewer', 'coding_agents', 'automation', 'memory', 'shared_with', mode='before')
     @classmethod
     def _dict_default(cls, value):
         if value in (None, ''):
@@ -230,6 +230,10 @@ class Agent(Model):
 
     owner_id: str | None = None
     """User who owns this agent. None means a shared agent that only admins can change."""
+
+    shared_with: dict[str, str] = Field(default_factory=dict)
+    """People the owner shared this agent with: user key (or '*' for everyone
+    on the server) to 'use' or 'edit'. See cognitrix/agents/access.py."""
 
     autostart: bool = False
     """Whether the agent should start running as soon as it's created"""

@@ -5,8 +5,9 @@ well, or a person asks for one from a finished chat ("Save as skill").
 Either way nothing changes how agents work until someone approves the
 draft: only then is a SKILL.md written (``SkillManager.create_skill``).
 
-Skills are shared by every agent on the server, so on a server with several
-people only an admin can approve.
+An approved draft becomes the person's own skill (``skills/personal.py``).
+Only an admin can save one for everyone, because shared skills are used by
+every agent on the server.
 """
 from __future__ import annotations
 
@@ -129,21 +130,28 @@ async def skill_exists(name: str) -> bool:
         return False
 
 
-async def approve(row: SkillDraft, decided_by: str) -> Any:
-    """Write the skill and close the draft. Raises DraftError on a name clash."""
+async def approve(row: SkillDraft, decided_by: str, *, everyone: bool = False) -> Any:
+    """Save the skill and close the draft. Raises DraftError on a name clash.
+
+    The skill becomes the draft owner's own unless ``everyone`` is set, which
+    writes a shared SKILL.md (the caller checks that an admin asked).
+    """
+    from cognitrix.skills import personal
     from cognitrix.skills.manager import get_skill_manager
     from cognitrix.tasks.automation import utcnow_str
 
     name, description, body = clean(row.name, row.description, row.body)
-    if await skill_exists(name):
+    if await skill_exists(name) or (not everyone and await personal.get(str(row.user_id), name) is not None):
         raise DraftError(f"A skill called '{name}' already exists. Rename the draft first.")
     if await SkillDraft.update_one(
             {'id': row.id, 'status': PENDING},
             {'status': APPROVED, 'decided_at': utcnow_str(), 'decided_by': decided_by}) != 1:
         raise DraftError('This draft was already reviewed')
     try:
-        return await get_skill_manager().create_skill(
-            name, description, body, author=row.agent_name or '', category='learned')
+        if everyone:
+            return await get_skill_manager().create_skill(
+                name, description, body, author=row.agent_name or '', category='learned')
+        return await personal.create(str(row.user_id), name, description, body, author=row.agent_name or '')
     except Exception:
         await SkillDraft.update_one({'id': row.id}, {'status': PENDING, 'decided_at': None, 'decided_by': None})
         raise

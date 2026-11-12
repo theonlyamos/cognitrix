@@ -18,6 +18,7 @@ import { ProviderKeys } from '@/components/settings/ProviderKeys';
 import { ChatGPTPlanCard } from '@/components/settings/ChatGPTPlan';
 import { AppearanceSettings } from '@/components/settings/Appearance';
 import { MemorySettings } from '@/components/settings/Memory';
+import { SkillsSettings } from '@/components/settings/Skills';
 import { UsageSettings } from '@/components/settings/Usage';
 import { PasswordChange } from '@/components/settings/PasswordChange';
 import { SpokenRepliesSettings } from '@/components/settings/SpokenReplies';
@@ -30,7 +31,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'memory' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'people' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'people' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -49,10 +50,11 @@ const SECTIONS: SectionMeta[] = [
   { id: 'models', label: 'Models and keys', group: 'AI', keywords: 'providers api key chatgpt plan subscription plus pro openai anthropic claude gemini google groq openrouter cerebras ollama' },
   { id: 'usage', label: 'Usage', group: 'AI', keywords: 'cost spend tokens money bill price how much' },
   { id: 'memory', label: 'Memory', group: 'AI', keywords: 'remember memories personalization forget history what agents know about me' },
+  { id: 'skills', label: 'Skills', group: 'AI', keywords: 'skill instructions learned how to slash commands playbook procedure reuse' },
   { id: 'voice', label: 'Voice', group: 'AI', keywords: 'input mic microphone speech transcription dictation spoken replies read aloud listen text to speech tts' },
   { id: 'apps', label: 'Connected apps', group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
   { id: 'access', label: 'Agent access', group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
-  { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack discord bot alerts approvals' },
+  { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp bot alerts approvals mention channel' },
   { id: 'people', label: 'People', group: 'SERVER', keywords: 'users admin invite invitation members roles disable accounts email smtp reset', adminOnly: true },
   { id: 'desktop', label: 'Desktop app', group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
   { id: 'engine', label: 'Engine', group: 'THIS COMPUTER', keywords: 'server status restart log version database queue worker data folder' },
@@ -419,6 +421,16 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
           <MemorySettings />
         </>
       );
+    case 'skills':
+      return (
+        <>
+          <SectionHeader
+            title="Skills"
+            description="Instructions your agents load when a job comes up again. Your own skills are only used in your chats and tasks."
+          />
+          <SkillsSettings />
+        </>
+      );
     case 'voice':
       return (
         <>
@@ -445,7 +457,7 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
         <>
           <SectionHeader
             title="Chat apps"
-            description="Chat with your agents from Telegram, Slack or Discord, and get alerts and task approvals there. You create the bot, so messages go only between your bot and this engine."
+            description="Chat with your agents from Telegram, Slack, Discord, Microsoft Teams or WhatsApp, and get alerts and task approvals there. You create the bot, so messages go only between your bot and this engine."
           />
           <ChatChannelsCard />
         </>

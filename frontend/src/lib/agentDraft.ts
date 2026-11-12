@@ -18,6 +18,11 @@ export interface ToolInfo {
 export interface AgentRecord {
   id: string;
   name: string;
+  /** What the signed-in person may do with this agent. */
+  my_role?: AgentRole;
+  /** True when its owner shared it with someone. */
+  shared?: boolean;
+  owner_id?: string | null;
   description?: string;
   system_prompt?: string;
   llm?: {
@@ -319,18 +324,28 @@ export interface AgentOptions {
   default_max_runs_per_day: number;
 }
 
-export type TabId = 'overview' | 'checkins' | 'general' | 'tools' | 'folders' | 'connections' | 'tasks' | 'teams';
+export type TabId = 'overview' | 'checkins' | 'general' | 'tools' | 'folders' | 'connections' | 'tasks' | 'teams' | 'sharing';
 
-export const TABS: { id: TabId; label: string }[] = [
+/** `needs` is the least a person must be on the agent to see the tab:
+ *  'edit' for people it was shared with to edit, 'owner' for its owner only. */
+export const TABS: { id: TabId; label: string; needs?: 'edit' | 'owner' }[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'checkins', label: 'Check-ins' },
-  { id: 'general', label: 'General' },
-  { id: 'tools', label: 'Tools & approvals' },
-  { id: 'folders', label: 'Working folders' },
-  { id: 'connections', label: 'Connections' },
+  { id: 'checkins', label: 'Check-ins', needs: 'owner' },
+  { id: 'general', label: 'General', needs: 'edit' },
+  { id: 'tools', label: 'Tools & approvals', needs: 'edit' },
+  { id: 'folders', label: 'Working folders', needs: 'owner' },
+  { id: 'connections', label: 'Connections', needs: 'owner' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'teams', label: 'Teams' },
+  { id: 'sharing', label: 'Sharing', needs: 'owner' },
 ];
+
+export type AgentRole = 'owner' | 'edit' | 'use';
+
+export function tabsFor(role: AgentRole | undefined) {
+  const mine = role || 'owner';
+  return TABS.filter((t) => !t.needs || mine === 'owner' || (t.needs === 'edit' && mine === 'edit'));
+}
 
 export interface TabProps {
   agent: AgentRecord;

@@ -110,7 +110,8 @@ class TelegramTransport(Transport):
                 ack_id=str(query.get('id') or ''),
             ))
 
-    async def send(self, chat_id: str, text: str, buttons: list[Button] | None = None) -> str:
+    async def send(self, chat_id: str, text: str, buttons: list[Button] | None = None,
+                   thread_id: str = '') -> str:
         markup = None
         if buttons:
             markup = {'inline_keyboard': [[{'text': b.label, 'callback_data': b.data} for b in buttons]]}

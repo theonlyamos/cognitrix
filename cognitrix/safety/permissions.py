@@ -55,6 +55,11 @@ unattended_turn: ContextVar[bool] = ContextVar('permissions_unattended_turn', de
 # Why the current run may only read, or '' when it may act (see module doc).
 read_only_run: ContextVar[str] = ContextVar('permissions_read_only_run', default='')
 
+# True while the agent answers someone other than its person (a question from
+# a shared chat channel). On top of read-only, only GUEST_TOOLS run: nothing
+# that reaches the person's connected apps, memory, chats, tasks or screen.
+guest_run: ContextVar[bool] = ContextVar('permissions_guest_run', default=False)
+
 
 def is_unattended(interface: str | None) -> bool:
     return str(interface or '') in UNATTENDED_INTERFACES or unattended_turn.get()
@@ -235,9 +240,17 @@ READ_ONLY_TOOLS = frozenset({
 })
 
 
+GUEST_TOOLS = frozenset({
+    'read', 'grep', 'glob', 'search', 'tavily_search', 'webfetch', 'web_fetch',
+    'search_knowledge', 'load_skill',
+})
+
+
 def _only_looks(tool: Any, args: dict, mcp_reads: bool | None) -> bool:
     name = str(getattr(tool, 'name', '') or '').strip().lower().replace(' ', '_')
     args = args if isinstance(args, dict) else {}
+    if guest_run.get():
+        return name in GUEST_TOOLS
     if name in READ_ONLY_TOOLS:
         return True
     if str(getattr(tool, 'category', '') or '') in ('mcp', 'mcp_dynamic') and name != 'list_mcp_tools':

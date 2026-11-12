@@ -11,12 +11,16 @@ interface Agent {
   name: string;
   llm?: { provider?: string; model?: string };
   tools?: unknown[];
+  my_role?: 'owner' | 'edit' | 'use';
+  shared?: boolean;
+  owner_id?: string | null;
 }
 
 export default function Agents() {
   const { data, loading, error, refetch } = useResource<Agent[]>('/agents');
   // Drop phantom null-id rows (leftover default "Assistant" agents).
   const agents = (data ?? []).filter((a) => a.id);
+  const sharedWithMe = agents.filter((a) => a.owner_id && a.my_role && a.my_role !== 'owner').length;
   const navigate = useNavigate();
   const fileInput = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState('');
@@ -37,7 +41,9 @@ export default function Agents() {
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
-      <PageHeader title="Agents" subtitle={`owner: you · private · ${agents.length} agent${agents.length === 1 ? "" : "s"} only you can see and run`}>
+      <PageHeader title="Agents" subtitle={sharedWithMe
+        ? `${agents.length} agent${agents.length === 1 ? '' : 's'} · ${sharedWithMe} shared with you`
+        : `owner: you · private · ${agents.length} agent${agents.length === 1 ? "" : "s"} only you can see and run`}>
         <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" aria-label="Agent file" onChange={importFile} />
         <Button type="button" size="sm" variant="outline" onClick={() => fileInput.current?.click()}>Import</Button>
         <Button asChild size="sm">
@@ -77,7 +83,14 @@ export default function Agents() {
                       <AgentIcon />
                     </span>
                     <div className="min-w-0">
-                      <div className="truncate font-medium transition-colors group-hover:text-accent-ink">{a.name}</div>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-medium transition-colors group-hover:text-accent-ink">{a.name}</span>
+                        {a.owner_id && a.my_role && a.my_role !== 'owner' ? (
+                          <span className="flex-none rounded-sm border border-line px-1.5 py-px font-mono text-[10px] tracking-wide text-fg-dim">SHARED WITH YOU</span>
+                        ) : a.shared ? (
+                          <span className="flex-none rounded-sm border border-line px-1.5 py-px font-mono text-[10px] tracking-wide text-fg-dim">SHARED</span>
+                        ) : null}
+                      </div>
                       <div className="truncate font-mono text-[11px] text-fg-dim">
                         {a.llm?.provider || '—'} · {a.llm?.model || '—'} · <span className="opacity-70">{a.id.slice(0, 8)}</span>
                       </div>

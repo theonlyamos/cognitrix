@@ -183,7 +183,9 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
           </div>
           <button type="button" onClick={() => void duplicate()} disabled={busy} className={buttonClass}>Duplicate</button>
           <button type="button" onClick={exportFile} className={buttonClass}>Export as file</button>
-          <button type="button" onClick={remove} className={cn(buttonClass, 'border-danger/60 text-danger-ink hover:bg-danger/10')}>Delete agent</button>
+          {(agent.my_role || 'owner') === 'owner' && (
+            <button type="button" onClick={remove} className={cn(buttonClass, 'border-danger/60 text-danger-ink hover:bg-danger/10')}>Delete agent</button>
+          )}
         </div>
         {error && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{error}</p>}
       </Card>

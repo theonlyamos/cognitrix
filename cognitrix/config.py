@@ -403,6 +403,10 @@ _ARTIFACT_MIGRATION_COLUMNS = (
     ('thumbnail_storage_key', 'TEXT'), ('created_at', 'TEXT'),
 )
 
+_CHANNEL_MIGRATION_COLUMNS = (
+    ('service_url', 'TEXT'), ('answer_others', 'BOOLEAN'),
+)
+
 _AGENT_MIGRATION_COLUMNS = (
     ('owner_id', 'TEXT'),
     ('folders', 'TEXT'), ('can_request_folders', 'BOOLEAN'),
@@ -411,7 +415,7 @@ _AGENT_MIGRATION_COLUMNS = (
     ('description', 'TEXT'), ('reviewer', 'TEXT'), ('coding_agents', 'TEXT'),
     ('credentials', 'TEXT'), ('can_create_sub_agents', 'BOOLEAN'),
     ('sub_agent_model', 'TEXT'), ('automation', 'TEXT'),
-    ('memory', 'TEXT'), ('knowledge', 'TEXT'),
+    ('memory', 'TEXT'), ('knowledge', 'TEXT'), ('shared_with', 'TEXT'),
 )
 
 _SESSION_MIGRATION_COLUMNS = (
@@ -659,6 +663,7 @@ async def _migrate_relational_task_schema(database) -> None:
         ('mcpservers', _MCP_SERVER_MIGRATION_COLUMNS),
         ('agentnotifications', _NOTIFICATION_MIGRATION_COLUMNS),
         ('tasktriggers', _TRIGGER_MIGRATION_COLUMNS),
+        ('chatchannels', _CHANNEL_MIGRATION_COLUMNS),
     ):
         for column, ctype in columns:
             clause = (
@@ -755,7 +760,7 @@ async def _ensure_schema():
 
     from cognitrix.artifacts import Artifact, DocumentArtifact
     from cognitrix.models.api_key import APIKey
-    from cognitrix.models.chat_channel import ChannelDelivery, ChatChannel
+    from cognitrix.models.chat_channel import ChannelDelivery, ChannelThread, ChatChannel
     from cognitrix.models.credential import Credential
     from cognitrix.models.mcp_server import MCPServer
     from cognitrix.models.memory import Memory, MemorySettings
@@ -792,13 +797,17 @@ async def _ensure_schema():
             if hasattr(result, '__await__'):
                 await result
 
+    from cognitrix.meetings.notes import MeetingNote
     from cognitrix.skills.drafts import SkillDraft
+    from cognitrix.skills.personal import PersonalSkill
     from cognitrix.tasks.approvals import TaskApproval
     from cognitrix.tasks.automation import AgentNotification, TaskTrigger, TriggerEvent
     from cognitrix.tasks.standing import AgentOffer
 
     for model in (
         AgentOffer,
+        MeetingNote,
+        PersonalSkill,
         SkillDraft,
         TaskRun,
         TaskRunHead,
@@ -814,6 +823,7 @@ async def _ensure_schema():
         AgentNotification,
         MCPServer,
         ChatChannel,
+        ChannelThread,
         ChannelDelivery,
         Credential,
         Memory,
@@ -879,6 +889,7 @@ async def _ensure_schema():
         ('mcpservers', _MCP_SERVER_MIGRATION_COLUMNS),
         ('agentnotifications', _NOTIFICATION_MIGRATION_COLUMNS),
         ('tasktriggers', _TRIGGER_MIGRATION_COLUMNS),
+        ('chatchannels', _CHANNEL_MIGRATION_COLUMNS),
     ):
         try:
             cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')

@@ -17,7 +17,7 @@ from cognitrix.providers.base import LLM
 from cognitrix.safety import permissions
 from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
 from cognitrix.safety.permissions import decide_tool_call, normalize_tool_permissions, read_only_block
-from cognitrix.skills import drafts
+from cognitrix.skills import drafts, personal
 from cognitrix.tasks import standing
 from cognitrix.tasks.automation import AgentNotification, TaskTrigger, TriggerEvent
 from cognitrix.tasks.base import Task
@@ -57,7 +57,7 @@ async def db(tmp_path):
         DBMS.initialize('sqlite', database=db_file)
     _patch_odbms_sqlite()
     for model in (Agent, Task, TaskRun, TaskRunHead, TaskTrigger, TriggerEvent, AgentNotification,
-                  standing.AgentOffer, drafts.SkillDraft):
+                  standing.AgentOffer, drafts.SkillDraft, personal.PersonalSkill):
         create = getattr(model, '_create_table_async', None) or model.create_table
         await create()
 
@@ -364,8 +364,15 @@ def skills(monkeypatch):
         async def get_skill(self, name):
             return made.get(name)
 
+        async def list_skills(self):
+            return list(made.values())
+
+        def list_skills_sync(self):
+            return tuple(made.values())
+
         async def create_skill(self, name, description, body, **front):
-            made[name] = SimpleNamespace(name=name, description=description, body=body, front=front)
+            made[name] = SimpleNamespace(name=name, description=description, body=body, front=front,
+                                         category='learned', argument_hint='', tags=[])
             return made[name]
 
     monkeypatch.setattr('cognitrix.skills.manager.get_skill_manager', lambda: FakeManager())
@@ -418,29 +425,99 @@ async def test_propose_skill_tool_makes_a_draft_for_review(db, skills):
 async def test_review_edit_approve_reject(db, skills):
     row = await drafts.create_draft('u2', 'sales-summary', 'When asked', BODY, agent_name='Ada')
     member, admin = _ctx('u2', role='member'), _ctx('u1')
-    # the author can edit but, not being an admin, cannot approve
     edited = await assistant.edit_draft(row.id, assistant.DraftEdit(name='Regional Sales'), member)
-    assert edited['name'] == 'regional-sales' and edited['can_approve'] is False
+    assert edited['name'] == 'regional-sales' and edited['can_approve'] and not edited['can_share']
+    # a draft is its owner's: nobody else reviews it, not even an admin
+    for other in (_ctx('u3', role='member'), admin):
+        with pytest.raises(HTTPException) as exc:
+            await assistant.edit_draft(row.id, assistant.DraftEdit(), other)
+        assert exc.value.status_code == 404
+    # only an admin can save a skill for everyone
     with pytest.raises(HTTPException) as exc:
-        await assistant.approve_draft(row.id, member)
+        await assistant.approve_draft(row.id, assistant.DraftApproval(everyone=True), member)
     assert exc.value.status_code == 403
-    with pytest.raises(HTTPException) as exc:
-        await assistant.edit_draft(row.id, assistant.DraftEdit(), _ctx('u3', role='member'))
-    assert exc.value.status_code == 404
 
-    out = await assistant.approve_draft(row.id, admin)
-    assert out == {'status': 'approved', 'name': 'regional-sales'}
-    assert skills['regional-sales'].body == BODY and skills['regional-sales'].front['author'] == 'Ada'
+    out = await assistant.approve_draft(row.id, None, member)
+    assert out == {'status': 'approved', 'name': 'regional-sales', 'scope': 'mine'}
+    assert skills == {}  # nothing shared was written
+    [mine] = await personal.skills_of('u2')
+    assert mine.body == BODY and mine.author == 'Ada'
+    assert await personal.skills_of('u1') == []
     with pytest.raises(HTTPException) as exc:
-        await assistant.approve_draft(row.id, admin)
+        await assistant.approve_draft(row.id, None, member)
     assert exc.value.status_code == 409
 
     other = await drafts.create_draft('u2', 'regional-sales', 'When asked', BODY)
     with pytest.raises(HTTPException) as exc:  # the name is taken now
-        await assistant.approve_draft(other.id, admin)
+        await assistant.approve_draft(other.id, None, member)
     assert exc.value.status_code == 409
     assert (await assistant.reject_draft(other.id, member))['status'] == 'rejected'
-    assert await assistant.list_drafts(admin) == []
+    assert await assistant.list_drafts(member) == []
+
+    # an admin's own draft can go to everyone
+    shared = await drafts.create_draft('u1', 'team-report', 'When asked', BODY, agent_name='Ada')
+    out = await assistant.approve_draft(shared.id, assistant.DraftApproval(everyone=True), admin)
+    assert out['scope'] == 'everyone'
+    assert skills['team-report'].body == BODY and skills['team-report'].front['author'] == 'Ada'
+    assert await personal.skills_of('u1') == []
+
+
+async def test_personal_skills_are_loaded_only_by_their_owner(db, skills):
+    from cognitrix.api.routes import skills as skill_routes
+    from cognitrix.tools.skill_tool import load_skill
+
+    member, admin = _ctx('u2', role='member'), _ctx('u1')
+    made = await skill_routes.add_my_skill(
+        skill_routes.SkillBody(name='Client Report', description='When asked for a client report', body=BODY), member)
+    assert made['name'] == 'client-report'
+    assert [s['name'] for s in await skill_routes.list_skills(member) if s['scope'] == 'mine'] == ['client-report']
+    assert not [s for s in await skill_routes.list_skills(admin) if s['scope'] == 'mine']
+
+    async def load(user):
+        token = set_execution_context(ToolExecutionContext(user_id=user, session_id='s'))
+        try:
+            return str(await load_skill.run(skill_name='client-report'))
+        finally:
+            reset_execution_context(token)
+
+    assert BODY in await load('u2')
+    assert 'not found' in await load('u1')
+
+    # someone else's skill can't be read, changed, deleted or shared
+    for call in (skill_routes.delete_my_skill, skill_routes.share_my_skill):
+        with pytest.raises(HTTPException) as exc:
+            await call(made['id'], admin)
+        assert exc.value.status_code == 404
+    with pytest.raises(HTTPException) as exc:  # a member can't share with everyone
+        await skill_routes.share_my_skill(made['id'], member)
+    assert exc.value.status_code == 403
+
+    edited = await skill_routes.edit_my_skill(made['id'], skill_routes.SkillBody(description='New line'), member)
+    assert edited['description'] == 'New line' and edited['body'] == BODY
+    with pytest.raises(HTTPException) as exc:  # one name per person
+        await skill_routes.add_my_skill(
+            skill_routes.SkillBody(name='client-report', description='d', body=BODY), member)
+    assert exc.value.status_code == 422
+
+    assert (await personal.summaries('u2')) == ({'name': 'client-report', 'description': 'New line'},)
+    await skill_routes.delete_my_skill(made['id'], member)
+    assert await personal.skills_of('u2') == []
+
+
+async def test_admin_shares_own_skill_with_everyone(db, skills):
+    from cognitrix.api.routes import skills as skill_routes
+
+    admin = _ctx('u1')
+    made = await skill_routes.add_my_skill(
+        skill_routes.SkillBody(name='team-report', description='When asked', body=BODY), admin)
+    out = await skill_routes.share_my_skill(made['id'], admin)
+    assert out == {'status': 'shared', 'name': 'team-report'}
+    assert skills['team-report'].body == BODY and await personal.skills_of('u1') == []
+    # the shared name is now taken for everybody's own skills
+    with pytest.raises(HTTPException) as exc:
+        await skill_routes.add_my_skill(
+            skill_routes.SkillBody(name='team-report', description='When asked', body=BODY), _ctx('u2', role='member'))
+    assert exc.value.status_code == 422
 
 
 # --- stop all ----------------------------------------------------------------------

@@ -267,9 +267,17 @@ async def clear_other_primaries(agent: Any, owner_key: str) -> None:
             await save_settings(other, current)
 
 
-def primary_first(agents: list) -> list:
-    """Put the person's main assistant at the front of a list of agents."""
-    return sorted(agents, key=lambda a: 0 if settings_of(a)['primary'] else 1)
+def primary_first(agents: list, user_key: str | None = None) -> list:
+    """Put the person's main assistant at the front of a list of agents.
+
+    With ``user_key``, an agent someone else owns and shared never counts: its
+    "main assistant" mark is its owner's choice, not this person's.
+    """
+    def mine(agent: Any) -> bool:
+        owner = str(getattr(agent, 'owner_id', None) or '')
+        return user_key is None or not owner or owner == str(user_key)
+
+    return sorted(agents, key=lambda a: 0 if settings_of(a)['primary'] and mine(a) else 1)
 
 
 # --- run context ----------------------------------------------------------------

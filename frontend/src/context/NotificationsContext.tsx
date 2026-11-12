@@ -138,6 +138,8 @@ export interface InboxSkillDraft {
   body: string;
   mine: boolean;
   can_approve: boolean;
+  /** An admin can save the skill for everyone on the server. */
+  can_share?: boolean;
   created_at: string | null;
 }
 

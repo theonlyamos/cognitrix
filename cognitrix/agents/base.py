@@ -349,11 +349,22 @@ class AgentManager:
                     asyncio.run(manager.discover_all())
 
             summaries = manager.get_skill_summaries()
-            if not summaries:
+            try:
+                from cognitrix.skills.personal import personal_skills_ctx
+
+                own = personal_skills_ctx.get()
+            except Exception:
+                own = ()
+            if not summaries and not own:
                 return ''
             lines = ["Available Skills — invoke by calling the load_skill tool with the skill name "
                      "(e.g. load_skill(skill_name='<name>')) when a request matches one:"]
+            own_names = {s['name'] for s in own}
+            for s in own:
+                lines.append(f"  - /{s['name']}: {s['description'][:100]} [the person's own]")
             for s in summaries:
+                if s['name'] in own_names:
+                    continue
                 hint = f" {s['argument_hint']}" if s.get('argument_hint') else ""
                 invocable = "" if s.get('user_invocable') == 'True' else " [auto-only]"
                 lines.append(f"  - /{s['name']}{hint}: {s['description'][:100]}{invocable}")

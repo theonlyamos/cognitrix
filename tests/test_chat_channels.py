@@ -345,7 +345,7 @@ async def test_settings_check_tokens_hide_them_and_issue_a_link_code(db, monkeyp
     assert 'secret-token' not in json.dumps(data)
 
     listed = await channels.list_channels(_ctx('u1'))
-    assert [c['kind'] for c in listed['channels']] == ['telegram', 'slack', 'discord']
+    assert [c['kind'] for c in listed['channels']] == ['telegram', 'slack', 'discord', 'teams', 'whatsapp']
     assert 'secret-token' not in json.dumps(listed)
     other = await channels.list_channels(_ctx('u2'))
     assert other['channels'][0]['configured'] is False

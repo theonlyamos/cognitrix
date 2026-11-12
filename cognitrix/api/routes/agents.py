@@ -439,11 +439,38 @@ def _check_policy(agent: Agent, data: dict, existing: Agent | None) -> None:
     agent.memory = memory_policy(agent)
 
 
+# What only the owner of an agent may change. Someone it was shared with to
+# edit changes its instructions, model, tools and approval rules; these stay
+# as stored, because they decide whose apps, files and sign-ins it reaches.
+_OWNER_ONLY_FIELDS = (
+    'mcp_servers', 'folders', 'can_request_folders', 'knowledge', 'credentials',
+    'coding_agents', 'automation', 'memory',
+)
+
+
+async def _agent_view(agent: Agent, ctx: AuthContext) -> dict:
+    """An agent as the API returns it, with what this person may do with it."""
+    data = redact_secrets(agent.json())
+    if not isinstance(data, dict):
+        return data
+    role = await agent_access.my_role(agent, ctx.user)
+    data['my_role'] = role
+    given = agent_access.shares(agent)
+    data['shared'] = bool(given)
+    if role != 'owner':
+        # Who else it is shared with, and what it watches for its owner,
+        # are the owner's business.
+        data['shared_with'] = {}
+        if isinstance(data.get('automation'), dict):
+            data['automation'] = {k: v for k, v in data['automation'].items() if k != 'standing'}
+    return data
+
+
 @agents_api.get('')
 async def list_agents(ctx: AuthContext = Depends(get_auth_context)):
     agents = await agent_access.visible_agents(agent_access.owner_key(ctx.user))
 
-    return [redact_secrets(agent.json()) for agent in agents]
+    return [await _agent_view(agent, ctx) for agent in agents]
 
 @agents_api.post('')
 async def save_agent(request: Request, agent: Agent,
@@ -456,11 +483,20 @@ async def save_agent(request: Request, agent: Agent,
         if not agent_access.can_view(existing, user_key):
             raise HTTPException(status_code=404, detail="Agent not found")
         if not await agent_access.can_edit(existing, ctx.user):
-            raise HTTPException(status_code=403, detail="Only an admin can change a shared agent")
-        # Ownership never moves through this endpoint.
+            raise HTTPException(
+                status_code=403,
+                detail="You can chat with this agent but not change it" if existing.owner_id
+                else "Only an admin can change a shared agent")
+        # Ownership and sharing never move through this endpoint.
         agent.owner_id = existing.owner_id
+        agent.shared_with = dict(existing.shared_with or {})
+        if not await agent_access.can_manage(existing, ctx.user):
+            for field in _OWNER_ONLY_FIELDS:
+                data.pop(field, None)
+                setattr(agent, field, getattr(existing, field))
     else:
         agent.owner_id = user_key
+        agent.shared_with = {}
 
     await _check_mcp_servers(agent)
     if agent.knowledge:
@@ -513,7 +549,7 @@ async def save_agent(request: Request, agent: Agent,
 
     # Return the dict directly so FastAPI's encoder handles datetime/UUID;
     # wrapping in JSONResponse uses stdlib json and raises on datetime.
-    return redact_secrets(agent.json())
+    return await _agent_view(agent, ctx)
 
 # Browser-session plumbing: these two run full tool-enabled agent turns via
 # the SSE action queue, so API keys (which must pass 'chat' scope + agent
@@ -1130,7 +1166,7 @@ async def agent_overview(agent_id: str, ctx: AuthContext = Depends(get_auth_cont
 @agents_api.get('/{agent_id}')
 async def load_agent(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
     agent = await _visible_agent_or_404(agent_id, ctx)
-    data = redact_secrets(agent.json())
+    data = await _agent_view(agent, ctx)
     if isinstance(data, dict):
         from cognitrix.memory.saved import agent_saves_global
 
@@ -1138,11 +1174,101 @@ async def load_agent(agent_id: str, ctx: AuthContext = Depends(get_auth_context)
         data['memory_saves_global'] = await agent_saves_global(agent)
     return data
 
+class ShareEntry(BaseModel):
+    user_id: str
+    role: str
+
+
+class SharingUpdate(BaseModel):
+    people: list[ShareEntry] = []
+    everyone: str | None = None
+    """'use' or 'edit' to share with everyone on the server; None for nobody."""
+
+
+MAX_SHARES = 200
+
+
+async def _people() -> list:
+    from cognitrix.models import User
+
+    try:
+        users = list(await User.all() or [])
+    except Exception:
+        users = []
+    return [u for u in users if not getattr(u, 'disabled', None)]
+
+
+def _person(user) -> dict:
+    return {
+        'id': agent_access.owner_key(user),
+        'name': str(getattr(user, 'name', '') or '') or str(getattr(user, 'email', '') or ''),
+        'email': str(getattr(user, 'email', '') or ''),
+    }
+
+
+async def _sharing_view(agent: Agent, ctx: AuthContext) -> dict:
+    me = agent_access.owner_key(ctx.user)
+    role = await agent_access.my_role(agent, ctx.user)
+    people = {p['id']: p for p in (_person(u) for u in await _people())}
+    owner = people.get(str(agent.owner_id or ''))
+    out: dict = {
+        'role': role,
+        'owner': owner if agent.owner_id else None,
+        'can_manage': role == 'owner' and bool(agent.owner_id),
+    }
+    if not out['can_manage']:
+        return out
+    given = agent_access.shares(agent)
+    out['everyone'] = given.get(agent_access.EVERYONE)
+    out['people'] = [
+        {**people.get(key, {'id': key, 'name': 'Someone who left', 'email': ''}), 'role': value}
+        for key, value in given.items() if key != agent_access.EVERYONE
+    ]
+    out['directory'] = sorted((p for key, p in people.items() if key != me), key=lambda p: p['name'].lower())
+    return out
+
+
+@agents_api.get('/{agent_id}/sharing', dependencies=[Depends(jwt_only)])
+async def get_sharing(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
+    """Who an agent is shared with (its owner), or my own role on it (anyone else)."""
+    return await _sharing_view(await _visible_agent_or_404(agent_id, ctx), ctx)
+
+
+@agents_api.put('/{agent_id}/sharing', dependencies=[Depends(jwt_only)])
+async def set_sharing(agent_id: str, body: SharingUpdate, ctx: AuthContext = Depends(get_auth_context)):
+    agent = await _visible_agent_or_404(agent_id, ctx)
+    if not agent.owner_id:
+        raise HTTPException(status_code=400, detail='This agent already belongs to everyone on the server')
+    if not await agent_access.can_manage(agent, ctx.user):
+        raise HTTPException(status_code=403, detail='Only its owner can share this agent')
+    known = {agent_access.owner_key(u) for u in await _people()}
+    shares: dict[str, str] = {}
+    for entry in body.people[:MAX_SHARES]:
+        key = str(entry.user_id or '').strip()
+        if entry.role not in agent_access.SHARE_ROLES:
+            raise HTTPException(status_code=400, detail="A role is 'use' or 'edit'")
+        if key == str(agent.owner_id):
+            continue
+        if key not in known:
+            raise HTTPException(status_code=400, detail='That person has no account on this server')
+        shares[key] = entry.role
+    if body.everyone is not None:
+        if body.everyone not in agent_access.SHARE_ROLES:
+            raise HTTPException(status_code=400, detail="A role is 'use' or 'edit'")
+        shares[agent_access.EVERYONE] = body.everyone
+    await Agent.update_one({'id': agent.id}, {'shared_with': shares})
+    agent.shared_with = shares
+    return await _sharing_view(agent, ctx)
+
+
 @agents_api.delete('/{agent_id}')
 async def delete_agent(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
     agent = await _visible_agent_or_404(agent_id, ctx)
-    if not await agent_access.can_edit(agent, ctx.user):
-        raise HTTPException(status_code=403, detail="Only an admin can delete a shared agent")
+    if not await agent_access.can_manage(agent, ctx.user):
+        raise HTTPException(
+            status_code=403,
+            detail="Only its owner can delete this agent" if agent.owner_id
+            else "Only an admin can delete a shared agent")
 
     # delete_many avoids the odbms sqlite `delete_one` bug (emits DELETE … LIMIT,
     # which SQLite rejects); an id filter still deletes exactly one row.

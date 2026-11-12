@@ -1,6 +1,6 @@
 import { api } from '@/lib/api';
 
-export type ChannelKind = 'telegram' | 'slack' | 'discord';
+export type ChannelKind = 'telegram' | 'slack' | 'discord' | 'teams' | 'whatsapp';
 
 export interface ChatChannel {
   kind: ChannelKind;
@@ -26,6 +26,19 @@ export interface ChatChannel {
   status: '' | 'connecting' | 'connected' | 'error';
   last_error: string;
   connected: boolean;
+  /** Slack and Teams: the bot also answers @mentions in shared channels. */
+  mentions?: boolean;
+  /** Also answer people other than the linked person there (read-only). */
+  answer_others?: boolean;
+  /** Teams: the bot's Microsoft App ID and organisation. */
+  app_id?: string;
+  tenant_id?: string;
+  /** Teams and WhatsApp: path the app calls, after the server's public address. */
+  webhook_path?: string;
+  /** WhatsApp: the "Verify token" for Meta's webhook form. */
+  verify_token?: string;
+  /** The app calls the engine, so it needs a public https address. */
+  needs_public_url?: boolean;
 }
 
 export interface ChannelList {
@@ -42,6 +55,10 @@ export interface ChannelUpdate {
   enabled?: boolean;
   send_alerts?: boolean;
   send_approvals?: boolean;
+  answer_others?: boolean;
+  app_id?: string;
+  tenant_id?: string;
+  app_secret?: string;
 }
 
 export async function listChannels(): Promise<ChannelList> {

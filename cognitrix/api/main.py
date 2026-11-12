@@ -66,6 +66,12 @@ async def lifespan(app: FastAPI):
         start_attachment_maintenance()
         maintenance_started = True
         try:
+            from ..meetings.notes import fail_interrupted
+            await fail_interrupted()
+        except Exception:
+            import logging
+            logging.getLogger('cognitrix.log').exception('Could not tidy up meeting notes')
+        try:
             from ..channels.service import start_channels
             await start_channels()
         except Exception:

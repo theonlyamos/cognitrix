@@ -48,10 +48,26 @@ async def load_skill(skill_name: str, context: str = "same") -> str:
     parent = kwargs.pop('parent', None)
 
     manager = get_skill_manager()
-    manifest = await manager.get_skill(skill_name)
+    # The person's own skills come first; nobody else's chats see them.
+    manifest = None
+    own_names: list[str] = []
+    try:
+        from cognitrix.skills import personal
+        from cognitrix.tools.utils import current_execution_context
+
+        owner = current_execution_context().user_id
+        own = await personal.get(owner, skill_name)
+        if own is not None:
+            manifest = personal.manifest_of(own)
+        else:
+            own_names = [row.name for row in await personal.skills_of(owner)]
+    except Exception:
+        logger.debug('Personal skills unavailable', exc_info=True)
+    if manifest is None:
+        manifest = await manager.get_skill(skill_name)
 
     if not manifest:
-        available = [s.name for s in manager.list_skills_sync()]
+        available = own_names + [s.name for s in manager.list_skills_sync()]
         return f"Skill '{skill_name}' not found. Available skills: {available}"
 
     # Render skill content - resolve environment variables
@@ -223,8 +239,10 @@ async def propose_skill(name: str, description: str, instructions: str) -> str:
     if ctx.api_key_id:
         return 'Error: skills can only be proposed in a chat with a signed-in person.'
     try:
+        from cognitrix.skills import personal
+
         clean_name = drafts.slug(name)
-        if clean_name and await drafts.skill_exists(clean_name):
+        if clean_name and await personal.name_taken(str(ctx.user_id), clean_name):
             return f"Error: a skill called '{clean_name}' already exists. Pick another name."
         agent_name = ''
         if ctx.agent_id:

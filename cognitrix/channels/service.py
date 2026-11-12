@@ -2,6 +2,11 @@
 
 * One background task per channel keeps the bot connected (Telegram long
   polling, Slack Socket Mode, the Discord Gateway) and restarts it after network errors.
+  Microsoft Teams and WhatsApp call the API instead (``deliver_teams``,
+  ``deliver_whatsapp``), which needs a public URL.
+* In Slack and Teams the bot also answers @mentions in shared channels, in
+  the thread (``_on_mention``): the linked person as usual, other people
+  only if the person allowed it, and then read-only.
 * A message from the linked chat starts a chat turn with the channel's agent,
   in the same kind of conversation the web UI uses, so it also shows there.
   Risky tool calls and Ask User questions arrive as buttons in the chat.
@@ -24,13 +29,14 @@ from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
-from cognitrix.models.chat_channel import ChannelDelivery, ChatChannel
+from cognitrix.models.chat_channel import ChannelDelivery, ChannelThread, ChatChannel
 
 from .base import (
     Button,
     ButtonPress,
     ChannelAuthError,
     ChannelConflictError,
+    ChannelUndeliverable,
     Handlers,
     Incoming,
     Transport,
@@ -39,7 +45,13 @@ from .formatting import split_text, strip_reasoning
 
 logger = logging.getLogger('cognitrix.log')
 
-KINDS = ('telegram', 'slack', 'discord')
+KINDS = ('telegram', 'slack', 'discord', 'teams', 'whatsapp')
+# Apps that call the engine (it needs a public https address) instead of the engine connecting out.
+WEBHOOK_KINDS = ('teams', 'whatsapp')
+# Apps where a person's id is the same in every chat, so someone who
+# @mentions the bot in a shared channel can be told apart from its owner.
+MENTION_KINDS = ('slack', 'teams')
+GUEST_REASON = 'this question came from someone other than your person, so you may only look things up'
 LINK_CODE_MINUTES = 30
 MAX_LINK_ATTEMPTS = 10
 DELIVERY_INTERVAL = 4.0
@@ -73,6 +85,23 @@ def make_transport(channel: ChatChannel) -> Transport:
     if channel.kind == 'discord':
         from .discord import DiscordTransport
         return DiscordTransport(channel.bot_token)
+    if channel.kind == 'teams':
+        from .teams import TeamsTransport, split_app
+
+        app_id, tenant = split_app(channel.app_token)
+        channel_id = channel.id
+
+        async def remember(url: str) -> None:
+            if channel_id:
+                await ChatChannel.update_one({'id': channel_id}, {'service_url': url})
+
+        return TeamsTransport(app_id, channel.bot_token, tenant,
+                              service_url=channel.service_url, on_service_url=remember)
+    if channel.kind == 'whatsapp':
+        from .whatsapp import WhatsAppTransport, split_app
+
+        phone_id, secret = split_app(channel.app_token)
+        return WhatsAppTransport(channel.bot_token, phone_id, secret)
     raise ValueError(f'Unknown chat app {channel.kind!r}')
 
 
@@ -156,13 +185,33 @@ class ChannelService:
 
     async def cancel_turn(self, channel_id: str) -> None:
         """Stop the running reply, e.g. because the chat it answers was unlinked."""
-        turn = self._turns.pop(channel_id, None)
-        if turn is not None and not turn.done():
-            turn.cancel()
-            try:
-                await turn
-            except (asyncio.CancelledError, Exception):
-                pass
+        for key in [k for k in self._turns if k == channel_id or k.startswith(channel_id + '|')]:
+            turn = self._turns.pop(key, None)
+            if turn is not None and not turn.done():
+                turn.cancel()
+                try:
+                    await turn
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+    async def deliver_teams(self, channel_id: str, authorization: str, activity: dict[str, Any]) -> None:
+        """Hand over an activity Microsoft Teams posted to the API.
+
+        Raises LookupError when that bot isn't running here and
+        ``TeamsAuthError`` when the request isn't genuinely from Teams.
+        """
+        transport = self._transports.get(channel_id)
+        if transport is None or getattr(transport, 'kind', '') != 'teams':
+            raise LookupError(channel_id)
+        await transport.receive(authorization, activity)  # type: ignore[attr-defined]
+
+    async def deliver_whatsapp(self, channel_id: str, signature: str, raw: bytes) -> None:
+        """Hand over a webhook call from WhatsApp. Raises LookupError when that
+        bot isn't running here and ``WhatsAppAuthError`` when the signature is wrong."""
+        transport = self._transports.get(channel_id)
+        if transport is None or getattr(transport, 'kind', '') != 'whatsapp':
+            raise LookupError(channel_id)
+        await transport.receive(signature, raw)  # type: ignore[attr-defined]
 
     async def _still_linked(self, channel: ChatChannel) -> bool:
         fresh = await ChatChannel.get(channel.id)
@@ -177,15 +226,13 @@ class ChannelService:
 
     async def _stop_runner(self, channel_id: str) -> None:
         task = self._runners.pop(channel_id, None)
-        turn = self._turns.pop(channel_id, None)
-        for item in (task, turn):
-            if item is None:
-                continue
-            item.cancel()
+        if task is not None:
+            task.cancel()
             try:
-                await item
+                await task
             except (asyncio.CancelledError, Exception):
                 pass
+        await self.cancel_turn(channel_id)
         self._connected.discard(channel_id)
 
     async def _set_status(self, channel_id: str, status: str, error: str = '') -> None:
@@ -242,7 +289,7 @@ class ChannelService:
     # --- incoming ------------------------------------------------------------
 
     async def _reply(self, channel: ChatChannel, chat_id: str, text: str,
-                     buttons: list[Button] | None = None) -> str:
+                     buttons: list[Button] | None = None, thread_id: str = '') -> str:
         transport = self._transports.get(channel.id)
         if transport is None:
             return ''
@@ -250,7 +297,8 @@ class ChannelService:
         parts = split_text(text, transport.text_limit) or ['']
         for index, part in enumerate(parts):
             last = index == len(parts) - 1
-            ref = await transport.send(chat_id, part, buttons if last else None)
+            ref = await transport.send(chat_id, part, buttons if last else None,
+                                       **({'thread_id': thread_id} if thread_id else {}))
         if buttons and ref:
             self._button_text[(channel.id, chat_id, ref)] = parts[-1]
         return ref
@@ -260,6 +308,11 @@ class ChannelService:
 
     def _is_owner(self, channel: ChatChannel, chat_id: str, sender_id: str) -> bool:
         return bool(channel.chat_id) and chat_id == channel.chat_id and sender_id == channel.peer_id
+
+    def _is_person(self, channel: ChatChannel, sender_id: str) -> bool:
+        """The linked person, wherever in the app they wrote from."""
+        return (channel.kind in MENTION_KINDS and bool(channel.chat_id)
+                and bool(channel.peer_id) and sender_id == channel.peer_id)
 
     async def _owner_active(self, channel: ChatChannel) -> bool:
         """The channel's person still has a working account.
@@ -280,6 +333,9 @@ class ChannelService:
             await self.cancel_turn(channel.id)
             if msg.private:
                 await self._reply(channel, msg.chat_id, 'This account is disabled.')
+            return
+        if msg.mention and not msg.private:
+            await self._on_mention(channel, msg)
             return
         if not channel.chat_id:
             await self._try_link(channel, msg)
@@ -309,6 +365,45 @@ class ChannelService:
                               f'Still working on your last message. Send {_prefix(channel.kind)}stop to cancel it.')
             return
         self._turns[channel.id] = asyncio.create_task(self._turn(channel, text))
+
+    async def _on_mention(self, channel: ChatChannel, msg: Incoming) -> None:
+        """Someone @mentioned the bot in a shared channel: answer in that thread.
+
+        The linked person gets their agent as usual. Anyone else is answered
+        only when the person turned that on, and then read-only, in a chat
+        that has none of the person's memories.
+        """
+        if channel.kind not in MENTION_KINDS or not channel.chat_id:
+            return  # not linked yet: linking happens in a direct message
+        text = msg.text.strip()
+        where = {'thread_id': msg.thread_id}
+        guest = not self._is_person(channel, msg.sender_id)
+        if guest and not channel.answer_others:
+            await self._reply(channel, msg.chat_id,
+                              f'I only answer {channel.peer_name or "the person who set me up"} here.', **where)
+            return
+        key = f'{channel.id}|{msg.chat_id}|{msg.thread_id}'
+        command = _COMMAND.match(text)
+        if command and command.group(1).lower() == 'stop':
+            turn = self._turns.get(key)
+            if turn is not None and not turn.done() and not guest:
+                turn.cancel()
+            return
+        pending = self._questions.get(key)
+        if pending:
+            from cognitrix.questions.broker import resolve_question
+            from cognitrix.questions.models import QuestionAction
+
+            if await resolve_question(pending, channel.user_id, QuestionAction.ANSWER, text=text):
+                self._questions.pop(key, None)
+                return
+        turn = self._turns.get(key)
+        if turn is not None and not turn.done():
+            await self._reply(channel, msg.chat_id, 'Still working on the last message in this thread.', **where)
+            return
+        self._turns[key] = asyncio.create_task(self._turn(
+            channel, text, chat_id=msg.chat_id, thread_id=msg.thread_id, guest=guest,
+            sender_name=msg.sender_name, key=key))
 
     async def _try_link(self, channel: ChatChannel, msg: Incoming) -> None:
         from cognitrix.tasks.automation import utcnow_str
@@ -414,10 +509,27 @@ class ChannelService:
         from cognitrix.tasks.standing import primary_first
 
         # No agent picked yet: the person's main assistant, when they chose one.
-        agents = primary_first(await self._agents(channel.user_id))
+        agents = primary_first(await self._agents(channel.user_id), channel.user_id)
         return agents[0] if agents else None
 
-    async def _session(self, channel: ChatChannel, agent):
+    async def _thread_session(self, channel: ChatChannel, agent, chat_id: str, thread_id: str, guest: bool):
+        """The conversation behind one thread of a shared channel."""
+        query = {'channel_id': channel.id, 'chat_id': chat_id, 'thread_id': thread_id}
+        row = await ChannelThread.find_one(query)
+        # A thread someone else started never continues as the person's own
+        # conversation (and the other way round): each keeps its limits.
+        stored = row.session_id if row is not None and bool(row.guest) == guest else ''
+
+        async def remember(session_id: str) -> None:
+            if row is not None:
+                await ChannelThread.update_one({'id': row.id}, {'session_id': session_id, 'guest': guest})
+            else:
+                await ChannelThread(**query, session_id=session_id, guest=guest).save()
+
+        return await self._session(channel, agent, stored=stored, remember=remember, incognito=guest)
+
+    async def _session(self, channel: ChatChannel, agent, *, stored: str | None = None,
+                       remember: Any = None, incognito: bool = False):
         from cognitrix.session_ownership import (
             OwnershipConflict,
             OwnershipNotFound,
@@ -426,50 +538,77 @@ class ChannelService:
         )
         from cognitrix.sessions.base import Session
 
-        if channel.session_id:
+        stored = channel.session_id if stored is None else stored
+        if stored:
             try:
-                binding = await require_active_owned(channel.session_id, channel.user_id, str(agent.id))
-                session = await Session.get(channel.session_id)
+                binding = await require_active_owned(stored, channel.user_id, str(agent.id))
+                session = await Session.get(stored)
                 if session is not None and str(session.agent_id or '') == binding.agent_id:
                     return session
             except (OwnershipNotFound, OwnershipConflict):
                 pass
-        session = Session(agent_id=agent.id, user_id=channel.user_id)
+        session = Session(agent_id=agent.id, user_id=channel.user_id, incognito=True if incognito else None)
         await session.save()
         try:
             await claim_new(str(session.id), channel.user_id, str(agent.id))
         except BaseException:
             await Session.delete_many({'id': str(session.id)})
             raise
-        await ChatChannel.update_one({'id': channel.id}, {'session_id': str(session.id)})
+        if remember is not None:
+            await remember(str(session.id))
+        else:
+            await ChatChannel.update_one({'id': channel.id}, {'session_id': str(session.id)})
         return session
 
-    async def _keep_typing(self, channel: ChatChannel) -> None:
+    async def _keep_typing(self, channel: ChatChannel, chat_id: str) -> None:
         transport = self._transports.get(channel.id)
         if transport is None:
             return
         while True:
-            await transport.typing(channel.chat_id)
+            await transport.typing(chat_id)
             await asyncio.sleep(TYPING_INTERVAL)
 
-    async def _turn(self, channel: ChatChannel, text: str) -> None:
+    async def _turn(self, channel: ChatChannel, text: str, *, chat_id: str = '', thread_id: str = '',
+                    guest: bool = False, sender_name: str = '', key: str = '') -> None:
+        """One reply. With ``chat_id`` it answers an @mention in a shared
+        channel (in ``thread_id``); ``guest`` means someone other than the
+        linked person asked."""
         from cognitrix.api.routes.agents import CHAT_TIMEOUT
         from cognitrix.questions.broker import QuestionTurnContext, question_turn_ctx
         from cognitrix.safety.approval_gate import web_turn_ctx
+        from cognitrix.safety.permissions import guest_run, read_only_run
         from cognitrix.sessions import runs as chat_runs
         from cognitrix.tools.utils import ToolExecutionContext, signed_in_host_process_mode
 
+        shared = bool(chat_id)
+        chat_id = chat_id or channel.chat_id
+        key = key or channel.id
+        where = {'thread_id': thread_id} if thread_id else {}
         agent = await self._agent(channel)
         if agent is None:
-            await self._reply(channel, channel.chat_id,
-                              'You have no agents yet. Create one in Cognitrix first.')
+            await self._reply(channel, chat_id,
+                              'You have no agents yet. Create one in Cognitrix first.', **where)
             return
-        session = await self._session(channel, agent)
+        if shared:
+            session = await self._thread_session(channel, agent, chat_id, thread_id, guest)
+            person = channel.peer_name or 'the person you work for'
+            if guest:
+                # These context variables live in this turn's own task.
+                read_only_run.set(GUEST_REASON)
+                guest_run.set(True)
+                text = (f'[{sender_name or "Someone"} asked this in a shared {channel.kind.capitalize()} channel. '
+                        f'They are not {person}. Answer from what you can look up; you cannot change anything '
+                        f'for them, and do not share private details about {person}.]\n\n{text}')
+            else:
+                text = (f'[{person} asked this in a shared {channel.kind.capitalize()} channel: '
+                        f'everyone there reads your reply.]\n\n{text}')
+        else:
+            session = await self._session(channel, agent)
         existing = chat_runs.get_run(channel.user_id, str(session.id))
         if existing is not None and existing.running:
-            await self._reply(channel, channel.chat_id,
+            await self._reply(channel, chat_id,
                               'This conversation is busy in Cognitrix. Try again in a moment, '
-                              f'or send {_prefix(channel.kind)}new.')
+                              f'or send {_prefix(channel.kind)}new.', **where)
             return
 
         me = asyncio.current_task()
@@ -484,7 +623,7 @@ class ChannelService:
             reply = strip_reasoning(''.join(collected))
             collected.clear()
             if reply and await self._still_linked(channel):
-                await self._reply(channel, channel.chat_id, reply)
+                await self._reply(channel, chat_id, reply, **where)
 
         async def output(payload: Any = None, *args, **kwargs) -> None:
             if not isinstance(payload, dict):
@@ -503,16 +642,17 @@ class ChannelService:
                 await flush()
                 rid = str(event.get('request_id'))
                 await self._reply(
-                    channel, channel.chat_id,
+                    channel, chat_id,
                     f'{agent.name} wants to run **{event.get("tool_name")}** '
                     f'({event.get("risk_level", "")} risk).\n'
                     f'```\n{_params_preview(event.get("params"))}\n```',
                     [Button('Approve', f'ca:{rid}:1', 'primary'), Button('Deny', f'ca:{rid}:0', 'danger')],
+                    **where,
                 )
             elif kind == 'question_request':
                 await flush()
                 rid = str(event.get('request_id'))
-                self._questions[channel.id] = rid
+                self._questions[key] = rid
                 options = event.get('options') or []
                 body = str(event.get('prompt') or 'Question')
                 if event.get('details'):
@@ -520,16 +660,20 @@ class ChannelService:
                 if event.get('allow_free_text'):
                     body += '\n\nTap an option or type your answer.' if options else '\n\nType your answer.'
                 buttons = [Button(str(o.get('label'))[:60], f'q:{rid}:{i}') for i, o in enumerate(options)][:8]
-                await self._reply(channel, channel.chat_id, body, buttons or None)
+                if guest:
+                    # Buttons are the linked person's; a guest answers by mentioning the bot again.
+                    buttons = []
+                    body += '\n\nMention me with your answer.'
+                await self._reply(channel, chat_id, body, buttons or None, **where)
 
-        typing = asyncio.create_task(self._keep_typing(channel))
+        typing = asyncio.create_task(self._keep_typing(channel, chat_id))
         approval_token = web_turn_ctx.set({
             'emit': emit, 'session_id': str(session.id), 'bypass': False, 'user_key': channel.user_id,
             'agent_name': agent.name, 'origin': f'channel:{channel.id}',
         })
         question_token = question_turn_ctx.set(QuestionTurnContext(
             emit=emit, session_id=str(session.id),
-            stream_id=f'channel-{channel.id}', user_key=channel.user_id,
+            stream_id=f'channel-{key}', user_key=channel.user_id,
         ))
         terminal = {'type': 'turn_complete', 'content': '', 'session_id': str(session.id)}
         try:
@@ -560,7 +704,7 @@ class ChannelService:
             web_turn_ctx.reset(approval_token)
             question_turn_ctx.reset(question_token)
             typing.cancel()
-            self._questions.pop(channel.id, None)
+            self._questions.pop(key, None)
             run.finish(terminal)
             try:
                 await flush()
@@ -574,7 +718,8 @@ class ChannelService:
         transport = self._transports.get(channel_id)
         if channel is None or transport is None:
             return
-        if not self._is_owner(channel, press.chat_id, press.sender_id):
+        if not (self._is_owner(channel, press.chat_id, press.sender_id)
+                or self._is_person(channel, press.sender_id)):
             await transport.answer_button(press, 'Only the linked account can answer this.')
             return
         if not await self._owner_active(channel):
@@ -625,7 +770,8 @@ class ChannelService:
         ok = await broker.resolve_question(request_id, channel.user_id, QuestionAction.ANSWER,
                                            option_id=option.id)
         if ok:
-            self._questions.pop(channel.id, None)
+            for key in [k for k, v in self._questions.items() if v == request_id]:
+                self._questions.pop(key, None)
             return f'Answered: {option.label}'
         return 'This question has already ended.'
 
@@ -646,6 +792,15 @@ class ChannelService:
     async def _close_delivery(self, channel_id: str, kind: str, item_id: str) -> None:
         await ChannelDelivery.update_one(
             {'channel_id': channel_id, 'item_kind': kind, 'item_id': item_id}, {'closed': True})
+
+    async def _push(self, channel: ChatChannel, body: str, buttons: list[Button] | None = None) -> str | None:
+        """Send an Inbox item to the linked chat. None when the app refuses
+        it for good; the item then simply stays in the Inbox."""
+        try:
+            return await self._reply(channel, channel.chat_id, body, buttons)
+        except ChannelUndeliverable as exc:
+            logger.info('Chat channel %s could not deliver an Inbox item: %s', channel.id, exc)
+            return None
 
     async def _pending_items(self, channel: ChatChannel) -> tuple[list, list]:
         from cognitrix.tasks import approvals
@@ -690,11 +845,11 @@ class ChannelService:
             body = (f'Approval needed: {approval_alerts.headline(entry)} '
                     f'({entry.get("risk_level", "")} risk).\n'
                     f'```\n{_params_preview(entry.get("params"))}\n```')
-            ref = await self._reply(channel, channel.chat_id, body, [
+            ref = await self._push(channel, body, [
                 Button('Approve', f'ca:{rid}:1', 'primary'),
                 Button('Deny', f'ca:{rid}:0', 'danger'),
             ])
-            await self._record(channel.id, 'chat_approval', rid, ref)
+            await self._record(channel.id, 'chat_approval', rid, ref or '', closed=ref is None)
             sent += 1
         return sent
 
@@ -723,8 +878,8 @@ class ChannelService:
                             body += f'\n{note.message}'
                         if title:
                             body += f'\n\nTask: {title}'
-                        ref = await self._reply(channel, channel.chat_id, body)
-                        await self._record(channel.id, 'notification', str(note.id), ref, closed=True)
+                        ref = await self._push(channel, body)
+                        await self._record(channel.id, 'notification', str(note.id), ref or '', closed=True)
                         sent += 1
                 if channel.send_approvals:
                     for row in rows:
@@ -734,11 +889,11 @@ class ChannelService:
                         body = (f'Approval needed{f" for task **{title}**" if title else ""}: '
                                 f'run **{row.tool_name}** ({row.risk_level} risk)?\n'
                                 f'```\n{_params_preview(row.params)}\n```')
-                        ref = await self._reply(channel, channel.chat_id, body, [
+                        ref = await self._push(channel, body, [
                             Button('Approve', f'ta:{row.id}:1', 'primary'),
                             Button('Deny', f'ta:{row.id}:0', 'danger'),
                         ])
-                        await self._record(channel.id, 'approval', str(row.id), ref)
+                        await self._record(channel.id, 'approval', str(row.id), ref or '', closed=ref is None)
                         sent += 1
                     sent += await self._deliver_chat_approvals(channel, seen)
                 # Approvals answered elsewhere: drop their buttons.

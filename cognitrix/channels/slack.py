@@ -40,10 +40,11 @@ SLACK_MANIFEST: dict[str, Any] = {
         'bot_user': {'display_name': 'Cognitrix', 'always_online': True},
     },
     'oauth_config': {
-        'scopes': {'bot': ['chat:write', 'im:history', 'im:read', 'im:write']},
+        # app_mentions:read lets people @mention the bot in a channel it was added to.
+        'scopes': {'bot': ['app_mentions:read', 'chat:write', 'im:history', 'im:read', 'im:write']},
     },
     'settings': {
-        'event_subscriptions': {'bot_events': ['message.im']},
+        'event_subscriptions': {'bot_events': ['app_mention', 'message.im']},
         'interactivity': {'is_enabled': True},
         'org_deploy_enabled': False,
         'socket_mode_enabled': True,
@@ -142,8 +143,25 @@ class SlackTransport(Transport):
         payload = envelope.get('payload') or {}
         if envelope.get('type') == 'events_api':
             event = payload.get('event') or {}
-            if (event.get('type') != 'message' or event.get('subtype') or event.get('bot_id')
+            if (event.get('subtype') or event.get('bot_id')
                     or event.get('user') in (None, '', self._bot_user_id)):
+                return
+            if event.get('type') == 'app_mention':
+                # Someone @mentioned the bot in a channel: answer in that thread.
+                text = str(event.get('text') or '')
+                if self._bot_user_id:
+                    text = text.replace(f'<@{self._bot_user_id}>', ' ')
+                await handlers.on_message(Incoming(
+                    chat_id=str(event.get('channel') or ''),
+                    sender_id=str(event.get('user') or ''),
+                    sender_name='',
+                    text=text.strip(),
+                    private=False,
+                    mention=True,
+                    thread_id=str(event.get('thread_ts') or event.get('ts') or ''),
+                ))
+                return
+            if event.get('type') != 'message':
                 return
             await handlers.on_message(Incoming(
                 chat_id=str(event.get('channel') or ''),
@@ -181,9 +199,11 @@ class SlackTransport(Transport):
             {'type': 'actions', 'elements': elements},
         ]
 
-    async def send(self, chat_id: str, text: str, buttons: list[Button] | None = None) -> str:
+    async def send(self, chat_id: str, text: str, buttons: list[Button] | None = None,
+                   thread_id: str = '') -> str:
         data = await self._call('chat.postMessage', channel=chat_id, text=to_slack_mrkdwn(text),
-                                blocks=self._blocks(text, buttons), unfurl_links=False)
+                                blocks=self._blocks(text, buttons), unfurl_links=False,
+                                thread_ts=thread_id or None)
         return str(data.get('ts') or '')
 
     async def edit(self, chat_id: str, message_ref: str, text: str) -> None:
