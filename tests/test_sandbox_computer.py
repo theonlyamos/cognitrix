@@ -115,6 +115,36 @@ def test_sandbox_gives_up_waiting(sandboxed):
         sandboxed.look(1)
 
 
+def test_take_over_stops_typing_already_under_way(sandboxed, fake):
+    fake.fg = 2
+    fake.idle = 0.0
+    sandboxed.look(2)
+    real_tick = fake._tick
+
+    def slow_tick(still_ok):
+        time.sleep(0.05)
+        return real_tick(still_ok)
+
+    fake._tick = slow_tick
+    typing = threading.Thread(target=sandboxed.type_text, args=(2, 'x' * 40))
+    typing.start()
+    time.sleep(0.2)
+    sandboxed.hold('Amos')  # returns only once the typing has stopped
+    sent = len([p for p in fake.posted if p[0] == 'screen-char'])
+    time.sleep(0.2)
+    assert len([p for p in fake.posted if p[0] == 'screen-char']) == sent < 40
+    sandboxed.release()
+    typing.join(2)
+
+
+def test_sandbox_driver_keeps_its_looks_between_calls(monkeypatch):
+    from cognitrix.computer.sandbox import client
+    box = SimpleNamespace(passwords={'agent-a': 'x'}, drivers={})
+    mgr = client.SandboxManager.__new__(client.SandboxManager)
+    monkeypatch.setattr(mgr, 'sandbox', lambda owner: box, raising=False)
+    assert mgr.driver('u1', 'agent-a') is mgr.driver('u1', 'agent-a')
+
+
 def test_remote_driver_round_trip(remote, fake):
     windows = remote.list_windows('calc')
     assert [w.title for w in windows] == ['Calc']
@@ -267,6 +297,7 @@ def test_viewer_ticket_is_one_use(api):
     assert viewer['password'] == 'viewpass' and viewer['ticket'] in viewer['path']
     from cognitrix.api.routes import computer_sandbox
     assert viewer['ticket'] in computer_sandbox._tickets
-    with pytest.raises(Exception):
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect('/computer/sandbox/screen?ticket=wrong'):
             pass

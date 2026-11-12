@@ -15,6 +15,7 @@ person only reaches their own sandbox.
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import time
 from typing import Any
@@ -26,6 +27,8 @@ from starlette.concurrency import run_in_threadpool
 
 from cognitrix.common.security import AuthContext, jwt_only
 from cognitrix.computer.sandbox import check_name
+
+logger = logging.getLogger(__name__)
 
 sandbox_api = APIRouter(prefix='/computer/sandbox')
 
@@ -76,8 +79,10 @@ async def status(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
         return {'enabled': False, 'running': False, 'desktops': [], 'from_env': mode_from_env()}
     try:
         box = await run_in_threadpool(get_manager().existing, _owner(ctx))
-    except Exception as exc:  # Docker missing or stopped
-        return {'enabled': True, 'running': False, 'desktops': [], 'error': str(exc)}
+    except Exception:  # Docker missing or stopped
+        logger.warning("Couldn't reach the agents' computer", exc_info=True)
+        return {'enabled': True, 'running': False, 'desktops': [],
+                'error': "Couldn't reach Docker. Check that Docker is installed and running."}
     if box is None:
         return {'enabled': True, 'running': False, 'desktops': []}
     desktops = await run_in_threadpool(box.desktops)

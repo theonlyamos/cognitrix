@@ -26,8 +26,8 @@ import shutil
 import subprocess
 import threading
 import time
-from ctypes import POINTER, byref, c_char_p, c_double, c_int, c_long, c_uint, c_ulong, c_void_p
 from collections.abc import Callable
+from ctypes import POINTER, byref, c_char_p, c_double, c_int, c_long, c_uint, c_ulong, c_void_p
 from typing import Any
 
 from cognitrix.computer import Element, Unsupported, WindowInfo, blocked_reason, fingerprint_of

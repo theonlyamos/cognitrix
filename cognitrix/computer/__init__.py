@@ -278,6 +278,7 @@ class Driver:
         if sandbox:
             self.screen_idle_s = 0.0
         self._held_by: str | None = None  # a person took over this desktop
+        self._screen_busy = threading.Lock()  # held while real input is being sent
         self._snapshots: dict[int, Snapshot] = {}
         # (viewer, window) -> the snapshot id that viewer last looked at
         self._seen: dict[tuple[Any, int], str] = {}
@@ -303,8 +304,12 @@ class Driver:
     def hold(self, by: str = 'the person') -> None:
         """A person took over this desktop: refuse agent actions and looks
         until release(), so the two never fight over the mouse and nothing the
-        person types reaches the model."""
+        person types reaches the model. Input already being sent stops at its
+        next character, and this returns only once it has, so the person never
+        gets control while the agent is still typing."""
         self._held_by = by or 'the person'
+        if self._screen_busy.acquire(timeout=10):
+            self._screen_busy.release()
 
     def release(self) -> None:
         self._held_by = None
@@ -553,6 +558,12 @@ class Driver:
         the pointer and the person's foreground window back. `send` gets a
         still_ok() check and stops when another window takes the front.
         Returns a result when nothing (or not everything) could be sent."""
+        with self._screen_busy:
+            if self._held_by:
+                return ActionResult(FAILED, f'{self._held_by} has taken over this computer, so nothing was sent.')
+            return self._send_on_screen(win, send)
+
+    def _send_on_screen(self, win: WindowInfo, send: Callable[[Callable[[], bool]], bool]) -> ActionResult | None:
         b = self.backend
         deadline = time.monotonic() + self.screen_wait_s
         while b.idle_seconds() < self.screen_idle_s:
@@ -565,6 +576,8 @@ class Driver:
             return ActionResult(FAILED, "Couldn't bring the window to the front, so nothing was sent.")
 
         def still_ok() -> bool:
+            if self._held_by:  # a person took over mid-action
+                return False
             fg = b.foreground()
             if fg == win.id:
                 return True

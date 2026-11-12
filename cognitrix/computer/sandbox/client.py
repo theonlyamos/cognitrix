@@ -26,12 +26,28 @@ from typing import Any
 import httpx
 
 from cognitrix.computer import (
-    Actor, Blocked, Busy, DriverError, HumanControl, Snapshot, Stale, Unsupported, WindowInfo,
-    _global_listeners, current_actor,
+    Actor,
+    Blocked,
+    Busy,
+    DriverError,
+    HumanControl,
+    Snapshot,
+    Stale,
+    Unsupported,
+    WindowInfo,
+    _global_listeners,
+    current_actor,
 )
 from cognitrix.computer.sandbox import (
-    SERVICE_PORT, TOKEN_ENV, VIEWER_PORT, desktop_name, event_from_dict, image_from_b64, result_from_dict,
-    snapshot_from_dict, window_from_dict,
+    SERVICE_PORT,
+    TOKEN_ENV,
+    VIEWER_PORT,
+    desktop_name,
+    event_from_dict,
+    image_from_b64,
+    result_from_dict,
+    snapshot_from_dict,
+    window_from_dict,
 )
 
 logger = logging.getLogger('cognitrix.sandbox')
@@ -113,6 +129,9 @@ class Sandbox:
         self.api = f'http://127.0.0.1:{api_port}'
         self.viewer_port = viewer_port
         self.passwords: dict[str, str] = {}  # desktop -> VNC password
+        # One driver per desktop, kept so its snapshots last between tool calls
+        # (normalized-coordinate clicks read the last look's size).
+        self.drivers: dict[str, RemoteDriver] = {}
         self._client = httpx.Client(timeout=130, headers={'Authorization': f'Bearer {token}'})
 
     def request(self, method: str, path: str, body: dict | None = None, timeout: float | None = None) -> dict:
@@ -258,7 +277,10 @@ class SandboxManager:
         name = desktop_name(agent_id)
         if name not in box.passwords:
             box.desktop(name)
-        return RemoteDriver(box, name)
+        driver = box.drivers.get(name)
+        if driver is None:
+            driver = box.drivers[name] = RemoteDriver(box, name)
+        return driver
 
 
 class _RemoteBackend:
