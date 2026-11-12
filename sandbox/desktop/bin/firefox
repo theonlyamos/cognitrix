@@ -1,0 +1,9 @@
+#!/bin/sh
+# Firefox with this desktop's own profile.
+PROFILE="$HOME/.profiles/${DESKTOP_NAME:-main}/firefox"
+mkdir -p "$PROFILE"
+# Same as Chromium: a hard stop leaves a lock that makes Firefox refuse the profile.
+if ! pgrep -f -- "--profile $PROFILE" >/dev/null 2>&1; then
+    rm -f "$PROFILE/lock" "$PROFILE/.parentlock"
+fi
+exec /usr/bin/firefox-esr --no-remote --profile "$PROFILE" "$@"

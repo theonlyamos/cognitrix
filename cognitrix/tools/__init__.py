@@ -3,6 +3,7 @@ from cognitrix.tools.base import Tool
 from cognitrix.tools.chat_history import read_chat, search_chats
 from cognitrix.tools.chats import check_chat, message_chat, start_chat
 from cognitrix.tools.computer import (
+    ask_to_take_over,
     click_element,
     click_in_window,
     list_windows,
@@ -86,5 +87,5 @@ __all__ = [
     'take_screenshot', 'text_input', 'key_press', 'hot_key',
     'mouse_click', 'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
     'list_windows', 'open_app', 'look_at_window', 'click_element', 'set_text',
-    'click_in_window', 'type_in_window', 'press_key_in_window', 'scroll_window',
+    'click_in_window', 'type_in_window', 'press_key_in_window', 'scroll_window', 'ask_to_take_over',
 ]

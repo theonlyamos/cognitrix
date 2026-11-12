@@ -1320,10 +1320,24 @@ def _to_screen(x: int, y: int) -> tuple[int, int]:
     return int(round(float(x) * _screen_scale)), int(round(float(y) * _screen_scale))
 
 
+def _sandbox_refusal():
+    """With the sandboxed computer on, the full-screen tools would act on the
+    engine's own machine, not the agent's computer: point at the window tools."""
+    from cognitrix.computer.sandbox.client import sandbox_mode
+
+    if not sandbox_mode():
+        return None
+    from cognitrix.tools.utils import ToolOutcome
+    return ToolOutcome.failure('unsupported', "You work on a sandboxed computer: use list_windows, open_app, "
+                               'look_at_window and the other window tools instead of this one.')
+
+
 @tool(category='system')
 def take_screenshot():
     """Take a screenshot of the screen. The image is shown to you right after this
     tool's result. Give click coordinates in that image's pixels."""
+    if (refused := _sandbox_refusal()) is not None:
+        return refused
     global _screen_scale, _shot_size
     import base64
     import io
@@ -1357,6 +1371,8 @@ def text_input(text: str):
     Args:
         text (str): Text to type.
     """
+    if (refused := _sandbox_refusal()) is not None:
+        return refused
     _pyautogui().write(text, 0.02)
     return 'Text typed'
 
@@ -1367,6 +1383,8 @@ def key_press(key: str):
     Args:
         key (str): Name of the key.
     """
+    if (refused := _sandbox_refusal()) is not None:
+        return refused
     _pyautogui().press(key.lower())
     return f'Pressed {key}'
 
@@ -1377,6 +1395,8 @@ def hot_key(hotkeys: list):
     Args:
         hotkeys (list): Keys to press together.
     """
+    if (refused := _sandbox_refusal()) is not None:
+        return refused
     _pyautogui().hotkey(*[str(k).lower() for k in hotkeys])
     return f"Pressed {'+'.join(hotkeys)}"
 
@@ -1388,6 +1408,8 @@ def mouse_click(x: int, y: int):
         x (int): X coordinate in the screenshot.
         y (int): Y coordinate in the screenshot.
     """
+    if (refused := _sandbox_refusal()) is not None:
+        return refused
     _pyautogui().click(*_to_screen(x, y))
     return f'Clicked at ({x}, {y})'
 
@@ -1399,6 +1421,8 @@ def mouse_double_click(x: int, y: int):
         x (int): X coordinate in the screenshot.
         y (int): Y coordinate in the screenshot.
     """
+    if (refused := _sandbox_refusal()) is not None:
+        return refused
     _pyautogui().doubleClick(*_to_screen(x, y))
     return f'Double-clicked at ({x}, {y})'
 
@@ -1410,6 +1434,8 @@ def mouse_right_click(x: int, y: int):
         x (int): X coordinate in the screenshot.
         y (int): Y coordinate in the screenshot.
     """
+    if (refused := _sandbox_refusal()) is not None:
+        return refused
     _pyautogui().rightClick(*_to_screen(x, y))
     return f'Right-clicked at ({x}, {y})'
 
@@ -1422,6 +1448,8 @@ def mouse_scroll(x: int, y: int, amount: int):
         y (int): Y coordinate in the screenshot.
         amount (int): Wheel clicks; about 3 per screenful of text.
     """
+    if (refused := _sandbox_refusal()) is not None:
+        return refused
     sx, sy = _to_screen(x, y)
     _pyautogui().scroll(int(amount), x=sx, y=sy)
     return f'Scrolled {amount} at ({x}, {y})'

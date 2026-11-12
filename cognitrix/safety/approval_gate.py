@@ -249,7 +249,7 @@ class ApprovalGate:
 
         # Taking over the person's screen, mouse and keyboard is asked every
         # time: no remembered answer, auto-approve or reviewer stands in.
-        always_ask = 'screen_takeover' in (risk.categories or [])
+        always_ask = bool({'screen_takeover', 'person_takeover'} & set(risk.categories or []))
 
         if not person_only and not always_ask and scoped in self.permanent_cache:
             return ApprovalResult(approved=True, cached=True)

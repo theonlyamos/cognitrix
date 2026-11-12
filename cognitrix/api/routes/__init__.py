@@ -15,6 +15,7 @@ from ...api.routes.auth import auth_api
 from ...api.routes.channels import channels_api
 from ...api.routes.computer import computer_api
 from ...api.routes.computer_overlay import overlay_api
+from ...api.routes.computer_sandbox import sandbox_api
 from ...api.routes.oauth import oauth_api
 from ...api.routes.onboarding import onboarding_api
 from ...api.routes.folders import folders_api
@@ -69,3 +70,4 @@ api_router.include_router(system_api)
 api_router.include_router(channels_api)
 api_router.include_router(computer_api)
 api_router.include_router(overlay_api)
+api_router.include_router(sandbox_api)

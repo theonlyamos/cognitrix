@@ -117,6 +117,20 @@ _DESKTOP_CONTROL = frozenset({
     'open_app',
 })
 
+# The window tools act in the agents' sandboxed computer when it is on; the
+# full-screen tools above always act on this machine's own screen.
+_SANDBOX_WINDOW_TOOLS = frozenset({
+    'click_element', 'set_text', 'click_in_window', 'type_in_window', 'press_key_in_window', 'open_app',
+    'scroll_window', 'look_at_window', 'list_windows',
+})
+
+
+def _sandboxed_computer() -> bool:
+    from cognitrix.computer.sandbox.client import sandbox_mode
+
+    return sandbox_mode() is not None
+
+
 # Handing a job to a coding agent CLI (Claude Code, Codex, ...): it edits
 # files and may run commands on its own, so a run always asks.
 _CODING_AGENT_TOOLS = frozenset({'coding_agent'})
@@ -307,6 +321,17 @@ class DestructiveOpDetector:
                 RiskLevel.MEDIUM, ['folder_access'],
                 f"Wants {access} access to the folder '{params.get('path', '')}'",
             )
+        if name == 'ask_to_take_over':
+            # Always a person's answer: they take over, then hand back.
+            reason = str(params.get('reason') or '').strip()[:200] or 'a step only you should do'
+            return RiskAssessment(
+                RiskLevel.MEDIUM, ['person_takeover'],
+                f"Asks you to take over its computer: {reason}. Open the agent's computer, press Take over, "
+                'do it, then allow this to hand the computer back')
+        if name in _SANDBOX_WINDOW_TOOLS and _sandboxed_computer():
+            # The agents' own computer in a container, not the person's screen.
+            return RiskAssessment(RiskLevel.LOW, ['sandbox_computer'],
+                                  f"'{tool_name}' works in the agent's sandboxed computer")
         if name in _DESKTOP_CONTROL and _truthy(params.get('use_screen')):
             # Takes over the person's real mouse and keyboard for a moment.
             # Never covered by a per-app "always allow".

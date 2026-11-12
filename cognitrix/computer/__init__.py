@@ -52,6 +52,10 @@ class Busy(DriverError):
     pass
 
 
+class HumanControl(DriverError):
+    """A person has taken over the agent's desktop."""
+
+
 class Stale(DriverError):
     pass
 
@@ -146,6 +150,7 @@ class ActionEvent:
     agent_id: str | None = None
     session_id: str | None = None
     user_id: str | None = None
+    desktop: str | None = None  # set for a sandbox desktop (not the person's own screen)
 
 
 # Listeners for every driver (the desktop app's agent cursor subscribes here).
@@ -263,9 +268,16 @@ class Driver:
     stop_hold_s = 600.0  # how long Stop on the agent cursor keeps that agent off the computer
     screen_idle_s = 1.0  # use_screen waits for the person to pause this long...
     screen_wait_s = 6.0  # ...for at most this long
+    hold_wait_s = 90.0  # sandbox: how long an action waits for a person to hand the desktop back
 
-    def __init__(self, backend: Backend):
+    def __init__(self, backend: Backend, sandbox: bool = False):
         self.backend = backend
+        # In a sandbox the screen belongs to the agent: real input is used
+        # whenever it works better, without waiting for anyone to pause.
+        self.sandbox = sandbox
+        if sandbox:
+            self.screen_idle_s = 0.0
+        self._held_by: str | None = None  # a person took over this desktop
         self._snapshots: dict[int, Snapshot] = {}
         # (viewer, window) -> the snapshot id that viewer last looked at
         self._seen: dict[tuple[Any, int], str] = {}
@@ -287,7 +299,32 @@ class Driver:
         next actions for a while."""
         self._stopped[str(agent_id)] = time.monotonic()
 
+    # -- take over ----------------------------------------------------------
+    def hold(self, by: str = 'the person') -> None:
+        """A person took over this desktop: refuse agent actions and looks
+        until release(), so the two never fight over the mouse and nothing the
+        person types reaches the model."""
+        self._held_by = by or 'the person'
+
+    def release(self) -> None:
+        self._held_by = None
+
+    @property
+    def held_by(self) -> str | None:
+        return self._held_by
+
+    def _check_held(self) -> None:
+        # The agent pauses here while the person has control, and carries on
+        # when they hand back (up to hold_wait_s; then it is told to wait).
+        deadline = time.monotonic() + (self.hold_wait_s if self.sandbox else 0)
+        while self._held_by and time.monotonic() < deadline:
+            time.sleep(0.5)
+        if self._held_by:
+            raise HumanControl(f'{self._held_by} has taken over this computer. Wait until they hand it back, '
+                               'then look at the window again; don\'t act until then.')
+
     def _check_stopped(self) -> None:
+        self._check_held()
         actor = current_actor.get()
         when = self._stopped.get(str(actor.agent_id)) if actor and actor.agent_id else None
         if when is not None and time.monotonic() - when < self.stop_hold_s:
@@ -401,6 +438,7 @@ class Driver:
         """Screenshot + numbered elements. Returns (image, snapshot, shown, note).
         `viewer` names the caller (an agent): its later actions are refused when
         someone else's look has replaced the snapshot it saw."""
+        self._check_held()
         win = self._window(window_id, acting=False)
         notes = [self.backend.prepare(win.id)]
         image, origin, cap_note = self.backend.capture(win.id)
@@ -545,6 +583,13 @@ class Driver:
     def act_on_element(self, window_id: int, index: int, action: str = 'click',
                        snapshot_id: str | None = None, viewer: Any = None,
                        use_screen: bool = False) -> ActionResult:
+        result = self._act_on_element(window_id, index, action, snapshot_id, viewer, use_screen)
+        if self.sandbox and not use_screen and result.status == NEEDS_SCREEN and action == 'click':
+            return self._act_on_element(window_id, index, action, snapshot_id, viewer, True)
+        return result
+
+    def _act_on_element(self, window_id: int, index: int, action: str, snapshot_id: str | None,
+                        viewer: Any, use_screen: bool) -> ActionResult:
         def body(win: WindowInfo) -> ActionResult:
             snap, element = self._element(win.id, index, snapshot_id, viewer)
             if element.rect[2] > element.rect[0]:
@@ -605,6 +650,9 @@ class Driver:
                     return ActionResult(FAILED, 'No text field has focus in that window; give an element number.')
             else:
                 _, element = self._element(win.id, index, snapshot_id, viewer)
+            if self.sandbox and element.rect[2] > element.rect[0] and (
+                    'set_value' not in element.actions or win.kind == 'chromium'):
+                return self._fill_on_screen(win, element, text, index is None)
             if 'set_value' not in element.actions:
                 return ActionResult(FAILED, f'{element.role} {element.name!r} does not accept text directly; '
                                     'use type_in_window instead.')
@@ -616,15 +664,50 @@ class Driver:
             if after is None:
                 # Some fields (e.g. a rename box) disappear once the value is committed.
                 return ActionResult(UNVERIFIED, 'The field closed after the change; look at the window to check.')
+            if self.sandbox and element.rect[2] > element.rect[0]:
+                return self._fill_on_screen(win, element, text, index is None)
             if win.kind == 'chromium':
                 return ActionResult(NEEDS_SCREEN, 'This app did not accept the text in the background. Use '
                                     'type_in_window on the field instead.' + SCREEN_RETRY)
             return ActionResult(FAILED, f'The field reads {(after.value or "")[:80]!r}, not the new text.')
         return self._act(window_id, 'set_text', body)
 
+    def _fill_on_screen(self, win: WindowInfo, element: Element, text: str, live: bool) -> ActionResult:
+        """Sandbox only: click the field, select all, type the text with real input.
+        `live` means the element was just read, so its position is current."""
+        dx, dy = (0, 0) if live else self._moved(win, self._snapshots[win.id])
+        cx, cy = _center(element.rect)
+
+        def send(ok: Callable[[], bool]) -> bool:
+            if not self.backend.send_click(cx + dx, cy + dy, 'left', False, ok):
+                return False
+            time.sleep(0.3)
+            return self.backend.send_key('a', ('ctrl',), ok) and self.backend.send_text(text, ok)
+
+        stopped = self._with_screen(win, send)
+        if stopped:
+            return stopped
+        time.sleep(self.settle_s)
+        after = self.backend.element_state(element)
+        if after is not None and after.value is not None:
+            if (after.value or '') == text or (text.strip() and text.strip() in after.value):
+                return ActionResult(CONFIRMED, f'{element.role} {element.name!r} now holds the text.')
+            if after.value:
+                return ActionResult(FAILED, f'Typed the text, but {element.role} {element.name!r} reads '
+                                    f'{after.value[:80]!r}. Look at the window and try again.')
+        return ActionResult(UNVERIFIED, 'Typed the text into the field; it could not be read back. Look at the '
+                            'window to check.')
+
     def click_point(self, window_id: int, x: float, y: float, button: str = 'left',
                     double: bool = False, viewer: Any = None, use_screen: bool = False) -> ActionResult:
         """Click at (x, y) in the latest look's image coordinates."""
+        result = self._click_point(window_id, x, y, button, double, viewer, use_screen)
+        if self.sandbox and not use_screen and result.status == NEEDS_SCREEN:
+            return self._click_point(window_id, x, y, button, double, viewer, True)
+        return result
+
+    def _click_point(self, window_id: int, x: float, y: float, button: str, double: bool, viewer: Any,
+                     use_screen: bool) -> ActionResult:
         snap = self._snapshot(window_id, viewer)
         px, py = round(x * snap.scale), round(y * snap.scale)
         if not (0 <= px < snap.size[0] and 0 <= py < snap.size[1]):
@@ -666,7 +749,7 @@ class Driver:
 
     def type_text(self, window_id: int, text: str, x: float | None = None,
                   y: float | None = None, viewer: Any = None, use_screen: bool = False) -> ActionResult:
-        if use_screen:
+        if use_screen or self.sandbox:
             return self._type_on_screen(window_id, text, x, y, viewer)
         if x is not None and y is not None:
             focus = self.click_point(window_id, x, y, viewer=viewer)
@@ -747,6 +830,7 @@ class Driver:
         return self._act(window_id, 'screen:type', body, point)
 
     def press_key(self, window_id: int, keys: str, use_screen: bool = False) -> ActionResult:
+        use_screen = use_screen or self.sandbox
         combo = [k.strip().lower() for k in keys.replace(' ', '').split('+') if k.strip()]
         if not combo:
             raise DriverError('Give a key, e.g. "enter" or "ctrl+s".')
@@ -882,6 +966,16 @@ def fingerprint_of(title: str, elements: list[Element]) -> str:
 
 _driver: Driver | None = None
 _driver_guard = threading.Lock()
+
+
+def driver_for(actor: Actor | None = None) -> Any:
+    """The driver the computer tools use: the agent's desktop in the user's
+    sandbox when the sandboxed computer is on, else this machine's screen."""
+    from cognitrix.computer.sandbox.client import sandbox_driver, sandbox_mode
+
+    if sandbox_mode():
+        return sandbox_driver(actor)
+    return get_driver()
 
 
 def get_driver() -> Driver:
