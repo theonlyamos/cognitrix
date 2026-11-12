@@ -91,6 +91,8 @@ _KNOWN_LOW = frozenset({
     'run_mcp_tool',  # the MCP action itself is checked in the agent loop
     # always-on agents: notes and alerts go to the run's own owner
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me',
+    # an offer or a skill draft only waits in the person's Inbox for a yes
+    'offer_help', 'propose_skill',
     # chats agents start: their own risky tool calls still ask in that chat
     'start_chat', 'check_chat', 'message_chat',
     # saved memories: each change shows in the chat with Undo

@@ -33,7 +33,30 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
     }
   };
 
+  const [stopping, setStopping] = useState(false);
+  const [stopNote, setStopNote] = useState('');
+  const stopAll = async () => {
+    setStopping(true);
+    setStopNote('');
+    try {
+      const { data } = await api.post<{ chats: number; task_runs: number; checks: number }>(`/agents/${agent.id}/stop-all`);
+      const parts = [
+        data.chats ? `${data.chats} ${data.chats === 1 ? 'chat' : 'chats'}` : '',
+        data.task_runs ? `${data.task_runs} task ${data.task_runs === 1 ? 'run' : 'runs'}` : '',
+        data.checks ? `${data.checks} planned ${data.checks === 1 ? 'check' : 'checks'}` : '',
+      ].filter(Boolean);
+      setStopNote(parts.length ? `Stopped ${parts.join(', ')}.` : 'Nothing was running.');
+      refreshOverview();
+    } catch (e) {
+      setStopNote(errorMessage(e, "Couldn't stop everything. Try again."));
+    } finally {
+      setStopping(false);
+    }
+  };
+
   const stats = overview?.stats;
+  const working = (stats?.running_chats || 0) > 0
+    || (overview?.tasks || []).some((t) => t.status === 'in_progress' || !!t.wake_at);
   const askFirst = draft.tools.filter((t) => draft.toolPermissions[t] === 'ask').length;
   const tiles = [
     { label: 'CHATS · 7 DAYS', value: stats?.chats_week, note: stats ? `${stats.running_chats} running now` : '', tone: stats?.running_chats ? 'text-ok' : 'text-fg-dim' },
@@ -97,6 +120,20 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
           </div>
         ))}
       </div>
+
+      {(working || stopNote) && (
+        <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-line bg-panel px-4 py-3">
+          <p role="status" className="min-w-[200px] flex-1 text-[13.5px] text-fg-dim">
+            {stopNote || 'This agent is working or has a check planned. Stop all ends its running chats, the chats it started, its task runs and planned checks. Schedules you set stay on.'}
+          </p>
+          {working && (
+            <button type="button" onClick={() => void stopAll()} disabled={stopping}
+              className={cn(buttonClass, 'border-danger/40 text-danger-ink')}>
+              {stopping ? 'Stopping…' : 'Stop all'}
+            </button>
+          )}
+        </div>
+      )}
 
       {overview && overview.approvals.length > 0 && (
         <Card tone="warn">

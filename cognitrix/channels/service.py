@@ -411,7 +411,10 @@ class ChannelService:
             agent = await agent_access.find_visible_agent(channel.user_id, agent_id=channel.agent_id)
             if agent is not None:
                 return agent
-        agents = await self._agents(channel.user_id)
+        from cognitrix.tasks.standing import primary_first
+
+        # No agent picked yet: the person's main assistant, when they chose one.
+        agents = primary_first(await self._agents(channel.user_id))
         return agents[0] if agents else None
 
     async def _session(self, channel: ChatChannel, agent):

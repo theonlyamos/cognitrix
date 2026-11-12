@@ -6,8 +6,11 @@ A person can set, on each agent:
   ``destructive_ops``), ``ask`` (ask before every action) or ``allow``
   (run every action without asking);
 - a level per tool, which wins over the agent-wide one: ``allow`` (always
-  allow), ``ask`` (always ask first), ``deny`` (never run) or ``auto``
-  (follow the agent-wide level).
+  allow), ``ask`` (always ask first), ``told`` (run in a conversation the
+  person is in, ask first when the agent works on its own), ``handoff``
+  (never run: the prepared action goes to the person's Inbox to do
+  themselves), ``deny`` (never run) or ``auto`` (follow the agent-wide
+  level).
 
 ``decide_tool_call`` turns those settings, the tool's own ``approval_mode``
 and the risk assessment into one decision for a call: run it, ask a person,
@@ -19,21 +22,42 @@ Two things no setting changes:
 - the full shell (a Bash command that isn't on the allowlist) still needs a
   person to approve that exact call, so "always allow" asks for it;
 - ``COGNITRIX_AUTO_APPROVE`` and bypass mode still apply inside the gate.
+
+A run can also be read-only (``read_only_run``): the check-ins of a standing
+assistant look at things but may not change anything, so every call that
+would otherwise ask (or that only an "always allow" setting lets through) is
+blocked instead, whatever the agent's levels say.
 """
 
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from cognitrix.safety.destructive_ops import RiskAssessment, RiskLevel
 
 AgentLevel = Literal['auto', 'ask', 'allow']
-ToolLevel = Literal['auto', 'allow', 'ask', 'deny']
+ToolLevel = Literal['auto', 'allow', 'ask', 'told', 'handoff', 'deny']
 
 AGENT_LEVELS: tuple[str, ...] = ('auto', 'ask', 'allow')
-TOOL_LEVELS: tuple[str, ...] = ('auto', 'allow', 'ask', 'deny')
+TOOL_LEVELS: tuple[str, ...] = ('auto', 'allow', 'ask', 'told', 'handoff', 'deny')
+STORED_TOOL_LEVELS: tuple[str, ...] = tuple(level for level in TOOL_LEVELS if level != 'auto')
+
+# Interfaces where nobody is in the conversation (same set the reviewer uses).
+UNATTENDED_INTERFACES = frozenset({'task', 'auto'})
+
+# True for a turn nobody started by hand on an attended interface, e.g. a
+# chat one agent started with another (sessions/agent_chats.py).
+unattended_turn: ContextVar[bool] = ContextVar('permissions_unattended_turn', default=False)
+
+# Why the current run may only read, or '' when it may act (see module doc).
+read_only_run: ContextVar[str] = ContextVar('permissions_read_only_run', default='')
+
+
+def is_unattended(interface: str | None) -> bool:
+    return str(interface or '') in UNATTENDED_INTERFACES or unattended_turn.get()
 
 # Added to the risk's categories when a person's "ask" setting is why the
 # call asks, so a reviewer in the gate knows a person wants to answer it.
@@ -83,7 +107,7 @@ def stored_tool_permissions(agent: Any) -> dict[str, str]:
     return {
         str(name): str(level).lower()
         for name, level in perms.items()
-        if str(name or '').strip() and str(level or '').lower() in ('allow', 'ask', 'deny')
+        if str(name or '').strip() and str(level or '').lower() in STORED_TOOL_LEVELS
     }
 
 
@@ -142,6 +166,9 @@ class ToolDecision:
     # level) or 'policy' (the default risk policy and the tool's approval_mode).
     source: str = 'policy'
     reason: str = ''
+    # True when the block means "the person does this one themselves": the
+    # agent loop then leaves the prepared action in their Inbox.
+    handoff: bool = False
 
 
 def needs_person(tools: tuple, args: dict) -> bool:
@@ -185,8 +212,33 @@ def _asking(risk: RiskAssessment, details: str) -> RiskAssessment:
     return RiskAssessment(level, categories, shown, risk.confidence)
 
 
+def _policy_action(tool: Any, risk: RiskAssessment) -> str:
+    approval_mode = getattr(tool, 'approval_mode', 'risk_based') or 'risk_based'
+    if approval_mode == 'always' or (
+        approval_mode == 'risk_based' and risk.risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH)
+    ):
+        return 'ask'
+    return 'run'
+
+
+def read_only_block(decision: ToolDecision, tool: Any, args: dict, *, runtime_tool: Any = None) -> ToolDecision:
+    """In a read-only run, turn anything that changes things into a block."""
+    why = read_only_run.get()
+    if not why or decision.action == 'block':
+        return decision
+    changes = (
+        decision.action == 'ask'
+        or _policy_action(tool, decision.risk) == 'ask'
+        or needs_person((tool, runtime_tool), args)
+    )
+    if not changes:
+        return decision
+    return ToolDecision('block', decision.risk, 'read_only', why)
+
+
 def decide_tool_call(
     agent: Any, tool: Any, args: dict, risk: RiskAssessment, *, runtime_tool: Any = None,
+    interface: str | None = None,
 ) -> ToolDecision:
     """Decide whether a call runs, asks a person first, or is blocked.
 
@@ -205,6 +257,20 @@ def decide_tool_call(
 
     if level == 'deny':
         return ToolDecision('block', risk, source, f"'{name}' is set to never run for this agent")
+
+    if level == 'handoff':
+        return ToolDecision(
+            'block', risk, source,
+            f"the person does '{name}' themselves. What you prepared was left in their Inbox; "
+            'tell them it is waiting there', handoff=True)
+
+    if level == 'told':
+        # In a conversation the person is in, their request is the go-ahead.
+        level = 'ask' if is_unattended(interface) else 'allow'
+        if level == 'ask':
+            return ToolDecision(
+                'ask', _asking(risk, 'You asked to approve this tool first when the agent works on its own'),
+                source)
 
     if level == 'allow':
         if needs_person((tool, runtime_tool), args):
@@ -227,14 +293,12 @@ def decide_tool_call(
         )
 
     # auto: the default policy.
-    if approval_mode == 'always' or (
-        approval_mode == 'risk_based' and risk.risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH)
-    ):
-        return ToolDecision('ask', risk, 'policy')
-    return ToolDecision('run', risk, 'policy')
+    return ToolDecision(_policy_action(tool, risk), risk, 'policy')
 
 
-def apply_target_level(decision: ToolDecision, level: str, name: str, risk: RiskAssessment) -> ToolDecision:
+def apply_target_level(
+    decision: ToolDecision, level: str, name: str, risk: RiskAssessment, *, interface: str | None = None,
+) -> ToolDecision:
     """Apply the person's setting for the app tool that a Run Mcp Tool call runs.
 
     Agents reach connected apps through one tool (Run Mcp Tool), so the
@@ -243,6 +307,13 @@ def apply_target_level(decision: ToolDecision, level: str, name: str, risk: Risk
     """
     if level == 'deny':
         return ToolDecision('block', risk, 'tool', f"'{name}' is set to never run for this agent")
+    if level == 'handoff':
+        return ToolDecision(
+            'block', risk, 'tool',
+            f"the person does '{name}' themselves. What you prepared was left in their Inbox; "
+            'tell them it is waiting there', handoff=True)
+    if level == 'told':
+        level = 'ask' if is_unattended(interface) else 'allow'
     if level == 'allow':
         return ToolDecision('run', risk, 'tool', f"'{name}' is always allowed for this agent")
     if level == 'ask':

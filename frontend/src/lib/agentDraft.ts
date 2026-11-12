@@ -2,7 +2,7 @@ import { folderName, type WorkFolder } from '@/lib/folders';
 import { isHarness } from '@/lib/providers';
 
 export type AgentLevel = 'auto' | 'ask' | 'allow';
-export type ToolLevel = 'auto' | 'allow' | 'ask' | 'deny';
+export type ToolLevel = 'auto' | 'allow' | 'ask' | 'told' | 'handoff' | 'deny';
 export type ReviewerMode = '' | 'off' | 'unattended' | 'always';
 export type CodingMode = '' | 'read_only' | 'edit' | 'full';
 
@@ -41,7 +41,7 @@ export interface AgentRecord {
   knowledge?: string[] | null;
   can_create_sub_agents?: boolean;
   sub_agent_model?: string;
-  automation?: { self_checkins?: boolean; max_runs_per_day?: number | null };
+  automation?: { self_checkins?: boolean; max_runs_per_day?: number | null; standing?: { enabled?: boolean; primary?: boolean } };
   memory?: { read_global?: boolean; save_global?: boolean };
   /** Where this agent's saves go when the page never set it (the server decides). */
   memory_saves_global?: boolean;
@@ -319,10 +319,11 @@ export interface AgentOptions {
   default_max_runs_per_day: number;
 }
 
-export type TabId = 'overview' | 'general' | 'tools' | 'folders' | 'connections' | 'tasks' | 'teams';
+export type TabId = 'overview' | 'checkins' | 'general' | 'tools' | 'folders' | 'connections' | 'tasks' | 'teams';
 
 export const TABS: { id: TabId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
+  { id: 'checkins', label: 'Check-ins' },
   { id: 'general', label: 'General' },
   { id: 'tools', label: 'Tools & approvals' },
   { id: 'folders', label: 'Working folders' },

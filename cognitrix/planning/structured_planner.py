@@ -37,7 +37,8 @@ class StructuredPlanner:
         available_agents: list[Agent],
         available_tools: list[Tool],
         budget: float = None,
-        constraints: list[str] = None
+        constraints: list[str] = None,
+        always_available: list[str] | None = None,
     ) -> TaskPlan:
         """
         Generate a structured plan for a task.
@@ -122,6 +123,12 @@ class StructuredPlanner:
             # Capability validation is not a formatting problem.  Retrying the
             # same planner and eventually returning a tool-free fallback would
             # silently change the requested task, so surface it immediately.
+            # Tools every step gets anyway are not something to plan around;
+            # a plan that names one is still a good plan.
+            given = {str(name) for name in (always_available or [])}
+            if given:
+                for step in plan.steps:
+                    step.required_tools = [t for t in step.required_tools if t not in given]
             self._validate_references(plan, available_agents, available_tools)
             logger.info(f"Generated plan with {len(plan.steps)} steps")
             return plan

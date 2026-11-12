@@ -23,6 +23,7 @@ import {
 } from '@/lib/agentDraft';
 import { buttonClass, primaryButtonClass } from '@/components/agent/ui';
 import OverviewTab from '@/components/agent/OverviewTab';
+import CheckinsTab from '@/components/agent/CheckinsTab';
 import GeneralTab from '@/components/agent/GeneralTab';
 import ToolsTab from '@/components/agent/ToolsTab';
 import FoldersTab from '@/components/agent/FoldersTab';
@@ -32,6 +33,7 @@ import TeamsTab from '@/components/agent/TeamsTab';
 
 const TAB_VIEWS: Record<TabId, (props: TabProps) => JSX.Element> = {
   overview: OverviewTab,
+  checkins: CheckinsTab,
   general: GeneralTab,
   tools: ToolsTab,
   folders: FoldersTab,

@@ -6,8 +6,7 @@ import { listCredentials, type Credential } from '@/lib/credentials';
 import { listMcpServerTools, listMcpServers, type McpServer, type McpTestResult } from '@/lib/mcp';
 import { appLabel } from '@/lib/apps';
 import type { TabProps, ToolLevel } from '@/lib/agentDraft';
-import { Segmented } from '@/components/settings/ui';
-import { Card, Check, buttonClass, linkButtonClass } from '@/components/agent/ui';
+import { Card, Check, buttonClass, inputClass, linkButtonClass } from '@/components/agent/ui';
 import type { KnowledgeCollection } from '@/pages/Knowledge';
 import { cn } from '@/lib/utils';
 
@@ -211,11 +210,18 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
   );
 }
 
-const LEVELS: { value: 'allow' | 'ask' | 'deny'; label: string }[] = [
+type AppToolLevel = 'allow' | 'told' | 'ask' | 'handoff' | 'deny';
+
+// "When I ask": runs in a chat you are in, asks when the agent works on its
+// own. "Hand off": never runs; what was prepared goes to your Inbox.
+const LEVELS: { value: AppToolLevel; label: string }[] = [
   { value: 'allow', label: 'Allow' },
+  { value: 'told', label: 'When I ask' },
   { value: 'ask', label: 'Ask' },
+  { value: 'handoff', label: 'Hand off' },
   { value: 'deny', label: 'Off' },
 ];
+const isAppLevel = (v: unknown): v is AppToolLevel => LEVELS.some((l) => l.value === v);
 
 /** Allow / Ask / Off for each of a server's tools, for this agent.
  *  Matching the default stores nothing, so the default can change later. */
@@ -235,7 +241,7 @@ function ToolPermissions({ server, label, levels, onChange }: {
       .catch((e) => setResult({ connected: false, tools: [], error: errorMessage(e, "Couldn't load the tools.") }));
   }, [open, result, server.ref]);
 
-  const set = (tool: string, fallback: 'allow' | 'ask', value: 'allow' | 'ask' | 'deny') => {
+  const set = (tool: string, fallback: 'allow' | 'ask', value: AppToolLevel) => {
     const next = { ...levels };
     if (value === fallback) delete next[tool];
     else next[tool] = value;
@@ -265,7 +271,7 @@ function ToolPermissions({ server, label, levels, onChange }: {
               const tool = t.tool || t.name;
               const fallback = t.default || (t.asks_first ? 'ask' : 'allow');
               const stored = levels[tool];
-              const value = stored === 'allow' || stored === 'ask' || stored === 'deny' ? stored : fallback;
+              const value: AppToolLevel = isAppLevel(stored) ? stored : fallback;
               return (
                 <li key={t.name} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2">
                   <div className="min-w-0 flex-1 basis-[200px]">
@@ -275,7 +281,11 @@ function ToolPermissions({ server, label, levels, onChange }: {
                       {t.description ? ` · ${t.description}` : ''}
                     </div>
                   </div>
-                  <Segmented label={`${t.name} permission`} value={value} options={LEVELS} onChange={(v) => set(tool, fallback, v)} />
+                  <select aria-label={`${t.name} permission`} value={value}
+                    onChange={(e) => set(tool, fallback, e.target.value as AppToolLevel)}
+                    className={cn(inputClass, 'h-10 w-[150px] px-2 text-[13px] md:h-9', value === 'deny' && 'text-danger-ink')}>
+                    {LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                  </select>
                 </li>
               );
             })}

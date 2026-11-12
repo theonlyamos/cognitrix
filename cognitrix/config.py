@@ -369,7 +369,7 @@ _TASK_MIGRATION_COLUMNS = (
     ('notes', 'TEXT'), ('wake_pending', 'BOOLEAN'), ('wake_at', 'TEXT'),
     ('wake_reason', 'TEXT'), ('wake_requested_by', 'TEXT'),
     ('wake_authority_kind', 'TEXT'), ('wake_authority_id', 'TEXT'),
-    ('max_runs_per_day', 'INTEGER'),
+    ('max_runs_per_day', 'INTEGER'), ('standing_agent_id', 'TEXT'),
 )
 
 _USER_MIGRATION_COLUMNS = (
@@ -792,10 +792,14 @@ async def _ensure_schema():
             if hasattr(result, '__await__'):
                 await result
 
+    from cognitrix.skills.drafts import SkillDraft
     from cognitrix.tasks.approvals import TaskApproval
     from cognitrix.tasks.automation import AgentNotification, TaskTrigger, TriggerEvent
+    from cognitrix.tasks.standing import AgentOffer
 
     for model in (
+        AgentOffer,
+        SkillDraft,
         TaskRun,
         TaskRunHead,
         TaskRunStep,

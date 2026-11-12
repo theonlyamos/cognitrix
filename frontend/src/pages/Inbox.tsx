@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
-import { useNotifications, type InboxApproval, type InboxItem, type InboxNotification, type InboxQuestion } from '@/context/NotificationsContext';
+import { useNotifications, type InboxApproval, type InboxItem, type InboxNotification, type InboxOffer, type InboxQuestion, type InboxSkillDraft } from '@/context/NotificationsContext';
 import { LoadingState } from '@/components/list-ui';
 import { cn } from '@/lib/utils';
 import { answerApproval } from '@/lib/approvals';
 
 function itemTitle(item: InboxItem): string {
   if (item.kind === 'approval') return `Run ${item.tool_name}`;
-  if (item.kind === 'notification') return item.title;
+  if (item.kind === 'notification' || item.kind === 'offer') return item.title;
+  if (item.kind === 'skill_draft') return `Review the skill "${item.name}"`;
   return String(item.question.prompt || 'An agent asked a question');
 }
 
@@ -19,6 +20,8 @@ function itemSource(item: InboxItem): string {
     return `${item.task_title || 'Task run'}${step}`;
   }
   if (item.kind === 'notification') return item.task_title || (item.session_id ? 'Chat' : 'Agent');
+  if (item.kind === 'offer') return `${item.agent_name || 'Your assistant'} · check-in`;
+  if (item.kind === 'skill_draft') return item.agent_name ? `Learned by ${item.agent_name}` : 'Learned from a chat';
   return 'Chat';
 }
 
@@ -30,9 +33,11 @@ function Badge({ kind }: { kind: InboxItem['kind'] }) {
         kind === 'approval' && 'bg-[#ffb86b]/15 text-[#b4691a] dark:text-[#ffb86b]',
         kind === 'question' && 'bg-[#7cc4ff]/15 text-[#1f6f8b] dark:text-[#7cc4ff]',
         kind === 'notification' && 'bg-accent/15 text-accent-ink',
+        kind === 'offer' && 'bg-ok/15 text-ok',
+        kind === 'skill_draft' && 'bg-[#b48cff]/15 text-[#6b46c1] dark:text-[#c9b0ff]',
       )}
     >
-      {kind === 'approval' ? 'APPROVAL' : kind === 'notification' ? 'ALERT' : 'QUESTION'}
+      {{ approval: 'APPROVAL', notification: 'ALERT', question: 'QUESTION', offer: 'OFFER', skill_draft: 'SKILL' }[kind]}
     </span>
   );
 }
@@ -267,6 +272,147 @@ function NotificationDetail({ item, onDone }: { item: InboxNotification; onDone:
   );
 }
 
+function OfferDetail({ item, onDone }: { item: InboxOffer; onDone: () => void }) {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState<'accept' | 'dismiss' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const answer = async (action: 'accept' | 'dismiss') => {
+    setBusy(action);
+    setError(null);
+    try {
+      const { data } = await api.post<{ session_id?: string }>(`/offers/${item.id}/${action}`);
+      onDone();
+      if (action === 'accept' && data.session_id) navigate(`/home?chat=${encodeURIComponent(data.session_id)}`);
+    } catch (err) {
+      setError(errorMessage(err, 'Could not send your answer.'));
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <div className="font-mono text-[10.5px] tracking-[0.14em] text-ok">OFFER TO HELP</div>
+        <div className="mt-1 font-mono text-[12px] text-fg-dim">{itemSource(item)}</div>
+        <h2 className="mt-2 text-[20px] font-semibold leading-snug">{item.title}</h2>
+        {item.details && <p className="mt-2 whitespace-pre-wrap text-[13.5px] leading-relaxed text-fg">{item.details}</p>}
+      </div>
+      {item.plan && (
+        <div className="rounded-xl border border-line bg-panel">
+          <div className="border-b border-line px-3.5 py-2.5 text-[12.5px] font-medium">What it will do if you accept</div>
+          <p className="whitespace-pre-wrap px-3.5 py-3 text-[13px] leading-relaxed text-fg">{item.plan}</p>
+        </div>
+      )}
+      {error && <p role="alert" className="text-[13px] text-danger-ink">{error}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy !== null} onClick={() => void answer('accept')}
+          className="h-10 rounded-[9px] bg-accent px-5 text-[13.5px] font-semibold text-accent-foreground disabled:opacity-60">
+          {busy === 'accept' ? 'Starting…' : 'Accept'}
+        </button>
+        <button type="button" disabled={busy !== null} onClick={() => void answer('dismiss')}
+          className="h-10 rounded-[9px] border border-line px-5 text-[13.5px] disabled:opacity-60">
+          {busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}
+        </button>
+        <span className="flex-1" />
+        <Link to={`/agents/${item.agent_id}/checkins`} className="text-[13px] text-accent-ink hover:underline">Check-in settings</Link>
+      </div>
+      <p className="text-[12.5px] leading-relaxed text-fg-dim">
+        Accepting starts a chat where {item.agent_name || 'the agent'} does this. Risky steps still ask you first. A dismissed offer isn't made again.
+      </p>
+    </div>
+  );
+}
+
+function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () => void }) {
+  const [name, setName] = useState(item.name);
+  const [description, setDescription] = useState(item.description);
+  const [body, setBody] = useState(item.body);
+  const [busy, setBusy] = useState<'approve' | 'reject' | 'save' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const edited = name !== item.name || description !== item.description || body !== item.body;
+
+  const saveEdits = async () => {
+    await api.patch(`/skill-drafts/${item.id}`, { name, description, body });
+  };
+
+  const run = async (action: 'approve' | 'reject' | 'save') => {
+    setBusy(action);
+    setError(null);
+    setSaved(false);
+    try {
+      if (action !== 'reject' && edited) await saveEdits();
+      if (action === 'save') {
+        setSaved(true);
+        setBusy(null);
+        return;
+      }
+      await api.post(`/skill-drafts/${item.id}/${action}`);
+      onDone();
+    } catch (err) {
+      setError(errorMessage(err, 'Could not save that.'));
+      setBusy(null);
+    }
+  };
+
+  const field = 'w-full rounded-[9px] border border-line bg-panel px-3 text-[13.5px] outline-none focus:border-accent';
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <div className="font-mono text-[10.5px] tracking-[0.14em] text-[#6b46c1] dark:text-[#c9b0ff]">SKILL TO REVIEW</div>
+        <div className="mt-1 font-mono text-[12px] text-fg-dim">{itemSource(item)}</div>
+        <h2 className="mt-2 text-[20px] font-semibold leading-snug">Save “{item.name}” as a skill?</h2>
+        <p className="mt-2 text-[13.5px] leading-relaxed text-fg-dim">
+          A skill is a set of instructions your agents can load when a job like this comes up again. Read it, fix anything that's off, then approve it. Until then nothing uses it.
+        </p>
+      </div>
+      <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+        Name
+        <input value={name} onChange={(e) => setName(e.target.value)} maxLength={64} className={cn(field, 'h-10 font-mono')} />
+      </label>
+      <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+        When to use it
+        <input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1024} className={cn(field, 'h-10')} />
+      </label>
+      <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+        Instructions
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={16}
+          className={cn(field, 'resize-y py-2.5 font-mono text-[12.5px] leading-relaxed')} />
+      </label>
+      {error && <p role="alert" className="text-[13px] text-danger-ink">{error}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        {item.can_approve && (
+          <button type="button" disabled={busy !== null} onClick={() => void run('approve')}
+            className="h-10 rounded-[9px] bg-accent px-5 text-[13.5px] font-semibold text-accent-foreground disabled:opacity-60">
+            {busy === 'approve' ? 'Saving…' : 'Approve and save skill'}
+          </button>
+        )}
+        {edited && (
+          <button type="button" disabled={busy !== null} onClick={() => void run('save')}
+            className="h-10 rounded-[9px] border border-line px-5 text-[13.5px] disabled:opacity-60">
+            {busy === 'save' ? 'Saving…' : 'Save edits'}
+          </button>
+        )}
+        <button type="button" disabled={busy !== null} onClick={() => void run('reject')}
+          className="h-10 rounded-[9px] border border-danger/40 px-5 text-[13.5px] text-danger-ink disabled:opacity-60">
+          {busy === 'reject' ? 'Rejecting…' : 'Reject'}
+        </button>
+        {saved && <span role="status" className="text-[13px] text-fg-dim">Edits saved.</span>}
+        <span className="flex-1" />
+        {item.session_id && item.mine && (
+          <Link to={`/home?chat=${encodeURIComponent(item.session_id)}`} className="text-[13px] text-accent-ink hover:underline">Open the chat it came from</Link>
+        )}
+      </div>
+      {!item.can_approve && (
+        <p className="text-[12.5px] leading-relaxed text-fg-dim">
+          Skills are shared by every agent on this server, so an admin has to approve this one. They see it in their inbox too.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Everything waiting on you: approvals from paused task runs, questions from chats, and agent alerts. */
 export default function Inbox() {
   const { inbox, inboxLoaded, refreshInbox } = useNotifications();
@@ -328,6 +474,10 @@ export default function Inbox() {
               <ApprovalDetail key={selected.id} item={selected} onDone={done} />
             ) : selected.kind === 'notification' ? (
               <NotificationDetail key={selected.id} item={selected} onDone={done} />
+            ) : selected.kind === 'offer' ? (
+              <OfferDetail key={selected.id} item={selected} onDone={done} />
+            ) : selected.kind === 'skill_draft' ? (
+              <SkillDraftDetail key={selected.id} item={selected} onDone={done} />
             ) : (
               <QuestionDetail key={selected.id} item={selected} onDone={done} />
             )}
@@ -337,7 +487,7 @@ export default function Inbox() {
             <div className="grid h-full place-items-center text-center">
               <div>
                 <div className="text-[15px] font-medium">You're all caught up</div>
-                <p className="mt-1 text-[13px] text-fg-dim">When a task pauses on a risky step, an agent asks something, or an automation sends an alert, it shows up here.</p>
+                <p className="mt-1 text-[13px] text-fg-dim">When a task pauses on a risky step, an agent asks something, offers to help or drafts a skill, or an automation sends an alert, it shows up here.</p>
               </div>
             </div>
           )

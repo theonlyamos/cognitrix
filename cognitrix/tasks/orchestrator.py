@@ -98,7 +98,7 @@ def _with_automation_brief(text: str) -> str:
     return f"{text}\n\n{brief}" if brief else text
 
 
-def _add_automation_tools(roster: Sequence[Agent]) -> None:
+def _add_automation_tools(roster: Sequence[Agent], offers: bool = False) -> None:
     """Give every tool-capable agent in this run the automation tools.
 
     In-memory only: the agents' stored tool lists are not changed.
@@ -106,7 +106,11 @@ def _add_automation_tools(roster: Sequence[Agent]) -> None:
     from cognitrix.tools.automation import AUTOMATION_TOOL_CATEGORY
     from cognitrix.tools.base import ToolManager
 
-    extra = ToolManager.get_tools_by_category(AUTOMATION_TOOL_CATEGORY)
+    extra = [
+        tool for tool in ToolManager.get_tools_by_category(AUTOMATION_TOOL_CATEGORY)
+        # Offer Help belongs to a standing assistant's check-ins only.
+        if offers or tool.name.strip().lower().replace(' ', '_') != 'offer_help'
+    ]
     for agent in roster:
         if not getattr(agent.llm, 'supports_tool_use', False):
             continue
@@ -195,8 +199,11 @@ async def _planner_plan(task: 'Task', roster: list[Agent], leader: Agent) -> lis
     # doesn't need to plan around them.
     tools = list({t.name: t for a in roster for t in (a.tools or [])
                   if t.category != 'automation'}.values())
+    always = sorted({t.name for a in roster for t in (a.tools or [])
+                     if t.category == 'automation'})
     plan = await StructuredPlanner(leader.llm).create_plan(
-        _with_automation_brief(task.description), roster, tools)
+        _with_automation_brief(task.description), roster, tools,
+        always_available=always)
     steps = list(plan.steps or [])
     if not steps or len(steps) > MAX_PLAN_STEPS or not all((s.title or '').strip() for s in steps):
         logger.warning("Task %s: planner output invalid, falling back to single step", task.id)
@@ -1347,11 +1354,25 @@ async def run(
         except Exception:
             logger.exception("Task %s: could not build automation context", task.id)
             brief = ''
+        # A standing assistant's check-in: restate its brief every time and
+        # let the run look but not change anything (tasks/standing.py).
+        standing_offers = False
+        if getattr(task, 'standing_agent_id', None):
+            from cognitrix.safety.permissions import read_only_run
+            from cognitrix.tasks import standing
+
+            standing_owner = await standing.standing_agent(task)
+            if standing_owner is None:
+                raise RuntimeError('this check-in no longer belongs to a standing assistant')
+            read_only_run.set(standing.READ_ONLY_REASON)
+            standing_offers = standing.settings_of(standing_owner)['offers']
+            context = await standing.run_context(task, standing_owner)
+            brief = f'{context}\n\n{brief}' if brief else context
         _automation_brief.set(brief)
         if brief:
             # Only automation runs (scheduled, woken, webhook, or with notes
             # or triggers) get the automation tools automatically.
-            _add_automation_tools(roster)
+            _add_automation_tools(roster, offers=standing_offers)
         if (
             run_rec.acl_version != 1
             or run_rec.acl_team_id != (str(task.team_id) if task.team_id else None)

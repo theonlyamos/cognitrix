@@ -14,7 +14,9 @@ const LEVELS: { value: AgentLevel; label: string; help: string }[] = [
 const TOOL_LEVELS: { value: ToolLevel; label: string }[] = [
   { value: 'auto', label: 'Agent default' },
   { value: 'allow', label: 'Always allow' },
+  { value: 'told', label: 'Only when I ask' },
   { value: 'ask', label: 'Ask first' },
+  { value: 'handoff', label: 'Hand off to me' },
   { value: 'deny', label: 'Never' },
 ];
 
@@ -177,6 +179,10 @@ export default function ToolsTab({ draft, update, options, catalog, agent }: Tab
           </div>
         )}
 
+        <p className="mb-3 text-[12.5px] leading-relaxed text-fg-dim">
+          <span className="font-medium text-fg">Only when I ask</span> runs in a chat you are in, and asks first when the agent works on its own (schedules, check-ins, chats started by agents).{' '}
+          <span className="font-medium text-fg">Hand off to me</span> never runs: what the agent prepared lands in your Inbox for you to do yourself.
+        </p>
         <div className="overflow-hidden rounded-lg border border-line">
           <div className="hidden grid-cols-[minmax(0,1fr)_190px_36px] gap-3 bg-panel-2 px-3.5 py-2 text-[12px] text-fg-dim sm:grid">
             <span>Tool</span><span>Permission</span><span />

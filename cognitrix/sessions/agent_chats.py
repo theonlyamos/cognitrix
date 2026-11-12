@@ -146,6 +146,9 @@ async def _turn(
         # listed in the Inbox and sent as a notification (approval_alerts).
         run.record({**event, 'session_id': sid})
 
+    from cognitrix.safety.permissions import unattended_turn
+
+    unattended_turn.set(True)  # this task has its own context
     approval_token = web_turn_ctx.set({
         'emit': emit, 'session_id': sid, 'bypass': False, 'user_key': user_key,
         'agent_name': getattr(agent, 'name', '') or '',

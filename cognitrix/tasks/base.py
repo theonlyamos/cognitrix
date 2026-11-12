@@ -125,6 +125,10 @@ class Task(Model):
     COGNITRIX_AUTOMATION_MAX_RUNS_PER_DAY. User-defined schedules don't count
     against it."""
 
+    standing_agent_id: str | None = None
+    """Set on the home task of a standing assistant (tasks/standing.py): the
+    agent whose brief this task checks in on. Its runs are read-only."""
+
     async def team(self):
         agents: list[Agent] = []
         for agent_id in self.assigned_agents:
