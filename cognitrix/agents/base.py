@@ -29,6 +29,7 @@ from cognitrix.safety.permissions import (
     decide_tool_call,
     needs_person,
     read_only_block,
+    read_only_run,
     visible_tools,
 )
 from cognitrix.tools.base import ToolManager
@@ -634,7 +635,11 @@ class AgentManager:
                     decision = apply_target_level(
                         decision, target_level, target_name, risk, interface=interface)
                 # A standing assistant's check-in may look but not change.
-                decision = read_only_block(decision, assigned_tool, args, runtime_tool=tool)
+                mcp_reads = None
+                if read_only_run.get() and getattr(assigned_tool, 'category', None) in ('mcp', 'mcp_dynamic'):
+                    mcp_reads = await self._mcp_only_reads(assigned_tool, args)
+                decision = read_only_block(
+                    decision, assigned_tool, args, runtime_tool=tool, mcp_reads=mcp_reads)
                 if decision.action == 'block':
                     if decision.handoff:
                         await self._hand_off(assigned_tool, args, interface)
@@ -943,6 +948,33 @@ class AgentManager:
             return None
         risk.details = f"{risk.details} (MCP server '{server}')"
         return risk
+
+    async def _mcp_only_reads(self, tool: Any, args: dict) -> bool:
+        """Whether an action on a connected app only reads (for read-only runs)."""
+        from cognitrix.safety.destructive_ops import mcp_only_reads
+
+        name = str(getattr(tool, 'name', '') or '').strip().lower().replace(' ', '_')
+        if getattr(tool, 'category', None) == 'mcp_dynamic':
+            # A wrapper built as "always ask" deletes or sends.
+            return getattr(tool, 'approval_mode', None) != 'always' and mcp_only_reads(name, None)
+        if name != 'run_mcp_tool':
+            return False
+        server = str(args.get('server') or '')
+        tool_name = str(args.get('tool_name') or '')
+        annotations = None
+        try:
+            from cognitrix.mcp import apps
+            from cognitrix.mcp.client import get_dynamic_client
+            from cognitrix.mcp.registry import agent_servers, matches
+
+            config = next((c for c in await agent_servers(self.agent) if matches(c, server)), None)
+            if config is None:
+                return False
+            client = await get_dynamic_client()
+            annotations = await apps.annotations(client, config, tool_name)
+        except Exception:
+            logger.exception("Could not check MCP tool annotations")
+        return mcp_only_reads(tool_name, annotations)
 
     async def _hand_off(self, tool: Any, args: dict, interface: str) -> None:
         """Leave a "hand off to me" action in the person's Inbox, ready to do."""

@@ -234,7 +234,7 @@ async def accept_offer(offer_id: str, ctx: AuthContext = Depends(get_auth_contex
             'agent_id': str(agent.id), 'agent_name': str(agent.name or ''), 'session_id': None,
             'depth': 0, 'report_back': False, 'exchanges': 1, 'offer_id': str(row.id),
         })
-        agent_chats.send_turn(me, agent, session, standing.accept_prompt(row))
+        agent_chats.send_turn(me, agent, session, standing.accept_prompt(row, agent))
     except Exception:
         await standing.AgentOffer.update_one(
             {'id': row.id}, {'status': standing.OFFER_PENDING, 'decided_at': None})

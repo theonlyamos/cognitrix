@@ -221,13 +221,63 @@ def _policy_action(tool: Any, risk: RiskAssessment) -> str:
     return 'run'
 
 
-def read_only_block(decision: ToolDecision, tool: Any, args: dict, *, runtime_tool: Any = None) -> ToolDecision:
-    """In a read-only run, turn anything that changes things into a block."""
+# What a read-only run (a standing assistant's check-in) may call. Asking
+# first is not the same as changing something: Edit, a new file from Write
+# and undoable changes in connected apps all run without asking, so the
+# check-in boundary is this list and not the approval policy.
+READ_ONLY_TOOLS = frozenset({
+    'read', 'grep', 'glob', 'search', 'tavily_search', 'webfetch', 'web_fetch',
+    'search_knowledge', 'search_chats', 'read_chat', 'check_chat',
+    'list_agents', 'list_tasks', 'get_task', 'list_mcp_tools', 'list_credentials',
+    'load_skill', 'bash_output', 'list_windows', 'look_at_window', 'take_screenshot',
+    # the check-in's own notes, alerts and offers
+    'read_notes', 'update_notes', 'schedule_next_check', 'notify_me', 'offer_help',
+})
+
+
+def _only_looks(tool: Any, args: dict, mcp_reads: bool | None) -> bool:
+    name = str(getattr(tool, 'name', '') or '').strip().lower().replace(' ', '_')
+    args = args if isinstance(args, dict) else {}
+    if name in READ_ONLY_TOOLS:
+        return True
+    if str(getattr(tool, 'category', '') or '') in ('mcp', 'mcp_dynamic') and name != 'list_mcp_tools':
+        return bool(mcp_reads)
+    if name == 'http_request':
+        return str(args.get('method') or 'GET').strip().upper() in ('GET', 'HEAD')
+    if name == 'bash':
+        command = args.get('command')
+        if not isinstance(command, str) or not command.strip():
+            return False
+        try:
+            from pathlib import Path
+
+            from cognitrix.common import shell as sh
+            from cognitrix.config import settings
+
+            plan = sh.plan_call(
+                command, Path(settings.tools_root).expanduser().resolve(), args.get('run_in_background'),
+            )
+            return plan.kind == 'allowlisted' and bool(plan.read_only)
+        except Exception:
+            return False
+    return False
+
+
+def read_only_block(
+    decision: ToolDecision, tool: Any, args: dict, *, runtime_tool: Any = None,
+    mcp_reads: bool | None = None,
+) -> ToolDecision:
+    """In a read-only run, refuse everything that is not known to only look.
+
+    ``mcp_reads`` says whether an action on a connected app only reads
+    (``destructive_ops.mcp_only_reads``); unknown counts as a change.
+    """
     why = read_only_run.get()
     if not why or decision.action == 'block':
         return decision
     changes = (
-        decision.action == 'ask'
+        not _only_looks(tool, args, mcp_reads)
+        or decision.action == 'ask'
         or _policy_action(tool, decision.risk) == 'ask'
         or needs_person((tool, runtime_tool), args)
     )

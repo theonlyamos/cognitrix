@@ -239,6 +239,22 @@ def _read_only_folder_note(params: dict) -> str:
     )
 
 
+def mcp_only_reads(tool_name: str, annotations: dict | None) -> bool:
+    """True when an action on a connected app clearly changes nothing.
+
+    Stricter than ``mcp_tool_risk``: an undoable change is still a change.
+    The server has to mark the tool read-only, or its name has to say it
+    reads and nothing else.
+    """
+    notes = annotations if isinstance(annotations, dict) else {}
+    if notes.get('readOnlyHint'):
+        return True
+    if notes.get('readOnlyHint') is False or notes.get('destructiveHint') is True:
+        return False
+    words = _words(tool_name)
+    return bool(words & READ_VERBS) and not words & (CHANGE_VERBS | DESTRUCTIVE_VERBS | OUTWARD_VERBS)
+
+
 def mcp_tool_risk(tool_name: str, annotations: dict | None) -> RiskAssessment:
     """Risk for an action on a connected app (MCP server).
 

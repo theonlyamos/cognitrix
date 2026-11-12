@@ -19,9 +19,11 @@ interval (15 minutes at the least, 4 hours by default).
   step, so a check-in makes no planning call.
 - The brief is restated at the start of every check-in
   (`tasks/standing.py: run_context`), so it survives context compaction.
-- A check-in is read-only. `permissions.read_only_run` turns any call that
-  would have asked a person, or that the policy marks as changing something,
-  into a refusal. Notes, alerts and offers still work.
+- A check-in is read-only. While `permissions.read_only_run` is set, only
+  tools known to look are allowed (`READ_ONLY_TOOLS`, plus read-only shell
+  commands, GET requests and connected-app actions that only read). Everything
+  else is refused, including edits that would normally run without asking.
+  Notes, alerts and offers still work.
 - One agent per person can be the main assistant. The dashboard's ask bar and
   chat apps start with it.
 
@@ -32,7 +34,7 @@ offer is stored as an `AgentOffer` and shown in the Inbox with Accept and
 Dismiss.
 
 - Accept starts an ordinary chat with that agent, opened with the plan it
-  wrote. The chat follows the agent's normal rules, so risky steps still ask.
+  wrote and the brief's "must not do yet" limits. The chat follows the agent's normal rules, so risky steps still ask.
 - Dismiss is remembered: the same title is refused later, and the most recent
   dismissals are listed in the next check-in's context.
 - Limits: 3 offers per check-in, and a cap on unanswered offers.

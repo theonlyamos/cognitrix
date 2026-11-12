@@ -377,8 +377,14 @@ async def decide_offer(row: AgentOffer, status: str, session_id: str | None = No
     return changed == 1
 
 
-def accept_prompt(row: AgentOffer) -> str:
-    return (
+def accept_prompt(row: AgentOffer, agent: Any = None) -> str:
+    text = (
         f'I accepted your offer "{row.title}". Go ahead.\n\n'
         f'What you said you would do:\n{row.plan or row.details}'
     )
+    # The brief's limits hold after an offer is accepted; the new chat does
+    # not see the brief unless it is told here.
+    limits = str(settings_of(agent)['brief'].get('not_yet') or '').strip() if agent is not None else ''
+    if limits:
+        text += f'\n\nLimits from my standing brief still apply:\n{limits}'
+    return text

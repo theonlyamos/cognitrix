@@ -488,3 +488,51 @@ async def test_stop_all_stops_chats_runs_and_pending_checks(db, monkeypatch):
     assert stopped == ['chat-a'] and cancelled == [task.id]
     assert not (await Task.get(task.id)).wake_pending
     assert (await Task.get(foreign.id)).wake_pending
+
+
+def test_read_only_run_refuses_changes_that_never_ask():
+    """Edit, a new file and undoable app changes run without asking, yet are changes."""
+    from cognitrix.safety.destructive_ops import mcp_only_reads
+
+    always = Agent(name='A', llm=_llm(), system_prompt='s', permission_level='allow')
+    token = permissions.read_only_run.set('check-ins can only look')
+    try:
+        for name in ('Edit', 'Write', 'Create Task', 'Message Chat', 'Some New Tool'):
+            tool = _tool(name)
+            decision = decide_tool_call(always, tool, {}, LOW)
+            assert decision.action == 'run'
+            assert read_only_block(decision, tool, {}).action == 'block', name
+        for name in ('Read', 'Grep', 'Offer Help', 'Notify Me', 'Search Knowledge'):
+            tool = _tool(name)
+            assert read_only_block(decide_tool_call(always, tool, {}, LOW), tool, {}).action == 'run', name
+
+        http = _tool('Http Request')
+        ran = decide_tool_call(always, http, {}, LOW)
+        assert read_only_block(ran, http, {'url': 'https://x.test'}).action == 'run'
+        assert read_only_block(ran, http, {'url': 'https://x.test', 'method': 'post'}).action == 'block'
+
+        app = _tool('Run Mcp Tool')
+        app.category = 'mcp'
+        ran = decide_tool_call(always, app, {}, LOW)
+        assert read_only_block(ran, app, {}).action == 'block'  # unknown counts as a change
+        assert read_only_block(ran, app, {}, mcp_reads=False).action == 'block'
+        assert read_only_block(ran, app, {}, mcp_reads=True).action == 'run'
+    finally:
+        permissions.read_only_run.reset(token)
+
+    assert mcp_only_reads('anything', {'readOnlyHint': True})
+    assert mcp_only_reads('search_threads', None)
+    assert not mcp_only_reads('create_draft', None)
+    assert not mcp_only_reads('get_and_delete', None)
+    assert not mcp_only_reads('search_threads', {'readOnlyHint': False})
+    assert not mcp_only_reads('frobnicate', None)
+
+
+def test_accepted_offer_carries_the_briefs_limits():
+    agent = Agent(name='A', llm=_llm(), system_prompt='s')
+    agent.automation = {'standing': {'enabled': True, 'brief': {
+        'keep_true': 'Mail gets answered', 'not_yet': 'Never send mail. Drafts only.'}}}
+    row = standing.AgentOffer(user_id='u', agent_id=str(agent.id), title='Draft replies', plan='Write drafts')
+    text = standing.accept_prompt(row, agent)
+    assert 'Write drafts' in text and 'Never send mail. Drafts only.' in text
+    assert 'Limits' not in standing.accept_prompt(row)
