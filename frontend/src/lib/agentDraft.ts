@@ -24,6 +24,7 @@ export interface AgentRecord {
   shared?: boolean;
   owner_id?: string | null;
   description?: string;
+  avatar?: { emoji?: string; hue?: number | null } | null;
   system_prompt?: string;
   llm?: {
     provider?: string;
@@ -56,6 +57,10 @@ export interface AgentRecord {
 export interface AgentDraft {
   name: string;
   description: string;
+  /** Thumbnail: an emoji instead of the first letter ('' = letter). */
+  avatarEmoji: string;
+  /** Thumbnail colour, 0-359; null = made from the name. */
+  avatarHue: number | null;
   provider: string;
   model: string;
   reasoning: string;
@@ -94,6 +99,8 @@ export function draftFrom(agent: AgentRecord): AgentDraft {
   return {
     name: agent.name || '',
     description: agent.description || '',
+    avatarEmoji: agent.avatar?.emoji || '',
+    avatarHue: typeof agent.avatar?.hue === 'number' ? agent.avatar.hue : null,
     provider: agent.llm?.provider || 'openai',
     model: agent.llm?.model || '',
     reasoning: agent.llm?.reasoning_effort || '',
@@ -155,6 +162,10 @@ export function payloadFrom(id: string, draft: AgentDraft, catalog: ToolInfo[], 
     id,
     name: draft.name.trim(),
     description: draft.description.trim(),
+    avatar: {
+      ...(draft.avatarEmoji.trim() ? { emoji: draft.avatarEmoji.trim() } : {}),
+      ...(draft.avatarHue !== null ? { hue: draft.avatarHue } : {}),
+    },
     system_prompt: draft.systemPrompt,
     // api_key is left out: the server keeps the stored one or uses the engine's.
     llm: {

@@ -382,10 +382,29 @@ def _check_folders(agent: Agent, data: dict, existing: Agent | None) -> None:
 
 
 _POLICY_DEFAULTS = {
-    'description': '', 'reviewer': {}, 'coding_agents': {}, 'credentials': None,
+    'description': '', 'avatar': {}, 'reviewer': {}, 'coding_agents': {}, 'credentials': None,
     'can_create_sub_agents': True, 'sub_agent_model': '', 'automation': {},
     'memory': {},
 }
+
+
+def _clean_avatar(value: object) -> dict:
+    """Keep only a short emoji and a hue from what the agent page sent."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict = {}
+    emoji = str(value.get('emoji') or '').strip()
+    if emoji:
+        if len(emoji) > 16 or any(ch.isalnum() and ch.isascii() or ch in '<>&"\'' for ch in emoji):
+            raise HTTPException(status_code=400, detail='Pick a single emoji for the thumbnail')
+        out['emoji'] = emoji
+    hue = value.get('hue')
+    if hue is not None and hue != '':
+        try:
+            out['hue'] = int(hue) % 360
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail='Pick a colour for the thumbnail') from None
+    return out
 
 
 def _check_policy(agent: Agent, data: dict, existing: Agent | None) -> None:
@@ -405,6 +424,7 @@ def _check_policy(agent: Agent, data: dict, existing: Agent | None) -> None:
     agent.description = str(agent.description or '').strip()
     if len(agent.description) > 300:
         raise HTTPException(status_code=400, detail='Keep the description under 300 characters')
+    agent.avatar = _clean_avatar(agent.avatar)
     try:
         agent.reviewer = normalize_agent_settings(agent.reviewer)
     except ValueError as exc:

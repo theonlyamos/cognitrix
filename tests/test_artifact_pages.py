@@ -438,6 +438,9 @@ async def test_written_documents_are_listed_but_code_is_not(db):
 
     files = (await routes.list_artifacts(_ctx(amos)))['files']
     assert [f['title'] for f in files] == ['report.md'] and files[0]['mime_type'] == 'text/markdown'
+    # A chat's side panel asks for just what that chat made.
+    assert [f['title'] for f in (await routes.list_artifacts(_ctx(amos), session_id='s1'))['files']] == ['report.md']
+    assert (await routes.list_artifacts(_ctx(amos), session_id='s2'))['files'] == []
     assert (await routes.list_artifacts(_ctx(kofi)))['files'] == []
     with pytest.raises(HTTPException):
         await routes.get_file(files[0]['id'], False, _ctx(kofi))

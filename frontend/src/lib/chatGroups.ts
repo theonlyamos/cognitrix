@@ -138,3 +138,26 @@ export function savePanelWidth(width: number) {
     // ignore
   }
 }
+
+const MINI_STORE = 'chatList.mini';
+/** Width of the minimized list: a rail of agent and team thumbnails. */
+export const RAIL_WIDTH = 64;
+/** Dragging the list this far below its smallest width minimizes it. */
+export const MINI_SNAP = 70;
+
+/** Whether the chat list is minimized to thumbnails. */
+export function loadListMini(): boolean {
+  try {
+    return localStorage.getItem(MINI_STORE) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function saveListMini(mini: boolean) {
+  try {
+    localStorage.setItem(MINI_STORE, mini ? '1' : '0');
+  } catch {
+    // ignore
+  }
+}

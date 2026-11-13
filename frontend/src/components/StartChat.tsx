@@ -1,25 +1,32 @@
+import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { avatarEmoji, avatarHue, type AgentAvatar } from '@/lib/agentAvatar';
 import { agentModel, teamLine, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 
-/** Square letter badge used for agents and teams (teams get a dashed edge). */
+/** Square thumbnail for agents and teams (teams get a dashed edge): the first
+ *  letter, or the agent's emoji, on its own colour. */
 export function AgentBadge({
   name,
   team = false,
   selected = false,
   size = 'md',
+  avatar,
   className,
 }: {
   name: string;
   team?: boolean;
   selected?: boolean;
   size?: 'sm' | 'md' | 'lg';
+  avatar?: AgentAvatar | null;
   className?: string;
 }) {
   const letter = (name.trim()[0] || '?').toUpperCase();
+  const emoji = avatarEmoji(avatar);
   return (
     <span
       aria-hidden
+      style={selected ? undefined : ({ '--tint-h': avatarHue(name, avatar) } as CSSProperties)}
       className={cn(
         'inline-grid flex-none place-items-center border font-mono font-medium',
         size === 'sm' && 'h-[18px] w-[18px] rounded-[4px] text-[9.5px]',
@@ -27,10 +34,10 @@ export function AgentBadge({
         size === 'lg' && 'h-9 w-9 rounded-lg text-[15px]',
         team && 'border-dashed',
         className,
-        selected ? 'border-transparent bg-accent text-accent-foreground' : 'border-line bg-panel-2 text-fg',
+        selected ? 'border-transparent bg-accent text-accent-foreground' : 'agent-tint',
       )}
     >
-      {letter}
+      {emoji ? <span className={cn('leading-none', size === 'lg' ? 'text-[18px]' : size === 'md' ? 'text-[12px]' : 'text-[10px]')}>{emoji}</span> : letter}
     </span>
   );
 }

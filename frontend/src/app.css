@@ -228,3 +228,13 @@ select optgroup {
   background-color: var(--panel);
   color: var(--fg);
 }
+
+/* Agent and team thumbnails: a letter (or emoji) tile tinted with the agent's
+   own colour. --tint-h is the hue, set inline by AgentBadge. */
+.agent-tint {
+  --tint-l: 32%;
+  background: hsl(var(--tint-h) 70% 50% / .16);
+  color: hsl(var(--tint-h) 60% var(--tint-l));
+  border-color: hsl(var(--tint-h) 60% 45% / .4);
+}
+html.dark .agent-tint { --tint-l: 74%; background: hsl(var(--tint-h) 70% 50% / .2); }
