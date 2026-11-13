@@ -1898,6 +1898,13 @@ export default function Home() {
                 </div>
               </div>
             )}
+            <FolderChips
+              className="mb-2"
+              folders={shownFolders}
+              onChange={changeFolders}
+              emptyLabel="private scratch folder"
+              disabled={busy}
+            />
             <div
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
@@ -2067,13 +2074,6 @@ export default function Home() {
               <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
             )}
             <VoiceNotice voice={voice} />
-            <FolderChips
-              className="mt-2"
-              folders={shownFolders}
-              onChange={changeFolders}
-              emptyLabel="private scratch folder"
-              disabled={busy}
-            />
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim">
               <button
                 type="button"
