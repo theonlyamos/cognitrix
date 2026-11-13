@@ -101,4 +101,27 @@ describe('ComputerPanel', () => {
     expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument();
     expect(rfb.made.length).toBe(1);
   });
+
+  it('leaves Esc to the desktop only while you are in control', async () => {
+    lib.sandboxStatus.mockResolvedValue({
+      enabled: true, running: true, desktops: [{ name: 'a1', display: ':1', held_by: null, running: true }],
+    });
+    lib.takeOver.mockResolvedValue('full');
+    render(<ComputerPanel agents={agents} focusAgentId="a1" onClose={() => {}} />);
+    await waitFor(() => expect(rfb.made.length).toBe(1));
+    const panel = screen.getByRole('region', { name: "Agents' computer" });
+    const screenEl = screen.getByLabelText("Researcher's screen");
+
+    // Watching: Esc from the (focused) screen still collapses.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    fireEvent.keyDown(screenEl, { key: 'Escape' });
+    expect(panel).toHaveAttribute('data-view', 'docked');
+
+    // In control: Esc belongs to the desktop.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Take over' }));
+    expect(await screen.findByRole('button', { name: 'Hand back' })).toBeInTheDocument();
+    fireEvent.keyDown(screenEl, { key: 'Escape' });
+    expect(panel).toHaveAttribute('data-view', 'expanded');
+  });
 });

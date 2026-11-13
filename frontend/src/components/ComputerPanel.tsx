@@ -83,11 +83,13 @@ export function ComputerPanel({ agents, focusAgentId, onClose }: {
   }, [enterFullscreen]);
 
   // Esc collapses, except while you're in control: then keys go to the desktop.
+  const inControl = useRef(false);
+  const onControl = useCallback((held: boolean) => { inControl.current = held; }, []);
   useEffect(() => {
     if (!expanded) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || document.fullscreenElement) return;
-      if ((e.target as HTMLElement | null)?.closest?.('[data-computer-screen]')) return;
+      if (inControl.current) return;
       collapse();
     };
     document.addEventListener('keydown', onKey);
@@ -158,6 +160,7 @@ export function ComputerPanel({ agents, focusAgentId, onClose }: {
             desktop={current}
             agentName={label(current)}
             onChange={load}
+            onControl={onControl}
             view={fullscreen && !isPhone() ? 'fullscreen' : expanded ? 'expanded' : 'docked'}
             leading={oneBar && (
               <>
@@ -259,10 +262,12 @@ function DesktopSelect({ desktops, selected, label, onSelect, className }: {
 
 type View = 'docked' | 'expanded' | 'fullscreen';
 
-function DesktopScreen({ desktop, agentName, onChange, view, leading, trailing }: {
+function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading, trailing }: {
   desktop: SandboxDesktop;
   agentName: string;
   onChange: () => void;
+  /** Told whether you have control, so the panel leaves Esc to the desktop. */
+  onControl?: (held: boolean) => void;
   view: View;
   /** Expanded: the panel's own controls, put in this desktop's one bar. */
   leading?: ReactNode;
@@ -270,6 +275,10 @@ function DesktopScreen({ desktop, agentName, onChange, view, leading, trailing }
 }) {
   const screenRef = useRef<HTMLDivElement>(null);
   const [control, setControl] = useState<string | null>(null); // full password while you have control
+  useEffect(() => {
+    onControl?.(control !== null);
+    return () => onControl?.(false);
+  }, [control, onControl]);
   const [state, setState] = useState<'connecting' | 'live' | 'closed'>('connecting');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
