@@ -188,13 +188,15 @@ def _write_source(page_id: str, number: int, content: bytes) -> None:
     tmp.replace(_version_file(page_id, number))
 
 
-def _prune(page_id: str, newest: int) -> None:
+def _prune(page_id: str, newest: int, keep: int = 0) -> None:
+    """Drop sources older than the last ``MAX_VERSIONS_KEPT``, except ``keep``:
+    the version the owner holds viewers on, which shared links still show."""
     oldest_kept = newest - MAX_VERSIONS_KEPT
     if oldest_kept <= 0:
         return
     for path in page_dir(page_id).glob('*.src'):
         try:
-            if int(path.stem) <= oldest_kept:
+            if int(path.stem) <= oldest_kept and int(path.stem) != keep:
                 path.unlink(missing_ok=True)
         except ValueError:
             continue
@@ -279,7 +281,7 @@ async def publish(
     await ArtifactPage.update_one({'id': str(page.id)}, changes)
     for key, value in changes.items():
         setattr(page, key, value)
-    _prune(str(page.id), number)
+    _prune(str(page.id), number, keep=int(page.share_version or 0))
     return page, False
 
 

@@ -98,14 +98,19 @@ async def read_artifact(artifact_id: str, version: int = 0, *, parent=None) -> T
         return ToolOutcome.failure('no_owner', 'Reading artifacts needs a signed-in person.')
     try:
         page, role = await store.page_for(str(artifact_id or '').strip(), user_key)
-        source = store.read_source(page, int(version or 0) or None)
+        # Someone the page is shared with reads the version the owner shares, no other.
+        shown = store.viewer_version(page, role)
+        asked = int(version or 0) or shown
+        if asked != shown and not store.can_edit(role):
+            return ToolOutcome.failure('no_version', f'Only version {shown} of this artifact is shared with this person.')
+        source = store.read_source(page, asked)
     except store.PageError as exc:
         return _failure(exc)
     cut = len(source) > READ_LIMIT
     rows = await page_comments.thread_rows(str(page.id))
     open_threads = [t for t in page_comments.threads(rows) if not t['resolved']]
-    lines = [f'"{page.title}" (artifact_id {page.id}, {page.format}, version {int(version or 0) or page.version} '
-             f'of {page.version}, your access: {role}).']
+    lines = [f'"{page.title}" (artifact_id {page.id}, {page.format}, version {asked} '
+             f'of {page.version if store.can_edit(role) else shown}, your access: {role}).']
     if open_threads:
         lines.append('Open comments:')
         for thread in open_threads[:20]:

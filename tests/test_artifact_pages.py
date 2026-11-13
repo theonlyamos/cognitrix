@@ -202,6 +202,14 @@ async def test_viewers_stay_on_the_shared_version(db):
     seen = await routes.get_page(pid, _ctx(kofi))
     assert seen['viewer_version'] == 1 and [v['number'] for v in seen['versions']] == [1]
 
+    # The viewer's own agent gets the shared version too, never a newer one.
+    _as(kofi)
+    read = await _tool('read_artifact', artifact_id=pid)
+    assert read.status == 'success' and 'one' in read.text and 'two' not in read.text
+    assert (await _tool('read_artifact', artifact_id=pid, version=2)).status != 'success'
+    _as(amos)
+    assert 'two' in (await _tool('read_artifact', artifact_id=pid)).text
+
     await routes.set_sharing(pid, routes.SharingUpdate(share_version=0), _ctx(amos))
     assert (await routes.page_source(pid, None, _ctx(kofi)))['source'] == 'two'
 
@@ -475,3 +483,31 @@ def test_artifact_tools_do_not_ask_for_approval():
 
     for name in ('Publish Artifact', 'Read Artifact', 'Artifact Comments'):
         assert DestructiveOpDetector().analyze(name, {}).risk_level == RiskLevel.LOW
+
+
+async def test_pruning_keeps_the_version_viewers_are_held_on(db, monkeypatch):
+    from cognitrix.api.routes import artifact_pages as routes
+    from cognitrix.artifact_pages import store
+
+    monkeypatch.setattr(store, 'MAX_VERSIONS_KEPT', 2)
+    amos = await _user('Amos', 'amos@example.com')
+    kofi = await _user('Kofi', 'kofi@example.com')
+    _as(amos)
+    pid = _page_id(await _tool('publish_artifact', title='T', content='v1'))
+    await routes.set_sharing(pid, routes.SharingUpdate(everyone='view', share_version=1), _ctx(amos))
+    for n in range(2, 7):
+        await _tool('publish_artifact', title='T', content=f'v{n}', artifact_id=pid)
+
+    assert (await routes.page_source(pid, None, _ctx(kofi)))['source'] == 'v1'
+    page = await store.get_page(pid)
+    with pytest.raises(store.PageError):
+        store.read_source(page, 2)  # an old version nobody is held on is gone
+
+
+def test_pages_may_only_call_app_tools_that_change_nothing():
+    """The rule the apps power uses: an undoable change is still a change."""
+    from cognitrix.safety.destructive_ops import mcp_only_reads
+
+    assert mcp_only_reads('list_issues', None) and mcp_only_reads('anything', {'readOnlyHint': True})
+    for name in ('create_issue', 'update_record', 'add_label', 'send_message'):
+        assert not mcp_only_reads(name, None)

@@ -524,7 +524,7 @@ async def _apps_list(me: str) -> list[dict[str, Any]]:
     from cognitrix.mcp import apps
     from cognitrix.mcp.client import get_dynamic_client
     from cognitrix.mcp.registry import prepare
-    from cognitrix.safety.destructive_ops import RiskLevel, mcp_tool_risk
+    from cognitrix.safety.destructive_ops import mcp_only_reads
 
     client = await get_dynamic_client()
     out = []
@@ -535,7 +535,7 @@ async def _apps_list(me: str) -> list[dict[str, Any]]:
         tools = []
         for info in await apps.list_tools(client, config):
             name = str(info.get('name') or '')
-            if mcp_tool_risk(name, info.get('annotations')).risk_level == RiskLevel.LOW:
+            if mcp_only_reads(name, info.get('annotations')):
                 tools.append({'name': name, 'description': str(info.get('description') or '')[:300]})
         out.append({'app': config.name, 'connected': True, 'tools': tools})
     return out
@@ -545,7 +545,7 @@ async def _apps_call(me: str, app: str, tool_name: str, arguments: Any) -> Any:
     from cognitrix.mcp import apps
     from cognitrix.mcp.client import get_dynamic_client
     from cognitrix.mcp.registry import matches, prepare
-    from cognitrix.safety.destructive_ops import RiskLevel, mcp_tool_risk
+    from cognitrix.safety.destructive_ops import mcp_only_reads
     from cognitrix.tools.mcp import _content_to_text
 
     config = next((c for c in await _my_apps(me) if matches(c, app)), None)
@@ -559,8 +559,8 @@ async def _apps_call(me: str, app: str, tool_name: str, arguments: Any) -> Any:
     info = known.get(tool_name)
     if info is None:
         raise store.PageError('no_tool', f'"{app}" has no tool called "{tool_name}"', 404)
-    # Pages only read: anything that could change or send something stays with agents and their approvals.
-    if mcp_tool_risk(tool_name, info.get('annotations')).risk_level != RiskLevel.LOW:
+    # Pages only read: any change, even one that can be undone, stays with agents and their approvals.
+    if not mcp_only_reads(tool_name, info.get('annotations')):
         raise store.PageError('not_read_only', f'"{tool_name}" can change things, so pages may not call it', 403)
     result = await apps.call_tool(client, config, tool_name, arguments if isinstance(arguments, dict) else {})
     text = _content_to_text(result)
