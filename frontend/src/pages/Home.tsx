@@ -611,11 +611,19 @@ export default function Home() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== '.' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
       event.preventDefault();
-      setSidebar(!sidebarOpen);
+      // Same as the header button: with an artifact or the computer showing,
+      // the shortcut closes the whole right column.
+      if (sidebarOpen || artifactOpen || computerOpen) {
+        closeArtifact();
+        setComputerOpen(false);
+        setSidebar(false);
+      } else {
+        setSidebar(true);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sidebarOpen, setSidebar]);
+  }, [sidebarOpen, artifactOpen, computerOpen, closeArtifact, setSidebar]);
   // Spoken replies: when a turn ends and "read replies aloud" is on, read the
   // answer. Sending a new message stops whatever was being read.
   const wasBusyRef = useRef(false);
