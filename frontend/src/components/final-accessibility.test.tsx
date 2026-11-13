@@ -312,12 +312,15 @@ describe('final accessibility contracts', () => {
       'md:h-8',
       'md:w-8',
     );
-    expect(screen.getByRole('button', { name: 'Attach files' })).toHaveClass(
-      'min-h-11',
+    const more = screen.getByRole('button', { name: 'More options' });
+    expect(more).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8');
+    fireEvent.click(more);
+    expect(screen.getByRole('menuitem', { name: /Attach files/ })).toHaveClass(
+      'min-h-12',
       'md:min-h-0',
     );
-    expect(screen.getByRole('button', { name: /auto-approve/i })).toHaveClass(
-      'min-h-11',
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Auto-approve' })).toHaveClass(
+      'min-h-12',
       'md:min-h-0',
     );
   });

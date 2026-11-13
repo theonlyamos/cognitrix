@@ -74,7 +74,7 @@ export default function AgentPage() {
   const [saving, setSaving] = useState(false);
   const [mcpServers, setMcpServers] = useState<McpServer[] | null>(null);
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
-  // null: never set, so chats use the app's working folder.
+  // null: never set, so new chats start with only a private scratch folder.
   const [folders, setFolders] = useState<WorkFolder[] | null>(null);
   const [canRequestFolders, setCanRequestFolders] = useState(true);
   const [workingFolder, setWorkingFolder] = useState('');
@@ -396,8 +396,7 @@ export default function AgentPage() {
           {folders === null ? (
             <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-fg-dim">
               <span>
-                Uses the app's working folder
-                {workingFolder ? <> <span className="font-mono text-[12px] text-fg">{workingFolder}</span></> : null} (read &amp; write).
+                No default folders: each new chat starts with a private scratch folder.
               </span>
               <button type="button" className="text-accent-ink hover:underline"
                 onClick={() => setFolders(workingFolder ? [{ path: workingFolder, access: 'write', primary: true }] : [])}>
@@ -409,7 +408,7 @@ export default function AgentPage() {
               <FolderChips folders={folders} onChange={setFolders} emptyLabel="none: each chat gets a private scratch folder" />
               <button type="button" className="self-start text-[12px] text-fg-dim hover:text-fg hover:underline"
                 onClick={() => setFolders(null)}>
-                Go back to the app's working folder
+                Clear default folders
               </button>
             </div>
           )}

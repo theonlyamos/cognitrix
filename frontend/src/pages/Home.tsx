@@ -12,7 +12,6 @@ import { useResource } from '@/hooks/useResource';
 import { api, errorMessage } from '@/lib/api';
 import { desktop } from '@/lib/desktop';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
-import ReasoningPicker from '@/components/ReasoningPicker';
 import { AGENTS_CHANGED_EVENT } from '@/lib/providers';
 import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
@@ -25,7 +24,8 @@ import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
-import { folderInfo, getChatFolders, setChatFolders, type FolderInfo, type WorkFolder } from '@/lib/folders';
+import ComposerMenu from '@/components/ComposerMenu';
+import { getChatFolders, setChatFolders, type WorkFolder } from '@/lib/folders';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
@@ -549,26 +549,17 @@ export default function Home() {
   useEffect(() => clearStopFallback, [clearStopFallback]);
 
   // ── Working folders ──
-  // A chat's folders live on its session; a new chat shows the agent's
-  // defaults and sends any changes with its first message.
-  const [folderSetup, setFolderSetup] = useState<FolderInfo | null>(null);
+  // A chat's folders live on its session; a new chat shows the agent's own
+  // default folders (none unless set on the agent) and sends any changes with
+  // its first message.
   const [savedFolders, setSavedFolders] = useState<WorkFolder[] | null>(null);
   const [draftFolders, setDraftFolders] = useState<WorkFolder[] | null>(null);
   const draftFoldersRef = useRef<WorkFolder[] | null>(null);
   draftFoldersRef.current = draftFolders;
-  useEffect(() => {
-    let alive = true;
-    folderInfo().then((info) => alive && setFolderSetup(info)).catch(() => alive && setFolderSetup(null));
-    return () => { alive = false; };
-  }, []);
-  const agentFolders = useMemo<WorkFolder[]>(() => {
-    const agent = agents.find((a) => a.id === agentId);
-    if (agent?.folders) return agent.folders;
-    if (agent && Array.isArray(agent.folders)) return [];
-    return folderSetup?.working_folder
-      ? [{ path: folderSetup.working_folder, access: 'write', primary: true }]
-      : [];
-  }, [agents, agentId, folderSetup]);
+  const agentFolders = useMemo<WorkFolder[]>(
+    () => agents.find((a) => a.id === agentId)?.folders ?? [],
+    [agents, agentId],
+  );
   useEffect(() => {
     // Switching chats or agents drops the new-chat draft. A new chat adopting
     // its id mid-turn keeps it until the saved list loads.
@@ -1927,6 +1918,13 @@ export default function Home() {
                 </div>
               </div>
             )}
+            <FolderChips
+              className="mb-2"
+              folders={shownFolders}
+              onChange={changeFolders}
+              emptyLabel="private scratch folder"
+              disabled={busy}
+            />
             <div
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
@@ -2096,64 +2094,25 @@ export default function Home() {
               <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
             )}
             <VoiceNotice voice={voice} />
-            <FolderChips
-              className="mt-2"
-              folders={shownFolders}
-              onChange={changeFolders}
-              emptyLabel="private scratch folder"
-              disabled={busy}
-            />
-            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                aria-label="Attach files"
-                className="flex min-h-11 items-center gap-1.5 transition-colors hover:text-fg md:min-h-0"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
-                attach
-              </button>
-              <button
-                type="button"
-                onClick={toggleBypass}
-                aria-pressed={bypass}
-                title="Auto-approve tool calls for this browser (skips the approval prompt). Use with care."
-                className={cn('flex min-h-11 items-center gap-1 transition-colors md:min-h-0', bypass ? 'text-danger-ink' : 'hover:text-fg')}
-              >
-                <span>[{bypass ? '✓' : 'x'}]</span> auto-approve
-              </button>
-              <button
-                type="button"
-                onClick={() => setIncognito((v) => !v)}
-                disabled={!!activeSessionId}
-                aria-pressed={incognito}
-                title={activeSessionId
-                  ? (incognito ? 'This chat is incognito.' : 'Incognito can only be turned on for a new chat.')
-                  : "Incognito: the chat isn't listed, doesn't use or change memory, and is deleted when you leave it."}
-                className={cn('flex min-h-11 items-center gap-1 transition-colors disabled:cursor-default md:min-h-0',
-                  incognito ? 'text-[#b4691a] dark:text-[#ffb86b]' : 'hover:text-fg disabled:opacity-50 disabled:hover:text-fg-dim')}
-              >
-                <span>[{incognito ? '✓' : ' '}]</span> incognito
-              </button>
-              <div
-                title="How hard the model thinks before answering. Agent default uses the level set on the agent."
-                className="flex min-h-11 items-center gap-1 md:min-h-0"
-              >
-                <span aria-hidden>reasoning:</span>
-                <ReasoningPicker value={reasoning} onChange={changeReasoning} />
-              </div>
-              <button
-                type="button"
-                onClick={() => void send(input, 'task')}
-                disabled={busy || !!uploadError || !isConnected || !input.trim() || attachments.length > 0 || editSource !== null}
-                aria-label="Run as task"
-                title={attachments.length > 0 || editSource !== null
+            <div className="mt-1.5 flex items-center gap-x-4 font-mono text-[10.5px] text-fg-dim">
+              <ComposerMenu
+                onAttach={() => fileInputRef.current?.click()}
+                onRunTask={() => void send(input, 'task')}
+                runTaskDisabled={busy || !!uploadError || !isConnected || !input.trim() || attachments.length > 0 || editSource !== null}
+                runTaskTitle={attachments.length > 0 || editSource !== null
                   ? 'Task mode does not support attachments or edit sources yet.'
                   : 'Create a persisted task and run it with step tracking.'}
-                className="flex min-h-11 items-center gap-1 transition-colors hover:text-accent disabled:cursor-not-allowed disabled:opacity-50 md:min-h-0"
-              >
-                <span aria-hidden>[ ]</span> run as task
-              </button>
+                bypass={bypass}
+                onToggleBypass={toggleBypass}
+                incognito={incognito}
+                onToggleIncognito={() => setIncognito((v) => !v)}
+                incognitoDisabled={!!activeSessionId}
+                incognitoTitle={activeSessionId
+                  ? (incognito ? 'This chat is incognito.' : 'Incognito can only be turned on for a new chat.')
+                  : "Incognito: the chat isn't listed, doesn't use or change memory, and is deleted when you leave it."}
+                reasoning={reasoning}
+                onReasoning={changeReasoning}
+              />
               <SendKeyHint />
             </div>
           </div>

@@ -240,11 +240,11 @@ def test_chats_copy_agent_defaults_or_get_a_scratch_folder(tmp_path, monkeypatch
     (tmp_path / 'legacy').mkdir()
     (tmp_path / 'repo').mkdir()
 
-    # Agent never configured: the app's working folder, as before.
+    # Agent never configured: new chats get no default folders, only scratch.
     s1 = Session(agent_id='a')
     got = s1._turn_folders(SimpleNamespace(folders=None), 'web')
-    assert [f.path for f in got] == [str((tmp_path / 'legacy').resolve())]
-    assert s1.folders[0]['access'] == 'write'
+    assert len(got) == 1 and got[0].name == 'scratch'
+    assert str((tmp_path / 'legacy').resolve()) not in got[0].path
 
     # Agent defaults are copied once; later agent changes don't move the chat.
     agent = SimpleNamespace(folders=[{'path': str(tmp_path / 'repo'), 'access': 'read'}])

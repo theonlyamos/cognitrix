@@ -15,6 +15,7 @@ const en = {
   'nav.settings': 'Settings',
   'nav.apiKeys': 'API Keys',
   'nav.signOut': 'Sign out',
+  'nav.account': 'Account menu',
   'nav.collapse': 'Collapse',
   'nav.collapseSidebar': 'Collapse sidebar',
   'nav.expandSidebar': 'Expand sidebar',
