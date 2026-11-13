@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LayoutDashboard as DashboardIcon, Inbox as InboxIcon, MessageSquare as MessageSquareIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon, Users as UsersIcon, BookOpen as BookOpenIcon, Mic as MicIcon, Settings as SettingsIcon, KeyRound as KeyRoundIcon, type LucideIcon } from 'lucide-react';
+import { LayoutDashboard as DashboardIcon, Inbox as InboxIcon, MessageSquare as MessageSquareIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon, Users as UsersIcon, BookOpen as BookOpenIcon, LayoutPanelTop as LayoutPanelTopIcon, Mic as MicIcon, Settings as SettingsIcon, KeyRound as KeyRoundIcon, type LucideIcon } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
@@ -23,6 +23,7 @@ const NAV: { path: string; label: MessageKey; icon: (p: IconProps) => JSX.Elemen
   { path: '/tasks', label: 'nav.tasks', icon: icon(ListChecksIcon) },
   { path: '/automations', label: 'nav.automations', icon: icon(ZapIcon) },
   { path: '/teams', label: 'nav.teams', icon: icon(UsersIcon) },
+  { path: '/artifacts', label: 'nav.artifacts', icon: icon(LayoutPanelTopIcon) },
   { path: '/knowledge', label: 'nav.knowledge', icon: icon(BookOpenIcon) },
   { path: '/meetings', label: 'nav.meetings', icon: icon(MicIcon) },
   { path: '/settings', label: 'nav.settings', icon: icon(SettingsIcon) },

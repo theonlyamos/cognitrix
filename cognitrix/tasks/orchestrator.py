@@ -111,6 +111,10 @@ def _add_automation_tools(roster: Sequence[Agent], offers: bool = False) -> None
         # Offer Help belongs to a standing assistant's check-ins only.
         if offers or tool.name.strip().lower().replace(' ', '_') != 'offer_help'
     ]
+    # Artifacts: a task can publish a page and keep it fresh on its schedule.
+    from cognitrix.tools.artifact_pages import ARTIFACT_TOOL_CATEGORY
+
+    extra.extend(ToolManager.get_tools_by_category(ARTIFACT_TOOL_CATEGORY))
     for agent in roster:
         if not getattr(agent.llm, 'supports_tool_use', False):
             continue
