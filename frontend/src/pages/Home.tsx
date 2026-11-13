@@ -1725,7 +1725,7 @@ export default function Home() {
     while (from > 0 && messages[from - 1].role !== 'user') from -= 1;
     const steps: SidebarActivity[] = [];
     for (const message of messages.slice(from)) {
-      (message.tools || []).forEach((tool, i) => steps.push({ key: `${message.id}:${tool.id || i}`, name: tool.name, status: tool.status }));
+      (message.tools || []).forEach((tool, i) => steps.push({ key: `${message.id}:${tool.id || i}`, name: tool.name.replace(/_/g, ' '), status: tool.status }));
     }
     return steps.slice(-12);
   }, [messages]);
@@ -1923,17 +1923,17 @@ export default function Home() {
             (phones), reconnect while the stream is down, and the side panel. */}
         <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:min-h-12 md:py-1.5 md:pl-5 md:pr-3">
           <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2.5 overflow-hidden">
-            <h1 className="truncate text-[15px] font-semibold md:text-[13.5px] md:font-medium">
+            <h1 className="min-w-[5rem] truncate text-[15px] font-semibold md:text-[13.5px] md:font-medium">
               {picking || !activeSessionId
                 ? 'New chat'
                 : (allChats.find((c) => c.id === activeSessionId)?.title || 'Chat')}
             </h1>
             {!picking && agentById.get(agentId) && (
-              <span className="hidden flex-none items-center gap-1.5 text-[12.5px] text-fg-dim sm:flex" aria-label={`Chatting with ${agentById.get(agentId)!.name}`}>
+              <span className="hidden min-w-0 shrink-[99] items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12.5px] text-fg-dim sm:flex" aria-label={`Chatting with ${agentById.get(agentId)!.name}`}>
                 <AgentBadge name={agentById.get(agentId)!.name} avatar={agentById.get(agentId)!.avatar} size="sm" />
                 <span className="text-fg">{agentById.get(agentId)!.name}</span>
                 {agentModel(agentById.get(agentId)) && (
-                  <span className="hidden truncate font-mono text-[10.5px] lg:inline">· {agentModel(agentById.get(agentId))}</span>
+                  <span className="hidden truncate font-mono text-[10.5px] xl:inline">· {agentModel(agentById.get(agentId))}</span>
                 )}
               </span>
             )}
@@ -1989,7 +1989,7 @@ export default function Home() {
               >
                 {agentDesktop && <span aria-hidden className="h-[7px] w-[7px] flex-none animate-pulse rounded-full bg-accent" />}
                 {sidebarWaiting.length > 0 && <span aria-hidden className="h-[7px] w-[7px] flex-none rounded-full bg-[#ffb86b]" />}
-                {sidebarSummary && <span className="hidden whitespace-nowrap lg:inline">{sidebarSummary}</span>}
+                {sidebarSummary && !sidebarShown && <span className="hidden whitespace-nowrap xl:inline">{sidebarSummary}</span>}
                 <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
               </button>
             )}
