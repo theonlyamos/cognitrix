@@ -235,6 +235,43 @@ def _validate_secret_free_tool_schema(value: Any) -> None:
             _validate_secret_free_tool_schema(nested)
 
 
+# Built-in tools whose parameter *names* look secret-bearing but which only ever
+# carry secret references. Http Request takes a saved credential's name in
+# ``credential`` and ``{{secret:NAME}}`` placeholders in ``headers``; the real
+# values are filled in when the request is sent and never reach the model or
+# the run record. Each parameter's own schema is still checked.
+_VETTED_SECRET_LIKE_PARAMETERS: dict[str, frozenset[str]] = {
+    "Http Request": frozenset({"headers", "credential"}),
+}
+
+
+def _validate_persisted_tool_schema_secrets(tool_name: str, schema: Any) -> None:
+    allowed = _VETTED_SECRET_LIKE_PARAMETERS.get(tool_name)
+    if allowed and isinstance(schema, Mapping):
+        function = schema.get("function")
+        parameters = function.get("parameters") if isinstance(function, Mapping) else None
+        properties = parameters.get("properties") if isinstance(parameters, Mapping) else None
+        if isinstance(properties, Mapping):
+            # Check the vetted parameters' own schemas, then the rest of the
+            # schema with those parameter names left out.
+            for name in allowed & set(properties):
+                _validate_secret_free_tool_schema(properties[name])
+            schema = {
+                **schema,
+                "function": {
+                    **function,
+                    "parameters": {
+                        **parameters,
+                        "properties": {
+                            key: value for key, value in properties.items()
+                            if key not in allowed
+                        },
+                    },
+                },
+            }
+    _validate_secret_free_tool_schema(schema)
+
+
 def _safe_endpoint(value: str | None) -> str | None:
     if not value:
         return None
@@ -292,7 +329,7 @@ def _validate_tool_schema_contract(
         raise ValueError("persisted task runtime tool names must be unique")
 
     for tool_name, schema in zip(tool_names, tool_schemas, strict=True):
-        _validate_secret_free_tool_schema(schema)
+        _validate_persisted_tool_schema_secrets(tool_name, schema)
         if not isinstance(schema, Mapping) or schema.get("type") != "function":
             raise ValueError(f"persisted schema for tool '{tool_name}' must be a function schema")
         function = schema.get("function")

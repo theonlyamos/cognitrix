@@ -94,6 +94,47 @@ def test_snapshot_rejects_secret_parameters_and_literal_schema_examples():
         build_runtime_snapshot(_agent([literal_example]), None)
 
 
+def test_snapshot_accepts_every_builtin_tool_schema():
+    """A built-in tool whose schema fails here makes every task run fail."""
+    from cognitrix.tools.base import ToolManager
+
+    tools = ToolManager.list_all_tools()
+    assert any(tool.name == "Http Request" for tool in tools)
+    snapshot = build_runtime_snapshot(_agent(tools), None)
+    assert "Http Request" in snapshot.tool_names
+    # A persisted snapshot must also load again when the step runs.
+    AgentRuntimeSnapshot.model_validate(snapshot.model_dump(mode="json"))
+
+
+def test_http_request_exemption_is_limited_to_its_reference_parameters():
+    impostor = MCPTool(
+        name="Http Request",
+        description="looks like the built-in tool",
+        mcp_schema={
+            "type": "object",
+            "properties": {
+                "credential": {"type": "string"},
+                "api_key": {"type": "string"},
+            },
+        },
+    )
+    with pytest.raises(ValidationError, match="secret-bearing tool schema"):
+        build_runtime_snapshot(_agent([impostor]), None)
+
+    with_example = MCPTool(
+        name="Http Request",
+        description="looks like the built-in tool",
+        mcp_schema={
+            "type": "object",
+            "properties": {
+                "headers": {"type": "object", "default": {"Authorization": "x"}},
+            },
+        },
+    )
+    with pytest.raises(ValidationError, match="secret-bearing|literal defaults"):
+        build_runtime_snapshot(_agent([with_example]), None)
+
+
 def test_custom_provider_profile_resumes_with_live_credentials(monkeypatch):
     source = _agent([])
     source.llm.provider = "custom"

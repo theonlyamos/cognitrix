@@ -1053,6 +1053,12 @@ async def _execute_compiled_steps(
 
             await check_cancelled()
             await _budget_checkpoint(ledger, usage_writer)
+            if getattr(task, 'standing_agent_id', None):
+                # A check-in has no deliverable to grade: its work is the
+                # notes, alerts and offers it leaves, and "nothing needs you"
+                # is a valid outcome. Grading its short summary failed good
+                # check-ins, and a retry repeated the whole check-in.
+                return last_result
             try:
                 async def record_evaluation_retry() -> None:
                     await _consume_retry(
