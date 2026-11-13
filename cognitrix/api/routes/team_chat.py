@@ -13,7 +13,7 @@ import weakref
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from cognitrix.agents import Agent
 from cognitrix.agents.access import can_view
@@ -104,7 +104,9 @@ def _chat_summary(session: Session, run_key: str) -> dict[str, Any]:
     )
     return {
         'id': session.id,
-        'title': group_chat.chat_title(session.chat or []),
+        'title': (getattr(session, 'title', None) or '').strip() or group_chat.chat_title(session.chat or []),
+        'pinned': bool(getattr(session, 'pinned', False)),
+        'archived': bool(getattr(session, 'archived', False)),
         'updated_at': last,
         'running': bool(run and run.running),
     }
@@ -145,6 +147,36 @@ async def delete_team_chat(team_id: str, session_id: str, user=Depends(get_curre
         raise HTTPException(status_code=409, detail='Stop the chat before deleting it')
     await Session.delete_many({'id': str(session.id)})
     return {'status': 'deleted'}
+
+
+class TeamChatUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    title: str | None = Field(default=None, max_length=120)
+    pinned: bool | None = None
+    archived: bool | None = None
+
+
+@team_chat_api.patch('/{team_id}/chats/{session_id}')
+async def update_team_chat(
+    team_id: str, session_id: str, body: TeamChatUpdate, user=Depends(get_current_user),
+):
+    """Rename, pin or archive one of the caller's group chats."""
+    session = await _owned_chat(team_id, session_id, user)
+    run = chat_runs.get_run(_run_key(user), str(session.id))
+    # A running turn saves its own copy of the chat when it ends and would
+    # undo this change.
+    if run is not None and run.running:
+        raise HTTPException(status_code=409, detail='This chat is still working. Try again when it finishes.')
+    changes = body.model_dump(exclude_unset=True)
+    if 'title' in changes:
+        session.title = (changes['title'] or '').strip() or None
+    if changes.get('pinned') is not None:
+        session.pinned = bool(changes['pinned'])
+    if changes.get('archived') is not None:
+        session.archived = bool(changes['archived'])
+    await session.save()
+    return _chat_summary(session, _run_key(user))
 
 
 @team_chat_api.post('/{team_id}/chats/{session_id}/stop')

@@ -29,6 +29,10 @@ import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
 import type { PickTarget, PickerAgent, PickerTeam } from '@/lib/agentPicker';
 import { takeChatDraft } from '@/lib/chatDraft';
+import {
+  ARCHIVED_KEY, GROUP_PREVIEW, PANEL_DEFAULT, PANEL_MAX, PANEL_MIN, PINNED_KEY,
+  clampPanelWidth, groupChats, groupKey, loadClosedSections, loadPanelWidth, saveClosedSections, savePanelWidth,
+} from '@/lib/chatGroups';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
 import { setViewingChat } from '@/lib/chatPresence';
@@ -157,7 +161,9 @@ export default function Home() {
   const [reworkError, setReworkError] = useState<string | null>(null);
   const [chatQuery, setChatQuery] = useState('');
   const [chatHits, setChatHits] = useState<ChatSearchHit[] | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
+  const [closedSections, setClosedSections] = useState<Set<string>>(loadClosedSections);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set());
+  const [panelWidth, setPanelWidth] = useState(loadPanelWidth);
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const mobileConversationsTriggerRef = useRef<HTMLButtonElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -389,14 +395,15 @@ export default function Home() {
       Number(!!b.pinned) - Number(!!a.pinned)
       || String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
   }, [allChatsData, convos, agentById, teamById, agentId]);
-  const archivedCount = useMemo(() => allChats.filter((c) => c.archived).length, [allChats]);
-  // The list shows live chats, or the archive when asked; typing narrows it
-  // by title straight away while the server looks through the messages.
+  // Typing narrows the list by title straight away while the server looks
+  // through the messages. Chats sit under their agent or team; pinned ones
+  // on top and archived ones at the bottom (both mixed back in while searching).
+  const searching = !!chatQuery.trim();
   const listedChats = useMemo(() => {
     const words = chatQuery.trim().toLowerCase();
-    return allChats.filter((c) =>
-      (words ? c.title.toLowerCase().includes(words) : !!c.archived === showArchived));
-  }, [allChats, chatQuery, showArchived]);
+    return words ? allChats.filter((c) => c.title.toLowerCase().includes(words)) : allChats;
+  }, [allChats, chatQuery]);
+  const grouped = useMemo(() => groupChats(listedChats, { searching }), [listedChats, searching]);
   useEffect(() => {
     const words = chatQuery.trim();
     if (words.length < 3) {
@@ -1197,7 +1204,12 @@ export default function Home() {
 
   const updateChat = async (chat: ChatSummary, changes: { title?: string; pinned?: boolean; archived?: boolean }) => {
     try {
-      await api.patch(`/sessions/${encodeURIComponent(chat.id)}`, changes);
+      await api.patch(
+        chat.kind === 'team'
+          ? `/teams/${encodeURIComponent(chat.team_id || '')}/chats/${encodeURIComponent(chat.id)}`
+          : `/sessions/${encodeURIComponent(chat.id)}`,
+        changes,
+      );
     } catch {
       // The list is re-read below and shows what was actually saved.
     }
@@ -1359,6 +1371,161 @@ export default function Home() {
     if (isUserTurn(messages[i])) break;
   }
 
+  const chatIsRunning = (c: ChatSummary) =>
+    (c.kind !== 'team' && c.agent_id === agentId) ? isRunning(c.id) : !!c.running;
+
+  const toggleSection = (key: string) => {
+    setClosedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      saveClosedSections(next);
+      return next;
+    });
+  };
+
+  // "PINNED" and "ARCHIVED": plain labels that open and close like sections.
+  const renderLabelHeader = (key: string, label: string, count: number) => {
+    const open = !closedSections.has(key);
+    return (
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={`${label.toLowerCase()} chats (${count})`}
+        onClick={() => toggleSection(key)}
+        className="flex min-h-11 w-full items-center gap-2 border-b border-line bg-panel pl-2.5 pr-4 text-left transition-colors hover:bg-panel-2 md:min-h-9"
+      >
+        <span aria-hidden className={cn('w-3.5 flex-none text-center text-[9px] text-fg-dim transition-transform', !open && '-rotate-90')}>▼</span>
+        <span className="flex-1 font-mono text-[10px] tracking-[0.18em] text-fg-dim">{label}</span>
+        <span className="font-mono text-[10.5px] text-fg-dim">{count}</span>
+      </button>
+    );
+  };
+
+  // One chat. Inside an agent's or team's section the badge and name are in
+  // the section header, so the row keeps only the title and time.
+  const renderChatRow = (c: ChatSummary, inSection: boolean) => {
+    const isTeam = c.kind === 'team';
+    const who = isTeam ? teamById.get(c.team_id || '')?.name : agentById.get(c.agent_id || '')?.name;
+    const selected = !picking && !isTeam && c.id === activeSessionId;
+    const running = chatIsRunning(c);
+    const title = (c.message_count === 0 && chatRuns.find((run) => run.session_id === c.id)?.prompt) || c.title;
+    const label = inSection ? '' : (who ? `${who} · ` : '');
+    if (renaming?.id === c.id) {
+      return (
+        <form
+          key={c.id}
+          className={cn('flex min-h-11 items-center gap-2 border-b border-line py-2 pr-3', inSection ? 'pl-9' : 'pl-3')}
+          onSubmit={(e) => { e.preventDefault(); saveRename(); }}
+        >
+          <input
+            autoFocus
+            value={renaming.title}
+            maxLength={120}
+            aria-label="Chat name"
+            onChange={(e) => setRenaming({ id: c.id, title: e.target.value })}
+            onBlur={saveRename}
+            onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(null); }}
+            className="min-h-11 min-w-0 flex-1 rounded border border-accent bg-bg px-2 text-[13px] text-fg focus:outline-none md:min-h-8"
+          />
+        </form>
+      );
+    }
+    const actions = [
+      { label: 'Rename', disabled: running, onSelect: () => setRenaming({ id: c.id, title: c.title }) },
+      { label: c.pinned ? 'Unpin' : 'Pin to top', disabled: running, onSelect: () => void updateChat(c, { pinned: !c.pinned }) },
+      { label: c.archived ? 'Move back to chats' : 'Archive', disabled: running, onSelect: () => void updateChat(c, { archived: !c.archived }) },
+      ...(isTeam ? [] : [
+        { label: 'Export as Markdown', onSelect: () => void exportChat(c.id, c.title, who || 'agent').catch(() => {}) },
+        { label: 'Save as skill', disabled: running, onSelect: () => void saveAsSkill(c) },
+      ]),
+      { label: 'Delete', danger: true, disabled: running, onSelect: () => void deleteConversation(c) },
+    ];
+    return (
+      <SelectionRow
+        key={c.id}
+        selected={selected}
+        onSelect={() => openChat(c)}
+        className={cn(
+          'group relative min-h-11 gap-2 border-b border-line transition-colors',
+          selected ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
+        )}
+        buttonClassName={cn('flex items-start gap-2.5 self-stretch py-2.5 pr-4', inSection ? 'pl-10' : 'pl-4')}
+        trailingAction={(
+          // On a wide screen the menu shows on hover, focus or the open chat
+          // and floats over the title, so titles get the full row.
+          <div
+            className={cn(
+              'flex-none md:absolute md:inset-y-0 md:right-0 md:flex md:items-center md:pl-2 md:transition-opacity',
+              selected ? 'md:bg-panel-2' : 'md:bg-panel-2 md:opacity-0 md:focus-within:opacity-100 md:group-hover:opacity-100',
+            )}
+          >
+            <ChatRowMenu label={`More actions for ${c.title}`} actions={actions} />
+          </div>
+        )}
+      >
+        {!inSection && <span className="mt-0.5"><AgentBadge name={who || '?'} team={isTeam} size="sm" /></span>}
+        <div className="min-w-0 flex-1">
+          {/* A new conversation has no saved messages (and so no title) until its first reply is done. */}
+          <div className="truncate text-[13px]">
+            {c.pinned && <span className="mr-1 font-mono text-[10px] text-accent-ink" title="Pinned" aria-label="Pinned">▲</span>}
+            {title}
+          </div>
+          {running ? (
+            <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px] text-accent" data-testid={`running-${c.id}`}>
+              <span aria-hidden className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />
+              {label}working…
+            </div>
+          ) : (
+            <div className="mt-0.5 truncate font-mono text-[10.5px] text-fg-dim">{label}{fmtRelative(c.updated_at)}</div>
+          )}
+          {c.started_by && (
+            <div className="mt-0.5 truncate font-mono text-[10.5px] text-fg-dim" data-testid={`started-by-${c.id}`}>
+              started by {c.started_by.agent_name || 'an agent'}
+            </div>
+          )}
+        </div>
+      </SelectionRow>
+    );
+  };
+
+  // Drag the panel's edge (or use the arrow keys on it) to resize; double
+  // click puts it back. The width is remembered per browser.
+  const resizeFrom = useRef<{ x: number; width: number } | null>(null);
+  const setWidth = (width: number) => setPanelWidth(clampPanelWidth(width));
+  const resizeHandle = (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize conversations"
+      aria-valuemin={PANEL_MIN}
+      aria-valuemax={PANEL_MAX}
+      aria-valuenow={panelWidth}
+      tabIndex={0}
+      onPointerDown={(e) => {
+        resizeFrom.current = { x: e.clientX, width: panelWidth };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (resizeFrom.current) setWidth(resizeFrom.current.width + e.clientX - resizeFrom.current.x);
+      }}
+      onPointerUp={() => {
+        resizeFrom.current = null;
+        savePanelWidth(panelWidth);
+      }}
+      onDoubleClick={() => { setPanelWidth(PANEL_DEFAULT); savePanelWidth(PANEL_DEFAULT); }}
+      onKeyDown={(e) => {
+        const step = e.shiftKey ? 40 : 16;
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        const next = clampPanelWidth(panelWidth + (e.key === 'ArrowRight' ? step : -step));
+        setPanelWidth(next);
+        savePanelWidth(next);
+      }}
+      className="absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-[3px] after:w-0.5 after:transition-colors hover:after:bg-accent focus-visible:after:bg-accent"
+    />
+  );
+
   const conversationPanel = (
     <>
       <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
@@ -1388,110 +1555,85 @@ export default function Home() {
             aria-label="Search chats"
             className="min-h-11 min-w-0 flex-1 rounded border border-line bg-bg px-2 text-[13px] text-fg placeholder:text-fg-dim focus:border-accent focus:outline-none md:min-h-8"
           />
-          {(archivedCount > 0 || showArchived) && !chatQuery.trim() && (
-            <button
-              type="button"
-              aria-pressed={showArchived}
-              onClick={() => setShowArchived((value) => !value)}
-              className="min-h-11 flex-none font-mono text-[10.5px] text-fg-dim hover:text-fg md:min-h-8"
-            >
-              {showArchived ? 'back' : `archived ${archivedCount}`}
-            </button>
-          )}
         </div>
       )}
       <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto">
         {allChats.length === 0 ? (
           <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no conversations yet</p>
         ) : listedChats.length === 0 && !chatHits?.length ? (
-          <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">
-            {chatQuery.trim() ? 'no chats match' : showArchived ? 'no archived chats' : 'no conversations yet'}
-          </p>
+          <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no chats match</p>
         ) : (
-          listedChats.map((c) => {
-            const isTeam = c.kind === 'team';
-            const who = isTeam ? teamById.get(c.team_id || '')?.name : agentById.get(c.agent_id || '')?.name;
-            const selected = !picking && !isTeam && c.id === activeSessionId;
-            const running = (!isTeam && c.agent_id === agentId) ? isRunning(c.id) : !!c.running;
-            const title = (c.message_count === 0 && chatRuns.find((run) => run.session_id === c.id)?.prompt) || c.title;
-            if (renaming?.id === c.id) {
+          <>
+            {grouped.pinned.length > 0 && (
+              <>
+                {renderLabelHeader(PINNED_KEY, 'PINNED', grouped.pinned.length)}
+                {!closedSections.has(PINNED_KEY) && grouped.pinned.map((c) => renderChatRow(c, false))}
+              </>
+            )}
+            {grouped.groups.map((group) => {
+              const isTeam = group.kind === 'team';
+              const name = (isTeam ? teamById.get(group.id)?.name : agentById.get(group.id)?.name) || '?';
+              const open = searching || !closedSections.has(group.key);
+              const limit = searching || expandedSections.has(group.key) ? Infinity : GROUP_PREVIEW;
+              const shown = group.chats.slice(0, limit);
+              const busyHere = allChats.some((c) => groupKey(c) === group.key && chatIsRunning(c));
+              const sectionId = `chat-section-${group.key.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
               return (
-                <form
-                  key={c.id}
-                  className="flex min-h-11 items-center gap-2 border-b border-line px-3 py-2"
-                  onSubmit={(e) => { e.preventDefault(); saveRename(); }}
-                >
-                  <input
-                    autoFocus
-                    value={renaming.title}
-                    maxLength={120}
-                    aria-label="Chat name"
-                    onChange={(e) => setRenaming({ id: c.id, title: e.target.value })}
-                    onBlur={saveRename}
-                    onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(null); }}
-                    className="min-h-11 min-w-0 flex-1 rounded border border-accent bg-bg px-2 text-[13px] text-fg focus:outline-none md:min-h-8"
-                  />
-                </form>
-              );
-            }
-            return (
-              <SelectionRow
-                key={c.id}
-                selected={selected}
-                onSelect={() => openChat(c)}
-                className={cn(
-                  'group min-h-11 gap-2 border-b border-line transition-colors',
-                  selected ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
-                )}
-                buttonClassName="flex items-start gap-2.5 self-stretch px-4 py-2.5"
-                trailingAction={isTeam ? (
-                  <button
-                    type="button"
-                    onClick={() => void deleteConversation(c)}
-                    disabled={running}
-                    aria-label={`Delete conversation ${c.title}`}
-                    className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8"
-                  >
-                    ✕
-                  </button>
-                ) : (
-                  <ChatRowMenu
-                    label={`More actions for ${c.title}`}
-                    actions={[
-                      { label: 'Rename', disabled: running, onSelect: () => setRenaming({ id: c.id, title: c.title }) },
-                      { label: c.pinned ? 'Unpin' : 'Pin to top', disabled: running, onSelect: () => void updateChat(c, { pinned: !c.pinned }) },
-                      { label: c.archived ? 'Move back to chats' : 'Archive', disabled: running, onSelect: () => void updateChat(c, { archived: !c.archived }) },
-                      { label: 'Export as Markdown', onSelect: () => void exportChat(c.id, c.title, who || 'agent').catch(() => {}) },
-                      { label: 'Save as skill', disabled: running, onSelect: () => void saveAsSkill(c) },
-                      { label: 'Delete', danger: true, disabled: running, onSelect: () => void deleteConversation(c) },
-                    ]}
-                  />
-                )}
-              >
-                <span className="mt-0.5"><AgentBadge name={who || '?'} team={isTeam} size="sm" /></span>
-                <div className="min-w-0 flex-1">
-                  {/* A new conversation has no saved messages (and so no title) until its first reply is done. */}
-                  <div className="truncate text-[13px]">
-                    {c.pinned && <span className="mr-1 font-mono text-[10px] text-accent-ink" title="Pinned" aria-label="Pinned">▲</span>}
-                    {title}
+                <section key={group.key} aria-label={`${name} chats`}>
+                  <div className="flex min-h-11 items-center border-b border-line bg-panel transition-colors hover:bg-panel-2 md:min-h-10">
+                    <button
+                      type="button"
+                      aria-expanded={open}
+                      aria-controls={sectionId}
+                      disabled={searching}
+                      onClick={() => toggleSection(group.key)}
+                      className="flex min-h-11 min-w-0 flex-1 items-center gap-2 pl-2.5 pr-1 text-left disabled:cursor-default md:min-h-10"
+                    >
+                      <span aria-hidden className={cn('w-3.5 flex-none text-center text-[9px] text-fg-dim transition-transform', !open && '-rotate-90')}>▼</span>
+                      <AgentBadge name={name} team={isTeam} />
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+                        {name}
+                        {isTeam && <span className="ml-1.5 rounded-[3px] border border-line px-1 align-[1px] font-mono text-[9.5px] font-normal text-fg-dim">team</span>}
+                      </span>
+                      {busyHere && <span aria-label="working" title="Working" className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />}
+                      <span className="flex-none font-mono text-[10.5px] text-fg-dim">
+                        {open ? group.chats.length : fmtRelative(group.latest)}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => startChatWith({ kind: group.kind, id: group.id })}
+                      aria-label={`New chat with ${name}`}
+                      title={`New chat with ${name}`}
+                      className="mx-2 grid h-11 w-11 flex-none place-items-center rounded border border-line text-[13px] text-fg-dim hover:border-fg-dim hover:text-fg md:h-6 md:w-6"
+                    >
+                      <span aria-hidden>+</span>
+                    </button>
                   </div>
-                  {running ? (
-                    <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px] text-accent" data-testid={`running-${c.id}`}>
-                      <span aria-hidden className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />
-                      {who ? `${who} · ` : ''}working…
+                  {open && (
+                    <div id={sectionId}>
+                      {shown.map((c) => renderChatRow(c, true))}
+                      {group.chats.length > shown.length && (
+                        <button
+                          type="button"
+                          onClick={() => setExpandedSections((prev) => new Set(prev).add(group.key))}
+                          className="block min-h-11 w-full border-b border-line pl-10 pr-4 text-left font-mono text-[10.5px] text-fg-dim hover:bg-panel-2 hover:text-fg md:min-h-8"
+                        >
+                          show {group.chats.length - shown.length} more
+                        </button>
+                      )}
                     </div>
-                  ) : (
-                    <div className="mt-0.5 truncate font-mono text-[10.5px] text-fg-dim">{who ? `${who} · ` : ''}{fmtRelative(c.updated_at)}</div>
                   )}
-                  {c.started_by && (
-                    <div className="mt-0.5 truncate font-mono text-[10.5px] text-fg-dim" data-testid={`started-by-${c.id}`}>
-                      started by {c.started_by.agent_name || 'an agent'}
-                    </div>
-                  )}
-                </div>
-              </SelectionRow>
-            );
-          })
+                </section>
+              );
+            })}
+            {grouped.archived.length > 0 && (
+              <>
+                {renderLabelHeader(ARCHIVED_KEY, 'ARCHIVED', grouped.archived.length)}
+                {!closedSections.has(ARCHIVED_KEY) && grouped.archived.map((c) => renderChatRow(c, false))}
+              </>
+            )}
+          </>
         )}
         {chatHits && chatHits.some((hit) => hit.snippet && !listedChats.some((c) => c.id === hit.id)) && (
           <>
@@ -1532,8 +1674,12 @@ export default function Home() {
 
       {/* Conversations panel */}
       {agentId && (
-        <aside className="hidden min-h-0 w-60 flex-none flex-col border-r border-line bg-panel md:flex">
+        <aside
+          className="relative hidden min-h-0 flex-none flex-col border-r border-line bg-panel md:flex"
+          style={{ width: panelWidth }}
+        >
           {conversationPanel}
+          {resizeHandle}
         </aside>
       )}
 

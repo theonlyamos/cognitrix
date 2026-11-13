@@ -433,3 +433,46 @@ async def test_all_chats_lists_agent_and_team_chats_newest_first(tmp_path, monke
     # API keys see only their allowed agents and never group chats.
     narrowed = await routes.all_chats(_ctx('user-1', allowed_agents=['agent-2']))
     assert [row['id'] for row in narrowed] == [newer.id]
+
+
+async def test_team_chats_can_be_renamed_pinned_and_archived(tmp_path, monkeypatch):
+    from cognitrix.api.routes import sessions as routes
+    from cognitrix.api.routes import team_chat as team_routes
+    from cognitrix.sessions.base import Session
+    from cognitrix.teams.base import Team
+
+    await _initialize_routes_db(tmp_path)
+    chat = Session(
+        team_id='team-1', user_id='user-1', group_chat=True,
+        chat=[{'speaker_id': 'user', 'content': 'plan the launch', 'timestamp': '2026-11-01T00:00:00'}],
+    )
+    await chat.save()
+
+    async def fake_team_get(team_id):
+        return SimpleNamespace(id='team-1', owner_id='user-1') if team_id == 'team-1' else None
+
+    monkeypatch.setattr(Team, 'get', fake_team_get)
+    user = SimpleNamespace(id='user-1', email='one@example.com')
+
+    body = team_routes.TeamChatUpdate(title='Launch plan', pinned=True, archived=True)
+    summary = await team_routes.update_team_chat('team-1', chat.id, body, user)
+    assert summary['title'] == 'Launch plan'
+    assert summary['pinned'] is True and summary['archived'] is True
+
+    rows = {row['id']: row for row in await routes.all_chats(_ctx('user-1'))}
+    assert rows[chat.id]['title'] == 'Launch plan'
+    assert rows[chat.id]['renamed'] is True
+    assert rows[chat.id]['pinned'] is True and rows[chat.id]['archived'] is True
+
+    # Clearing the name shows the first message again.
+    await team_routes.update_team_chat('team-1', chat.id, team_routes.TeamChatUpdate(title=''), user)
+    rows = {row['id']: row for row in await routes.all_chats(_ctx('user-1'))}
+    assert rows[chat.id]['title'] == 'plan the launch'
+
+    # Someone else's chat, or the wrong team, is not found.
+    other = SimpleNamespace(id='user-2', email='two@example.com')
+    with pytest.raises(HTTPException) as exc_info:
+        await team_routes.update_team_chat('team-1', chat.id, body, other)
+    assert exc_info.value.status_code == 404
+    with pytest.raises(HTTPException):
+        await team_routes.update_team_chat('team-2', chat.id, body, user)

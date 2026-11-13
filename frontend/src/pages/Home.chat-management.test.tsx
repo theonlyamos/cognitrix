@@ -81,9 +81,27 @@ describe('Home chat list management', () => {
     expect(titles[1]).toContain('Trip to Accra');
     expect(screen.queryByText('Old notes')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getAllByRole('button', { name: 'archived 1' })[0]);
+    await userEvent.click(screen.getAllByRole('button', { name: 'archived chats (1)' })[0]);
     expect(screen.getAllByText('Old notes').length).toBeGreaterThan(0);
+    // The archive opens under the rest of the list.
+    expect(screen.getAllByText('Trip to Accra').length).toBeGreaterThan(0);
+  });
+
+  it('groups chats under their agent and remembers closed sections', async () => {
+    renderHome();
+    const header = (await screen.findAllByRole('button', { name: /^Agent One/, expanded: true }))[0];
+    expect(screen.getAllByRole('region', { name: 'Agent One chats' })[0]).toHaveTextContent('Trip to Accra');
+    await userEvent.click(header);
     expect(screen.queryByText('Trip to Accra')).not.toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('chatList.closedSections') || '[]')).toContain('agent:agent-1');
+    // Pinned chats stay on top even with their agent's section closed.
+    expect(screen.getAllByText('Budget review').length).toBeGreaterThan(0);
+  });
+
+  it('starts a new chat from a section header', async () => {
+    renderHome();
+    await userEvent.click((await screen.findAllByRole('button', { name: 'New chat with Agent One' }))[0]);
+    expect(localStorage.getItem('chatSession:agent-1')).toBe('');
   });
 
   it('renames, pins and archives from the row menu', async () => {
