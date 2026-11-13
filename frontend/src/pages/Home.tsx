@@ -23,7 +23,7 @@ import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/Vo
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
 import ComposerMenu from '@/components/ComposerMenu';
-import { folderInfo, getChatFolders, setChatFolders, type FolderInfo, type WorkFolder } from '@/lib/folders';
+import { getChatFolders, setChatFolders, type WorkFolder } from '@/lib/folders';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
@@ -528,26 +528,17 @@ export default function Home() {
   useEffect(() => clearStopFallback, [clearStopFallback]);
 
   // ── Working folders ──
-  // A chat's folders live on its session; a new chat shows the agent's
-  // defaults and sends any changes with its first message.
-  const [folderSetup, setFolderSetup] = useState<FolderInfo | null>(null);
+  // A chat's folders live on its session; a new chat shows the agent's own
+  // default folders (none unless set on the agent) and sends any changes with
+  // its first message.
   const [savedFolders, setSavedFolders] = useState<WorkFolder[] | null>(null);
   const [draftFolders, setDraftFolders] = useState<WorkFolder[] | null>(null);
   const draftFoldersRef = useRef<WorkFolder[] | null>(null);
   draftFoldersRef.current = draftFolders;
-  useEffect(() => {
-    let alive = true;
-    folderInfo().then((info) => alive && setFolderSetup(info)).catch(() => alive && setFolderSetup(null));
-    return () => { alive = false; };
-  }, []);
-  const agentFolders = useMemo<WorkFolder[]>(() => {
-    const agent = agents.find((a) => a.id === agentId);
-    if (agent?.folders) return agent.folders;
-    if (agent && Array.isArray(agent.folders)) return [];
-    return folderSetup?.working_folder
-      ? [{ path: folderSetup.working_folder, access: 'write', primary: true }]
-      : [];
-  }, [agents, agentId, folderSetup]);
+  const agentFolders = useMemo<WorkFolder[]>(
+    () => agents.find((a) => a.id === agentId)?.folders ?? [],
+    [agents, agentId],
+  );
   useEffect(() => {
     // Switching chats or agents drops the new-chat draft. A new chat adopting
     // its id mid-turn keeps it until the saved list loads.

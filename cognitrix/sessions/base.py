@@ -1313,23 +1313,20 @@ class Session(Model):
     def _turn_folders(self, agent: 'Agent', interface: str) -> list:
         """This chat's working folders, copying the agent's defaults on first use.
 
-        CLI and compat turns keep the app's working folder (an empty list).
+        A new chat starts with only its private scratch folder unless the agent
+        has its own default folders. CLI and compat turns keep the app's working
+        folder (an empty list).
         """
         if interface not in ('web', 'ws', 'task'):
             return []
         from cognitrix.common.folders import (
             folders_to_dicts,
-            legacy_default_folders,
             normalize_folders,
             scratch_folder,
         )
         source = self.folders
         if source is None:
-            agent_folders = getattr(agent, 'folders', None)
-            source = (
-                folders_to_dicts(legacy_default_folders())
-                if agent_folders is None else list(agent_folders)
-            )
+            source = list(getattr(agent, 'folders', None) or [])
         folders = normalize_folders(source, validate=False, scratch=self.scratch_path())
         if not folders:
             folders = [scratch_folder(self.scratch_key())]

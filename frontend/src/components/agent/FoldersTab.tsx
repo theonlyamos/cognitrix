@@ -16,11 +16,8 @@ import { Card, Check, Eyebrow, Pill, buttonClass, inputClass, linkButtonClass } 
 import { cn } from '@/lib/utils';
 
 /** Same wording as folder_prompt() in cognitrix/common/folders.py. */
-function folderPrompt(folders: WorkFolder[] | null, workingFolder: string): string {
-  if (folders === null) {
-    return `You can work with files in the app's working folder${workingFolder ? `: ${workingFolder}` : ''} (read & write).`;
-  }
-  if (folders.length === 0) {
+function folderPrompt(folders: WorkFolder[] | null): string {
+  if (folders === null || folders.length === 0) {
     return 'You can work with files in a private scratch folder for this chat (read & write). It is deleted with the chat.';
   }
   const lines = ['You can work with files in these folders:'];
@@ -79,7 +76,7 @@ export default function FoldersTab({ draft, update }: TabProps) {
         {folders === null ? (
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line px-3.5 py-3 text-[13.5px]">
             <span className="min-w-[220px] flex-1 text-fg-dim">
-              Uses the app's working folder{workingFolder && <> <span className="font-mono text-[12.5px] text-fg">{workingFolder}</span></>} (read &amp; write).
+              No default folders: each new chat starts with a private scratch folder. Tasks use the app's working folder{workingFolder && <> <span className="font-mono text-[12.5px] text-fg">{workingFolder}</span></>}.
             </span>
             <button type="button" className={buttonClass}
               onClick={() => set(workingFolder ? [{ path: workingFolder, access: 'write', primary: true }] : [])}>
@@ -153,7 +150,7 @@ export default function FoldersTab({ draft, update }: TabProps) {
             ) : (
               <div className="mt-3.5 flex flex-wrap items-center gap-2">
                 <button type="button" onClick={() => setAdding(true)} className={buttonClass}>+ Add folder…</button>
-                <button type="button" onClick={() => set(null)} className={linkButtonClass}>Go back to the app's working folder</button>
+                <button type="button" onClick={() => set(null)} className={linkButtonClass}>Clear default folders</button>
               </div>
             )}
             {error && <p role="alert" className="mt-2 font-mono text-[12px] text-danger-ink">{error}</p>}
@@ -175,7 +172,7 @@ export default function FoldersTab({ draft, update }: TabProps) {
 
       <Card>
         <Eyebrow>WHAT THE AGENT IS TOLD</Eyebrow>
-        <pre className="mt-3 whitespace-pre-wrap font-mono text-[12.5px] leading-relaxed text-fg">{folderPrompt(folders, workingFolder)}</pre>
+        <pre className="mt-3 whitespace-pre-wrap font-mono text-[12.5px] leading-relaxed text-fg">{folderPrompt(folders)}</pre>
       </Card>
     </div>
   );
