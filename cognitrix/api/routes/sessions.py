@@ -422,7 +422,10 @@ async def all_chats(ctx: AuthContext = Depends(get_auth_context)):
                 continue
             chats.append({
                 'id': row.session_id,
-                'title': row.title,
+                'title': row.custom_title or row.title,
+                'renamed': bool(row.custom_title),
+                'pinned': row.pinned,
+                'archived': row.archived,
                 'updated_at': row.changed,
                 'message_count': row.message_count,
                 'kind': 'team',

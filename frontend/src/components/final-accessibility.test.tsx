@@ -590,8 +590,9 @@ describe('final accessibility contracts', () => {
     const user = userEvent.setup();
     renderRoute(<Home />);
 
-    // Each row names who the chat is with.
-    const row = screen.getByRole('button', { name: /Other chat\s*Agent Two/ });
+    // Chats sit under a section named for who the chat is with.
+    const section = screen.getByRole('region', { name: 'Agent Two chats' });
+    const row = within(section).getByRole('button', { name: /^Other chat/ });
     await user.click(row);
     expect(localStorage.getItem('selectedAgentId')).toBe('agent-2');
     expect(localStorage.getItem('chatSession:agent-2')).toBe('s-two');
