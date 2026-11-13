@@ -8,6 +8,7 @@ from ...api.routes.credentials import credentials_api
 from ...api.routes.knowledge import knowledge_api
 from ...api.routes.memories import memories_api
 from ...api.routes.artifacts import artifacts_api
+from ...api.routes.artifact_pages import artifact_frame_api, artifact_pages_api
 from ...api.routes.assistant import assistant_api
 from ...api.routes.automations import automations_api, hooks_api
 from ...api.routes.audio import audio_api
@@ -34,6 +35,7 @@ from ...api.routes.push import push_api
 from ...api.routes.usage import usage_api
 
 api_router.include_router(public_api)
+api_router.include_router(artifact_frame_api)
 api_router.include_router(hooks_api)
 # Invoke/run-scoped routers MUST register before their crud twins: FastAPI
 # matches in registration order and e.g. GET /tasks/start/{id} would otherwise
@@ -43,6 +45,7 @@ api_router.include_router(agents_invoke_api)
 api_router.include_router(agents_api)
 api_router.include_router(tools_api)
 api_router.include_router(artifacts_api)
+api_router.include_router(artifact_pages_api)
 api_router.include_router(skills_api)
 api_router.include_router(providers_api)
 api_router.include_router(automations_api)

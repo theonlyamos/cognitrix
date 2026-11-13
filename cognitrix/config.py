@@ -803,8 +803,10 @@ async def _ensure_schema():
     from cognitrix.tasks.approvals import TaskApproval
     from cognitrix.tasks.automation import AgentNotification, TaskTrigger, TriggerEvent
     from cognitrix.tasks.standing import AgentOffer
+    from cognitrix.artifact_pages.models import MODELS as ARTIFACT_PAGE_MODELS
 
     for model in (
+        *ARTIFACT_PAGE_MODELS,
         AgentOffer,
         MeetingNote,
         PersonalSkill,

@@ -586,6 +586,22 @@ class Session(Model):
             except Exception:
                 logger.debug('Memory tools unavailable', exc_info=True)
 
+        # Artifacts: pages the agent publishes beside the chat (Publish
+        # Artifact, Read Artifact, Artifact Comments). Signed-in turns only:
+        # a page belongs to a person. Tool-less models don't get them.
+        if interface in ('web', 'ws', 'task') and owner and getattr(agent.llm, 'supports_tool_use', True):
+            try:
+                from cognitrix.tools.artifact_pages import ARTIFACT_TOOL_CATEGORY
+                from cognitrix.tools.base import ToolManager
+
+                names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
+                extra = [t for t in ToolManager.get_tools_by_category(ARTIFACT_TOOL_CATEGORY)
+                         if t.name.lower() not in names]
+                if extra:
+                    agent = agent.model_copy(update={'tools': [*agent.tools, *extra]})
+            except Exception:
+                logger.debug('Artifact tools unavailable', exc_info=True)
+
         # Propose Skill lets an agent suggest saving how it did a job; the
         # person reviews the draft before it is used (skills/drafts.py).
         if interface in ('web', 'ws') and owner and not self.task_id and not getattr(self, 'incognito', False):
@@ -889,6 +905,8 @@ class Session(Model):
                                     outcome.get('status') == 'success'
                                     if outcome else item.get('success') is True
                                 ) else 'error'
+                                if status == 'completed':
+                                    await self._note_written_file(agent, tool_context, name, data)
                                 await output({
                                     'type': 'tool',
                                     'status': status,
@@ -1309,6 +1327,22 @@ class Session(Model):
             return str(item.get('data', '')), item.get('success') is True, list(images)
 
         return call
+
+    async def _note_written_file(self, agent: 'Agent', tool_context: Any, name: str | None, data: Any) -> None:
+        """List a document the agent wrote on the person's Artifacts page."""
+        try:
+            from cognitrix.artifact_pages.store import record_written_file, written_path
+
+            path = written_path(name, data)
+            owner = self.user_id or getattr(tool_context, 'user_id', None)
+            if not path or not owner:
+                return
+            await record_written_file(
+                owner_id=str(owner), path=path, agent_id=str(getattr(agent, 'id', '') or ''),
+                session_id='' if self.task_id else str(self.id), task_id=str(self.task_id or ''),
+            )
+        except Exception:
+            logger.debug('Could not list a written file on the Artifacts page', exc_info=True)
 
     def _turn_folders(self, agent: 'Agent', interface: str) -> list:
         """This chat's working folders, copying the agent's defaults on first use.

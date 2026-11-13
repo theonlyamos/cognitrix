@@ -28,6 +28,9 @@ const TeamPage = lazy(() => import('@/pages/TeamPage'));
 const ApiKeys = lazy(() => import('@/pages/ApiKeys'));
 const Inbox = lazy(() => import('@/pages/Inbox'));
 const Automations = lazy(() => import('@/pages/Automations'));
+const Artifacts = lazy(() => import('@/pages/Artifacts'));
+const ArtifactPage = lazy(() => import('@/pages/ArtifactPage'));
+const PublicArtifact = lazy(() => import('@/pages/PublicArtifact'));
 const Knowledge = lazy(() => import('@/pages/Knowledge'));
 const Meetings = lazy(() => import('@/pages/Meetings'));
 const Notifications = lazy(() => import('@/pages/Notifications'));
@@ -70,6 +73,8 @@ function AppRoutes() {
         <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
         <Route path="/oauth/complete" element={<OAuthComplete />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        {/* A public artifact link: readable signed out. */}
+        <Route path="/s/:token" element={<PublicArtifact />} />
         {/* The desktop app's Alt+Space window: no app shell around it. */}
         <Route path="/quick" element={<ProtectedRoute><QuickAsk /></ProtectedRoute>} />
 
@@ -93,6 +98,8 @@ function AppRoutes() {
           <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/automations" element={<Automations />} />
+          <Route path="/artifacts" element={<Artifacts />} />
+          <Route path="/artifacts/:artifactId" element={<ArtifactPage />} />
           <Route path="/knowledge" element={<Knowledge />} />
           <Route path="/meetings" element={<Meetings />} />
           <Route path="/notifications" element={<Notifications />} />

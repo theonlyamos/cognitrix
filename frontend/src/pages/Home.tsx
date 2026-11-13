@@ -18,6 +18,8 @@ import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
 import { ComputerPanel } from '@/components/ComputerPanel';
+import { ArtifactViewer } from '@/components/artifacts/ArtifactViewer';
+import { announceArtifactUpdate, onOpenArtifact, publishedFrom } from '@/lib/artifactPages';
 import { sandboxStatus } from '@/lib/sandbox';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
@@ -343,6 +345,25 @@ export default function Home() {
   // The agents' sandboxed computer (one desktop per agent), when the server has it on.
   const [sandboxOn, setSandboxOn] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
+  // The artifact open beside the chat (same place as the computer panel), and
+  // whether it is expanded to fill the window.
+  const [artifactOpen, setArtifactOpen] = useState<string | null>(null);
+  const [artifactExpanded, setArtifactExpanded] = useState(false);
+  const showArtifact = useCallback((id: string) => {
+    setComputerOpen(false);
+    setArtifactOpen(id);
+  }, []);
+  const closeArtifact = useCallback(() => {
+    setArtifactOpen(null);
+    setArtifactExpanded(false);
+  }, []);
+  useEffect(() => onOpenArtifact(showArtifact), [showArtifact]);
+  useEffect(() => {
+    if (!artifactExpanded) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setArtifactExpanded(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [artifactExpanded]);
   useEffect(() => {
     let alive = true;
     sandboxStatus().then((s) => alive && setSandboxOn(s.enabled)).catch(() => alive && setSandboxOn(false));
@@ -864,8 +885,16 @@ export default function Home() {
           if (event.tool_name) {
             if (event.status === 'started')
               addToolCall(event.tool_name, { id: event.tool_call_id, params: event.params });
-            else
+            else {
               resolveToolCall(event.tool_name, event.status === 'error' ? 'error' : 'done', { id: event.tool_call_id, result: event.result, artifacts: event.artifacts });
+              // A page was published: show it beside the chat (wide screens),
+              // and tell an open viewer there is a new version.
+              const published = event.status === 'error' ? null : publishedFrom(event.tool_name, event.result);
+              if (published) {
+                announceArtifactUpdate(published.id);
+                if (window.matchMedia?.('(min-width: 768px)').matches) showArtifact(published.id);
+              }
+            }
           }
           break;
         case 'attachments_ingested': {
@@ -912,7 +941,7 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos],
+    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos, showArtifact],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
@@ -1685,10 +1714,10 @@ export default function Home() {
 
       {/* Chat column */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {sandboxOn && !computerOpen && (
+        {sandboxOn && !computerOpen && !artifactOpen && (
           <button
             type="button"
-            onClick={() => setComputerOpen(true)}
+            onClick={() => { closeArtifact(); setComputerOpen(true); }}
             className="absolute right-3 top-2 z-10 hidden items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 py-1 text-[12px] text-fg-dim hover:bg-panel-2 hover:text-fg md:inline-flex"
             title="Watch the agents' computer and take over"
           >
@@ -2131,7 +2160,20 @@ export default function Home() {
         </div>
       </div>
 
-      {computerOpen && (
+      {artifactOpen && (
+        <aside className={cn('fixed inset-0 z-40 flex flex-col border-line',
+          !artifactExpanded && 'md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l')}>
+          <ArtifactViewer
+            pageId={artifactOpen}
+            variant="panel"
+            onClose={closeArtifact}
+            onGone={closeArtifact}
+            expanded={artifactExpanded}
+            onToggleExpand={() => setArtifactExpanded((v) => !v)}
+          />
+        </aside>
+      )}
+      {computerOpen && !artifactOpen && (
         <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l">
           <ComputerPanel
             agents={agents.map((a) => ({ id: String(a.id), name: a.name }))}

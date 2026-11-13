@@ -9,6 +9,7 @@ const en = {
   'nav.tasks': 'Tasks',
   'nav.automations': 'Automations',
   'nav.teams': 'Teams',
+  'nav.artifacts': 'Artifacts',
   'nav.knowledge': 'Knowledge',
   'nav.meetings': 'Meetings',
   'nav.settings': 'Settings',
