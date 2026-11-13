@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -9,6 +9,7 @@ import {
   Clock3,
   Coins,
   Inbox as InboxIcon,
+  LayoutPanelTop,
   ListChecks,
   MessageSquare,
   Plus,
@@ -27,6 +28,10 @@ import { CHAT_DRAFT_KEY } from '@/lib/chatDraft';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { insertTranscript } from '@/lib/voice';
 import { cn } from '@/lib/utils';
+import { api } from '@/lib/api';
+import { ArtifactFrame } from '@/components/artifacts/ArtifactFrame';
+import { LiveBadge } from '@/components/artifacts/ArtifactViewer';
+import type { PagePower, PageSummary } from '@/lib/artifactPages';
 
 interface Agent {
   id: string;
@@ -306,6 +311,15 @@ export default function Dashboard() {
   const inbox = notifications?.inbox ?? [];
   const inboxLoaded = notifications?.inboxLoaded ?? true;
 
+  // Artifacts pinned here from their menu ("Pin to dashboard").
+  const [pinned, setPinned] = useState<(PageSummary & { frame_url: string; allowed_powers?: PagePower[] })[]>([]);
+  useEffect(() => {
+    let alive = true;
+    api.get<{ pages: (PageSummary & { frame_url: string; allowed_powers?: PagePower[] })[] }>('/artifact-pages/pinned')
+      .then(({ data }) => { if (alive) setPinned(data.pages || []); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, []);
   const agents = useResource<Agent[]>('/agents');
   const chats = useResource<ChatRow[]>('/sessions/chats');
   const tasks = useResource<TaskRow[]>('/tasks');
@@ -542,6 +556,14 @@ export default function Dashboard() {
           {/* Main grid */}
           <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
             <div className="flex min-w-0 flex-col gap-4">
+              {pinned.map((page) => (
+                <Card key={page.id} title={page.title} icon={LayoutPanelTop}
+                  action={<span className="flex items-center gap-2">{page.live && <LiveBadge />}<CardLink to={`/artifacts/${page.id}`}>Open</CardLink></span>}>
+                  <div className="h-[380px] overflow-hidden rounded-b-[14px]">
+                    <ArtifactFrame url={page.frame_url} title={page.title} pageId={page.id} allowed={page.allowed_powers ?? []} />
+                  </div>
+                </Card>
+              ))}
               {/* Needs you */}
               <Card title="Needs you" icon={InboxIcon} action={inbox.length > 0 ? <CardLink to="/inbox">Open inbox</CardLink> : undefined}>
                 {!inboxLoaded ? (

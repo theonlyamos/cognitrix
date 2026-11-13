@@ -97,6 +97,9 @@ _KNOWN_LOW = frozenset({
     'start_chat', 'check_chat', 'message_chat',
     # saved memories: each change shows in the chat with Undo
     'memory', 'search_chats', 'read_chat',
+    # artifact pages: a page is private to its owner until they share it
+    # themselves, and every version is kept
+    'publish_artifact', 'read_artifact', 'artifact_comments',
     # asking the person a question, images, screenshots
     'ask_user', 'ask_question', 'generate_image', 'take_screenshot',
     # background computer use: looking and scrolling

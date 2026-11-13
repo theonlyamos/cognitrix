@@ -1,5 +1,6 @@
 import { lazy, memo, Suspense, useState } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
+import { ArtifactCard } from '@/components/artifacts/ArtifactCard';
 import { MemoryNotice } from '@/components/MemoryNotice';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import {
@@ -93,7 +94,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
     return (
       <div className="grid grid-cols-1 gap-2 border-b border-line px-4 py-3 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
         <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">TOOL</div>
-        <div className="flex flex-col items-start gap-1.5">
+        <div className="flex min-w-0 flex-col items-start gap-1.5">
           {message.tools.map((tool, index) => (
             <div key={tool.id || index} className="w-full max-w-2xl space-y-2">
               <details className="group w-full">
@@ -136,6 +137,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
               {tool.status !== 'running' && isRefusal(tool.result) && <RefusedNotice result={tool.result} />}
               {tool.status !== 'running' && signInNeeded(tool.result) && <SignInNeededNotice app={signInNeeded(tool.result)!} />}
               {tool.status === 'done' && <MemoryNotice toolName={tool.name} result={tool.result} />}
+              {tool.status === 'done' && <ArtifactCard toolName={tool.name} result={tool.result} />}
               {tool.artifacts?.map((artifact) => (
                 <ArtifactPreview
                   key={artifact.id}
