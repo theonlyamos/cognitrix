@@ -283,6 +283,7 @@ async def test_check_in_context_restates_the_brief_and_remembers_offers(db):
 
     text = await standing.run_context(task, agent)
     assert 'Never send mail' in text and 'cannot send, change' in text
+    assert 'It is now ' in text and "on the person's computer (UTC" in text
     assert 'do not repeat): Draft replies' in text
     assert 'do not offer these again): Tidy the calendar' in text
 

@@ -982,3 +982,55 @@ async def test_step_whose_tool_calls_were_all_denied_fails_instead_of_completing
     assert stored is not None and stored.status != TaskRunStatus.COMPLETED
     assert rows[0].status == TaskRunStepStatus.FAILED
     assert rows[0].gate == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_check_in_step_is_not_graded_by_the_quality_gate(
+    orchestration_db,
+    monkeypatch,
+):
+    """A check-in that finds nothing new used to fail the quality gate."""
+    from cognitrix.safety.permissions import read_only_run
+    from cognitrix.tasks import standing
+
+    agent = _agent()
+    task = _task(agent)
+    task.standing_agent_id = agent.id
+    queued = await _queued(task.id)
+    _common_stubs(monkeypatch)
+    attempts = 0
+
+    class Executor:
+        def __init__(self, _snapshot, **_kwargs):
+            pass
+
+        async def execute(self, prompt, *, tool_context=None, attempt=1):
+            nonlocal attempts
+            attempts += 1
+            return StepResult(text="Nothing new since the last check-in.")
+
+    async def must_not_grade(*_args, **_kwargs):
+        raise AssertionError("check-ins are not graded")
+
+    async def owner(_task):
+        return agent
+
+    async def context(_task, _agent):
+        return "check-in context"
+
+    monkeypatch.setattr(orchestrator, "TaskStepExecutor", Executor)
+    monkeypatch.setattr(orchestrator, "evaluate_step", must_not_grade)
+    monkeypatch.setattr(orchestrator, "_add_automation_tools", lambda *_a, **_k: None)
+    monkeypatch.setattr(standing, "standing_agent", owner)
+    monkeypatch.setattr(standing, "run_context", context)
+
+    token = read_only_run.set("")
+    try:
+        await orchestrator.run(task, run_record=queued)
+    finally:
+        read_only_run.reset(token)
+
+    assert attempts == 1
+    row = (await _steps(queued.id))[0]
+    assert row.status == TaskRunStepStatus.DONE
+    assert row.result.text == "Nothing new since the last check-in."
