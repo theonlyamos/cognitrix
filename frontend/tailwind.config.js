@@ -5,6 +5,9 @@ module.exports = {
   theme: {
     container: { center: true, padding: '2rem', screens: { '2xl': '1400px' } },
     extend: {
+      // A phone turned sideways: short and wide. Used where the agents'
+      // computer moves its controls to a side rail.
+      screens: { side: { raw: '(orientation: landscape) and (max-height: 500px)' } },
       colors: {
         // "Technical / Signal" tokens (CSS-var backed; theme-reactive)
         bg: 'rgb(var(--bg-rgb) / <alpha-value>)',

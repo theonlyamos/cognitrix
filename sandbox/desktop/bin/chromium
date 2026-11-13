@@ -8,5 +8,5 @@ mkdir -p "$PROFILE"
 if ! pgrep -f -- "--user-data-dir=$PROFILE" >/dev/null 2>&1; then
     rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonSocket" "$PROFILE/SingletonCookie"
 fi
-exec /usr/bin/chromium --force-renderer-accessibility --no-sandbox --no-first-run --no-default-browser-check \
+exec /usr/bin/chromium --force-renderer-accessibility --no-sandbox --start-maximized --no-first-run --no-default-browser-check \
     --password-store=basic --user-data-dir="$PROFILE" "$@"

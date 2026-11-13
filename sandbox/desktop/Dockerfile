@@ -34,6 +34,15 @@ COPY sandbox/desktop/bin/ /usr/local/bin/
 COPY sandbox/desktop/applications/ /usr/local/share/applications/
 # Firefox without first-run pages, telemetry prompts or captive-portal checks.
 COPY sandbox/desktop/firefox/policies.json /usr/lib/firefox-esr/distribution/policies.json
+# Chromium without the "unsupported command-line flag: --no-sandbox" bar
+# across the top of every window (the container is the sandbox, see above).
+COPY sandbox/desktop/chromium/policies.json /etc/chromium/policies/managed/cognitrix.json
+# Every app window opens maximized, so the screen people watch is the app and
+# not a small window in the corner of an empty desktop. The build fails if
+# openbox's default config no longer has the spot this rule goes in.
+RUN sed -i 's#^</applications>#  <application class="*" type="normal"><maximized>yes</maximized></application>\n</applications>#' \
+        /etc/xdg/openbox/rc.xml \
+    && grep -q '<maximized>yes</maximized></application>' /etc/xdg/openbox/rc.xml
 COPY sandbox/desktop/entrypoint.sh /usr/local/bin/cognitrix-sandbox
 COPY cognitrix/computer/ /opt/cognitrix-sandbox/cognitrix/computer/
 RUN chmod 755 /usr/local/bin/* \

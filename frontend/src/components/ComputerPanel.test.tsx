@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ComputerPanel } from './ComputerPanel';
 
 const lib = vi.hoisted(() => ({
@@ -62,5 +62,66 @@ describe('ComputerPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Hand back' }));
     await waitFor(() => expect(lib.handBack).toHaveBeenCalledWith('b2'));
     expect(await screen.findByRole('button', { name: 'Take over' })).toBeInTheDocument();
+  });
+
+  it('expands to fill the window, goes full screen, and collapses with Esc', async () => {
+    lib.sandboxStatus.mockResolvedValue({
+      enabled: true, running: true,
+      desktops: [{ name: 'a1', display: ':1', held_by: null, running: true }, { name: 'b2', display: ':2', held_by: null, running: true }],
+    });
+    render(<ComputerPanel agents={agents} focusAgentId="a1" onClose={() => {}} />);
+    await waitFor(() => expect(rfb.made.length).toBe(1));
+    const panel = screen.getByRole('region', { name: "Agents' computer" });
+    expect(panel).toHaveAttribute('data-view', 'docked');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    expect(panel).toHaveAttribute('data-view', 'expanded');
+    // One bar: the desktop tabs, Take over and Full screen sit together, and
+    // the same live screen stays connected.
+    expect(screen.getByRole('tab', { name: 'Writer' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Take over' })).toBeInTheDocument();
+    expect(rfb.made.length).toBe(1);
+
+    const requestFullscreen = vi.fn(async function (this: HTMLElement) {
+      Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: this });
+      document.dispatchEvent(new Event('fullscreenchange'));
+    });
+    panel.requestFullscreen = requestFullscreen;
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+    await waitFor(() => expect(panel).toHaveAttribute('data-view', 'fullscreen'));
+    expect(screen.getByRole('button', { name: 'Exit full screen' })).toBeInTheDocument();
+    act(() => {
+      Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null });
+      document.dispatchEvent(new Event('fullscreenchange'));
+    });
+    await waitFor(() => expect(panel).toHaveAttribute('data-view', 'expanded'));
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(panel).toHaveAttribute('data-view', 'docked');
+    expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument();
+    expect(rfb.made.length).toBe(1);
+  });
+
+  it('leaves Esc to the desktop only while you are in control', async () => {
+    lib.sandboxStatus.mockResolvedValue({
+      enabled: true, running: true, desktops: [{ name: 'a1', display: ':1', held_by: null, running: true }],
+    });
+    lib.takeOver.mockResolvedValue('full');
+    render(<ComputerPanel agents={agents} focusAgentId="a1" onClose={() => {}} />);
+    await waitFor(() => expect(rfb.made.length).toBe(1));
+    const panel = screen.getByRole('region', { name: "Agents' computer" });
+    const screenEl = screen.getByLabelText("Researcher's screen");
+
+    // Watching: Esc from the (focused) screen still collapses.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    fireEvent.keyDown(screenEl, { key: 'Escape' });
+    expect(panel).toHaveAttribute('data-view', 'docked');
+
+    // In control: Esc belongs to the desktop.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Take over' }));
+    expect(await screen.findByRole('button', { name: 'Hand back' })).toBeInTheDocument();
+    fireEvent.keyDown(screenEl, { key: 'Escape' });
+    expect(panel).toHaveAttribute('data-view', 'expanded');
   });
 });
