@@ -107,15 +107,9 @@ describe('AppLayout', () => {
     for (const link of within(navigation).getAllByRole('link')) {
       expect(link).toHaveClass('min-h-11', 'md:min-h-0');
     }
-    expect(within(navigation).getByRole('button', { name: /Switch to .* mode/i })).toHaveClass(
-      'h-11',
-      'w-11',
-      'md:h-9',
-      'md:w-9',
-    );
-    expect(within(navigation).getByRole('button', { name: 'Sign out' })).toHaveClass(
-      'h-11',
-      'md:h-9',
+    expect(within(navigation).getByRole('button', { name: 'Account menu' })).toHaveClass(
+      'min-h-11',
+      'md:min-h-0',
     );
   });
 

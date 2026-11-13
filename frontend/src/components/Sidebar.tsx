@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { LayoutDashboard as DashboardIcon, Inbox as InboxIcon, MessageSquare as MessageSquareIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon, Users as UsersIcon, BookOpen as BookOpenIcon, Mic as MicIcon, Settings as SettingsIcon, KeyRound as KeyRoundIcon, type LucideIcon } from 'lucide-react';
+import { LayoutDashboard as DashboardIcon, Inbox as InboxIcon, MessageSquare as MessageSquareIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon, Users as UsersIcon, BookOpen as BookOpenIcon, Mic as MicIcon, type LucideIcon } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
-import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import { isDesktop } from '@/lib/desktop';
-import { ThemeToggle } from '@/components/ThemeToggle';
+import AccountMenu from '@/components/AccountMenu';
 import { useT, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
@@ -12,7 +11,7 @@ type IconProps = { className?: string };
 
 // Each icon says what's behind it: a tray for the inbox, a speech bubble for
 // chat, a robot for agents, a checklist for tasks, a lightning bolt for
-// automations, people for teams, a gear for settings and a key for API keys.
+// automations and people for teams. Settings and API Keys live in the account menu.
 const icon = (Icon: LucideIcon) => (p: IconProps) => <Icon {...p} strokeWidth={1.9} aria-hidden="true" />;
 
 const NAV: { path: string; label: MessageKey; icon: (p: IconProps) => JSX.Element }[] = [
@@ -25,8 +24,6 @@ const NAV: { path: string; label: MessageKey; icon: (p: IconProps) => JSX.Elemen
   { path: '/teams', label: 'nav.teams', icon: icon(UsersIcon) },
   { path: '/knowledge', label: 'nav.knowledge', icon: icon(BookOpenIcon) },
   { path: '/meetings', label: 'nav.meetings', icon: icon(MicIcon) },
-  { path: '/settings', label: 'nav.settings', icon: icon(SettingsIcon) },
-  { path: '/api-keys', label: 'nav.apiKeys', icon: icon(KeyRoundIcon) },
 ];
 
 interface SidebarProps {
@@ -37,7 +34,6 @@ interface SidebarProps {
 export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps) {
   const location = useLocation();
   const t = useT();
-  const { user, logout } = useUser();
   const waiting = useOptionalNotifications()?.inbox.length ?? 0;
   // The desktop app opens with the slim icon rail from the designs; the web
   // keeps the full sidebar until someone collapses it.
@@ -123,31 +119,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
 
       {/* Footer */}
       <div className="mt-auto border-t border-line p-2.5">
-        <div className={cn('mb-1.5 flex items-center gap-2.5 rounded px-2 py-1.5', collapsed && 'md:hidden')}>
-          <span className="grid h-7 w-7 flex-none place-items-center rounded-sm border border-line bg-panel-2 text-[12px] font-bold text-accent-ink">
-            {(user?.name?.[0] || 'U').toUpperCase()}
-          </span>
-          <div className="min-w-0 leading-tight">
-            <div className="truncate text-[13px] font-semibold">{user?.name || 'User'}</div>
-            <div className="truncate font-mono text-[10.5px] text-fg-dim">{user?.email}</div>
-          </div>
-        </div>
-
-        <div className={cn('flex items-center gap-1.5', collapsed && 'md:flex-col')}>
-          <ThemeToggle className="flex-none" />
-          <button
-            type="button"
-            onClick={logout}
-            title={collapsed ? t('nav.signOut') : undefined}
-            className={cn(
-              'flex h-11 flex-1 items-center justify-center gap-2 rounded border border-line font-mono text-[11px] tracking-[0.04em] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:h-9',
-              collapsed && 'md:w-9 md:flex-none',
-            )}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
-            <span className={cn('uppercase', collapsed && 'md:hidden')}>{t('nav.signOut')}</span>
-          </button>
-        </div>
+        <AccountMenu collapsed={collapsed} onNavigate={onNavigate} />
 
         <button
           type="button"

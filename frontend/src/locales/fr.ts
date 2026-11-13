@@ -14,6 +14,7 @@ const fr: Messages = {
   'nav.settings': 'Paramètres',
   'nav.apiKeys': 'Clés API',
   'nav.signOut': 'Se déconnecter',
+  'nav.account': 'Menu du compte',
   'nav.collapse': 'Réduire',
   'nav.collapseSidebar': 'Réduire le menu',
   'nav.expandSidebar': 'Agrandir le menu',
