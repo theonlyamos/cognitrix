@@ -6,6 +6,7 @@ a public link's details and the sandboxed frame a page is shown in.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +18,8 @@ from cognitrix.artifact_pages import frame, store
 from cognitrix.artifact_pages.models import ArtifactFile, ArtifactPage
 from cognitrix.common.security import AuthContext, jwt_only
 from cognitrix.session_ownership import principal_key
+
+logger = logging.getLogger('cognitrix.log')
 
 artifact_pages_api = APIRouter(prefix='/artifact-pages')
 artifact_frame_api = APIRouter()
@@ -564,6 +567,10 @@ async def _apps_call(me: str, app: str, tool_name: str, arguments: Any) -> Any:
         raise store.PageError('not_read_only', f'"{tool_name}" can change things, so pages may not call it', 403)
     result = await apps.call_tool(client, config, tool_name, arguments if isinstance(arguments, dict) else {})
     text = _content_to_text(result)
+    if result is None or (isinstance(text, str) and text.lstrip().startswith('Error:')):
+        # What went wrong stays in the server log; the page only learns that it failed.
+        logger.warning('Artifact page call to %s on %s failed: %s', tool_name, app, str(text)[:500])
+        raise store.PageError('app_failed', f'"{app}" could not run "{tool_name}". Try again later.', 502)
     try:
         return json.loads(text) if isinstance(text, str) else text
     except (TypeError, ValueError):

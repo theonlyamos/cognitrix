@@ -511,3 +511,40 @@ def test_pages_may_only_call_app_tools_that_change_nothing():
     assert mcp_only_reads('list_issues', None) and mcp_only_reads('anything', {'readOnlyHint': True})
     for name in ('create_issue', 'update_record', 'add_label', 'send_message'):
         assert not mcp_only_reads(name, None)
+
+
+async def test_app_errors_reach_the_page_as_a_plain_failure(db, monkeypatch):
+    """What an app said when it failed stays in the log, not in the page."""
+    from cognitrix.api.routes import artifact_pages as routes
+    from cognitrix.artifact_pages import store
+    from cognitrix.mcp import apps, client, registry
+
+    config = SimpleNamespace(name='Tracker', key='tracker')
+    results = iter(['Error: token abc123 rejected by upstream', '{"items": [1, 2]}', 'plain text'])
+
+    async def my_apps(me):
+        return [config]
+
+    async def call_tool(*_a, **_k):
+        return next(results)
+
+    monkeypatch.setattr(routes, '_my_apps', my_apps)
+    monkeypatch.setattr(client, 'get_dynamic_client', lambda: _none())
+    monkeypatch.setattr(registry, 'prepare', lambda *_a: _none())
+    monkeypatch.setattr(registry, 'matches', lambda c, app: True)
+    monkeypatch.setattr(apps, 'list_tools', lambda *_a: _value([{'name': 'list_issues'}]))
+    monkeypatch.setattr(apps, 'call_tool', call_tool)
+
+    with pytest.raises(store.PageError) as failed:
+        await routes._apps_call('u1', 'Tracker', 'list_issues', {})
+    assert 'abc123' not in failed.value.message and failed.value.status == 502
+    assert await routes._apps_call('u1', 'Tracker', 'list_issues', {}) == {'items': [1, 2]}
+    assert await routes._apps_call('u1', 'Tracker', 'list_issues', {}) == 'plain text'
+
+
+async def _none():
+    return None
+
+
+async def _value(value):
+    return value
