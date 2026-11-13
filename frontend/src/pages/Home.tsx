@@ -12,7 +12,6 @@ import { useResource } from '@/hooks/useResource';
 import { api, errorMessage } from '@/lib/api';
 import { desktop } from '@/lib/desktop';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
-import ReasoningPicker from '@/components/ReasoningPicker';
 import { AGENTS_CHANGED_EVENT } from '@/lib/providers';
 import { cn } from '@/lib/utils';
 import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
@@ -23,6 +22,7 @@ import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
+import ComposerMenu from '@/components/ComposerMenu';
 import { folderInfo, getChatFolders, setChatFolders, type FolderInfo, type WorkFolder } from '@/lib/folders';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
@@ -2035,29 +2035,49 @@ export default function Home() {
                 aria-controls="skill-menu"
                 aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
                 placeholder="Message the agent…"
-                className={cn('block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-24 text-sm text-fg placeholder:text-fg-dim md:min-h-0 md:pr-20', voice.active && '!hidden')}
+                className={cn('block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 text-sm text-fg placeholder:text-fg-dim md:min-h-0', voice.active && '!hidden')}
               />
               {!voice.active && (
-                <MicButton voice={voice} className="absolute bottom-1 right-[3.25rem] md:right-10" />
+                <div className="flex items-end gap-1.5 px-1.5 pb-1.5">
+                  <ComposerMenu
+                    onAttach={() => fileInputRef.current?.click()}
+                    onRunTask={() => void send(input, 'task')}
+                    runTaskDisabled={busy || !!uploadError || !isConnected || !input.trim() || attachments.length > 0 || editSource !== null}
+                    runTaskTitle={attachments.length > 0 || editSource !== null
+                      ? 'Task mode does not support attachments or edit sources yet.'
+                      : 'Create a persisted task and run it with step tracking.'}
+                    bypass={bypass}
+                    onToggleBypass={toggleBypass}
+                    incognito={incognito}
+                    onToggleIncognito={() => setIncognito((v) => !v)}
+                    incognitoDisabled={!!activeSessionId}
+                    incognitoTitle={activeSessionId
+                      ? (incognito ? 'This chat is incognito.' : 'Incognito can only be turned on for a new chat.')
+                      : "Incognito: the chat isn't listed, doesn't use or change memory, and is deleted when you leave it."}
+                    reasoning={reasoning}
+                    onReasoning={changeReasoning}
+                  />
+                  <span className="flex-1" />
+                  <MicButton voice={voice} className="flex-none" />
+                  <button
+                    onClick={() => { if (busy) void stop(); else void send(input); }}
+                    disabled={busy ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
+                    aria-label={busy ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
+                    className={cn(
+                      'grid h-11 w-11 flex-none place-items-center rounded transition disabled:cursor-not-allowed disabled:opacity-60 hover:brightness-105 md:h-8 md:w-8',
+                      busy ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
+                    )}
+                  >
+                    {busy && stopping ? (
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
+                    ) : busy ? (
+                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12l16-8-6 16-3-6-7-2z" /></svg>
+                    )}
+                  </button>
+                </div>
               )}
-              <button
-                onClick={() => { if (busy) void stop(); else void send(input); }}
-                disabled={busy ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
-                aria-label={busy ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
-                className={cn(
-                  'absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded transition disabled:cursor-not-allowed disabled:opacity-60 hover:brightness-105 md:h-8 md:w-8',
-                  busy ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
-                  voice.active && '!hidden',
-                )}
-              >
-                {busy && stopping ? (
-                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
-                ) : busy ? (
-                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
-                ) : (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12l16-8-6 16-3-6-7-2z" /></svg>
-                )}
-              </button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -2074,57 +2094,7 @@ export default function Home() {
               <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
             )}
             <VoiceNotice voice={voice} />
-            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                aria-label="Attach files"
-                className="flex min-h-11 items-center gap-1.5 transition-colors hover:text-fg md:min-h-0"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
-                attach
-              </button>
-              <button
-                type="button"
-                onClick={toggleBypass}
-                aria-pressed={bypass}
-                title="Auto-approve tool calls for this browser (skips the approval prompt). Use with care."
-                className={cn('flex min-h-11 items-center gap-1 transition-colors md:min-h-0', bypass ? 'text-danger-ink' : 'hover:text-fg')}
-              >
-                <span>[{bypass ? '✓' : 'x'}]</span> auto-approve
-              </button>
-              <button
-                type="button"
-                onClick={() => setIncognito((v) => !v)}
-                disabled={!!activeSessionId}
-                aria-pressed={incognito}
-                title={activeSessionId
-                  ? (incognito ? 'This chat is incognito.' : 'Incognito can only be turned on for a new chat.')
-                  : "Incognito: the chat isn't listed, doesn't use or change memory, and is deleted when you leave it."}
-                className={cn('flex min-h-11 items-center gap-1 transition-colors disabled:cursor-default md:min-h-0',
-                  incognito ? 'text-[#b4691a] dark:text-[#ffb86b]' : 'hover:text-fg disabled:opacity-50 disabled:hover:text-fg-dim')}
-              >
-                <span>[{incognito ? '✓' : ' '}]</span> incognito
-              </button>
-              <div
-                title="How hard the model thinks before answering. Agent default uses the level set on the agent."
-                className="flex min-h-11 items-center gap-1 md:min-h-0"
-              >
-                <span aria-hidden>reasoning:</span>
-                <ReasoningPicker value={reasoning} onChange={changeReasoning} />
-              </div>
-              <button
-                type="button"
-                onClick={() => void send(input, 'task')}
-                disabled={busy || !!uploadError || !isConnected || !input.trim() || attachments.length > 0 || editSource !== null}
-                aria-label="Run as task"
-                title={attachments.length > 0 || editSource !== null
-                  ? 'Task mode does not support attachments or edit sources yet.'
-                  : 'Create a persisted task and run it with step tracking.'}
-                className="flex min-h-11 items-center gap-1 transition-colors hover:text-accent disabled:cursor-not-allowed disabled:opacity-50 md:min-h-0"
-              >
-                <span aria-hidden>[ ]</span> run as task
-              </button>
+            <div className="mt-1.5 hidden items-center gap-x-4 font-mono text-[10.5px] text-fg-dim sm:flex">
               <SendKeyHint />
             </div>
           </div>

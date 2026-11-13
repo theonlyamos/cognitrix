@@ -69,11 +69,11 @@ describe('Home explicit execution mode', () => {
     })));
   });
 
-  it('sends the reasoning level picked under the message box', async () => {
+  it('sends the reasoning level picked in the + menu', async () => {
     const user = userEvent.setup();
     renderHome();
-    await user.click(screen.getByRole('button', { name: /^Reasoning level/ }));
-    await user.click(screen.getByRole('option', { name: 'high' }));
+    await user.click(screen.getByRole('button', { name: 'More options' }));
+    await user.click(screen.getByRole('radio', { name: 'high' }));
     await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'think hard{enter}');
 
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/agents/chat', expect.objectContaining({
@@ -87,7 +87,8 @@ describe('Home explicit execution mode', () => {
     const user = userEvent.setup();
     renderHome();
     await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'prepare a report');
-    await user.click(screen.getByRole('button', { name: 'Run as task' }));
+    await user.click(screen.getByRole('button', { name: 'More options' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Run as task' }));
 
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/agents/chat', expect.objectContaining({
       message: 'prepare a report',
@@ -101,7 +102,8 @@ describe('Home explicit execution mode', () => {
       target: { files: [new File(['x'], 'note.txt', { type: 'text/plain' })] },
     });
 
-    expect(await screen.findByRole('button', { name: 'Run as task' })).toBeDisabled();
+    fireEvent.click(await screen.findByRole('button', { name: 'More options' }));
+    expect(await screen.findByRole('menuitem', { name: 'Run as task' })).toBeDisabled();
   });
 
   it('renders and resolves an interactive question from the chat stream', async () => {
