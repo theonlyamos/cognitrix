@@ -113,7 +113,7 @@ export function QuestionCard({
   };
 
   return (
-    <div className="mx-4 my-4 max-w-3xl sm:mx-6">
+    <div className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
       <PanelCard
         role="group"
         labelledBy={headingId}

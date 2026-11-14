@@ -21,6 +21,10 @@ const es: Messages = {
   'nav.collapseSidebar': 'Contraer el menú',
   'nav.expandSidebar': 'Expandir el menú',
   'nav.waiting': 'en espera',
+  'nav.newChat': 'Nuevo chat',
+  'nav.search': 'Buscar',
+  'nav.more': 'Más',
+  'nav.notifications': 'Notificaciones',
 
   'settings.title': 'Ajustes',
   'settings.search': 'Buscar en los ajustes',

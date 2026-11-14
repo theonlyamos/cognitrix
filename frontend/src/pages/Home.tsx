@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArtworkScene, ChatHorizon } from '@/components/ThemeArtwork';
+import { ChatHorizon } from '@/components/ThemeArtwork';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
 import { WaitingMessages, type WaitingMessage } from '@/components/WaitingMessages';
 import { useSession, type ChatMessage, type ToolArtifact } from '@/context/SessionContext';
-import { MobileSheet } from '@/components/MobileSheet';
-import { SelectionRow } from '@/components/SelectionRow';
-import { ChatRowMenu } from '@/components/ChatRowMenu';
-import { exportChat } from '@/lib/chatExport';
 import { useSSE, type SSEEvent } from '@/hooks/useSSE';
 import { useEventStream } from '@/hooks/useEventStream';
 import { fetchChatRuns, useChatRuns } from '@/hooks/useChatRuns';
@@ -16,7 +12,7 @@ import { desktop } from '@/lib/desktop';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import { AGENTS_CHANGED_EVENT } from '@/lib/providers';
 import { cn } from '@/lib/utils';
-import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript';
+import { parseChatEntries, toChatMessages } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
 import { ComputerPanel } from '@/components/ComputerPanel';
 import { ArtifactViewer } from '@/components/artifacts/ArtifactViewer';
@@ -25,7 +21,6 @@ import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { announceArtifactUpdate, onArtifactUpdate, onOpenArtifact, parseStamp, publishedFrom, type ArtifactList } from '@/lib/artifactPages';
 import { desktopName, sandboxStatus, type SandboxDesktop } from '@/lib/sandbox';
 import { ChatSidebar, loadSidebarOpen, saveSidebarOpen, type SidebarActivity, type SidebarWaiting } from '@/components/ChatSidebar';
-import { ChatRail, type RailChat, type RailGroup } from '@/components/ChatRail';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { insertTranscript } from '@/lib/voice';
@@ -34,23 +29,17 @@ import ComposerMenu from '@/components/ComposerMenu';
 import { getChatFolders, setChatFolders, type WorkFolder } from '@/lib/folders';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
-import { AgentBadge, StartChat } from '@/components/StartChat';
+import { AgentBadge } from '@/components/StartChat';
+import { AgentPickerChip, NewChatGreeting } from '@/components/NewChatGreeting';
+import { useOptionalUser } from '@/context/AppContext';
 import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 import { takeChatAutoSend, takeChatDraft } from '@/lib/chatDraft';
-import {
-  ARCHIVED_KEY, GROUP_PREVIEW, PANEL_DEFAULT, PANEL_MAX, PANEL_MIN, PINNED_KEY,
-  clampPanelWidth, groupChats, groupKey, MINI_SNAP, RAIL_WIDTH, loadClosedSections, loadListMini, loadPanelWidth, saveClosedSections, saveListMini, savePanelWidth,
-} from '@/lib/chatGroups';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { CHATS_EDITED, chatsStale, setChatNav, type ChatsEditedDetail } from '@/lib/chatNav';
 import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
 import { setViewingChat } from '@/lib/chatPresence';
 import { useApprovalSeen } from '@/hooks/useApprovalSeen';
 
-const SUGGESTIONS = [
-  'Summarize the benefits of unit testing.',
-  'First research X, then write a short brief.',
-  'What can you help me with?',
-];
 
 interface ConvoSummary {
   id: string;
@@ -62,16 +51,6 @@ interface ConvoSummary {
   started_by?: { agent_id: string; agent_name: string; session_id?: string | null } | null;
   pinned?: boolean;
   archived?: boolean;
-}
-
-/** A chat found by its title or by words in its messages. */
-interface ChatSearchHit {
-  id: string;
-  title: string;
-  agent_id: string;
-  updated_at?: string | null;
-  archived?: boolean;
-  snippet: string;
 }
 
 /** An earlier message being reworded; sending replaces it and what followed. */
@@ -164,13 +143,13 @@ export default function Home() {
   const attachArtifactsToLatestUser = attachArtifactsToLatestUserFromSession ?? addArtifactsToLastUser;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+  const user = useOptionalUser();
   const [input, setInput] = useState(takeChatDraft);
   const [waiting, setWaiting] = useState(false); // sent, before first token
   const [streaming, setStreaming] = useState(false); // actively streaming a reply
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
   const [planning, setPlanning] = useState<string | null>(null); // transient status (e.g. multi-step)
-  const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
   const [rework, setRework] = useState<Rework | null>(null);
   // Sent while the agent works; read after its current step (steering).
   const [waitingMsgs, setWaitingMsgs] = useState<WaitingMessage[]>([]);
@@ -180,13 +159,6 @@ export default function Home() {
   // Bumped to make the resend effect look at resendRef again.
   const [resendTick, setResendTick] = useState(0);
   const [reworkError, setReworkError] = useState<string | null>(null);
-  const [chatQuery, setChatQuery] = useState('');
-  const [chatHits, setChatHits] = useState<ChatSearchHit[] | null>(null);
-  const [closedSections, setClosedSections] = useState<Set<string>>(loadClosedSections);
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set());
-  const [panelWidth, setPanelWidth] = useState(loadPanelWidth);
-  const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
-  const mobileConversationsTriggerRef = useRef<HTMLButtonElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -397,10 +369,8 @@ export default function Home() {
       .catch(() => alive && setSandboxOn(false));
     return () => { alive = false; };
   }, []);
-  // The chat's side panel (computer preview, artifacts, files...), and the
-  // chat list shrunk to a rail of agent thumbnails.
+  // The chat's side panel (computer preview, artifacts, files...).
   const [sidebarOpen, setSidebarOpen] = useState(() => loadSidebarOpen() === true && isWideScreen());
-  const [listMini, setListMini] = useState(loadListMini);
   const setSidebar = useCallback((open: boolean) => {
     setSidebarOpen(open);
     saveSidebarOpen(open);
@@ -433,8 +403,12 @@ export default function Home() {
   const { data: teamsData } = useResource<PickerTeam[]>('/teams');
   const teams = useMemo(() => (teamsData || []).filter((t) => t.id), [teamsData]);
   const { data: allChatsData, refetch: refetchAllChats } = useResource<ChatSummary[]>('/sessions/chats');
+  // This agent's list moved on (a turn ended, a chat was made): re-read the
+  // combined list here and in the app sidebar.
   useEffect(() => {
-    if (convos) void refetchAllChats({ silent: true });
+    if (!convos) return;
+    void refetchAllChats({ silent: true });
+    chatsStale();
   }, [convos, refetchAllChats]);
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const teamById = useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
@@ -452,40 +426,6 @@ export default function Home() {
       Number(!!b.pinned) - Number(!!a.pinned)
       || String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
   }, [allChatsData, convos, agentById, teamById, agentId]);
-  // Typing narrows the list by title straight away while the server looks
-  // through the messages. Chats sit under their agent or team; pinned ones
-  // on top and archived ones at the bottom (both mixed back in while searching).
-  const searching = !!chatQuery.trim();
-  const listedChats = useMemo(() => {
-    const words = chatQuery.trim().toLowerCase();
-    return words ? allChats.filter((c) => c.title.toLowerCase().includes(words)) : allChats;
-  }, [allChats, chatQuery]);
-  const grouped = useMemo(() => groupChats(listedChats, { searching }), [listedChats, searching]);
-  useEffect(() => {
-    const words = chatQuery.trim();
-    if (words.length < 3) {
-      setChatHits(null);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      api.get<ChatSearchHit[]>('/sessions/search', { params: { q: words } })
-        .then((res) => { if (!cancelled) setChatHits(res.data); })
-        .catch(() => { if (!cancelled) setChatHits([]); });
-    }, 250);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [chatQuery]);
-  // Chats running with other agents or teams aren't covered by this agent's
-  // run polling, so re-read the combined list until they finish.
-  const othersRunning = (allChatsData || []).some((c) => c.running && !(c.kind === 'agent' && c.agent_id === agentId));
-  useEffect(() => {
-    if (!othersRunning) return;
-    const timer = window.setInterval(() => { void refetchAllChats({ silent: true }); }, 4_000);
-    return () => window.clearInterval(timer);
-  }, [othersRunning, refetchAllChats]);
 
   // Who the user chatted with last (agent or team), newest first.
   const recentTargets = useMemo(() => {
@@ -501,7 +441,8 @@ export default function Home() {
     }
     return out;
   }, [allChats]);
-  // "+ new" shows the who-to-talk-to screen until the user picks someone.
+  // Kept false: new chats open on the greeting with an agent picker in the
+  // composer rather than a separate who-to-talk-to screen.
   const [picking, setPicking] = useState(false);
   const convosSorted = useMemo(
     () => [...(convos || [])].sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '')),
@@ -1473,8 +1414,6 @@ export default function Home() {
     }
   }, [agentId, busy, clearStopFallback, finishTurn, loadConversation, stopping, streamId]);
 
-  const isRunning = (id: string) => runningIds.has(id) || (busy && id === activeSessionId);
-
   // Reword one of your own messages: it goes back into the box, and sending
   // replaces it and every reply after it.
   const startRework = useCallback((message: ChatMessage) => {
@@ -1507,46 +1446,6 @@ export default function Home() {
     });
   }, [send]);
 
-  const updateChat = async (chat: ChatSummary, changes: { title?: string; pinned?: boolean; archived?: boolean }) => {
-    try {
-      await api.patch(
-        chat.kind === 'team'
-          ? `/teams/${encodeURIComponent(chat.team_id || '')}/chats/${encodeURIComponent(chat.id)}`
-          : `/sessions/${encodeURIComponent(chat.id)}`,
-        changes,
-      );
-    } catch {
-      // The list is re-read below and shows what was actually saved.
-    }
-    refetchConvos({ silent: true });
-    void refetchAllChats({ silent: true });
-  };
-
-  // Ask the chat's agent to write up how it did the job as a reusable
-  // skill. The draft waits in the Inbox; nothing changes until it's approved.
-  const saveAsSkill = async (chat: ChatSummary) => {
-    notifications?.push({ event: 'agent_alert', title: 'Writing a skill from this chat…', body: chat.title });
-    try {
-      await api.post('/skill-drafts', { session_id: chat.id });
-      // The inbox announces the new draft itself.
-      void notifications?.refreshInbox();
-    } catch (err) {
-      notifications?.push({
-        event: 'agent_alert',
-        title: "Couldn't write a skill from this chat",
-        body: errorMessage(err, 'Try again in a moment.'),
-      });
-    }
-  };
-
-  const saveRename = () => {
-    const target = renaming && allChats.find((c) => c.id === renaming.id);
-    setRenaming(null);
-    if (target && renaming && renaming.title.trim() !== target.title) {
-      void updateChat(target, { title: renaming.title.trim() });
-    }
-  };
-
   // Leaving a conversation mid-turn keeps that turn running on the server.
   // This page moves to a fresh browser stream so it can start another turn
   // elsewhere right away.
@@ -1563,7 +1462,6 @@ export default function Home() {
     setPicking(false);
     if (id === activeSessionId) return;
     if (!incognitoSidRef.current) setIncognito(false);
-    setMobileConversationsOpen(false);
     leaveRunningTurn();
     resetThreadState();
     void loadConversation(id);
@@ -1571,7 +1469,6 @@ export default function Home() {
 
   const newConversation = () => {
     if (!incognitoSidRef.current) setIncognito(false);
-    setMobileConversationsOpen(false);
     leaveRunningTurn();
     adoptSession(null);
     resetThreadState();
@@ -1579,23 +1476,9 @@ export default function Home() {
     inputRef.current?.focus();
   };
 
-  const deleteConversation = async (chat: ChatSummary) => {
-    const id = chat.id;
-    if (isRunning(id) || chat.running || !confirm('Delete this conversation?')) return;
-    try {
-      await api.delete(chat.kind === 'team' ? `/teams/${chat.team_id}/chats/${id}` : `/sessions/${id}`);
-      refetchConvos({ silent: true });
-      void refetchAllChats({ silent: true });
-      if (id === activeSessionId) newConversation();
-    } catch {
-      // list stays as-is; nothing destructive happened client-side
-    }
-  };
-
   const switchAgent = (id: string) => {
     if (id === agentId) return;
     if (!incognitoSidRef.current) setIncognito(false);
-    setMobileConversationsOpen(false);
     leaveRunningTurn();
     setAgentId(id);
     localStorage.setItem('selectedAgentId', id);
@@ -1607,7 +1490,6 @@ export default function Home() {
   // Open any chat from the combined list. A chat with another agent switches
   // to that agent first; the restore effect then opens the stored chat.
   const openChat = (chat: ChatSummary) => {
-    setMobileConversationsOpen(false);
     if (chat.kind === 'team') {
       leaveRunningTurn();
       navigate(`/teams/${chat.team_id}/chat?chat=${encodeURIComponent(chat.id)}`);
@@ -1656,10 +1538,47 @@ export default function Home() {
     window.setTimeout(() => inputRef.current?.focus(), 0);
   };
 
-  const startPicking = () => {
-    newConversation();
-    setPicking(true);
+  // /home?new=1 (the sidebar's New chat) or ?new=agent:<id>: a fresh chat.
+  const linkedNew = searchParams.get('new');
+  useEffect(() => {
+    if (!linkedNew) return;
+    const [kind, id] = linkedNew.split(':');
+    // Keep an agent link until the agent list has loaded, so it isn't lost.
+    if (kind === 'agent' && id && agentsLoading && !agents.some((a) => a.id === id)) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('new');
+      return next;
+    }, { replace: true });
+    if (kind === 'agent' && id && agents.some((a) => a.id === id)) startChatWith({ kind: 'agent', id });
+    else newConversation();
+    // startChatWith and newConversation change every render; this runs once per link.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedNew, agents.length, agentsLoading]);
+
+  // Tell the app sidebar which chat is open and which are running.
+  const runningList = useMemo(() => (runningKey ? runningKey.split(',') : []), [runningKey]);
+  useEffect(() => {
+    setChatNav({ activeChatId: incognito ? null : activeSessionId, runningIds: runningList });
+  }, [activeSessionId, runningList, incognito]);
+  useEffect(() => () => setChatNav({ activeChatId: null, runningIds: [] }), []);
+
+  // The sidebar renamed, pinned, archived or deleted a chat: re-read the lists,
+  // and leave the chat on screen if it was the one deleted.
+  const leaveDeletedRef = useRef<(id: string) => void>(() => {});
+  leaveDeletedRef.current = (id: string) => {
+    if (id === activeRef.current) newConversation();
   };
+  useEffect(() => {
+    const onEdited = (event: Event) => {
+      void refetchConvos({ silent: true });
+      void refetchAllChats({ silent: true });
+      const deleted = (event as CustomEvent<ChatsEditedDetail>).detail?.deletedId;
+      if (deleted) leaveDeletedRef.current(deleted);
+    };
+    window.addEventListener(CHATS_EDITED, onEdited);
+    return () => window.removeEventListener(CHATS_EDITED, onEdited);
+  }, [refetchConvos, refetchAllChats]);
 
   const empty = messages.length === 0;
   // Saved one-to-one chats only, and never while a reply is on its way.
@@ -1675,216 +1594,6 @@ export default function Home() {
     }
     if (isUserTurn(messages[i])) break;
   }
-
-  const chatIsRunning = (c: ChatSummary) =>
-    (c.kind !== 'team' && c.agent_id === agentId) ? isRunning(c.id) : !!c.running;
-
-  const toggleSection = (key: string) => {
-    setClosedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      saveClosedSections(next);
-      return next;
-    });
-  };
-
-  // "PINNED" and "ARCHIVED": plain labels that open and close like sections.
-  const renderLabelHeader = (key: string, label: string, count: number) => {
-    const open = !closedSections.has(key);
-    return (
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-label={`${label.toLowerCase()} chats (${count})`}
-        data-chat-section={key}
-        onClick={() => toggleSection(key)}
-        className="flex min-h-11 w-full items-center gap-2 border-b border-line bg-panel pl-2.5 pr-4 text-left transition-colors hover:bg-panel-2 md:min-h-9"
-      >
-        <span aria-hidden className={cn('w-3.5 flex-none text-center text-[9px] text-fg-dim transition-transform', !open && '-rotate-90')}>▼</span>
-        <span className="flex-1 font-mono text-[10px] tracking-[0.18em] text-fg-dim">{label}</span>
-        <span className="font-mono text-[10.5px] text-fg-dim">{count}</span>
-      </button>
-    );
-  };
-
-  // One chat. Inside an agent's or team's section the badge and name are in
-  // the section header, so the row keeps only the title and time.
-  const renderChatRow = (c: ChatSummary, inSection: boolean) => {
-    const isTeam = c.kind === 'team';
-    const who = isTeam ? teamById.get(c.team_id || '')?.name : agentById.get(c.agent_id || '')?.name;
-    const selected = !picking && !isTeam && c.id === activeSessionId;
-    const running = chatIsRunning(c);
-    const title = (c.message_count === 0 && chatRuns.find((run) => run.session_id === c.id)?.prompt) || c.title;
-    const label = inSection ? '' : (who ? `${who} · ` : '');
-    if (renaming?.id === c.id) {
-      return (
-        <form
-          key={c.id}
-          className={cn('flex min-h-11 items-center gap-2 border-b border-line py-2 pr-3', inSection ? 'pl-9' : 'pl-3')}
-          onSubmit={(e) => { e.preventDefault(); saveRename(); }}
-        >
-          <input
-            autoFocus
-            value={renaming.title}
-            maxLength={120}
-            aria-label="Chat name"
-            onChange={(e) => setRenaming({ id: c.id, title: e.target.value })}
-            onBlur={saveRename}
-            onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(null); }}
-            className="min-h-11 min-w-0 flex-1 rounded border border-accent bg-bg px-2 text-[13px] text-fg focus:outline-none md:min-h-8"
-          />
-        </form>
-      );
-    }
-    const actions = [
-      { label: 'Rename', disabled: running, onSelect: () => setRenaming({ id: c.id, title: c.title }) },
-      { label: c.pinned ? 'Unpin' : 'Pin to top', disabled: running, onSelect: () => void updateChat(c, { pinned: !c.pinned }) },
-      { label: c.archived ? 'Move back to chats' : 'Archive', disabled: running, onSelect: () => void updateChat(c, { archived: !c.archived }) },
-      ...(isTeam ? [] : [
-        { label: 'Export as Markdown', onSelect: () => void exportChat(c.id, c.title, who || 'agent').catch(() => {}) },
-        { label: 'Save as skill', disabled: running, onSelect: () => void saveAsSkill(c) },
-      ]),
-      { label: 'Delete', danger: true, disabled: running, onSelect: () => void deleteConversation(c) },
-    ];
-    return (
-      <SelectionRow
-        key={c.id}
-        selected={selected}
-        onSelect={() => openChat(c)}
-        className={cn(
-          'group relative min-h-11 gap-2 border-b border-line transition-colors',
-          selected ? 'bg-panel-2 border-l-2 border-l-accent' : 'hover:bg-panel-2',
-        )}
-        buttonClassName={cn('flex items-start gap-2.5 self-stretch py-2.5 pr-4', inSection ? 'pl-10' : 'pl-4')}
-        trailingAction={(
-          // On a wide screen the menu shows on hover, focus or the open chat
-          // and floats over the title, so titles get the full row.
-          <div
-            className={cn(
-              'flex-none md:absolute md:inset-y-0 md:right-0 md:flex md:items-center md:pl-2 md:transition-opacity',
-              selected ? 'md:bg-panel-2' : 'md:bg-panel-2 md:opacity-0 md:focus-within:opacity-100 md:group-hover:opacity-100',
-            )}
-          >
-            <ChatRowMenu label={`More actions for ${c.title}`} actions={actions} />
-          </div>
-        )}
-      >
-        {!inSection && <span className="mt-0.5"><AgentBadge name={who || '?'} team={isTeam} size="sm" avatar={isTeam ? undefined : agentById.get(c.agent_id || '')?.avatar} /></span>}
-        <div className="min-w-0 flex-1">
-          {/* A new conversation has no saved messages (and so no title) until its first reply is done. */}
-          <div className="truncate text-[13px]">
-            {c.pinned && <span className="mr-1 font-mono text-[10px] text-accent-ink" title="Pinned" aria-label="Pinned">▲</span>}
-            {title}
-          </div>
-          {running ? (
-            <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px] text-accent" data-testid={`running-${c.id}`}>
-              <span aria-hidden className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />
-              {label}working…
-            </div>
-          ) : (
-            <div className="mt-0.5 truncate font-mono text-[10.5px] text-fg-dim">{label}{fmtRelative(c.updated_at)}</div>
-          )}
-          {c.started_by && (
-            <div className="mt-0.5 truncate font-mono text-[10.5px] text-fg-dim" data-testid={`started-by-${c.id}`}>
-              started by {c.started_by.agent_name || 'an agent'}
-            </div>
-          )}
-        </div>
-      </SelectionRow>
-    );
-  };
-
-  const minimizeList = (mini: boolean) => {
-    setListMini(mini);
-    saveListMini(mini);
-    if (mini) setChatQuery('');
-  };
-  // Back from the rail to the full list, with one section open and in view.
-  const expandList = (sectionKey?: string) => {
-    minimizeList(false);
-    if (!sectionKey) return;
-    setClosedSections((prev) => {
-      if (!prev.has(sectionKey)) return prev;
-      const next = new Set(prev);
-      next.delete(sectionKey);
-      saveClosedSections(next);
-      return next;
-    });
-    window.setTimeout(() => {
-      document.querySelector(`[data-chat-section="${CSS.escape(sectionKey)}"]`)?.scrollIntoView({ block: 'start' });
-    }, 0);
-  };
-  const railChat = (c: ChatSummary): RailChat => ({
-    id: c.id,
-    title: (c.message_count === 0 && chatRuns.find((run) => run.session_id === c.id)?.prompt) || c.title,
-    when: fmtRelative(c.updated_at),
-    running: chatIsRunning(c),
-    selected: !picking && c.kind !== 'team' && c.id === activeSessionId,
-  });
-  const railGroups: RailGroup[] = grouped.groups.map((group) => {
-    const isTeam = group.kind === 'team';
-    const agent = isTeam ? undefined : agentById.get(group.id);
-    return {
-      key: group.key,
-      kind: group.kind,
-      id: group.id,
-      name: (isTeam ? teamById.get(group.id)?.name : agent?.name) || '?',
-      avatar: agent?.avatar,
-      chats: group.chats.map(railChat),
-      current: !picking && !isTeam && group.id === agentId,
-    };
-  });
-  const openChatById = (id: string) => {
-    const chat = allChats.find((c) => c.id === id);
-    if (chat) openChat(chat);
-  };
-
-  // Drag the panel's edge (or use the arrow keys on it) to resize; double
-  // click puts it back. The width is remembered per browser.
-  const resizeFrom = useRef<{ x: number; width: number } | null>(null);
-  const setWidth = (width: number) => setPanelWidth(clampPanelWidth(width));
-  const resizeHandle = (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Resize conversations"
-      aria-valuemin={PANEL_MIN}
-      aria-valuemax={PANEL_MAX}
-      aria-valuenow={panelWidth}
-      tabIndex={0}
-      onPointerDown={(e) => {
-        resizeFrom.current = { x: e.clientX, width: panelWidth };
-        e.currentTarget.setPointerCapture?.(e.pointerId);
-      }}
-      onPointerMove={(e) => {
-        if (!resizeFrom.current) return;
-        const width = resizeFrom.current.width + e.clientX - resizeFrom.current.x;
-        // Dragged well past the smallest width: minimize to thumbnails.
-        if (width < PANEL_MIN - MINI_SNAP) {
-          resizeFrom.current = null;
-          minimizeList(true);
-          return;
-        }
-        setWidth(width);
-      }}
-      onPointerUp={() => {
-        if (!resizeFrom.current) return;
-        resizeFrom.current = null;
-        savePanelWidth(panelWidth);
-      }}
-      onDoubleClick={() => { setPanelWidth(PANEL_DEFAULT); savePanelWidth(PANEL_DEFAULT); }}
-      onKeyDown={(e) => {
-        const step = e.shiftKey ? 40 : 16;
-        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-        e.preventDefault();
-        const next = clampPanelWidth(panelWidth + (e.key === 'ArrowRight' ? step : -step));
-        setPanelWidth(next);
-        savePanelWidth(next);
-      }}
-      className="absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-[3px] after:w-0.5 after:transition-colors hover:after:bg-accent focus-visible:after:bg-accent"
-    />
-  );
 
   // ── The chat's side panel ──
   const sidebarShown = sidebarOpen || !!artifactOpen || computerOpen;
@@ -1927,232 +1636,305 @@ export default function Home() {
     pageCount ? `${pageCount} ${pageCount === 1 ? 'artifact' : 'artifacts'}` : '',
   ].filter(Boolean).join(' · ');
   const activeChat = allChats.find((c) => c.id === activeSessionId);
+  const currentAgent = agentById.get(agentId);
   const chatStarted = parseStamp(activeChat?.datetime || activeChat?.updated_at)?.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 
-  const conversationPanel = (
-    <>
-      <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
-        <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">CONVERSATIONS</span>
-        <div className="flex items-center gap-1">
-          <Button variant="outline" size="sm" onClick={startPicking}>
-            + new
-          </Button>
-          <button
-            type="button"
-            onClick={() => minimizeList(true)}
-            aria-label="Minimize the chat list"
-            title="Minimize to agent thumbnails"
-            className="hidden h-8 w-8 flex-none place-items-center rounded-lg text-fg-dim hover:bg-panel-2 hover:text-fg md:grid"
-          >
-            <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5" /></svg>
-          </button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setMobileConversationsOpen(false)}
-            aria-label="Close conversations"
-            className="md:hidden"
-          >
-            <span aria-hidden>×</span>
-          </Button>
-        </div>
-      </div>
-      {allChats.length > 0 && (
-        <div className="flex flex-none items-center gap-2 border-b border-line px-3 py-2">
-          <input
-            type="search"
-            value={chatQuery}
-            onChange={(e) => setChatQuery(e.target.value)}
-            placeholder="Search chats"
-            aria-label="Search chats"
-            className="min-h-11 min-w-0 flex-1 rounded border border-line bg-bg px-2 text-[13px] text-fg placeholder:text-fg-dim focus:border-accent focus:outline-none md:min-h-8"
-          />
+
+  // The message box: in the middle of a new chat's greeting, else at the bottom.
+  const composer = (
+    <div className="relative mx-auto max-w-3xl">
+      {skillMenuOpen && (
+        <div
+          id="skill-menu"
+          role="listbox"
+          className="animate-rise absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-md border border-line bg-panel shadow-lg"
+        >
+          <div className="border-b border-line px-3 py-1.5 font-mono text-[10px] tracking-[0.18em] text-fg-dim">SKILLS</div>
+          <div className="max-h-64 overflow-y-auto">
+            {filteredSkills.map((s, i) => (
+              <button
+                key={s.name}
+                id={`skill-opt-${i}`}
+                role="option"
+                aria-selected={i === skillIndex}
+                onMouseEnter={() => setSkillIndex(i)}
+                onClick={() => selectSkill(s)}
+                className={cn(
+                  'flex w-full items-baseline gap-2 border-l-2 px-3 py-2 text-left transition-colors',
+                  i === skillIndex ? 'border-l-accent bg-panel-2' : 'border-l-transparent hover:bg-panel-2',
+                )}
+              >
+                <span className="font-mono text-[11px] text-fg-dim">›_</span>
+                <span className="flex-none font-mono text-[12px] text-accent-ink">/{s.name}</span>
+                {s.argument_hint && <span className="flex-none font-mono text-[10.5px] text-fg-dim">{s.argument_hint}</span>}
+                <span className="ml-auto truncate pl-3 text-[11px] text-fg-dim">{s.description}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
-      <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto">
-        {allChats.length === 0 ? (
-          <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no conversations yet</p>
-        ) : listedChats.length === 0 && !chatHits?.length ? (
-          <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no chats match</p>
-        ) : (
-          <>
-            {grouped.pinned.length > 0 && (
-              <>
-                {renderLabelHeader(PINNED_KEY, 'PINNED', grouped.pinned.length)}
-                {!closedSections.has(PINNED_KEY) && grouped.pinned.map((c) => renderChatRow(c, false))}
-              </>
-            )}
-            {grouped.groups.map((group) => {
-              const isTeam = group.kind === 'team';
-              const name = (isTeam ? teamById.get(group.id)?.name : agentById.get(group.id)?.name) || '?';
-              const open = searching || !closedSections.has(group.key);
-              const limit = searching || expandedSections.has(group.key) ? Infinity : GROUP_PREVIEW;
-              const shown = group.chats.slice(0, limit);
-              const busyHere = allChats.some((c) => groupKey(c) === group.key && chatIsRunning(c));
-              const sectionId = `chat-section-${group.key.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-              return (
-                <section key={group.key} aria-label={`${name} chats`} data-chat-section={group.key}>
-                  <div className="flex min-h-11 items-center border-b border-line bg-panel transition-colors hover:bg-panel-2 md:min-h-10">
-                    <button
-                      type="button"
-                      aria-expanded={open}
-                      aria-controls={sectionId}
-                      disabled={searching}
-                      onClick={() => toggleSection(group.key)}
-                      className="flex min-h-11 min-w-0 flex-1 items-center gap-2 pl-2.5 pr-1 text-left disabled:cursor-default md:min-h-10"
-                    >
-                      <span aria-hidden className={cn('w-3.5 flex-none text-center text-[9px] text-fg-dim transition-transform', !open && '-rotate-90')}>▼</span>
-                      <AgentBadge name={name} team={isTeam} avatar={isTeam ? undefined : agentById.get(group.id)?.avatar} />
-                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-                        {name}
-                        {isTeam && <span className="ml-1.5 rounded-[3px] border border-line px-1 align-[1px] font-mono text-[9.5px] font-normal text-fg-dim">team</span>}
-                      </span>
-                      {busyHere && <span aria-label="working" title="Working" className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />}
-                      <span className="flex-none font-mono text-[10.5px] text-fg-dim">
-                        {open ? group.chats.length : fmtRelative(group.latest)}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => startChatWith({ kind: group.kind, id: group.id })}
-                      aria-label={`New chat with ${name}`}
-                      title={`New chat with ${name}`}
-                      className="mx-2 grid h-11 w-11 flex-none place-items-center rounded border border-line text-[13px] text-fg-dim hover:border-fg-dim hover:text-fg md:h-6 md:w-6"
-                    >
-                      <span aria-hidden>+</span>
-                    </button>
-                  </div>
-                  {open && (
-                    <div id={sectionId}>
-                      {shown.map((c) => renderChatRow(c, true))}
-                      {group.chats.length > shown.length && (
-                        <button
-                          type="button"
-                          onClick={() => setExpandedSections((prev) => new Set(prev).add(group.key))}
-                          className="block min-h-11 w-full border-b border-line pl-10 pr-4 text-left font-mono text-[10.5px] text-fg-dim hover:bg-panel-2 hover:text-fg md:min-h-8"
-                        >
-                          show {group.chats.length - shown.length} more
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </section>
-              );
-            })}
-            {grouped.archived.length > 0 && (
-              <>
-                {renderLabelHeader(ARCHIVED_KEY, 'ARCHIVED', grouped.archived.length)}
-                {!closedSections.has(ARCHIVED_KEY) && grouped.archived.map((c) => renderChatRow(c, false))}
-              </>
-            )}
-          </>
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); void addFiles(e.dataTransfer.files); }}
+        className={cn(
+          'relative rounded-2xl border bg-panel shadow-[0_6px_24px_rgba(0,0,0,0.06)] transition-colors dark:shadow-[0_6px_24px_rgba(0,0,0,0.35)]',
+          // subtle 1px accent border on focus/drag — no glow ring
+          dragOver ? 'border-accent' : 'border-line focus-within:border-fg-dim',
         )}
-        {chatHits && chatHits.some((hit) => hit.snippet && !listedChats.some((c) => c.id === hit.id)) && (
-          <>
-            <div className="border-b border-line px-4 py-1.5 font-mono text-[10px] tracking-[0.18em] text-fg-dim">IN MESSAGES</div>
-            {chatHits.filter((hit) => hit.snippet && !listedChats.some((c) => c.id === hit.id)).map((hit) => {
-              const chat = allChats.find((c) => c.id === hit.id);
-              if (!chat) return null;
-              return (
-                <SelectionRow
-                  key={`hit-${hit.id}`}
-                  selected={false}
-                  onSelect={() => openChat(chat)}
-                  className="min-h-11 border-b border-line transition-colors hover:bg-panel-2"
-                  buttonClassName="px-4 py-2.5"
+      >
+        {editSource?.type === 'artifact' && (
+          <div className="flex items-center gap-2 border-b border-line bg-panel-2 px-3 py-2 font-mono text-[10.5px]">
+            <div
+              data-testid="edit-source-thumbnail"
+              aria-hidden="true"
+              className="grid h-8 w-8 flex-none place-items-center overflow-hidden rounded-sm border border-line bg-panel text-accent-ink"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8" cy="9" r="1.5" /><path d="m4 18 5-5 3 3 3-3 5 5" /></svg>
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="block tracking-[0.12em] text-accent-ink">Editing image</span>
+              <span className="block truncate text-fg" title={editSource.artifact.filename || editSource.artifact.id}>
+                {editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}`}
+              </span>
+            </div>
+            <button
+              type="button"
+              aria-label={`Remove ${editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}`} edit source`}
+              className="flex min-h-11 min-w-11 h-11 w-11 flex-none items-center justify-center text-fg-dim transition-colors hover:text-danger-ink md:h-8 md:w-8"
+              onClick={() => setEditSource(null)}
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+        )}
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 border-b border-line px-3 pb-1 pt-2.5">
+            {attachments.map((a) => (
+              <span
+                key={a.id}
+                className="group inline-flex max-w-full items-center gap-1.5 rounded border border-line bg-panel-2 py-1 pl-1 pr-1.5 font-mono text-[10.5px]"
+              >
+                {a.kind === 'image' ? (
+                  <button
+                    type="button"
+                    aria-label={`Use ${a.name} as edit source`}
+                    aria-pressed={editSource?.type === 'attachment' && editSource.attachmentId === a.id}
+                    title="Use as edit source"
+                    className={cn(
+                      'relative h-8 w-8 flex-none overflow-hidden rounded-sm border transition-colors',
+                      editSource?.type === 'attachment' && editSource.attachmentId === a.id
+                        ? 'border-accent ring-1 ring-accent'
+                        : 'border-transparent hover:border-fg-dim',
+                    )}
+                    onClick={() => setEditSource({ type: 'attachment', attachmentId: a.id })}
+                  >
+                    {a.previewUrl
+                      ? <img src={a.previewUrl} alt="" className="h-full w-full object-cover" />
+                      : <span aria-hidden className="text-accent-ink">â—‡</span>}
+                  </button>
+                ) : (
+                  <svg className="h-4 w-4 flex-none text-fg-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                )}
+                <span className="truncate text-fg" title={a.name}>{a.name}</span>
+                <button
+                  onClick={() => removeAttachment(a.id)}
+                  aria-label={`Remove ${a.name}`}
+                  className="grid h-11 w-11 flex-none place-items-center text-fg-dim transition-colors hover:text-danger-ink md:h-auto md:w-auto"
                 >
-                  <div className="truncate text-[13px]">{hit.title}</div>
-                  <div className="mt-0.5 line-clamp-2 text-[11.5px] text-fg-dim">{hit.snippet}</div>
-                </SelectionRow>
-              );
-            })}
-          </>
+                  ✕
+                </button>
+              </span>
+            ))}
+            {editSource?.type === 'attachment' && (
+              <button
+                type="button"
+                aria-label="Clear edit source"
+                className="min-h-11 px-1 font-mono text-[10.5px] text-fg-dim transition-colors hover:text-danger-ink md:min-h-0"
+                onClick={() => setEditSource(null)}
+              >
+                clear edit
+              </button>
+            )}
+          </div>
         )}
+        {voice.active && <VoiceBar voice={voice} />}
+        {(rework || reworkError) && (
+          <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-1.5 text-[12px] text-fg-dim" role="status">
+            <span className={reworkError ? 'text-danger-ink' : undefined}>
+              {reworkError || 'Editing an earlier message. Sending replaces it and every reply after it.'}
+            </span>
+            <button
+              type="button"
+              className="min-h-11 flex-none font-mono text-[10.5px] hover:text-fg md:min-h-0"
+              onClick={() => { setRework(null); setReworkError(null); setInput(''); }}
+            >
+              cancel
+            </button>
+          </div>
+        )}
+        <textarea
+          ref={inputRef}
+          rows={1}
+          value={input}
+          onChange={(e) => { setInput(e.target.value); setMenuHidden(false); updateSlash(e.target.value, e.target.selectionStart ?? e.target.value.length); }}
+          onSelect={(e) => updateSlash(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+          onPaste={(e) => {
+            // Paste images (screenshots, copied pictures) straight into attachments;
+            // let text paste through untouched.
+            const imgs = Array.from(e.clipboardData.files || []).filter((f) => f.type.startsWith('image/'));
+            if (imgs.length) { e.preventDefault(); void addFiles(imgs); }
+          }}
+          onKeyDown={(e) => {
+            if (skillMenuOpen) {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setSkillIndex((i) => Math.min(i + 1, filteredSkills.length - 1)); return; }
+              if (e.key === 'ArrowUp') { e.preventDefault(); setSkillIndex((i) => Math.max(i - 1, 0)); return; }
+              if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); selectSkill(filteredSkills[skillIndex]); return; }
+              if (e.key === 'Escape') { e.preventDefault(); setMenuHidden(true); return; }
+            }
+            if (e.key === 'Escape' && busy && !stopping) {
+              // Stop the current step; anything waiting goes next.
+              e.preventDefault();
+              void stop();
+              return;
+            }
+            if (isSendKey(e, getSendKey())) {
+              e.preventDefault();
+              send(input);
+            }
+          }}
+          role="combobox"
+          aria-label="Message the agent"
+          aria-expanded={skillMenuOpen}
+          aria-controls="skill-menu"
+          aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
+          placeholder={busy && question === null
+            ? 'Add to what it’s doing…'
+            : empty ? 'Ask anything…' : `Reply to ${currentAgent?.name || 'the agent'}…`}
+          className={cn('block min-h-11 max-h-48 w-full resize-none bg-transparent outline-none focus-visible:outline-none px-4 pb-1 pt-3.5 text-[15px] text-fg placeholder:text-fg-dim', voice.active && '!hidden')}
+        />
+        <div className={cn('flex min-w-0 items-center gap-1 px-2 pb-2 pt-1', voice.active && '!hidden')}>
+          <div className="flex-none">
+          <ComposerMenu
+            onAttach={() => fileInputRef.current?.click()}
+            onRunTask={() => void send(input, 'task')}
+            runTaskDisabled={busy || !!uploadError || !isConnected || !input.trim() || attachments.length > 0 || editSource !== null}
+            runTaskTitle={attachments.length > 0 || editSource !== null
+              ? 'Task mode does not support attachments or edit sources yet.'
+              : 'Create a persisted task and run it with step tracking.'}
+            bypass={bypass}
+            onToggleBypass={toggleBypass}
+            incognito={incognito}
+            onToggleIncognito={() => setIncognito((v) => !v)}
+            incognitoDisabled={!!activeSessionId}
+            incognitoTitle={activeSessionId
+              ? (incognito ? 'This chat is incognito.' : 'Incognito can only be turned on for a new chat.')
+              : "Incognito: the chat isn't listed, doesn't use or change memory, and is deleted when you leave it."}
+            reasoning={reasoning}
+            onReasoning={changeReasoning}
+          />
+          </div>
+          {empty && (
+            <div className="min-w-0 flex-none">
+              <AgentPickerChip agents={agents} teams={teams} currentAgentId={agentId} onPick={startChatWith} />
+            </div>
+          )}
+          <FolderChips
+            className="min-w-0"
+            folders={shownFolders}
+            onChange={changeFolders}
+            emptyLabel="private scratch folder"
+            disabled={busy}
+          />
+          <span className="flex-1" />
+          {!voice.active && !(busy && input.trim()) && (
+            <MicButton voice={voice} className="rounded-full" />
+          )}
+          {busy && !!input.trim() && !voice.active && (
+            // While it works, typed text is sent into the running task;
+            // Stop moves over to where the mic was.
+            <button
+              onClick={() => void stop()}
+              disabled={stopping}
+              aria-label={stopping ? 'Stopping response' : 'Stop response'}
+              className="grid h-11 w-11 place-items-center rounded-full border border-line text-fg transition hover:border-danger hover:text-danger-ink disabled:opacity-60 md:h-9 md:w-9"
+            >
+              <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
+            </button>
+          )}
+          <button
+            onClick={() => { if (busy && !input.trim()) void stop(); else void send(input); }}
+            disabled={busy && !input.trim() ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
+            aria-label={busy && !input.trim() ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
+            className={cn(
+              'grid h-11 w-11 flex-none place-items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 hover:brightness-105 md:h-9 md:w-9',
+              busy && !input.trim() ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
+              voice.active && '!hidden',
+            )}
+          >
+            {busy && !input.trim() && stopping ? (
+              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
+            ) : busy && !input.trim() ? (
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
+            ) : (
+              <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+            )}
+          </button>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept={ACCEPT_ATTR}
+          className="hidden"
+          onChange={(e) => { void addFiles(e.target.files || []); e.target.value = ''; }}
+        />
       </div>
-    </>
+      {uploadError && (
+        <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{uploadError}</div>
+      )}
+      {stopError && (
+        <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
+      )}
+      {steerError && (
+        <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{steerError}</div>
+      )}
+      <VoiceNotice voice={voice} />
+      <div className="mt-1.5 hidden items-center gap-x-4 px-2 text-[11px] text-fg-dim md:flex">
+        <SendKeyHint />
+      </div>
+    </div>
   );
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-bg text-fg">
-      <MobileSheet
-        id="mobile-conversations"
-        label="Conversations"
-        open={mobileConversationsOpen && !!agentId}
-        onClose={() => setMobileConversationsOpen(false)}
-        triggerRef={mobileConversationsTriggerRef}
-      >
-        {conversationPanel}
-      </MobileSheet>
-
-      {/* Conversations panel */}
-      {agentId && (
-        <aside
-          className="relative hidden min-h-0 flex-none flex-col border-r border-line bg-panel md:flex"
-          style={{ width: listMini ? RAIL_WIDTH : panelWidth }}
-        >
-          {listMini ? (
-            <ChatRail
-              groups={railGroups}
-              pinned={grouped.pinned.map(railChat)}
-              archivedCount={grouped.archived.length}
-              onExpand={expandList}
-              onNew={startPicking}
-              onNewWith={(group) => startChatWith({ kind: group.kind, id: group.id })}
-              onOpenChat={openChatById}
-            />
-          ) : (
-            <>
-              {conversationPanel}
-              {resizeHandle}
-            </>
-          )}
-        </aside>
-      )}
-
       {/* Chat column */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {/* The theme's drawing along the bottom, behind messages and the message box */}
         <ChatHorizon className={cn((empty || picking) && 'hidden')} />
-        {/* Top bar: the chat's name and who it is with, the chat list button
-            (phones), reconnect while the stream is down, and the side panel. */}
-        <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:min-h-12 md:py-1.5 md:pl-5 md:pr-3">
+        {/* Slim header: who the chat is with and its name, the model, reconnect
+            while the stream is down, and the chat's side panel. */}
+        <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-3 md:pl-5">
           <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2.5 overflow-hidden">
-            <h1 className="min-w-[5rem] truncate text-[15px] font-semibold md:text-[13.5px] md:font-medium">
-              {picking || !activeSessionId
-                ? 'New chat'
-                : (allChats.find((c) => c.id === activeSessionId)?.title || 'Chat')}
-            </h1>
-            {!picking && agentById.get(agentId) && (
-              <span className="hidden min-w-0 shrink-[99] items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12.5px] text-fg-dim sm:flex" aria-label={`Chatting with ${agentById.get(agentId)!.name}`}>
-                <AgentBadge name={agentById.get(agentId)!.name} avatar={agentById.get(agentId)!.avatar} size="sm" />
-                <span className="text-fg">{agentById.get(agentId)!.name}</span>
-                {agentModel(agentById.get(agentId)) && (
-                  <span className="hidden truncate font-mono text-[10.5px] xl:inline">· {agentModel(agentById.get(agentId))}</span>
-                )}
+            {currentAgent && (
+              <span className="flex flex-none items-center gap-2" aria-label={`Chatting with ${currentAgent.name}`}>
+                <AgentBadge name={currentAgent.name} avatar={currentAgent.avatar} />
+                <span className="hidden text-[14px] font-semibold sm:inline">{currentAgent.name}</span>
               </span>
             )}
+            {currentAgent && <span aria-hidden className="hidden flex-none text-fg-dim sm:inline">/</span>}
+            <h1 className={cn('min-w-0 truncate text-[14px]', activeSessionId ? 'text-fg-dim max-sm:font-semibold max-sm:text-fg' : 'text-fg-dim')}>
+              {activeSessionId ? (activeChat?.title || 'Chat') : 'New chat'}
+            </h1>
           </div>
-          <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-2">
-            {agentId && (
-              <Button
-                ref={mobileConversationsTriggerRef}
-                variant="outline"
-                size="icon"
-                className="md:hidden"
-                aria-label="Open conversations"
-                aria-controls="mobile-conversations"
-                aria-expanded={mobileConversationsOpen}
-                onClick={() => setMobileConversationsOpen(true)}
-              >
-                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16v11H7l-3 3V5z" /></svg>
-              </Button>
+          <div className="flex flex-none items-center gap-1">
+            {agentModel(currentAgent) && (
+              <span className="hidden max-w-[220px] truncate rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-dim lg:inline" title="Model">
+                {agentModel(currentAgent)}
+              </span>
             )}
             {isConnected ? (
-              <span aria-label="Connection status: connected" className="flex h-11 w-11 items-center justify-center text-fg-dim md:hidden" title="Connected">
-                <svg aria-hidden="true" className="h-4 w-4 text-accent md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l4 4L19 6" /></svg>
-                <span aria-hidden="true" className="hidden h-1.5 w-1.5 rounded-full bg-accent md:block" />
-                <span className="sr-only md:not-sr-only">connected</span>
-              </span>
+              <span className="sr-only">Connection status: connected</span>
             ) : (
               <Button
                 variant="ghost"
@@ -2177,12 +1959,12 @@ export default function Home() {
                 aria-label="Chat sidebar"
                 title={`${sidebarShown ? 'Close' : 'Open'} the chat sidebar (Ctrl+.)`}
                 className={cn(
-                  'relative inline-flex h-11 min-w-11 flex-none items-center justify-center gap-2 rounded-lg border border-line px-2.5 text-[12.5px] text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-8 md:min-w-0',
+                  'relative inline-flex h-11 min-w-11 flex-none items-center justify-center gap-2 rounded-lg px-2.5 text-[12.5px] text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-9 md:min-w-9',
                   sidebarShown && 'bg-panel-2 text-fg',
                 )}
               >
                 {agentDesktop && <span aria-hidden className="h-[7px] w-[7px] flex-none animate-pulse rounded-full bg-accent" />}
-                {sidebarWaiting.length > 0 && <span aria-hidden className="h-[7px] w-[7px] flex-none rounded-full bg-[#ffb86b]" />}
+                {sidebarWaiting.length > 0 && <span aria-hidden className="h-[7px] w-[7px] flex-none rounded-full bg-warn" />}
                 {sidebarSummary && !sidebarShown && <span className="hidden whitespace-nowrap xl:inline">{sidebarSummary}</span>}
                 <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
               </button>
@@ -2207,31 +1989,20 @@ export default function Home() {
               </span>
             </div>
           )}
-          {picking && agents.length > 0 ? (
-            <StartChat agents={agents} teams={teams} recent={recentTargets} onPick={startChatWith} />
-          ) : empty ? (
-            <div className="mx-auto flex h-full max-w-2xl flex-col justify-center px-6">
-              <ArtworkScene className="-mx-2 mb-4 h-[130px] sm:h-[170px]" />
-              <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ {agentById.get(agentId) ? `new chat with ${agentById.get(agentId)!.name}` : 'start a conversation'}</p>
-              <h2 className="mt-3 text-2xl font-bold tracking-tight">What should we run?</h2>
-              <p className="mt-2 max-w-md text-fg-dim">
-                Ask a question, chat, or kick off a multi-step task — the agent plans and executes with its tools.
-              </p>
-              <div className="mt-6 flex flex-col gap-2">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => send(s)}
-                    className="group flex min-h-11 items-center gap-3 rounded border border-line px-3.5 py-2.5 text-left text-sm text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0"
-                  >
-                    <span className="font-mono text-[11px] text-fg-dim group-hover:text-accent-ink">→</span>
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
+          {empty ? (
+            <NewChatGreeting
+              name={user?.name}
+              agents={agents}
+              teams={teams}
+              currentAgentId={agentId}
+              recent={recentTargets}
+              onPick={startChatWith}
+              onSuggestion={(text) => { setInput(text); inputRef.current?.focus(); }}
+            >
+              {composer}
+            </NewChatGreeting>
           ) : (
-            <div>
+            <div className="py-4">
               {messages.map((message, index) => (
                 <ChatMessageRow
                   key={message.id}
@@ -2246,9 +2017,8 @@ export default function Home() {
               ))}
 
               {waiting && (
-                <div role="status" className="grid grid-cols-1 gap-2 px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
-                  <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">AGENT</div>
-                  <div className="flex items-center gap-2.5 font-mono text-[12px] text-fg-dim">
+                <div role="status" className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6">
+                  <div className="flex items-center gap-2.5 text-[13px] text-fg-dim">
                     <span className="think-bars"><i /><i /><i /><i /></span>
                     {planning || 'Thinking…'}
                   </div>
@@ -2266,7 +2036,7 @@ export default function Home() {
           )}
 
           {error && (
-            <div role="alert" className="mx-6 my-4 flex items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
+            <div role="alert" className="mx-auto my-4 flex w-[calc(100%-3rem)] max-w-[720px] items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
               <span>connection error — the stream stopped after several retries.</span>
               <button onClick={reconnect} className="min-h-11 flex-none rounded border border-line px-2 py-0.5 transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">
                 ↻ retry
@@ -2284,7 +2054,7 @@ export default function Home() {
           )}
 
           {approvals.map((a) => (
-            <div key={a.request_id} role="alert" className="mx-4 my-4 max-w-3xl sm:mx-6">
+            <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
               <PanelCard
                 tone="danger"
                 tag={<>⚠ approval</>}
@@ -2321,259 +2091,11 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Composer (hidden while choosing who to talk to) */}
-        <div className={cn('relative flex-none border-t border-line px-6 py-4', picking && agents.length > 0 && 'hidden')}>
-          <div className="relative mx-auto max-w-3xl">
-            {skillMenuOpen && (
-              <div
-                id="skill-menu"
-                role="listbox"
-                className="animate-rise absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-md border border-line bg-panel shadow-lg"
-              >
-                <div className="border-b border-line px-3 py-1.5 font-mono text-[10px] tracking-[0.18em] text-fg-dim">SKILLS</div>
-                <div className="max-h-64 overflow-y-auto">
-                  {filteredSkills.map((s, i) => (
-                    <button
-                      key={s.name}
-                      id={`skill-opt-${i}`}
-                      role="option"
-                      aria-selected={i === skillIndex}
-                      onMouseEnter={() => setSkillIndex(i)}
-                      onClick={() => selectSkill(s)}
-                      className={cn(
-                        'flex w-full items-baseline gap-2 border-l-2 px-3 py-2 text-left transition-colors',
-                        i === skillIndex ? 'border-l-accent bg-panel-2' : 'border-l-transparent hover:bg-panel-2',
-                      )}
-                    >
-                      <span className="font-mono text-[11px] text-fg-dim">›_</span>
-                      <span className="flex-none font-mono text-[12px] text-accent-ink">/{s.name}</span>
-                      {s.argument_hint && <span className="flex-none font-mono text-[10.5px] text-fg-dim">{s.argument_hint}</span>}
-                      <span className="ml-auto truncate pl-3 text-[11px] text-fg-dim">{s.description}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <FolderChips
-              className="mb-2"
-              folders={shownFolders}
-              onChange={changeFolders}
-              emptyLabel="private scratch folder"
-              disabled={busy}
-            />
-            <div
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => { e.preventDefault(); setDragOver(false); void addFiles(e.dataTransfer.files); }}
-              className={cn(
-                'relative rounded-md border bg-panel transition-colors',
-                // subtle 1px accent border on focus/drag — no glow ring
-                dragOver ? 'border-accent' : 'border-line focus-within:border-accent',
-              )}
-            >
-              {editSource?.type === 'artifact' && (
-                <div className="flex items-center gap-2 border-b border-line bg-panel-2 px-3 py-2 font-mono text-[10.5px]">
-                  <div
-                    data-testid="edit-source-thumbnail"
-                    aria-hidden="true"
-                    className="grid h-8 w-8 flex-none place-items-center overflow-hidden rounded-sm border border-line bg-panel text-accent-ink"
-                  >
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8" cy="9" r="1.5" /><path d="m4 18 5-5 3 3 3-3 5 5" /></svg>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <span className="block tracking-[0.12em] text-accent-ink">Editing image</span>
-                    <span className="block truncate text-fg" title={editSource.artifact.filename || editSource.artifact.id}>
-                      {editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}`}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}`} edit source`}
-                    className="flex min-h-11 min-w-11 h-11 w-11 flex-none items-center justify-center text-fg-dim transition-colors hover:text-danger-ink md:h-8 md:w-8"
-                    onClick={() => setEditSource(null)}
-                  >
-                    <span aria-hidden="true">×</span>
-                  </button>
-                </div>
-              )}
-              {attachments.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 border-b border-line px-3 pb-1 pt-2.5">
-                  {attachments.map((a) => (
-                    <span
-                      key={a.id}
-                      className="group inline-flex max-w-full items-center gap-1.5 rounded border border-line bg-panel-2 py-1 pl-1 pr-1.5 font-mono text-[10.5px]"
-                    >
-                      {a.kind === 'image' ? (
-                        <button
-                          type="button"
-                          aria-label={`Use ${a.name} as edit source`}
-                          aria-pressed={editSource?.type === 'attachment' && editSource.attachmentId === a.id}
-                          title="Use as edit source"
-                          className={cn(
-                            'relative h-8 w-8 flex-none overflow-hidden rounded-sm border transition-colors',
-                            editSource?.type === 'attachment' && editSource.attachmentId === a.id
-                              ? 'border-accent ring-1 ring-accent'
-                              : 'border-transparent hover:border-fg-dim',
-                          )}
-                          onClick={() => setEditSource({ type: 'attachment', attachmentId: a.id })}
-                        >
-                          {a.previewUrl
-                            ? <img src={a.previewUrl} alt="" className="h-full w-full object-cover" />
-                            : <span aria-hidden className="text-accent-ink">â—‡</span>}
-                        </button>
-                      ) : (
-                        <svg className="h-4 w-4 flex-none text-fg-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
-                      )}
-                      <span className="truncate text-fg" title={a.name}>{a.name}</span>
-                      <button
-                        onClick={() => removeAttachment(a.id)}
-                        aria-label={`Remove ${a.name}`}
-                        className="grid h-11 w-11 flex-none place-items-center text-fg-dim transition-colors hover:text-danger-ink md:h-auto md:w-auto"
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  ))}
-                  {editSource?.type === 'attachment' && (
-                    <button
-                      type="button"
-                      aria-label="Clear edit source"
-                      className="min-h-11 px-1 font-mono text-[10.5px] text-fg-dim transition-colors hover:text-danger-ink md:min-h-0"
-                      onClick={() => setEditSource(null)}
-                    >
-                      clear edit
-                    </button>
-                  )}
-                </div>
-              )}
-              {voice.active && <VoiceBar voice={voice} />}
-              {(rework || reworkError) && (
-                <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-1.5 text-[12px] text-fg-dim" role="status">
-                  <span className={reworkError ? 'text-danger-ink' : undefined}>
-                    {reworkError || 'Editing an earlier message. Sending replaces it and every reply after it.'}
-                  </span>
-                  <button
-                    type="button"
-                    className="min-h-11 flex-none font-mono text-[10.5px] hover:text-fg md:min-h-0"
-                    onClick={() => { setRework(null); setReworkError(null); setInput(''); }}
-                  >
-                    cancel
-                  </button>
-                </div>
-              )}
-              <textarea
-                ref={inputRef}
-                rows={1}
-                value={input}
-                onChange={(e) => { setInput(e.target.value); setMenuHidden(false); updateSlash(e.target.value, e.target.selectionStart ?? e.target.value.length); }}
-                onSelect={(e) => updateSlash(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
-                onPaste={(e) => {
-                  // Paste images (screenshots, copied pictures) straight into attachments;
-                  // let text paste through untouched.
-                  const imgs = Array.from(e.clipboardData.files || []).filter((f) => f.type.startsWith('image/'));
-                  if (imgs.length) { e.preventDefault(); void addFiles(imgs); }
-                }}
-                onKeyDown={(e) => {
-                  if (skillMenuOpen) {
-                    if (e.key === 'ArrowDown') { e.preventDefault(); setSkillIndex((i) => Math.min(i + 1, filteredSkills.length - 1)); return; }
-                    if (e.key === 'ArrowUp') { e.preventDefault(); setSkillIndex((i) => Math.max(i - 1, 0)); return; }
-                    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); selectSkill(filteredSkills[skillIndex]); return; }
-                    if (e.key === 'Escape') { e.preventDefault(); setMenuHidden(true); return; }
-                  }
-                  if (e.key === 'Escape' && busy && !stopping) {
-                    // Stop the current step; anything waiting goes next.
-                    e.preventDefault();
-                    void stop();
-                    return;
-                  }
-                  if (isSendKey(e, getSendKey())) {
-                    e.preventDefault();
-                    send(input);
-                  }
-                }}
-                role="combobox"
-                aria-label="Message the agent"
-                aria-expanded={skillMenuOpen}
-                aria-controls="skill-menu"
-                aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
-                placeholder={busy && question === null ? 'Add to what it’s doing…' : 'Message the agent…'}
-                className={cn('block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-24 text-sm text-fg placeholder:text-fg-dim md:min-h-0 md:pr-20', voice.active && '!hidden')}
-              />
-              {!voice.active && !(busy && input.trim()) && (
-                <MicButton voice={voice} className="absolute bottom-1 right-[3.25rem] md:right-10" />
-              )}
-              {busy && !!input.trim() && !voice.active && (
-                // While it works, typed text is sent into the running task;
-                // Stop moves over to where the mic was.
-                <button
-                  onClick={() => void stop()}
-                  disabled={stopping}
-                  aria-label={stopping ? 'Stopping response' : 'Stop response'}
-                  className="absolute bottom-1 right-[3.25rem] grid h-11 w-11 place-items-center rounded border border-line text-fg transition hover:border-danger hover:text-danger-ink disabled:opacity-60 md:right-10 md:h-8 md:w-8"
-                >
-                  <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
-                </button>
-              )}
-              <button
-                onClick={() => { if (busy && !input.trim()) void stop(); else void send(input); }}
-                disabled={busy && !input.trim() ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
-                aria-label={busy && !input.trim() ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
-                className={cn(
-                  'absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded transition disabled:cursor-not-allowed disabled:opacity-60 hover:brightness-105 md:h-8 md:w-8',
-                  busy && !input.trim() ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
-                  voice.active && '!hidden',
-                )}
-              >
-                {busy && !input.trim() && stopping ? (
-                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
-                ) : busy && !input.trim() ? (
-                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
-                ) : (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12l16-8-6 16-3-6-7-2z" /></svg>
-                )}
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept={ACCEPT_ATTR}
-                className="hidden"
-                onChange={(e) => { void addFiles(e.target.files || []); e.target.value = ''; }}
-              />
-            </div>
-            {uploadError && (
-              <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{uploadError}</div>
-            )}
-            {stopError && (
-              <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
-            )}
-            {steerError && (
-              <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{steerError}</div>
-            )}
-            <VoiceNotice voice={voice} />
-            <div className="mt-1.5 flex items-center gap-x-4 font-mono text-[10.5px] text-fg-dim">
-              <ComposerMenu
-                onAttach={() => fileInputRef.current?.click()}
-                onRunTask={() => void send(input, 'task')}
-                runTaskDisabled={busy || !!uploadError || !isConnected || !input.trim() || attachments.length > 0 || editSource !== null}
-                runTaskTitle={attachments.length > 0 || editSource !== null
-                  ? 'Task mode does not support attachments or edit sources yet.'
-                  : 'Create a persisted task and run it with step tracking.'}
-                bypass={bypass}
-                onToggleBypass={toggleBypass}
-                incognito={incognito}
-                onToggleIncognito={() => setIncognito((v) => !v)}
-                incognitoDisabled={!!activeSessionId}
-                incognitoTitle={activeSessionId
-                  ? (incognito ? 'This chat is incognito.' : 'Incognito can only be turned on for a new chat.')
-                  : "Incognito: the chat isn't listed, doesn't use or change memory, and is deleted when you leave it."}
-                reasoning={reasoning}
-                onReasoning={changeReasoning}
-              />
-              <SendKeyHint />
-            </div>
+        {!empty && (
+          <div className="relative flex-none px-3 pb-4 pt-2 sm:px-6">
+            {composer}
           </div>
-        </div>
+        )}
       </div>
 
       {artifactOpen && (

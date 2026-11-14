@@ -11,6 +11,7 @@ const appSource = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
 const cssSource = readFileSync(resolve(process.cwd(), 'src/app.css'), 'utf8');
 
 vi.mock('@/context/AppContext', () => ({
+  useOptionalUser: () => ({ id: 'user-1', name: 'Test User', email: 'test@example.com' }),
   useUser: () => ({
     user: {
       id: 'user-1',
@@ -22,6 +23,11 @@ vi.mock('@/context/AppContext', () => ({
     logout: vi.fn(),
     checkAuth: vi.fn().mockResolvedValue(undefined),
   }),
+}));
+
+vi.mock('@/lib/api', () => ({
+  api: { get: vi.fn().mockResolvedValue({ data: [] }), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+  errorMessage: (_e: unknown, fallback = 'error') => fallback,
 }));
 
 function renderShell() {
@@ -105,7 +111,8 @@ describe('AppLayout', () => {
 
     expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveClass('h-11', 'w-11');
     for (const link of within(navigation).getAllByRole('link')) {
-      expect(link).toHaveClass('min-h-11', 'md:min-h-0');
+      expect(link).toHaveClass('min-h-11');
+      expect(link.className).toMatch(/md:min-h-(0|\[34px\])/);
     }
     expect(within(navigation).getByRole('button', { name: 'Account menu' })).toHaveClass(
       'min-h-11',

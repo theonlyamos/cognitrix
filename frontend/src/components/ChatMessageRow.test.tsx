@@ -180,11 +180,6 @@ describe('ChatMessageRow', () => {
       'overscroll-contain',
     );
     expect(transcript.parentElement).toHaveClass('min-h-0', 'overflow-hidden');
-    expect(screen.getByText('no conversations yet').parentElement).toHaveClass(
-      'min-h-0',
-      'overscroll-contain',
-      'overflow-y-auto',
-    );
   });
 
   it('keeps screen-reader tool status inside its scroll container', async () => {

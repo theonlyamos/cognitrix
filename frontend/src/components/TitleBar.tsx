@@ -1,28 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
 import { isDesktop, windowAction } from '@/lib/desktop';
-import { useOptionalNotifications } from '@/context/NotificationsContext';
-import NotificationPopover from '@/components/NotificationPopover';
 import { cn } from '@/lib/utils';
-import { Settings as SettingsIcon } from 'lucide-react';
-
-const SECTIONS: [string, string][] = [
-  ['/dashboard', 'Dashboard'],
-  ['/home', 'Chat'],
-  ['/inbox', 'Inbox'],
-  ['/agents', 'Agents'],
-  ['/teams', 'Teams'],
-  ['/tasks', 'Tasks'],
-  ['/automations', 'Automations'],
-  ['/knowledge', 'Knowledge'],
-  ['/notifications', 'Notifications'],
-  ['/settings', 'Settings'],
-  ['/api-keys', 'API keys'],
-];
-
-function sectionFor(pathname: string) {
-  return SECTIONS.find(([path]) => pathname === path || pathname.startsWith(`${path}/`))?.[1];
-}
 
 export function BellIcon({ className = 'h-[17px] w-[17px]' }: { className?: string }) {
   return (
@@ -52,77 +29,15 @@ export function WindowControls({ height = 42 }: { height?: number }) {
 }
 
 /**
- * Top bar: brand and breadcrumb, the command palette search, the notification
- * bell and, in the desktop app, the window controls. The desktop window has no
- * system frame, so this bar is also its drag handle.
+ * The desktop app's window frame: a slim drag handle with the window
+ * controls. The web app has no top bar; search, notifications and settings
+ * live in the sidebar.
  */
-export default function TitleBar({ onOpenPalette }: { onOpenPalette: () => void }) {
-  const desktopApp = isDesktop();
-  const { pathname } = useLocation();
-  const notifications = useOptionalNotifications();
-  const [bellOpen, setBellOpen] = useState(false);
-  const section = sectionFor(pathname);
-
-  useEffect(() => setBellOpen(false), [pathname]);
-
+export default function TitleBar() {
+  if (!isDesktop()) return null;
   return (
-    <header
-      data-tauri-drag-region
-      className={cn(
-        'relative z-30 h-[42px] flex-none select-none items-center gap-3 border-b border-line bg-panel pl-3.5',
-        desktopApp ? 'flex' : 'hidden md:flex',
-      )}
-    >
-      <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2.5 md:w-[300px] md:flex-none">
-        <span className="grid h-[22px] w-[22px] flex-none place-items-center rounded-[6px] bg-accent text-accent-foreground">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
-        </span>
-        <span data-tauri-drag-region className="font-mono text-[12px] font-medium tracking-[0.12em]">COGNITRIX</span>
-        {section && (
-          <span data-tauri-drag-region className="truncate font-mono text-[11px] text-fg-dim">/ {section}</span>
-        )}
-      </div>
-
-      <div data-tauri-drag-region className="hidden flex-1 justify-center md:flex">
-        <button
-          type="button"
-          onClick={onOpenPalette}
-          className="flex h-7 w-full max-w-[440px] items-center gap-2 rounded-md border border-line bg-panel-2 px-2.5 text-[13px] text-fg-dim transition-colors hover:text-fg"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-          <span className="flex-1 text-left">Search sessions, agents, or run a command</span>
-          <kbd className="rounded border border-line px-1.5 py-0.5 font-mono text-[10.5px]">Ctrl K</kbd>
-        </button>
-      </div>
-
-      <div className="flex items-center justify-end md:w-[300px]">
-        {notifications && (
-          <div className="relative">
-            <button
-              type="button"
-              aria-label={notifications.unread ? `Notifications, ${notifications.unread} new` : 'Notifications'}
-              aria-expanded={bellOpen}
-              aria-haspopup="dialog"
-              onClick={() => setBellOpen((open) => !open)}
-              className={cn('relative grid h-[42px] w-10 place-items-center text-fg-dim transition-colors hover:text-fg', bellOpen && 'text-fg')}
-            >
-              <BellIcon />
-              {notifications.unread > 0 && (
-                <span className="absolute right-1 top-[7px] grid h-3.5 min-w-3.5 place-items-center rounded-full bg-warn px-0.5 font-mono text-[9px] font-medium text-warn-foreground">
-                  {notifications.unread > 9 ? '9+' : notifications.unread}
-                </span>
-              )}
-            </button>
-            {bellOpen && <NotificationPopover onClose={() => setBellOpen(false)} />}
-          </div>
-        )}
-        {!desktopApp && (
-          <Link to="/settings" aria-label="Settings" className="grid h-[42px] w-10 place-items-center text-fg-dim hover:text-fg">
-            <SettingsIcon width={16} height={16} strokeWidth={1.9} aria-hidden="true" />
-          </Link>
-        )}
-        {desktopApp && <WindowControls />}
-      </div>
+    <header data-tauri-drag-region className="relative z-30 flex h-8 flex-none select-none items-center justify-end border-b border-line bg-panel">
+      <WindowControls height={32} />
     </header>
   );
 }

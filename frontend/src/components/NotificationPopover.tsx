@@ -40,7 +40,11 @@ export function NotificationRow({ n, onOpen }: { n: AppNotification; onOpen: (n:
 }
 
 /** The bell's dropdown: newest notifications, split into "needs you" and the rest. */
-export default function NotificationPopover({ onClose }: { onClose: () => void }) {
+export default function NotificationPopover({ onClose, placement = 'below' }: {
+  onClose: () => void;
+  /** below: under a top bar button. sidebar: up from the sidebar's footer. */
+  placement?: 'below' | 'sidebar';
+}) {
   const { notifications, markAllRead, markRead, inbox } = useNotifications();
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
@@ -71,7 +75,10 @@ export default function NotificationPopover({ onClose }: { onClose: () => void }
       ref={ref}
       role="dialog"
       aria-label="Notifications"
-      className="absolute right-0 top-[46px] w-[380px] max-w-[calc(100vw-24px)] overflow-hidden rounded-xl border border-line bg-panel shadow-panel"
+      className={cn(
+        'w-[380px] max-w-[calc(100vw-24px)] overflow-hidden rounded-xl border border-line bg-panel shadow-panel',
+        placement === 'below' ? 'absolute right-0 top-[46px]' : 'fixed bottom-14 left-3 z-[60]',
+      )}
     >
       <div className="flex items-center justify-between border-b border-line px-3.5 py-3">
         <span className="text-[14px] font-semibold">Notifications</span>

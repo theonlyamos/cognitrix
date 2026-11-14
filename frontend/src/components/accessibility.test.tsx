@@ -24,6 +24,7 @@ const session = vi.hoisted(() => ({
 }));
 
 vi.mock('@/context/AppContext', () => ({
+  useOptionalUser: () => ({ id: 'user-1', name: 'Test User', email: 'test@example.com' }),
   useUser: () => ({
     user: { id: 'user-1', name: 'Test User', email: 'test@example.com' },
     logout: vi.fn(),

@@ -8,7 +8,7 @@ export interface ChatRowAction {
 }
 
 /** The "more" button on a chat list row: rename, pin, archive, export, delete. */
-export function ChatRowMenu({ label, actions }: { label: string; actions: ChatRowAction[] }) {
+export function ChatRowMenu({ label, actions, compact = false }: { label: string; actions: ChatRowAction[]; /** A borderless button for the sidebar's rows. */ compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -29,14 +29,16 @@ export function ChatRowMenu({ label, actions }: { label: string; actions: ChatRo
   }, [open]);
 
   return (
-    <div ref={root} className="relative mr-2 flex-none">
+    <div ref={root} className={compact ? 'relative mr-1 flex-none' : 'relative mr-2 flex-none'}>
       <button
         type="button"
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="grid h-11 w-11 place-items-center rounded border border-line text-fg-dim hover:border-fg-dim hover:text-fg md:h-8 md:w-8"
+        className={compact
+          ? 'grid h-11 w-9 place-items-center rounded-md text-fg-dim hover:bg-panel hover:text-fg md:h-7 md:w-7'
+          : 'grid h-11 w-11 place-items-center rounded border border-line text-fg-dim hover:border-fg-dim hover:text-fg md:h-8 md:w-8'}
       >
         <span aria-hidden>⋯</span>
       </button>

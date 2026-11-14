@@ -8,8 +8,8 @@ import AssistantSetup from '@/components/AssistantSetup';
 import { NotificationsProvider } from '@/context/NotificationsContext';
 import { isDesktop, onDesktopEvent } from '@/lib/desktop';
 
-/** Persistent shell: title bar, Sidebar and alerts mount once; pages swap
- *  through the Outlet. */
+/** Persistent shell: the sidebar (with every chat) and alerts mount once;
+ *  pages swap through the Outlet. */
 export default function AppLayout() {
   return (
     <NotificationsProvider>
@@ -73,7 +73,7 @@ function AppShell() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-fg">
-      <TitleBar onOpenPalette={() => setPaletteOpen(true)} />
+      <TitleBar />
       <AppAlerts />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <AssistantSetup />
@@ -84,7 +84,7 @@ function AppShell() {
         aria-controls="primary-navigation"
         aria-expanded={mobileNavOpen}
         onClick={() => setMobileNavOpen(true)}
-        className="fixed left-2 top-2 z-40 grid h-11 w-11 place-items-center rounded border border-line bg-panel text-fg md:hidden"
+        className="fixed left-2 top-1.5 z-40 grid h-11 w-11 place-items-center rounded-lg text-fg md:hidden"
       >
         <svg
           aria-hidden="true"
@@ -106,7 +106,7 @@ function AppShell() {
           onClick={() => setMobileNavOpen(false)}
         />
       )}
-      <Sidebar mobileOpen={mobileNavOpen} onNavigate={() => setMobileNavOpen(false)} />
+      <Sidebar mobileOpen={mobileNavOpen} onNavigate={() => setMobileNavOpen(false)} onOpenSearch={() => setPaletteOpen(true)} />
       <main id="main-content" className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Outlet />
       </main>
