@@ -12,7 +12,7 @@ import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { useApprovalSeen } from '@/hooks/useApprovalSeen';
 import { setViewingChat } from '@/lib/chatPresence';
-import { chatsStale } from '@/lib/chatNav';
+import { CHATS_EDITED, chatsStale, type ChatsEditedDetail } from '@/lib/chatNav';
 
 interface Member { id: string; name: string; handle: string; lead: boolean; provider?: string | null; model?: string | null }
 interface ChatSummary { id: string; title: string; updated_at?: string | null; running: boolean }
@@ -292,6 +292,18 @@ export default function TeamChat() {
       setSendError(errorMessage(err, 'Could not stop the team.'));
     }
   }, [chatId, teamId]);
+
+  // The app sidebar renamed, pinned, archived or deleted a chat: re-read, and
+  // leave this chat if it was the one deleted.
+  useEffect(() => {
+    const onEdited = (event: Event) => {
+      const deleted = (event as CustomEvent<ChatsEditedDetail>).detail?.deletedId;
+      if (deleted && deleted === chatIdRef.current) setParams({});
+      void loadInfo();
+    };
+    window.addEventListener(CHATS_EDITED, onEdited);
+    return () => window.removeEventListener(CHATS_EDITED, onEdited);
+  }, [loadInfo, setParams]);
 
   const removeChat = useCallback(async () => {
     if (!chatId || running || !confirm('Delete this group chat?')) return;
