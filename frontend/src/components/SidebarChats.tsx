@@ -78,7 +78,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
   const navigate = useNavigate();
   const notifications = useOptionalNotifications();
   const { activeChatId, runningIds } = useChatNav();
-  const { data: chatsData, refetch } = useResource<SidebarChat[]>('/sessions/chats');
+  const { data: chatsData, refetch, setData: setChatsData } = useResource<SidebarChat[]>('/sessions/chats');
   const { data: agentsData, refetch: refetchAgents } = useResource<Named[]>('/agents');
   const { data: teamsData, refetch: refetchTeams } = useResource<Named[]>('/teams');
   const [mode, setMode] = useState<ChatListMode>(loadChatListMode);
@@ -132,12 +132,20 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
       const next = data?.version;
       if (!next) return;
       const previous = versionRef.current;
+      if (previous === next) return;
+      if (previous !== null) {
+        // Take the new token only once the list is fresh, so a failed
+        // re-read is tried again on the next tick.
+        void refetchAgents({ silent: true });
+        void refetchTeams({ silent: true });
+        const fresh = await api.get<SidebarChat[]>('/sessions/chats');
+        setChatsData(fresh.data ?? []);
+      }
       versionRef.current = next;
-      if (previous !== null && previous !== next) reread();
     } catch {
       /* signed out or engine restarting: try again on the next tick */
     }
-  }, [reread]);
+  }, [refetchAgents, refetchTeams, setChatsData]);
   useEffect(() => { void checkVersion(); }, [checkVersion]);
   usePolling(checkVersion, VERSION_POLL_MS, true);
 
