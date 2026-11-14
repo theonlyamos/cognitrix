@@ -125,6 +125,13 @@ def _multipart_parser_error(exc: MultiPartException) -> HTTPException:
     return HTTPException(status_code=400, detail='Malformed multipart request')
 
 
+def _request_timezone() -> str:
+    """The browser timezone sent with this request (X-Timezone), or ''."""
+    from cognitrix.common.clock import clean_timezone, client_timezone
+
+    return clean_timezone(client_timezone.get())
+
+
 async def _run_awaitable_joined(operation):
     """Let an async close finish before request cancellation propagates."""
     worker = asyncio.create_task(operation)
@@ -697,6 +704,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'bypass_permissions': bool(data.get('bypass_permissions')),
                 'reasoning_effort': normalize_reasoning_effort(data.get('reasoning_effort')),
                 'execution_mode': execution_mode.value,
+                'timezone': _request_timezone(),
                 **({'folders': folders} if folders is not None else {}),
                 **({'incognito': True} if data.get('incognito') and not data.get('session_id') else {}),
             })

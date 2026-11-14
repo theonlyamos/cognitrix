@@ -49,3 +49,15 @@ async def test_own_skills_are_listed_before_the_shared_cache_is_warm(monkeypatch
     finally:
         personal_skills_ctx.reset(token)
     assert '/weekly-report: Write the weekly report' in text
+
+
+def test_the_timezone_travels_with_a_queued_chat_message():
+    """Chat turns run in the event stream's context, not the request's."""
+    from cognitrix.api.routes.agents import _request_timezone
+
+    assert _request_timezone() == ''
+    token = clock.client_timezone.set('Africa/Accra')
+    try:
+        assert _request_timezone() == 'Africa/Accra'
+    finally:
+        clock.client_timezone.reset(token)

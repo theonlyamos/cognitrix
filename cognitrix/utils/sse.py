@@ -829,6 +829,14 @@ class SSEManager:
                 effort_token = turn_reasoning_effort.set(
                     normalize_reasoning_effort(action.get('reasoning_effort')) or None
                 )
+                # The turn runs in the event stream's context, not in the
+                # request that sent the message, so the person's timezone
+                # travels with the queued message.
+                from cognitrix.common.clock import clean_timezone, client_timezone
+
+                timezone_token = client_timezone.set(
+                    clean_timezone(action.get('timezone')) or client_timezone.get()
+                )
                 media_token = set_media_turn_context(MediaTurnContext(
                     ownership=ownership,
                     current_images=image_refs,
@@ -866,6 +874,7 @@ class SSEManager:
                     question_turn_ctx.reset(question_token)
                     web_turn_ctx.reset(token)
                     turn_reasoning_effort.reset(effort_token)
+                    client_timezone.reset(timezone_token)
         except asyncio.CancelledError:
             terminal = {
                 'type': 'turn_stopped',

@@ -459,3 +459,17 @@ async def test_a_chat_keeps_its_memory_section_between_messages(db):
     await saved.add(str(user.id), 'Timezone is GMT.', pinned=True)
     third = await saved.prompt_block(str(user.id), agent, 'and the glacier?', budget=1000, session_id='chat-1')
     assert 'Timezone is GMT.' in third
+
+
+async def test_a_quick_same_length_correction_replaces_the_old_fact(db):
+    from cognitrix.memory import saved
+
+    saved._block_cache.clear()
+    user = await _user('Amos', 'amos@example.com')
+    row, _ = await saved.add(str(user.id), 'Office is Rome.')
+    agent = _agent()
+    assert 'Rome' in await saved.prompt_block(str(user.id), agent, session_id='chat-1')
+    # Same second, same length: only the text tells the two apart.
+    await saved.update(row, content='Office is Lima.')
+    block = await saved.prompt_block(str(user.id), agent, session_id='chat-1')
+    assert 'Lima' in block and 'Rome' not in block

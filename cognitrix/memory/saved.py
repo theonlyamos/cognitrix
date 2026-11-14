@@ -11,6 +11,7 @@ forget and search them. See docs/designs/global-memory.md.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from collections import OrderedDict
@@ -256,9 +257,12 @@ _block_cache: OrderedDict[tuple[str, str, str, int], tuple[str, str]] = OrderedD
 
 
 def _fingerprint(rows: list[Memory]) -> str:
-    return '|'.join(
-        f"{r.id}:{getattr(r, 'updated', '')}:{int(bool(r.pinned))}:{len(r.content)}" for r in rows
-    )
+    # The text itself, not its timestamp: a correction made within the same
+    # second as the last save must still replace the old fact.
+    digest = hashlib.sha256()
+    for r in rows:
+        digest.update(f"{r.id}\x1f{int(bool(r.pinned))}\x1f{r.scope}\x1f{r.content}\x1e".encode('utf-8', 'replace'))
+    return digest.hexdigest()
 
 
 async def prompt_block(user_id: str | None, agent: Any, query: str = '',
