@@ -377,6 +377,7 @@ _USER_MIGRATION_COLUMNS = (
     ('onboarded_at', 'INTEGER'),
     ('role', 'TEXT'), ('disabled', 'BOOLEAN'),
     ('reset_token_hash', 'TEXT'), ('reset_expires', 'INTEGER'),
+    ('whats_new_seen', 'TEXT'),
 )
 
 _MCP_SERVER_MIGRATION_COLUMNS = (

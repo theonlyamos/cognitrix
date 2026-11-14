@@ -36,6 +36,18 @@ describe('AccountMenu', () => {
     expect(screen.getByRole('menuitem', { name: 'API Keys' })).toHaveAttribute('href', '/api-keys');
   });
 
+  it("opens the What's new window", async () => {
+    const user = userEvent.setup();
+    const opened = vi.fn();
+    window.addEventListener('cognitrix:open-whats-new', opened);
+    renderSidebar();
+    await user.click(screen.getByRole('button', { name: 'Account menu' }));
+    await user.click(screen.getByRole('menuitem', { name: "What's new" }));
+    expect(opened).toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).toBeNull();
+    window.removeEventListener('cognitrix:open-whats-new', opened);
+  });
+
   it('switches the theme and keeps the menu open', async () => {
     const user = userEvent.setup();
     renderSidebar();

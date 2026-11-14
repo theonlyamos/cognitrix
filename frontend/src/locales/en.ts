@@ -15,6 +15,7 @@ const en = {
   'nav.meetings': 'Meetings',
   'nav.settings': 'Settings',
   'nav.apiKeys': 'API Keys',
+  'nav.whatsNew': "What's new",
   'nav.signOut': 'Sign out',
   'nav.account': 'Account menu',
   'nav.collapse': 'Collapse',
