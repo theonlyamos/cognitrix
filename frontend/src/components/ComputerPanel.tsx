@@ -392,7 +392,7 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
         {actions}
         {trailing}
       </div>
-      {error && <p role="alert" className="px-3 pb-2 text-[12px] text-[#b42318] dark:text-[#ff8a80]">{error}</p>}
+      {error && <p role="alert" className="px-3 pb-2 text-[12px] text-danger-ink">{error}</p>}
       <div className={cn('flex min-h-0 min-w-0 flex-1', docked ? 'bg-panel-2 p-3' : full ? 'bg-black' : 'bg-bg p-4 md:p-6', 'max-md:p-0 side:p-0')}>
         <div
           ref={screenRef}

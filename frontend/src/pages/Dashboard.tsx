@@ -150,11 +150,11 @@ function inboxHref(item: InboxItem): string {
 }
 
 const KIND_STYLE: Record<InboxItem['kind'], { label: string; className: string }> = {
-  approval: { label: 'APPROVAL', className: 'bg-[#ffb86b]/15 text-[#b4691a] dark:text-[#ffb86b]' },
-  question: { label: 'QUESTION', className: 'bg-[#7cc4ff]/15 text-[#1f6f8b] dark:text-[#7cc4ff]' },
+  approval: { label: 'APPROVAL', className: 'bg-warn/15 text-warn-ink' },
+  question: { label: 'QUESTION', className: 'bg-info/15 text-info-ink' },
   notification: { label: 'ALERT', className: 'bg-accent/15 text-accent-ink' },
   offer: { label: 'OFFER', className: 'bg-ok/15 text-ok' },
-  skill_draft: { label: 'SKILL', className: 'bg-[#b48cff]/15 text-[#6b46c1] dark:text-[#c9b0ff]' },
+  skill_draft: { label: 'SKILL', className: 'bg-violet/15 text-violet-ink' },
 };
 
 /* ------------------------------------------------------------------ pieces */
@@ -273,16 +273,16 @@ function StatTile({
       to={to}
       className={cn(
         'group relative flex min-w-0 flex-col justify-between gap-3 overflow-hidden rounded-[14px] border bg-panel p-4 transition-colors hover:border-fg-dim/50',
-        tone === 'warn' ? 'border-[#ffb86b]/50' : 'border-line',
+        tone === 'warn' ? 'border-warn/50' : 'border-line',
       )}
     >
-      {tone === 'warn' && <span aria-hidden="true" className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#ffb86b]/[0.09] to-transparent" />}
+      {tone === 'warn' && <span aria-hidden="true" className="pointer-events-none absolute inset-0 bg-gradient-to-br from-warn/[0.09] to-transparent" />}
       <div className="relative flex items-center justify-between gap-2">
         <span className="font-mono text-[10.5px] tracking-[0.13em] text-fg-dim">{label}</span>
         <span
           className={cn(
             'grid h-7 w-7 flex-none place-items-center rounded-md border',
-            tone === 'warn' ? 'border-[#ffb86b]/40 text-[#b4691a] dark:text-[#ffb86b]' : 'border-line text-fg-dim group-hover:text-fg',
+            tone === 'warn' ? 'border-warn/40 text-warn-ink' : 'border-line text-fg-dim group-hover:text-fg',
           )}
         >
           <Icon className="h-[15px] w-[15px]" strokeWidth={1.9} aria-hidden="true" />
@@ -536,7 +536,7 @@ export default function Dashboard() {
                   'last 7 days'
                 ) : (
                   <span>
-                    <span className={cn('font-mono', change > 0 ? 'text-[#b4691a] dark:text-[#ffb86b]' : 'text-ok')}>
+                    <span className={cn('font-mono', change > 0 ? 'text-warn-ink' : 'text-ok')}>
                       {change > 0 ? '▲' : '▼'} {Math.abs(change)}%
                     </span>{' '}
                     vs last wk

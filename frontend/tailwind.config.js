@@ -26,6 +26,19 @@ module.exports = {
           ink: 'rgb(var(--danger-ink-rgb) / <alpha-value>)',
         },
         ok: 'rgb(var(--ok-rgb) / <alpha-value>)',
+        warn: {
+          DEFAULT: 'rgb(var(--warn-rgb) / <alpha-value>)',
+          foreground: 'rgb(var(--on-warn-rgb) / <alpha-value>)',
+          ink: 'rgb(var(--warn-ink-rgb) / <alpha-value>)',
+        },
+        info: {
+          DEFAULT: 'rgb(var(--info-rgb) / <alpha-value>)',
+          ink: 'rgb(var(--info-ink-rgb) / <alpha-value>)',
+        },
+        violet: {
+          DEFAULT: 'rgb(var(--violet-rgb) / <alpha-value>)',
+          ink: 'rgb(var(--violet-ink-rgb) / <alpha-value>)',
+        },
         // transition aliases so any lingering shadcn/base classes resolve sanely
         border: 'var(--line)',
         input: 'var(--line)',
@@ -47,8 +60,8 @@ module.exports = {
         },
       },
       fontFamily: {
-        sans: ['Space Grotesk', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+        sans: ['var(--font-ui)'],
+        mono: ['var(--font-code)'],
       },
       borderRadius: { sm: 'var(--r1)', DEFAULT: '6px', md: 'var(--r2)', lg: '10px', xl: '12px' },
       boxShadow: {

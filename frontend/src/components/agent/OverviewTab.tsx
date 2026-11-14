@@ -61,7 +61,7 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
   const tiles = [
     { label: 'CHATS · 7 DAYS', value: stats?.chats_week, note: stats ? `${stats.running_chats} running now` : '', tone: stats?.running_chats ? 'text-ok' : 'text-fg-dim' },
     { label: 'TASK RUNS · 7 DAYS', value: stats?.task_runs_week, note: stats ? (stats.failed_runs_week ? `${stats.failed_runs_week} failed` : 'none failed') : '', tone: stats?.failed_runs_week ? 'text-danger-ink' : 'text-fg-dim' },
-    { label: 'WAITING ON YOU', value: stats?.pending_approvals, note: stats?.pending_approvals ? 'see below' : 'nothing to approve', tone: stats?.pending_approvals ? 'text-[#a15c00] dark:text-[#e5b567]' : 'text-fg-dim' },
+    { label: 'WAITING ON YOU', value: stats?.pending_approvals, note: stats?.pending_approvals ? 'see below' : 'nothing to approve', tone: stats?.pending_approvals ? 'text-warn-ink' : 'text-fg-dim' },
     { label: 'TOOLS', value: draft.tools.length, note: askFirst ? `${askFirst} ask first` : 'default approvals', tone: 'text-fg-dim' },
   ];
 
@@ -137,7 +137,7 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
 
       {overview && overview.approvals.length > 0 && (
         <Card tone="warn">
-          <Eyebrow className="text-[#a15c00] dark:text-[#e5b567]">WAITING ON YOU</Eyebrow>
+          <Eyebrow className="text-warn-ink">WAITING ON YOU</Eyebrow>
           <ul className="mt-2 divide-y divide-line">
             {overview.approvals.map((a) => (
               <li key={a.id} className="flex flex-wrap items-center gap-3 py-3 first:pt-1 last:pb-0">

@@ -112,7 +112,7 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
                         {s.description && <span className="block truncate text-[12.5px] text-fg-dim">{s.description}</span>}
                       </span>
                       <span className={cn('inline-flex items-center gap-1.5 text-[12.5px]',
-                        status === 'connected' ? 'text-ok' : status === 'off' ? 'text-fg-dim' : 'text-[#a15c00] dark:text-[#e5b567]')}>
+                        status === 'connected' ? 'text-ok' : status === 'off' ? 'text-fg-dim' : 'text-warn-ink')}>
                         <span aria-hidden className="h-[7px] w-[7px] rounded-full bg-current" />{status}
                       </span>
                     </label>
@@ -259,7 +259,7 @@ function ToolPermissions({ server, label, levels, onChange }: {
         !result ? (
           <p className="mt-2 text-[12.5px] text-fg-dim">Connecting…</p>
         ) : !result.connected ? (
-          <p role="alert" className="mt-2 text-[12.5px] text-[#a15c00] dark:text-[#e5b567]">
+          <p role="alert" className="mt-2 text-[12.5px] text-warn-ink">
             {result.error}{' '}
             {(server.catalog_id || server.auth_type === 'oauth') && <Link to="/settings/apps" className="text-accent-ink hover:underline">Connected apps</Link>}
           </p>

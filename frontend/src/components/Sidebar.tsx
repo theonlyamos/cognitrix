@@ -101,14 +101,14 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
               <span className="relative flex-none">
                 <item.icon className="h-[17px] w-[17px] flex-none" />
                 {item.path === '/inbox' && waiting > 0 && collapsed && (
-                  <span aria-hidden="true" className="absolute -right-2 -top-2 hidden h-[15px] min-w-[15px] place-items-center rounded-full bg-[#ffb86b] px-0.5 font-mono text-[9.5px] font-medium text-[#0b0c0e] md:grid">
+                  <span aria-hidden="true" className="absolute -right-2 -top-2 hidden h-[15px] min-w-[15px] place-items-center rounded-full bg-warn px-0.5 font-mono text-[9.5px] font-medium text-warn-foreground md:grid">
                     {waiting}
                   </span>
                 )}
               </span>
               <span className={cn('flex-1', collapsed && 'md:hidden')}>{t(item.label)}</span>
               {item.path === '/inbox' && waiting > 0 && (
-                <span className={cn('rounded-full bg-[#ffb86b]/15 px-1.5 font-mono text-[10.5px] text-[#c77a26] dark:text-[#ffb86b]', collapsed && 'md:hidden')}>
+                <span className={cn('rounded-full bg-warn/15 px-1.5 font-mono text-[10.5px] text-warn-ink', collapsed && 'md:hidden')}>
                   {waiting}
                   <span className="sr-only"> {t('nav.waiting')}</span>
                 </span>

@@ -771,6 +771,7 @@ async def _ensure_schema():
     from cognitrix.models.usage import UsageDay
     from cognitrix.sessions.index import ChatIndex
     from cognitrix.models.voice_settings import VoiceSettings
+    from cognitrix.themes import ThemeSettings
     from cognitrix.session_ownership import SessionOwnership
     from cognitrix.tasks.events import TaskRunEvent
     from cognitrix.tasks.metrics import TaskRunPhaseMetric
@@ -830,6 +831,7 @@ async def _ensure_schema():
         Credential,
         Memory,
         MemorySettings,
+        ThemeSettings,
         UsageDay,
         ChatIndex,
         KnowledgeCollection,

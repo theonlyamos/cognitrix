@@ -1779,8 +1779,8 @@ export default function Home() {
           className="min-h-0 flex-1 overscroll-contain overflow-y-auto"
         >
           {incognito && !picking && (
-            <div role="note" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-dashed border-[#ffb86b]/60 bg-[#ffb86b]/10 px-3 py-2 text-[12.5px] leading-relaxed sm:mx-6">
-              <svg aria-hidden="true" className="mt-0.5 flex-none text-[#b4691a] dark:text-[#ffb86b]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><path d="M3 3l18 18" /></svg>
+            <div role="note" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-dashed border-warn/60 bg-warn/10 px-3 py-2 text-[12.5px] leading-relaxed sm:mx-6">
+              <svg aria-hidden="true" className="mt-0.5 flex-none text-warn-ink" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><path d="M3 3l18 18" /></svg>
               <span>
                 <span className="font-medium">Incognito.</span> This chat isn't saved to your chat list, doesn't use or change
                 memory, and is deleted when you leave it.

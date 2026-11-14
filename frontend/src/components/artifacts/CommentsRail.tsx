@@ -139,12 +139,12 @@ export function CommentsRail({
           )}
           {canSend && (
             <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12.5px]">
-              <input type="checkbox" className="h-3.5 w-3.5 accent-[#4e6b00]" checked={send} onChange={(e) => setSend(e.target.checked)} />
+              <input type="checkbox" className="h-3.5 w-3.5 accent-accent-ink" checked={send} onChange={(e) => setSend(e.target.checked)} />
               Send to <span className="font-medium">{agentName}</span>
             </label>
           )}
           <button type="submit" disabled={busy || !text.trim()}
-            className="ml-auto inline-flex h-8 items-center rounded-md bg-accent px-3 text-[12.5px] font-semibold text-[#0b0c0e] disabled:opacity-50">
+            className="ml-auto inline-flex h-8 items-center rounded-md bg-accent px-3 text-[12.5px] font-semibold text-accent-foreground disabled:opacity-50">
             {busy ? 'Posting…' : 'Comment'}
           </button>
         </div>
