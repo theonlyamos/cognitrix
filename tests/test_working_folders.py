@@ -1,12 +1,18 @@
 """Working folders: chats and agents can use several folders, read only or read & write."""
 import os
+from pathlib import Path
 
 import pytest
 
 from cognitrix.common import folders as F
 from cognitrix.common.process_security import HostProcessMode
 from cognitrix.common.safe_exec import PathEscapesRoot
-from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
+from cognitrix.tools.utils import (
+    ToolExecutionContext,
+    current_execution_context,
+    reset_execution_context,
+    set_execution_context,
+)
 
 
 @pytest.fixture
@@ -185,7 +191,7 @@ def test_sub_agents_get_read_only_folders(two_folders):
 
 def test_merge_folder_adds_or_upgrades(two_folders):
     project, notes, outside = two_folders
-    current = list(F.active_folders())
+    current = list(current_execution_context().folders)
     upgraded = F.merge_folder(current, F.Folder(str(notes.resolve()), F.WRITE, 'notes'))
     assert [f.access for f in upgraded] == [F.WRITE, F.WRITE]
     added = F.merge_folder(current, F.Folder(str(outside.resolve()), F.READ, 'outside'))
@@ -385,3 +391,51 @@ def test_task_runtime_snapshots_keep_the_folder_policy(tmp_path, monkeypatch):
     unset = instantiate_runtime(build_runtime_snapshot(
         Agent(name='B', llm=LLM(provider='openai', model='gpt-x'), system_prompt='hi'), None))
     assert unset.folders is None
+
+
+# --- the apps folder every agent can use --------------------------------------
+
+def test_every_turn_can_write_in_the_apps_folder(two_folders):
+    from cognitrix.config import settings
+
+    apps = F.apps_root()
+    assert apps == (Path(settings.workdir) / 'apps').resolve() and apps.is_dir()
+    listed = F.active_folders()
+    assert [f.name for f in listed] == ['project', 'notes', 'apps']
+    assert listed[-1].writable and not listed[-1].primary
+    # The rest of the data folder stays off limits.
+    target = F.resolve_path(str(apps / 'todo' / 'app.py'), write=True)
+    assert target.parent.name == 'todo'
+    with pytest.raises(PathEscapesRoot):
+        F.resolve_path(str(Path(settings.workdir) / 'cognitrix.db'))
+    assert 'apps folder' in F.folder_prompt(current_execution_context().folders)
+
+
+def test_apps_folder_without_chat_folders_and_not_for_api_keys(two_folders):
+    from cognitrix.tools.utils import reset_execution_context as reset
+
+    token = set_execution_context(ToolExecutionContext(host_process_mode=HostProcessMode.TRUSTED_LOCAL))
+    try:
+        assert [f.name for f in F.active_folders()][-1] == 'apps'
+    finally:
+        reset(token)
+    token = set_execution_context(ToolExecutionContext(api_key_id='k1', folders=(
+        F.Folder(str(two_folders[0].resolve()), F.WRITE, 'project', True),)))
+    try:
+        assert [f.name for f in F.active_folders()] == ['project']
+        with pytest.raises(PathEscapesRoot):
+            F.resolve_path(str(F.apps_root() / 'x.txt'), write=True)
+    finally:
+        reset(token)
+
+
+def test_changing_app_files_never_asks(two_folders):
+    from cognitrix.safety.destructive_ops import DestructiveOpDetector, RiskLevel
+
+    existing = F.apps_root() / 'todo' / 'app.py'
+    existing.parent.mkdir(parents=True)
+    existing.write_text('print(1)\n')
+    detector = DestructiveOpDetector()
+    assert detector.analyze('Write', {'file_path': str(existing), 'content': 'x'}).risk_level == RiskLevel.LOW
+    project_file = two_folders[0] / 'README.md'
+    assert detector.analyze('Write', {'file_path': str(project_file), 'content': 'x'}).risk_level != RiskLevel.LOW

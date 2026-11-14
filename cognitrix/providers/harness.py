@@ -291,6 +291,7 @@ def remember(chat_id: str | None, key: str, model: str, cwd: str, session: str, 
 def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
                   resume: str | None, new_session: str | None, cwd: str,
                   tools_url: str | None = None, settings_file: str | None = None,
+                  extra_dirs: list[str] | tuple[str, ...] = (),
                   ) -> tuple[list[str], dict[str, str]]:
     """(argv, extra environment). The message itself always goes on stdin.
 
@@ -298,6 +299,8 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
     (harness_bridge.py). 'ask' mode needs it, and falls back to 'edit' without.
     CLIs that take MCP servers as JSON get it in ``settings_file``, written
     here: JSON in an argument doesn't survive the .cmd wrappers on Windows.
+    ``extra_dirs`` are folders besides ``cwd`` the CLI may use (the apps
+    folder): each CLI gets its own "add a directory" option.
     """
     from cognitrix.providers.harness_bridge import APPROVE_TOOL, SERVER_NAME
 
@@ -323,6 +326,8 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
             argv += ['--mcp-config', settings_file, '--allowedTools', f'mcp__{SERVER_NAME}']
         if mode == 'ask':
             argv += ['--permission-prompt-tool', f'mcp__{SERVER_NAME}__{APPROVE_TOOL}']
+        # '=' form: --add-dir takes several values and would swallow what follows.
+        argv += [f'--add-dir={d}' for d in extra_dirs]
         if model:
             argv += ['--model', model]
         if resume:
@@ -335,6 +340,8 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
                     '-c', f'sandbox_mode="{sandbox}"']
         else:
             argv = [program, 'exec', '--json', '--skip-git-repo-check', '--sandbox', sandbox, '-C', cwd]
+        for d in extra_dirs:
+            argv += ['--add-dir', d]
         if model:
             argv += ['-m', model]
         if effort in ('minimal', 'low', 'medium', 'high', 'xhigh'):
@@ -351,6 +358,8 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
     if key == 'gemini-cli':
         approval = {'read_only': 'plan', 'edit': 'auto_edit', 'full': 'yolo'}[mode]
         argv = [program, '-p', '', '--output-format', 'stream-json', '--approval-mode', approval, '--skip-trust']
+        if extra_dirs:
+            argv += ['--include-directories', ','.join(extra_dirs)]
         if model:
             argv += ['-m', model]
         argv += ['--resume', resume] if resume else ['--session-id', new_session or str(uuid.uuid4())]
@@ -364,6 +373,8 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
     if key == 'copilot-cli':
         argv = [program, '--output-format', 'json', '--no-color', '--no-ask-user', '--no-auto-update',
                 '--session-id', resume or new_session or str(uuid.uuid4())]
+        for d in extra_dirs:
+            argv += [f'--add-dir={d}']
         if mode == 'edit':
             argv += ['--allow-tool', 'write']
         elif mode == 'full':
@@ -385,6 +396,9 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
             'edit': {'edit': 'allow', 'bash': 'deny'},
             'full': {'edit': 'allow', 'bash': 'allow', 'webfetch': 'allow'},
         }[mode]
+        if extra_dirs:
+            permission = {**permission, 'external_directory': {
+                f"{d.rstrip('/').rstrip(chr(92))}/**": 'allow' for d in extra_dirs}}
         config: dict[str, Any] = {'permission': permission}
         if tools_url:
             config['mcp'] = {SERVER_NAME: {'type': 'remote', 'url': tools_url, 'enabled': True, 'oauth': False}}
@@ -673,6 +687,11 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
         chat_folders = tuple(info.folders) if info is not None and info.folders else folder_paths.active_folders()
         primary = next((f for f in chat_folders if getattr(f, 'primary', False)), chat_folders[0] if chat_folders else None)
         cwd = str(primary.root) if primary is not None else str(folder_paths.primary_folder())
+        # The apps folder every agent may build apps in, unless it's where the CLI starts.
+        apps_dir = str(folder_paths.apps_root())
+        extra_dirs = [apps_dir] if (
+            any(f.path == apps_dir and f.writable for f in folder_paths.with_apps_folder(chat_folders))
+            and os.path.normcase(apps_dir) != os.path.normcase(cwd)) else []
         if primary is not None and mode != 'read_only' and not primary.writable:
             mode = 'read_only'
             note = f"'{primary.label}' is read only in this chat, so {harness.label} can't change files.\n"
@@ -720,7 +739,7 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
         argv, env_extra = build_command(key, program, mode=mode, model=model, effort=effort,
                                         resume=resume, new_session=new_session, cwd=cwd,
                                         tools_url=bridge.url if bridge is not None else None,
-                                        settings_file=settings_file)
+                                        settings_file=settings_file, extra_dirs=extra_dirs)
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
         proc = _spawn(argv, text, cwd, env_extra, loop, queue)
