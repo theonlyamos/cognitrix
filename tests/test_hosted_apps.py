@@ -16,6 +16,7 @@ import sys
 import tarfile
 import textwrap
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -277,6 +278,29 @@ async def test_app_from_another_folder_is_copied_into_the_apps_folder(db, tmp_pa
     home = store.apps_root() / app.slug
     assert app.folder == str(home) and (home / 'app.py').is_file() and not (home / 'node_modules').exists()
 
+    # Publishing again replaces only its own copy.
+    token = _as(amos, session_id='s1', agent_id='a1',
+                folders=(F.Folder(str(project.resolve()), F.WRITE, 'project', True),))
+    try:
+        again = await _tool('publish_app', title='Preview', folder=str(project), start_command=cmd)
+    finally:
+        reset_execution_context(token)
+    assert again.status == 'success' and (await store.get_app(app.id)).folder == str(home)
+
+    # Another app's work in apps/<slug> is never replaced.
+    (store.apps_root() / 'second').mkdir()
+    (store.apps_root() / 'second' / 'mine.txt').write_text('keep me')
+    token = _as(amos, session_id='s2', agent_id='a1',
+                folders=(F.Folder(str(project.resolve()), F.WRITE, 'project', True),))
+    try:
+        second = await _tool('publish_app', title='Second', folder=str(project), start_command=cmd)
+    finally:
+        reset_execution_context(token)
+    assert second.status == 'success', second.text
+    other = await store.get_app(second.entities[0].id)
+    assert (store.apps_root() / 'second' / 'mine.txt').read_text() == 'keep me'
+    assert other.folder != str(store.apps_root() / 'second') and (Path(other.folder) / 'app.py').is_file()
+
     # A folder the chat can't see can't be published.
     secret = tmp_path / 'elsewhere'
     make_app(secret, 'nope')
@@ -297,9 +321,15 @@ async def test_older_apps_move_into_the_apps_folder(db, tmp_path):
     make_app(old_src, 'old')
     await HostedApp(owner_id='u1', slug='old-one', title='Old one', runtime='local', folder=str(old_src)).save()
     await HostedApp(owner_id='u1', slug='gone', title='Gone', runtime='sandbox', folder=str(tmp_path / 'missing')).save()
-    assert await store.move_into_apps_folder() == 1
+    await HostedApp(owner_id='u1', slug='taken', title='Taken', runtime='local', folder=str(old_src)).save()
+    (store.apps_root() / 'taken').mkdir()
+    (store.apps_root() / 'taken' / 'other.txt').write_text('another app')
+    assert await store.move_into_apps_folder() == 2
     moved = await store.by_slug('old-one')
     assert moved.folder == str(store.apps_root() / 'old-one') and (store.apps_root() / 'old-one' / 'app.py').is_file()
+    taken = await store.by_slug('taken')
+    assert taken.folder != str(store.apps_root() / 'taken') and (Path(taken.folder) / 'app.py').is_file()
+    assert (store.apps_root() / 'taken' / 'other.txt').read_text() == 'another app'
     assert (await store.by_slug('gone')).folder == str(tmp_path / 'missing')
     assert await store.move_into_apps_folder() == 0
 

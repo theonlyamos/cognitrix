@@ -282,7 +282,8 @@ async def publish(
         try:
             # Every app's code lives in the apps folder (~/.cognitrix/apps/<name>);
             # one published from elsewhere is copied there first.
-            archive, home = await asyncio.to_thread(_pack_into_apps_folder, source, app.slug)
+            archive, home = await asyncio.to_thread(_pack_into_apps_folder, source, app.slug,
+                                                     app.folder)
         except AppHostError as exc:
             archive, home = b'', source
             pack_error = exc.message
@@ -370,14 +371,25 @@ def _source_folder(folder: str, title: str) -> Path:
     return root
 
 
-def _pack_into_apps_folder(source: Path, slug: str) -> tuple[bytes, Path]:
+def _free_home(slug: str, own: str = '') -> Path:
+    """``apps/<slug>``, unless that folder holds something that isn't this
+    app's (another app's source, or work not published yet): then a fresh
+    ``apps/<slug>-<hex>``, so nothing there is ever replaced."""
+    home = apps_root() / slug
+    while home.exists() and str(home) != own and (not home.is_dir() or any(home.iterdir())):
+        home = apps_root() / f'{slug}-{secrets.token_hex(2)}'
+    return home
+
+
+def _pack_into_apps_folder(source: Path, slug: str, own: str = '') -> tuple[bytes, Path]:
     """Pack ``source`` for the runner. A folder outside the apps folder is
-    copied to ``apps/<slug>`` (replacing an older copy), so every app's code
-    is kept in one place. Returns (archive, folder the app now lives in)."""
+    copied into the apps folder (replacing only this app's own earlier copy,
+    ``own``), so every app's code is kept in one place. Returns (archive,
+    folder the app now lives in)."""
     archive = pack_folder(str(source))
     if _inside_apps(source):
         return archive, Path(source).resolve()
-    home = apps_root() / slug
+    home = _free_home(slug, own if own and _inside_apps(Path(own)) else '')
     _replace_with(archive, home)
     return archive, home
 
@@ -411,14 +423,12 @@ def _move_one(app: HostedApp) -> str | None:
     current = Path(app.folder).expanduser() if app.folder else None
     if current is not None and current.is_dir() and _inside_apps(current):
         return None
-    home = apps_root() / app.slug
-    if home.is_dir() and any(home.iterdir()):
-        return str(home)  # copied before
     source = current if current is not None and current.is_dir() else None
     if source is None and app.runtime == 'local' and app.version:
         source = _local_release(app.slug, app.version)  # the code that's running now
     if source is None:
         return None
+    home = _free_home(app.slug)
     _replace_with(pack_folder(str(source)), home)
     return str(home)
 
