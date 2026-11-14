@@ -333,6 +333,11 @@ class AgentManager:
     def _format_skills_string(self) -> str:
         """Build skill awareness section for system prompt."""
         try:
+            # Listing skills to an agent that can't load them only invites
+            # failed tool calls (the starter specialists have short tool lists).
+            tool_names = {str(getattr(t, 'name', '')).lower() for t in (getattr(self.agent, 'tools', None) or [])}
+            if tool_names and 'load skill' not in tool_names:
+                return ''
             import asyncio
 
             from cognitrix.skills.manager import get_skill_manager
