@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
+import type { Card } from '@/lib/cards';
 
 export type ToolStatus = 'running' | 'done' | 'error' | 'stopped';
 
@@ -21,6 +22,8 @@ export interface ToolUse {
   /** Tool output preview (may be truncated), shown when the chip expands. */
   result?: string;
   artifacts?: ToolArtifact[];
+  /** A card the agent showed with Show Card (lib/cards). */
+  card?: Card;
 }
 
 export interface ChatMessage {
@@ -50,7 +53,7 @@ interface SessionContextType {
   /** A tool started: append a running chip to the current tool row, or open one. */
   addToolCall: (name: string, opts?: { id?: string; params?: string }) => void;
   /** A tool finished: flip its most-recent running chip to done/error + result. */
-  resolveToolCall: (name: string, status: 'done' | 'error', opts?: { id?: string; result?: string; artifacts?: ToolArtifact[] }) => void;
+  resolveToolCall: (name: string, status: 'done' | 'error', opts?: { id?: string; result?: string; artifacts?: ToolArtifact[]; card?: Card }) => void;
   /** Mark every still-running tool in the active transcript as user-stopped. */
   stopRunningTools: () => void;
   /** Mark every still-running tool as failed when the turn terminates in error. */
@@ -143,7 +146,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   // A tool finished: flip the matching running chip to done/error and attach its
   // result. Pair by tool_call_id when present, else by name (most recent running).
-  const resolveToolCall = useCallback((name: string, status: 'done' | 'error', opts?: { id?: string; result?: string; artifacts?: ToolArtifact[] }) => {
+  const resolveToolCall = useCallback((name: string, status: 'done' | 'error', opts?: { id?: string; result?: string; artifacts?: ToolArtifact[]; card?: Card }) => {
     setMessagesState(prev => {
       for (let i = prev.length - 1; i >= 0; i--) {
         const m = prev[i];
@@ -155,12 +158,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           if (opts?.id ? t.id === opts.id : t.name === name) { hit = j; break; }
         }
         if (hit === -1) continue;
-        const tools = m.tools.map((t, j) => (j === hit ? { ...t, status, result: opts?.result, artifacts: opts?.artifacts } : t));
+        const tools = m.tools.map((t, j) => (j === hit ? { ...t, status, result: opts?.result, artifacts: opts?.artifacts, ...(opts?.card ? { card: opts.card } : {}) } : t));
         const copy = [...prev];
         copy[i] = { ...m, tools };
         return copy;
       }
-      if (status !== 'error' && !opts?.artifacts?.length) return prev;
+      if (status !== 'error' && !opts?.artifacts?.length && !opts?.card) return prev;
       // Preserve terminal errors and artifact-bearing completions even if a
       // reconnect caused the matching `started` event to be missed.
       const chip: ToolUse = {
@@ -169,6 +172,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         status,
         result: opts?.result,
         artifacts: opts?.artifacts,
+        ...(opts?.card ? { card: opts.card } : {}),
       };
       const last = prev[prev.length - 1];
       if (last && last.role === 'tool') {

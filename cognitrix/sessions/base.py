@@ -611,6 +611,19 @@ class Session(Model):
             except Exception:
                 logger.debug('Artifact tools unavailable', exc_info=True)
 
+        # Show Card: numbers, a table, a chart and buttons drawn in the chat
+        # (cognitrix/cards). Any chat or task run with a tool-capable model.
+        if interface in ('web', 'ws', 'task') and getattr(agent.llm, 'supports_tool_use', True):
+            try:
+                from cognitrix.tools.base import ToolManager
+
+                if not any(str(getattr(t, 'name', '')).lower() == 'show card' for t in agent.tools):
+                    card_tool = ToolManager.get_by_name('show_card')
+                    if card_tool:
+                        agent = agent.model_copy(update={'tools': [*agent.tools, card_tool]})
+            except Exception:
+                logger.debug('Show Card tool unavailable', exc_info=True)
+
         # Propose Skill lets an agent suggest saving how it did a job; the
         # person reviews the draft before it is used (skills/drafts.py).
         if interface in ('web', 'ws') and owner and not self.task_id and not getattr(self, 'incognito', False):

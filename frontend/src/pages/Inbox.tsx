@@ -1,3 +1,4 @@
+import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
@@ -42,26 +43,6 @@ function Badge({ kind }: { kind: InboxItem['kind'] }) {
   );
 }
 
-/** Pretty-print a tool call's parameters; a shell command shows as itself. */
-function CallPreview({ approval }: { approval: InboxApproval }) {
-  const params = approval.params ?? {};
-  const command = typeof params.command === 'string' ? params.command : null;
-  const text = command ?? JSON.stringify(params, null, 2);
-  return (
-    <div className="rounded-xl border border-line bg-panel">
-      <div className="flex items-center gap-2 border-b border-line px-3.5 py-2.5">
-        <span className="font-mono text-[12.5px] font-medium">{approval.tool_name}</span>
-        {approval.risk_level && (
-          <span className="rounded-full bg-danger/10 px-2 py-0.5 font-mono text-[10.5px] text-danger-ink">{approval.risk_level} risk</span>
-        )}
-        <span className="flex-1" />
-        <span className="font-mono text-[11px] text-[#b4691a] dark:text-[#ffb86b]">waiting</span>
-      </div>
-      <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words px-3.5 py-3 font-mono text-[12px] leading-relaxed text-fg">{text}</pre>
-    </div>
-  );
-}
-
 function ApprovalDetail({ item, onDone }: { item: InboxApproval; onDone: () => void }) {
   const [busy, setBusy] = useState<'approve' | 'deny' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -93,45 +74,43 @@ function ApprovalDetail({ item, onDone }: { item: InboxApproval; onDone: () => v
     return () => document.removeEventListener('keydown', onKey);
   });
 
+  const params = item.params ?? {};
+  const command = typeof params.command === 'string' ? params.command : null;
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <div className="font-mono text-[10.5px] tracking-[0.14em] text-[#b4691a] dark:text-[#ffb86b]">APPROVAL NEEDED</div>
-        <div className="mt-1 font-mono text-[12px] text-fg-dim">{itemSource(item)}</div>
-        <h2 className="mt-2 text-[20px] font-semibold leading-snug">{fromChat ? `${item.agent_name || 'The agent'} wants to run ${item.tool_name}` : `The agent wants to run ${item.tool_name}`}</h2>
-        {item.details && <p className="mt-2 text-[13.5px] leading-relaxed text-fg-dim">{item.details}</p>}
-      </div>
-      <CallPreview approval={item} />
-      {error && <p role="alert" className="text-[13px] text-danger-ink">{error}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => decide(true)}
-          className="h-10 rounded-[9px] bg-accent px-5 text-[13.5px] font-semibold text-accent-foreground disabled:opacity-60"
-        >
-          {busy === 'approve' ? 'Approving…' : 'Approve'}
-        </button>
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => decide(false)}
-          className="h-10 rounded-[9px] border border-danger/40 px-5 text-[13.5px] text-danger-ink disabled:opacity-60"
-        >
-          {busy === 'deny' ? 'Denying…' : 'Deny'}
-        </button>
-        <span className="font-mono text-[11px] text-fg-dim">A / D</span>
-        <span className="flex-1" />
-        {fromChat && item.href ? (
-          <Link to={item.href} className="text-[13px] text-accent-ink hover:underline">
-            Open chat
-          </Link>
-        ) : item.task_id && (
-          <Link to={`/tasks/${item.task_id}`} className="text-[13px] text-accent-ink hover:underline">
-            Open task
-          </Link>
+      <PanelCard
+        tone="danger"
+        tag="⚠ approval"
+        title={fromChat ? `${item.agent_name || 'The agent'} wants to run ${item.tool_name}` : `The agent wants to run ${item.tool_name}`}
+        subtitle={item.details || itemSource(item)}
+        fields={[
+          { label: 'Tool', value: <span className="font-mono text-[13px]">{item.tool_name}</span> },
+          ...(item.risk_level ? [{ label: 'Risk', value: <span className="text-danger-ink">{item.risk_level}</span> }] : []),
+          { label: 'From', value: itemSource(item) },
+        ]}
+        footer={(
+          <>
+            <PanelButton kind="primary" disabled={busy !== null} onClick={() => void decide(true)}>
+              {busy === 'approve' ? 'Approving…' : 'Approve'}
+            </PanelButton>
+            <PanelButton kind="danger" disabled={busy !== null} onClick={() => void decide(false)}>
+              {busy === 'deny' ? 'Denying…' : 'Deny'}
+            </PanelButton>
+            <span className="font-mono text-[11px] text-fg-dim">A / D</span>
+            <span className="flex-1" />
+            {fromChat && item.href ? (
+              <Link to={item.href} className="text-[13px] text-accent-ink hover:underline">Open chat</Link>
+            ) : item.task_id && (
+              <Link to={`/tasks/${item.task_id}`} className="text-[13px] text-accent-ink hover:underline">Open task</Link>
+            )}
+          </>
         )}
-      </div>
+      >
+        <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-panel-2 px-3 py-2.5 font-mono text-[12px] leading-relaxed text-fg">
+          {command ?? JSON.stringify(params, null, 2)}
+        </pre>
+      </PanelCard>
+      {error && <p role="alert" className="text-[13px] text-danger-ink">{error}</p>}
       <p className="text-[12.5px] leading-relaxed text-fg-dim">
         {fromChat
           ? 'The same request shows in the chat, so you can answer in either place. The agent waits until you do.'
@@ -162,56 +141,58 @@ function QuestionDetail({ item, onDone }: { item: InboxQuestion; onDone: () => v
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <div className="font-mono text-[10.5px] tracking-[0.14em] text-[#1f6f8b] dark:text-[#7cc4ff]">AGENT IS ASKING</div>
-        <h2 className="mt-2 text-[20px] font-semibold leading-snug">{String(q.prompt || 'A question from your chat')}</h2>
-        {typeof q.details === 'string' && q.details && <p className="mt-2 text-[13.5px] leading-relaxed text-fg-dim">{q.details}</p>}
-      </div>
-      {q.options && q.options.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {q.options.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              disabled={busy}
-              onClick={() => answer({ option_id: option.id })}
-              className={cn(
-                'min-h-10 rounded-[10px] border px-4 py-2 text-left text-[13.5px] disabled:opacity-60',
-                option.id === q.recommended_option_id ? 'border-accent bg-accent/10' : 'border-line hover:bg-panel-2',
-              )}
-            >
-              <span className="block font-medium">{option.label}</span>
-              {option.description && <span className="block text-[12px] text-fg-dim">{option.description}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-      {q.allow_free_text !== false && (
-        <form
-          className="flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (text.trim()) void answer({ text: text.trim() });
-          }}
-        >
-          <label htmlFor="inbox-answer" className="sr-only">Your answer</label>
-          <input
-            id="inbox-answer"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Type an answer…"
-            className="h-10 flex-1 rounded-[9px] border border-line bg-panel px-3 text-[13.5px] outline-none focus:border-accent"
-          />
-          <button type="submit" disabled={busy || !text.trim()} className="h-10 rounded-[9px] bg-accent px-4 text-[13.5px] font-semibold text-accent-foreground disabled:opacity-60">
-            Send
-          </button>
-        </form>
-      )}
+      <PanelCard
+        tag="? question"
+        title={String(q.prompt || 'A question from your chat')}
+        subtitle={typeof q.details === 'string' && q.details ? q.details : itemSource(item)}
+        footer={(
+          <>
+            <span className="text-[12.5px] text-fg-dim">Chat questions answer themselves with the recommended option if nobody replies in time.</span>
+            <span className="flex-1" />
+            <Link to="/home" className="text-[13px] text-accent-ink hover:underline">Open the chat</Link>
+          </>
+        )}
+      >
+        {q.options && q.options.length > 0 && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {q.options.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                disabled={busy}
+                onClick={() => answer({ option_id: option.id })}
+                className={cn(
+                  'min-h-10 rounded-md border px-3 py-2 text-left text-[13.5px] disabled:opacity-60',
+                  option.id === q.recommended_option_id ? 'border-accent bg-accent/10' : 'border-line hover:bg-panel-2',
+                )}
+              >
+                <span className="block font-medium">{option.label}</span>
+                {option.description && <span className="block text-[12px] text-fg-dim">{option.description}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+        {q.allow_free_text !== false && (
+          <form
+            className={cn('flex gap-2', q.options && q.options.length > 0 && 'mt-3')}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (text.trim()) void answer({ text: text.trim() });
+            }}
+          >
+            <label htmlFor="inbox-answer" className="sr-only">Your answer</label>
+            <input
+              id="inbox-answer"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Type an answer…"
+              className="h-10 flex-1 rounded-md border border-line bg-panel px-3 text-[13.5px] outline-none focus:border-accent"
+            />
+            <PanelButton type="submit" kind="primary" disabled={busy || !text.trim()}>Send</PanelButton>
+          </form>
+        )}
+      </PanelCard>
       {error && <p role="alert" className="text-[13px] text-danger-ink">{error}</p>}
-      <p className="text-[12.5px] text-fg-dim">
-        Chat questions answer themselves with the recommended option if nobody replies in time.{' '}
-        <Link to="/home" className="text-accent-ink hover:underline">Open the chat</Link>
-      </p>
     </div>
   );
 }
@@ -235,39 +216,37 @@ function NotificationDetail({ item, onDone }: { item: InboxNotification; onDone:
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <div className="font-mono text-[10.5px] tracking-[0.14em] text-accent-ink">AGENT ALERT</div>
-        <div className="mt-1 font-mono text-[12px] text-fg-dim">{itemSource(item)}</div>
-        <h2 className="mt-2 text-[20px] font-semibold leading-snug">{item.title}</h2>
-        {item.message && <p className="mt-2 whitespace-pre-wrap text-[13.5px] leading-relaxed text-fg">{item.message}</p>}
-      </div>
+      <PanelCard
+        tag="alert"
+        title={item.title}
+        subtitle={itemSource(item)}
+        footer={(
+          <>
+            <PanelButton kind="primary" disabled={busy} onClick={() => void dismiss()}>
+              {busy ? 'Dismissing…' : 'Dismiss'}
+            </PanelButton>
+            <span className="flex-1" />
+            {item.link && item.link.startsWith('/') && (
+              <Link to={item.link} className="text-[13px] font-medium text-accent-ink hover:underline">
+                {item.title.startsWith('Reconnect ') ? item.title : 'Open'}
+              </Link>
+            )}
+            {item.task_id && (
+              <Link to={`/tasks/${item.task_id}`} className="text-[13px] text-accent-ink hover:underline">
+                Open task
+              </Link>
+            )}
+            {!item.task_id && item.session_id && (
+              <Link to={`/home?chat=${encodeURIComponent(item.session_id)}`} className="text-[13px] text-accent-ink hover:underline">
+                Open chat
+              </Link>
+            )}
+          </>
+        )}
+      >
+        {item.message ? <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-fg">{item.message}</p> : undefined}
+      </PanelCard>
       {error && <p role="alert" className="text-[13px] text-danger-ink">{error}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={dismiss}
-          className="h-10 rounded-[9px] bg-accent px-5 text-[13.5px] font-semibold text-accent-foreground disabled:opacity-60"
-        >
-          {busy ? 'Dismissing…' : 'Dismiss'}
-        </button>
-        <span className="flex-1" />
-        {item.link && item.link.startsWith('/') && (
-          <Link to={item.link} className="text-[13px] font-medium text-accent-ink hover:underline">
-            {item.title.startsWith('Reconnect ') ? item.title : 'Open'}
-          </Link>
-        )}
-        {item.task_id && (
-          <Link to={`/tasks/${item.task_id}`} className="text-[13px] text-accent-ink hover:underline">
-            Open task
-          </Link>
-        )}
-        {!item.task_id && item.session_id && (
-          <Link to={`/home?chat=${encodeURIComponent(item.session_id)}`} className="text-[13px] text-accent-ink hover:underline">
-            Open chat
-          </Link>
-        )}
-      </div>
     </div>
   );
 }

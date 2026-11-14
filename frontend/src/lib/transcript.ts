@@ -1,4 +1,5 @@
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
+import { parseCard, type Card } from '@/lib/cards';
 
 /** Raw session.chat entry as the backend persists it. Roles are inconsistent
  *  in case ('User' vs 'user') and tool results carry no `type` — parse, don't
@@ -10,7 +11,7 @@ export interface BackendChatEntry {
   content?: unknown;
   tool_calls?: { name?: string; arguments?: unknown; tool_call_id?: string | null }[];
   tool_call_id?: string | null;
-  outcome?: { status?: unknown; artifacts?: unknown };
+  outcome?: { status?: unknown; artifacts?: unknown; card?: unknown };
   artifact?: unknown;
   duration?: number;
   prompt_tokens?: number | null;
@@ -24,6 +25,7 @@ export type TranscriptTool = {
   result?: string | null;
   status?: 'running' | 'done' | 'error' | 'stopped';
   artifacts?: ToolArtifact[];
+  card?: Card;
 };
 
 export type TranscriptEntry =
@@ -84,7 +86,7 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
   const out: TranscriptEntry[] = [];
   // Tool results are separate `role: 'tool'` messages; index them by
   // tool_call_id so each tool call can carry its own result for display.
-  const resultsById: Record<string, { content: string; status: 'done' | 'error' | 'stopped'; artifacts?: ToolArtifact[] }> = {};
+  const resultsById: Record<string, { content: string; status: 'done' | 'error' | 'stopped'; artifacts?: ToolArtifact[]; card?: Card }> = {};
   for (const m of chat || []) {
     if (String(m.role || '').toLowerCase() === 'tool' && m.tool_call_id) {
       const outcomeStatus = m.outcome?.status;
@@ -96,6 +98,7 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
             ? 'done'
             : 'error',
         artifacts: safeArtifacts(m.outcome?.artifacts),
+        card: parseCard(m.outcome?.card) ?? undefined,
       };
     }
   }
@@ -149,6 +152,7 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
             result: result?.content,
             status: result?.status,
             artifacts: result?.artifacts,
+            ...(result?.card ? { card: result.card } : {}),
           };
         }),
       });
@@ -207,6 +211,7 @@ export function toChatMessages(
             params: t.args,
             result: t.result ?? undefined,
             artifacts: t.artifacts,
+            ...(t.card ? { card: t.card } : {}),
           })),
         });
     }

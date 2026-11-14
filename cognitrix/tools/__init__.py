@@ -1,6 +1,7 @@
 from cognitrix.tools.artifact_pages import artifact_comments, publish_artifact, read_artifact
 from cognitrix.tools.automation import notify_me, offer_help, read_notes, schedule_next_check, update_notes
 from cognitrix.tools.base import Tool
+from cognitrix.tools.cards import show_card
 from cognitrix.tools.chat_history import read_chat, search_chats
 from cognitrix.tools.chats import check_chat, message_chat, start_chat
 from cognitrix.tools.computer import (
@@ -73,6 +74,7 @@ __all__ = [
     'Glob',
     'WebFetch',
     'http_request', 'list_credentials',
+    'show_card',
     'Search',
     'Tavily_Search',
     'open_file',

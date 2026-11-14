@@ -36,8 +36,8 @@ describe('QuestionCard', () => {
     );
 
     expect(screen.getByRole('group', { name: 'How should I continue?' })).toHaveClass(
-      'border-l-2',
-      'border-accent',
+      'rounded-xl',
+      'border-line',
     );
     expect(screen.getByText('recommended')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Deep research/i }));

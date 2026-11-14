@@ -115,6 +115,10 @@ def _add_automation_tools(roster: Sequence[Agent], offers: bool = False) -> None
     from cognitrix.tools.artifact_pages import ARTIFACT_TOOL_CATEGORY
 
     extra.extend(ToolManager.get_tools_by_category(ARTIFACT_TOOL_CATEGORY))
+    # Cards: a run's report can show its numbers as a card in the transcript.
+    from cognitrix.tools.cards import CARD_TOOL_CATEGORY
+
+    extra.extend(ToolManager.get_tools_by_category(CARD_TOOL_CATEGORY))
     for agent in roster:
         if not getattr(agent.llm, 'supports_tool_use', False):
             continue
