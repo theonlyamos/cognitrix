@@ -94,6 +94,9 @@ class ChatRun:
     # paths that don't (task mode, team chats) refuse steering instead of
     # holding messages nobody will read.
     steerable: bool = False
+    # The code running this turn starts the follow-up for unread messages
+    # itself (chat apps, agent-started chats), so pages must not resend them.
+    follows_up: bool = False
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     started_at: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat().replace('+00:00', 'Z')
@@ -104,6 +107,8 @@ class ChatRun:
     finished_at: float | None = None
     # Messages waiting to be read by the running turn (see steer()).
     inbox: list[InboxMessage] = field(default_factory=list)
+    # Messages the model has already read this turn, oldest first.
+    read: list[InboxMessage] = field(default_factory=list)
     _changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     @property
@@ -164,6 +169,7 @@ class ChatRun:
     def take_inbox(self) -> list[InboxMessage]:
         """Everything waiting, oldest first, removed from the inbox."""
         taken, self.inbox = self.inbox, []
+        self.read.extend(taken)
         return taken
 
     def finish(self, terminal: dict[str, Any]) -> None:
@@ -171,7 +177,9 @@ class ChatRun:
 
         Messages still in the inbox were never read by the model: they go out
         on the terminal event as ``unsent`` so the sender can send them as the
-        next turn, and stay readable via ``unsent`` until then.
+        next turn, and stay readable via ``unsent`` until then. A run that
+        ``follows_up`` itself leaves them off the event, except messages
+        typed on the web when it was stopped (its follow-up won't run).
         """
         if not self.running:
             return
@@ -179,7 +187,12 @@ class ChatRun:
         if self.inbox:
             self.unsent = [m.as_dict() for m in self.inbox]
             self.inbox = []
-            terminal['unsent'] = self.unsent
+            shown = self.unsent
+            if self.follows_up:
+                stopped = terminal.get('type') == 'turn_stopped'
+                shown = [m for m in self.unsent if stopped and m.get('source') == 'web']
+            if shown:
+                terminal['unsent'] = shown
         self.events.append(terminal)
         self.status = _status_for(terminal)
         self.finished_at = time.monotonic()

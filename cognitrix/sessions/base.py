@@ -194,6 +194,10 @@ class Session(Model):
     archived: bool | None = None
     """Hidden from the chat list until the person looks at archived chats."""
 
+    pending_messages: list[dict[str, Any]] | None = None
+    """Messages sent while the last turn ran that it never read. The next
+    turn clears them; a page that reopens the chat sends them."""
+
     started_by: dict[str, Any] | None = None
     """Set when an agent started this chat: {agent_id, agent_name, session_id
     (the chat it was started from), depth, report_back, exchanges}"""

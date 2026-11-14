@@ -697,6 +697,8 @@ class SSEManager:
                 })
                 return
             terminal['session_id'] = session.id
+            # This turn takes over anything an earlier one left unread.
+            session.pending_messages = None
             run = chat_runs.start_run(
                 str(self.user_key or ''),
                 str(self.agent.id),
@@ -925,7 +927,15 @@ class SSEManager:
                 run.finish(terminal)
                 if run.unsent:
                     # Sent mid-turn but never read: the page sends them next.
+                    # They are saved too, so a page that left in the meantime
+                    # finds them when it reopens the chat.
                     terminal = {**terminal, 'unsent': run.unsent}
+                    if session is not None:
+                        try:
+                            session.pending_messages = list(run.unsent)
+                            await session.save()
+                        except Exception:
+                            logger.exception('Could not save unread messages for chat %s', session.id)
             self._complete_turn_output(
                 asyncio.current_task(),
                 output_queue,

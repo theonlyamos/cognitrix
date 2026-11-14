@@ -250,3 +250,19 @@ async def test_chat_endpoint_steers_a_running_chat_and_can_take_it_back(monkeypa
             'agent_id': 'agent-1', 'session_id': 's1', 'message': 'x', 'execution_mode': 'task',
         }), user=user)
     assert exc.value.status_code == 409
+
+
+def test_runs_that_follow_up_themselves_keep_unread_messages_off_the_event():
+    run = chat_runs.start_run('u', 'a1', 's-follow')
+    run.follows_up = True
+    run.steer('from the app', source='telegram')
+    run.finish({'type': 'turn_complete', 'content': '', 'session_id': 's-follow'})
+    assert [m['content'] for m in run.unsent] == ['from the app']
+    assert 'unsent' not in run.events[-1]
+
+    stopped = chat_runs.start_run('u', 'a1', 's-follow-2')
+    stopped.follows_up = True
+    stopped.steer('typed on the page', source='web')
+    stopped.steer('from the app', source='telegram')
+    stopped.finish({'type': 'turn_stopped', 'content': '', 'session_id': 's-follow-2'})
+    assert [m['content'] for m in stopped.events[-1]['unsent']] == ['typed on the page']

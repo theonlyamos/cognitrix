@@ -168,6 +168,8 @@ export default function Home() {
   const [steerError, setSteerError] = useState<string | null>(null);
   // Messages the agent never got to (the turn ended first): sent next.
   const resendRef = useRef<string | null>(null);
+  // Bumped to make the resend effect look at resendRef again.
+  const [resendTick, setResendTick] = useState(0);
   const [reworkError, setReworkError] = useState<string | null>(null);
   const [chatQuery, setChatQuery] = useState('');
   const [chatHits, setChatHits] = useState<ChatSearchHit[] | null>(null);
@@ -757,6 +759,17 @@ export default function Home() {
           setWaiting(false);
           setStreaming(false);
           setIsStreaming(false);
+          if (attach) {
+            // Messages the last turn never read (the page was gone when it
+            // ended) go out now as the next turn.
+            const pending = await api.get(`/sessions/${encodeURIComponent(id)}/pending`)
+              .then((r) => (r.data as { messages?: WaitingMessage[] })?.messages ?? [])
+              .catch(() => [] as WaitingMessage[]);
+            if (pending.length && activeRef.current === id) {
+              resendRef.current = pending.map((m) => m.content).join('\n\n');
+              setResendTick((n) => n + 1);
+            }
+          }
         }
         return true;
       } catch {
@@ -1256,7 +1269,7 @@ export default function Home() {
     const text = resendRef.current;
     resendRef.current = null;
     void send(text, 'chat', null, { keepComposer: true });
-  }, [busy, isConnected, send]);
+  }, [busy, isConnected, send, resendTick]);
 
   // Messages held while a new chat waited for its id go out once it has one.
   // If the turn ended without ever getting an id, they go back in the box.

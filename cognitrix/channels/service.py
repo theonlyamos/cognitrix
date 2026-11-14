@@ -719,6 +719,7 @@ class ChannelService:
         terminal = {'type': 'turn_complete', 'content': '', 'session_id': str(session.id)}
         # A guest's turn reads nothing from the inbox (see the check above).
         run.steerable = not guest
+        run.follows_up = True
         run_token = chat_runs.current_run.set(run)
         try:
             await asyncio.wait_for(
