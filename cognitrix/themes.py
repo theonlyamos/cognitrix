@@ -159,7 +159,9 @@ _ART_COLOR_WORDS = {
 _A_NUMBER = re.compile(r'^-?(\d+\.?\d*|\.\d+)(e-?\d+)?%?$', re.I)
 _A_NUMBERS = re.compile(r'^[-\d.eE,\s]+$')
 _A_PATH = re.compile(r'^[MmLlHhVvCcSsQqTtAaZz\d.eE,\s+-]+$')
-_A_TRANSFORM = re.compile(r'^(\s*(matrix|translate|scale|rotate|skewX|skewY)\s*\([-\d.eE,\s]*\)\s*,?)+$')
+_A_TRANSFORM_FN = r'(?:matrix|translate|scale|rotate|skewX|skewY)\s*\([-\d.eE,\s]*\)'
+# Written so no two parts can match the same text (no catastrophic backtracking).
+_A_TRANSFORM = re.compile(rf'^\s*{_A_TRANSFORM_FN}(?:[\s,]*{_A_TRANSFORM_FN})*\s*$')
 _A_ID = re.compile(r'^[A-Za-z][\w-]{0,40}$')
 _A_REF = re.compile(r'^url\(\s*#[A-Za-z][\w-]{0,40}\s*\)$')
 _A_HEX = re.compile(r'^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')

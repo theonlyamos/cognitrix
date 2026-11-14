@@ -44,7 +44,10 @@ const ELEMENTS: ReadonlySet<string> = new Set([
 const NUMBER = /^-?(\d+\.?\d*|\.\d+)(e-?\d+)?%?$/i;
 const NUMBERS = /^[-\d.eE,\s]+$/;
 const PATH = /^[MmLlHhVvCcSsQqTtAaZz\d.eE,\s+-]+$/;
-const TRANSFORM = /^(\s*(matrix|translate|scale|rotate|skewX|skewY)\s*\([-\d.eE,\s]*\)\s*,?)+$/;
+// One transform function; several are separated by spaces or commas. Written so
+// no two parts can match the same text (no catastrophic backtracking).
+const TRANSFORM_FN = '(?:matrix|translate|scale|rotate|skewX|skewY)\\s*\\([-\\d.eE,\\s]*\\)';
+const TRANSFORM = new RegExp(`^\\s*${TRANSFORM_FN}(?:[\\s,]*${TRANSFORM_FN})*\\s*$`);
 const ID = /^[A-Za-z][\w-]{0,40}$/;
 const REF = /^url\(\s*#[A-Za-z][\w-]{0,40}\s*\)$/;
 const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;

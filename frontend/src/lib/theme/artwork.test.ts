@@ -65,3 +65,14 @@ describe('artwork', () => {
       .toEqual({ svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><circle r="1" fill="fg"/></svg>', name: 'Your drawing', strength: 100 });
   });
 });
+
+describe('artwork transforms', () => {
+  it('accepts lists of transforms and refuses anything else, quickly', async () => {
+    const { cleanAttribute } = await import('./artwork');
+    expect(cleanAttribute('transform', 'translate(10 20) rotate(45), scale(2)')).toBe('translate(10 20) rotate(45), scale(2)');
+    expect(cleanAttribute('transform', 'rotate(4) url(x)')).toBeNull();
+    const start = Date.now();
+    expect(cleanAttribute('transform', `scale()${' scale()'.repeat(400)}!`)).toBeNull();
+    expect(Date.now() - start).toBeLessThan(200);
+  });
+});

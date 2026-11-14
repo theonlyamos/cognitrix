@@ -324,3 +324,14 @@ async def test_set_theme_tool_draws_and_picks_artwork(db):
         assert json.loads(hidden.split('Previous: ', 1)[1])['artwork']['nord']['name'] == 'Lighthouse'
         assert 'no artwork' in _text(await _tool(action='artwork', artwork='Mona Lisa')).lower()
         assert 'not valid' in _text(await _tool(action='artwork', svg='<svg nope')).lower()
+
+
+def test_artwork_transforms_do_not_backtrack():
+    import time
+
+    from cognitrix import themes
+
+    assert themes.clean_artwork_attribute('transform', 'translate(10 20) rotate(45), scale(2)') == 'translate(10 20) rotate(45), scale(2)'
+    start = time.monotonic()
+    assert themes.clean_artwork_attribute('transform', 'scale()' + ' scale()' * 400 + '!') is None
+    assert time.monotonic() - start < 0.5
