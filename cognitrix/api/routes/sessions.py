@@ -464,6 +464,16 @@ async def all_chats(ctx: AuthContext = Depends(get_auth_context)):
     return chats
 
 
+@sessions_api.get('/chats/version')
+async def chats_version(ctx: AuthContext = Depends(get_auth_context)):
+    """A token that changes whenever one of the caller's chats is added,
+    changed or removed, so the chat list can re-read only when it must (e.g.
+    when an agent starts a chat with another agent in the background)."""
+    from cognitrix.sessions import index as chat_index
+
+    return {'version': chat_index.version(principal_key(ctx.user))}
+
+
 SEARCH_MAX_RESULTS = 20
 
 

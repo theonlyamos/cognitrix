@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SidebarChats from './SidebarChats';
+import { api } from '@/lib/api';
 import { CHATS_EDITED, setChatNav } from '@/lib/chatNav';
 
 const CHATS = vi.hoisted(() => [
@@ -28,6 +29,7 @@ vi.mock('@/hooks/useResource', () => ({
     loading: false,
     loadedPath: path,
     refetch,
+    setData: vi.fn(),
   }),
 }));
 
@@ -91,6 +93,44 @@ describe('SidebarChats', () => {
       expect(refetch).toHaveBeenCalledWith({ silent: true });
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('re-reads the list when a chat is made elsewhere, e.g. by another agent', async () => {
+    const get = vi.mocked(api.get);
+    let version = 'v1';
+    let listFails = false;
+    get.mockImplementation(async (path: string) => {
+      if (path === '/sessions/chats/version') return { data: { version } } as never;
+      if (path === '/sessions/chats' && listFails) throw new Error('offline');
+      return { data: [] } as never;
+    });
+    const listReads = () => get.mock.calls.filter(([path]) => path === '/sessions/chats').length;
+    CHATS[4].running = false;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderList();
+      await act(async () => { await Promise.resolve(); });
+      // Nothing changed: no re-read.
+      await act(async () => { vi.advanceTimersByTime(4_100); });
+      expect(get).toHaveBeenCalledWith('/sessions/chats/version');
+      expect(listReads()).toBe(0);
+      // An agent started a chat with another agent, but the re-read fails.
+      version = 'v2';
+      listFails = true;
+      await act(async () => { vi.advanceTimersByTime(4_100); });
+      expect(listReads()).toBe(1);
+      // The failed re-read is tried again on the next tick.
+      listFails = false;
+      await act(async () => { vi.advanceTimersByTime(4_100); });
+      expect(listReads()).toBe(2);
+      // Once it succeeded, a stable token means no more re-reads.
+      await act(async () => { vi.advanceTimersByTime(4_100); });
+      expect(listReads()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+      CHATS[4].running = true;
+      get.mockReset().mockResolvedValue({ data: [] });
     }
   });
 

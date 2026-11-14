@@ -61,3 +61,31 @@ async def test_chats_from_before_the_index_are_picked_up_once(tmp_path):
     assert [c['title'] for c in listed] == ['An older chat']
     # The task step is remembered as "not a chat" so it is not loaded again.
     assert (await ChatIndex.find_one({'session_id': str(step.id)})).kind == 'skip'
+
+
+async def test_version_changes_when_an_agent_starts_a_chat(tmp_path):
+    """The sidebar polls this token and re-reads the list only when it moves,
+    so a chat an agent starts with another agent shows up without a reload."""
+    from types import SimpleNamespace
+
+    from cognitrix.api.routes import sessions as routes
+    from cognitrix.sessions import agent_chats
+
+    await _initialize_routes_db(tmp_path)
+    parent = await _owned_session('user-1', 'agent-1', chat=_chat('Get the Writer on it'))
+    mine, theirs = _ctx('user-1'), _ctx('user-2')
+    await routes.all_chats(mine)
+    await routes.all_chats(theirs)
+    before = (await routes.chats_version(mine))['version']
+    assert (await routes.chats_version(mine))['version'] == before
+    other_before = (await routes.chats_version(theirs))['version']
+
+    child = await agent_chats.create_chat(
+        'user-1', SimpleNamespace(id='agent-2'),
+        {'agent_id': 'agent-1', 'agent_name': 'Helper', 'session_id': str(parent.id), 'depth': 1},
+    )
+
+    assert (await routes.chats_version(mine))['version'] != before
+    assert (await routes.chats_version(theirs))['version'] == other_before
+    listed = await routes.all_chats(mine)
+    assert str(child.id) in {c['id'] for c in listed}
