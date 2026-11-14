@@ -111,7 +111,7 @@ async def test_themes_are_per_person_and_picks_fall_back(db):
     amy = await _user('Amy', 'amy@example.com')
     bob = await _user('Bob', 'bob@example.com')
     state = themes.project(await themes.get_settings(str(amy.id)))
-    assert state == {'mode': '', 'light': 'signal', 'dark': 'signal', 'themes': [], 'artwork': {}}
+    assert state == {'mode': '', 'light': 'signal', 'dark': 'signal', 'themes': [], 'artwork': {}, 'drawings': []}
 
     dusk = {'name': 'Dusk', 'dark': {'background': '#101018', 'text': '#eeeeee', 'accent': '#ff8800'}}
     theme, state = await themes.save_theme(str(amy.id), dusk)
@@ -324,6 +324,73 @@ async def test_set_theme_tool_draws_and_picks_artwork(db):
         assert json.loads(hidden.split('Previous: ', 1)[1])['artwork']['nord']['name'] == 'Lighthouse'
         assert 'no artwork' in _text(await _tool(action='artwork', artwork='Mona Lisa')).lower()
         assert 'not valid' in _text(await _tool(action='artwork', svg='<svg nope')).lower()
+
+
+async def test_drawings_survive_picking_other_artwork(db):
+    """A drawing is never lost: picking other artwork, replacing or deleting its theme keeps it saved."""
+    from cognitrix import themes
+
+    amy = await _user('Amy', 'amy@example.com')
+    uid = str(amy.id)
+    pumpkin = '<svg viewBox="0 0 400 160"><circle cx="200" cy="120" r="30" fill="warn"/></svg>'
+    bat = '<svg viewBox="0 0 400 160"><path d="M10 10L20 20Z" fill="violet"/></svg>'
+
+    await themes.set_artwork(uid, 'nord', {'svg': pumpkin, 'name': 'Pumpkin'})
+    state = await themes.set_artwork(uid, 'nord', {'id': 'blueprint'})
+    assert state['artwork']['nord'] == {'id': 'blueprint'}
+    assert [d['name'] for d in state['drawings']] == ['Pumpkin']
+    # Picking it again from the library brings it back.
+    key = state['drawings'][0]['key']
+    state = await themes.set_artwork(uid, 'nord', {'svg': state['drawings'][0]['svg'], 'name': 'Pumpkin'})
+    assert state['artwork']['nord']['name'] == 'Pumpkin' and len(state['drawings']) == 1
+
+    # A theme's own drawing is kept too, even after the theme is deleted.
+    dusk = {'name': 'Dusk', 'dark': {'background': '#101018', 'text': '#eeeeee', 'accent': '#ff8800'},
+            'artwork': {'svg': bat, 'name': 'Bat'}}
+    _, state = await themes.save_theme(uid, dusk)
+    assert [d['name'] for d in state['drawings']] == ['Bat', 'Pumpkin']
+    state = await themes.delete_theme(uid, 'dusk')
+    assert [d['name'] for d in state['drawings']] == ['Bat', 'Pumpkin']
+    assert themes.find_drawing('bat', await themes.get_settings(uid))['name'] == 'Bat'
+
+    # Removing from the library; one still in use stays listed.
+    bat_key = state['drawings'][0]['key']
+    assert [d['name'] for d in (await themes.delete_drawing(uid, bat_key))['drawings']] == ['Pumpkin']
+    assert [d['name'] for d in (await themes.delete_drawing(uid, key))['drawings']] == ['Pumpkin']
+
+
+async def test_drawings_in_use_before_the_library_are_kept(db):
+    """Rows saved before drawings were kept: the drawing in use joins the library on the next change."""
+    from cognitrix import themes
+
+    amy = await _user('Amy', 'amy@example.com')
+    uid = str(amy.id)
+    art = themes.clean_artwork({'svg': '<svg viewBox="0 0 4 4"><circle r="1" fill="accent"/></svg>', 'name': 'Old'})
+    await themes._save(uid, {'artwork': json.dumps({'nord': art})})
+    state = await themes.set_artwork(uid, 'nord', {'id': 'skyline'})
+    assert [d['name'] for d in state['drawings']] == ['Old']
+
+
+async def test_set_theme_create_keeps_its_drawing_and_reuses_saved_ones(db):
+    from cognitrix import themes
+
+    amy = await _user('Amy', 'amy@example.com')
+    pumpkin = '<svg viewBox="0 0 400 160"><circle cx="200" cy="120" r="30" fill="warn"/></svg>'
+    with _as(amy):
+        made = _text(await _tool(action='create', name='Haunted Harvest', dark_background='#15111c',
+                                 dark_text='#fff1dd', dark_accent='#ff9b40', svg=pumpkin))
+        assert made.startswith('Theme changed: Haunted Harvest')
+        state = themes.project(await themes.get_settings(str(amy.id)))
+        own = next(t for t in state['themes'] if t['id'] == 'haunted-harvest')
+        assert own['artwork']['name'] == 'Haunted Harvest' and 'fill="warn"' in own['artwork']['svg']
+        assert [d['name'] for d in state['drawings']] == ['Haunted Harvest']
+
+        await _tool(action='artwork', artwork='blueprint', theme='haunted-harvest')
+        assert 'Saved drawings (name, key): Haunted Harvest (' in _text(await _tool(action='list'))
+        key = themes.project(await themes.get_settings(str(amy.id)))['drawings'][0]['key']
+        assert f'Haunted Harvest ({key})' in _text(await _tool(action='list'))
+        back = _text(await _tool(action='artwork', artwork='Haunted Harvest', theme='haunted-harvest'))
+        assert back.startswith('Theme changed: Haunted Harvest artwork on Haunted Harvest')
 
 
 def test_artwork_transforms_do_not_backtrack():

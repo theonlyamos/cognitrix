@@ -56,7 +56,7 @@ describe('artwork', () => {
   it('theme files and the person’s choice decide what shows', () => {
     const nord = PRESETS.find((t) => t.id === 'nord')!;
     expect(nord.artwork).toEqual({ id: 'aurora' });
-    const selection = { light: 'nord', dark: 'nord', themes: [], artwork: {} };
+    const selection = { light: 'nord', dark: 'nord', themes: [], artwork: {}, drawings: [] };
     expect(artworkFor(selection, nord)).toEqual({ id: 'aurora' });
     expect(artworkFor({ ...selection, artwork: { nord: { id: 'none' } } }, nord)).toBeNull();
     expect(artworkFor({ ...selection, artwork: { nord: { id: 'skyline' } } }, nord)).toEqual({ id: 'skyline' });

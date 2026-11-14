@@ -88,7 +88,9 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
       so the drawing follows the theme: accent, fg (text), fg-dim, warn, info, violet, ok, danger,
       panel-2, and surface (what the drawing sits on; use it to hide shapes behind others). Use
       opacity for softer tones. Keep it under 24 KB. Applies to the themes in use, or to `theme`.
-      strength: 20-100 (default 85).
+      strength: 20-100 (default 85). Every drawing is kept in their library ("list" shows them), so
+      artwork can also be the name of a saved drawing to bring it back.
+      "create" also takes svg (with name) to give the new theme its own drawing.
     Only change the theme when the person asks for it."""
     user_id = _owner()
     if not user_id:
@@ -110,9 +112,11 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
             in_use = dict.fromkeys([before['light'], before['dark']])
             arts = '; '.join(f'{themes.theme_name(tid, custom)}: {themes.artwork_label(themes.theme_artwork(tid, row))}'
                              for tid in in_use)
+            saved_list = ', '.join(f'{d["name"]} ({d["key"]})' for d in before['drawings'])
             return ToolOutcome.success(
                 f'In use: {_describe(before)}.\nArtwork: {arts}.\nBuilt-in themes (light and dark): {built_in}.\n'
-                f'Their own themes: {own}.\nBuilt-in artwork: {", ".join(themes.ARTWORK_NAMES)}.')
+                f'Their own themes: {own}.\nBuilt-in artwork: {", ".join(themes.ARTWORK_NAMES)}.\n'
+                f'Saved drawings (name, key): {saved_list or "none"}.')
 
         if action == 'artwork':
             if theme:
@@ -132,10 +136,16 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
             elif choice:
                 found = next((k for k, v in themes.ARTWORK_NAMES.items()
                               if choice in (k, v.lower().replace(' ', '-'))), None)
-                if not found:
+                saved = None if found else themes.find_drawing(str(artwork), await themes.get_settings(user_id))
+                if saved:
+                    art_raw = {'svg': saved['svg'], 'name': saved['name']}
+                elif not found:
+                    drawn = ', '.join(d['name'] for d in before['drawings'])
                     return ToolOutcome.failure(
-                        'no_artwork', f'There is no artwork "{artwork}". Choose from: {", ".join(themes.ARTWORK_NAMES)}, or none.')
-                art_raw = {'id': found}
+                        'no_artwork', f'There is no artwork "{artwork}". Choose from: {", ".join(themes.ARTWORK_NAMES)}'
+                        + (f', a saved drawing ({drawn})' if drawn else '') + ', or none.')
+                else:
+                    art_raw = {'id': found}
             else:
                 return ToolOutcome.failure('no_artwork', 'Give svg (a drawing) or artwork (a built-in name, "none" or "default").')
             if art_raw is not None and strength:
@@ -186,6 +196,10 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
                 raw['light'] = light
             if dark:
                 raw['dark'] = dark
+            if str(svg or '').strip():
+                raw['artwork'] = {'svg': svg, 'name': str(name or label).strip()[:48] or 'Drawing'}
+                if strength:
+                    raw['artwork']['strength'] = strength
             existing = themes.find_theme(label, custom)
             if existing in themes.BUILT_IN_THEMES:
                 existing = None

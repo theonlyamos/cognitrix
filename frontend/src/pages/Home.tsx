@@ -1953,7 +1953,7 @@ export default function Home() {
     <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-bg text-fg">
       {/* Chat column */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {/* The theme's drawing along the bottom, behind messages and the message box */}
+        {/* The theme's whole drawing, faint, behind messages and the message box */}
         <ChatHorizon className={cn((empty || picking) && 'hidden')} />
         {/* Slim header: who the chat is with and its name, the model, reconnect
             while the stream is down, and the chat's side panel. */}
