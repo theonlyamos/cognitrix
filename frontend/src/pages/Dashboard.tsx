@@ -16,6 +16,7 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
+import { ArtworkScene } from '@/components/ThemeArtwork';
 import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications, type InboxItem } from '@/context/NotificationsContext';
 import { useResource } from '@/hooks/useResource';
@@ -150,11 +151,11 @@ function inboxHref(item: InboxItem): string {
 }
 
 const KIND_STYLE: Record<InboxItem['kind'], { label: string; className: string }> = {
-  approval: { label: 'APPROVAL', className: 'bg-[#ffb86b]/15 text-[#b4691a] dark:text-[#ffb86b]' },
-  question: { label: 'QUESTION', className: 'bg-[#7cc4ff]/15 text-[#1f6f8b] dark:text-[#7cc4ff]' },
+  approval: { label: 'APPROVAL', className: 'bg-warn/15 text-warn-ink' },
+  question: { label: 'QUESTION', className: 'bg-info/15 text-info-ink' },
   notification: { label: 'ALERT', className: 'bg-accent/15 text-accent-ink' },
   offer: { label: 'OFFER', className: 'bg-ok/15 text-ok' },
-  skill_draft: { label: 'SKILL', className: 'bg-[#b48cff]/15 text-[#6b46c1] dark:text-[#c9b0ff]' },
+  skill_draft: { label: 'SKILL', className: 'bg-violet/15 text-violet-ink' },
 };
 
 /* ------------------------------------------------------------------ pieces */
@@ -273,16 +274,16 @@ function StatTile({
       to={to}
       className={cn(
         'group relative flex min-w-0 flex-col justify-between gap-3 overflow-hidden rounded-[14px] border bg-panel p-4 transition-colors hover:border-fg-dim/50',
-        tone === 'warn' ? 'border-[#ffb86b]/50' : 'border-line',
+        tone === 'warn' ? 'border-warn/50' : 'border-line',
       )}
     >
-      {tone === 'warn' && <span aria-hidden="true" className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#ffb86b]/[0.09] to-transparent" />}
+      {tone === 'warn' && <span aria-hidden="true" className="pointer-events-none absolute inset-0 bg-gradient-to-br from-warn/[0.09] to-transparent" />}
       <div className="relative flex items-center justify-between gap-2">
         <span className="font-mono text-[10.5px] tracking-[0.13em] text-fg-dim">{label}</span>
         <span
           className={cn(
             'grid h-7 w-7 flex-none place-items-center rounded-md border',
-            tone === 'warn' ? 'border-[#ffb86b]/40 text-[#b4691a] dark:text-[#ffb86b]' : 'border-line text-fg-dim group-hover:text-fg',
+            tone === 'warn' ? 'border-warn/40 text-warn-ink' : 'border-line text-fg-dim group-hover:text-fg',
           )}
         >
           <Icon className="h-[15px] w-[15px]" strokeWidth={1.9} aria-hidden="true" />
@@ -423,8 +424,9 @@ export default function Dashboard() {
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1180px] px-4 pb-12 pt-6 md:px-8 md:pt-9">
           {/* Hero */}
-          <section className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-            <div className="min-w-0 pl-12 md:pl-0">
+          <section className="relative flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <ArtworkScene fade="left" className="absolute -top-6 right-0 z-0 hidden h-[150px] w-[460px] md:block lg:w-[560px] md:-top-9" />
+            <div className="relative min-w-0 pl-12 md:pl-0">
               <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-fg-dim">{today}</div>
               <h1 className="mt-2 text-[26px] font-semibold leading-tight tracking-tight md:text-[32px]">
                 {greeting(hour)}
@@ -432,7 +434,7 @@ export default function Dashboard() {
               </h1>
               {summary.length > 0 && <p className="mt-1.5 text-[14px] text-fg-dim">{summary.join(' · ')}</p>}
             </div>
-            <div className="flex flex-none flex-wrap gap-2">
+            <div className="relative flex flex-none flex-wrap gap-2 [&>a]:bg-bg/85 [&>a]:backdrop-blur-sm">
               <Button asChild variant="outline" size="sm">
                 <Link to="/tasks/new">
                   <Plus className="h-3.5 w-3.5" aria-hidden="true" /> New task
@@ -536,7 +538,7 @@ export default function Dashboard() {
                   'last 7 days'
                 ) : (
                   <span>
-                    <span className={cn('font-mono', change > 0 ? 'text-[#b4691a] dark:text-[#ffb86b]' : 'text-ok')}>
+                    <span className={cn('font-mono', change > 0 ? 'text-warn-ink' : 'text-ok')}>
                       {change > 0 ? '▲' : '▼'} {Math.abs(change)}%
                     </span>{' '}
                     vs last wk

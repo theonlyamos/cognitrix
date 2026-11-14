@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { UserProvider, useUser } from '@/context/AppContext';
 import { SessionProvider } from '@/context/SessionContext';
-import { ThemeProvider } from '@/context/ThemeContext';
+import { AccountThemeSync, ThemeProvider } from '@/context/ThemeContext';
 import AppLayout from '@/components/AppLayout';
 import DesktopFrame from '@/components/DesktopFrame';
 import { isDesktop } from '@/lib/desktop';
@@ -113,11 +113,18 @@ function AppRoutes() {
   );
 }
 
+/** Follows the account's theme while signed in (themes made on another device or by an agent). */
+function ThemeAccount() {
+  const { user } = useUser();
+  return <AccountThemeSync signedIn={!!user} />;
+}
+
 export default function App() {
   return (
     <BrowserRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
       <ThemeProvider>
         <UserProvider>
+          <ThemeAccount />
           <SessionProvider>
             <AppRoutes />
           </SessionProvider>

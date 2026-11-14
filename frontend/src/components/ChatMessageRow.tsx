@@ -2,6 +2,7 @@ import { lazy, memo, Suspense, useState } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { ArtifactCard } from '@/components/artifacts/ArtifactCard';
 import { MemoryNotice } from '@/components/MemoryNotice';
+import { ThemeNotice } from '@/components/ThemeNotice';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import {
   BlockedEndpointNotice, RefusedNotice, SignInNeededNotice, blockedEndpoint, isRefusal, signInNeeded,
@@ -137,6 +138,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
               {tool.status !== 'running' && isRefusal(tool.result) && <RefusedNotice result={tool.result} />}
               {tool.status !== 'running' && signInNeeded(tool.result) && <SignInNeededNotice app={signInNeeded(tool.result)!} />}
               {tool.status === 'done' && <MemoryNotice toolName={tool.name} result={tool.result} />}
+              {tool.status === 'done' && <ThemeNotice toolName={tool.name} result={tool.result} />}
               {tool.status === 'done' && <ArtifactCard toolName={tool.name} result={tool.result} />}
               {tool.artifacts?.map((artifact) => (
                 <ArtifactPreview
