@@ -1,9 +1,8 @@
 """Call Agent saves its helper's work as a chat the person can find."""
 from types import SimpleNamespace
 
-from tests.test_session_ownership_routes import _ctx, _initialize_routes_db, _owned_session
-
 from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
+from tests.test_session_ownership_routes import _ctx, _initialize_routes_db, _owned_session
 
 
 def _fake_turn(monkeypatch, seen):
