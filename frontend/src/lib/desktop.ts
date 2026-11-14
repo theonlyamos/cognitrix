@@ -63,6 +63,8 @@ export const desktop = {
   restartEngine: () => invokeDesktop<void>('restart_engine'),
   openFolder: (kind: 'logs' | 'data' | 'working') => invokeDesktop<void>('open_folder', { kind }),
   openExternal: (url: string) => invokeDesktop<void>('open_external', { url }),
+  /** An app from the Apps page in a window of its own (brought forward if already open). */
+  openAppWindow: (slug: string, title: string) => invokeDesktop<void>('open_app_window', { slug, title }),
   getSettings: () => invokeDesktop<DesktopSettings>('get_desktop_settings'),
   setSettings: (patch: Partial<Pick<DesktopSettings, 'close_to_tray' | 'notify_desktop' | 'start_with_windows' | 'agent_cursor'>>) =>
     invokeDesktop<DesktopSettings>('set_desktop_settings', { patch }),

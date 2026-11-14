@@ -399,6 +399,49 @@ async fn test_notification(app: AppHandle) -> Result<(), String> {
     notify::test(&app)
 }
 
+/// An app agents built (Apps page), in a window of its own: the engine's
+/// /apps/open/<slug> page, which shows the app under a bar with Close.
+/// Opening the same app again brings its window to the front. Async: on
+/// Windows, creating a WebView2 window inside a synchronous command deadlocks.
+#[tauri::command]
+async fn open_app_window(app: AppHandle, slug: String, title: Option<String>) -> Result<(), String> {
+    let valid = !slug.is_empty()
+        && slug.len() <= 48
+        && slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !valid {
+        return Err("Not an app name".into());
+    }
+    let label = format!("app-{slug}");
+    if let Some(existing) = app.get_webview_window(&label) {
+        let _ = existing.unminimize();
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+    let main = app.get_webview_window(MAIN).ok_or("The app window isn't open")?;
+    let current = main.url().map_err(|e| e.to_string())?;
+    if current.scheme() != "http" || current.host_str() != Some("127.0.0.1") {
+        return Err("The engine isn't running yet".into());
+    }
+    let mut url = current.clone();
+    url.set_path(&format!("/apps/open/{slug}"));
+    url.set_query(Some("window=1"));
+    url.set_fragment(None);
+    let handle = app.clone();
+    let name = title.unwrap_or_else(|| slug.clone());
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::External(url))
+        .title(name.chars().take(120).collect::<String>())
+        .inner_size(1280.0, 820.0)
+        .min_inner_size(480.0, 360.0)
+        .center()
+        .background_color(tauri::window::Color(11, 12, 14, 255))
+        .additional_browser_args(BROWSER_ARGS)
+        .on_navigation(move |url| allow_navigation(&handle, url))
+        .build()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn show_main_window(app: AppHandle, path: Option<String>) {
     show_main(&app, path);
@@ -483,6 +526,7 @@ pub fn run() {
             pick_folder,
             desktop_notify,
             show_main_window,
+            open_app_window,
             hide_quick_ask,
             overlay_stop,
             get_saved_session,

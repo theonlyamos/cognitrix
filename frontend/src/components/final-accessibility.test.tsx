@@ -319,8 +319,8 @@ describe('final accessibility contracts', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toHaveClass(
       'h-11',
       'w-11',
-      'md:h-9',
-      'md:w-9',
+      'md:h-8',
+      'md:w-8',
     );
     const more = screen.getByRole('button', { name: 'More options' });
     expect(more).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8');

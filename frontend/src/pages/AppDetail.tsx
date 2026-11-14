@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, Copy, ExternalLink, Pause, Pencil, Pin, Play, RefreshCw, Share2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Check, Copy, ExternalLink, Maximize2, Pause, Pencil, Pin, Play, RefreshCw, Share2, Trash2 } from 'lucide-react';
 import { AccessLabel, AppStatusBadge, Sparkline } from '@/components/hosted-apps/parts';
 import { AppShareDialog } from '@/components/hosted-apps/AppShareDialog';
 import { ErrorState, LoadingState } from '@/components/list-ui';
 import { api, errorMessage } from '@/lib/api';
 import { ago } from '@/lib/artifactPages';
 import { CHAT_DRAFT_KEY } from '@/lib/chatDraft';
-import { APP_FRAME_SANDBOX, appLink, openUrl, type AppDetail as Detail } from '@/lib/hostedApps';
+import { APP_FRAME_SANDBOX, appLink, openAppWindow, openUrl, type AppDetail as Detail } from '@/lib/hostedApps';
 import { cn } from '@/lib/utils';
 
 type SideTab = 'overview' | 'versions' | 'logs';
@@ -218,10 +218,8 @@ export default function AppDetail() {
       /* clipboard off */
     }
   };
-  const openNew = async () => {
-    const url = await openUrl(app.id);
-    window.open(url, '_blank', 'noopener');
-  };
+  // Full screen inside Cognitrix, with a bar to come back (a new tab is one click from there).
+  const openFull = () => navigate(`/apps/open/${app.slug}`);
   const editInChat = () => { openChat(app); navigate('/home'); };
 
   const appFrame = live && frame ? (
@@ -236,7 +234,7 @@ export default function AppDetail() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex flex-none items-center gap-2 border-b border-line bg-panel px-3 py-2 md:gap-3 md:px-4">
+      <header className="app-page-header flex flex-none items-center gap-2 border-b border-line bg-panel py-2 pl-16 pr-3 md:gap-3 md:px-4">
         <Link to="/apps" aria-label="All apps" className="grid h-9 w-9 flex-none place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg"><ArrowLeft size={16} /></Link>
         <h1 className="min-w-0 truncate text-[15px] font-semibold">{app.title}</h1>
         <AppStatusBadge app={app} className="hidden sm:inline-flex" />
@@ -246,7 +244,8 @@ export default function AppDetail() {
         </button>
         <div className="ml-auto flex flex-none items-center gap-2">
           {app.role !== 'view' && <button type="button" className={cn(button, 'hidden md:inline-flex')} onClick={editInChat}><Pencil size={14} />Edit in chat</button>}
-          {live && <button type="button" className={cn(button, 'hidden md:inline-flex')} onClick={() => void openNew()}><ExternalLink size={14} />Open</button>}
+          {live && <button type="button" className={cn(button, 'w-9 justify-center px-0')} onClick={openFull} aria-label="Full screen" title="Full screen (Esc to come back)"><Maximize2 size={14} /></button>}
+          {live && <button type="button" className={cn(button, 'hidden md:inline-flex')} onClick={() => void openAppWindow(app).catch(() => openFull())} title="Open in its own window"><ExternalLink size={14} />Open</button>}
           {app.role === 'owner' ? (
             <button type="button" className={cn(button, 'border-transparent bg-accent text-accent-foreground hover:bg-accent/90')} onClick={() => setSharing(true)} aria-label="Share">
               <Share2 size={14} /><span className="hidden md:inline">Share</span>

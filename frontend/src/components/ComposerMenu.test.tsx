@@ -60,7 +60,7 @@ describe('ComposerMenu', () => {
     await user.click(screen.getByRole('button', { name: 'Turn off incognito' }));
     expect(p.onToggleBypass).toHaveBeenCalled();
     expect(p.onToggleIncognito).toHaveBeenCalled();
-    expect(screen.getByText('high')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reasoning high. Change' })).toBeInTheDocument();
   });
 
   it('shows no tags when everything is off', () => {
