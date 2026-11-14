@@ -76,8 +76,8 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
   const notifications = useOptionalNotifications();
   const { activeChatId, runningIds } = useChatNav();
   const { data: chatsData, refetch } = useResource<SidebarChat[]>('/sessions/chats');
-  const { data: agentsData } = useResource<Named[]>('/agents');
-  const { data: teamsData } = useResource<Named[]>('/teams');
+  const { data: agentsData, refetch: refetchAgents } = useResource<Named[]>('/agents');
+  const { data: teamsData, refetch: refetchTeams } = useResource<Named[]>('/teams');
   const [mode, setMode] = useState<ChatListMode>(loadChatListMode);
   const [closed, setClosed] = useState<Set<string>>(loadClosedSections);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -85,7 +85,12 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
 
-  const reread = useCallback(() => { void refetch({ silent: true }); }, [refetch]);
+  // Agents and teams too: one made since the sidebar mounted owns new chats.
+  const reread = useCallback(() => {
+    void refetch({ silent: true });
+    void refetchAgents({ silent: true });
+    void refetchTeams({ silent: true });
+  }, [refetch, refetchAgents, refetchTeams]);
   useEffect(() => {
     window.addEventListener(CHATS_STALE, reread);
     return () => window.removeEventListener(CHATS_STALE, reread);

@@ -620,6 +620,21 @@ describe('final accessibility contracts', () => {
     expect(await screen.findByRole('button', { name: 'Chat with Agent One. Change' })).toBeInTheDocument();
   });
 
+  it('keeps a new-chat link for an agent until the agent list has loaded', async () => {
+    harness.resources.set('/agents', { loading: true });
+    const view = renderRoute(<Home />, '/?new=agent:agent-2');
+    harness.resources.set('/agents', {
+      data: [{ id: 'agent-1', name: 'Agent One' }, { id: 'agent-2', name: 'Agent Two' }],
+    });
+    view.rerender(
+      <MemoryRouter initialEntries={['/?new=agent:agent-2']} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+        <ThemeProvider><SidebarProbe /><Home /></ThemeProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(localStorage.getItem('selectedAgentId')).toBe('agent-2'));
+    expect(localStorage.getItem('chatSession:agent-2')).toBe('');
+  });
+
   it('keeps the Home header on one compact row', () => {
     renderRoute(<Home />);
 

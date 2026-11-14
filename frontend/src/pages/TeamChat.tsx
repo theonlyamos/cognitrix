@@ -12,6 +12,7 @@ import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { useApprovalSeen } from '@/hooks/useApprovalSeen';
 import { setViewingChat } from '@/lib/chatPresence';
+import { chatsStale } from '@/lib/chatNav';
 
 interface Member { id: string; name: string; handle: string; lead: boolean; provider?: string | null; model?: string | null }
 interface ChatSummary { id: string; title: string; updated_at?: string | null; running: boolean }
@@ -109,6 +110,11 @@ export default function TeamChat() {
   }, [teamId]);
 
   useEffect(() => { void loadInfo(); }, [loadInfo]);
+  // A turn ended or a chat was made or deleted here: the app sidebar re-reads.
+  const refresh = useCallback(() => {
+    void loadInfo();
+    chatsStale();
+  }, [loadInfo]);
 
   const loadChat = useCallback(async (id: string | null, opts: { keepStatus?: boolean } = {}) => {
     setApprovals([]);
@@ -156,9 +162,9 @@ export default function TeamChat() {
     setFollow(null);
     setApprovals([]);
     setQuestion(null);
-    void loadInfo();
+    refresh();
     if (chatIdRef.current) void loadChat(chatIdRef.current, { keepStatus: true });
-  }, [loadChat, loadInfo]);
+  }, [loadChat, refresh]);
 
   const onEvent = useCallback((event: RunEvent) => {
     switch (event.type) {
@@ -269,14 +275,14 @@ export default function TeamChat() {
         setParams({ chat: sid }, { replace: !chatId });
       }
       setFollow({ sid, runId: res.data.run_id });
-      void loadInfo();
+      refresh();
     } catch (err) {
       setRunning(false);
       setMessages(baseRef.current);
       setInput(text);
       setSendError(errorMessage(err, 'Could not send the message.'));
     }
-  }, [chatId, input, loadInfo, messages, running, setParams, teamId]);
+  }, [chatId, input, refresh, messages, running, setParams, teamId]);
 
   const stop = useCallback(async () => {
     if (!chatId) return;
@@ -292,11 +298,11 @@ export default function TeamChat() {
     try {
       await api.delete(`/teams/${teamId}/chats/${chatId}`);
       setParams({});
-      void loadInfo();
+      refresh();
     } catch (err) {
       setSendError(errorMessage(err, 'Could not delete the chat.'));
     }
-  }, [chatId, loadInfo, running, setParams, teamId]);
+  }, [chatId, refresh, running, setParams, teamId]);
 
   const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always') => {
     setApprovals((prev) => prev.filter((a) => a.request_id !== requestId));

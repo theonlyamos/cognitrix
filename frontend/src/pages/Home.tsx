@@ -1513,17 +1513,19 @@ export default function Home() {
   const linkedNew = searchParams.get('new');
   useEffect(() => {
     if (!linkedNew) return;
+    const [kind, id] = linkedNew.split(':');
+    // Keep an agent link until the agent list has loaded, so it isn't lost.
+    if (kind === 'agent' && id && agentsLoading && !agents.some((a) => a.id === id)) return;
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.delete('new');
       return next;
     }, { replace: true });
-    const [kind, id] = linkedNew.split(':');
     if (kind === 'agent' && id && agents.some((a) => a.id === id)) startChatWith({ kind: 'agent', id });
     else newConversation();
     // startChatWith and newConversation change every render; this runs once per link.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkedNew, agents.length]);
+  }, [linkedNew, agents.length, agentsLoading]);
 
   // Tell the app sidebar which chat is open and which are running.
   const runningList = useMemo(() => (runningKey ? runningKey.split(',') : []), [runningKey]);
