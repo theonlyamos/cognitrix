@@ -81,3 +81,42 @@ describe('Publish App card', () => {
     expect(screen.getByText('one app')).toBeInTheDocument();
   });
 });
+
+describe('Full-screen app', () => {
+  it('shows a way back to Cognitrix and leaves on Esc', async () => {
+    const { default: OpenApp } = await import('./OpenApp');
+    const { api } = await import('@/lib/api');
+    vi.mocked(api.post).mockResolvedValue({ data: { url: '/a/support-log-abc/~tok/' } });
+    apiGet.mockImplementation(() => Promise.resolve({ data: app({}) }));
+    render(
+      <MemoryRouter initialEntries={['/apps/open/support-log-abc']}>
+        <Routes>
+          <Route path="/apps/open/:slug" element={<OpenApp />} />
+          <Route path="/apps/:id" element={<div>app page</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByTitle('Support log')).toHaveAttribute('src', '/a/support-log-abc/~tok/');
+    expect(screen.getByRole('link', { name: /Back/ })).toHaveAttribute('href', '/apps/a1');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(await screen.findByText('app page')).toBeInTheDocument();
+  });
+});
+
+describe('App in its own window', () => {
+  it('closes instead of going back', async () => {
+    const { default: OpenApp } = await import('./OpenApp');
+    const { api } = await import('@/lib/api');
+    vi.mocked(api.post).mockResolvedValue({ data: { url: '/a/support-log-abc/~tok/' } });
+    apiGet.mockImplementation(() => Promise.resolve({ data: app({}) }));
+    const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+    render(
+      <MemoryRouter initialEntries={['/apps/open/support-log-abc?window=1']}>
+        <Routes><Route path="/apps/open/:slug" element={<OpenApp />} /></Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /Close/ }));
+    expect(close).toHaveBeenCalled();
+    close.mockRestore();
+  });
+});

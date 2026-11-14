@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "app-windows",
+  "description": "Windows that show one app agents built (Apps page). The page is the engine's own; the app itself runs in a sandboxed frame inside it. These windows may only close themselves.",
+  "windows": [
+    "app-*"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*"
+    ]
+  },
+  "permissions": [
+    "core:window:allow-close"
+  ]
+}

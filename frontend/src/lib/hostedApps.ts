@@ -94,6 +94,17 @@ export async function openUrl(ref: string): Promise<string> {
   return data.url;
 }
 
+/** Open an app in its own window: a desktop window in the app, a new tab on the web.
+ *  Both show /apps/open/<slug>?window=1, the app under a bar with Close. */
+export async function openAppWindow(app: Pick<AppSummary, 'slug' | 'title'>): Promise<void> {
+  const { desktop, isDesktop } = await import('@/lib/desktop');
+  if (isDesktop()) {
+    await desktop.openAppWindow(app.slug, app.title);
+    return;
+  }
+  window.open(`/apps/open/${encodeURIComponent(app.slug)}?window=1`, `cognitrix-app-${app.slug}`);
+}
+
 /** Sandbox flags for the frame an app is shown in (never allow-same-origin). */
 export const APP_FRAME_SANDBOX = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads';
 

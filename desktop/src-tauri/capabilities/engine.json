@@ -31,6 +31,7 @@
     "allow-pick-folder",
     "allow-desktop-notify",
     "allow-show-main-window",
+    "allow-open-app-window",
     "allow-hide-quick-ask",
     "allow-get-saved-session",
     "allow-save-session",
