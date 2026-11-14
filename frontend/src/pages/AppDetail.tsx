@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Check, Copy, ExternalLink, Maximize2, Pause, Pencil, Pin, Play, RefreshCw, Share2, Trash2 } from 'lucide-react';
 import { AccessLabel, AppStatusBadge, Sparkline } from '@/components/hosted-apps/parts';
 import { AppShareDialog } from '@/components/hosted-apps/AppShareDialog';
+import { DeleteAppDialog } from '@/components/hosted-apps/DeleteAppDialog';
 import { ErrorState, LoadingState } from '@/components/list-ui';
 import { api, errorMessage } from '@/lib/api';
 import { ago } from '@/lib/artifactPages';
@@ -109,6 +110,7 @@ function Overview({ app, onChanged, onDeleted }: { app: Detail; onChanged: (d: D
   const canEdit = app.role !== 'view';
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const act = async (name: string, work: () => Promise<Detail | void>) => {
     setBusy(name);
     setError('');
@@ -160,11 +162,19 @@ function Overview({ app, onChanged, onDeleted }: { app: Detail; onChanged: (d: D
             onClick={() => void act('redeploy', async () => (await api.post<Detail>(`/hosted-apps/${app.id}/redeploy`, {})).data)}><RefreshCw size={14} />{busy === 'redeploy' ? 'Publishing…' : 'Redeploy'}</button>}
           {owner && <button type="button" className={button} disabled={busy !== ''} onClick={() => void patch({ pinned: !app.pinned })}><Pin size={14} />{app.pinned ? 'Unpin' : 'Pin'}</button>}
           {owner && <button type="button" className={cn(button, 'text-danger-ink')} disabled={busy !== ''}
-            onClick={() => { if (window.confirm(`Delete ${app.title}? Its versions and saved data go too.`)) void act('delete', async () => { await api.delete(`/hosted-apps/${app.id}`); onDeleted(); }); }}>
+            onClick={() => setConfirmDelete(true)}>
             <Trash2 size={14} />Delete</button>}
         </div>
       )}
       {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
+      {confirmDelete && (
+        <DeleteAppDialog title={app.title} folder={app.folder} onCancel={() => setConfirmDelete(false)}
+          onConfirm={async () => {
+            // A failure closes the dialog too, so its message shows under the buttons.
+            await act('delete', async () => { await api.delete(`/hosted-apps/${app.id}`); onDeleted(); });
+            setConfirmDelete(false);
+          }} />
+      )}
     </div>
   );
 }
