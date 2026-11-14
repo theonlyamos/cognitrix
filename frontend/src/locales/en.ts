@@ -21,6 +21,10 @@ const en = {
   'nav.collapseSidebar': 'Collapse sidebar',
   'nav.expandSidebar': 'Expand sidebar',
   'nav.waiting': 'waiting',
+  'nav.newChat': 'New chat',
+  'nav.search': 'Search',
+  'nav.more': 'More',
+  'nav.notifications': 'Notifications',
 
   'settings.title': 'Settings',
   'settings.search': 'Search settings',

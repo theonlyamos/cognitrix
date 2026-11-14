@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate, type NavigateFunction } from 'react-router-dom';
+import { useChatNav } from '@/lib/chatNav';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PageForm } from '@/components/form';
 import { ThemeProvider } from '@/context/ThemeContext';
@@ -126,6 +127,7 @@ vi.mock('@/hooks/useEventStream', () => ({
 }));
 
 vi.mock('@/context/AppContext', () => ({
+  useOptionalUser: () => ({ id: 'user-1', name: 'Test User', email: 'test@example.com' }),
   useUser: () => ({
     user: { id: 'user-1', name: 'Test User', email: 'test@example.com' },
     login: harness.login,
@@ -149,13 +151,22 @@ vi.mock('@/context/SessionContext', () => ({
   }),
 }));
 
+// What the app sidebar sees and does: the open and running chats, and links.
+let go: NavigateFunction = () => {};
+let runningNow: readonly string[] = [];
+function SidebarProbe() {
+  go = useNavigate();
+  runningNow = useChatNav().runningIds;
+  return null;
+}
+
 function renderRoute(element: React.ReactElement, initialEntry = '/') {
   return render(
     <MemoryRouter
       initialEntries={[initialEntry]}
       future={{ v7_relativeSplatPath: true, v7_startTransition: true }}
     >
-      <ThemeProvider>{element}</ThemeProvider>
+      <ThemeProvider><SidebarProbe />{element}</ThemeProvider>
     </MemoryRouter>,
   );
 }
@@ -298,19 +309,18 @@ describe('final accessibility contracts', () => {
   it('renders Home composer actions with responsive touch targets', () => {
     renderRoute(<Home />);
 
-    expect(screen.getByRole('button', { name: /Summarize the benefits of unit testing\./ })).toHaveClass(
+    expect(screen.getByRole('button', { name: 'What can you help me with?' })).toHaveClass(
       'min-h-11',
-      'md:min-h-0',
+      'md:min-h-9',
     );
     expect(screen.getByRole('combobox', { name: 'Message the agent' })).toHaveClass(
       'min-h-11',
-      'md:min-h-0',
     );
     expect(screen.getByRole('button', { name: 'Send' })).toHaveClass(
       'h-11',
       'w-11',
-      'md:h-8',
-      'md:w-8',
+      'md:h-9',
+      'md:w-9',
     );
     const more = screen.getByRole('button', { name: 'More options' });
     expect(more).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8');
@@ -541,7 +551,8 @@ describe('final accessibility contracts', () => {
       expect.objectContaining({ role: 'user', content: 'Research it' }),
     ]);
     expect(await screen.findByRole('button', { name: 'Stop response' })).toBeInTheDocument();
-    expect(await screen.findByTestId('running-s-run')).toBeInTheDocument();
+    // The app sidebar is told the chat is running.
+    await waitFor(() => expect(runningNow).toContain('s-run'));
 
     act(() => harness.followOnEvent?.({ data: { type: 'generate', content: 'So far…', session_id: 's-run' } }));
     expect(harness.appendToLastMessage).toHaveBeenCalledWith('So far…');
@@ -568,14 +579,15 @@ describe('final accessibility contracts', () => {
     await user.type(screen.getByRole('combobox', { name: 'Message the agent' }), 'Keep this turn running');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    await user.click(screen.getByRole('button', { name: '+ new' }));
-    await user.click(screen.getByRole('button', { name: /^Agent Two/ }));
+    // The sidebar's "New chat with Agent Two".
+    act(() => { go('/?new=agent:agent-2'); });
+    await waitFor(() => expect(localStorage.getItem('selectedAgentId')).toBe('agent-2'));
     // The old turn keeps its stream; this page moves to a fresh one.
     expect(harness.rotateStream).toHaveBeenCalledTimes(1);
     expect(harness.apiPost).not.toHaveBeenCalledWith('/agents/stop', expect.anything());
   });
 
-  it('lists chats with every agent and starts new chats from the who-to-talk-to screen', async () => {
+  it('opens chats with any agent from a link and changes agent from the new-chat picker', async () => {
     harness.resources.set('/agents', {
       data: [
         { id: 'agent-1', name: 'Agent One' },
@@ -591,58 +603,47 @@ describe('final accessibility contracts', () => {
       data: [{ id: 's-two', title: 'Other chat', message_count: 2, updated_at: '2026-11-01T10:00:00' }],
     });
     const user = userEvent.setup();
-    renderRoute(<Home />);
+    renderRoute(<Home />, '/?chat=s-two');
 
-    // Chats sit under a section named for who the chat is with.
-    const section = screen.getByRole('region', { name: 'Agent Two chats' });
-    const row = within(section).getByRole('button', { name: /^Other chat/ });
-    await user.click(row);
-    expect(localStorage.getItem('selectedAgentId')).toBe('agent-2');
+    // The sidebar links to /home?chat=<id>, whoever the chat is with.
+    await waitFor(() => expect(localStorage.getItem('selectedAgentId')).toBe('agent-2'));
     expect(localStorage.getItem('chatSession:agent-2')).toBe('s-two');
 
-    await user.click(screen.getByRole('button', { name: '+ new' }));
-    expect(screen.getByRole('heading', { name: 'Who do you want to talk to?' })).toBeInTheDocument();
-    // The last agent used is offered first.
-    const recent = screen.getByRole('heading', { name: 'Recent' }).nextElementSibling as HTMLElement;
-    expect(within(recent).getByRole('button', { name: /^Agent Two/ })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /^Agent Two\s*groq · gpt-oss-120b/ })).toHaveLength(2);
-    await user.click(screen.getByRole('button', { name: /^Agent One/ }));
-    expect(screen.queryByRole('heading', { name: 'Who do you want to talk to?' })).not.toBeInTheDocument();
+    act(() => { go('/?new=1'); });
+    // A new chat greets you and says who it will be with.
+    await user.click(await screen.findByRole('button', { name: 'Chat with Agent Two. Change' }));
+    const menu = screen.getByRole('menu', { name: 'Chat with' });
+    expect(within(menu).getByRole('menuitemradio', { name: /^Agent Two\s*groq · gpt-oss-120b/ })).toHaveAttribute('aria-checked', 'true');
+    await user.click(within(menu).getByRole('menuitemradio', { name: /^Agent One/ }));
     expect(localStorage.getItem('selectedAgentId')).toBe('agent-1');
     expect(localStorage.getItem('chatSession:agent-1')).toBe('');
+    expect(await screen.findByRole('button', { name: 'Chat with Agent One. Change' })).toBeInTheDocument();
   });
 
-  it('keeps re-reading the chat list while a chat with another agent is running', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      harness.resources.set('/agents', { data: [{ id: 'agent-1', name: 'Agent One' }, { id: 'agent-2', name: 'Agent Two' }] });
-      harness.resources.set('/sessions/chats', {
-        data: [{ id: 's-bg', title: 'Background', message_count: 1, kind: 'agent', agent_id: 'agent-2', team_id: null, running: true }],
-      });
-      renderRoute(<Home />);
-      expect(screen.getByTestId('running-s-bg')).toBeInTheDocument();
-      harness.refetch.mockClear();
-      await act(async () => { vi.advanceTimersByTime(4_100); });
-      expect(harness.refetch).toHaveBeenCalledWith({ silent: true });
-    } finally {
-      vi.useRealTimers();
-    }
+  it('keeps a new-chat link for an agent until the agent list has loaded', async () => {
+    harness.resources.set('/agents', { loading: true });
+    const view = renderRoute(<Home />, '/?new=agent:agent-2');
+    harness.resources.set('/agents', {
+      data: [{ id: 'agent-1', name: 'Agent One' }, { id: 'agent-2', name: 'Agent Two' }],
+    });
+    view.rerender(
+      <MemoryRouter initialEntries={['/?new=agent:agent-2']} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+        <ThemeProvider><SidebarProbe /><Home /></ThemeProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(localStorage.getItem('selectedAgentId')).toBe('agent-2'));
+    expect(localStorage.getItem('chatSession:agent-2')).toBe('');
   });
 
-  it('keeps the Home header on one compact mobile row', () => {
+  it('keeps the Home header on one compact row', () => {
     renderRoute(<Home />);
 
-    expect(screen.getByRole('banner')).toHaveClass('flex-row', 'flex-nowrap');
-    expect(screen.getByRole('banner')).not.toHaveClass('overflow-hidden');
-    expect(within(screen.getByRole('banner')).getByRole('heading', { name: 'New chat' })).toHaveClass('truncate');
-    // Desktop keeps the bar (chat name and the side panel button) and drops
-    // only the connected mark.
-    expect(screen.getByRole('banner')).not.toHaveClass('md:hidden');
-    expect(screen.getByLabelText('Connection status: connected')).toHaveClass('md:hidden');
-    expect(screen.getByRole('button', { name: 'Open conversations' })).toHaveClass('h-11', 'w-11', 'md:hidden');
-    const connectionStatus = screen.getByLabelText('Connection status: connected');
-    expect(connectionStatus).toHaveClass('flex', 'items-center');
-    expect(within(connectionStatus).getByText('connected')).toHaveClass('sr-only', 'md:not-sr-only');
+    const banner = screen.getByRole('banner');
+    expect(banner).toHaveClass('flex-row', 'flex-nowrap');
+    expect(banner).not.toHaveClass('overflow-hidden');
+    expect(within(banner).getByRole('heading', { name: 'New chat' })).toHaveClass('truncate');
+    expect(within(banner).getByText('Connection status: connected')).toHaveClass('sr-only');
+    expect(within(banner).getByRole('button', { name: 'Chat sidebar' })).toHaveClass('h-11', 'min-w-11', 'md:h-9', 'md:min-w-9');
   });
 
   it('does not send a new turn until its event stream is connected', async () => {

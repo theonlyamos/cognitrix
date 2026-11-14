@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
@@ -63,12 +63,6 @@ describe('Home chats started by agents', () => {
     localStorage.clear();
     localStorage.setItem('selectedAgentId', 'agent-1');
     localStorage.setItem('chatSession:agent-1', '');
-  });
-
-  it('labels a chat with the agent that started it', async () => {
-    renderHome();
-    expect((await screen.findByTestId('started-by-c2')).textContent).toBe('started by Boss');
-    expect(screen.queryByTestId('started-by-c1')).not.toBeInTheDocument();
   });
 
   it('opens the chat named in the link', async () => {

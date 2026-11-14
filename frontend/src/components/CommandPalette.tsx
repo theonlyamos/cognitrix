@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { chatHref, newChatHref } from '@/lib/chatNav';
 
 interface AgentLite {
   id: string;
@@ -20,9 +21,24 @@ interface TeamLite {
   name: string;
 }
 
+interface ChatLite {
+  id: string;
+  title: string;
+  kind?: 'agent' | 'team';
+  team_id?: string | null;
+  archived?: boolean;
+}
+
+/** A chat found by words in its messages. */
+interface ChatHit {
+  id: string;
+  title: string;
+  snippet?: string;
+}
+
 interface Item {
   id: string;
-  group: 'Actions' | 'Agents' | 'Tasks' | 'Teams';
+  group: 'Actions' | 'Chats' | 'Agents' | 'Tasks' | 'Teams';
   label: string;
   hint?: string;
   shortcut?: string;
@@ -30,27 +46,16 @@ interface Item {
   run: () => void;
 }
 
-/** Opens a fresh chat with an agent (Home reads its agent from localStorage). */
-export function startChatWith(agentId: string, navigate: (to: string) => void, onHome: boolean) {
-  try {
-    localStorage.setItem('selectedAgentId', agentId);
-    localStorage.removeItem(`chatSession:${agentId}`);
-  } catch {
-    /* ignore */
-  }
-  if (onHome) window.location.assign('/home');
-  else navigate('/home');
-}
-
-/** Ctrl K: search actions, agents, tasks and teams in one list. */
+/** Ctrl K: search actions, chats, agents, tasks and teams in one list. */
 export default function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate();
-  const { pathname } = useLocation();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [tasks, setTasks] = useState<TaskLite[]>([]);
   const [teams, setTeams] = useState<TeamLite[]>([]);
+  const [chats, setChats] = useState<ChatLite[]>([]);
+  const [hits, setHits] = useState<ChatHit[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -63,12 +68,32 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
     api.get<AgentLite[]>('/agents').then((r) => setAgents(r.data ?? [])).catch(() => {});
     api.get<TaskLite[]>('/tasks').then((r) => setTasks(r.data ?? [])).catch(() => {});
     api.get<TeamLite[]>('/teams').then((r) => setTeams(r.data ?? [])).catch(() => {});
+    api.get<ChatLite[]>('/sessions/chats').then((r) => setChats(r.data ?? [])).catch(() => {});
   }, [open]);
+
+  // Words in a chat's messages, not just its title (three letters or more).
+  useEffect(() => {
+    const words = query.trim();
+    if (!open || words.length < 3) {
+      setHits([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      api.get<ChatHit[]>('/sessions/search', { params: { q: words } })
+        .then((r) => { if (!cancelled) setHits(r.data ?? []); })
+        .catch(() => { if (!cancelled) setHits([]); });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, query]);
 
   const items = useMemo<Item[]>(() => {
     const go = (to: string) => () => navigate(to);
     const actions: Item[] = [
-      { id: 'new-chat', group: 'Actions', label: 'New chat', hint: 'Talk to your selected agent', shortcut: 'Ctrl N', run: go('/home') },
+      { id: 'new-chat', group: 'Actions', label: 'New chat', hint: 'Talk to your selected agent', shortcut: 'Ctrl N', run: go(newChatHref()) },
       { id: 'run-task', group: 'Actions', label: 'Run task…', hint: 'Plan and execute with an agent or team in the background', run: go('/tasks/new') },
       { id: 'inbox', group: 'Actions', label: 'Open inbox', hint: 'Approvals, questions and agent alerts waiting on you', run: go('/inbox') },
       { id: 'automations', group: 'Actions', label: 'Open automations', hint: 'Scheduled, self-checking and webhook tasks', run: go('/automations') },
@@ -87,7 +112,7 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
       group: 'Agents',
       label: `New chat with ${a.name}`,
       hint: [a.llm?.provider, a.llm?.model].filter(Boolean).join(' · '),
-      run: () => startChatWith(a.id, navigate, pathname === '/home'),
+      run: go(newChatHref({ kind: 'agent', id: a.id })),
     }));
     const taskItems: Item[] = tasks.map((t) => ({
       id: `task-${t.id}`,
@@ -100,11 +125,28 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
       { id: `team-${t.id}`, group: 'Teams' as const, label: t.name, run: go(`/teams/${t.id}`) },
       { id: `team-chat-${t.id}`, group: 'Teams' as const, label: `Group chat: ${t.name}`, run: go(`/teams/${t.id}/chat`) },
     ]);
-    const all = [...actions, ...agentItems, ...taskItems, ...teamItems];
+    const byId = new Map(chats.map((c) => [c.id, c]));
+    const chatItems: Item[] = chats.filter((c) => !c.archived).map((c) => ({
+      id: `chat-${c.id}`,
+      group: 'Chats',
+      label: c.title,
+      run: go(chatHref(c)),
+    }));
     const q = query.trim().toLowerCase();
-    if (!q) return [...actions, ...agentItems.slice(0, 4), ...taskItems.slice(0, 5)];
-    return all.filter((item) => `${item.label} ${item.hint ?? ''} ${item.keywords ?? ''}`.toLowerCase().includes(q)).slice(0, 30);
-  }, [agents, tasks, teams, query, navigate, pathname]);
+    if (!q) return [...actions, ...chatItems.slice(0, 5), ...agentItems.slice(0, 4), ...taskItems.slice(0, 5)];
+    const matches = (item: Item) => `${item.label} ${item.hint ?? ''} ${item.keywords ?? ''}`.toLowerCase().includes(q);
+    const titled = chats.filter((c) => c.title.toLowerCase().includes(q)).map((c) => ({
+      id: `chat-${c.id}`, group: 'Chats' as const, label: c.title, run: go(chatHref(c)),
+    }));
+    const found = hits.filter((h) => !titled.some((t) => t.id === `chat-${h.id}`)).map((h) => ({
+      id: `chat-${h.id}`, group: 'Chats' as const, label: h.title, hint: h.snippet, run: go(chatHref(byId.get(h.id) || h)),
+    }));
+    return [
+      ...actions.filter(matches),
+      ...[...titled, ...found].slice(0, 8),
+      ...[...agentItems, ...taskItems, ...teamItems].filter(matches),
+    ].slice(0, 30);
+  }, [agents, tasks, teams, chats, hits, query, navigate]);
 
   useEffect(() => setActive(0), [query]);
 
@@ -154,8 +196,8 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Type a command, agent or task"
-            aria-label="Search commands, agents and tasks"
+            placeholder="Search chats, agents, tasks or commands"
+            aria-label="Search chats, commands, agents and tasks"
             aria-controls="palette-results"
             aria-activedescendant={items[active] ? `palette-${items[active].id}` : undefined}
             className="flex-1 border-0 bg-transparent text-[17px] text-fg outline-none placeholder:text-fg-dim"

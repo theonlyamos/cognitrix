@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useNavigate, type NavigateFunction } from 'react-router-dom';
+import { chatsEdited } from '@/lib/chatNav';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import Home from './Home';
@@ -27,13 +28,25 @@ const apiDelete = vi.hoisted(() => vi.fn().mockResolvedValue({ data: {} }));
 
 vi.mock('@/lib/api', () => ({ api: { get: apiGet, post: apiPost, delete: apiDelete } }));
 vi.mock('@/context/SessionContext', () => ({ useSession: () => ({ ...harness }) }));
+// One stable list per conversations array, like a real fetch result.
+const chatsCache = new WeakMap<object, unknown[]>();
+function allChats() {
+  let list = chatsCache.get(harness.conversations);
+  if (!list) {
+    list = harness.conversations.map((c) => ({ ...c, agent_id: 'agent-1', kind: 'agent' }));
+    chatsCache.set(harness.conversations, list);
+  }
+  return list;
+}
 vi.mock('@/hooks/useResource', () => ({
   useResource: (path: string | null) => ({
     data: path === '/agents'
       ? harness.agents
       : path?.startsWith('/sessions/agents/')
         ? harness.conversations
-        : [],
+        : path === '/sessions/chats'
+          ? allChats()
+          : [],
     loading: false,
     loadedPath: path,
     refetch: vi.fn(),
@@ -46,9 +59,20 @@ vi.mock('@/hooks/useSSE', () => ({
   },
 }));
 
-function renderHome() {
-  return render(<MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}><Home /></MemoryRouter>);
+let go: NavigateFunction = () => {};
+function Nav() {
+  go = useNavigate();
+  return null;
 }
+
+function renderHome() {
+  return render(<MemoryRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}><Nav /><Home /></MemoryRouter>);
+}
+
+/** What the app sidebar does: open a chat, start one, or say one was deleted. */
+const openChat = (id: string) => act(() => { go(`/?chat=${id}`); });
+const newChat = (target?: string) => act(() => { go(target ? `/?new=agent:${target}` : '/?new=1'); });
+const deleteChat = (id: string) => act(() => { chatsEdited({ deletedId: id }); });
 
 async function readJsonBlob(blob: Blob) {
   return JSON.parse(await new Promise<string>((resolve, reject) => {
@@ -259,20 +283,10 @@ describe('Home image editing transport', () => {
   });
 
   it.each([
-    ['conversation switch', async () => {
-      await userEvent.click(screen.getByRole('button', { name: /^Second/ }));
-    }],
-    ['agent switch', async () => {
-      await userEvent.click(screen.getByRole('button', { name: '+ new' }));
-      await userEvent.click(screen.getByRole('button', { name: /^Agent Two/ }));
-    }],
-    ['new conversation', async () => {
-      await userEvent.click(screen.getByRole('button', { name: '+ new' }));
-    }],
-    ['active conversation deletion', async () => {
-      await userEvent.click(screen.getByRole('button', { name: 'More actions for Current' }));
-      await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    }],
+    ['conversation switch', () => openChat('conversation-2')],
+    ['agent switch', () => newChat('agent-2')],
+    ['new conversation', () => newChat()],
+    ['active conversation deletion', () => deleteChat('conversation-1')],
   ])('revokes a pending preview exactly once on %s', async (_scenario, runLifecycle) => {
     vi.stubGlobal('confirm', vi.fn(() => true));
     harness.agents = [{ id: 'agent-1', name: 'Agent One' }, { id: 'agent-2', name: 'Agent Two' }];
@@ -306,16 +320,15 @@ describe('Home image editing transport', () => {
     ] }];
     renderHome();
     await userEvent.click(await screen.findByRole('button', { name: 'Use source.png as edit source' }));
-    await userEvent.click(screen.getByRole('button', { name: /^Second/ }));
+    await openChat('conversation-2');
     await waitFor(() => expect(screen.queryByText('Editing image')).not.toBeInTheDocument());
 
     await userEvent.click(screen.getByRole('button', { name: 'Use source.png as edit source' }));
-    await userEvent.click(screen.getByRole('button', { name: '+ new' }));
-      await userEvent.click(screen.getByRole('button', { name: /^Agent Two/ }));
-    expect(screen.queryByText('Editing image')).not.toBeInTheDocument();
+    await newChat('agent-2');
+    await waitFor(() => expect(screen.queryByText('Editing image')).not.toBeInTheDocument());
 
     await userEvent.click(screen.getByRole('button', { name: 'Use source.png as edit source' }));
-    await userEvent.click(screen.getByRole('button', { name: '+ new' }));
+    await newChat();
     expect(screen.queryByText('Editing image')).not.toBeInTheDocument();
   });
 
@@ -328,9 +341,8 @@ describe('Home image editing transport', () => {
     ] }];
     renderHome();
     await userEvent.click(await screen.findByRole('button', { name: 'Use source.png as edit source' }));
-    await userEvent.click(screen.getByRole('button', { name: 'More actions for Current' }));
-      await userEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith('/sessions/conversation-1'));
+    expect(screen.getByText('Editing image')).toBeVisible();
+    await deleteChat('conversation-1');
     expect(screen.queryByText('Editing image')).not.toBeInTheDocument();
   });
 

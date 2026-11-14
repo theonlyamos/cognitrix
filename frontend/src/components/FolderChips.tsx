@@ -104,7 +104,7 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
   return (
     <div ref={rootRef} className={cn('relative flex flex-wrap items-center gap-1.5', className)}>
       {folders.length === 0 && emptyLabel && (
-        <span className="flex items-center gap-1.5 rounded-full border border-dashed border-line px-2.5 py-0.5 text-[11.5px] text-fg-dim">
+        <span className="hidden items-center gap-1.5 whitespace-nowrap rounded-full border border-dashed border-line px-2.5 py-0.5 text-[11.5px] text-fg-dim sm:flex">
           <FolderIcon /> {emptyLabel}
         </span>
       )}
@@ -153,7 +153,7 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
         disabled={disabled || busy}
         onClick={() => { setMenu(null); setAdding((v) => !v); }}
         aria-expanded={adding}
-        className="flex min-h-8 items-center gap-1 rounded-full border border-dashed border-line px-2.5 py-0.5 text-[11.5px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg disabled:opacity-60"
+        className="flex min-h-8 items-center gap-1 whitespace-nowrap rounded-full border border-dashed border-line px-2.5 py-0.5 text-[11.5px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg disabled:opacity-60"
       >
         + folder
       </button>

@@ -94,13 +94,13 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   if (message.role === 'tool') {
     if (!message.tools?.length) return null;
     return (
-      <div className="grid grid-cols-1 gap-2 border-b border-line px-4 py-3 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
-        <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">TOOL</div>
+      <div className="mx-auto w-full max-w-3xl px-4 py-1.5 sm:px-6">
+        <span className="sr-only">Tool steps</span>
         <div className="flex min-w-0 flex-col items-start gap-1.5">
           {message.tools.map((tool, index) => (
             <div key={tool.id || index} className="w-full max-w-2xl space-y-2">
               <details className="group w-full">
-              <summary className="relative inline-flex min-h-11 list-none cursor-pointer select-none items-center gap-1.5 rounded border border-line bg-panel-2 px-2 py-1 font-mono text-[11px] transition-colors hover:border-fg-dim sm:min-h-0 [&::-webkit-details-marker]:hidden">
+              <summary className="relative inline-flex min-h-11 list-none cursor-pointer select-none items-center gap-1.5 rounded-full px-1 py-1 text-[12.5px] text-fg-dim transition-colors hover:text-fg sm:min-h-0 [&::-webkit-details-marker]:hidden">
                 {tool.status === 'running' ? (
                   <span className="think-bars"><i /><i /><i /></span>
                 ) : tool.status === 'error' ? (
@@ -110,7 +110,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
                 ) : (
                   <span className="text-accent-ink" aria-hidden>✓</span>
                 )}
-                <span className={cn(tool.status === 'running' ? 'text-accent-ink' : 'text-fg')}>
+                <span className={cn('capitalize', tool.status === 'running' ? 'text-accent-ink' : 'text-fg-dim')}>
                   {humanizeTool(tool.name)}
                 </span>
                 {tool.status === 'running' && <span className="text-fg-dim">running…</span>}
@@ -119,7 +119,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
                 {tool.status === 'stopped' && <span className="sr-only">Stopped</span>}
                 <svg className="ml-0.5 text-fg-dim transition-transform group-open:rotate-90" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
               </summary>
-              <div className="mt-1.5 space-y-2 rounded border border-line bg-panel-2 p-2 font-mono text-[11px]">
+              <div className="mt-1.5 space-y-2 rounded-xl border border-line bg-panel p-2.5 font-mono text-[11px]">
                 {tool.params && tool.params !== '{}' && (
                   <div>
                     <div className="mb-1 text-[10px] uppercase tracking-wider text-fg-dim">params</div>
@@ -162,14 +162,18 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   const isUser = message.role === 'user';
   const blockedUrl = isUser ? null : blockedEndpoint(message.content);
   return (
-    <div className="group/msg grid grid-cols-1 gap-2 border-b border-line px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
+    <div className={cn('group/msg mx-auto flex w-full max-w-3xl flex-col px-4 py-2.5 sm:px-6', isUser && 'items-end')}>
+      {isUser ? (
+        <span className="sr-only">You said:</span>
+      ) : message.speaker ? (
+        <div className="mb-1 truncate text-[12px] font-semibold text-fg-dim" title={message.speaker}>{message.speaker}</div>
+      ) : (
+        <span className="sr-only">Agent:</span>
+      )}
       <div
-        className={cn('truncate pt-0.5 font-mono text-[11px] tracking-[0.06em]', isUser ? 'text-accent-ink' : 'text-fg-dim')}
-        title={message.speaker}
+        className={cn('min-w-0', isUser ? 'max-w-[85%] rounded-2xl bg-panel-2 px-4 py-2.5' : 'w-full')}
+        aria-live={!isUser && isLast && streaming ? 'off' : undefined}
       >
-        {isUser ? 'YOU' : message.speaker ? message.speaker.toUpperCase() : 'AGENT'}
-      </div>
-      <div className="min-w-0" aria-live={!isUser && isLast && streaming ? 'off' : undefined}>
         {blockedUrl && <BlockedEndpointNotice url={blockedUrl} />}
         {isUser ? (
           <>
@@ -199,13 +203,14 @@ export const ChatMessageRow = memo(function ChatMessageRow({
             />
           </div>
         ))}
-        {message.timestamp && (
-          <div className="mt-2 font-mono text-[10.5px] text-fg-dim">
-            <span className="opacity-70">at</span> {fmtTime(message.timestamp)}
-          </div>
-        )}
-        {message.content.trim() && !(isLast && streaming) && (
-          <div className="mt-1 flex flex-wrap items-center gap-3 opacity-100 transition-opacity md:opacity-0 md:group-hover/msg:opacity-100 md:group-focus-within/msg:opacity-100">
+      </div>
+      {(message.timestamp || (message.content.trim() && !(isLast && streaming))) && (
+        <div className="mt-1 flex flex-wrap items-center gap-3 opacity-100 transition-opacity md:opacity-0 md:group-hover/msg:opacity-100 md:group-focus-within/msg:opacity-100">
+          {message.timestamp && (
+            <span className="font-mono text-[10.5px] text-fg-dim">{fmtTime(message.timestamp)}</span>
+          )}
+          {message.content.trim() && !(isLast && streaming) && (
+          <>
             <CopyButton text={message.content} />
             {!isUser && <ListenButton id={message.id} text={message.content} />}
             {isUser && onEdit && (
@@ -214,9 +219,10 @@ export const ChatMessageRow = memo(function ChatMessageRow({
             {!isUser && onRegenerate && (
               <button type="button" className={actionClass} onClick={onRegenerate}>regenerate</button>
             )}
-          </div>
-        )}
-      </div>
+          </>
+          )}
+        </div>
+      )}
     </div>
   );
 });

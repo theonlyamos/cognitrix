@@ -32,6 +32,8 @@ interface ChatRailProps {
   onNew: () => void;
   onNewWith: (group: RailGroup) => void;
   onOpenChat: (chatId: string) => void;
+  /** Inside the app sidebar, which has its own expand and New chat buttons. */
+  bare?: boolean;
 }
 
 const FLYOUT_WIDTH = 300;
@@ -39,7 +41,7 @@ const PINNED = '__pinned';
 
 /** The chat list, minimized: one thumbnail per agent and team. A thumbnail
  *  opens a flyout with that agent's chats, so the list never has to widen. */
-export function ChatRail({ groups, pinned, archivedCount, onExpand, onNew, onNewWith, onOpenChat }: ChatRailProps) {
+export function ChatRail({ groups, pinned, archivedCount, onExpand, onNew, onNewWith, onOpenChat, bare = false }: ChatRailProps) {
   const [open, setOpen] = useState<{ key: string; top: number; left: number } | null>(null);
   const railRef = useRef<HTMLElement>(null);
   const flyoutRef = useRef<HTMLDivElement>(null);
@@ -142,7 +144,8 @@ export function ChatRail({ groups, pinned, archivedCount, onExpand, onNew, onNew
   const shownChats = open?.key === PINNED ? pinned : shownGroup?.chats;
 
   return (
-    <nav ref={railRef} aria-label="Conversations, minimized" className="flex h-full min-h-0 w-full flex-col items-center gap-1.5 py-2.5">
+    <nav ref={railRef} aria-label="Conversations, minimized" className={cn('flex h-full min-h-0 w-full flex-col items-center gap-1.5', bare ? 'py-1' : 'py-2.5')}>
+      {!bare && (<>
       <button
         type="button"
         onClick={() => onExpand()}
@@ -162,6 +165,7 @@ export function ChatRail({ groups, pinned, archivedCount, onExpand, onNew, onNew
         <span aria-hidden>+</span>
       </button>
       <span aria-hidden className="my-0.5 h-px w-6 flex-none bg-line" />
+      </>)}
       <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto overscroll-contain [scrollbar-width:none]" onScroll={close}>
         {pinned.length > 0 && tile(PINNED, `Pinned, ${pinned.length} ${pinned.length === 1 ? 'chat' : 'chats'}`,
           <span aria-hidden className="font-mono text-[13px] text-fg-dim">▲</span>)}

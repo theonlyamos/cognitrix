@@ -26,10 +26,9 @@ const CHATS = vi.hoisted(() => [
 ]);
 const apiPost = vi.hoisted(() => vi.fn());
 const apiGet = vi.hoisted(() => vi.fn());
-const apiPatch = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/api', () => ({
-  api: { get: apiGet, post: apiPost, patch: apiPatch, delete: vi.fn().mockResolvedValue({ data: {} }) },
+  api: { get: apiGet, post: apiPost, patch: vi.fn(), delete: vi.fn().mockResolvedValue({ data: {} }) },
 }));
 vi.mock('@/context/SessionContext', () => ({ useSession: () => ({ ...harness }) }));
 vi.mock('@/hooks/useResource', () => ({
@@ -55,87 +54,6 @@ function renderHome() {
     </MemoryRouter>,
   );
 }
-
-const chatTitles = () =>
-  screen.getAllByRole('button', { pressed: false })
-    .map((button) => button.textContent || '')
-    .filter((text) => /Accra|Budget|Old notes/.test(text));
-
-describe('Home chat list management', () => {
-  beforeEach(() => {
-    apiGet.mockReset().mockResolvedValue({ data: [] });
-    apiPost.mockReset().mockResolvedValue({ data: {} });
-    apiPatch.mockReset().mockResolvedValue({ data: {} });
-    harness.messages = [];
-    harness.setMessages.mockReset();
-    localStorage.clear();
-    localStorage.setItem('selectedAgentId', 'agent-1');
-    localStorage.setItem('chatSession:agent-1', '');
-  });
-
-  it('lists pinned chats first and keeps archived chats out of the way', async () => {
-    renderHome();
-    await screen.findAllByText('Budget review');
-    const titles = chatTitles();
-    expect(titles[0]).toContain('Budget review');
-    expect(titles[1]).toContain('Trip to Accra');
-    expect(screen.queryByText('Old notes')).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getAllByRole('button', { name: 'archived chats (1)' })[0]);
-    expect(screen.getAllByText('Old notes').length).toBeGreaterThan(0);
-    // The archive opens under the rest of the list.
-    expect(screen.getAllByText('Trip to Accra').length).toBeGreaterThan(0);
-  });
-
-  it('groups chats under their agent and remembers closed sections', async () => {
-    renderHome();
-    const header = (await screen.findAllByRole('button', { name: /^Agent One/, expanded: true }))[0];
-    expect(screen.getAllByRole('region', { name: 'Agent One chats' })[0]).toHaveTextContent('Trip to Accra');
-    await userEvent.click(header);
-    expect(screen.queryByText('Trip to Accra')).not.toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem('chatList.closedSections') || '[]')).toContain('agent:agent-1');
-    // Pinned chats stay on top even with their agent's section closed.
-    expect(screen.getAllByText('Budget review').length).toBeGreaterThan(0);
-  });
-
-  it('starts a new chat from a section header', async () => {
-    renderHome();
-    await userEvent.click((await screen.findAllByRole('button', { name: 'New chat with Agent One' }))[0]);
-    expect(localStorage.getItem('chatSession:agent-1')).toBe('');
-  });
-
-  it('renames, pins and archives from the row menu', async () => {
-    renderHome();
-    await userEvent.click((await screen.findAllByRole('button', { name: 'More actions for Trip to Accra' }))[0]);
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Pin to top' }));
-    await waitFor(() => expect(apiPatch).toHaveBeenCalledWith('/sessions/c1', { pinned: true }));
-
-    await userEvent.click(screen.getAllByRole('button', { name: 'More actions for Trip to Accra' })[0]);
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-    const box = screen.getByRole('textbox', { name: 'Chat name' });
-    await userEvent.clear(box);
-    await userEvent.type(box, 'Ghana holiday{Enter}');
-    await waitFor(() => expect(apiPatch).toHaveBeenCalledWith('/sessions/c1', { title: 'Ghana holiday' }));
-
-    await userEvent.click(screen.getAllByRole('button', { name: 'More actions for Budget review' })[0]);
-    expect(screen.getByRole('menuitem', { name: 'Unpin' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Archive' }));
-    await waitFor(() => expect(apiPatch).toHaveBeenCalledWith('/sessions/c2', { archived: true }));
-  });
-
-  it('filters by title as you type and shows chats found by their messages', async () => {
-    apiGet.mockImplementation((path: string) => Promise.resolve({
-      data: path === '/sessions/search'
-        ? [{ id: 'c2', title: 'Budget review', agent_id: 'agent-1', snippet: 'flights to Accra cost 900' }]
-        : [],
-    }));
-    renderHome();
-    await userEvent.type((await screen.findAllByRole('searchbox', { name: 'Search chats' }))[0], 'accra');
-    expect(screen.queryByText('Budget review')).not.toBeInTheDocument();
-    expect((await screen.findAllByText('flights to Accra cost 900')).length).toBeGreaterThan(0);
-    expect(apiGet).toHaveBeenCalledWith('/sessions/search', { params: { q: 'accra' } });
-  });
-});
 
 describe('Home edit and regenerate', () => {
   const history = [
