@@ -141,7 +141,9 @@ export function CredentialsCard() {
                 </button>
               </div>
               <p className="mt-1 text-[12px] text-fg-dim">
-                Only sent to {c.allowed_hosts.join(', ')}
+                {c.allowed_hosts.length === 1 && c.allowed_hosts[0] === 'sandbox.invalid'
+                  ? 'Only for commands in the sandbox'
+                  : `Only sent to ${c.allowed_hosts.filter((h) => h !== 'sandbox.invalid').join(', ')}`}
                 {c.last_used_at ? ` · last used ${c.last_used_at} UTC` : ' · not used yet'}
               </p>
               {c.description && <p className="mt-0.5 text-[12px] text-fg-dim">{c.description}</p>}

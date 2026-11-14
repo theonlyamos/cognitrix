@@ -19,7 +19,7 @@ import { ArtifactViewer } from '@/components/artifacts/ArtifactViewer';
 import { onCardAction, parseCard } from '@/lib/cards';
 import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { announceArtifactUpdate, onArtifactUpdate, onOpenArtifact, parseStamp, publishedFrom, type ArtifactList } from '@/lib/artifactPages';
-import { desktopName, sandboxStatus, type SandboxDesktop } from '@/lib/sandbox';
+import { desktopName, getChatSandbox, sandboxStatus, setChatSandbox, type ChatSandbox, type SandboxDesktop } from '@/lib/sandbox';
 import { ChatSidebar, loadSidebarOpen, saveSidebarOpen, type SidebarActivity, type SidebarWaiting } from '@/components/ChatSidebar';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
@@ -332,7 +332,7 @@ export default function Home() {
 
   // Agent selection — chat + SSE must share one agent_id (they rendezvous on a
   // per-(user, agent) manager on the backend).
-  const { data: agentsData, loading: agentsLoading, refetch: refetchAgents } = useResource<(PickerAgent & { folders?: WorkFolder[] | null })[]>('/agents');
+  const { data: agentsData, loading: agentsLoading, refetch: refetchAgents } = useResource<(PickerAgent & { folders?: WorkFolder[] | null; run_in_sandbox?: boolean })[]>('/agents');
   const agents = useMemo(() => (agentsData || []).filter((a) => a.id), [agentsData]);
   // The agents' sandboxed computer (one desktop per agent), when the server has it on.
   const [sandboxOn, setSandboxOn] = useState(false);
@@ -677,6 +677,40 @@ export default function Home() {
     if (sid) setSavedFolders(await setChatFolders(sid, next));
     else setDraftFolders(next);
   }, []);
+
+  // ── Run in sandbox ──
+  // A chat's shell, files and tests can work in the agents' sandboxed
+  // computer. A new chat follows the agent's default until the person flips
+  // it, and sends the choice with its first message.
+  const [chatSandbox, setChatSandboxState] = useState<ChatSandbox | null>(null);
+  const [draftSandbox, setDraftSandbox] = useState<boolean | null>(null);
+  const draftSandboxRef = useRef<boolean | null>(null);
+  draftSandboxRef.current = draftSandbox;
+  useEffect(() => {
+    if (!busyRef.current) setDraftSandbox(null);
+  }, [activeSessionId, agentId]);
+  useEffect(() => {
+    setChatSandboxState(null);
+    if (!activeSessionId) return;
+    let cancelled = false;
+    getChatSandbox(activeSessionId)
+      .then((v) => { if (!cancelled) setChatSandboxState(v); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeSessionId]);
+  const agentSandboxDefault = !!agents.find((a) => a.id === agentId)?.run_in_sandbox;
+  const runInSandbox = chatSandbox ? chatSandbox.effective : (draftSandbox ?? agentSandboxDefault);
+  const toggleSandbox = useCallback(async () => {
+    const sid = activeRef.current;
+    const next = !runInSandbox;
+    if (sid) {
+      try {
+        setChatSandboxState(await setChatSandbox(sid, next));
+      } catch { /* keep the old state */ }
+    } else {
+      setDraftSandbox(next);
+    }
+  }, [runInSandbox]);
 
   // Default to the first agent once the list loads (or if the saved one is gone).
   useEffect(() => {
@@ -1327,6 +1361,7 @@ export default function Home() {
           ...(chatModelRef.current ? { model: chatModelRef.current } : {}),
           ...(!activeRef.current && draftFoldersRef.current ? { folders: draftFoldersRef.current } : {}),
           ...(!activeRef.current && incognitoRef.current ? { incognito: true } : {}),
+          ...(!activeRef.current && draftSandboxRef.current !== null ? { run_in_sandbox: draftSandboxRef.current } : {}),
         };
         if (pending.length) {
           const form = new FormData();
@@ -1872,6 +1907,11 @@ export default function Home() {
               : "Incognito: the chat isn't listed, doesn't use or change memory, and is deleted when you leave it."}
             reasoning={reasoning}
             onReasoning={changeReasoning}
+            sandbox={sandboxOn || runInSandbox ? {
+              on: runInSandbox,
+              available: sandboxOn,
+              onToggle: () => void toggleSandbox(),
+            } : undefined}
           >
             {empty && (
               <div className="min-w-0 flex-none">

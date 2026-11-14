@@ -120,12 +120,18 @@ def _stopped_tool_messages(tool_calls: list[dict[str, Any]]) -> list[dict[str, A
     return stopped
 
 
-def _with_folder_prompt(prompt, folders) -> Any:
-    """Add the working-folders block to the system message."""
-    if not folders or not isinstance(prompt, list):
+def _with_folder_prompt(prompt, folders, sandbox: tuple | None = None) -> Any:
+    """Add the working-folders block to the system message. With Run in
+    sandbox (``sandbox`` is (agent id, user id)), the block says the shell and
+    files are in the sandbox and the folders can be copied in."""
+    if not isinstance(prompt, list) or (not folders and sandbox is None):
         return prompt
-    from cognitrix.common.folders import folder_prompt
-    block = folder_prompt(folders)
+    if sandbox is not None:
+        from cognitrix.common.sandbox_work import sandbox_prompt
+        block = sandbox_prompt(folders, *sandbox)
+    else:
+        from cognitrix.common.folders import folder_prompt
+        block = folder_prompt(folders)
     if not block:
         return prompt
     if prompt and isinstance(prompt[0], dict) and prompt[0].get('role') == 'system' \
@@ -149,6 +155,10 @@ class Session(Model):
     folders: list[dict[str, Any]] | None = None
     """Working folders for this chat ({path, access, name, primary}). None until
     the first turn copies the agent's defaults."""
+
+    run_in_sandbox: bool | None = None
+    """Run in sandbox: this chat's shell, files and tests work in the person's
+    sandboxed computer. None follows the agent's own setting."""
 
     user_id: str | None = None
     """Durable owner of an ordinary web/API chat (None for local/internal sessions)"""
@@ -676,6 +686,27 @@ class Session(Model):
         except Exception:
             logger.debug('Search Knowledge tool unavailable', exc_info=True)
 
+        # Run in sandbox: the shell and file tools work in the sandboxed
+        # computer, so the turn gets them (and the sandbox-only tools) even
+        # when the agent doesn't have them; nothing there reaches this machine.
+        turn_sandbox = self._turn_sandbox(agent, interface, tool_context)
+        sandbox_for_prompt = (
+            (agent.id, getattr(tool_context, 'user_id', None) or self.user_id) if turn_sandbox else None)
+        if turn_sandbox:
+            try:
+                from cognitrix.tools.base import ToolManager
+                from cognitrix.tools.sandbox_work import SANDBOX_TOOL_NAMES
+                have = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
+                extra = [
+                    t for t in (ToolManager.get_by_name(n) for n in (
+                        'bash', 'read', 'write', 'edit', 'glob', 'grep', *SANDBOX_TOOL_NAMES))
+                    if t is not None and t.name.lower() not in have
+                ]
+                if extra:
+                    agent = agent.model_copy(update={'tools': [*agent.tools, *extra]})
+            except Exception:
+                logger.debug('sandbox tools unavailable', exc_info=True)
+
         # Bash's background mode and the Coding Agent tool need the two
         # background helpers; agents that have either get them for the turn
         # without changing the saved agent.
@@ -793,7 +824,7 @@ class Session(Model):
 
         # Build the context-aware prompt using the manager
         prompt = await agent.get_context_manager().build_prompt(agent, self)
-        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders))
+        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
 
         # Tools set to "never" for this agent aren't offered to the model
         # (the agent loop refuses them too, see safety/permissions.py).
@@ -860,7 +891,7 @@ class Session(Model):
                             tools=tuple(formatted_tools),
                             call_tool=self._cli_tool_caller(
                                 agent, interface, output, tool_context, turn_folders, inherited_folders,
-                                record_history),
+                                record_history, turn_sandbox),
                             approve=lambda name, params: agent.manager.approve_cli_action(
                                 _harness.HARNESSES[agent.llm.provider.lower()].label, name, params,
                                 interface=interface, folders=tuple(inherited_folders or turn_folders or ()),
@@ -973,6 +1004,9 @@ class Session(Model):
                                 bound_context = _dc.replace(
                                     bound_context, folders=tuple(turn_folders),
                                 )
+                            if turn_sandbox and not bound_context.sandbox:
+                                import dataclasses as _dc
+                                bound_context = _dc.replace(bound_context, sandbox=True)
                             from cognitrix.common.folders import reset_grant_sink, set_grant_sink
                             grant_token = set_grant_sink(
                                 self._folder_grant_sink(turn_folders)
@@ -1117,7 +1151,7 @@ class Session(Model):
 
                                 prompt = await agent.get_context_manager().build_prompt(agent, self)
                                 # Keep the folder list (including any just granted) on every request.
-                                prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders))
+                                prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
                                 continue  # Continue the loop to re-prompt the LLM with the tool result
                             else:
                                 if interface == 'cli':
@@ -1165,7 +1199,7 @@ class Session(Model):
                                        'or give your final answer.]',
                         })
                         prompt = await agent.get_context_manager().build_prompt(agent, self)
-                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders))
+                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
                         continue
 
                     # Persist the final assistant text only when this response did
@@ -1214,7 +1248,7 @@ class Session(Model):
                         # answer: keep the turn going so it gets read now
                         # instead of waiting for another turn.
                         prompt = await agent.get_context_manager().build_prompt(agent, self)
-                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders))
+                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
                         continue
 
                     if not called_tools:
@@ -1354,7 +1388,8 @@ class Session(Model):
         return True
 
     def _cli_tool_caller(self, agent: 'Agent', interface: str, output: Callable, tool_context,
-                         turn_folders: list, inherited_folders: tuple, record_history: bool | None = False):
+                         turn_folders: list, inherited_folders: tuple, record_history: bool | None = False,
+                         turn_sandbox: bool = False):
         """Runs one of the agent's tools for a coding agent CLI (providers/harness.py).
 
         The CLI calls it over MCP while its turn runs. The call goes through
@@ -1382,6 +1417,9 @@ class Session(Model):
             if turn_folders and not bound.folders:
                 import dataclasses as _dc
                 bound = _dc.replace(bound, folders=tuple(turn_folders))
+            if turn_sandbox and not bound.sandbox:
+                import dataclasses as _dc
+                bound = _dc.replace(bound, sandbox=True)
             grant_token = set_grant_sink(
                 self._folder_grant_sink(turn_folders) if turn_folders and not inherited_folders else None
             )
@@ -1438,6 +1476,17 @@ class Session(Model):
             )
         except Exception:
             logger.debug('Could not list a written file on the Artifacts page', exc_info=True)
+
+    def _turn_sandbox(self, agent: 'Agent', interface: str, tool_context: Any = None) -> bool:
+        """Whether this turn's shell and files work in the sandbox: the chat's
+        own switch, else the agent's default. A helper turn follows the turn
+        that called it. API keys never get it."""
+        if getattr(tool_context, 'sandbox', False):
+            return True
+        if interface not in ('web', 'ws', 'task') or getattr(tool_context, 'restricted', False):
+            return False
+        from cognitrix.common.sandbox_work import wants_sandbox
+        return wants_sandbox(self.run_in_sandbox, agent)
 
     def _turn_folders(self, agent: 'Agent', interface: str) -> list:
         """This chat's working folders, copying the agent's defaults on first use.

@@ -765,6 +765,8 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'timezone': _request_timezone(),
                 **({'folders': folders} if folders is not None else {}),
                 **({'incognito': True} if data.get('incognito') and not data.get('session_id') else {}),
+                **({'run_in_sandbox': bool(data.get('run_in_sandbox'))}
+                   if data.get('run_in_sandbox') is not None and not data.get('session_id') else {}),
             })
         except BaseException:
             try:

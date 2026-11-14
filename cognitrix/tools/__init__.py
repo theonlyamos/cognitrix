@@ -34,6 +34,13 @@ from cognitrix.tools.management import (
 )
 from cognitrix.tools.mcp import list_mcp_tools, run_mcp_tool
 from cognitrix.tools.memory import memory
+from cognitrix.tools.sandbox_work import (
+    ask_for_sign_in,
+    copy_back_from_sandbox,
+    copy_into_sandbox,
+    run_tests,
+    sandbox_changes,
+)
 from cognitrix.tools.theme import set_theme
 from cognitrix.tools.misc import (
     Edit,
@@ -77,6 +84,11 @@ __all__ = [
     'WebFetch',
     'http_request', 'list_credentials',
     'show_card',
+    'copy_into_sandbox',
+    'sandbox_changes',
+    'copy_back_from_sandbox',
+    'run_tests',
+    'ask_for_sign_in',
     'Search',
     'Tavily_Search',
     'open_file',

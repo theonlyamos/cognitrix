@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { cn } from '@/lib/utils';
+import { errorMessage } from '@/lib/api';
+import { answerSignInRequest } from '@/lib/sandbox';
 
 export interface QuestionOption {
   id: string;
@@ -18,6 +20,8 @@ export interface QuestionRequest {
   recommended_option_id?: string | null;
   auto_submit_seconds?: number | null;
   auto_submit_at?: string | null;
+  /** Ask For Sign-in: a masked field whose value goes straight to Saved sign-ins, never to the agent. */
+  secret?: { name: string; kind: 'token' | 'basic'; hosts?: string[]; description?: string; replaces?: boolean } | null;
 }
 
 type QuestionAnswer = { option_id: string } | { text: string };
@@ -118,7 +122,7 @@ export function QuestionCard({
         role="group"
         labelledBy={headingId}
         titleId={headingId}
-        tag="? question"
+        tag={question.secret ? 'sign-in' : '? question'}
         title={question.prompt}
         subtitle={question.details || undefined}
         footer={(
@@ -131,11 +135,19 @@ export function QuestionCard({
             )}
             <div aria-live="polite" className="text-[12px] text-danger-ink">{error}</div>
             <span className="grow" />
-            <PanelButton kind="quiet" disabled={submitting} onClick={() => void cancel()}>Cancel question</PanelButton>
+            <PanelButton kind="quiet" disabled={submitting} onClick={() => void cancel()}>{question.secret ? "Don't share" : 'Cancel question'}</PanelButton>
           </>
         )}
       >
-        {question.options.length > 0 && (
+        {question.secret && (
+          <SecretForm
+            question={question}
+            disabled={submitting}
+            onSaved={() => void submit({ option_id: 'saved' })}
+          />
+        )}
+
+        {!question.secret && question.options.length > 0 && (
           <div className="grid gap-2 sm:grid-cols-2">
             {question.options.map((option) => {
               const recommended = option.id === question.recommended_option_id;
@@ -169,7 +181,7 @@ export function QuestionCard({
           </div>
         )}
 
-        {question.allow_free_text && (
+        {!question.secret && question.allow_free_text && (
           <form
             className={cn('flex flex-col gap-2 sm:flex-row', question.options.length > 0 && 'mt-3')}
             onSubmit={(event) => {
@@ -195,5 +207,58 @@ export function QuestionCard({
         )}
       </PanelCard>
     </div>
+  );
+}
+
+const fieldCls = 'h-11 w-full rounded-md border border-line bg-panel px-3 font-mono text-[13px] text-fg outline-none transition-colors placeholder:text-fg-dim focus:border-accent md:h-9';
+
+function SecretForm({ question, disabled, onSaved }: { question: QuestionRequest; disabled: boolean; onSaved: () => void }) {
+  const secret = question.secret!;
+  const [value, setValue] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const basic = secret.kind === 'basic';
+  const ready = basic ? !!username.trim() && !!password : !!value.trim();
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    if (!ready || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      await answerSignInRequest(question.request_id, basic ? { username, password } : { value });
+      setValue('');
+      setPassword('');
+      onSaved();
+    } catch (err) {
+      setSaving(false);
+      setError(errorMessage(err, "Couldn't save it. Try again."));
+    }
+  }
+
+  return (
+    <form onSubmit={(e) => void save(e)} className="flex flex-col gap-2" autoComplete="off">
+      {basic ? (
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input aria-label="Username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username"
+            disabled={disabled || saving} className={fieldCls} autoComplete="off" />
+          <input aria-label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+            placeholder="Password" disabled={disabled || saving} className={fieldCls} autoComplete="new-password" />
+        </div>
+      ) : (
+        <input aria-label={secret.name} type="password" value={value} onChange={(e) => setValue(e.target.value)}
+          placeholder={`${secret.name} value`} disabled={disabled || saving} className={fieldCls} autoComplete="new-password" />
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[12px] text-fg-dim">
+          Saved as <span className="font-mono">{secret.name}</span> in Settings, Saved sign-ins. The agent only gets the name.
+        </span>
+        <span className="grow" />
+        <PanelButton type="submit" kind="primary" disabled={disabled || saving || !ready}>{saving ? 'Saving…' : 'Save'}</PanelButton>
+      </div>
+      {error && <p role="alert" className="text-[12px] text-danger-ink">{error}</p>}
+    </form>
   );
 }

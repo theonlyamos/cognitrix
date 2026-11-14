@@ -39,6 +39,7 @@ export interface AgentRecord {
   mcp_servers?: string[];
   folders?: WorkFolder[] | null;
   can_request_folders?: boolean;
+  run_in_sandbox?: boolean;
   permission_level?: AgentLevel;
   tool_permissions?: Record<string, ToolLevel>;
   reviewer?: { mode?: string; provider?: string; model?: string; max_allow?: string };
@@ -81,6 +82,7 @@ export interface AgentDraft {
   codingMaxMode: CodingMode;
   folders: WorkFolder[] | null;
   canRequestFolders: boolean;
+  runInSandbox: boolean;
   mcpServers: string[];
   credentials: string[] | null;
   knowledge: string[];
@@ -120,6 +122,7 @@ export function draftFrom(agent: AgentRecord): AgentDraft {
     codingMaxMode: (['read_only', 'edit', 'full'].includes(coding.max_mode || '') ? coding.max_mode : '') as CodingMode,
     folders: agent.folders ?? null,
     canRequestFolders: agent.can_request_folders ?? true,
+    runInSandbox: !!agent.run_in_sandbox,
     mcpServers: [...(agent.mcp_servers || [])],
     credentials: Array.isArray(agent.credentials) ? [...agent.credentials] : null,
     knowledge: Array.isArray(agent.knowledge) ? [...agent.knowledge] : [],
@@ -188,6 +191,7 @@ export function payloadFrom(id: string, draft: AgentDraft, catalog: ToolInfo[], 
     coding_agents: coding,
     folders: draft.folders,
     can_request_folders: draft.canRequestFolders,
+    run_in_sandbox: draft.runInSandbox,
     mcp_servers: draft.mcpServers,
     credentials: draft.credentials,
     knowledge: draft.knowledge,

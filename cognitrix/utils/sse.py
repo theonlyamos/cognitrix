@@ -676,6 +676,9 @@ class SSEManager:
                 # checked by the chat endpoint) replace the agent's defaults.
                 if session is not None and not requested_sid and action.get('folders') is not None:
                     session.folders = list(action['folders'])
+                # Run in sandbox picked before the first message of a new chat.
+                if session is not None and not requested_sid and action.get('run_in_sandbox') is not None:
+                    session.run_in_sandbox = bool(action['run_in_sandbox'])
             except Exception:
                 logger.exception('Failed to resolve chat session')
                 await emit({

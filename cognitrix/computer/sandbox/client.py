@@ -154,6 +154,28 @@ class Sandbox:
             raise DriverError(out.get('message') or out.get('error') or f'sandbox error {resp.status_code}')
         return out
 
+    def call(self, method: str, path: str, body: dict | None = None, *, content: bytes | None = None,
+             params: dict | None = None, timeout: float | None = None) -> dict:
+        """Like ``request`` but returns the answer even when it is an error
+        ({'ok': False, 'error': code, 'message': ...}), for callers that
+        tell errors apart. Only a computer that doesn't answer raises."""
+        try:
+            resp = self._client.request(
+                method, self.api + path, json=body if content is None else None, content=content, params=params,
+                timeout=timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT,
+                headers={'Content-Type': 'application/gzip'} if content is not None else None)
+        except httpx.HTTPError as exc:
+            raise DriverError(f"The agent's computer is not responding ({type(exc).__name__}). "
+                              'It may still be starting; try again in a moment.') from None
+        try:
+            out = resp.json()
+        except ValueError:
+            return {'ok': False, 'error': 'bad_answer', 'message': f"The agent's computer answered {resp.status_code}."}
+        if resp.status_code == 404 and out.get('error') == 'not_found' and not out.get('message'):
+            out['message'] = ("The agent's computer doesn't know this yet: update it (Settings, Computer) "
+                              'to get coding in the sandbox.')
+        return out
+
     def desktop(self, name: str) -> dict:
         out = self.request('POST', f'/desktops/{name}', timeout=60)
         self.passwords[name] = out.get('vnc_password', '')

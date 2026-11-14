@@ -23,9 +23,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxtst6 libxss1 libxcomposite1 \
         chromium firefox-esr \
         python3 python3-pil \
-        python3-venv python3-pip nodejs npm sqlite3 git curl \
+        python3-venv python3-pip python3-dev sqlite3 git curl \
         fonts-dejavu-core fonts-liberation xdg-utils ca-certificates tini procps \
+        xterm build-essential pkg-config ripgrep jq less zip unzip file openssh-client gnupg \
     && rm -rf /var/lib/apt/lists/*
+
+# Coding work (cognitrix/computer/sandbox/workspace.py): Node 22 with pnpm and
+# yarn, uv for Python, and the coding agent CLIs the Coding Agent tool runs
+# here (each signs in with the person's API key, passed per run). Other
+# toolchains (Go, Rust, Java) install into the home folder without root and
+# stay in the home volume.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable \
+    && npm install -g --no-fund --no-audit @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+    && npm cache clean --force \
+    && curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
+ENV DISABLE_AUTOUPDATER=1 \
+    NPM_CONFIG_PREFIX=/home/agent/.npm-global \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Browsers start with accessibility on (the driver reads pages through it) and
 # with a profile per desktop, because one profile can't be open on two
@@ -54,8 +72,8 @@ RUN chmod 755 /usr/local/bin/* \
 
 USER agent
 WORKDIR /home/agent
-# Files, downloads, browser profiles and Apps (~/.cognitrix-apps) live here;
-# mount a volume to keep them. Apps need python3/node to run what agents build.
+# Files, downloads, browser profiles, Apps (~/.cognitrix-apps) and the agents'
+# coding folders (~/work/<agent>) live here; mount a volume to keep them.
 VOLUME /home/agent
 
 EXPOSE 8790 6080
