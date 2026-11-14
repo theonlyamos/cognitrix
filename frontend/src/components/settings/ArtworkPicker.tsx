@@ -74,10 +74,10 @@ export function ArtworkPicker() {
     timer.current = setTimeout(() => void run({ ...current, strength: value }), 350);
   };
 
-  // Drawings still used by some theme can't be removed from the library.
+  // Drawings still used by some theme (chosen, or a theme's own) can't be removed from the library.
   const inUse = new Set<string>();
   for (const art of Object.values(selection.artwork)) if (art.svg) inUse.add(art.svg);
-  for (const t of selection.themes) if (t.artwork?.svg && !selection.artwork[t.id]) inUse.add(t.artwork.svg);
+  for (const t of selection.themes) if (t.artwork?.svg) inUse.add(t.artwork.svg);
 
   const options: { key: string; label: string; art: Artwork; drawing?: string }[] = [
     { key: 'none', label: 'None', art: { id: 'none' } },

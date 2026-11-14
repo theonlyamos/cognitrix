@@ -386,7 +386,9 @@ async def test_set_theme_create_keeps_its_drawing_and_reuses_saved_ones(db):
         assert [d['name'] for d in state['drawings']] == ['Haunted Harvest']
 
         await _tool(action='artwork', artwork='blueprint', theme='haunted-harvest')
-        assert 'Saved drawings: Haunted Harvest' in _text(await _tool(action='list'))
+        assert 'Saved drawings (name, key): Haunted Harvest (' in _text(await _tool(action='list'))
+        key = themes.project(await themes.get_settings(str(amy.id)))['drawings'][0]['key']
+        assert f'Haunted Harvest ({key})' in _text(await _tool(action='list'))
         back = _text(await _tool(action='artwork', artwork='Haunted Harvest', theme='haunted-harvest'))
         assert back.startswith('Theme changed: Haunted Harvest artwork on Haunted Harvest')
 

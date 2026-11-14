@@ -112,10 +112,11 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
             in_use = dict.fromkeys([before['light'], before['dark']])
             arts = '; '.join(f'{themes.theme_name(tid, custom)}: {themes.artwork_label(themes.theme_artwork(tid, row))}'
                              for tid in in_use)
+            saved_list = ', '.join(f'{d["name"]} ({d["key"]})' for d in before['drawings'])
             return ToolOutcome.success(
                 f'In use: {_describe(before)}.\nArtwork: {arts}.\nBuilt-in themes (light and dark): {built_in}.\n'
                 f'Their own themes: {own}.\nBuilt-in artwork: {", ".join(themes.ARTWORK_NAMES)}.\n'
-                f'Saved drawings: {", ".join(d["name"] for d in before["drawings"]) or "none"}.')
+                f'Saved drawings (name, key): {saved_list or "none"}.')
 
         if action == 'artwork':
             if theme:
