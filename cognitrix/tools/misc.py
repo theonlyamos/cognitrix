@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import fnmatch
 import html
@@ -1555,8 +1556,36 @@ _CALL_AGENT_DEPTH = contextvars.ContextVar('call_agent_depth', default=0)
 MAX_AGENT_CALL_DEPTH = 3
 
 
+async def _helper_chat(authority, agent, parent):
+    """A new saved chat for a Call Agent helper, owned by the person the
+    calling turn works for, so they can find it in their chat list (Recent
+    and By agent) and read what the helper did.
+
+    None (the helper runs unsaved) for API-key callers, turns with no
+    signed-in person, and calls from an incognito chat. Every call gets its
+    own fresh chat, so nothing is shared across people or conversations.
+    """
+    if authority.restricted or not authority.user_id:
+        return None
+    from cognitrix.sessions import agent_chats  # noqa: WPS433
+    from cognitrix.sessions.base import Session  # noqa: WPS433
+
+    current = await Session.get(authority.session_id) if authority.session_id else None
+    if current is not None and getattr(current, 'incognito', False):
+        return None
+    started_by = {
+        'agent_id': str(getattr(parent, 'id', '') or authority.agent_id or ''),
+        'agent_name': str(getattr(parent, 'name', '') or 'An agent'),
+        'session_id': str(current.id) if current is not None else None,
+        'depth': agent_chats.depth_of(current) + 1 if current is not None else 1,
+        'report_back': False,
+        'via': 'call_agent',
+    }
+    return await agent_chats.create_chat(str(authority.user_id), agent, started_by)
+
+
 @tool(category='system')
-async def call_agent(name: str, task: str, *, interface: str = 'task'):
+async def call_agent(name: str, task: str, *, interface: str = 'task', parent=None):
     """Run a task with a sub agent
 
     Args:
@@ -1617,20 +1646,60 @@ async def call_agent(name: str, task: str, *, interface: str = 'task'):
                 if interface in ('web', 'ws', 'compat')
                 else 'task'
             )
-        session = Session(agent_id=str(agent.id), user_id=authority.user_id)
-        await session(
-            task,
-            agent,
-            session_interface,
-            True,
-            capture,
-            {},
-            save_history=False,
-            tool_context=child_context,
-            record_history=True,
-            persist_history=False,
-            compact_history=False,
-        )
+        try:
+            saved = await _helper_chat(authority, agent, parent)
+        except Exception:
+            logger.exception('Could not save a chat for Call Agent; running it unsaved')
+            saved = None
+        if saved is None:
+            session = Session(agent_id=str(agent.id), user_id=authority.user_id)
+            await session(
+                task,
+                agent,
+                session_interface,
+                True,
+                capture,
+                {},
+                save_history=False,
+                tool_context=child_context,
+                record_history=True,
+                persist_history=False,
+                compact_history=False,
+            )
+        else:
+            # A fresh chat of the person's own: save it like any chat, and
+            # mark it running so the chat list shows it working and the chat
+            # can be opened and followed live.
+            from cognitrix.sessions import runs as chat_runs  # noqa: WPS433
+
+            sid = str(saved.id)
+            run = chat_runs.start_run(str(authority.user_id), str(agent.id), sid, prompt=task)
+            run.started_by_agent = True
+
+            async def capture_and_record(payload=None, *args, **kwargs):
+                if isinstance(payload, dict):
+                    run.record({**payload, 'session_id': sid})
+                await capture(payload, *args, **kwargs)
+
+            terminal = {'type': 'turn_complete', 'content': '', 'session_id': sid}
+            try:
+                await saved(
+                    task,
+                    agent,
+                    session_interface,
+                    True,
+                    capture_and_record,
+                    {},
+                    tool_context=child_context,
+                )
+            except asyncio.CancelledError:
+                terminal = {'type': 'turn_stopped', 'content': '', 'session_id': sid}
+                raise
+            except Exception as exc:
+                terminal = {'type': 'error', 'content': str(exc), 'session_id': sid}
+                raise
+            finally:
+                run.finish(terminal)
         # The helper's thinking is not part of its answer: passing it on only
         # fills the caller's context (a reviewer can think for pages).
         from cognitrix.teams.group_chat import _strip_think  # noqa: WPS433

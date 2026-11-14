@@ -244,6 +244,11 @@ async def test_delegated_agent_keeps_allowlists_but_not_document_or_host_authori
 
     monkeypatch.setattr(Agent, 'find_one', find_one)
     monkeypatch.setattr('cognitrix.sessions.base.Session', ChildSession)
+    # The unsaved path (as for API keys); the saved helper chat is covered in
+    # tests/test_call_agent_chats.py.
+    async def no_saved_chat(*_args, **_kwargs):
+        return None
+    monkeypatch.setattr('cognitrix.tools.misc._helper_chat', no_saved_chat)
     token = set_execution_context(ToolExecutionContext(
         session_id='parent-session',
         user_id='user-1',
