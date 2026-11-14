@@ -108,7 +108,7 @@ export default function TitleBar({ onOpenPalette }: { onOpenPalette: () => void 
             >
               <BellIcon />
               {notifications.unread > 0 && (
-                <span className="absolute right-1 top-[7px] grid h-3.5 min-w-3.5 place-items-center rounded-full bg-[#ffb86b] px-0.5 font-mono text-[9px] font-medium text-[#0b0c0e]">
+                <span className="absolute right-1 top-[7px] grid h-3.5 min-w-3.5 place-items-center rounded-full bg-warn px-0.5 font-mono text-[9px] font-medium text-warn-foreground">
                   {notifications.unread > 9 ? '9+' : notifications.unread}
                 </span>
               )}

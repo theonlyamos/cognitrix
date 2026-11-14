@@ -3,27 +3,9 @@ import { setReduceMotion, setSendKey, useReduceMotion, useSendKey, type SendKey 
 import { Toggle } from '@/pages/Notifications';
 import { LANGUAGES, getLanguageChoice, setLanguage, useLanguage, useT, type LanguageCode, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import { Group, Segmented, SettingRow } from './ui';
-
-// Fixed swatches: each preview shows that theme whatever theme is on screen.
-const SWATCH = {
-  light: { side: '#eeeee9', page: '#ffffff', line: '#c6f24e', text: '#16181a' },
-  dark: { side: '#1c1f23', page: '#0b0c0e', line: '#c6f24e', text: '#f4f4f2' },
-};
-
-function Preview({ kind }: { kind: 'light' | 'dark' }) {
-  const s = SWATCH[kind];
-  return (
-    <span className="grid h-full w-full grid-cols-[28%_1fr]" style={{ background: s.page }}>
-      <span style={{ background: s.side }} />
-      <span className="flex flex-col gap-1.5 p-2">
-        <span className="h-1.5 w-1/2 rounded-full" style={{ background: s.line }} />
-        <span className="h-1 w-3/4 rounded-full opacity-40" style={{ background: s.text }} />
-        <span className="h-1 w-2/3 rounded-full opacity-40" style={{ background: s.text }} />
-      </span>
-    </span>
-  );
-}
+import { ArtworkPicker } from './ArtworkPicker';
+import { ThemeLibrary, ThemeSwatch } from './Themes';
+import { Group, Segmented, SettingRow, SubHeading } from './ui';
 
 const MODES: { value: ThemeMode; label: MessageKey }[] = [
   { value: 'system', label: 'appearance.theme.system' },
@@ -32,7 +14,9 @@ const MODES: { value: ThemeMode; label: MessageKey }[] = [
 ];
 
 export function AppearanceSettings() {
-  const { mode, setMode } = useTheme();
+  const { mode, setMode, themes, selection } = useTheme();
+  const lightTheme = themes.find((x) => x.id === selection.light && x.light) ?? themes[0];
+  const darkTheme = themes.find((x) => x.id === selection.dark && x.dark) ?? themes[0];
   const sendKey = useSendKey();
   const reduceMotion = useReduceMotion();
   const t = useT();
@@ -40,6 +24,7 @@ export function AppearanceSettings() {
   const choice = getLanguageChoice();
 
   return (
+    <>
     <Group>
       <div className="p-3.5">
         <div className="mb-2.5 text-[13.5px] font-medium">{t('appearance.theme')}</div>
@@ -59,11 +44,11 @@ export function AppearanceSettings() {
               <span className="relative block h-14 overflow-hidden rounded-md border border-line">
                 {m.value === 'system' ? (
                   <>
-                    <span className="absolute inset-0"><Preview kind="light" /></span>
-                    <span className="absolute inset-0 [clip-path:polygon(100%_0,100%_100%,0_100%)]"><Preview kind="dark" /></span>
+                    <span className="absolute inset-0"><ThemeSwatch theme={lightTheme} appearance="light" /></span>
+                    <span className="absolute inset-0 [clip-path:polygon(100%_0,100%_100%,0_100%)]"><ThemeSwatch theme={darkTheme} appearance="dark" /></span>
                   </>
                 ) : (
-                  <Preview kind={m.value} />
+                  <ThemeSwatch theme={m.value === 'light' ? lightTheme : darkTheme} appearance={m.value} />
                 )}
               </span>
               <span className="mt-1.5 block text-[12.5px]">{t(m.label)}</span>
@@ -71,6 +56,13 @@ export function AppearanceSettings() {
           ))}
         </div>
       </div>
+    </Group>
+    <SubHeading className="!mt-6">THEMES</SubHeading>
+    <ThemeLibrary />
+    <SubHeading className="!mt-6">ARTWORK</SubHeading>
+    <ArtworkPicker />
+    <SubHeading className="!mt-6">MORE</SubHeading>
+    <Group>
       <SettingRow label={t('appearance.language')} detail={t('appearance.language.detail')}>
         <select
           aria-label={t('appearance.language')}
@@ -94,5 +86,6 @@ export function AppearanceSettings() {
         <Toggle label={t('appearance.reduceMotion')} checked={reduceMotion} onChange={setReduceMotion} />
       </SettingRow>
     </Group>
+    </>
   );
 }

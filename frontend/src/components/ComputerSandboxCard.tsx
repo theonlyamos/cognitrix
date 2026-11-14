@@ -64,7 +64,7 @@ export function ComputerSandboxCard() {
           disabled={!settings || busy || settings.from_env}
         />
       </SettingRow>
-      {error && <p role="alert" className="mt-1 text-[12px] text-[#b42318] dark:text-[#ff8a80]">{error}</p>}
+      {error && <p role="alert" className="mt-1 text-[12px] text-danger-ink">{error}</p>}
     </div>
   );
 }

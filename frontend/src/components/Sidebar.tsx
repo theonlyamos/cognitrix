@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { LayoutDashboard as DashboardIcon, Inbox as InboxIcon, MessageSquare as MessageSquareIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon, Users as UsersIcon, BookOpen as BookOpenIcon, LayoutPanelTop as LayoutPanelTopIcon, Mic as MicIcon, type LucideIcon } from 'lucide-react';
+import { LayoutDashboard as DashboardIcon, Inbox as InboxIcon, MessageSquare as MessageSquareIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon, Users as UsersIcon, BookOpen as BookOpenIcon, AppWindow as AppWindowIcon, Mic as MicIcon, type LucideIcon } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
+import { SidebarArtwork } from '@/components/ThemeArtwork';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import { isDesktop } from '@/lib/desktop';
 import AccountMenu from '@/components/AccountMenu';
@@ -22,7 +23,7 @@ const NAV: { path: string; label: MessageKey; icon: (p: IconProps) => JSX.Elemen
   { path: '/tasks', label: 'nav.tasks', icon: icon(ListChecksIcon) },
   { path: '/automations', label: 'nav.automations', icon: icon(ZapIcon) },
   { path: '/teams', label: 'nav.teams', icon: icon(UsersIcon) },
-  { path: '/artifacts', label: 'nav.artifacts', icon: icon(LayoutPanelTopIcon) },
+  { path: '/apps', label: 'nav.apps', icon: icon(AppWindowIcon) },
   { path: '/knowledge', label: 'nav.knowledge', icon: icon(BookOpenIcon) },
   { path: '/meetings', label: 'nav.meetings', icon: icon(MicIcon) },
 ];
@@ -59,15 +60,18 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
       aria-label="Primary navigation"
       data-mobile-open={mobileOpen}
       className={cn(
-        'fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(88vw,280px)] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 md:visible md:static md:z-auto md:h-full md:translate-x-0 md:transition-[width]',
+        'fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(88vw,280px)] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 md:visible md:relative md:z-auto md:h-full md:translate-x-0 md:transition-[width]',
         mobileOpen ? 'visible translate-x-0' : 'invisible -translate-x-full',
         collapsed ? 'md:w-[58px]' : 'md:w-[232px]',
       )}
     >
+      {/* The theme's drawing, fading out under the first items */}
+      <SidebarArtwork className={cn(collapsed && 'md:hidden')} />
+
       {/* Brand (the title bar shows it on wider screens) */}
       <div
         className={cn(
-          'flex items-center gap-2.5 border-b border-line px-4 py-4 md:hidden',
+          'relative flex items-center gap-2.5 border-b border-line px-4 py-4 md:hidden',
           collapsed && 'md:justify-center md:gap-0 md:px-0',
         )}
       >
@@ -80,7 +84,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
       </div>
 
       {/* Nav */}
-      <nav className={cn('flex flex-col gap-0.5 px-2.5 py-3', collapsed && 'md:px-2')}>
+      <nav className={cn('relative flex flex-col gap-0.5 px-2.5 py-3', collapsed && 'md:px-2')}>
         <div className={cn('px-2 pb-1.5 pt-2 font-mono text-[10px] tracking-[0.16em] text-fg-dim', collapsed && 'md:hidden')}>{t('nav.workspace')}</div>
         {NAV.map((item) => {
           const active = isActive(item.path);
@@ -101,14 +105,14 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
               <span className="relative flex-none">
                 <item.icon className="h-[17px] w-[17px] flex-none" />
                 {item.path === '/inbox' && waiting > 0 && collapsed && (
-                  <span aria-hidden="true" className="absolute -right-2 -top-2 hidden h-[15px] min-w-[15px] place-items-center rounded-full bg-[#ffb86b] px-0.5 font-mono text-[9.5px] font-medium text-[#0b0c0e] md:grid">
+                  <span aria-hidden="true" className="absolute -right-2 -top-2 hidden h-[15px] min-w-[15px] place-items-center rounded-full bg-warn px-0.5 font-mono text-[9.5px] font-medium text-warn-foreground md:grid">
                     {waiting}
                   </span>
                 )}
               </span>
               <span className={cn('flex-1', collapsed && 'md:hidden')}>{t(item.label)}</span>
               {item.path === '/inbox' && waiting > 0 && (
-                <span className={cn('rounded-full bg-[#ffb86b]/15 px-1.5 font-mono text-[10.5px] text-[#c77a26] dark:text-[#ffb86b]', collapsed && 'md:hidden')}>
+                <span className={cn('rounded-full bg-warn/15 px-1.5 font-mono text-[10.5px] text-warn-ink', collapsed && 'md:hidden')}>
                   {waiting}
                   <span className="sr-only"> {t('nav.waiting')}</span>
                 </span>
@@ -119,7 +123,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }: SidebarProps
       </nav>
 
       {/* Footer */}
-      <div className="mt-auto border-t border-line p-2.5">
+      <div className="relative mt-auto border-t border-line p-2.5">
         <AccountMenu collapsed={collapsed} onNavigate={onNavigate} />
 
         <button

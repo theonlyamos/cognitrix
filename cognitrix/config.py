@@ -407,6 +407,11 @@ _CHANNEL_MIGRATION_COLUMNS = (
     ('service_url', 'TEXT'), ('answer_others', 'BOOLEAN'),
 )
 
+# Theme artwork choices (cognitrix/themes.py ThemeSettings.artwork).
+_THEME_MIGRATION_COLUMNS = (
+    ('artwork', "TEXT DEFAULT '{}'"),
+)
+
 _AGENT_MIGRATION_COLUMNS = (
     ('owner_id', 'TEXT'),
     ('folders', 'TEXT'), ('can_request_folders', 'BOOLEAN'),
@@ -772,6 +777,7 @@ async def _ensure_schema():
     from cognitrix.models.usage import UsageDay
     from cognitrix.sessions.index import ChatIndex
     from cognitrix.models.voice_settings import VoiceSettings
+    from cognitrix.themes import ThemeSettings
     from cognitrix.session_ownership import SessionOwnership
     from cognitrix.tasks.events import TaskRunEvent
     from cognitrix.tasks.metrics import TaskRunPhaseMetric
@@ -805,9 +811,11 @@ async def _ensure_schema():
     from cognitrix.tasks.automation import AgentNotification, TaskTrigger, TriggerEvent
     from cognitrix.tasks.standing import AgentOffer
     from cognitrix.artifact_pages.models import MODELS as ARTIFACT_PAGE_MODELS
+    from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
+        *HOSTED_APP_MODELS,
         AgentOffer,
         MeetingNote,
         PersonalSkill,
@@ -831,6 +839,7 @@ async def _ensure_schema():
         Credential,
         Memory,
         MemorySettings,
+        ThemeSettings,
         UsageDay,
         ChatIndex,
         KnowledgeCollection,
@@ -893,6 +902,7 @@ async def _ensure_schema():
         ('agentnotifications', _NOTIFICATION_MIGRATION_COLUMNS),
         ('tasktriggers', _TRIGGER_MIGRATION_COLUMNS),
         ('chatchannels', _CHANNEL_MIGRATION_COLUMNS),
+        ('themesetting', _THEME_MIGRATION_COLUMNS),
     ):
         try:
             cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')

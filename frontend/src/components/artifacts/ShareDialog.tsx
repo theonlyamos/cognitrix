@@ -169,7 +169,7 @@ export function ShareDialog({ page, onClose, onChanged }: { page: PageDetail; on
                     {data.share_version ? `Off: viewers stay on version ${data.share_version} until you change this.` : 'Viewers get each new version as the agent publishes it.'}
                   </span>
                 </span>
-                <input type="checkbox" className="h-4 w-4 accent-[#4e6b00]" checked={!data.share_version} disabled={busy}
+                <input type="checkbox" className="h-4 w-4 accent-accent-ink" checked={!data.share_version} disabled={busy}
                   onChange={(e) => void save({ share_version: e.target.checked ? 0 : data.version })} />
               </label>
             </>
@@ -184,7 +184,7 @@ export function ShareDialog({ page, onClose, onChanged }: { page: PageDetail; on
             {notice && <span className="inline-flex items-center gap-1"><Check size={12} />{notice}</span>}
           </span>
           <button type="button" onClick={() => void copy()}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3.5 text-[13px] font-semibold text-[#0b0c0e] md:h-8">
+            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3.5 text-[13px] font-semibold text-accent-foreground md:h-8">
             <LinkIcon size={14} /> Copy {data?.public ? 'public ' : ''}link
           </button>
         </footer>

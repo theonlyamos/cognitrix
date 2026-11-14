@@ -7,6 +7,7 @@ import { Input } from '@/lib/components/ui/input';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import OAuthButtons from '@/components/OAuthButtons';
 import { useT } from '@/lib/i18n';
+import { takeAfterSignIn } from '@/lib/afterSignIn';
 
 const GRID = {
   backgroundImage:
@@ -48,7 +49,7 @@ export default function Login() {
     try {
       const { data } = await api.post('/auth/login', { username: email, password });
       login(data.user, data.access_token);
-      navigate('/dashboard');
+      navigate(takeAfterSignIn());
     } catch (err) {
       setError(errorMessage(err, t('login.wrong')));
     } finally {

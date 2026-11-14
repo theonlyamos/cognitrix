@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArtworkScene, ChatHorizon } from '@/components/ThemeArtwork';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
 import { WaitingMessages, type WaitingMessage } from '@/components/WaitingMessages';
 import { useSession, type ChatMessage, type ToolArtifact } from '@/context/SessionContext';
@@ -35,7 +36,7 @@ import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
 import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
-import { takeChatDraft } from '@/lib/chatDraft';
+import { takeChatAutoSend, takeChatDraft } from '@/lib/chatDraft';
 import {
   ARCHIVED_KEY, GROUP_PREVIEW, PANEL_DEFAULT, PANEL_MAX, PANEL_MIN, PINNED_KEY,
   clampPanelWidth, groupChats, groupKey, MINI_SNAP, RAIL_WIDTH, loadClosedSections, loadListMini, loadPanelWidth, saveClosedSections, saveListMini, savePanelWidth,
@@ -1382,6 +1383,15 @@ export default function Home() {
     return send(text, 'chat', null, { keepComposer: true });
   }), [busy, isConnected, send, steer]);
 
+  // A draft handed over with "send it" (Create app): send once the chat is up.
+  const [autoSendOnce] = useState(takeChatAutoSend);
+  const autoSendRef = useRef(autoSendOnce);
+  useEffect(() => {
+    if (!autoSendRef.current || !isConnected || busy || !input.trim()) return;
+    autoSendRef.current = false;
+    void send(input);
+  }, [isConnected, busy, input, send]);
+
   // Messages the last turn never read go out as the next one, by themselves
   // (whatever is in the box stays there).
   useEffect(() => {
@@ -2101,6 +2111,8 @@ export default function Home() {
 
       {/* Chat column */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {/* The theme's drawing along the bottom, behind messages and the message box */}
+        <ChatHorizon className={cn((empty || picking) && 'hidden')} />
         {/* Top bar: the chat's name and who it is with, the chat list button
             (phones), reconnect while the stream is down, and the side panel. */}
         <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:min-h-12 md:py-1.5 md:pl-5 md:pr-3">
@@ -2184,11 +2196,11 @@ export default function Home() {
           role="log"
           aria-live="polite"
           aria-relevant="additions text"
-          className="min-h-0 flex-1 overscroll-contain overflow-y-auto"
+          className="relative min-h-0 flex-1 overscroll-contain overflow-y-auto"
         >
           {incognito && !picking && (
-            <div role="note" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-dashed border-[#ffb86b]/60 bg-[#ffb86b]/10 px-3 py-2 text-[12.5px] leading-relaxed sm:mx-6">
-              <svg aria-hidden="true" className="mt-0.5 flex-none text-[#b4691a] dark:text-[#ffb86b]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><path d="M3 3l18 18" /></svg>
+            <div role="note" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-dashed border-warn/60 bg-warn/10 px-3 py-2 text-[12.5px] leading-relaxed sm:mx-6">
+              <svg aria-hidden="true" className="mt-0.5 flex-none text-warn-ink" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><path d="M3 3l18 18" /></svg>
               <span>
                 <span className="font-medium">Incognito.</span> This chat isn't saved to your chat list, doesn't use or change
                 memory, and is deleted when you leave it.
@@ -2199,6 +2211,7 @@ export default function Home() {
             <StartChat agents={agents} teams={teams} recent={recentTargets} onPick={startChatWith} />
           ) : empty ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col justify-center px-6">
+              <ArtworkScene className="-mx-2 mb-4 h-[130px] sm:h-[170px]" />
               <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ {agentById.get(agentId) ? `new chat with ${agentById.get(agentId)!.name}` : 'start a conversation'}</p>
               <h2 className="mt-3 text-2xl font-bold tracking-tight">What should we run?</h2>
               <p className="mt-2 max-w-md text-fg-dim">
@@ -2309,7 +2322,7 @@ export default function Home() {
         </div>
 
         {/* Composer (hidden while choosing who to talk to) */}
-        <div className={cn('flex-none border-t border-line px-6 py-4', picking && agents.length > 0 && 'hidden')}>
+        <div className={cn('relative flex-none border-t border-line px-6 py-4', picking && agents.length > 0 && 'hidden')}>
           <div className="relative mx-auto max-w-3xl">
             {skillMenuOpen && (
               <div

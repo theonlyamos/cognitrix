@@ -602,9 +602,12 @@ class Session(Model):
             try:
                 from cognitrix.tools.artifact_pages import ARTIFACT_TOOL_CATEGORY
                 from cognitrix.tools.base import ToolManager
+                from cognitrix.tools.hosted_apps import APP_TOOL_CATEGORY
 
                 names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
-                extra = [t for t in ToolManager.get_tools_by_category(ARTIFACT_TOOL_CATEGORY)
+                # Apps (Publish App, App Status) ride along with artifacts.
+                extra = [t for category in (ARTIFACT_TOOL_CATEGORY, APP_TOOL_CATEGORY)
+                         for t in ToolManager.get_tools_by_category(category)
                          if t.name.lower() not in names]
                 if extra:
                     agent = agent.model_copy(update={'tools': [*agent.tools, *extra]})
@@ -623,6 +626,17 @@ class Session(Model):
                         agent = agent.model_copy(update={'tools': [*agent.tools, card_tool]})
             except Exception:
                 logger.debug('Show Card tool unavailable', exc_info=True)
+        # Set Theme lets an agent change the app's colours for the person
+        # (cognitrix/tools/theme.py); the chat shows each change with Undo.
+        if interface in ('web', 'ws') and owner and not self.task_id and getattr(agent.llm, 'supports_tool_use', True):
+            try:
+                if not any(str(getattr(t, 'name', '')).lower() == 'set theme' for t in agent.tools):
+                    from cognitrix.tools.base import ToolManager
+                    theme_tool = ToolManager.get_by_name('set_theme')
+                    if theme_tool:
+                        agent = agent.model_copy(update={'tools': [*agent.tools, theme_tool]})
+            except Exception:
+                logger.debug('Set Theme tool unavailable', exc_info=True)
 
         # Propose Skill lets an agent suggest saving how it did a job; the
         # person reviews the draft before it is used (skills/drafts.py).

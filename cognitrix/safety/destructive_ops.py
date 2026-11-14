@@ -97,11 +97,15 @@ _KNOWN_LOW = frozenset({
     'start_chat', 'check_chat', 'message_chat',
     # saved memories: each change shows in the chat with Undo
     'memory', 'search_chats', 'read_chat',
+    # the app's colours: each change shows in the chat with Undo
+    'set_theme',
     # artifact pages: a page is private to its owner until they share it
     # themselves, and every version is kept
     'publish_artifact', 'read_artifact', 'artifact_comments',
     # cards only show in the chat; a button press is a message to the agent
     'show_card',
+    # apps: reading an app's status and logs
+    'app_status',
     # asking the person a question, images, screenshots
     'ask_user', 'ask_question', 'generate_image', 'take_screenshot',
     # background computer use: looking and scrolling
@@ -134,6 +138,22 @@ def _sandboxed_computer() -> bool:
     from cognitrix.computer.sandbox.client import sandbox_mode
 
     return sandbox_mode() is not None
+
+
+def _publish_app_risk(params: dict) -> RiskAssessment:
+    """Publishing an app runs the agent's code as a server. In the agents'
+    sandboxed computer that's their own container; on this machine it's like
+    running a shell command, so it asks."""
+    from cognitrix.hosted_apps.runner import default_runtime
+
+    command = str(params.get('start_command') or '')[:200]
+    if default_runtime() == 'sandbox' and not params.get('app_id'):
+        return RiskAssessment(RiskLevel.LOW, ['app_sandbox'], f"Runs an app in the agents' sandboxed computer: {command}")
+    if default_runtime() == 'sandbox' and params.get('app_id'):
+        # An existing app keeps the runtime it was made with; checked again when it runs.
+        return RiskAssessment(RiskLevel.LOW, ['app_sandbox'], f'Publishes a new version of an app: {command}')
+    return RiskAssessment(RiskLevel.HIGH, ['app_local'],
+                          f'Runs an app on this machine as a server, with the command: {command}')
 
 
 # Handing a job to a coding agent CLI (Claude Code, Codex, ...): it edits
@@ -316,6 +336,8 @@ class DestructiveOpDetector:
             from cognitrix.common.coding_agents import risk as coding_agent_risk
             level, details = coding_agent_risk(params)
             return RiskAssessment(RiskLevel(level), ['coding_agent'], details)
+        if name == 'publish_app':
+            return _publish_app_risk(params)
         if name in _SHELL_TOOLS or _words(tool_name) & _SHELL_WORDS or isinstance(params.get('command'), str):
             return _shell_risk(tool_name, params)
         if name in _WRITE_TOOLS:

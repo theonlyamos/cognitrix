@@ -1,0 +1,82 @@
+[
+  {
+    "format": "cognitrix-theme",
+    "version": 1,
+    "id": "signal",
+    "artwork": { "id": "signal" },
+    "name": "Signal",
+    "contrast": 50,
+    "light": {
+      "background": "#f7f7f4",
+      "text": "#16181a",
+      "accent": "#c6f24e",
+      "colors": {
+        "panel": "#ffffff", "panel-2": "#eeeee9", "line": "rgba(0,0,0,.11)",
+        "fg-dim": "#5a5f5c", "on-accent": "#0b0c0e", "accent-ink": "#4e6b00", "focus": "#4e6b00",
+        "danger": "#c23528", "danger-ink": "#c23528", "ok": "#3f7d20",
+        "warn": "#ffb86b", "on-warn": "#0b0c0e", "warn-ink": "#a15c00",
+        "info": "#7cc4ff", "info-ink": "#1f6f8b", "violet": "#b48cff", "violet-ink": "#6b46c1",
+        "syn-num": "#a15c00", "syn-alt": "#1f6f8b"
+      }
+    },
+    "dark": {
+      "background": "#0b0c0e",
+      "text": "#f4f4f2",
+      "accent": "#c6f24e",
+      "colors": {
+        "panel": "#141619", "panel-2": "#1c1f23", "line": "rgba(255,255,255,.09)",
+        "fg-dim": "#8b8f8b", "on-accent": "#0b0c0e", "accent-ink": "#c6f24e", "focus": "#c6f24e",
+        "danger": "#ff6b5e", "danger-ink": "#ff6b5e", "ok": "#9fe870",
+        "warn": "#ffb86b", "on-warn": "#0b0c0e", "warn-ink": "#ffb86b",
+        "info": "#7cc4ff", "info-ink": "#7cc4ff", "violet": "#b48cff", "violet-ink": "#c9b0ff",
+        "syn-num": "#e5b567", "syn-alt": "#6fb3d2"
+      }
+    }
+  },
+  {
+    "format": "cognitrix-theme",
+    "version": 1,
+    "id": "nord",
+    "artwork": { "id": "aurora" },
+    "name": "Nord",
+    "light": { "background": "#eceff4", "text": "#2e3440", "accent": "#5e81ac" },
+    "dark": { "background": "#2e3440", "text": "#eceff4", "accent": "#88c0d0" }
+  },
+  {
+    "format": "cognitrix-theme",
+    "version": 1,
+    "id": "solarized",
+    "artwork": { "id": "dunes" },
+    "name": "Solarized",
+    "light": { "background": "#fdf6e3", "text": "#073642", "accent": "#268bd2", "colors": { "panel-2": "#eee8d5" } },
+    "dark": { "background": "#002b36", "text": "#eee8d5", "accent": "#b58900", "colors": { "panel-2": "#073642" } }
+  },
+  {
+    "format": "cognitrix-theme",
+    "version": 1,
+    "id": "catppuccin",
+    "artwork": { "id": "moon-cat" },
+    "name": "Catppuccin",
+    "light": { "background": "#eff1f5", "text": "#4c4f69", "accent": "#8839ef", "colors": { "panel-2": "#e6e9ef" } },
+    "dark": { "background": "#1e1e2e", "text": "#cdd6f4", "accent": "#cba6f7", "colors": { "panel": "#181825", "panel-2": "#313244" } }
+  },
+  {
+    "format": "cognitrix-theme",
+    "version": 1,
+    "id": "tokyo-night",
+    "artwork": { "id": "skyline" },
+    "name": "Tokyo Night",
+    "light": { "background": "#e1e2e7", "text": "#343b58", "accent": "#2e7de9" },
+    "dark": { "background": "#1a1b26", "text": "#c0caf5", "accent": "#7aa2f7", "colors": { "panel": "#16161e", "panel-2": "#24283b" } }
+  },
+  {
+    "format": "cognitrix-theme",
+    "version": 1,
+    "id": "high-contrast",
+    "artwork": { "id": "halftone" },
+    "name": "High contrast",
+    "contrast": 100,
+    "light": { "background": "#ffffff", "text": "#000000", "accent": "#0047ff", "colors": { "panel": "#ffffff", "panel-2": "#ececec" } },
+    "dark": { "background": "#000000", "text": "#ffffff", "accent": "#ffd400", "colors": { "panel": "#0a0a0a", "panel-2": "#1a1a1a" } }
+  }
+]

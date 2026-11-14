@@ -19,7 +19,7 @@ function Switch({ on, tone }: { on: boolean; tone: 'danger' | 'warn' }) {
       aria-hidden
       className={cn(
         'relative h-[17px] w-[30px] flex-none rounded-full border transition-colors',
-        on ? (tone === 'danger' ? 'border-danger bg-danger' : 'border-[#b4691a] bg-[#b4691a] dark:border-[#ffb86b] dark:bg-[#ffb86b]') : 'border-line bg-panel-2',
+        on ? (tone === 'danger' ? 'border-danger bg-danger' : 'border-warn-ink bg-warn-ink') : 'border-line bg-panel-2',
       )}
     >
       <span className={cn('absolute top-[2px] h-[11px] w-[11px] rounded-full transition-all', on ? 'left-[15px] bg-white' : 'left-[2px] bg-fg-dim')} />
@@ -185,11 +185,11 @@ export default function ComposerMenu(p: Props) {
       )}
       {p.incognito && (
         p.incognitoDisabled ? (
-          <span title={p.incognitoTitle} className={cn(tag, 'border-[#b4691a]/40 text-[#b4691a] dark:border-[#ffb86b]/40 dark:text-[#ffb86b]')}>
+          <span title={p.incognitoTitle} className={cn(tag, 'border-warn-ink/40 text-warn-ink')}>
             <EyeOffIcon size={11} /> incognito
           </span>
         ) : (
-          <button type="button" onClick={p.onToggleIncognito} title="Incognito is on. Click to turn it off." aria-label="Turn off incognito" className={cn(tag, 'border-[#b4691a]/40 text-[#b4691a] hover:border-[#b4691a] dark:border-[#ffb86b]/40 dark:text-[#ffb86b]')}>
+          <button type="button" onClick={p.onToggleIncognito} title="Incognito is on. Click to turn it off." aria-label="Turn off incognito" className={cn(tag, 'border-warn-ink/40 text-warn-ink hover:border-warn-ink')}>
             <EyeOffIcon size={11} /> incognito <span aria-hidden className="opacity-70">✕</span>
           </button>
         )

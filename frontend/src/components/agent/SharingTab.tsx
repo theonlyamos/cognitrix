@@ -113,7 +113,7 @@ export default function SharingTab({ agent }: TabProps) {
           <strong className="font-medium text-fg">Can edit</strong> also lets them change its instructions, model, tools and approval rules.
           Only you can change its connections, folders, check-ins and sharing, or delete it.
         </p>
-        <p className="mt-3 rounded-md border border-[#a15c00]/50 px-3 py-2.5 text-[13px] leading-relaxed dark:border-[#e5b567]/50">
+        <p className="mt-3 rounded-md border border-warn-ink/50 px-3 py-2.5 text-[13px] leading-relaxed">
           People you share with use this agent's model key and the apps you connected to it, as you. Their chats, memories and saved sign-ins stay their own.
         </p>
 

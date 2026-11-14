@@ -79,10 +79,10 @@ export function Segmented<T extends string>({
 
 export const buttonClass = 'inline-flex h-9 items-center rounded-lg border border-line px-3 text-[12.5px] hover:bg-panel-2 disabled:opacity-60 md:h-8';
 export const quietButtonClass = 'inline-flex h-9 items-center rounded-lg px-2.5 text-[12.5px] text-fg-dim hover:bg-panel-2 hover:text-fg disabled:opacity-60 md:h-8';
-export const primaryButtonClass = 'inline-flex h-9 items-center rounded-lg bg-accent px-3 text-[12.5px] font-medium text-[#0b0c0e] disabled:opacity-60 md:h-8';
+export const primaryButtonClass = 'inline-flex h-9 items-center rounded-lg bg-accent px-3 text-[12.5px] font-medium text-accent-foreground disabled:opacity-60 md:h-8';
 
 export function StatusPill({ tone, children }: { tone: 'ok' | 'warn' | 'off' | 'accent'; children: ReactNode }) {
-  const color = { ok: 'text-ok', warn: 'text-[#a15c00] dark:text-[#e5b567]', off: 'text-fg-dim', accent: 'text-accent-ink' }[tone];
+  const color = { ok: 'text-ok', warn: 'text-warn-ink', off: 'text-fg-dim', accent: 'text-accent-ink' }[tone];
   return (
     <span className={cn('inline-flex items-center gap-1.5 rounded-full border border-line px-2 py-0.5 font-mono text-[10.5px] tracking-[0.04em]', color)}>
       <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />

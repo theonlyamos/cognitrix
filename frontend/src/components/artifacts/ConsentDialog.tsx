@@ -45,7 +45,7 @@ export function ConsentDialog({ page, onDone }: { page: PageDetail; onDone: () =
                   <span className="block text-[13.5px] font-medium">{POWER_COPY[power].title}</span>
                   <span className="mt-0.5 block text-[12.5px] leading-snug text-fg-dim">{POWER_COPY[power].detail}</span>
                 </span>
-                <input type="checkbox" className="mt-1 h-4 w-4 accent-[#4e6b00]" checked={picked.includes(power)}
+                <input type="checkbox" className="mt-1 h-4 w-4 accent-accent-ink" checked={picked.includes(power)}
                   onChange={(e) => setPicked((list) => (e.target.checked ? [...list, power] : list.filter((p) => p !== power)))} />
               </label>
             </li>
@@ -57,7 +57,7 @@ export function ConsentDialog({ page, onDone }: { page: PageDetail; onDone: () =
           <button type="button" disabled={busy} onClick={() => void answer([])}
             className="inline-flex h-9 items-center rounded-md border border-line px-3 text-[13px] hover:bg-panel-2 md:h-8">Not now</button>
           <button type="button" disabled={busy} onClick={() => void answer(picked)}
-            className="inline-flex h-9 items-center rounded-md bg-accent px-3.5 text-[13px] font-semibold text-[#0b0c0e] md:h-8">Allow</button>
+            className="inline-flex h-9 items-center rounded-md bg-accent px-3.5 text-[13px] font-semibold text-accent-foreground md:h-8">Allow</button>
         </footer>
       </div>
     </div>
