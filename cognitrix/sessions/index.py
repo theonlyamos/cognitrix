@@ -10,6 +10,7 @@ decided by the ownership bindings; a row only says what to show.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from odbms import Model
@@ -71,6 +72,23 @@ class ChatIndex(Model):
         return value if isinstance(value, dict) else None
 
 
+# Per-person change counters, so a chat list can ask "anything new?" cheaply
+# instead of re-reading every row. In memory: a restart starts a new epoch,
+# which reads as a change and makes lists re-read once.
+_EPOCH = uuid.uuid4().hex[:8]
+_VERSIONS: dict[str, int] = {}
+
+
+def _bump(user_id: str) -> None:
+    if user_id:
+        _VERSIONS[user_id] = _VERSIONS.get(user_id, 0) + 1
+
+
+def version(user_id: str) -> str:
+    """Changes whenever a chat of this person is added, changed or removed."""
+    return f'{_EPOCH}-{_VERSIONS.get(str(user_id), 0)}'
+
+
 def _marker_id(user_id: str) -> str:
     return f'indexed:{user_id}'
 
@@ -116,6 +134,9 @@ async def _upsert(fields: dict[str, Any]) -> None:
         await ChatIndex(**fields).save()
     else:
         await ChatIndex.update_one({'id': row.id}, fields)
+        if row.user_id and row.user_id != fields.get('user_id'):
+            _bump(row.user_id)
+    _bump(str(fields.get('user_id') or ''))
 
 
 async def record(session) -> None:
@@ -146,6 +167,8 @@ async def refresh(session_id: str) -> None:
 
 async def forget(session_id: Any) -> None:
     try:
+        for row in await ChatIndex.find({'session_id': str(session_id)}):
+            _bump(row.user_id)
         await ChatIndex.delete_many({'session_id': str(session_id)})
     except Exception:
         logger.debug('Could not drop chat index row for %s', session_id, exc_info=True)

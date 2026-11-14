@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Pin as PinIcon } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
+import { usePolling } from '@/hooks/usePolling';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import { AgentBadge } from '@/components/StartChat';
 import { ChatRowMenu } from '@/components/ChatRowMenu';
@@ -40,6 +41,8 @@ export type ChatListMode = 'recent' | 'agent';
 const MODE_KEY = 'chatList.mode';
 /** Chats the Recent list shows before "Show more". */
 const RECENT_PREVIEW = 25;
+/** How often the list asks whether any chat was added or changed elsewhere. */
+const VERSION_POLL_MS = 4_000;
 
 export function loadChatListMode(): ChatListMode {
   try {
@@ -117,6 +120,26 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
     const timer = window.setInterval(reread, 4_000);
     return () => window.clearInterval(timer);
   }, [anyRunning, reread]);
+
+  // Chats made somewhere else (an agent starting a chat with another agent,
+  // a chat app, another tab) show up without a reload: a cheap token changes
+  // whenever the list does, and only then is the list re-read.
+  const versionRef = useRef<string | null>(null);
+  const checkVersion = useCallback(async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    try {
+      const { data } = await api.get<{ version?: string }>('/sessions/chats/version');
+      const next = data?.version;
+      if (!next) return;
+      const previous = versionRef.current;
+      versionRef.current = next;
+      if (previous !== null && previous !== next) reread();
+    } catch {
+      /* signed out or engine restarting: try again on the next tick */
+    }
+  }, [reread]);
+  useEffect(() => { void checkVersion(); }, [checkVersion]);
+  usePolling(checkVersion, VERSION_POLL_MS, true);
 
   const grouped = useMemo(() => groupChats(chats), [chats]);
   const live = useMemo(() => chats.filter((c) => !c.archived), [chats]);

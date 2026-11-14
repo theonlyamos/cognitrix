@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SidebarChats from './SidebarChats';
+import { api } from '@/lib/api';
 import { CHATS_EDITED, setChatNav } from '@/lib/chatNav';
 
 const CHATS = vi.hoisted(() => [
@@ -91,6 +92,32 @@ describe('SidebarChats', () => {
       expect(refetch).toHaveBeenCalledWith({ silent: true });
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('re-reads the list when a chat is made elsewhere, e.g. by another agent', async () => {
+    const get = vi.mocked(api.get);
+    let version = 'v1';
+    get.mockImplementation(async (path: string) =>
+      ({ data: path === '/sessions/chats/version' ? { version } : [] }) as never);
+    CHATS[4].running = false;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderList();
+      await act(async () => { await Promise.resolve(); });
+      refetch.mockClear();
+      // Nothing changed: no re-read.
+      await act(async () => { vi.advanceTimersByTime(4_100); });
+      expect(get).toHaveBeenCalledWith('/sessions/chats/version');
+      expect(refetch).not.toHaveBeenCalled();
+      // An agent started a chat with another agent.
+      version = 'v2';
+      await act(async () => { vi.advanceTimersByTime(4_100); });
+      expect(refetch).toHaveBeenCalledWith({ silent: true });
+    } finally {
+      vi.useRealTimers();
+      CHATS[4].running = true;
+      get.mockReset().mockResolvedValue({ data: [] });
     }
   });
 
