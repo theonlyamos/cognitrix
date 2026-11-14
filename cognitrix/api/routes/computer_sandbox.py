@@ -6,6 +6,7 @@
     POST /computer/sandbox/desktops/{name}/hold    take over: the agent pauses; returns the password that
                                                    lets the screen take mouse and keyboard
     POST /computer/sandbox/desktops/{name}/release hand back
+    POST /computer/sandbox/update                  restart onto a newer image (files and logins stay)
     POST /computer/sandbox/reset                   throw the computer away (files and logins too)
 
 Browser sessions only. The container's own ports listen on 127.0.0.1 and need
@@ -86,7 +87,12 @@ async def status(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     if box is None:
         return {'enabled': True, 'running': False, 'desktops': []}
     desktops = await run_in_threadpool(box.desktops)
-    return {'enabled': True, 'running': True, 'desktops': desktops}
+    mgr = get_manager()
+    try:
+        update = bool(await run_in_threadpool(mgr.update_available, box))
+    except Exception:
+        update = False
+    return {'enabled': True, 'running': True, 'desktops': desktops, 'update_available': update}
 
 
 @sandbox_api.get('/settings')
@@ -149,6 +155,15 @@ async def release(name: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, 
     box = await _box(ctx)
     out = await run_in_threadpool(box.request, 'POST', f'/desktops/{_desktop(name)}/release')
     return {'ok': bool(out.get('ok'))}
+
+
+@sandbox_api.post('/update')
+async def update(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Restart the person's computer on the newest downloaded image. Open
+    windows close; files and logins are kept."""
+    mgr = _manager()
+    await run_in_threadpool(mgr.update, _owner(ctx))
+    return {'ok': True}
 
 
 @sandbox_api.post('/reset')

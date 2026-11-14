@@ -3,7 +3,7 @@ import { errorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import {
-  desktopName, handBack, openViewer, resetSandbox, sandboxStatus, takeOver,
+  desktopName, handBack, openViewer, resetSandbox, sandboxStatus, takeOver, updateSandbox,
   type SandboxDesktop, type SandboxStatus,
 } from '@/lib/sandbox';
 
@@ -130,6 +130,7 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
             </button>
           )}
           <h2 className="mr-auto text-[13px] font-semibold">Agents' computer</h2>
+          {status?.running && status.update_available && <UpdateButton onDone={load} />}
           {status?.running && <ResetButton onDone={load} />}
           {expanded ? (
             <button type="button" className={buttonClass} onClick={collapse} title="Collapse (Esc)">
@@ -442,6 +443,50 @@ function useAutoHide(active: boolean) {
     };
   }, [active]);
   return visible;
+}
+
+function UpdateButton({ onDone }: { onDone: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        className={primaryButtonClass}
+        onClick={() => setConfirming(true)}
+        title="A newer version of the agents' computer is ready"
+      >
+        Update
+      </button>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1 text-[12px]">
+      <span className="text-fg-dim">{error || 'Restart it? Open windows close; files and logins stay.'}</span>
+      <button
+        type="button"
+        className={buttonClass}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError('');
+          try {
+            await updateSandbox();
+            setConfirming(false);
+          } catch (err) {
+            setError(errorMessage(err, "Couldn't restart it."));
+          } finally {
+            setBusy(false);
+            onDone();
+          }
+        }}
+      >
+        {busy ? 'Restarting…' : 'Restart'}
+      </button>
+      <button type="button" className={quietButtonClass} disabled={busy} onClick={() => setConfirming(false)}>Later</button>
+    </span>
+  );
 }
 
 function ResetButton({ onDone }: { onDone: () => void }) {

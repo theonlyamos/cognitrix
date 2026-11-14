@@ -8,6 +8,7 @@ const lib = vi.hoisted(() => ({
   takeOver: vi.fn(),
   handBack: vi.fn(),
   resetSandbox: vi.fn(),
+  updateSandbox: vi.fn(),
 }));
 const rfb = vi.hoisted(() => ({ made: [] as { url: string; password?: string; viewOnly: boolean }[] }));
 
@@ -36,6 +37,20 @@ beforeEach(() => {
 });
 
 describe('ComputerPanel', () => {
+  it('offers to restart onto a newer version only when one is ready', async () => {
+    const desktops = [{ name: 'a1', display: ':1', held_by: null, running: true }];
+    lib.sandboxStatus.mockResolvedValue({ enabled: true, running: true, desktops, update_available: true });
+    lib.updateSandbox.mockResolvedValue(undefined);
+    render(<ComputerPanel agents={agents} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Update' }));
+    expect(screen.getByText(/files and logins stay/)).toBeInTheDocument();
+    lib.sandboxStatus.mockResolvedValue({ enabled: true, running: true, desktops, update_available: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    await waitFor(() => expect(lib.updateSandbox).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Update' })).not.toBeInTheDocument());
+    expect(lib.resetSandbox).not.toHaveBeenCalled();
+  });
+
   it('explains how to turn it on when it is off', async () => {
     lib.sandboxStatus.mockResolvedValue({ enabled: false, running: false, desktops: [] });
     render(<ComputerPanel agents={agents} onClose={() => {}} />);
