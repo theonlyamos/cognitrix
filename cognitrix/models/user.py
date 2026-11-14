@@ -23,3 +23,6 @@ class User(Model):
 
     reset_expires: int | None = None
     """Unix time the reset token stops working."""
+
+    whats_new_seen: str | None = None
+    """Last app version whose What's new notes this user saw (or skipped)."""

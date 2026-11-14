@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { KeyRound, LogOut, Monitor, Moon, Settings, Sun, type LucideIcon } from 'lucide-react';
+import { KeyRound, LogOut, Monitor, Moon, Settings, Sparkles, Sun, type LucideIcon } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
 import { useTheme, type ThemeMode } from '@/context/ThemeContext';
 import { useT } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import { OPEN_WHATS_NEW_EVENT } from '@/components/WhatsNew';
 
 const THEMES: { mode: ThemeMode; label: 'appearance.theme.light' | 'appearance.theme.dark' | 'appearance.theme.system'; Icon: LucideIcon }[] = [
   { mode: 'light', label: 'appearance.theme.light', Icon: Sun },
@@ -15,7 +16,7 @@ const THEMES: { mode: ThemeMode; label: 'appearance.theme.light' | 'appearance.t
 
 /**
  * The sidebar's account button: your name and email, opening a menu with
- * Settings, API Keys, the theme and Sign out (same look as the composer's + menu).
+ * Settings, API Keys, What's new, the theme and Sign out (same look as the composer's + menu).
  */
 export default function AccountMenu({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const t = useT();
@@ -127,6 +128,15 @@ export default function AccountMenu({ collapsed, onNavigate }: { collapsed: bool
           <div className="mx-1 my-1 h-px bg-line" />
           {link('/settings', t('nav.settings'), Settings)}
           {link('/api-keys', t('nav.apiKeys'), KeyRound)}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => { setOpen(false); onNavigate?.(); window.dispatchEvent(new Event(OPEN_WHATS_NEW_EVENT)); }}
+            className={item}
+          >
+            <Sparkles strokeWidth={1.9} aria-hidden="true" />
+            <span className="flex-1">{t('nav.whatsNew')}</span>
+          </button>
           <div className="mx-1 my-1 h-px bg-line" />
           <div className="px-2.5 pb-1 pt-1.5 font-mono text-[10px] tracking-[0.14em] text-fg-dim">{t('appearance.theme').toUpperCase()}</div>
           <div role="radiogroup" aria-label={t('appearance.theme')} className="grid grid-cols-3 gap-1 px-1.5 pb-1.5">
