@@ -15,6 +15,7 @@ const fr: Messages = {
   'nav.meetings': 'Réunions',
   'nav.settings': 'Paramètres',
   'nav.apiKeys': 'Clés API',
+  'nav.whatsNew': 'Nouveautés',
   'nav.signOut': 'Se déconnecter',
   'nav.account': 'Menu du compte',
   'nav.collapse': 'Réduire',
