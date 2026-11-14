@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI):
     await run_recovery_pass()
     scheduler = None
     recovery = None
+    app_sleeper = None
     maintenance_started = False
     try:
         scheduler = asyncio.create_task(scheduler_loop())
@@ -65,6 +66,8 @@ async def lifespan(app: FastAPI):
         )
         start_attachment_maintenance()
         maintenance_started = True
+        from ..hosted_apps.store import sleeper_loop
+        app_sleeper = asyncio.create_task(sleeper_loop())
         try:
             from ..meetings.notes import fail_interrupted
             await fail_interrupted()
@@ -99,7 +102,7 @@ async def lifespan(app: FastAPI):
             await stop_channels()
         except BaseException as exc:
             cleanup_errors.append(exc)
-        tasks = tuple(task for task in (scheduler, recovery) if task is not None)
+        tasks = tuple(task for task in (scheduler, recovery, app_sleeper) if task is not None)
         for task in tasks:
             task.cancel()
         for task in tasks:
@@ -217,6 +220,10 @@ class ClientTimezone:
 app.add_middleware(ClientTimezone)
 
 app.include_router(api_router)
+# Apps agents built, served at /a/<slug>/~<token>/ (before the SPA catch-all).
+from .routes.hosted_apps import app_proxy  # noqa: E402
+
+app.include_router(app_proxy)
 # OpenAI-compatible shim at the app root (/v1). MUST be registered before the
 # SPA catch-all below, or GET /v1/models would be served index.html with 200.
 app.include_router(openai_api)

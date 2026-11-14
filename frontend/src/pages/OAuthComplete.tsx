@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
+import { takeAfterSignIn } from '@/lib/afterSignIn';
 import { setToken } from '@/lib/session';
 
 /** Landing page after Google/GitHub sign-in on the web: the token arrives in
@@ -17,7 +18,7 @@ export default function OAuthComplete() {
       return;
     }
     setToken(token);
-    void checkAuth().then(() => navigate('/dashboard', { replace: true }));
+    void checkAuth().then(() => navigate(takeAfterSignIn(), { replace: true }));
   }, [checkAuth, navigate]);
 
   return (

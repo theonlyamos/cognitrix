@@ -16,6 +16,7 @@ from cognitrix.tools.computer import (
     type_in_window,
 )
 from cognitrix.tools.folders import request_folder
+from cognitrix.tools.hosted_apps import app_status, publish_app
 from cognitrix.tools.http import http_request, list_credentials
 from cognitrix.tools.image import generate_image
 from cognitrix.tools.knowledge import search_knowledge
@@ -32,6 +33,7 @@ from cognitrix.tools.management import (
 )
 from cognitrix.tools.mcp import list_mcp_tools, run_mcp_tool
 from cognitrix.tools.memory import memory
+from cognitrix.tools.theme import set_theme
 from cognitrix.tools.misc import (
     Edit,
     Glob,
@@ -84,7 +86,7 @@ __all__ = [
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me', 'offer_help',
     'request_folder',
     'start_chat', 'check_chat', 'message_chat',
-    'memory', 'search_chats', 'read_chat',
+    'memory', 'search_chats', 'read_chat', 'set_theme',
     'take_screenshot', 'text_input', 'key_press', 'hot_key',
     'mouse_click', 'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
     'list_windows', 'open_app', 'look_at_window', 'click_element', 'set_text',

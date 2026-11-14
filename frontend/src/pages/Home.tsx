@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChatHorizon } from '@/components/ThemeArtwork';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
 import { WaitingMessages, type WaitingMessage } from '@/components/WaitingMessages';
 import { useSession, type ChatMessage, type ToolArtifact } from '@/context/SessionContext';
@@ -30,7 +31,7 @@ import { AgentBadge } from '@/components/StartChat';
 import { AgentPickerChip, NewChatGreeting } from '@/components/NewChatGreeting';
 import { useOptionalUser } from '@/context/AppContext';
 import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
-import { takeChatDraft } from '@/lib/chatDraft';
+import { takeChatAutoSend, takeChatDraft } from '@/lib/chatDraft';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CHATS_EDITED, chatsStale, setChatNav, type ChatsEditedDetail } from '@/lib/chatNav';
 import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
@@ -1304,6 +1305,15 @@ export default function Home() {
     [busy, question, steer, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
   );
 
+  // A draft handed over with "send it" (Create app): send once the chat is up.
+  const [autoSendOnce] = useState(takeChatAutoSend);
+  const autoSendRef = useRef(autoSendOnce);
+  useEffect(() => {
+    if (!autoSendRef.current || !isConnected || busy || !input.trim()) return;
+    autoSendRef.current = false;
+    void send(input);
+  }, [isConnected, busy, input, send]);
+
   // Messages the last turn never read go out as the next one, by themselves
   // (whatever is in the box stays there).
   useEffect(() => {
@@ -1881,6 +1891,8 @@ export default function Home() {
     <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-bg text-fg">
       {/* Chat column */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {/* The theme's drawing along the bottom, behind messages and the message box */}
+        <ChatHorizon className={cn((empty || picking) && 'hidden')} />
         {/* Slim header: who the chat is with and its name, the model, reconnect
             while the stream is down, and the chat's side panel. */}
         <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-3 md:pl-5">
@@ -1933,7 +1945,7 @@ export default function Home() {
                 )}
               >
                 {agentDesktop && <span aria-hidden className="h-[7px] w-[7px] flex-none animate-pulse rounded-full bg-accent" />}
-                {sidebarWaiting.length > 0 && <span aria-hidden className="h-[7px] w-[7px] flex-none rounded-full bg-[#ffb86b]" />}
+                {sidebarWaiting.length > 0 && <span aria-hidden className="h-[7px] w-[7px] flex-none rounded-full bg-warn" />}
                 {sidebarSummary && !sidebarShown && <span className="hidden whitespace-nowrap xl:inline">{sidebarSummary}</span>}
                 <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
               </button>
@@ -1947,11 +1959,11 @@ export default function Home() {
           role="log"
           aria-live="polite"
           aria-relevant="additions text"
-          className="min-h-0 flex-1 overscroll-contain overflow-y-auto"
+          className="relative min-h-0 flex-1 overscroll-contain overflow-y-auto"
         >
           {incognito && !picking && (
-            <div role="note" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-dashed border-[#ffb86b]/60 bg-[#ffb86b]/10 px-3 py-2 text-[12.5px] leading-relaxed sm:mx-6">
-              <svg aria-hidden="true" className="mt-0.5 flex-none text-[#b4691a] dark:text-[#ffb86b]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><path d="M3 3l18 18" /></svg>
+            <div role="note" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-dashed border-warn/60 bg-warn/10 px-3 py-2 text-[12.5px] leading-relaxed sm:mx-6">
+              <svg aria-hidden="true" className="mt-0.5 flex-none text-warn-ink" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><path d="M3 3l18 18" /></svg>
               <span>
                 <span className="font-medium">Incognito.</span> This chat isn't saved to your chat list, doesn't use or change
                 memory, and is deleted when you leave it.
@@ -2054,7 +2066,7 @@ export default function Home() {
         </div>
 
         {!empty && (
-          <div className="flex-none px-3 pb-4 pt-2 sm:px-6">
+          <div className="relative flex-none px-3 pb-4 pt-2 sm:px-6">
             {composer}
           </div>
         )}

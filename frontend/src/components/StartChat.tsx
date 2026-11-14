@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
+import { ArtworkScene } from '@/components/ThemeArtwork';
 import { cn } from '@/lib/utils';
 import { avatarEmoji, avatarHue, type AgentAvatar } from '@/lib/agentAvatar';
 import { agentModel, teamLine, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
@@ -84,6 +85,7 @@ export function StartChat({
   const heading = 'font-mono text-[10px] uppercase tracking-[0.14em] text-fg-dim';
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col px-4 py-10 sm:px-6">
+      <ArtworkScene className="-mx-2 mb-5 h-[120px] sm:h-[150px]" />
       <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ new chat</p>
       <h2 className="mt-3 text-2xl font-bold tracking-tight">Who do you want to talk to?</h2>
       <p className="mt-2 text-fg-dim">Each chat is with one agent or team. You can start another chat with someone else at any time.</p>

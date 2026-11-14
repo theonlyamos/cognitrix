@@ -263,7 +263,7 @@ function ChannelPanel({
         <button
           type="submit"
           disabled={busy || missing}
-          className="h-10 rounded-lg bg-accent px-3 text-[13px] font-medium text-[#0b0c0e] disabled:opacity-60"
+          className="h-10 rounded-lg bg-accent px-3 text-[13px] font-medium text-accent-foreground disabled:opacity-60"
         >
           {busy ? 'Checking…' : channel.configured ? 'Save tokens' : `Connect ${label}`}
         </button>
@@ -504,7 +504,7 @@ function ChannelRow({
           className={cn(
             'inline-flex h-9 flex-none items-center rounded-lg px-3 text-[12.5px] md:h-8',
             open ? 'text-fg-dim hover:bg-panel-2 hover:text-fg'
-              : channel.configured ? 'border border-line hover:bg-panel-2' : 'bg-accent font-medium text-[#0b0c0e]',
+              : channel.configured ? 'border border-line hover:bg-panel-2' : 'bg-accent font-medium text-accent-foreground',
           )}
         >
           {open ? 'Close' : channel.configured ? 'Manage' : 'Set up'}

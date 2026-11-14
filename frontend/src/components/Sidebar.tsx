@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
   LayoutDashboard as DashboardIcon, Inbox as InboxIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon,
-  Users as UsersIcon, BookOpen as BookOpenIcon, LayoutPanelTop as LayoutPanelTopIcon, Mic as MicIcon,
+  Users as UsersIcon, BookOpen as BookOpenIcon, AppWindow as AppWindowIcon, Mic as MicIcon,
   Plus as PlusIcon, Search as SearchIcon, Ellipsis as MoreIcon, PanelLeft as PanelLeftIcon, type LucideIcon,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import AccountMenu from '@/components/AccountMenu';
+import { SidebarArtwork } from '@/components/ThemeArtwork';
 import NotificationPopover from '@/components/NotificationPopover';
 import SidebarChats from '@/components/SidebarChats';
 import { BellIcon } from '@/components/TitleBar';
@@ -21,7 +22,7 @@ const NAV: NavItem[] = [
   { path: '/dashboard', label: 'nav.dashboard', icon: DashboardIcon },
   { path: '/inbox', label: 'nav.inbox', icon: InboxIcon },
   { path: '/agents', label: 'nav.agents', icon: BotIcon },
-  { path: '/artifacts', label: 'nav.artifacts', icon: LayoutPanelTopIcon },
+  { path: '/apps', label: 'nav.apps', icon: AppWindowIcon },
   { path: '/automations', label: 'nav.automations', icon: ZapIcon },
   { path: '/knowledge', label: 'nav.knowledge', icon: BookOpenIcon },
 ];
@@ -122,13 +123,16 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
       data-mobile-open={mobileOpen}
       data-collapsed={collapsed}
       className={cn(
-        'fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(88vw,300px)] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 md:visible md:static md:z-auto md:h-full md:translate-x-0 md:transition-[width]',
+        'fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(88vw,300px)] flex-none flex-col border-r border-line bg-panel transition-transform duration-200 md:visible md:relative md:z-auto md:h-full md:translate-x-0 md:transition-[width]',
         mobileOpen ? 'visible translate-x-0' : 'invisible -translate-x-full',
         collapsed ? 'md:w-16' : 'md:w-[264px]',
       )}
     >
+      {/* The theme's drawing, fading out under the first items */}
+      <SidebarArtwork className={slim('md:hidden')} />
+
       {/* Brand and collapse */}
-      <div className={cn('flex flex-none items-center gap-2.5 px-3.5 pb-2 pt-3.5', slim('md:flex-col md:gap-2 md:px-0'))}>
+      <div className={cn('relative flex flex-none items-center gap-2.5 px-3.5 pb-2 pt-3.5', slim('md:flex-col md:gap-2 md:px-0'))}>
         <Link to="/dashboard" onClick={onNavigate} aria-label="Cognitrix home" className="flex min-h-11 min-w-0 flex-1 items-center gap-2.5 md:min-h-0">
           <span className="grid h-7 w-7 flex-none place-items-center rounded-lg bg-accent text-accent-foreground">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
@@ -148,7 +152,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
       </div>
 
       {/* New chat and search */}
-      <div className={cn('flex flex-none flex-col gap-1 px-2.5', slim('md:items-center md:px-0'))}>
+      <div className={cn('relative flex flex-none flex-col gap-1 px-2.5', slim('md:items-center md:px-0'))}>
         <button
           type="button"
           onClick={() => { onNavigate?.(); navigate(newChatHref()); }}
@@ -177,7 +181,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
       </div>
 
       {/* The main places */}
-      <nav aria-label="Main" className={cn('flex flex-none flex-col gap-px px-2.5 pt-2', slim('md:px-3'))}>
+      <nav aria-label="Main" className={cn('relative flex flex-none flex-col gap-px px-2.5 pt-2', slim('md:px-3'))}>
         {NAV.map(link)}
         <button
           type="button"
@@ -203,12 +207,12 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
       {collapsed && <span aria-hidden className="mx-auto my-2 hidden h-px w-7 flex-none bg-line md:block" />}
 
       {/* Every chat (the phone drawer always shows the full list) */}
-      <div className={cn('flex min-h-0 flex-1 flex-col px-2', slim('md:px-0'))}>
+      <div className={cn('relative flex min-h-0 flex-1 flex-col px-2', slim('md:px-0'))}>
         <SidebarChats collapsed={collapsed} onExpand={toggle} onNavigate={onNavigate} />
       </div>
 
       {/* Account and notifications */}
-      <div className={cn('flex flex-none items-center gap-1 border-t border-line p-2', slim('md:flex-col-reverse md:px-0'))}>
+      <div className={cn('relative flex flex-none items-center gap-1 border-t border-line p-2', slim('md:flex-col-reverse md:px-0'))}>
         <div className={cn('min-w-0 flex-1', slim('md:flex-none'))}>
           <AccountMenu collapsed={collapsed} onNavigate={onNavigate} />
         </div>

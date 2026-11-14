@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown as ChevronDownIcon } from 'lucide-react';
 import { AgentBadge } from '@/components/StartChat';
+import { ArtworkScene } from '@/components/ThemeArtwork';
+import { useOptionalTheme } from '@/context/ThemeContext';
 import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 import { cn } from '@/lib/utils';
 
@@ -45,6 +47,7 @@ export function NewChatGreeting({
   children: ReactNode;
 }) {
   const first = (name || '').trim().split(/\s+/)[0];
+  const hasArtwork = !!useOptionalTheme()?.artwork;
   const others = recent
     .filter((t) => !(t.kind === 'agent' && t.id === currentAgentId))
     .flatMap((t) => {
@@ -55,9 +58,13 @@ export function NewChatGreeting({
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[720px] flex-col justify-center px-4 pb-16 pt-10 sm:px-6">
       <div className="flex flex-col items-center text-center">
-        <span aria-hidden className="new-chat-art mb-5 grid h-12 w-12 place-items-center rounded-2xl bg-accent text-accent-foreground">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
-        </span>
+        {hasArtwork ? (
+          <ArtworkScene className="-mx-2 mb-4 h-[130px] w-full sm:h-[170px]" />
+        ) : (
+          <span aria-hidden className="new-chat-art mb-5 grid h-12 w-12 place-items-center rounded-2xl bg-accent text-accent-foreground">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
+          </span>
+        )}
         <h2 className="text-[28px] font-bold leading-tight tracking-[-0.015em] sm:text-[30px]">
           {greetingFor()}{first ? `, ${first}` : ''}
         </h2>

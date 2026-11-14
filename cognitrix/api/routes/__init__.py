@@ -7,6 +7,7 @@ from ...api.routes.connected_apps import apps_api
 from ...api.routes.credentials import credentials_api
 from ...api.routes.knowledge import knowledge_api
 from ...api.routes.memories import memories_api
+from ...api.routes.themes import themes_api
 from ...api.routes.artifacts import artifacts_api
 from ...api.routes.artifact_pages import artifact_frame_api, artifact_pages_api
 from ...api.routes.assistant import assistant_api
@@ -21,6 +22,7 @@ from ...api.routes.computer_sandbox import sandbox_api
 from ...api.routes.oauth import oauth_api
 from ...api.routes.onboarding import onboarding_api
 from ...api.routes.folders import folders_api
+from ...api.routes.hosted_apps import hosted_apps_api
 from ...api.routes.base import api_router
 from ...api.routes.providers import providers_api
 from ...api.routes.public import public_api
@@ -46,6 +48,7 @@ api_router.include_router(agents_api)
 api_router.include_router(tools_api)
 api_router.include_router(artifacts_api)
 api_router.include_router(artifact_pages_api)
+api_router.include_router(hosted_apps_api)
 api_router.include_router(skills_api)
 api_router.include_router(providers_api)
 api_router.include_router(automations_api)
@@ -65,6 +68,7 @@ api_router.include_router(mcp_api)
 api_router.include_router(apps_api)
 api_router.include_router(credentials_api)
 api_router.include_router(memories_api)
+api_router.include_router(themes_api)
 api_router.include_router(usage_api)
 api_router.include_router(push_api)
 api_router.include_router(account_api)
