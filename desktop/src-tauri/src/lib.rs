@@ -401,9 +401,10 @@ async fn test_notification(app: AppHandle) -> Result<(), String> {
 
 /// An app agents built (Apps page), in a window of its own: the engine's
 /// /apps/open/<slug> page, which shows the app under a bar with Close.
-/// Opening the same app again brings its window to the front.
+/// Opening the same app again brings its window to the front. Async: on
+/// Windows, creating a WebView2 window inside a synchronous command deadlocks.
 #[tauri::command]
-fn open_app_window(app: AppHandle, slug: String, title: Option<String>) -> Result<(), String> {
+async fn open_app_window(app: AppHandle, slug: String, title: Option<String>) -> Result<(), String> {
     let valid = !slug.is_empty()
         && slug.len() <= 48
         && slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
