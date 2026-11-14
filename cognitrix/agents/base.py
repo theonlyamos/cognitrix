@@ -4,7 +4,6 @@ import logging
 import os
 import weakref
 from collections.abc import Callable
-from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, TypeAlias
 
@@ -296,8 +295,9 @@ class AgentManager:
         llms_str = self._format_llms_string()
         skills_str = self._format_skills_string()
 
-        today = (datetime.now()).strftime("%a %b %d %Y")
-        prompt = f"Today is {today}.\n\n"
+        from cognitrix.common.clock import date_line
+
+        prompt = f"{date_line()}\n\n"
         prompt += self.agent.system_prompt
         prompt = prompt.replace("{name}", self.agent.name)
 
@@ -338,13 +338,13 @@ class AgentManager:
             from cognitrix.skills.manager import get_skill_manager
             manager = get_skill_manager()
 
-            # Use cached data if available (pre-warmed at startup)
+            # Use cached data if available (pre-warmed at startup). Inside a
+            # running event loop the shared skills can't be read from here, so
+            # the person's own skills are still listed and the shared ones
+            # appear once the cache is warm.
             if not manager._cache:
                 try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        return ''
-                    loop.run_until_complete(manager.discover_all())
+                    asyncio.get_running_loop()
                 except RuntimeError:
                     asyncio.run(manager.discover_all())
 
