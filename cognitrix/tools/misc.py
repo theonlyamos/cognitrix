@@ -1538,8 +1538,11 @@ async def list_agents(*, parent: Any | None = None):
         provider = getattr(llm, 'provider', '') or '?'
         model = getattr(llm, 'model', '') or '?'
         desc = ' '.join((getattr(a, 'description', '') or a.system_prompt or '').split())
-        if len(desc) > 160:
-            desc = desc[:160] + '…'
+        # A description is at most 300 characters (the agent form's limit);
+        # a prompt standing in for one is cut much shorter.
+        limit = 300 if getattr(a, 'description', '') else 160
+        if len(desc) > limit:
+            desc = desc[:limit] + '…'
         line = f"- {a.name} [{provider}/{model}]"
         if desc:
             line += f" — {desc}"
@@ -1628,7 +1631,11 @@ async def call_agent(name: str, task: str, *, interface: str = 'task'):
             persist_history=False,
             compact_history=False,
         )
-        return ''.join(chunks).strip() or f"Agent '{name}' returned no output."
+        # The helper's thinking is not part of its answer: passing it on only
+        # fills the caller's context (a reviewer can think for pages).
+        from cognitrix.teams.group_chat import _strip_think  # noqa: WPS433
+
+        return _strip_think(''.join(chunks)).strip() or f"Agent '{name}' returned no output."
     except Exception as e:
         return f"Error calling agent: {str(e)}"
     finally:

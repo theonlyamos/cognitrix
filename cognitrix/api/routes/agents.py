@@ -125,6 +125,13 @@ def _multipart_parser_error(exc: MultiPartException) -> HTTPException:
     return HTTPException(status_code=400, detail='Malformed multipart request')
 
 
+def _request_timezone() -> str:
+    """The browser timezone sent with this request (X-Timezone), or ''."""
+    from cognitrix.common.clock import clean_timezone, client_timezone
+
+    return clean_timezone(client_timezone.get())
+
+
 async def _run_awaitable_joined(operation):
     """Let an async close finish before request cancellation propagates."""
     worker = asyncio.create_task(operation)
@@ -382,10 +389,29 @@ def _check_folders(agent: Agent, data: dict, existing: Agent | None) -> None:
 
 
 _POLICY_DEFAULTS = {
-    'description': '', 'reviewer': {}, 'coding_agents': {}, 'credentials': None,
+    'description': '', 'avatar': {}, 'reviewer': {}, 'coding_agents': {}, 'credentials': None,
     'can_create_sub_agents': True, 'sub_agent_model': '', 'automation': {},
     'memory': {},
 }
+
+
+def _clean_avatar(value: object) -> dict:
+    """Keep only a short emoji and a hue from what the agent page sent."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict = {}
+    emoji = str(value.get('emoji') or '').strip()
+    if emoji:
+        if len(emoji) > 16 or any(ch.isalnum() and ch.isascii() or ch in '<>&"\'' for ch in emoji):
+            raise HTTPException(status_code=400, detail='Pick a single emoji for the thumbnail')
+        out['emoji'] = emoji
+    hue = value.get('hue')
+    if hue is not None and hue != '':
+        try:
+            out['hue'] = int(hue) % 360
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail='Pick a colour for the thumbnail') from None
+    return out
 
 
 def _check_policy(agent: Agent, data: dict, existing: Agent | None) -> None:
@@ -405,6 +431,7 @@ def _check_policy(agent: Agent, data: dict, existing: Agent | None) -> None:
     agent.description = str(agent.description or '').strip()
     if len(agent.description) > 300:
         raise HTTPException(status_code=400, detail='Keep the description under 300 characters')
+    agent.avatar = _clean_avatar(agent.avatar)
     try:
         agent.reviewer = normalize_agent_settings(agent.reviewer)
     except ValueError as exc:
@@ -653,6 +680,28 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
         if isinstance(requested_session, str) and requested_session:
             running = chat_runs.get_run(_user_key(user), requested_session)
             if running is not None and running.running:
+                # Steering: a plain text message goes into the running turn,
+                # read after its current tool round. Anything else still waits.
+                expected = data.get('expected_run_id')
+                steerable = (
+                    running.steerable
+                    and execution_mode is ExecutionMode.CHAT
+                    and not has_task_incompatible_input
+                    and (not expected or expected == running.run_id)
+                )
+                if steerable:
+                    try:
+                        queued = running.steer(str(data.get('message') or ''), source='web')
+                    except chat_runs.InboxFull as exc:
+                        raise HTTPException(status_code=429, detail=str(exc)) from None
+                    except ValueError as exc:
+                        raise HTTPException(status_code=400, detail=str(exc)) from None
+                    if queued is not None:
+                        return {
+                            'status': 'queued',
+                            'message': queued.as_dict(),
+                            'run_id': running.run_id,
+                        }
                 raise HTTPException(
                     status_code=409,
                     detail='This conversation is still working on its last message',
@@ -697,6 +746,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'bypass_permissions': bool(data.get('bypass_permissions')),
                 'reasoning_effort': normalize_reasoning_effort(data.get('reasoning_effort')),
                 'execution_mode': execution_mode.value,
+                'timezone': _request_timezone(),
                 **({'folders': folders} if folders is not None else {}),
                 **({'incognito': True} if data.get('incognito') and not data.get('session_id') else {}),
             })
@@ -708,6 +758,17 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                     await cleanup_staged_attachments(staged)
             raise
     return {'status': 'Message sent'}
+
+
+@agents_api.delete("/runs/{session_id}/inbox/{message_id}", dependencies=[Depends(jwt_only)])
+async def withdraw_chat_message(session_id: str, message_id: str, user=Depends(get_current_user)):
+    """Take back a message sent while the turn was running, if it hasn't
+    been read yet. 409 once the agent has it."""
+    run = chat_runs.get_run(_user_key(user), session_id)
+    message = run.withdraw(message_id) if run is not None else None
+    if message is None:
+        raise HTTPException(status_code=409, detail='The agent has already read this message')
+    return {'status': 'withdrawn', 'message': message.as_dict()}
 
 
 @agents_api.post("/stop", dependencies=[Depends(jwt_only)])

@@ -15,10 +15,12 @@ interface PanelAgent {
 /** The agents' sandboxed computer: one desktop per agent, watched live, with
  *  Take over / Hand back. While a person has control the agent waits and
  *  sees nothing of what they do. */
-export function ComputerPanel({ agents, focusAgentId, onClose }: {
+export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
   agents: PanelAgent[];
   focusAgentId?: string | null;
   onClose: () => void;
+  /** Beside a chat with its side panel open: go back to that panel. */
+  onBack?: () => void;
 }) {
   const [status, setStatus] = useState<SandboxStatus | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -122,6 +124,11 @@ export function ComputerPanel({ agents, focusAgentId, onClose }: {
     >
       {!oneBar && (
         <header className="flex flex-none items-center gap-1 border-b border-line px-3 py-2">
+          {onBack && !expanded && (
+            <button type="button" onClick={onBack} className="-ml-1 mr-1 inline-flex h-9 flex-none items-center gap-1 rounded-lg px-2 font-mono text-[11.5px] text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8">
+              <span aria-hidden>‹</span> This chat
+            </button>
+          )}
           <h2 className="mr-auto text-[13px] font-semibold">Agents' computer</h2>
           {status?.running && <ResetButton onDone={load} />}
           {expanded ? (

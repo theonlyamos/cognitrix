@@ -697,6 +697,8 @@ class SSEManager:
                 })
                 return
             terminal['session_id'] = session.id
+            # This turn takes over anything an earlier one left unread.
+            session.pending_messages = None
             run = chat_runs.start_run(
                 str(self.user_key or ''),
                 str(self.agent.id),
@@ -829,12 +831,24 @@ class SSEManager:
                 effort_token = turn_reasoning_effort.set(
                     normalize_reasoning_effort(action.get('reasoning_effort')) or None
                 )
+                # The turn runs in the event stream's context, not in the
+                # request that sent the message, so the person's timezone
+                # travels with the queued message.
+                from cognitrix.common.clock import clean_timezone, client_timezone
+
+                timezone_token = client_timezone.set(
+                    clean_timezone(action.get('timezone')) or client_timezone.get()
+                )
                 media_token = set_media_turn_context(MediaTurnContext(
                     ownership=ownership,
                     current_images=image_refs,
                     selected_image=selected_ref,
                     vision_data_uri_cache={},
                 ))
+                # Messages sent to this chat while it runs are read
+                # between tool rounds (Session._take_steering).
+                run.steerable = True
+                run_token = chat_runs.current_run.set(run)
                 try:
                     await session(
                         user_prompt,
@@ -862,10 +876,12 @@ class SSEManager:
                             'Session did not durably adopt promoted attachments'
                         )
                 finally:
+                    chat_runs.current_run.reset(run_token)
                     reset_media_turn_context(media_token)
                     question_turn_ctx.reset(question_token)
                     web_turn_ctx.reset(token)
                     turn_reasoning_effort.reset(effort_token)
+                    client_timezone.reset(timezone_token)
         except asyncio.CancelledError:
             terminal = {
                 'type': 'turn_stopped',
@@ -918,6 +934,17 @@ class SSEManager:
                 }
             if run is not None:
                 run.finish(terminal)
+                if run.unsent:
+                    # Sent mid-turn but never read: the page sends them next.
+                    # They are saved too, so a page that left in the meantime
+                    # finds them when it reopens the chat.
+                    terminal = {**terminal, 'unsent': run.unsent}
+                    if session is not None:
+                        try:
+                            session.pending_messages = list(run.unsent)
+                            await session.save()
+                        except Exception:
+                            logger.exception('Could not save unread messages for chat %s', session.id)
             self._complete_turn_output(
                 asyncio.current_task(),
                 output_queue,

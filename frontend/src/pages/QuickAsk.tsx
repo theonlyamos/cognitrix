@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { API_BASE } from '@/lib/api';
+import { API_BASE, browserTimezone } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
 import MarkdownMessage from '@/components/MarkdownMessage';
 import { desktop, onDesktopEvent } from '@/lib/desktop';
@@ -115,6 +115,7 @@ export default function QuickAsk() {
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
           Authorization: `Bearer ${localStorage.getItem('token') ?? ''}`,
+          ...(browserTimezone() ? { 'X-Timezone': browserTimezone() } : {}),
         },
         body: JSON.stringify({ message, stream: true, session_id: sessionId }),
         signal: controller.signal,

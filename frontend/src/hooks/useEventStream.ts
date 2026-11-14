@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { API_BASE } from '@/lib/api';
+import { API_BASE, browserTimezone } from '@/lib/api';
 import { onDesktopEvent, type EngineStatus } from '@/lib/desktop';
 import { AUTH_EXPIRED_EVENT } from '@/lib/session';
 import { consumeSSE } from '@/lib/sse';
@@ -101,6 +101,8 @@ export function useEventStream<T>(options: UseEventStreamOptions<T>) {
     setIsConnecting(true);
     const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
     if (lastEventIdRef.current) headers['Last-Event-ID'] = lastEventIdRef.current;
+    const timezone = browserTimezone();
+    if (timezone) headers['X-Timezone'] = timezone;
 
     const scheduleReconnect = (streamError?: Error) => {
       if (controller.signal.aborted) return;

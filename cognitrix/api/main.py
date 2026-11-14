@@ -75,6 +75,20 @@ async def lifespan(app: FastAPI):
             import logging
             logging.getLogger('cognitrix.log').exception('Could not tidy up meeting notes')
         try:
+            # Agents list the shared skills in their prompt from this cache;
+            # only the CLI used to fill it, so server chats saw no skills.
+            from ..skills.manager import get_skill_manager
+            await get_skill_manager().discover_all()
+        except Exception:
+            import logging
+            logging.getLogger('cognitrix.log').exception('Could not load skills at startup')
+        try:
+            from ..agents.templates import upgrade_default_assistants
+            await upgrade_default_assistants()
+        except Exception:
+            import logging
+            logging.getLogger('cognitrix.log').exception('Could not update default assistant prompts')
+        try:
             from ..channels.service import start_channels
             await start_channels()
         except Exception:
@@ -178,6 +192,32 @@ class SecurityHeaders:
 
 
 app.add_middleware(SecurityHeaders)
+
+
+class ClientTimezone:
+    """Remember the browser's timezone (X-Timezone) for this request, so the
+    date agents are told is the person's date, not the server's."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            return await self.app(scope, receive, send)
+        from ..common.clock import clean_timezone, client_timezone
+
+        raw = next((value for name, value in scope.get('headers') or [] if name == b'x-timezone'), b'')
+        name = clean_timezone(raw.decode('latin-1', 'ignore')) if raw else ''
+        if not name:
+            return await self.app(scope, receive, send)
+        token = client_timezone.set(name)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            client_timezone.reset(token)
+
+
+app.add_middleware(ClientTimezone)
 
 app.include_router(api_router)
 # Apps agents built, served at /a/<slug>/~<token>/ (before the SPA catch-all).

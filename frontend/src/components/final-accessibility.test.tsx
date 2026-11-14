@@ -635,8 +635,10 @@ describe('final accessibility contracts', () => {
     expect(screen.getByRole('banner')).toHaveClass('flex-row', 'flex-nowrap');
     expect(screen.getByRole('banner')).not.toHaveClass('overflow-hidden');
     expect(within(screen.getByRole('banner')).getByRole('heading', { name: 'New chat' })).toHaveClass('truncate');
-    // Desktop hides the bar while connected.
-    expect(screen.getByRole('banner')).toHaveClass('md:hidden');
+    // Desktop keeps the bar (chat name and the side panel button) and drops
+    // only the connected mark.
+    expect(screen.getByRole('banner')).not.toHaveClass('md:hidden');
+    expect(screen.getByLabelText('Connection status: connected')).toHaveClass('md:hidden');
     expect(screen.getByRole('button', { name: 'Open conversations' })).toHaveClass('h-11', 'w-11', 'md:hidden');
     const connectionStatus = screen.getByLabelText('Connection status: connected');
     expect(connectionStatus).toHaveClass('flex', 'items-center');

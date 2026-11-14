@@ -20,9 +20,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from cognitrix.agents import Agent
+from cognitrix.agents import Agent, starter_team
 from cognitrix.agents import access as agent_access
-from cognitrix.agents.templates import default_assistant_prompt
+from cognitrix.agents.templates import DEFAULT_ASSISTANT_DESCRIPTION, default_assistant_prompt
 from cognitrix.common.security import AuthContext, get_auth_context, jwt_only, redact_secrets
 from cognitrix.models import User
 
@@ -56,6 +56,9 @@ class AssistantSetup(BaseModel):
     model: str
     api_key: str | None = None
     reasoning_effort: str | None = None
+    # Also create the specialists the assistant hands work to
+    # (cognitrix/agents/starter_team.py).
+    starter_team: bool = True
 
 
 def _has_server_key(provider: str) -> bool:
@@ -184,6 +187,7 @@ async def _create_assistant(user: User, name: str, llm: LLM) -> Agent:
         name=name,
         llm=llm,
         system_prompt=default_assistant_prompt(getattr(user, 'name', None)),
+        description=DEFAULT_ASSISTANT_DESCRIPTION,
         tools=list(ToolManager.list_all_tools()),
         owner_id=agent_access.owner_key(user),
         memory={'save_global': True},
@@ -198,11 +202,14 @@ async def onboarding_status(ctx: AuthContext = Depends(get_auth_context)) -> dic
     options = _provider_options()
     provider = _suggested_provider(options)
     model = next((o['default_model'] for o in options if o['id'] == provider), '')
+    missing = {s.key for s in await starter_team.missing_specialists(agent_access.owner_key(ctx.user))}
     return {
         'needs_setup': await _needs_setup(ctx.user),
         'has_agents': bool(await agent_access.visible_agents(agent_access.owner_key(ctx.user))),
         'suggested': {'name': DEFAULT_ASSISTANT_NAME, 'provider': provider, 'model': model},
         'providers': options,
+        # The specialists on offer, and which of them this person lacks.
+        'starter_team': [{**item, 'missing': item['key'] in missing} for item in starter_team.catalog()],
     }
 
 
@@ -218,8 +225,37 @@ async def create_default_assistant(
     name = _clean_name(setup.name)
     llm = _build_llm(setup)
     agent = await _create_assistant(ctx.user, name, llm)
+    team_size = 0
+    if setup.starter_team:
+        try:
+            made = await starter_team.create_starter_team(ctx.user, llm, leader=agent)
+            team_size = len(made['agents'])
+        except Exception:
+            # The assistant is what setup is for; the team can be added later
+            # from the Agents page.
+            logger.exception('Could not create the starter team for user %s', agent.owner_id)
     await _mark_onboarded(ctx.user)
-    return {'agent': redact_secrets(agent.json())}
+    return {'agent': redact_secrets(agent.json()), 'starter_team': team_size}
+
+
+@onboarding_api.post('/starter-team')
+async def add_starter_team(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """Add the specialists this person doesn't have yet, on their assistant's model."""
+    user_key = agent_access.owner_key(ctx.user)
+    owned = await _owned_agents(user_key)
+    known = {s.name.lower() for s in starter_team.SPECIALISTS}
+    # Their assistant: the first agent of theirs that isn't itself a specialist.
+    leader = next((a for a in owned if str(a.name).strip().lower() not in known), None)
+    if leader is None:
+        raise HTTPException(
+            status_code=400,
+            detail='Create an agent first: the specialists run on the same provider as your assistant.',
+        )
+    made = await starter_team.create_starter_team(ctx.user, leader.llm, leader=leader)
+    return {
+        'created': [{'id': str(a.id), 'name': a.name} for a in made['agents']],
+        'team_id': str(made['team'].id),
+    }
 
 
 @onboarding_api.post('/skip')

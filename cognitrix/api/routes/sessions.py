@@ -766,6 +766,16 @@ async def get_chat(
     return JSONResponse(session.chat)
 
 
+@sessions_api.get('/{session_id}/pending')
+async def get_pending_messages(
+    session_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Messages sent while the last turn ran that it never read."""
+    _, session = await _load_authorized_session(session_id, ctx)
+    return JSONResponse({'messages': session.pending_messages or []})
+
+
 @sessions_api.delete('/{session_id}/chat')
 async def delete_chat(
     session_id: str,

@@ -435,3 +435,41 @@ async def test_same_fact_in_two_scopes_returns_each_new_row(db):
     assert created and second.id != first.id and second.scope == 'agent'
     stored = await saved.get_memory(str(user.id), str(second.id))
     assert stored is not None and stored.scope == 'agent'
+
+
+async def test_a_chat_keeps_its_memory_section_between_messages(db):
+    """Re-picking memories for every message changed the system prompt each
+    turn, so providers could never reuse their cached copy of a long chat."""
+    from cognitrix.memory import saved
+
+    saved._block_cache.clear()
+    user = await _user('Amos', 'amos@example.com')
+    words = ['apple', 'river', 'violin', 'cactus', 'lantern', 'glacier', 'pepper', 'satellite',
+             'meadow', 'harbor', 'quartz', 'tundra', 'orchid', 'canyon', 'falcon', 'marble']
+    for i, word in enumerate(words):
+        await saved.add(str(user.id), f'{word.title()} {i}: ' + ' '.join(w[::-1] + str(i) for w in words[i:] + words[:i]))
+    agent = _agent()
+    first = await saved.prompt_block(str(user.id), agent, 'tell me about the cactus', budget=1000, session_id='chat-1')
+    second = await saved.prompt_block(str(user.id), agent, 'and the glacier?', budget=1000, session_id='chat-1')
+    assert second == first
+    # Another chat picks for its own first message.
+    other = await saved.prompt_block(str(user.id), agent, 'and the glacier?', budget=1000, session_id='chat-2')
+    assert other != first
+    # A changed memory shows up straight away.
+    await saved.add(str(user.id), 'Timezone is GMT.', pinned=True)
+    third = await saved.prompt_block(str(user.id), agent, 'and the glacier?', budget=1000, session_id='chat-1')
+    assert 'Timezone is GMT.' in third
+
+
+async def test_a_quick_same_length_correction_replaces_the_old_fact(db):
+    from cognitrix.memory import saved
+
+    saved._block_cache.clear()
+    user = await _user('Amos', 'amos@example.com')
+    row, _ = await saved.add(str(user.id), 'Office is Rome.')
+    agent = _agent()
+    assert 'Rome' in await saved.prompt_block(str(user.id), agent, session_id='chat-1')
+    # Same second, same length: only the text tells the two apart.
+    await saved.update(row, content='Office is Lima.')
+    block = await saved.prompt_block(str(user.id), agent, session_id='chat-1')
+    assert 'Lima' in block and 'Rome' not in block

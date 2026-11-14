@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
+import { WaitingMessages, type WaitingMessage } from '@/components/WaitingMessages';
 import { useSession, type ChatMessage, type ToolArtifact } from '@/context/SessionContext';
 import { MobileSheet } from '@/components/MobileSheet';
 import { SelectionRow } from '@/components/SelectionRow';
@@ -18,8 +19,10 @@ import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript'
 import { Button } from '@/lib/components/ui/button';
 import { ComputerPanel } from '@/components/ComputerPanel';
 import { ArtifactViewer } from '@/components/artifacts/ArtifactViewer';
-import { announceArtifactUpdate, onOpenArtifact, publishedFrom } from '@/lib/artifactPages';
-import { sandboxStatus } from '@/lib/sandbox';
+import { announceArtifactUpdate, onArtifactUpdate, onOpenArtifact, parseStamp, publishedFrom, type ArtifactList } from '@/lib/artifactPages';
+import { desktopName, sandboxStatus, type SandboxDesktop } from '@/lib/sandbox';
+import { ChatSidebar, loadSidebarOpen, saveSidebarOpen, type SidebarActivity, type SidebarWaiting } from '@/components/ChatSidebar';
+import { ChatRail, type RailChat, type RailGroup } from '@/components/ChatRail';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { insertTranscript } from '@/lib/voice';
@@ -29,11 +32,11 @@ import { getChatFolders, setChatFolders, type WorkFolder } from '@/lib/folders';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
-import type { PickTarget, PickerAgent, PickerTeam } from '@/lib/agentPicker';
+import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 import { takeChatAutoSend, takeChatDraft } from '@/lib/chatDraft';
 import {
   ARCHIVED_KEY, GROUP_PREVIEW, PANEL_DEFAULT, PANEL_MAX, PANEL_MIN, PINNED_KEY,
-  clampPanelWidth, groupChats, groupKey, loadClosedSections, loadPanelWidth, saveClosedSections, savePanelWidth,
+  clampPanelWidth, groupChats, groupKey, MINI_SNAP, RAIL_WIDTH, loadClosedSections, loadListMini, loadPanelWidth, saveClosedSections, saveListMini, savePanelWidth,
 } from '@/lib/chatGroups';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
@@ -80,7 +83,7 @@ interface Rework {
 /** The note the server keeps after a turn with uploaded files. */
 const UPLOAD_NOTE = '[User uploaded files, readable with your file tools:]';
 const isUploadNote = (m: ChatMessage) => m.role === 'user' && m.content.startsWith(UPLOAD_NOTE);
-const isUserTurn = (m: ChatMessage) => m.role === 'user' && !!m.content.trim() && !isUploadNote(m);
+const isUserTurn = (m: ChatMessage) => m.role === 'user' && !m.steered && !!m.content.trim() && !isUploadNote(m);
 /** A turn sent with files or images can't be resent: the resend would lose them. */
 const carriesUploads = (all: ChatMessage[], index: number) => {
   const message = all[index];
@@ -98,12 +101,16 @@ interface ChatSummary extends ConvoSummary {
 }
 
 const sessionKey = (agentId: string) => `chatSession:${agentId}`;
+/** A screen wide enough for panels beside the chat (Tailwind's md). */
+const isWideScreen = () => typeof window === 'undefined' || !window.matchMedia || window.matchMedia('(min-width: 768px)').matches;
 const STOP_RECONCILE_DELAY_MS = 4_000;
 
 // ── Attachments ──
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
 const MAX_FILES = 20;
+/** Id prefix for messages held on the page until a new chat has its id. */
+const HELD_PREFIX = 'held-';
 
 // Accepted attachments: images + common document types. Keep DOC_EXT and
 // ACCEPT_ATTR in sync — `accept` filters the file picker; addFiles re-checks so
@@ -160,6 +167,13 @@ export default function Home() {
   const [planning, setPlanning] = useState<string | null>(null); // transient status (e.g. multi-step)
   const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
   const [rework, setRework] = useState<Rework | null>(null);
+  // Sent while the agent works; read after its current step (steering).
+  const [waitingMsgs, setWaitingMsgs] = useState<WaitingMessage[]>([]);
+  const [steerError, setSteerError] = useState<string | null>(null);
+  // Messages the agent never got to (the turn ended first): sent next.
+  const resendRef = useRef<string | null>(null);
+  // Bumped to make the resend effect look at resendRef again.
+  const [resendTick, setResendTick] = useState(0);
   const [reworkError, setReworkError] = useState<string | null>(null);
   const [chatQuery, setChatQuery] = useState('');
   const [chatHits, setChatHits] = useState<ChatSearchHit[] | null>(null);
@@ -352,6 +366,12 @@ export default function Home() {
   const showArtifact = useCallback((id: string) => {
     setComputerOpen(false);
     setArtifactOpen(id);
+    setNewPageIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }, []);
   const closeArtifact = useCallback(() => {
     setArtifactOpen(null);
@@ -364,10 +384,21 @@ export default function Home() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [artifactExpanded]);
+  const [desktops, setDesktops] = useState<SandboxDesktop[]>([]);
   useEffect(() => {
     let alive = true;
-    sandboxStatus().then((s) => alive && setSandboxOn(s.enabled)).catch(() => alive && setSandboxOn(false));
+    sandboxStatus()
+      .then((s) => { if (alive) { setSandboxOn(s.enabled); setDesktops(s.desktops || []); } })
+      .catch(() => alive && setSandboxOn(false));
     return () => { alive = false; };
+  }, []);
+  // The chat's side panel (computer preview, artifacts, files...), and the
+  // chat list shrunk to a rail of agent thumbnails.
+  const [sidebarOpen, setSidebarOpen] = useState(() => loadSidebarOpen() === true && isWideScreen());
+  const [listMini, setListMini] = useState(loadListMini);
+  const setSidebar = useCallback((open: boolean) => {
+    setSidebarOpen(open);
+    saveSidebarOpen(open);
   }, []);
   const [agentId, setAgentId] = useState<string>(() => localStorage.getItem('selectedAgentId') || '');
 
@@ -523,6 +554,86 @@ export default function Home() {
 
   const busy = waiting || streaming || question !== null;
   const busyRef = useRef(busy);
+
+  // What this chat made (pages, documents), for its side panel.
+  const [chatItems, setChatItems] = useState<ArtifactList | null>(null);
+  const [newPageIds, setNewPageIds] = useState<Set<string>>(() => new Set());
+  const loadChatItems = useCallback(async (sessionId: string | null) => {
+    if (!sessionId) {
+      setChatItems(null);
+      return;
+    }
+    try {
+      const { data } = await api.get<ArtifactList>('/artifact-pages', { params: { session_id: sessionId } });
+      if (activeRef.current !== sessionId || !data) return;
+      setChatItems({
+        pages: Array.isArray(data.pages) ? data.pages : [],
+        images: Array.isArray(data.images) ? data.images : [],
+        files: Array.isArray(data.files) ? data.files : [],
+        public_links: !!data.public_links,
+      });
+    } catch {
+      // The panel keeps what it had; the chat itself is unaffected.
+    }
+  }, []);
+  useEffect(() => {
+    setChatItems(null);
+    setNewPageIds(new Set());
+    void loadChatItems(activeSessionId);
+  }, [activeSessionId, loadChatItems]);
+  useEffect(() => {
+    if (!busy) void loadChatItems(activeRef.current);
+  }, [busy, loadChatItems]);
+  useEffect(() => onArtifactUpdate((id) => {
+    setNewPageIds((prev) => new Set(prev).add(id));
+    void loadChatItems(activeRef.current);
+  }), [loadChatItems]);
+
+  // While the panel is open or the agent is working, keep an eye on whether
+  // its desktop is running, so the live preview appears and goes by itself.
+  useEffect(() => {
+    if (!sandboxOn || !(sidebarOpen || busy)) return;
+    let alive = true;
+    const check = () => {
+      if (document.hidden) return;
+      sandboxStatus().then((s) => alive && setDesktops(s.desktops || [])).catch(() => {});
+    };
+    check();
+    const timer = window.setInterval(check, 5000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [sandboxOn, sidebarOpen, busy]);
+  const agentDesktop = useMemo(
+    () => (agentId ? desktops.find((d) => d.running && d.name === desktopName(agentId)) ?? null : null),
+    [desktops, agentId],
+  );
+
+  // The first time a chat publishes a page or its agent starts the computer,
+  // the panel opens by itself (wide screens only). After that it stays how
+  // the person left it.
+  const hasChatPages = (chatItems?.pages.length ?? 0) > 0;
+  useEffect(() => {
+    if (loadSidebarOpen() !== null || !isWideScreen()) return;
+    if (hasChatPages || agentDesktop) setSidebar(true);
+  }, [hasChatPages, agentDesktop, setSidebar]);
+
+  // Ctrl+. (Cmd+. on a Mac) opens and closes the panel.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '.' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      // Same as the header button: with an artifact or the computer showing,
+      // the shortcut closes the whole right column.
+      if (sidebarOpen || artifactOpen || computerOpen) {
+        closeArtifact();
+        setComputerOpen(false);
+        setSidebar(false);
+      } else {
+        setSidebar(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sidebarOpen, artifactOpen, computerOpen, closeArtifact, setSidebar]);
   // Spoken replies: when a turn ends and "read replies aloud" is on, read the
   // answer. Sending a new message stops whatever was being read.
   const wasBusyRef = useRef(false);
@@ -692,6 +803,9 @@ export default function Home() {
     setFollowSid(null);
     setRework(null);
     setReworkError(null);
+    setWaitingMsgs([]);
+    setSteerError(null);
+    resendRef.current = null;
     clearComposerMedia();
   }, [clearComposerMedia, clearMessages, clearStopFallback, setIsStreaming]);
 
@@ -723,6 +837,8 @@ export default function Home() {
         const run = runs.find((item) => item.session_id === id);
         const history = toChatMessages(parseChatEntries(res.data));
         setMessages(history);
+        setWaitingMsgs(run?.inbox ?? []);
+        resendRef.current = null;
         setStopping(false);
         setStopError(null);
         setPlanning(null);
@@ -744,6 +860,17 @@ export default function Home() {
           setWaiting(false);
           setStreaming(false);
           setIsStreaming(false);
+          if (attach) {
+            // Messages the last turn never read (the page was gone when it
+            // ended) go out now as the next turn.
+            const pending = await api.get(`/sessions/${encodeURIComponent(id)}/pending`)
+              .then((r) => (r.data as { messages?: WaitingMessage[] })?.messages ?? [])
+              .catch(() => [] as WaitingMessage[]);
+            if (pending.length && activeRef.current === id) {
+              resendRef.current = pending.map((m) => m.content).join('\n\n');
+              setResendTick((n) => n + 1);
+            }
+          }
         }
         return true;
       } catch {
@@ -820,6 +947,16 @@ export default function Home() {
     }
   }, [agentId, convosReady, convosSorted, loadConversation, resetThreadState]);
 
+  // A turn ended with messages it never read: queue them to be sent next.
+  const takeUnsent = useCallback((event: object) => {
+    const unsent = (event as { unsent?: WaitingMessage[] }).unsent;
+    // Messages still held for a brand-new chat stay; they go out below.
+    setWaitingMsgs((prev) => prev.filter((m) => m.id.startsWith(HELD_PREFIX)));
+    if (Array.isArray(unsent) && unsent.length) {
+      resendRef.current = unsent.map((m) => m.content).join('\n\n');
+    }
+  }, []);
+
   const handleSSEEvent = useCallback(
     (event: { type: string; content?: string; action?: string; session_id?: string; tool_name?: string; status?: string; tool_call_id?: string; params?: string; result?: string; artifacts?: ToolArtifact[] }) => {
       const sid = event.session_id;
@@ -848,12 +985,38 @@ export default function Home() {
           }
           break;
         case 'turn_complete':
+          takeUnsent(event);
           finishTurn();
           notifyReplyRef.current();
           break;
         case 'turn_stopped':
+          // Stop keeps what was waiting and sends it next ("send now").
+          takeUnsent(event);
           finishTurn('stopped');
           break;
+        case 'message_queued': {
+          // Sent from elsewhere (another tab, a chat app) while this runs.
+          const queued = event as unknown as WaitingMessage;
+          if (queued.id && queued.content) {
+            setWaitingMsgs((prev) => (prev.some((m) => m.id === queued.id) ? prev : [...prev, queued]));
+          }
+          break;
+        }
+        case 'message_withdrawn': {
+          const gone = (event as { id?: string }).id;
+          if (gone) setWaitingMsgs((prev) => prev.filter((m) => m.id !== gone));
+          break;
+        }
+        case 'message_delivered': {
+          // The agent has read these: they join the chat where it read them.
+          const read = (event as { messages?: WaitingMessage[] }).messages || [];
+          const ids = new Set(read.map((m) => m.id));
+          setWaitingMsgs((prev) => prev.filter((m) => !ids.has(m.id)));
+          for (const m of read) addMessage('user', m.content, { id: `steer-${m.id}`, steered: true });
+          setWaiting(true);
+          setStreaming(false);
+          break;
+        }
         case 'multistep_result':
           if (event.content) appendToLastMessage(event.content);
           finishTurn();
@@ -863,6 +1026,7 @@ export default function Home() {
           if (event.content) setPlanning(event.content);
           break;
         case 'error':
+          takeUnsent(event);
           if (event.content) addMessage('assistant', `Error: ${event.content}`);
           if (event.content?.includes('no longer exists') && agentId) {
             localStorage.removeItem(sessionKey(agentId));
@@ -932,7 +1096,7 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos, showArtifact],
+    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos, showArtifact, takeUnsent],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
@@ -1047,11 +1211,56 @@ export default function Home() {
 
   type ExecutionMode = 'chat' | 'task';
 
+  // Steering: a message typed while the agent works goes into its current
+  // turn and is read after the step it is on.
+  const steer = useCallback(async (msg: string) => {
+    const sessionId = activeRef.current;
+    setInput('');
+    setSteerError(null);
+    if (!sessionId) {
+      // A brand-new chat has no id until its first reply arrives. Hold the
+      // message here and send it as soon as the id is known.
+      const held = { id: `${HELD_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, content: msg };
+      setWaitingMsgs((prev) => [...prev, held]);
+      return;
+    }
+    try {
+      const res = await api.post('/agents/chat', {
+        message: msg,
+        execution_mode: 'chat',
+        session_id: sessionId,
+        ...(agentId ? { agent_id: agentId } : {}),
+        ...(streamId ? { stream_id: streamId } : {}),
+      });
+      const data = res.data as { status?: string; message?: WaitingMessage } | undefined;
+      if (data?.status === 'queued' && data.message) {
+        const queued = data.message;
+        setWaitingMsgs((prev) => (prev.some((m) => m.id === queued.id) ? prev : [...prev, queued]));
+      } else {
+        // The turn had already ended: this started a new one.
+        addMessage('user', msg);
+        setWaiting(true);
+        setStreaming(false);
+        setIsStreaming(true);
+      }
+    } catch (error) {
+      setInput((current) => current || msg);
+      setSteerError(errorMessage(error, 'Could not send that while the agent is working. Try again when it finishes.'));
+    }
+  }, [addMessage, agentId, setIsStreaming, streamId]);
+
   const send = useCallback(
-    async (text: string, executionMode: ExecutionMode = 'chat', replace: Rework | null = rework) => {
+    async (text: string, executionMode: ExecutionMode = 'chat', replace: Rework | null = rework, opts: { keepComposer?: boolean } = {}) => {
       const msg = text.trim();
-      const pending = attachmentsRef.current;
-      const pendingEditSource = editSource;
+      const pending = opts.keepComposer ? [] : attachmentsRef.current;
+      const pendingEditSource = opts.keepComposer ? null : editSource;
+      if (
+        busy && question === null && msg && pending.length === 0 && pendingEditSource === null
+        && !replace && executionMode === 'chat' && !opts.keepComposer
+      ) {
+        void steer(msg);
+        return;
+      }
       if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return;
       if (executionMode === 'task' && (pending.length > 0 || pendingEditSource !== null)) return;
       if (replace) {
@@ -1093,10 +1302,12 @@ export default function Home() {
         ? `${msg}${msg ? '\n' : ''}📎 ${pending.map((a) => a.name).join(', ')}`
         : msg;
       if (!replace?.keep) addMessage('user', shown);
-      setInput('');
-      setAttachments([]);
-      setEditSource(null);
-      setUploadError(null);
+      if (!opts.keepComposer) {
+        setInput('');
+        setAttachments([]);
+        setEditSource(null);
+        setUploadError(null);
+      }
       setWaiting(true);
       setStreaming(false);
       setStopping(false);
@@ -1140,14 +1351,16 @@ export default function Home() {
         }
         window.setTimeout(() => void refreshRuns(), 600);
       } catch {
-        setInput(text);
-        setAttachments(pending);
-        setEditSource(pendingEditSource);
+        if (!opts.keepComposer) {
+          setInput(text);
+          setAttachments(pending);
+          setEditSource(pendingEditSource);
+        }
         addMessage('assistant', 'Unable to reach the agent. Check the connection and try again.');
         finishTurn();
       }
     },
-    [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
+    [busy, question, steer, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
   );
 
   // A draft handed over with "send it" (Create app): send once the chat is up.
@@ -1158,6 +1371,49 @@ export default function Home() {
     autoSendRef.current = false;
     void send(input);
   }, [isConnected, busy, input, send]);
+
+  // Messages the last turn never read go out as the next one, by themselves
+  // (whatever is in the box stays there).
+  useEffect(() => {
+    if (busy || !isConnected || !resendRef.current) return;
+    const text = resendRef.current;
+    resendRef.current = null;
+    void send(text, 'chat', null, { keepComposer: true });
+  }, [busy, isConnected, send, resendTick]);
+
+  // Messages held while a new chat waited for its id go out once it has one.
+  // If the turn ended without ever getting an id, they go back in the box.
+  useEffect(() => {
+    const held = waitingMsgs.filter((m) => m.id.startsWith(HELD_PREFIX));
+    if (!held.length) return;
+    if (activeSessionId) {
+      setWaitingMsgs((prev) => prev.filter((m) => !m.id.startsWith(HELD_PREFIX)));
+      void (async () => {
+        for (const m of held) await steer(m.content);
+      })();
+    } else if (!busy) {
+      setWaitingMsgs((prev) => prev.filter((m) => !m.id.startsWith(HELD_PREFIX)));
+      const text = held.map((m) => m.content).join('\n\n');
+      setInput((current) => (current.trim() ? `${text}\n${current}` : text));
+    }
+  }, [activeSessionId, busy, steer, waitingMsgs]);
+
+  const withdrawWaiting = useCallback(async (message: WaitingMessage, edit: boolean) => {
+    const sessionId = activeRef.current;
+    setSteerError(null);
+    if (message.id.startsWith(HELD_PREFIX) || !sessionId) {
+      setWaitingMsgs((prev) => prev.filter((m) => m.id !== message.id));
+      if (edit) setInput((current) => (current.trim() ? `${message.content}\n${current}` : message.content));
+      return;
+    }
+    try {
+      await api.delete(`/agents/runs/${encodeURIComponent(sessionId)}/inbox/${encodeURIComponent(message.id)}`);
+      setWaitingMsgs((prev) => prev.filter((m) => m.id !== message.id));
+      if (edit) setInput((current) => (current.trim() ? `${message.content}\n${current}` : message.content));
+    } catch (error) {
+      setSteerError(errorMessage(error, 'The agent has already read that message.'));
+    }
+  }, []);
 
   const stop = useCallback(async () => {
     if (!busy || stopping) return;
@@ -1421,6 +1677,7 @@ export default function Home() {
         type="button"
         aria-expanded={open}
         aria-label={`${label.toLowerCase()} chats (${count})`}
+        data-chat-section={key}
         onClick={() => toggleSection(key)}
         className="flex min-h-11 w-full items-center gap-2 border-b border-line bg-panel pl-2.5 pr-4 text-left transition-colors hover:bg-panel-2 md:min-h-9"
       >
@@ -1493,7 +1750,7 @@ export default function Home() {
           </div>
         )}
       >
-        {!inSection && <span className="mt-0.5"><AgentBadge name={who || '?'} team={isTeam} size="sm" /></span>}
+        {!inSection && <span className="mt-0.5"><AgentBadge name={who || '?'} team={isTeam} size="sm" avatar={isTeam ? undefined : agentById.get(c.agent_id || '')?.avatar} /></span>}
         <div className="min-w-0 flex-1">
           {/* A new conversation has no saved messages (and so no title) until its first reply is done. */}
           <div className="truncate text-[13px]">
@@ -1518,6 +1775,51 @@ export default function Home() {
     );
   };
 
+  const minimizeList = (mini: boolean) => {
+    setListMini(mini);
+    saveListMini(mini);
+    if (mini) setChatQuery('');
+  };
+  // Back from the rail to the full list, with one section open and in view.
+  const expandList = (sectionKey?: string) => {
+    minimizeList(false);
+    if (!sectionKey) return;
+    setClosedSections((prev) => {
+      if (!prev.has(sectionKey)) return prev;
+      const next = new Set(prev);
+      next.delete(sectionKey);
+      saveClosedSections(next);
+      return next;
+    });
+    window.setTimeout(() => {
+      document.querySelector(`[data-chat-section="${CSS.escape(sectionKey)}"]`)?.scrollIntoView({ block: 'start' });
+    }, 0);
+  };
+  const railChat = (c: ChatSummary): RailChat => ({
+    id: c.id,
+    title: (c.message_count === 0 && chatRuns.find((run) => run.session_id === c.id)?.prompt) || c.title,
+    when: fmtRelative(c.updated_at),
+    running: chatIsRunning(c),
+    selected: !picking && c.kind !== 'team' && c.id === activeSessionId,
+  });
+  const railGroups: RailGroup[] = grouped.groups.map((group) => {
+    const isTeam = group.kind === 'team';
+    const agent = isTeam ? undefined : agentById.get(group.id);
+    return {
+      key: group.key,
+      kind: group.kind,
+      id: group.id,
+      name: (isTeam ? teamById.get(group.id)?.name : agent?.name) || '?',
+      avatar: agent?.avatar,
+      chats: group.chats.map(railChat),
+      current: !picking && !isTeam && group.id === agentId,
+    };
+  });
+  const openChatById = (id: string) => {
+    const chat = allChats.find((c) => c.id === id);
+    if (chat) openChat(chat);
+  };
+
   // Drag the panel's edge (or use the arrow keys on it) to resize; double
   // click puts it back. The width is remembered per browser.
   const resizeFrom = useRef<{ x: number; width: number } | null>(null);
@@ -1536,9 +1838,18 @@ export default function Home() {
         e.currentTarget.setPointerCapture?.(e.pointerId);
       }}
       onPointerMove={(e) => {
-        if (resizeFrom.current) setWidth(resizeFrom.current.width + e.clientX - resizeFrom.current.x);
+        if (!resizeFrom.current) return;
+        const width = resizeFrom.current.width + e.clientX - resizeFrom.current.x;
+        // Dragged well past the smallest width: minimize to thumbnails.
+        if (width < PANEL_MIN - MINI_SNAP) {
+          resizeFrom.current = null;
+          minimizeList(true);
+          return;
+        }
+        setWidth(width);
       }}
       onPointerUp={() => {
+        if (!resizeFrom.current) return;
         resizeFrom.current = null;
         savePanelWidth(panelWidth);
       }}
@@ -1555,6 +1866,49 @@ export default function Home() {
     />
   );
 
+  // ── The chat's side panel ──
+  const sidebarShown = sidebarOpen || !!artifactOpen || computerOpen;
+  const closeRightSide = () => {
+    closeArtifact();
+    setComputerOpen(false);
+    setSidebar(false);
+  };
+  const sidebarWaiting: SidebarWaiting[] = [
+    ...approvals.map((a): SidebarWaiting => ({ id: a.request_id, kind: 'approval', title: `Run ${a.tool_name}?`, detail: a.details || undefined })),
+    ...(question ? [{ id: question.request_id, kind: 'question' as const, title: question.prompt, detail: question.details || undefined }] : []),
+  ];
+  // Images in this chat (sent or made), newest first.
+  const chatImages = useMemo(() => {
+    const seen = new Set<string>();
+    const out: ToolArtifact[] = [];
+    for (let i = messages.length - 1; i >= 0 && out.length < 12; i -= 1) {
+      const message = messages[i];
+      for (const artifact of [...(message.artifacts || []), ...(message.tools || []).flatMap((t) => t.artifacts || [])]) {
+        if (!artifact.mime_type.startsWith('image/') || seen.has(artifact.id)) continue;
+        seen.add(artifact.id);
+        out.push(artifact);
+      }
+    }
+    return out;
+  }, [messages]);
+  // What the agent did since the last thing the person said.
+  const chatActivity = useMemo(() => {
+    let from = messages.length;
+    while (from > 0 && messages[from - 1].role !== 'user') from -= 1;
+    const steps: SidebarActivity[] = [];
+    for (const message of messages.slice(from)) {
+      (message.tools || []).forEach((tool, i) => steps.push({ key: `${message.id}:${tool.id || i}`, name: tool.name.replace(/_/g, ' '), status: tool.status }));
+    }
+    return steps.slice(-12);
+  }, [messages]);
+  const pageCount = chatItems?.pages.length ?? 0;
+  const sidebarSummary = [
+    agentDesktop ? 'Computer' : '',
+    pageCount ? `${pageCount} ${pageCount === 1 ? 'artifact' : 'artifacts'}` : '',
+  ].filter(Boolean).join(' · ');
+  const activeChat = allChats.find((c) => c.id === activeSessionId);
+  const chatStarted = parseStamp(activeChat?.datetime || activeChat?.updated_at)?.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+
   const conversationPanel = (
     <>
       <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
@@ -1563,6 +1917,15 @@ export default function Home() {
           <Button variant="outline" size="sm" onClick={startPicking}>
             + new
           </Button>
+          <button
+            type="button"
+            onClick={() => minimizeList(true)}
+            aria-label="Minimize the chat list"
+            title="Minimize to agent thumbnails"
+            className="hidden h-8 w-8 flex-none place-items-center rounded-lg text-fg-dim hover:bg-panel-2 hover:text-fg md:grid"
+          >
+            <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5" /></svg>
+          </button>
           <Button
             variant="ghost"
             size="icon"
@@ -1608,7 +1971,7 @@ export default function Home() {
               const busyHere = allChats.some((c) => groupKey(c) === group.key && chatIsRunning(c));
               const sectionId = `chat-section-${group.key.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
               return (
-                <section key={group.key} aria-label={`${name} chats`}>
+                <section key={group.key} aria-label={`${name} chats`} data-chat-section={group.key}>
                   <div className="flex min-h-11 items-center border-b border-line bg-panel transition-colors hover:bg-panel-2 md:min-h-10">
                     <button
                       type="button"
@@ -1619,7 +1982,7 @@ export default function Home() {
                       className="flex min-h-11 min-w-0 flex-1 items-center gap-2 pl-2.5 pr-1 text-left disabled:cursor-default md:min-h-10"
                     >
                       <span aria-hidden className={cn('w-3.5 flex-none text-center text-[9px] text-fg-dim transition-transform', !open && '-rotate-90')}>▼</span>
-                      <AgentBadge name={name} team={isTeam} />
+                      <AgentBadge name={name} team={isTeam} avatar={isTeam ? undefined : agentById.get(group.id)?.avatar} />
                       <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
                         {name}
                         {isTeam && <span className="ml-1.5 rounded-[3px] border border-line px-1 align-[1px] font-mono text-[9.5px] font-normal text-fg-dim">team</span>}
@@ -1705,44 +2068,49 @@ export default function Home() {
       {agentId && (
         <aside
           className="relative hidden min-h-0 flex-none flex-col border-r border-line bg-panel md:flex"
-          style={{ width: panelWidth }}
+          style={{ width: listMini ? RAIL_WIDTH : panelWidth }}
         >
-          {conversationPanel}
-          {resizeHandle}
+          {listMini ? (
+            <ChatRail
+              groups={railGroups}
+              pinned={grouped.pinned.map(railChat)}
+              archivedCount={grouped.archived.length}
+              onExpand={expandList}
+              onNew={startPicking}
+              onNewWith={(group) => startChatWith({ kind: group.kind, id: group.id })}
+              onOpenChat={openChatById}
+            />
+          ) : (
+            <>
+              {conversationPanel}
+              {resizeHandle}
+            </>
+          )}
         </aside>
       )}
 
       {/* Chat column */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {sandboxOn && !computerOpen && !artifactOpen && (
-          <button
-            type="button"
-            onClick={() => { closeArtifact(); setComputerOpen(true); }}
-            className="absolute right-3 top-2 z-10 hidden items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 py-1 text-[12px] text-fg-dim hover:bg-panel-2 hover:text-fg md:inline-flex"
-            title="Watch the agents' computer and take over"
-          >
-            <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5" /><path d="M8 20h8M12 16v4" /></svg>
-            Computer
-          </button>
-        )}
-        {/* Top bar: phones only (menu + chat list buttons). On desktop it
-            shows only while the event stream is down, for the reconnect button. */}
-        {isConnected && <h1 className="hidden sr-only md:block">{picking || !activeSessionId ? 'New chat' : 'Chat'}</h1>}
-        <header className={cn('app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:flex-wrap md:px-6', isConnected && 'md:hidden')}>
-          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-hidden">
-            <h1 className="truncate text-[15px] font-semibold">
+        {/* Top bar: the chat's name and who it is with, the chat list button
+            (phones), reconnect while the stream is down, and the side panel. */}
+        <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:min-h-12 md:py-1.5 md:pl-5 md:pr-3">
+          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2.5 overflow-hidden">
+            <h1 className="min-w-[5rem] truncate text-[15px] font-semibold md:text-[13.5px] md:font-medium">
               {picking || !activeSessionId
                 ? 'New chat'
                 : (allChats.find((c) => c.id === activeSessionId)?.title || 'Chat')}
             </h1>
             {!picking && agentById.get(agentId) && (
-              <span className="hidden flex-none items-center gap-1.5 text-[12.5px] text-fg-dim sm:flex" aria-label={`Chatting with ${agentById.get(agentId)!.name}`}>
-                <AgentBadge name={agentById.get(agentId)!.name} selected size="sm" />
+              <span className="hidden min-w-0 shrink-[99] items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12.5px] text-fg-dim sm:flex" aria-label={`Chatting with ${agentById.get(agentId)!.name}`}>
+                <AgentBadge name={agentById.get(agentId)!.name} avatar={agentById.get(agentId)!.avatar} size="sm" />
                 <span className="text-fg">{agentById.get(agentId)!.name}</span>
+                {agentModel(agentById.get(agentId)) && (
+                  <span className="hidden truncate font-mono text-[10.5px] xl:inline">· {agentModel(agentById.get(agentId))}</span>
+                )}
               </span>
             )}
           </div>
-          <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-3">
+          <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-2">
             {agentId && (
               <Button
                 ref={mobileConversationsTriggerRef}
@@ -1758,7 +2126,7 @@ export default function Home() {
               </Button>
             )}
             {isConnected ? (
-              <span aria-label="Connection status: connected" className="flex h-11 w-11 items-center justify-center text-fg-dim md:h-8 md:w-auto md:justify-start md:gap-2" title="Connected">
+              <span aria-label="Connection status: connected" className="flex h-11 w-11 items-center justify-center text-fg-dim md:hidden" title="Connected">
                 <svg aria-hidden="true" className="h-4 w-4 text-accent md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l4 4L19 6" /></svg>
                 <span aria-hidden="true" className="hidden h-1.5 w-1.5 rounded-full bg-accent md:block" />
                 <span className="sr-only md:not-sr-only">connected</span>
@@ -1775,6 +2143,27 @@ export default function Home() {
                 <svg aria-hidden="true" className={cn(reconnecting && 'animate-spin')} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11a8 8 0 1 0 2 5.5" /><path d="M20 5v6h-6" /></svg>
                 <span className="sr-only md:not-sr-only">{reconnecting ? 'reconnecting…' : 'reconnect'}</span>
               </Button>
+            )}
+            {agentId && !picking && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (sidebarShown) { closeArtifact(); setComputerOpen(false); setSidebar(false); }
+                  else setSidebar(true);
+                }}
+                aria-pressed={sidebarShown}
+                aria-label="Chat sidebar"
+                title={`${sidebarShown ? 'Close' : 'Open'} the chat sidebar (Ctrl+.)`}
+                className={cn(
+                  'relative inline-flex h-11 min-w-11 flex-none items-center justify-center gap-2 rounded-lg border border-line px-2.5 text-[12.5px] text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-8 md:min-w-0',
+                  sidebarShown && 'bg-panel-2 text-fg',
+                )}
+              >
+                {agentDesktop && <span aria-hidden className="h-[7px] w-[7px] flex-none animate-pulse rounded-full bg-accent" />}
+                {sidebarWaiting.length > 0 && <span aria-hidden className="h-[7px] w-[7px] flex-none rounded-full bg-[#ffb86b]" />}
+                {sidebarSummary && !sidebarShown && <span className="hidden whitespace-nowrap xl:inline">{sidebarSummary}</span>}
+                <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
+              </button>
             )}
           </div>
         </header>
@@ -1842,6 +2231,14 @@ export default function Home() {
                   </div>
                 </div>
               )}
+
+              <WaitingMessages
+                messages={waitingMsgs}
+                onSendNow={() => void stop()}
+                sendingNow={stopping}
+                onEdit={(m) => void withdrawWaiting(m, true)}
+                onRemove={(m) => void withdrawWaiting(m, false)}
+              />
             </div>
           )}
 
@@ -2053,6 +2450,12 @@ export default function Home() {
                     if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); selectSkill(filteredSkills[skillIndex]); return; }
                     if (e.key === 'Escape') { e.preventDefault(); setMenuHidden(true); return; }
                   }
+                  if (e.key === 'Escape' && busy && !stopping) {
+                    // Stop the current step; anything waiting goes next.
+                    e.preventDefault();
+                    void stop();
+                    return;
+                  }
                   if (isSendKey(e, getSendKey())) {
                     e.preventDefault();
                     send(input);
@@ -2063,25 +2466,37 @@ export default function Home() {
                 aria-expanded={skillMenuOpen}
                 aria-controls="skill-menu"
                 aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
-                placeholder="Message the agent…"
+                placeholder={busy && question === null ? 'Add to what it’s doing…' : 'Message the agent…'}
                 className={cn('block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-24 text-sm text-fg placeholder:text-fg-dim md:min-h-0 md:pr-20', voice.active && '!hidden')}
               />
-              {!voice.active && (
+              {!voice.active && !(busy && input.trim()) && (
                 <MicButton voice={voice} className="absolute bottom-1 right-[3.25rem] md:right-10" />
               )}
+              {busy && !!input.trim() && !voice.active && (
+                // While it works, typed text is sent into the running task;
+                // Stop moves over to where the mic was.
+                <button
+                  onClick={() => void stop()}
+                  disabled={stopping}
+                  aria-label={stopping ? 'Stopping response' : 'Stop response'}
+                  className="absolute bottom-1 right-[3.25rem] grid h-11 w-11 place-items-center rounded border border-line text-fg transition hover:border-danger hover:text-danger-ink disabled:opacity-60 md:right-10 md:h-8 md:w-8"
+                >
+                  <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
+                </button>
+              )}
               <button
-                onClick={() => { if (busy) void stop(); else void send(input); }}
-                disabled={busy ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
-                aria-label={busy ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
+                onClick={() => { if (busy && !input.trim()) void stop(); else void send(input); }}
+                disabled={busy && !input.trim() ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
+                aria-label={busy && !input.trim() ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
                 className={cn(
                   'absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded transition disabled:cursor-not-allowed disabled:opacity-60 hover:brightness-105 md:h-8 md:w-8',
-                  busy ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
+                  busy && !input.trim() ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
                   voice.active && '!hidden',
                 )}
               >
-                {busy && stopping ? (
+                {busy && !input.trim() && stopping ? (
                   <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
-                ) : busy ? (
+                ) : busy && !input.trim() ? (
                   <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
                 ) : (
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12l16-8-6 16-3-6-7-2z" /></svg>
@@ -2101,6 +2516,9 @@ export default function Home() {
             )}
             {stopError && (
               <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
+            )}
+            {steerError && (
+              <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{steerError}</div>
             )}
             <VoiceNotice voice={voice} />
             <div className="mt-1.5 flex items-center gap-x-4 font-mono text-[10.5px] text-fg-dim">
@@ -2134,7 +2552,8 @@ export default function Home() {
           <ArtifactViewer
             pageId={artifactOpen}
             variant="panel"
-            onClose={closeArtifact}
+            onClose={closeRightSide}
+            onBack={sidebarOpen ? closeArtifact : undefined}
             onGone={closeArtifact}
             expanded={artifactExpanded}
             onToggleExpand={() => setArtifactExpanded((v) => !v)}
@@ -2146,7 +2565,46 @@ export default function Home() {
           <ComputerPanel
             agents={agents.map((a) => ({ id: String(a.id), name: a.name }))}
             focusAgentId={agentId}
-            onClose={() => setComputerOpen(false)}
+            onClose={closeRightSide}
+            onBack={sidebarOpen ? () => setComputerOpen(false) : undefined}
+          />
+        </aside>
+      )}
+      {sidebarOpen && !artifactOpen && !computerOpen && agentId && !picking && (
+        <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[320px] md:flex-none md:border-l">
+          <ChatSidebar
+            onClose={() => setSidebar(false)}
+            desktop={agentDesktop?.name ?? null}
+            sandboxOn={sandboxOn}
+            desktopHeldBy={agentDesktop?.held_by}
+            onOpenComputer={() => { closeArtifact(); setComputerOpen(true); }}
+            waiting={sidebarWaiting}
+            onApprove={(id) => void respondApproval(id, true)}
+            onDeny={(id) => void respondApproval(id, false)}
+            onShowWaiting={() => {
+              if (!isWideScreen()) setSidebar(false);
+              window.setTimeout(() => transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight }), 0);
+            }}
+            pages={chatItems?.pages ?? []}
+            newPageIds={newPageIds}
+            onOpenArtifact={showArtifact}
+            images={chatImages}
+            files={chatItems?.files ?? []}
+            activity={chatActivity}
+            busy={busy}
+            folders={shownFolders}
+            onChangeFolders={changeFolders}
+            foldersDisabled={busy}
+            about={{
+              agentId,
+              agentName: agentById.get(agentId)?.name || 'Agent',
+              avatar: agentById.get(agentId)?.avatar,
+              model: agentModel(agentById.get(agentId)),
+              reasoning: reasoning || 'agent default',
+              messages: messages.filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content.trim()).length,
+              started: chatStarted,
+              incognito,
+            }}
           />
         </aside>
       )}
