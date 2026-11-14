@@ -69,6 +69,13 @@ async def lifespan(app: FastAPI):
         from ..hosted_apps.store import sleeper_loop
         app_sleeper = asyncio.create_task(sleeper_loop())
         try:
+            # Apps published from other folders before the apps folder existed.
+            from ..hosted_apps.store import move_into_apps_folder
+            await move_into_apps_folder()
+        except Exception:
+            import logging
+            logging.getLogger('cognitrix.log').exception('Could not move apps into the apps folder')
+        try:
             from ..meetings.notes import fail_interrupted
             await fail_interrupted()
         except Exception:

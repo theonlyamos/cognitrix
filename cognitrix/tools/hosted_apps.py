@@ -7,6 +7,10 @@ to the artifact tools (see ``Session._run_turn`` and
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+from cognitrix.common import folders as folder_paths
+from cognitrix.common.safe_exec import PathEscapesRoot
 from cognitrix.hosted_apps import store
 from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import EntityRef, ToolOutcome, current_execution_context
@@ -27,7 +31,7 @@ def _agent_id(parent) -> str:
 
 
 @tool(category=APP_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
-async def publish_app(title: str, folder: str, start_command: str, install_command: str = '', note: str = '',
+async def publish_app(title: str, start_command: str, folder: str = '', install_command: str = '', note: str = '',
                       app_id: str = '', description: str = '', use_cognitrix_api: bool = False, branch: str = '',
                       *, parent=None) -> ToolOutcome:
     """Publish a live web app people open from a link that never changes: an internal tool, dashboard,
@@ -35,8 +39,10 @@ async def publish_app(title: str, folder: str, start_command: str, install_comma
     is a real server with its own backend and database. It runs in the agents' sandboxed computer
     (or on this machine when that's off), sleeps when nobody uses it and wakes on the next visit.
 
-    Build it first: write the code into a folder (your working folder is fine) and try it with the
-    shell. Then publish that folder. The folder is copied, so later edits need another publish.
+    Build it first: write the code into its own folder in the apps folder, ~/.cognitrix/apps/<name>
+    (every agent can read and write there without asking; see the build-app skill), and try it with the
+    shell if you can. Then publish that folder. A folder elsewhere is copied into the apps folder.
+    The running app is a copy, so later edits need another publish.
     Rules the app must follow:
     - Serve HTTP on 127.0.0.1 at the port in the PORT environment variable.
     - Use RELATIVE links and fetch paths ("api/items", "./static/app.js", Vite base "./"), never
@@ -55,7 +61,8 @@ async def publish_app(title: str, folder: str, start_command: str, install_comma
 
     Args:
         title (str): Short name, 2-5 words. Also picks the link (/apps/open/<name>).
-        folder (str): Folder holding the app's code, on this machine.
+        folder (str): The app's folder, e.g. ~/.cognitrix/apps/team-dashboard. A name alone means that
+            folder inside the apps folder; empty means the apps folder subfolder named after the title.
         start_command (str): Shell command run in the app folder to start it, e.g. "python3 app.py" or "node server.js".
         install_command (str): Optional command run once per version before starting, e.g. "npm ci".
         note (str): One line on what changed in this version.
@@ -69,6 +76,13 @@ async def publish_app(title: str, folder: str, start_command: str, install_comma
     if not user_key:
         return ToolOutcome.failure('no_owner', 'Apps need a signed-in person to belong to.')
     ctx = current_execution_context()
+    folder = str(folder or '').strip()
+    if folder and (Path(folder).expanduser().is_absolute() or folder.startswith('~')):
+        # Only folders this agent may read can be published.
+        try:
+            folder = str(folder_paths.resolve_path(folder))
+        except PathEscapesRoot as exc:
+            return ToolOutcome.failure('folder_not_allowed', str(exc))
     try:
         app, row, created = await store.publish(
             user_key=user_key, title=title, folder=folder, command=start_command, install=install_command,

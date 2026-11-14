@@ -76,6 +76,67 @@ def workspaces_root() -> Path:
     return (Path(_settings().workdir) / 'workspaces').resolve()
 
 
+APPS_FOLDER_NAME = 'apps'
+
+
+def apps_root() -> Path:
+    """Where agents build apps (``~/.cognitrix/apps``), one subfolder per app.
+
+    Every agent may read and write here without asking (see
+    :func:`active_folders`), so it can make an app and publish it.
+    """
+    path = (Path(_settings().workdir) / 'apps').resolve()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return path
+
+
+def apps_folder() -> Folder:
+    return Folder(path=str(apps_root()), access=WRITE, name=APPS_FOLDER_NAME, primary=False)
+
+
+def in_apps_root(path: Path) -> bool:
+    try:
+        return _inside(_norm(Path(os.path.realpath(os.fspath(path)))), _norm(apps_root()))
+    except OSError:
+        return False
+
+
+def _apps_folder_allowed() -> bool:
+    """Signed-in turns, the CLI and internal calls get the apps folder;
+    calls made with an API key (apps' own keys included) don't."""
+    from cognitrix.tools.utils import current_execution_context
+    try:
+        from cognitrix.hosted_apps.runner import apps_enabled
+        if not apps_enabled():
+            return False
+    except Exception:
+        pass
+    return not current_execution_context().restricted
+
+
+def with_apps_folder(folders: Iterable[Folder]) -> tuple[Folder, ...]:
+    """``folders`` plus the apps folder (read & write) when this turn may use it."""
+    folders = tuple(folders)
+    if not _apps_folder_allowed():
+        return folders
+    apps = apps_folder()
+    key = _norm(apps.root)
+    out = []
+    found = False
+    for f in folders:
+        if _norm(f.root) == key:
+            found = True
+            out.append(Folder(f.path, WRITE, f.name, f.primary))
+        else:
+            out.append(f)
+    if not found:
+        out.append(apps)
+    return tuple(out)
+
+
 def blocked_paths() -> list[Path]:
     """Locations that can never be added or touched, even inside an allowed folder."""
     home = Path.home()
@@ -111,6 +172,8 @@ def is_blocked(path: Path) -> bool:
     path = Path(os.path.normcase(str(path)))
     scratch = Path(os.path.normcase(str(workspaces_root())))
     if _inside(path, scratch):
+        return False
+    if _inside(path, Path(os.path.normcase(str(apps_root())))):
         return False
     for blocked in blocked_paths():
         b = Path(os.path.normcase(str(blocked)))
@@ -261,9 +324,10 @@ def legacy_default_folders() -> tuple[Folder, ...]:
 # ---------------------------------------------------------------------------
 
 def active_folders() -> tuple[Folder, ...]:
+    """This turn's folders, plus the shared apps folder every agent can write to."""
     from cognitrix.tools.utils import current_execution_context
     folders = current_execution_context().folders
-    return tuple(folders) if folders else legacy_default_folders()
+    return with_apps_folder(tuple(folders) if folders else legacy_default_folders())
 
 
 def primary_folder() -> Path:
@@ -330,7 +394,7 @@ def resolve_path(value: str, *, write: bool = False) -> Path:
 
 
 def folder_prompt(folders: Iterable[Folder]) -> str:
-    folders = list(folders)
+    folders = list(with_apps_folder(folders)) if folders else []
     if not folders:
         return ''
     lines = ['## Working folders', 'You can work with files in these folders:']
@@ -344,6 +408,12 @@ def folder_prompt(folders: Iterable[Folder]) -> str:
         'Paths outside these folders are refused, and read only folders can\'t be changed. '
         'If you need another folder or write access, ask the user (or use the Request Folder tool if you have it).'
     )
+    if any(_norm(f.root) == _norm(apps_root()) for f in folders):
+        lines.append(
+            f'Build web apps in the {APPS_FOLDER_NAME} folder ({apps_root()}), one subfolder per app '
+            f'(e.g. {apps_root() / "team-dashboard"}), then publish that subfolder with Publish App. '
+            'You can create and change files there without asking.'
+        )
     return '\n'.join(lines)
 
 
