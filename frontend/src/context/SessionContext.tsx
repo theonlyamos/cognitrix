@@ -34,13 +34,15 @@ export interface ChatMessage {
   tools?: ToolUse[];
   /** Group chats: the agent who wrote this message. */
   speaker?: string;
+  /** Sent while the agent was working, and read between its steps. */
+  steered?: boolean;
 }
 
 interface SessionContextType {
   messages: ChatMessage[];
   currentAgentId: string | null;
   isStreaming: boolean;
-  addMessage: (role: ChatMessage['role'], content: string) => void;
+  addMessage: (role: ChatMessage['role'], content: string, extra?: Partial<ChatMessage>) => void;
   attachArtifactsToLatestUser: (artifacts: ToolArtifact[]) => void;
   /** @deprecated Use attachArtifactsToLatestUser. */
   addArtifactsToLastUser: (artifacts: ToolArtifact[]) => void;
@@ -69,12 +71,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [currentAgentId, setCurrentAgentId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
 
-  const addMessage = useCallback((role: ChatMessage['role'], content: string) => {
+  const addMessage = useCallback((role: ChatMessage['role'], content: string, extra?: Partial<ChatMessage>) => {
     const newMessage: ChatMessage = {
       id: Date.now().toString(),
       role,
       content,
       timestamp: new Date().toISOString(),
+      ...extra,
     };
     setMessagesState(prev => [...prev, newMessage]);
   }, []);

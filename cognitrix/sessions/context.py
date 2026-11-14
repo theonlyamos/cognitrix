@@ -67,7 +67,7 @@ def _slim_past_turn(turn: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 'type': 'text',
                 'content': f'[Previously supplied image: {artifact_id}]',
             })
-        elif role == 'user' and mtype in ('text', 'summary'):
+        elif role == 'user' and mtype in ('text', 'summary', 'steer'):
             kept.append(m)
         elif role == 'assistant' and mtype == 'text' and not m.get('tool_calls'):
             kept.append(m)

@@ -27,7 +27,7 @@ export type TranscriptTool = {
 };
 
 export type TranscriptEntry =
-  | { kind: 'user'; content: string }
+  | { kind: 'user'; content: string; steered?: boolean }
   | { kind: 'assistant'; content: string; name?: string; live?: boolean }
   | { kind: 'tool_calls'; content: string; name?: string; tools: TranscriptTool[] }
   | { kind: 'tool_result'; content: string }
@@ -128,6 +128,9 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
       }
     } else if (role === 'user' && type === 'text') {
       if (content.trim()) out.push({ kind: 'user', content });
+    } else if (role === 'user' && type === 'steer') {
+      // Sent while the agent was working; read between its steps.
+      if (content.trim()) out.push({ kind: 'user', content, steered: true });
     } else if (role === 'user' && type === 'image_selection') {
       // Internal selection bookkeeping is never transcript UI state.
     } else if (role === 'assistant' && type === 'tool_calls') {
@@ -178,7 +181,7 @@ export function toChatMessages(
   // Group chats label each reply with the agent who wrote it.
   const who = (name?: string) => (options.speakers && name ? { speaker: name } : {});
   for (const e of entries) {
-    if (e.kind === 'user') out.push({ id: `hist-${out.length}`, role: 'user', content: e.content });
+    if (e.kind === 'user') out.push({ id: `hist-${out.length}`, role: 'user', content: e.content, ...(e.steered ? { steered: true } : {}) });
     else if (e.kind === 'image') {
       const last = out[out.length - 1];
       if (last?.role === 'user') {

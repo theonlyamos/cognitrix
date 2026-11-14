@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
+import { WaitingMessages, type WaitingMessage } from '@/components/WaitingMessages';
 import { useSession, type ChatMessage, type ToolArtifact } from '@/context/SessionContext';
 import { MobileSheet } from '@/components/MobileSheet';
 import { SelectionRow } from '@/components/SelectionRow';
@@ -80,7 +81,7 @@ interface Rework {
 /** The note the server keeps after a turn with uploaded files. */
 const UPLOAD_NOTE = '[User uploaded files, readable with your file tools:]';
 const isUploadNote = (m: ChatMessage) => m.role === 'user' && m.content.startsWith(UPLOAD_NOTE);
-const isUserTurn = (m: ChatMessage) => m.role === 'user' && !!m.content.trim() && !isUploadNote(m);
+const isUserTurn = (m: ChatMessage) => m.role === 'user' && !m.steered && !!m.content.trim() && !isUploadNote(m);
 /** A turn sent with files or images can't be resent: the resend would lose them. */
 const carriesUploads = (all: ChatMessage[], index: number) => {
   const message = all[index];
@@ -104,6 +105,8 @@ const STOP_RECONCILE_DELAY_MS = 4_000;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
 const MAX_FILES = 20;
+/** Id prefix for messages held on the page until a new chat has its id. */
+const HELD_PREFIX = 'held-';
 
 // Accepted attachments: images + common document types. Keep DOC_EXT and
 // ACCEPT_ATTR in sync — `accept` filters the file picker; addFiles re-checks so
@@ -160,6 +163,11 @@ export default function Home() {
   const [planning, setPlanning] = useState<string | null>(null); // transient status (e.g. multi-step)
   const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
   const [rework, setRework] = useState<Rework | null>(null);
+  // Sent while the agent works; read after its current step (steering).
+  const [waitingMsgs, setWaitingMsgs] = useState<WaitingMessage[]>([]);
+  const [steerError, setSteerError] = useState<string | null>(null);
+  // Messages the agent never got to (the turn ended first): sent next.
+  const resendRef = useRef<string | null>(null);
   const [reworkError, setReworkError] = useState<string | null>(null);
   const [chatQuery, setChatQuery] = useState('');
   const [chatHits, setChatHits] = useState<ChatSearchHit[] | null>(null);
@@ -692,6 +700,9 @@ export default function Home() {
     setFollowSid(null);
     setRework(null);
     setReworkError(null);
+    setWaitingMsgs([]);
+    setSteerError(null);
+    resendRef.current = null;
     clearComposerMedia();
   }, [clearComposerMedia, clearMessages, clearStopFallback, setIsStreaming]);
 
@@ -723,6 +734,8 @@ export default function Home() {
         const run = runs.find((item) => item.session_id === id);
         const history = toChatMessages(parseChatEntries(res.data));
         setMessages(history);
+        setWaitingMsgs(run?.inbox ?? []);
+        resendRef.current = null;
         setStopping(false);
         setStopError(null);
         setPlanning(null);
@@ -820,6 +833,16 @@ export default function Home() {
     }
   }, [agentId, convosReady, convosSorted, loadConversation, resetThreadState]);
 
+  // A turn ended with messages it never read: queue them to be sent next.
+  const takeUnsent = useCallback((event: object) => {
+    const unsent = (event as { unsent?: WaitingMessage[] }).unsent;
+    // Messages still held for a brand-new chat stay; they go out below.
+    setWaitingMsgs((prev) => prev.filter((m) => m.id.startsWith(HELD_PREFIX)));
+    if (Array.isArray(unsent) && unsent.length) {
+      resendRef.current = unsent.map((m) => m.content).join('\n\n');
+    }
+  }, []);
+
   const handleSSEEvent = useCallback(
     (event: { type: string; content?: string; action?: string; session_id?: string; tool_name?: string; status?: string; tool_call_id?: string; params?: string; result?: string; artifacts?: ToolArtifact[] }) => {
       const sid = event.session_id;
@@ -848,12 +871,38 @@ export default function Home() {
           }
           break;
         case 'turn_complete':
+          takeUnsent(event);
           finishTurn();
           notifyReplyRef.current();
           break;
         case 'turn_stopped':
+          // Stop keeps what was waiting and sends it next ("send now").
+          takeUnsent(event);
           finishTurn('stopped');
           break;
+        case 'message_queued': {
+          // Sent from elsewhere (another tab, a chat app) while this runs.
+          const queued = event as unknown as WaitingMessage;
+          if (queued.id && queued.content) {
+            setWaitingMsgs((prev) => (prev.some((m) => m.id === queued.id) ? prev : [...prev, queued]));
+          }
+          break;
+        }
+        case 'message_withdrawn': {
+          const gone = (event as { id?: string }).id;
+          if (gone) setWaitingMsgs((prev) => prev.filter((m) => m.id !== gone));
+          break;
+        }
+        case 'message_delivered': {
+          // The agent has read these: they join the chat where it read them.
+          const read = (event as { messages?: WaitingMessage[] }).messages || [];
+          const ids = new Set(read.map((m) => m.id));
+          setWaitingMsgs((prev) => prev.filter((m) => !ids.has(m.id)));
+          for (const m of read) addMessage('user', m.content, { id: `steer-${m.id}`, steered: true });
+          setWaiting(true);
+          setStreaming(false);
+          break;
+        }
         case 'multistep_result':
           if (event.content) appendToLastMessage(event.content);
           finishTurn();
@@ -863,6 +912,7 @@ export default function Home() {
           if (event.content) setPlanning(event.content);
           break;
         case 'error':
+          takeUnsent(event);
           if (event.content) addMessage('assistant', `Error: ${event.content}`);
           if (event.content?.includes('no longer exists') && agentId) {
             localStorage.removeItem(sessionKey(agentId));
@@ -932,7 +982,7 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos, showArtifact],
+    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos, showArtifact, takeUnsent],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
@@ -1047,11 +1097,56 @@ export default function Home() {
 
   type ExecutionMode = 'chat' | 'task';
 
+  // Steering: a message typed while the agent works goes into its current
+  // turn and is read after the step it is on.
+  const steer = useCallback(async (msg: string) => {
+    const sessionId = activeRef.current;
+    setInput('');
+    setSteerError(null);
+    if (!sessionId) {
+      // A brand-new chat has no id until its first reply arrives. Hold the
+      // message here and send it as soon as the id is known.
+      const held = { id: `${HELD_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, content: msg };
+      setWaitingMsgs((prev) => [...prev, held]);
+      return;
+    }
+    try {
+      const res = await api.post('/agents/chat', {
+        message: msg,
+        execution_mode: 'chat',
+        session_id: sessionId,
+        ...(agentId ? { agent_id: agentId } : {}),
+        ...(streamId ? { stream_id: streamId } : {}),
+      });
+      const data = res.data as { status?: string; message?: WaitingMessage } | undefined;
+      if (data?.status === 'queued' && data.message) {
+        const queued = data.message;
+        setWaitingMsgs((prev) => (prev.some((m) => m.id === queued.id) ? prev : [...prev, queued]));
+      } else {
+        // The turn had already ended: this started a new one.
+        addMessage('user', msg);
+        setWaiting(true);
+        setStreaming(false);
+        setIsStreaming(true);
+      }
+    } catch (error) {
+      setInput((current) => current || msg);
+      setSteerError(errorMessage(error, 'Could not send that while the agent is working. Try again when it finishes.'));
+    }
+  }, [addMessage, agentId, setIsStreaming, streamId]);
+
   const send = useCallback(
-    async (text: string, executionMode: ExecutionMode = 'chat', replace: Rework | null = rework) => {
+    async (text: string, executionMode: ExecutionMode = 'chat', replace: Rework | null = rework, opts: { keepComposer?: boolean } = {}) => {
       const msg = text.trim();
-      const pending = attachmentsRef.current;
-      const pendingEditSource = editSource;
+      const pending = opts.keepComposer ? [] : attachmentsRef.current;
+      const pendingEditSource = opts.keepComposer ? null : editSource;
+      if (
+        busy && question === null && msg && pending.length === 0 && pendingEditSource === null
+        && !replace && executionMode === 'chat' && !opts.keepComposer
+      ) {
+        void steer(msg);
+        return;
+      }
       if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return;
       if (executionMode === 'task' && (pending.length > 0 || pendingEditSource !== null)) return;
       if (replace) {
@@ -1093,10 +1188,12 @@ export default function Home() {
         ? `${msg}${msg ? '\n' : ''}📎 ${pending.map((a) => a.name).join(', ')}`
         : msg;
       if (!replace?.keep) addMessage('user', shown);
-      setInput('');
-      setAttachments([]);
-      setEditSource(null);
-      setUploadError(null);
+      if (!opts.keepComposer) {
+        setInput('');
+        setAttachments([]);
+        setEditSource(null);
+        setUploadError(null);
+      }
       setWaiting(true);
       setStreaming(false);
       setStopping(false);
@@ -1140,15 +1237,60 @@ export default function Home() {
         }
         window.setTimeout(() => void refreshRuns(), 600);
       } catch {
-        setInput(text);
-        setAttachments(pending);
-        setEditSource(pendingEditSource);
+        if (!opts.keepComposer) {
+          setInput(text);
+          setAttachments(pending);
+          setEditSource(pendingEditSource);
+        }
         addMessage('assistant', 'Unable to reach the agent. Check the connection and try again.');
         finishTurn();
       }
     },
-    [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
+    [busy, question, steer, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
   );
+
+  // Messages the last turn never read go out as the next one, by themselves
+  // (whatever is in the box stays there).
+  useEffect(() => {
+    if (busy || !isConnected || !resendRef.current) return;
+    const text = resendRef.current;
+    resendRef.current = null;
+    void send(text, 'chat', null, { keepComposer: true });
+  }, [busy, isConnected, send]);
+
+  // Messages held while a new chat waited for its id go out once it has one.
+  // If the turn ended without ever getting an id, they go back in the box.
+  useEffect(() => {
+    const held = waitingMsgs.filter((m) => m.id.startsWith(HELD_PREFIX));
+    if (!held.length) return;
+    if (activeSessionId) {
+      setWaitingMsgs((prev) => prev.filter((m) => !m.id.startsWith(HELD_PREFIX)));
+      void (async () => {
+        for (const m of held) await steer(m.content);
+      })();
+    } else if (!busy) {
+      setWaitingMsgs((prev) => prev.filter((m) => !m.id.startsWith(HELD_PREFIX)));
+      const text = held.map((m) => m.content).join('\n\n');
+      setInput((current) => (current.trim() ? `${text}\n${current}` : text));
+    }
+  }, [activeSessionId, busy, steer, waitingMsgs]);
+
+  const withdrawWaiting = useCallback(async (message: WaitingMessage, edit: boolean) => {
+    const sessionId = activeRef.current;
+    setSteerError(null);
+    if (message.id.startsWith(HELD_PREFIX) || !sessionId) {
+      setWaitingMsgs((prev) => prev.filter((m) => m.id !== message.id));
+      if (edit) setInput((current) => (current.trim() ? `${message.content}\n${current}` : message.content));
+      return;
+    }
+    try {
+      await api.delete(`/agents/runs/${encodeURIComponent(sessionId)}/inbox/${encodeURIComponent(message.id)}`);
+      setWaitingMsgs((prev) => prev.filter((m) => m.id !== message.id));
+      if (edit) setInput((current) => (current.trim() ? `${message.content}\n${current}` : message.content));
+    } catch (error) {
+      setSteerError(errorMessage(error, 'The agent has already read that message.'));
+    }
+  }, []);
 
   const stop = useCallback(async () => {
     if (!busy || stopping) return;
@@ -1833,6 +1975,14 @@ export default function Home() {
                   </div>
                 </div>
               )}
+
+              <WaitingMessages
+                messages={waitingMsgs}
+                onSendNow={() => void stop()}
+                sendingNow={stopping}
+                onEdit={(m) => void withdrawWaiting(m, true)}
+                onRemove={(m) => void withdrawWaiting(m, false)}
+              />
             </div>
           )}
 
@@ -2044,6 +2194,12 @@ export default function Home() {
                     if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); selectSkill(filteredSkills[skillIndex]); return; }
                     if (e.key === 'Escape') { e.preventDefault(); setMenuHidden(true); return; }
                   }
+                  if (e.key === 'Escape' && busy && !stopping) {
+                    // Stop the current step; anything waiting goes next.
+                    e.preventDefault();
+                    void stop();
+                    return;
+                  }
                   if (isSendKey(e, getSendKey())) {
                     e.preventDefault();
                     send(input);
@@ -2054,25 +2210,37 @@ export default function Home() {
                 aria-expanded={skillMenuOpen}
                 aria-controls="skill-menu"
                 aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
-                placeholder="Message the agent…"
+                placeholder={busy && question === null ? 'Add to what it’s doing…' : 'Message the agent…'}
                 className={cn('block min-h-11 max-h-40 w-full resize-none bg-transparent px-3 py-2.5 pr-24 text-sm text-fg placeholder:text-fg-dim md:min-h-0 md:pr-20', voice.active && '!hidden')}
               />
-              {!voice.active && (
+              {!voice.active && !(busy && input.trim()) && (
                 <MicButton voice={voice} className="absolute bottom-1 right-[3.25rem] md:right-10" />
               )}
+              {busy && !!input.trim() && !voice.active && (
+                // While it works, typed text is sent into the running task;
+                // Stop moves over to where the mic was.
+                <button
+                  onClick={() => void stop()}
+                  disabled={stopping}
+                  aria-label={stopping ? 'Stopping response' : 'Stop response'}
+                  className="absolute bottom-1 right-[3.25rem] grid h-11 w-11 place-items-center rounded border border-line text-fg transition hover:border-danger hover:text-danger-ink disabled:opacity-60 md:right-10 md:h-8 md:w-8"
+                >
+                  <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
+                </button>
+              )}
               <button
-                onClick={() => { if (busy) void stop(); else void send(input); }}
-                disabled={busy ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
-                aria-label={busy ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
+                onClick={() => { if (busy && !input.trim()) void stop(); else void send(input); }}
+                disabled={busy && !input.trim() ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
+                aria-label={busy && !input.trim() ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
                 className={cn(
                   'absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded transition disabled:cursor-not-allowed disabled:opacity-60 hover:brightness-105 md:h-8 md:w-8',
-                  busy ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
+                  busy && !input.trim() ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
                   voice.active && '!hidden',
                 )}
               >
-                {busy && stopping ? (
+                {busy && !input.trim() && stopping ? (
                   <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
-                ) : busy ? (
+                ) : busy && !input.trim() ? (
                   <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
                 ) : (
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12l16-8-6 16-3-6-7-2z" /></svg>
@@ -2092,6 +2260,9 @@ export default function Home() {
             )}
             {stopError && (
               <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{stopError}</div>
+            )}
+            {steerError && (
+              <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{steerError}</div>
             )}
             <VoiceNotice voice={voice} />
             <div className="mt-1.5 flex items-center gap-x-4 font-mono text-[10.5px] text-fg-dim">

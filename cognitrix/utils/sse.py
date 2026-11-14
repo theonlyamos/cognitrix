@@ -835,6 +835,10 @@ class SSEManager:
                     selected_image=selected_ref,
                     vision_data_uri_cache={},
                 ))
+                # Messages sent to this chat while it runs are read
+                # between tool rounds (Session._take_steering).
+                run.steerable = True
+                run_token = chat_runs.current_run.set(run)
                 try:
                     await session(
                         user_prompt,
@@ -862,6 +866,7 @@ class SSEManager:
                             'Session did not durably adopt promoted attachments'
                         )
                 finally:
+                    chat_runs.current_run.reset(run_token)
                     reset_media_turn_context(media_token)
                     question_turn_ctx.reset(question_token)
                     web_turn_ctx.reset(token)
@@ -918,6 +923,9 @@ class SSEManager:
                 }
             if run is not None:
                 run.finish(terminal)
+                if run.unsent:
+                    # Sent mid-turn but never read: the page sends them next.
+                    terminal = {**terminal, 'unsent': run.unsent}
             self._complete_turn_output(
                 asyncio.current_task(),
                 output_queue,

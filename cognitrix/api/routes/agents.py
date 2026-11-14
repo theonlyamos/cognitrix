@@ -653,6 +653,28 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
         if isinstance(requested_session, str) and requested_session:
             running = chat_runs.get_run(_user_key(user), requested_session)
             if running is not None and running.running:
+                # Steering: a plain text message goes into the running turn,
+                # read after its current tool round. Anything else still waits.
+                expected = data.get('expected_run_id')
+                steerable = (
+                    running.steerable
+                    and execution_mode is ExecutionMode.CHAT
+                    and not has_task_incompatible_input
+                    and (not expected or expected == running.run_id)
+                )
+                if steerable:
+                    try:
+                        queued = running.steer(str(data.get('message') or ''), source='web')
+                    except chat_runs.InboxFull as exc:
+                        raise HTTPException(status_code=429, detail=str(exc)) from None
+                    except ValueError as exc:
+                        raise HTTPException(status_code=400, detail=str(exc)) from None
+                    if queued is not None:
+                        return {
+                            'status': 'queued',
+                            'message': queued.as_dict(),
+                            'run_id': running.run_id,
+                        }
                 raise HTTPException(
                     status_code=409,
                     detail='This conversation is still working on its last message',
@@ -708,6 +730,17 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                     await cleanup_staged_attachments(staged)
             raise
     return {'status': 'Message sent'}
+
+
+@agents_api.delete("/runs/{session_id}/inbox/{message_id}", dependencies=[Depends(jwt_only)])
+async def withdraw_chat_message(session_id: str, message_id: str, user=Depends(get_current_user)):
+    """Take back a message sent while the turn was running, if it hasn't
+    been read yet. 409 once the agent has it."""
+    run = chat_runs.get_run(_user_key(user), session_id)
+    message = run.withdraw(message_id) if run is not None else None
+    if message is None:
+        raise HTTPException(status_code=409, detail='The agent has already read this message')
+    return {'status': 'withdrawn', 'message': message.as_dict()}
 
 
 @agents_api.post("/stop", dependencies=[Depends(jwt_only)])

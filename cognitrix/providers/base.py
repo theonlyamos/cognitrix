@@ -37,6 +37,9 @@ logger = logging.getLogger('cognitrix.log')
 
 # Defaults for optional fields (overridable via CLI)
 DEFAULT_TEMPERATURE = 0.4
+# Put in front of a message the person sent while the agent was mid-task, so
+# the model reads it as a course correction rather than a fresh request.
+STEER_NOTE = '[The user sent this while you were working. Take it into account and carry on.]\n'
 DEFAULT_MAX_TOKENS = 8192
 
 # Well-known base URLs when env does not provide them
@@ -758,6 +761,9 @@ class LLMManager:
                         for i, tc in enumerate(tool_calls)
                     ],
                 })
+            elif msg_type == 'steer':
+                # Sent by the person while the agent was mid-task.
+                formatted_messages.append({'role': 'user', 'content': STEER_NOTE + str(content or '')})
             elif msg_type in ('text', 'summary', 'progress_summary', 'media_context'):
                 # Summaries and turn-local media instructions are text messages
                 # with distinct internal types so context shaping can preserve them.

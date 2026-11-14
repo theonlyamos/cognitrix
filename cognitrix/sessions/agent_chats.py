@@ -157,6 +157,10 @@ async def _turn(
         emit=emit, session_id=sid, stream_id=f'agent-chat-{sid}', user_key=user_key,
     ))
     terminal: dict[str, Any] = {'type': 'turn_complete', 'content': '', 'session_id': sid}
+    # Replies from chats it started, and the person's own messages, reach a
+    # running turn between its tool rounds.
+    run.steerable = True
+    chat_runs.current_run.set(run)  # this task has its own context
     try:
         await asyncio.wait_for(
             session(text, agent, interface='web', stream=True, output=output,
@@ -182,6 +186,12 @@ async def _turn(
         web_turn_ctx.reset(approval_token)
         question_turn_ctx.reset(question_token)
         run.finish(terminal)
+    if run.unsent and run.status != 'stopped':
+        # Arrived too late for this turn: they start the next one, which
+        # then reports back in this one's place.
+        follow_up = '\n\n'.join(str(m.get('content') or '') for m in run.unsent)
+        run_in_background(user_key, agent, session, follow_up, on_done=on_done)
+        return
     if on_done is not None:
         try:
             await on_done(run.status, last_reply(session) if run.status == 'complete' else '')
@@ -278,6 +288,8 @@ async def report_back(user_key: str, agent: Any, session: Any, status: str, repl
     # One delivery at a time per chat: two children finishing together must
     # not both see it idle and run overlapping turns on the same history.
     async with _report_lock(user_key, parent_id):
+        if _steer_report(user_key, agent, parent_id, session, status, reply):
+            return
         waited = 0.0
         while is_running(user_key, parent_id) and waited < REPORT_WAIT_SECONDS:
             await asyncio.sleep(REPORT_POLL_SECONDS)
@@ -296,17 +308,33 @@ async def report_back(user_key: str, agent: Any, session: Any, status: str, repl
         _deliver(user_key, agent, parent_agent, parent, session, status, reply)
 
 
+def _report_text(agent: Any, session: Any, status: str, reply: str) -> str:
+    if status == 'complete':
+        body = reply[:MESSAGE_MAX_CHARS] or '(no reply)'
+        return (f'{REPORT_PREFIX}{agent.name} (agent) replied in the chat you started (chat id {session.id}):\n\n{body}\n\n'
+                'Carry on with what you were doing. Only use Message Chat if you need something more '
+                'from it; do not reply just to thank it or confirm.')
+    return (f'{REPORT_PREFIX}The chat you started with {agent.name} (chat id {session.id}) failed before it replied. '
+            'Tell the person if it matters.')
+
+
+def _steer_report(user_key: str, agent: Any, parent_id: str, session: Any, status: str, reply: str) -> bool:
+    """Hand the report to the parent chat's running turn, if it has one that
+    reads messages. Replies counted against MAX_EXCHANGES are the ones in the
+    parent's history, so a steered report counts like a delivered one."""
+    run = chat_runs.get_run(user_key, parent_id)
+    if run is None or not run.running or not run.steerable:
+        return False
+    try:
+        return run.steer(_report_text(agent, session, status, reply), source='agent') is not None
+    except Exception:
+        return False
+
+
 def _deliver(user_key: str, agent: Any, parent_agent: Any, parent: Any, session: Any,
              status: str, reply: str) -> None:
     parent_id = str(parent.id)
-    if status == 'complete':
-        body = reply[:MESSAGE_MAX_CHARS] or '(no reply)'
-        text = (f'{REPORT_PREFIX}{agent.name} (agent) replied in the chat you started (chat id {session.id}):\n\n{body}\n\n'
-                'Carry on with what you were doing. Only use Message Chat if you need something more '
-                'from it; do not reply just to thank it or confirm.')
-    else:
-        text = (f'{REPORT_PREFIX}The chat you started with {agent.name} (chat id {session.id}) failed before it replied. '
-                'Tell the person if it matters.')
+    text = _report_text(agent, session, status, reply)
 
     async def told(parent_status: str, parent_reply: str) -> None:
         # The person may not be looking at the chat that just woke up.

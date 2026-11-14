@@ -13,6 +13,7 @@ reader gets the text so far in a single event.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -30,6 +31,12 @@ MAX_RUNS_PER_USER = 32
 
 TERMINAL_TYPES = frozenset({'turn_complete', 'turn_stopped', 'multistep_result'})
 _MERGEABLE_KEYS = frozenset({'type', 'content', 'action', 'complete', 'session_id'})
+
+# Messages sent to a chat while its turn runs wait in the run's inbox and are
+# handed to the model after the current tool round ("steering"). Bounded so a
+# runaway sender can't grow it without limit.
+MAX_INBOX = 20
+MAX_INBOX_CHARS = 20_000
 
 # Sentinel yielded by ChatRun.follow when nothing arrived for a while, so the
 # HTTP layer can send a keep-alive ping and notice disconnects.
@@ -54,6 +61,24 @@ def _status_for(terminal: dict[str, Any]) -> str:
 
 
 @dataclass
+class InboxMessage:
+    """A message sent to a chat while its turn was running."""
+    content: str
+    source: str = 'web'
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
+    sent_at: str = field(
+        default_factory=lambda: datetime.now(UTC).isoformat().replace('+00:00', 'Z')
+    )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {'id': self.id, 'content': self.content, 'source': self.source, 'sent_at': self.sent_at}
+
+
+class InboxFull(Exception):
+    pass
+
+
+@dataclass
 class ChatRun:
     user_key: str
     agent_id: str
@@ -65,13 +90,20 @@ class ChatRun:
     stop: Callable[[], bool] | None = None
     # True for a chat an agent started (see sessions/agent_chats.py).
     started_by_agent: bool = False
+    # Set once the turn loop is reading this run's inbox. Runs started by
+    # paths that don't (task mode, team chats) refuse steering instead of
+    # holding messages nobody will read.
+    steerable: bool = False
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     started_at: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat().replace('+00:00', 'Z')
     )
     status: str = 'running'
+    unsent: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     finished_at: float | None = None
+    # Messages waiting to be read by the running turn (see steer()).
+    inbox: list[InboxMessage] = field(default_factory=list)
     _changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     @property
@@ -103,11 +135,52 @@ class ChatRun:
             return
         self._notify()
 
+    # --- steering ------------------------------------------------------------
+
+    def steer(self, content: str, source: str = 'web') -> InboxMessage | None:
+        """Hold a message for the running turn. None once the run has ended
+        (the caller then starts a normal turn instead)."""
+        if not self.running:
+            return None
+        text = (content or '').strip()
+        if not text:
+            raise ValueError('Message is empty')
+        if len(self.inbox) >= MAX_INBOX:
+            raise InboxFull('Too many messages are already waiting for this chat')
+        message = InboxMessage(content=text[:MAX_INBOX_CHARS], source=source)
+        self.inbox.append(message)
+        self.record({'type': 'message_queued', **message.as_dict()})
+        return message
+
+    def withdraw(self, message_id: str) -> InboxMessage | None:
+        """Take a waiting message back. None if it was already read."""
+        for i, message in enumerate(self.inbox):
+            if message.id == message_id:
+                del self.inbox[i]
+                self.record({'type': 'message_withdrawn', 'id': message_id})
+                return message
+        return None
+
+    def take_inbox(self) -> list[InboxMessage]:
+        """Everything waiting, oldest first, removed from the inbox."""
+        taken, self.inbox = self.inbox, []
+        return taken
+
     def finish(self, terminal: dict[str, Any]) -> None:
-        """Record the single terminal event and mark the run ended."""
+        """Record the single terminal event and mark the run ended.
+
+        Messages still in the inbox were never read by the model: they go out
+        on the terminal event as ``unsent`` so the sender can send them as the
+        next turn, and stay readable via ``unsent`` until then.
+        """
         if not self.running:
             return
-        self.events.append(dict(terminal))
+        terminal = dict(terminal)
+        if self.inbox:
+            self.unsent = [m.as_dict() for m in self.inbox]
+            self.inbox = []
+            terminal['unsent'] = self.unsent
+        self.events.append(terminal)
         self.status = _status_for(terminal)
         self.finished_at = time.monotonic()
         self.stop = None
@@ -122,6 +195,7 @@ class ChatRun:
             'started_at': self.started_at,
             'prompt': self.prompt,
             'history_len': self.history_len,
+            'inbox': [m.as_dict() for m in self.inbox],
         }
 
     async def follow(self, idle_timeout: float = 15.0) -> AsyncIterator[Any]:
@@ -183,6 +257,12 @@ def _still_relevant(event: dict[str, Any]) -> bool:
 
 
 _RUNS: dict[tuple[str, str], ChatRun] = {}
+
+# The run whose turn this task is executing, so the turn loop can read its
+# inbox (sessions/base.py). Set by whoever starts the turn.
+current_run: contextvars.ContextVar[ChatRun | None] = contextvars.ContextVar(
+    'cognitrix_current_chat_run', default=None,
+)
 
 
 def _prune() -> None:
@@ -250,3 +330,12 @@ def stop_run(user_key: str, session_id: str) -> bool:
     if run is None or not run.running or run.stop is None:
         return False
     return bool(run.stop())
+
+
+def steer(user_key: str, session_id: str, content: str, source: str = 'web') -> InboxMessage | None:
+    """Send a message into a chat's running turn. None when nothing that can
+    read it is running (the caller then starts a normal turn)."""
+    run = get_run(user_key, session_id)
+    if run is None or not run.running or not run.steerable:
+        return None
+    return run.steer(content, source)

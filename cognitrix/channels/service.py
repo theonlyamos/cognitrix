@@ -51,6 +51,7 @@ WEBHOOK_KINDS = ('teams', 'whatsapp')
 # Apps where a person's id is the same in every chat, so someone who
 # @mentions the bot in a shared channel can be told apart from its owner.
 MENTION_KINDS = ('slack', 'teams')
+STEER_ACK = 'Got it. I will read this as soon as the current step finishes.'
 GUEST_REASON = 'this question came from someone other than your person, so you may only look things up'
 LINK_CODE_MINUTES = 30
 MAX_LINK_ATTEMPTS = 10
@@ -139,6 +140,8 @@ class ChannelService:
         self._transports: dict[str, Transport] = {}
         self._connected: set[str] = set()
         self._turns: dict[str, asyncio.Task] = {}
+        # The chat run behind each running turn, for steering (see _steer).
+        self._turn_runs: dict[str, Any] = {}
         self._questions: dict[str, str] = {}
         """channel id -> request id of an Ask User question waiting for a reply."""
         self._guest_turns: set[str] = set()
@@ -362,11 +365,25 @@ class ChannelService:
                 self._questions.pop(channel.id, None)
                 return
         turn = self._turns.get(channel.id)
+        if turn is not None and not turn.done() and self._steer(channel.id, text, channel.kind):
+            await self._reply(channel, channel.chat_id, STEER_ACK)
+            return
         if turn is not None and not turn.done():
             await self._reply(channel, channel.chat_id,
                               f'Still working on your last message. Send {_prefix(channel.kind)}stop to cancel it.')
             return
         self._turns[channel.id] = asyncio.create_task(self._turn(channel, text))
+
+    def _steer(self, key: str, text: str, source: str) -> bool:
+        """Hand a message to the turn running under ``key``. False when it
+        can't take one (then the person is told to wait, as before)."""
+        run = self._turn_runs.get(key)
+        if run is None or not run.running or not run.steerable:
+            return False
+        try:
+            return run.steer(text, source=source) is not None
+        except Exception:
+            return False
 
     async def _on_mention(self, channel: ChatChannel, msg: Incoming) -> None:
         """Someone @mentioned the bot in a shared channel: answer in that thread.
@@ -402,6 +419,14 @@ class ChannelService:
                 self._questions.pop(key, None)
                 return
         turn = self._turns.get(key)
+        # Only the person steers, and only their own (full-power) turn.
+        if (
+            turn is not None and not turn.done() and not guest and key not in self._guest_turns
+            and self._steer(key, f'[{channel.peer_name or "The person you work for"} added this in the '
+                                 f'shared {channel.kind.capitalize()} thread.]\n\n{text}', channel.kind)
+        ):
+            await self._reply(channel, msg.chat_id, STEER_ACK, **where)
+            return
         if turn is not None and not turn.done():
             await self._reply(channel, msg.chat_id, 'Still working on the last message in this thread.', **where)
             return
@@ -610,6 +635,16 @@ class ChannelService:
         else:
             session = await self._session(channel, agent)
         existing = chat_runs.get_run(channel.user_id, str(session.id))
+        if existing is not None and existing.running and not guest and existing.steerable:
+            # The agent is mid-task: hand it this message after its current
+            # step instead of turning the person away.
+            try:
+                queued = existing.steer(text, source=channel.kind)
+            except (chat_runs.InboxFull, ValueError):
+                queued = None
+            if queued is not None:
+                await self._reply(channel, chat_id, STEER_ACK, **where)
+                return
         if existing is not None and existing.running:
             await self._reply(channel, chat_id,
                               'This conversation is busy in Cognitrix. Try again in a moment, '
@@ -622,6 +657,7 @@ class ChannelService:
             history_len=len(getattr(session, 'chat', None) or []),
             stop=lambda: bool(me and me.cancel()),
         )
+        self._turn_runs[key] = run
         collected: list[str] = []
 
         async def flush() -> None:
@@ -681,6 +717,9 @@ class ChannelService:
             stream_id=f'channel-{key}', user_key=channel.user_id,
         ))
         terminal = {'type': 'turn_complete', 'content': '', 'session_id': str(session.id)}
+        # A guest's turn reads nothing from the inbox (see the check above).
+        run.steerable = not guest
+        run_token = chat_runs.current_run.set(run)
         try:
             await asyncio.wait_for(
                 session(text, agent, interface='web', stream=True, output=output,
@@ -711,11 +750,22 @@ class ChannelService:
             typing.cancel()
             self._questions.pop(key, None)
             self._guest_turns.discard(key)
+            chat_runs.current_run.reset(run_token)
             run.finish(terminal)
+            if self._turn_runs.get(key) is run:
+                self._turn_runs.pop(key, None)
             try:
                 await flush()
             except Exception:
                 logger.exception('Could not send the reply to chat channel %s', channel.id)
+            # Messages that came in too late for this turn start the next one
+            # (unless the person stopped it).
+            if run.unsent and terminal.get('type') != 'turn_stopped' and await self._still_linked(channel):
+                follow_up = '\n\n'.join(str(m.get('content') or '') for m in run.unsent)
+                self._turns[key] = asyncio.create_task(self._turn(
+                    channel, follow_up, chat_id=chat_id if shared else '', thread_id=thread_id,
+                    sender_name=sender_name, key=key,
+                ))
 
     # --- buttons ---------------------------------------------------------------
 
