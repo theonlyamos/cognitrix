@@ -154,7 +154,7 @@ function AppsTab() {
         desc={data.runtime === null
           ? 'Apps run on the agents’ sandboxed computer. Turn it on in Settings > Computer, then ask an agent to build one.'
           : 'Describe a tool, dashboard or form, and an agent builds it and gives it a link your team can open.'}
-        action={<Link to="/apps/new" className="rounded-md bg-accent px-4 py-2 text-[13px] font-semibold text-[#0b0c0e]">Create app</Link>} />
+        action={<Link to="/apps/new" className="rounded-md bg-accent px-4 py-2 text-[13px] font-semibold text-accent-foreground">Create app</Link>} />
     );
   }
   return (
@@ -220,7 +220,7 @@ export default function Apps() {
             <span className="md:hidden">tools your agents built</span>
           </p>
         </div>
-        <Link to="/apps/new" className="ml-auto inline-flex h-9 flex-none items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-semibold text-[#0b0c0e]">
+        <Link to="/apps/new" className="ml-auto inline-flex h-9 flex-none items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-semibold text-accent-foreground">
           <Plus size={15} aria-hidden /><span className="hidden sm:inline">Create app</span><span className="sm:hidden">New</span>
         </Link>
       </header>

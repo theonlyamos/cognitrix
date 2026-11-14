@@ -361,7 +361,7 @@ function EngineSection({ desktopApp }: { desktopApp: boolean }) {
   const { info } = useSystemInfo();
   const engineState = engine?.status ?? (info ? 'running' : 'starting');
   const engineAddress = engine?.url?.replace(/^https?:\/\//, '') ?? window.location.host;
-  const dot = engineState === 'running' ? 'bg-ok' : engineState === 'starting' ? 'bg-[#ffb86b]' : 'bg-danger';
+  const dot = engineState === 'running' ? 'bg-ok' : engineState === 'starting' ? 'bg-warn' : 'bg-danger';
   const value = (v: ReactNode) => <span className="break-all text-right font-mono text-[12px]">{v}</span>;
 
   return (

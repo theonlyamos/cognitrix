@@ -69,7 +69,7 @@ function Versions({ app, onChanged }: { app: Detail; onChanged: (d: Detail) => v
               </span>
             </button>
             {v.status === 'live' ? (
-              <span className="flex-none rounded bg-accent px-1.5 py-0.5 font-mono text-[9.5px] tracking-wider text-[#0b0c0e]">LIVE</span>
+              <span className="flex-none rounded bg-accent px-1.5 py-0.5 font-mono text-[9.5px] tracking-wider text-accent-foreground">LIVE</span>
             ) : v.status === 'ok' && canEdit ? (
               <button type="button" className="flex-none rounded-md border border-line px-2 py-1 text-[11.5px] hover:bg-panel-2 disabled:opacity-50"
                 disabled={busy > 0} onClick={() => void promote(v.number)}>{busy === v.number ? 'Starting…' : 'Make live'}</button>
@@ -248,7 +248,7 @@ export default function AppDetail() {
           {app.role !== 'view' && <button type="button" className={cn(button, 'hidden md:inline-flex')} onClick={editInChat}><Pencil size={14} />Edit in chat</button>}
           {live && <button type="button" className={cn(button, 'hidden md:inline-flex')} onClick={() => void openNew()}><ExternalLink size={14} />Open</button>}
           {app.role === 'owner' ? (
-            <button type="button" className={cn(button, 'border-transparent bg-accent text-[#0b0c0e] hover:bg-accent/90')} onClick={() => setSharing(true)} aria-label="Share">
+            <button type="button" className={cn(button, 'border-transparent bg-accent text-accent-foreground hover:bg-accent/90')} onClick={() => setSharing(true)} aria-label="Share">
               <Share2 size={14} /><span className="hidden md:inline">Share</span>
             </button>
           ) : (

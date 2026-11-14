@@ -95,6 +95,14 @@ async def export_my_data(ctx: AuthContext = Depends(jwt_only)):
     except Exception:
         logger.exception('Could not add meetings and skills to a data export')
 
+    appearance: dict = {}
+    try:
+        from cognitrix import themes
+
+        appearance = themes.project(await themes.get_settings(owner))
+    except Exception:
+        logger.exception('Could not add themes to a data export')
+
     stamp = datetime.now(UTC)
     payload = {
         'cognitrix_export': 1,
@@ -108,6 +116,7 @@ async def export_my_data(ctx: AuthContext = Depends(jwt_only)):
         'memories': memories,
         'meetings': meetings,
         'skills': skills,
+        'appearance': appearance,
     }
     from fastapi.encoders import jsonable_encoder
 

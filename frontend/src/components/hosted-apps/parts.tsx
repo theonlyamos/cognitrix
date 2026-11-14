@@ -4,14 +4,14 @@ import { APP_FRAME_SANDBOX, STATUS_LABEL, type AppAccess, type AppStatus, type A
 import { cn } from '@/lib/utils';
 
 const DOT: Record<AppStatus, string> = {
-  online: 'bg-accent shadow-[0_0_0_3px_rgba(198,242,78,0.22)]',
+  online: 'bg-accent shadow-[0_0_0_3px_rgb(var(--accent-rgb)/0.22)]',
   asleep: 'border-[1.5px] border-fg-dim bg-transparent',
-  building: 'bg-[#c77a26] animate-pulse dark:bg-[#ffb86b]',
+  building: 'bg-warn animate-pulse',
   failed: 'bg-danger-ink',
   stopped: 'border-[1.5px] border-fg-dim bg-transparent',
 };
 const TEXT: Record<AppStatus, string> = {
-  online: 'text-accent-ink', asleep: 'text-fg-dim', building: 'text-[#a15c00] dark:text-[#ffb86b]',
+  online: 'text-accent-ink', asleep: 'text-fg-dim', building: 'text-warn-ink',
   failed: 'text-danger-ink', stopped: 'text-fg-dim',
 };
 
@@ -65,7 +65,7 @@ export function AppThumbnail({ app, className }: { app: AppSummary; className?: 
           className="pointer-events-none absolute left-0 top-0 origin-top-left border-0 bg-white"
           style={{ width: 1280, height: 800, transform: `scale(${scale})` }} />
       ) : (
-        <div className={cn('absolute inset-0 grid place-items-center', app.status === 'building' ? 'text-[#a15c00] dark:text-[#ffb86b]' : 'text-fg-dim/50')}>
+        <div className={cn('absolute inset-0 grid place-items-center', app.status === 'building' ? 'text-warn-ink' : 'text-fg-dim/50')}>
           {app.status === 'building'
             ? <span className="font-mono text-[12px]">building v{Math.max(1, app.latest)}…</span>
             : <AppWindow size={28} strokeWidth={1.5} />}

@@ -22,7 +22,7 @@ function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onCh
         onChange={(e) => onChange(e.target.checked)}
         aria-label={label}
       />
-      <span className="relative h-5 w-9 rounded-full bg-panel-2 ring-1 ring-line transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-fg-dim after:transition-transform peer-checked:bg-accent peer-checked:after:translate-x-4 peer-checked:after:bg-[#0b0c0e] peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-disabled:opacity-50" />
+      <span className="relative h-5 w-9 rounded-full bg-panel-2 ring-1 ring-line transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-fg-dim after:transition-transform peer-checked:bg-accent peer-checked:after:translate-x-4 peer-checked:after:bg-accent-foreground peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-disabled:opacity-50" />
     </label>
   );
 }

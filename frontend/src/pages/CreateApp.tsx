@@ -91,7 +91,7 @@ export default function CreateApp() {
             </label>
             <span className="flex-1" />
             <button type="submit" disabled={!idea.trim()}
-              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3.5 text-[13px] font-semibold text-[#14210a] disabled:opacity-50 md:h-8">
+              className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3.5 text-[13px] font-semibold text-accent-foreground disabled:opacity-50 md:h-8">
               <Sparkles size={14} aria-hidden />Build app
             </button>
           </div>

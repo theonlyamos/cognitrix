@@ -14,7 +14,7 @@ export function Card({ title, description, aside, children, className, tone }: {
   return (
     <section className={cn(
       'rounded-[10px] border bg-panel px-4 py-4 md:px-[22px] md:py-5',
-      tone === 'warn' ? 'border-[#a15c00]/60 dark:border-[#e5b567]/60' : tone === 'danger' ? 'border-danger/40' : 'border-line',
+      tone === 'warn' ? 'border-warn-ink/60' : tone === 'danger' ? 'border-danger/40' : 'border-line',
       className,
     )}>
       {(title || aside) && (
@@ -66,7 +66,7 @@ export function SettingLine({ label, detail, children }: { label: ReactNode; det
 
 export const inputClass = 'h-11 rounded border border-line bg-bg px-3 text-[14px] text-fg placeholder:text-fg-dim focus:border-accent disabled:opacity-50 md:h-10';
 export const buttonClass = 'inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-line px-3.5 text-[13px] text-fg transition-colors hover:bg-panel-2 disabled:opacity-60 md:min-h-9';
-export const primaryButtonClass = 'inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-4 text-[13px] font-semibold text-[#0b0c0e] transition hover:brightness-105 disabled:opacity-60 md:min-h-9';
+export const primaryButtonClass = 'inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-4 text-[13px] font-semibold text-accent-foreground transition hover:brightness-105 disabled:opacity-60 md:min-h-9';
 export const linkButtonClass = 'text-[13px] text-accent-ink hover:underline';
 
 export function Pill({ children, tone = 'dim' }: { children: ReactNode; tone?: 'accent' | 'dim' | 'ok' | 'warn' | 'danger' | 'blue' }) {
@@ -74,7 +74,7 @@ export function Pill({ children, tone = 'dim' }: { children: ReactNode; tone?: '
     accent: 'border-accent-ink text-accent-ink',
     dim: 'border-line text-fg-dim',
     ok: 'border-ok/60 text-ok',
-    warn: 'border-[#a15c00]/60 text-[#a15c00] dark:border-[#e5b567]/60 dark:text-[#e5b567]',
+    warn: 'border-warn-ink/60 text-warn-ink',
     danger: 'border-danger/60 text-danger-ink',
     blue: 'border-[var(--syn-alt)] text-[var(--syn-alt)]',
   }[tone];

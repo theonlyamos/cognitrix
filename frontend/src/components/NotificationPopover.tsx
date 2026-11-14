@@ -27,7 +27,7 @@ export function NotificationRow({ n, onOpen }: { n: AppNotification; onOpen: (n:
           aria-hidden="true"
           className={cn(
             'mt-1.5 h-2 w-2 flex-none rounded-full',
-            n.read ? 'bg-transparent' : urgent ? 'bg-[#ffb86b]' : 'bg-accent',
+            n.read ? 'bg-transparent' : urgent ? 'bg-warn' : 'bg-accent',
           )}
         />
         <span className="min-w-0 flex-1">
@@ -83,9 +83,9 @@ export default function NotificationPopover({ onClose }: { onClose: () => void }
         <Link
           to="/inbox"
           onClick={onClose}
-          className="mx-2 mt-2 flex items-center gap-2 rounded-lg border border-[#ffb86b]/40 bg-[#ffb86b]/10 px-3 py-2.5 text-[13px]"
+          className="mx-2 mt-2 flex items-center gap-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2.5 text-[13px]"
         >
-          <span className="font-mono text-[10px] tracking-[0.1em] text-[#ffb86b]">NEEDS YOU · {inbox.length}</span>
+          <span className="font-mono text-[10px] tracking-[0.1em] text-warn-ink">NEEDS YOU · {inbox.length}</span>
           <span className="flex-1 truncate text-fg">Open your inbox to answer</span>
         </Link>
       )}

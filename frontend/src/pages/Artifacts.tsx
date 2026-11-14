@@ -228,7 +228,7 @@ export default function Artifacts({ kind }: { kind?: ArtifactKind } = {}) {
       {error && !data ? <ErrorState message={error} onRetry={() => void load()} /> : !data ? <LoadingState label="loading…" /> : total === 0 ? (
         <EmptyState icon={<LayoutPanelTop size={20} />} title="Nothing here yet"
           desc={kind ? KIND_EMPTY[kind] : 'Ask an agent to make a report, a dashboard, an image or a document. What it makes shows up here.'}
-          action={<Link to="/home" className="rounded-md bg-accent px-4 py-2 text-[13px] font-semibold text-[#0b0c0e]">Open a chat</Link>} />
+          action={<Link to="/home" className="rounded-md bg-accent px-4 py-2 text-[13px] font-semibold text-accent-foreground">Open a chat</Link>} />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
           <div className="flex flex-col gap-3 md:flex-row md:items-center">

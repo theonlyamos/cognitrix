@@ -30,11 +30,11 @@ function Badge({ kind }: { kind: InboxItem['kind'] }) {
     <span
       className={cn(
         'rounded px-1.5 py-0.5 font-mono text-[10px] tracking-[0.1em]',
-        kind === 'approval' && 'bg-[#ffb86b]/15 text-[#b4691a] dark:text-[#ffb86b]',
-        kind === 'question' && 'bg-[#7cc4ff]/15 text-[#1f6f8b] dark:text-[#7cc4ff]',
+        kind === 'approval' && 'bg-warn/15 text-warn-ink',
+        kind === 'question' && 'bg-info/15 text-info-ink',
         kind === 'notification' && 'bg-accent/15 text-accent-ink',
         kind === 'offer' && 'bg-ok/15 text-ok',
-        kind === 'skill_draft' && 'bg-[#b48cff]/15 text-[#6b46c1] dark:text-[#c9b0ff]',
+        kind === 'skill_draft' && 'bg-violet/15 text-violet-ink',
       )}
     >
       {{ approval: 'APPROVAL', notification: 'ALERT', question: 'QUESTION', offer: 'OFFER', skill_draft: 'SKILL' }[kind]}
@@ -55,7 +55,7 @@ function CallPreview({ approval }: { approval: InboxApproval }) {
           <span className="rounded-full bg-danger/10 px-2 py-0.5 font-mono text-[10.5px] text-danger-ink">{approval.risk_level} risk</span>
         )}
         <span className="flex-1" />
-        <span className="font-mono text-[11px] text-[#b4691a] dark:text-[#ffb86b]">waiting</span>
+        <span className="font-mono text-[11px] text-warn-ink">waiting</span>
       </div>
       <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words px-3.5 py-3 font-mono text-[12px] leading-relaxed text-fg">{text}</pre>
     </div>
@@ -96,7 +96,7 @@ function ApprovalDetail({ item, onDone }: { item: InboxApproval; onDone: () => v
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <div className="font-mono text-[10.5px] tracking-[0.14em] text-[#b4691a] dark:text-[#ffb86b]">APPROVAL NEEDED</div>
+        <div className="font-mono text-[10.5px] tracking-[0.14em] text-warn-ink">APPROVAL NEEDED</div>
         <div className="mt-1 font-mono text-[12px] text-fg-dim">{itemSource(item)}</div>
         <h2 className="mt-2 text-[20px] font-semibold leading-snug">{fromChat ? `${item.agent_name || 'The agent'} wants to run ${item.tool_name}` : `The agent wants to run ${item.tool_name}`}</h2>
         {item.details && <p className="mt-2 text-[13.5px] leading-relaxed text-fg-dim">{item.details}</p>}
@@ -163,7 +163,7 @@ function QuestionDetail({ item, onDone }: { item: InboxQuestion; onDone: () => v
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <div className="font-mono text-[10.5px] tracking-[0.14em] text-[#1f6f8b] dark:text-[#7cc4ff]">AGENT IS ASKING</div>
+        <div className="font-mono text-[10.5px] tracking-[0.14em] text-info-ink">AGENT IS ASKING</div>
         <h2 className="mt-2 text-[20px] font-semibold leading-snug">{String(q.prompt || 'A question from your chat')}</h2>
         {typeof q.details === 'string' && q.details && <p className="mt-2 text-[13.5px] leading-relaxed text-fg-dim">{q.details}</p>}
       </div>
@@ -361,7 +361,7 @@ function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () 
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <div className="font-mono text-[10.5px] tracking-[0.14em] text-[#6b46c1] dark:text-[#c9b0ff]">SKILL TO REVIEW</div>
+        <div className="font-mono text-[10.5px] tracking-[0.14em] text-violet-ink">SKILL TO REVIEW</div>
         <div className="mt-1 font-mono text-[12px] text-fg-dim">{itemSource(item)}</div>
         <h2 className="mt-2 text-[20px] font-semibold leading-snug">Save “{item.name}” as a skill?</h2>
         <p className="mt-2 text-[13.5px] leading-relaxed text-fg-dim">

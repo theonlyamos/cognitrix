@@ -614,6 +614,18 @@ class Session(Model):
             except Exception:
                 logger.debug('Artifact tools unavailable', exc_info=True)
 
+        # Set Theme lets an agent change the app's colours for the person
+        # (cognitrix/tools/theme.py); the chat shows each change with Undo.
+        if interface in ('web', 'ws') and owner and not self.task_id and getattr(agent.llm, 'supports_tool_use', True):
+            try:
+                if not any(str(getattr(t, 'name', '')).lower() == 'set theme' for t in agent.tools):
+                    from cognitrix.tools.base import ToolManager
+                    theme_tool = ToolManager.get_by_name('set_theme')
+                    if theme_tool:
+                        agent = agent.model_copy(update={'tools': [*agent.tools, theme_tool]})
+            except Exception:
+                logger.debug('Set Theme tool unavailable', exc_info=True)
+
         # Propose Skill lets an agent suggest saving how it did a job; the
         # person reviews the draft before it is used (skills/drafts.py).
         if interface in ('web', 'ws') and owner and not self.task_id and not getattr(self, 'incognito', False):
