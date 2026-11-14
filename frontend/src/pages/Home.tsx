@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArtworkScene } from '@/components/ThemeArtwork';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
 import { useSession, type ChatMessage, type ToolArtifact } from '@/context/SessionContext';
 import { MobileSheet } from '@/components/MobileSheet';
@@ -1791,6 +1792,7 @@ export default function Home() {
             <StartChat agents={agents} teams={teams} recent={recentTargets} onPick={startChatWith} />
           ) : empty ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col justify-center px-6">
+              <ArtworkScene className="-mx-2 mb-4 h-[130px] sm:h-[170px]" />
               <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ {agentById.get(agentId) ? `new chat with ${agentById.get(agentId)!.name}` : 'start a conversation'}</p>
               <h2 className="mt-3 text-2xl font-bold tracking-tight">What should we run?</h2>
               <p className="mt-2 max-w-md text-fg-dim">

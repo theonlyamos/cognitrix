@@ -16,6 +16,7 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
+import { ArtworkScene } from '@/components/ThemeArtwork';
 import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications, type InboxItem } from '@/context/NotificationsContext';
 import { useResource } from '@/hooks/useResource';
@@ -423,8 +424,9 @@ export default function Dashboard() {
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1180px] px-4 pb-12 pt-6 md:px-8 md:pt-9">
           {/* Hero */}
-          <section className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-            <div className="min-w-0 pl-12 md:pl-0">
+          <section className="relative flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <ArtworkScene fade="left" className="absolute -top-6 right-0 z-0 hidden h-[150px] w-[460px] md:block lg:w-[560px] md:-top-9" />
+            <div className="relative min-w-0 pl-12 md:pl-0">
               <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-fg-dim">{today}</div>
               <h1 className="mt-2 text-[26px] font-semibold leading-tight tracking-tight md:text-[32px]">
                 {greeting(hour)}
@@ -432,7 +434,7 @@ export default function Dashboard() {
               </h1>
               {summary.length > 0 && <p className="mt-1.5 text-[14px] text-fg-dim">{summary.join(' · ')}</p>}
             </div>
-            <div className="flex flex-none flex-wrap gap-2">
+            <div className="relative flex flex-none flex-wrap gap-2 [&>a]:bg-bg/85 [&>a]:backdrop-blur-sm">
               <Button asChild variant="outline" size="sm">
                 <Link to="/tasks/new">
                   <Plus className="h-3.5 w-3.5" aria-hidden="true" /> New task

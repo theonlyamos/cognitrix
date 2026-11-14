@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  allThemes, applyVariables, fetchAccountTheme, removeTheme, saveSelection, saveTheme as saveThemeRemote,
-  storeMode, storeSelection, storedMode, storedSelection, variablesFor,
+  allThemes, applyVariables, artworkFor, fetchAccountTheme, removeTheme, saveArtwork, saveSelection, saveTheme as saveThemeRemote,
+  storeMode, storeSelection, storedMode, storedSelection, themeFor, variablesFor,
   type AccountTheme, type ThemeMode, type ThemeSelection,
 } from '@/lib/theme/store';
-import { parseThemeFile, themeVariables, type Appearance, type ThemeFile } from '@/lib/theme/themes';
+import { artworkSvg, parseArtwork, DEFAULT_STRENGTH, type Artwork } from '@/lib/theme/artwork';
+import { parseThemeFile, themeTokens, themeVariables, type Appearance, type ThemeFile, type TokenValues } from '@/lib/theme/themes';
 
 type Theme = Appearance;
 export type { ThemeMode };
@@ -18,6 +19,19 @@ export interface ThemeUndo {
   theme?: unknown;
   /** A theme the change added. */
   created?: string;
+  /** Artwork choices the change replaced, by theme id (null = the theme's own). */
+  artwork?: Record<string, unknown>;
+}
+
+/** The drawing on screen now, ready to paint with artworkImage(). */
+export interface ShownArtwork {
+  svg: string;
+  name: string;
+  /** 0-1 */
+  strength: number;
+  tokens: TokenValues;
+  /** The theme it belongs to. */
+  themeId: string;
 }
 
 /** A theme being edited: shown on screen in one appearance until the editor closes. */
@@ -39,6 +53,10 @@ interface ThemeCtx {
   /** Add or replace one of the person's themes (saved to the account when signed in). */
   saveTheme: (theme: ThemeFile) => Promise<void>;
   deleteTheme: (id: string) => Promise<void>;
+  /** Choose a theme's artwork (null = the theme's own). */
+  setArtwork: (themeId: string, artwork: Artwork | null) => Promise<void>;
+  /** The drawing on screen now, or null. */
+  artwork: ShownArtwork | null;
   /** Take the account's copy (after sign-in, on focus, after an agent changed it). */
   refresh: () => Promise<void>;
   /** Put the colours an agent's change replaced back. */
@@ -103,7 +121,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const take = useCallback((account: AccountTheme) => {
     syncedRef.current = true;
     setSynced(true);
-    adopt({ light: account.light, dark: account.dark, themes: account.themes });
+    adopt({ light: account.light, dark: account.dark, themes: account.themes, artwork: account.artwork });
     if (!accountModeRef.current && account.mode) deviceModeRef.current = modeRef.current;
     accountModeRef.current = account.mode;
     if (account.mode) applyMode(account.mode);
@@ -162,10 +180,30 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
     const fallback = (picked: string) => (picked === id ? 'signal' : picked);
     const current = selectionRef.current;
-    adopt({ light: fallback(current.light), dark: fallback(current.dark), themes: current.themes.filter((t) => t.id !== id) });
+    const artwork = { ...current.artwork };
+    delete artwork[id];
+    adopt({ light: fallback(current.light), dark: fallback(current.dark), themes: current.themes.filter((t) => t.id !== id), artwork });
+  }, [adopt, take]);
+
+  const setArtwork = useCallback(async (themeId: string, art: Artwork | null) => {
+    if (syncedRef.current) {
+      take(await saveArtwork(themeId, art));
+      return;
+    }
+    const current = selectionRef.current;
+    const artwork = { ...current.artwork };
+    if (art) artwork[themeId] = art;
+    else delete artwork[themeId];
+    adopt({ ...current, artwork });
   }, [adopt, take]);
 
   const restore = useCallback(async (previous: ThemeUndo) => {
+    // Put back artwork the change replaced.
+    for (const [themeId, raw] of Object.entries(previous.artwork ?? {})) {
+      let art: Artwork | null = null;
+      try { art = parseArtwork(raw) ?? null; } catch { art = null; }
+      try { take(await saveArtwork(themeId, art)); } catch { /* keep going */ }
+    }
     // Put back a theme definition the change overwrote, or remove one it added.
     if (previous.theme) {
       try { take(await saveThemeRemote(parseThemeFile(previous.theme))); } catch { /* keep going: picks still restore */ }
@@ -211,14 +249,34 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const themes = useMemo(() => allThemes(selection), [selection]);
 
+  const artwork = useMemo<ShownArtwork | null>(() => {
+    const appearance = preview ? preview.appearance : theme;
+    const shown = preview ? preview.theme : themeFor(selection, appearance);
+    const art = preview ? (selection.artwork[preview.theme.id] ?? preview.theme.artwork ?? null) : artworkFor(selection, shown);
+    const svg = artworkSvg(art);
+    if (!svg || !art) return null;
+    return {
+      svg,
+      name: art.svg ? art.name || 'Your drawing' : art.id ?? '',
+      strength: (art.strength ?? DEFAULT_STRENGTH) / 100,
+      tokens: themeTokens(shown, appearance),
+      themeId: shown.id,
+    };
+  }, [preview, theme, selection]);
+
   return (
     <Ctx.Provider value={{
-      theme, mode, toggle, setTheme, setMode, selection, themes, pickTheme, saveTheme, deleteTheme,
+      theme, mode, toggle, setTheme, setMode, selection, themes, pickTheme, saveTheme, deleteTheme, setArtwork, artwork,
       refresh, restore, preview, setPreview, synced, detach,
     }}>
       {children}
     </Ctx.Provider>
   );
+}
+
+/** The theme context, or null outside ThemeProvider (decorations that can do without). */
+export function useOptionalTheme(): ThemeCtx | null {
+  return useContext(Ctx);
 }
 
 export function useTheme(): ThemeCtx {

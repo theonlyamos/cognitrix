@@ -3,6 +3,7 @@ import { setReduceMotion, setSendKey, useReduceMotion, useSendKey, type SendKey 
 import { Toggle } from '@/pages/Notifications';
 import { LANGUAGES, getLanguageChoice, setLanguage, useLanguage, useT, type LanguageCode, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import { ArtworkPicker } from './ArtworkPicker';
 import { ThemeLibrary, ThemeSwatch } from './Themes';
 import { Group, Segmented, SettingRow, SubHeading } from './ui';
 
@@ -58,6 +59,8 @@ export function AppearanceSettings() {
     </Group>
     <SubHeading className="!mt-6">THEMES</SubHeading>
     <ThemeLibrary />
+    <SubHeading className="!mt-6">ARTWORK</SubHeading>
+    <ArtworkPicker />
     <SubHeading className="!mt-6">MORE</SubHeading>
     <Group>
       <SettingRow label={t('appearance.language')} detail={t('appearance.language.detail')}>

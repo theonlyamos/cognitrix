@@ -21,6 +21,7 @@ _ACTIONS = {
     'apply': 'apply', 'use': 'apply', 'set': 'apply', 'switch': 'apply', 'change': 'apply', 'select': 'apply',
     'mode': 'mode', 'appearance': 'mode',
     'create': 'create', 'make': 'create', 'new': 'create', 'save': 'create', 'update': 'create', 'edit': 'create',
+    'artwork': 'artwork', 'draw': 'artwork', 'picture': 'artwork', 'art': 'artwork', 'illustration': 'artwork',
 }
 
 
@@ -46,7 +47,7 @@ def _describe(state: dict) -> str:
 
 
 def _changed(name: str, before: dict, after: dict, *, replaced: dict | None = None,
-             created: str | None = None) -> ToolOutcome:
+             created: str | None = None, artwork: dict | None = None) -> ToolOutcome:
     """The result line the chat reads (ThemeNotice): what Undo needs is after "Previous:".
     ``theme`` is a definition this call overwrote; ``created`` a theme it added."""
     previous: dict = {'mode': before['mode'], 'light': before['light'], 'dark': before['dark']}
@@ -54,6 +55,8 @@ def _changed(name: str, before: dict, after: dict, *, replaced: dict | None = No
         previous['theme'] = replaced
     if created:
         previous['created'] = created
+    if artwork is not None:
+        previous['artwork'] = artwork
     return ToolOutcome.success(
         f'Theme changed: {name} ({_describe(after)}). Previous: {json.dumps(previous)}')
 
@@ -62,7 +65,7 @@ def _changed(name: str, before: dict, after: dict, *, replaced: dict | None = No
 async def set_theme(action: str, theme: str = '', mode: str = '', name: str = '',
                     light_background: str = '', light_text: str = '', light_accent: str = '',
                     dark_background: str = '', dark_text: str = '', dark_accent: str = '',
-                    contrast: int = 50) -> ToolOutcome:
+                    contrast: int = 50, svg: str = '', artwork: str = '', strength: int = 0) -> ToolOutcome:
     """Change how the Cognitrix app looks for the person you work for: its colour theme and light or
     dark mode. Applies to all their devices (web and desktop). The person sees the change at once,
     with Undo.
@@ -76,6 +79,16 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
       version, the dark version, or both: *_background, *_text, *_accent). The app derives panels,
       borders and secondary colours and keeps text readable. contrast: 0-100 (default 50).
       Saving under an existing name replaces that theme.
+    - "artwork": the picture shown at the top of their sidebar and above new chats. Either pick a
+      built-in one (artwork: signal, aurora, dunes, moon-cat, skyline, halftone, blueprint; "none" to
+      hide it; "default" for the theme's own), or draw one: svg = a complete <svg viewBox="0 0 400 160">
+      with name. Draw a calm, simple scene with the ground along the bottom (it is cropped to a strip
+      and faded). Shapes only: path, circle, ellipse, rect, line, polyline, polygon, g, linearGradient,
+      radialGradient, mask, feGaussianBlur. No text, images, scripts or styles. Colours are theme words
+      so the drawing follows the theme: accent, fg (text), fg-dim, warn, info, violet, ok, danger,
+      panel-2, and surface (what the drawing sits on; use it to hide shapes behind others). Use
+      opacity for softer tones. Keep it under 24 KB. Applies to the themes in use, or to `theme`.
+      strength: 20-100 (default 85).
     Only change the theme when the person asks for it."""
     user_id = _owner()
     if not user_id:
@@ -93,8 +106,50 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
             own = ', '.join(
                 f'{t["name"]} ({t["id"]}; {"/".join(m for m in ("light", "dark") if t.get(m))})' for t in custom
             ) or 'none'
+            row = await themes.get_settings(user_id)
+            in_use = dict.fromkeys([before['light'], before['dark']])
+            arts = '; '.join(f'{themes.theme_name(tid, custom)}: {themes.artwork_label(themes.theme_artwork(tid, row))}'
+                             for tid in in_use)
             return ToolOutcome.success(
-                f'In use: {_describe(before)}.\nBuilt-in themes (light and dark): {built_in}.\nTheir own themes: {own}.')
+                f'In use: {_describe(before)}.\nArtwork: {arts}.\nBuilt-in themes (light and dark): {built_in}.\n'
+                f'Their own themes: {own}.\nBuilt-in artwork: {", ".join(themes.ARTWORK_NAMES)}.')
+
+        if action == 'artwork':
+            if theme:
+                theme_id = themes.find_theme(theme, custom)
+                if not theme_id:
+                    return ToolOutcome.failure('no_theme', f'There is no theme called "{theme}".')
+                targets = [theme_id]
+            else:
+                targets = list(dict.fromkeys([before['light'], before['dark']]))
+            choice = str(artwork or '').strip().lower().replace(' ', '-')
+            if str(svg or '').strip():
+                art_raw: dict | None = {'svg': svg, 'name': str(name or '').strip() or 'Drawing'}
+            elif choice in ('default', 'reset', 'theme', 'own'):
+                art_raw = None
+            elif choice in ('none', 'off', 'hide', 'no'):
+                art_raw = {'id': 'none'}
+            elif choice:
+                found = next((k for k, v in themes.ARTWORK_NAMES.items()
+                              if choice in (k, v.lower().replace(' ', '-'))), None)
+                if not found:
+                    return ToolOutcome.failure(
+                        'no_artwork', f'There is no artwork "{artwork}". Choose from: {", ".join(themes.ARTWORK_NAMES)}, or none.')
+                art_raw = {'id': found}
+            else:
+                return ToolOutcome.failure('no_artwork', 'Give svg (a drawing) or artwork (a built-in name, "none" or "default").')
+            if art_raw is not None and strength:
+                art_raw['strength'] = strength
+            if art_raw is not None:
+                art_raw = themes.clean_artwork(art_raw)  # one clear error before anything changes
+            previous_art = {tid: before['artwork'].get(tid) for tid in targets}
+            after = before
+            for tid in targets:
+                after = await themes.set_artwork(user_id, tid, art_raw)
+            on = ' and '.join(themes.theme_name(tid, custom) for tid in targets)
+            label = 'theme artwork' if art_raw is None else ('no artwork' if art_raw.get('id') == 'none'
+                                                        else f'{themes.artwork_label(art_raw)} artwork')
+            return _changed(f'{label} on {on}', before, after, artwork=previous_art)
 
         if action == 'mode':
             if mode not in themes.MODES:
@@ -151,4 +206,4 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
                             created=None if replaced else saved['id'])
     except themes.ThemeError as exc:
         return ToolOutcome.failure('bad_theme', str(exc))
-    return ToolOutcome.failure('bad_action', 'action must be "list", "apply", "mode" or "create".')
+    return ToolOutcome.failure('bad_action', 'action must be "list", "apply", "mode", "create" or "artwork".')

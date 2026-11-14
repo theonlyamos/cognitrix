@@ -11,6 +11,7 @@ import presetsJson from './presets.json';
 import {
   contrastRatio, hexToRgb, isHex, mix, normalizeHex, readableOn, rgbChannels, shiftLightness, textOn, luminance,
 } from './color';
+import { ArtworkError, parseArtwork, type Artwork } from './artwork';
 
 export type Appearance = 'light' | 'dark';
 
@@ -60,6 +61,8 @@ export interface ThemeFile {
   /** 0-100, default 50: how far secondary text and borders stand out. */
   contrast?: number;
   fonts?: ThemeFonts;
+  /** A drawing shown in the sidebar and on new chats (see artwork.ts). */
+  artwork?: Artwork;
 }
 
 export const THEME_FORMAT = 'cognitrix-theme';
@@ -155,6 +158,14 @@ export function parseThemeFile(raw: unknown): ThemeFile {
     const code = cleanFont(f.code, 'fonts.code');
     if (ui || code) out.fonts = { ui, code };
   }
+  if (t.artwork !== undefined && t.artwork !== null) {
+    try {
+      const artwork = parseArtwork(t.artwork);
+      if (artwork) out.artwork = artwork;
+    } catch (e) {
+      throw new ThemeFormatError(e instanceof ArtworkError ? e.message : 'The artwork is not valid.');
+    }
+  }
   return out;
 }
 
@@ -223,10 +234,15 @@ export const DEFAULT_FONT_UI = "'Space Grotesk', -apple-system, BlinkMacSystemFo
 export const DEFAULT_FONT_CODE = "'JetBrains Mono', ui-monospace, monospace";
 
 /** The CSS variables to write on <html> for a theme in one appearance. */
-export function themeVariables(theme: ThemeFile, appearance: Appearance): Record<string, string> {
+/** Every token of a theme in one appearance (a one-appearance theme uses the one it has). */
+export function themeTokens(theme: ThemeFile, appearance: Appearance): TokenValues {
   const variant = theme[appearance] ?? theme.light ?? theme.dark!;
   const used: Appearance = theme[appearance] ? appearance : theme.light ? 'light' : 'dark';
-  const tokens = deriveTokens(variant, used, theme.contrast ?? 50);
+  return deriveTokens(variant, used, theme.contrast ?? 50);
+}
+
+export function themeVariables(theme: ThemeFile, appearance: Appearance): Record<string, string> {
+  const tokens = themeTokens(theme, appearance);
   const vars: Record<string, string> = {};
   for (const name of TOKENS) {
     vars[`--${name}`] = tokens[name];

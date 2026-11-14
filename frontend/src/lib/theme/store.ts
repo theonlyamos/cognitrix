@@ -10,6 +10,7 @@ import {
   DEFAULT_THEME_ID, PRESETS, isPreset, parseThemeFile, themeVariables,
   type Appearance, type ThemeFile,
 } from './themes';
+import { parseArtwork, type Artwork } from './artwork';
 
 export type ThemeMode = Appearance | 'system';
 
@@ -17,6 +18,8 @@ export interface ThemeSelection {
   light: string;
   dark: string;
   themes: ThemeFile[];
+  /** Artwork the person (or an agent) chose for a theme, by theme id. Wins over the theme's own. */
+  artwork: Record<string, Artwork>;
 }
 
 /** What GET /theme returns. `mode` '' = each device keeps its own. */
@@ -49,7 +52,16 @@ export function storeMode(mode: ThemeMode): void {
   write(MODE_KEY, mode === 'system' ? null : String(mode === 'dark'));
 }
 
-const DEFAULT_SELECTION: ThemeSelection = { light: DEFAULT_THEME_ID, dark: DEFAULT_THEME_ID, themes: [] };
+const DEFAULT_SELECTION: ThemeSelection = { light: DEFAULT_THEME_ID, dark: DEFAULT_THEME_ID, themes: [], artwork: {} };
+
+function cleanArtworkMap(raw: unknown): Record<string, Artwork> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const out: Record<string, Artwork> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    try { const a = parseArtwork(value); if (a) out[id] = a; } catch { /* skip a broken entry */ }
+  }
+  return out;
+}
 
 function cleanThemes(raw: unknown): ThemeFile[] {
   if (!Array.isArray(raw)) return [];
@@ -68,6 +80,7 @@ export function storedSelection(): ThemeSelection {
       light: typeof raw.light === 'string' ? raw.light : DEFAULT_THEME_ID,
       dark: typeof raw.dark === 'string' ? raw.dark : DEFAULT_THEME_ID,
       themes: cleanThemes(raw.themes),
+      artwork: cleanArtworkMap(raw.artwork),
     };
   } catch {
     return DEFAULT_SELECTION;
@@ -88,6 +101,12 @@ export function themeFor(selection: ThemeSelection, appearance: Appearance): The
   const picked = findTheme(selection, selection[appearance]);
   if (picked && picked[appearance]) return picked;
   return PRESETS[0];
+}
+
+/** The artwork in use for a theme: the person's choice, else the theme's own. */
+export function artworkFor(selection: ThemeSelection, theme: ThemeFile): Artwork | null {
+  const art = selection.artwork[theme.id] ?? theme.artwork;
+  return art && (art.svg || (art.id && art.id !== 'none')) ? art : null;
 }
 
 export function variablesFor(selection: ThemeSelection, appearance: Appearance): Record<string, string> {
@@ -126,6 +145,7 @@ function fromAccount(data: AccountTheme): AccountTheme {
     light: data.light || DEFAULT_THEME_ID,
     dark: data.dark || DEFAULT_THEME_ID,
     themes: cleanThemes(data.themes),
+    artwork: cleanArtworkMap(data.artwork),
   };
 }
 
@@ -143,4 +163,10 @@ export async function saveTheme(theme: ThemeFile): Promise<AccountTheme> {
 
 export async function removeTheme(id: string): Promise<AccountTheme> {
   return fromAccount((await api.delete<AccountTheme>(`/theme/themes/${encodeURIComponent(id)}`)).data);
+}
+
+/** Choose artwork for a theme; null goes back to the theme's own. */
+export async function saveArtwork(themeId: string, artwork: Artwork | null): Promise<AccountTheme> {
+  const path = `/theme/artwork/${encodeURIComponent(themeId)}`;
+  return fromAccount((artwork ? await api.put<AccountTheme>(path, artwork) : await api.delete<AccountTheme>(path)).data);
 }

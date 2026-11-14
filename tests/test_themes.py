@@ -111,7 +111,7 @@ async def test_themes_are_per_person_and_picks_fall_back(db):
     amy = await _user('Amy', 'amy@example.com')
     bob = await _user('Bob', 'bob@example.com')
     state = themes.project(await themes.get_settings(str(amy.id)))
-    assert state == {'mode': '', 'light': 'signal', 'dark': 'signal', 'themes': []}
+    assert state == {'mode': '', 'light': 'signal', 'dark': 'signal', 'themes': [], 'artwork': {}}
 
     dusk = {'name': 'Dusk', 'dark': {'background': '#101018', 'text': '#eeeeee', 'accent': '#ff8800'}}
     theme, state = await themes.save_theme(str(amy.id), dusk)
@@ -194,3 +194,133 @@ def test_set_theme_does_not_ask_first():
     from cognitrix.safety.destructive_ops import _KNOWN_LOW
 
     assert 'set_theme' in _KNOWN_LOW
+
+
+# --- artwork ----------------------------------------------------------------------
+
+ARTWORK_TS = Path(__file__).resolve().parents[1] / 'frontend' / 'src' / 'lib' / 'theme' / 'artwork.ts'
+
+
+def test_artwork_names_match_the_frontend():
+    import re
+
+    from cognitrix import themes
+
+    block = re.search(r'ARTWORK_NAMES: Record<string, string> = \{([^}]*)\}', ARTWORK_TS.read_text()).group(1)
+    names = dict(re.findall(r"'?([\w-]+)'?: '([^']+)'", block))
+    assert names == themes.ARTWORK_NAMES
+    presets = {p['id']: p['artwork']['id'] for p in json.loads(PRESETS.read_text())}
+    assert presets == {k: v['artwork'] for k, v in themes.BUILT_IN_THEMES.items()}
+
+
+def test_artwork_svg_is_cleaned_to_plain_shapes():
+    from cognitrix import themes
+
+    dirty = (
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 400 160" onload="x()">'
+        '<script>alert(1)</script><style>*{}</style><foreignObject><div/></foreignObject>'
+        '<image href="https://evil.example/a.png"/><use xlink:href="#a"/><text>hi</text>'
+        '<a href="javascript:x"><rect width="9" height="9"/></a>'
+        '<circle cx="10" cy="10" r="5" fill="text" onclick="x()" style="stroke:accent; opacity:.5"/>'
+        '<rect x="1" y="1" width="2" height="2" fill="url(https://evil)" stroke="red" transform="rotate(4) url(x)"/>'
+        '<path d="M0 0 L10 10 Z" fill="#ABC" mask="url(#m)" filter="url(http://x)"/>'
+        '</svg>')
+    clean = themes.clean_artwork_svg(dirty)
+    assert clean == ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 160">'
+                     '<circle cx="10" cy="10" r="5" fill="fg" stroke="accent" opacity=".5"/>'
+                     '<rect x="1" y="1" width="2" height="2"/>'
+                     '<path d="M0 0 L10 10 Z" fill="#abc" mask="url(#m)"/></svg>')
+    # Cleaning is stable, so the frontend can clean what the server sends again.
+    assert themes.clean_artwork_svg(clean) == clean
+
+
+@pytest.mark.parametrize('svg, reason', [
+    ('', 'empty'),
+    ('<svg viewBox="0 0 4 4"><circle r="1"/>' + ' ' * 30000 + '</svg>', 'too large'),
+    ('<!DOCTYPE svg [<!ENTITY a "aaaa">]><svg viewBox="0 0 4 4">&a;</svg>', 'DOCTYPE'),
+    ('<html><body/></html>', '<svg>'),
+    ('<svg><circle r="1"/></svg>', 'viewBox'),
+    ('<svg viewBox="0 0 4 4"><script>x</script></svg>', 'Nothing'),
+    ('not xml', 'not valid'),
+])
+def test_bad_artwork_is_refused(svg, reason):
+    from cognitrix import themes
+
+    with pytest.raises(themes.ThemeError, match=reason):
+        themes.clean_artwork_svg(svg)
+
+
+def test_theme_files_carry_artwork():
+    from cognitrix import themes
+
+    base = {'name': 'Dusk', 'dark': {'background': '#101018', 'text': '#eeeeee', 'accent': '#ff8800'}}
+    assert themes.clean_theme({**base, 'artwork': {'id': 'aurora', 'strength': 140}})['artwork'] == {'id': 'aurora', 'strength': 100}
+    drawn = themes.clean_theme({**base, 'artwork': {'svg': '<svg viewBox="0 0 4 4"><circle r="1" fill="accent"/></svg>'}})
+    assert drawn['artwork']['name'] == 'Your drawing' and 'fill="accent"' in drawn['artwork']['svg']
+    with pytest.raises(themes.ThemeError, match='Unknown artwork'):
+        themes.clean_theme({**base, 'artwork': {'id': 'mona-lisa'}})
+
+
+async def test_artwork_choices_are_per_person(db):
+    from cognitrix import themes
+
+    amy = await _user('Amy', 'amy@example.com')
+    bob = await _user('Bob', 'bob@example.com')
+    state = await themes.set_artwork(str(amy.id), 'nord', {'id': 'skyline'})
+    assert state['artwork'] == {'nord': {'id': 'skyline'}}
+    assert themes.project(await themes.get_settings(str(bob.id)))['artwork'] == {}
+    row = await themes.get_settings(str(amy.id))
+    assert themes.theme_artwork('nord', row) == {'id': 'skyline'}
+    assert themes.theme_artwork('solarized', row) == {'id': 'dunes'}
+    assert (await themes.set_artwork(str(amy.id), 'nord', None))['artwork'] == {}
+    with pytest.raises(themes.ThemeError, match='no theme'):
+        await themes.set_artwork(str(amy.id), 'barbie', {'id': 'none'})
+
+    # Deleting a theme drops its artwork choice too.
+    await themes.save_theme(str(amy.id), {'name': 'Dusk', 'dark': {'background': '#101018', 'text': '#eeeeee', 'accent': '#ff8800'}})
+    await themes.set_artwork(str(amy.id), 'dusk', {'id': 'blueprint'})
+    assert 'dusk' not in (await themes.delete_theme(str(amy.id), 'dusk'))['artwork']
+
+
+async def test_theme_artwork_api(db):
+    from httpx import ASGITransport, AsyncClient
+
+    from cognitrix.api.main import app
+    from cognitrix.common.security import AuthContext, jwt_only
+
+    amy = await _user('Amy', 'amy@example.com')
+    app.dependency_overrides[jwt_only] = lambda: AuthContext(user=amy)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+            res = await client.put('/api/v1/theme/artwork/signal', json={'svg': '<svg viewBox="0 0 4 4"><rect width="4" height="2" fill="warn"/><script/></svg>', 'name': 'Bar'})
+            assert res.status_code == 200, res.text
+            assert res.json()['artwork']['signal']['name'] == 'Bar'
+            assert '<script' not in res.json()['artwork']['signal']['svg']
+            assert (await client.put('/api/v1/theme/artwork/signal', json={'id': 'nope'})).status_code == 400
+            assert (await client.delete('/api/v1/theme/artwork/signal')).json()['artwork'] == {}
+    finally:
+        app.dependency_overrides.pop(jwt_only, None)
+
+
+async def test_set_theme_tool_draws_and_picks_artwork(db):
+    from cognitrix import themes
+
+    amy = await _user('Amy', 'amy@example.com')
+    lighthouse = ('<svg viewBox="0 0 400 160"><path d="M216 128L222 70H242L248 128Z" fill="text"/>'
+                  '<rect x="224" y="52" width="16" height="12" fill="warn"/></svg>')
+    with _as(amy):
+        await _tool(action='apply', theme='nord', mode='dark')
+        assert 'Artwork: Nord: Aurora' in _text(await _tool(action='list'))
+
+        drawn = _text(await _tool(action='artwork', svg=lighthouse, name='Lighthouse'))
+        assert drawn.startswith('Theme changed: Lighthouse artwork on Nord')
+        assert json.loads(drawn.split('Previous: ', 1)[1])['artwork'] == {'nord': None}
+        state = themes.project(await themes.get_settings(str(amy.id)))
+        assert state['artwork']['nord']['name'] == 'Lighthouse' and state['dark'] == 'nord'
+
+        picked = _text(await _tool(action='artwork', artwork='Moon cat', theme='solarized'))
+        assert picked.startswith('Theme changed: Moon cat artwork on Solarized')
+        hidden = _text(await _tool(action='artwork', artwork='none'))
+        assert json.loads(hidden.split('Previous: ', 1)[1])['artwork']['nord']['name'] == 'Lighthouse'
+        assert 'no artwork' in _text(await _tool(action='artwork', artwork='Mona Lisa')).lower()
+        assert 'not valid' in _text(await _tool(action='artwork', svg='<svg nope')).lower()
