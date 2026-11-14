@@ -120,6 +120,22 @@ def test_new_version_goes_live_only_when_it_answers(host, tmp_path):
     assert back['ok'] and _get(back['port'])['msg'] == 'one'
 
 
+def test_rollback_starts_a_version_with_its_own_command(host, tmp_path):
+    from cognitrix.computer.sandbox.apps import pack_folder
+
+    first = tmp_path / 'first'
+    cmd = make_app(first, 'old')
+    assert host.deploy('swap', 1, pack_folder(str(first)), cmd)['ok']
+    # v2 renames its entry point, so its start command can't run inside v1's files.
+    second = tmp_path / 'second'
+    make_app(second, 'new')
+    (second / 'app.py').rename(second / 'server.py')
+    assert host.deploy('swap', 2, pack_folder(str(second)), f'{sys.executable} server.py')['ok']
+    back = host.promote('swap', 1)
+    assert back['ok'], back
+    assert _get(back['port'])['msg'] == 'old'
+
+
 def test_sleep_and_wake(host, tmp_path):
     from cognitrix.computer.sandbox.apps import pack_folder
 
@@ -231,12 +247,19 @@ async def test_publish_app_tool_and_versions(db, tmp_path):
     status = await _tool('app_status', app_id='support-queue')
     assert 'live version 3' in status.text and 'starting v3' in status.text
 
+    # Someone who can only use the app doesn't get its commands, folders or logs.
+    bea = await _user('Bea', 'bea@example.com')
+    await store.set_sharing(await store.get_app(app.id), people={str(bea.id): 'view'})
+    _as(bea, session_id='s2', agent_id='a2')
+    denied = await _tool('app_status', app_id='support-queue')
+    assert denied.status != 'success' and 'start command' not in denied.text
+
 
 async def test_proxy_access_sandboxing_and_headers(db, tmp_path):
     from cognitrix.hosted_apps import store
 
     amos = await _user('Amos', 'amos@example.com')
-    bea = await _user('Bea', 'bea@example.com')
+    bea = await _user('Beatriz José', 'bea@example.com')
     app, _, _ = await store.publish(user_key=str(amos.id), title='Board', folder=str(tmp_path / 'b'),
                                     command=make_app(tmp_path / 'b', 'hi'))
     async with _proxy_client() as client:
@@ -264,7 +287,8 @@ async def test_proxy_access_sandboxing_and_headers(db, tmp_path):
         bea_token = store.open_token('board', str(bea.id))
         assert (await client.get(f'/a/board/~{bea_token}/')).status_code == 403
         await store.set_sharing(app, everyone='view')
-        assert (await client.get(f'/a/board/~{bea_token}/')).json()['user'] == 'Bea'
+        # Names outside ASCII reach the app percent-encoded instead of failing the request.
+        assert (await client.get(f'/a/board/~{bea_token}/')).json()['user'] == 'Beatriz Jos%C3%A9'
         other = store.open_token('other', str(amos.id))
         assert (await client.get(f'/a/board/~{other}/')).status_code == 403
 

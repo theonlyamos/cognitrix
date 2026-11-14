@@ -203,6 +203,24 @@ class AppHost:
     def log_file(self, slug: str, version: int) -> str:
         return self._under('logs', check_slug(slug), f'v{int(version)}.log')
 
+    def spec_file(self, slug: str, version: int) -> str:
+        """How a version is started (command, env, port), kept so a rollback runs it as it was."""
+        return self._under('specs', check_slug(slug), f'v{int(version)}.json')
+
+    def _write_spec(self, slug: str, version: int, spec: dict) -> None:
+        path = self.spec_file(slug, version)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as fh:
+            json.dump(spec, fh)
+
+    def _read_spec(self, slug: str, version: int) -> dict | None:
+        try:
+            with open(self.spec_file(slug, version), encoding='utf-8') as fh:
+                spec = json.load(fh)
+            return spec if isinstance(spec, dict) and spec.get('command') else None
+        except (OSError, ValueError):
+            return None
+
     # -- processes ------------------------------------------------------------
     def _spawn(self, slug: str, version: int, spec: dict, port: int) -> subprocess.Popen:
         cwd = self.release_dir(slug, version)
@@ -288,6 +306,7 @@ class AppHost:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             spec = {'command': command, 'install': str(install or '').strip(), 'env': dict(env or {}),
                     'port': int(port or 0)}
+            self._write_spec(slug, version, spec)
             if spec['install']:
                 with open(log_path, 'ab') as log:
                     log.write(f'--- installing v{version}: {spec["install"]}\n'.encode())
@@ -334,6 +353,10 @@ class AppHost:
         for number in versions[:-KEEP_RELEASES]:
             if number != live:
                 shutil.rmtree(self.release_dir(slug, number), ignore_errors=True)
+                try:
+                    os.remove(self.spec_file(slug, number))
+                except OSError:
+                    pass
 
     def has_release(self, slug: str, version: int) -> bool:
         return os.path.isdir(self.release_dir(slug, version))
@@ -342,9 +365,12 @@ class AppHost:
         """Make an earlier version live again (roll back)."""
         check_slug(slug)
         with self._lock(slug):
-            spec = self._state.get(slug)
+            live = self._state.get(slug)
+            # Each version starts the way it was published, not with the latest command.
+            spec = self._read_spec(slug, version) or live
             if spec is None or not self.has_release(slug, version):
                 raise AppHostError('no_version', f'Version {version} is no longer kept.')
+            spec = {k: v for k, v in spec.items() if k not in ('version', 'updated')}
             try:
                 new = self._start_and_wait(slug, version, spec, START_TIMEOUT)
             except AppHostError as exc:
@@ -389,7 +415,7 @@ class AppHost:
         with self._lock(slug):
             self._state.pop(slug, None)
             self._save()
-            for part in ('releases', 'data', 'logs'):
+            for part in ('releases', 'data', 'logs', 'specs'):
                 shutil.rmtree(self._under(part, check_slug(slug)), ignore_errors=True)
         return {'ok': True}
 

@@ -44,7 +44,8 @@ async def publish_app(title: str, folder: str, start_command: str, install_comma
     - Keep data (SQLite files, uploads) in the folder in APP_DATA_DIR; it survives new versions.
       Everything else is replaced on every publish.
     - It runs in a sandboxed browser frame: no cookies or localStorage. The viewer is signed in to
-      Cognitrix; read who they are from the X-Cognitrix-User-Name / -Email / -Id request headers.
+      Cognitrix; read who they are from the X-Cognitrix-User-Name / -Email / -Id request headers
+      (percent-encoded UTF-8: decode with unquote).
     - Python 3 and Node.js are available. Dependency folders (node_modules, .venv) are not copied;
       install them with install_command (e.g. "pip install -r requirements.txt" or "npm ci").
     - No websockets yet: poll instead.
@@ -118,6 +119,10 @@ async def app_status(app_id: str = '', log_lines: int = 80, *, parent=None) -> T
         app, role = await store.app_for(app_id, user_key)
     except store.AppError as exc:
         return ToolOutcome.failure(exc.code, exc.message)
+    if not store.can_edit(role):
+        # Commands, folders and logs are for the people who can change the app.
+        return ToolOutcome.failure('not_allowed', f'You can use "{app.title}" but not see its versions or logs. '
+                                   'Ask its owner for edit access.')
     lines = [f'"{app.title}" (app_id {app.id}): {app.status}, live version {app.version or "none"}, '
              f'runs on {app.runtime}, start command: {app.command}'
              + (f', install: {app.install}' if app.install else '') + f', folder: {app.folder}']

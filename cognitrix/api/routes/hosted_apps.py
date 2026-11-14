@@ -24,6 +24,7 @@ import asyncio
 import html
 import logging
 import re
+import urllib.parse
 from typing import Any
 
 import httpx
@@ -275,6 +276,12 @@ def _cors(headers: dict[str, str]) -> dict[str, str]:
     return headers
 
 
+def _header_safe(value: str) -> str:
+    """Viewer details as an ASCII header: plain names pass as they are, anything else
+    (José, a % sign, line breaks) is percent-encoded UTF-8, so apps can always unquote it."""
+    return urllib.parse.quote(str(value or ''), safe=" !#$&'()*+,/:;=?@[]~")
+
+
 _METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 
 
@@ -352,8 +359,8 @@ async def app_request(slug: str, rest: str, request: Request):
     prefix = f'/a/{slug}/~{token}'
     headers.update({
         'X-Forwarded-Prefix': prefix, 'X-Forwarded-Proto': request.url.scheme,
-        'X-Cognitrix-User-Id': viewer, 'X-Cognitrix-User-Name': user.get('name', ''),
-        'X-Cognitrix-User-Email': user.get('email', ''), 'X-Cognitrix-User-Role': role,
+        'X-Cognitrix-User-Id': _header_safe(viewer), 'X-Cognitrix-User-Name': _header_safe(user.get('name', '')),
+        'X-Cognitrix-User-Email': _header_safe(user.get('email', '')), 'X-Cognitrix-User-Role': role,
         'Accept-Encoding': 'identity',
     })
     query = request.url.query
