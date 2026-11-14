@@ -56,3 +56,29 @@ describe('FolderChips', () => {
     expect(screen.getByText('private scratch folder')).toBeInTheDocument();
   });
 });
+
+describe('FolderChips as one button', () => {
+  it('shows the main folder with a count and lists every folder', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<FolderChips variant="button" folders={FOLDERS} onChange={onChange} emptyLabel="Scratch folder" />);
+    const button = screen.getByRole('button', { name: 'Folders: app, notes. Change' });
+    expect(button).toHaveTextContent('app');
+    expect(button).toHaveTextContent('+1');
+    await user.click(button);
+    expect(screen.getByRole('dialog', { name: 'Folders this chat can use' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'notes: read only. Switch' }));
+    expect(onChange).toHaveBeenCalledWith([FOLDERS[0], { ...FOLDERS[1], access: 'write' }]);
+    await user.click(screen.getByRole('button', { name: 'Remove app' }));
+    expect(onChange).toHaveBeenLastCalledWith([{ ...FOLDERS[1], primary: true }]);
+  });
+
+  it('says the scratch folder is used when there are none, and can add one', async () => {
+    const user = userEvent.setup();
+    render(<FolderChips variant="button" folders={[]} onChange={vi.fn()} emptyLabel="Scratch folder" />);
+    await user.click(screen.getByRole('button', { name: 'Folders: Scratch folder. Change' }));
+    expect(screen.getByText(/private scratch folder/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Add folder' }));
+    expect(screen.getByLabelText('Folder path')).toBeInTheDocument();
+  });
+});
