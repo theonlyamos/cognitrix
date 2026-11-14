@@ -1,6 +1,6 @@
 [package]
 name = "cognitrix-desktop"
-version = "0.5.2"
+version = "0.5.3"
 description = "Cognitrix desktop app"
 authors = ["theonlyamos"]
 license = "Apache-2.0"
