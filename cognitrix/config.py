@@ -407,9 +407,10 @@ _CHANNEL_MIGRATION_COLUMNS = (
     ('service_url', 'TEXT'), ('answer_others', 'BOOLEAN'),
 )
 
-# Theme artwork choices (cognitrix/themes.py ThemeSettings.artwork).
+# Theme artwork choices and saved drawings (cognitrix/themes.py ThemeSettings).
 _THEME_MIGRATION_COLUMNS = (
     ('artwork', "TEXT DEFAULT '{}'"),
+    ('drawings', "TEXT DEFAULT '[]'"),
 )
 
 _AGENT_MIGRATION_COLUMNS = (

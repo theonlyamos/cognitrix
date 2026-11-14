@@ -6,6 +6,7 @@ PUT  /api/theme/themes/{id}      add or replace one of your themes
 DELETE /api/theme/themes/{id}    delete one (picks fall back to Signal)
 PUT  /api/theme/artwork/{id}     choose a theme's artwork ({id} built-in or 'none', or {svg, name})
 DELETE /api/theme/artwork/{id}   go back to the theme's own artwork
+DELETE /api/theme/drawings/{key} remove a saved drawing from the library
 
 See ``cognitrix/themes.py``. Agents change the same state with Set Theme.
 """
@@ -78,3 +79,8 @@ async def delete_artwork(theme_id: str, ctx: AuthContext = Depends(jwt_only)):
         return await themes.set_artwork(_owner(ctx), theme_id, None)
     except themes.ThemeError as exc:
         raise _bad(exc) from None
+
+
+@themes_api.delete('/drawings/{key}')
+async def delete_drawing(key: str, ctx: AuthContext = Depends(jwt_only)):
+    return await themes.delete_drawing(_owner(ctx), key)

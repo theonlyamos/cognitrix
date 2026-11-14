@@ -20,7 +20,12 @@ export interface ThemeSelection {
   themes: ThemeFile[];
   /** Artwork the person (or an agent) chose for a theme, by theme id. Wins over the theme's own. */
   artwork: Record<string, Artwork>;
+  /** Every drawing the person or an agent made, newest first. Picking other artwork never loses one. */
+  drawings: Drawing[];
 }
+
+/** A saved drawing in the person's library. */
+export interface Drawing { key: string; name: string; svg: string }
 
 /** What GET /theme returns. `mode` '' = each device keeps its own. */
 export interface AccountTheme extends ThemeSelection {
@@ -52,7 +57,7 @@ export function storeMode(mode: ThemeMode): void {
   write(MODE_KEY, mode === 'system' ? null : String(mode === 'dark'));
 }
 
-const DEFAULT_SELECTION: ThemeSelection = { light: DEFAULT_THEME_ID, dark: DEFAULT_THEME_ID, themes: [], artwork: {} };
+const DEFAULT_SELECTION: ThemeSelection = { light: DEFAULT_THEME_ID, dark: DEFAULT_THEME_ID, themes: [], artwork: {}, drawings: [] };
 
 function cleanArtworkMap(raw: unknown): Record<string, Artwork> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
@@ -61,6 +66,36 @@ function cleanArtworkMap(raw: unknown): Record<string, Artwork> {
     try { const a = parseArtwork(value); if (a) out[id] = a; } catch { /* skip a broken entry */ }
   }
   return out;
+}
+
+/** A short stable key for a drawing kept only on this device (the account uses its own). */
+function localKey(svg: string): string {
+  let h = 5381;
+  for (let i = 0; i < svg.length; i++) h = ((h * 33) ^ svg.charCodeAt(i)) >>> 0;
+  return `local-${h.toString(16)}`;
+}
+
+function cleanDrawings(raw: unknown): Drawing[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Drawing[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    try {
+      const art = parseArtwork(item);
+      if (!art?.svg || seen.has(art.svg)) continue;
+      seen.add(art.svg);
+      const key = typeof (item as { key?: unknown }).key === 'string' ? (item as { key: string }).key : localKey(art.svg);
+      out.push({ key, name: art.name || 'Your drawing', svg: art.svg });
+    } catch { /* skip a broken entry */ }
+  }
+  return out;
+}
+
+/** `drawings` with `art`'s drawing first (when it is one), for changes kept on this device. */
+export function withDrawing(drawings: Drawing[], art: Artwork | null | undefined): Drawing[] {
+  if (!art?.svg) return drawings;
+  const svg = art.svg;
+  return [{ key: localKey(svg), name: art.name || 'Your drawing', svg }, ...drawings.filter((d) => d.svg !== svg)];
 }
 
 function cleanThemes(raw: unknown): ThemeFile[] {
@@ -81,6 +116,7 @@ export function storedSelection(): ThemeSelection {
       dark: typeof raw.dark === 'string' ? raw.dark : DEFAULT_THEME_ID,
       themes: cleanThemes(raw.themes),
       artwork: cleanArtworkMap(raw.artwork),
+      drawings: cleanDrawings(raw.drawings),
     };
   } catch {
     return DEFAULT_SELECTION;
@@ -146,6 +182,7 @@ function fromAccount(data: AccountTheme): AccountTheme {
     dark: data.dark || DEFAULT_THEME_ID,
     themes: cleanThemes(data.themes),
     artwork: cleanArtworkMap(data.artwork),
+    drawings: cleanDrawings(data.drawings),
   };
 }
 
@@ -169,4 +206,9 @@ export async function removeTheme(id: string): Promise<AccountTheme> {
 export async function saveArtwork(themeId: string, artwork: Artwork | null): Promise<AccountTheme> {
   const path = `/theme/artwork/${encodeURIComponent(themeId)}`;
   return fromAccount((artwork ? await api.put<AccountTheme>(path, artwork) : await api.delete<AccountTheme>(path)).data);
+}
+
+/** Remove a drawing from the library (one still in use stays until it is replaced). */
+export async function removeDrawing(key: string): Promise<AccountTheme> {
+  return fromAccount((await api.delete<AccountTheme>(`/theme/drawings/${encodeURIComponent(key)}`)).data);
 }

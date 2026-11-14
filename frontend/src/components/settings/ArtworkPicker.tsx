@@ -50,7 +50,7 @@ function PasteDialog({ onDone, onClose }: { onDone: (art: Artwork) => void; onCl
 
 /** Settings > Appearance > Artwork: the drawing for the theme on screen now. */
 export function ArtworkPicker() {
-  const { theme: appearance, selection, setArtwork } = useTheme();
+  const { theme: appearance, selection, setArtwork, deleteDrawing } = useTheme();
   const shown = themeFor(selection, appearance);
   const current = artworkFor(selection, shown);
   const override = selection.artwork[shown.id];
@@ -74,12 +74,30 @@ export function ArtworkPicker() {
     timer.current = setTimeout(() => void run({ ...current, strength: value }), 350);
   };
 
-  const options: { key: string; label: string; art: Artwork }[] = [
+  // Drawings still used by some theme can't be removed from the library.
+  const inUse = new Set<string>();
+  for (const art of Object.values(selection.artwork)) if (art.svg) inUse.add(art.svg);
+  for (const t of selection.themes) if (t.artwork?.svg && !selection.artwork[t.id]) inUse.add(t.artwork.svg);
+
+  const options: { key: string; label: string; art: Artwork; drawing?: string }[] = [
     { key: 'none', label: 'None', art: { id: 'none' } },
     ...ARTWORK_IDS.map((id) => ({ key: id, label: ARTWORK_NAMES[id], art: { id } })),
   ];
-  if (current?.svg) options.push({ key: 'own', label: current.name || 'Your drawing', art: current });
-  const selectedKey = current ? (current.svg ? 'own' : current.id) : 'none';
+  // The drawing in use first (if the library doesn't have it yet), then every saved drawing.
+  if (current?.svg && !selection.drawings.some((d) => d.svg === current.svg)) {
+    options.push({ key: 'own', label: current.name || 'Your drawing', art: current });
+  }
+  for (const d of selection.drawings) {
+    options.push({ key: `drawing:${d.key}`, label: d.name, art: { svg: d.svg, name: d.name }, drawing: d.key });
+  }
+  const selectedKey = !current ? 'none'
+    : current.svg ? (options.find((o) => o.art.svg === current.svg)?.key ?? 'own')
+      : current.id;
+
+  const forget = async (key: string) => {
+    setError('');
+    try { await deleteDrawing(key); } catch (e) { setError(errorMessage(e, 'Could not remove this drawing.')); }
+  };
 
   return (
     <>
@@ -93,20 +111,30 @@ export function ArtworkPicker() {
               </button>
             )}
           </div>
-          <p className="mb-2.5 text-[12px] text-fg-dim">Shown at the top of the sidebar and above new chats. It is drawn in this theme’s colours.</p>
+          <p className="mb-2.5 text-[12px] text-fg-dim">Shown at the top of the sidebar and above new chats. It is drawn in this theme’s colours. Drawings you or an agent make stay here to pick again.</p>
           <div role="radiogroup" aria-label={`Artwork for ${shown.name}`} className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {options.map((o) => {
               const svg = artworkSvg(o.art);
+              const removable = !!o.drawing && selectedKey !== o.key && !inUse.has(o.art.svg ?? '');
               return (
-                <button key={o.key} type="button" role="radio" aria-checked={selectedKey === o.key} onClick={() => choose(o.art)}
-                  className={cn('rounded-[10px] border p-1.5 text-left transition-colors',
+                <div key={o.key} className="group relative">
+                <button type="button" role="radio" aria-checked={selectedKey === o.key} onClick={() => choose(o.art)}
+                  className={cn('w-full rounded-[10px] border p-1.5 text-left transition-colors',
                     selectedKey === o.key ? 'border-accent ring-1 ring-accent' : 'border-line hover:border-fg-dim')}>
                   <span className="relative grid aspect-[5/2] place-items-center overflow-hidden rounded-md border border-line" style={{ background: tokens.bg }}>
                     {svg ? <img src={artworkImage(svg, colors)} alt="" className="h-full w-full object-cover" />
                       : <span className="text-[11.5px]" style={{ color: tokens['fg-dim'] }}>No artwork</span>}
                   </span>
-                  <span className="mt-1 block truncate text-[12px]" title={o.label}>{o.label}</span>
+                  <span className={cn('mt-1 block truncate text-[12px]', removable && 'pr-5')} title={o.label}>{o.label}</span>
                 </button>
+                {removable && (
+                  <button type="button" aria-label={`Remove ${o.label} from saved drawings`} title="Remove from saved drawings"
+                    onClick={() => void forget(o.drawing!)}
+                    className="absolute bottom-1.5 right-1.5 grid h-5 w-5 place-items-center rounded text-[13px] leading-none text-fg-dim hover:bg-panel-2 hover:text-danger-ink">
+                    ×
+                  </button>
+                )}
+                </div>
               );
             })}
           </div>

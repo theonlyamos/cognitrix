@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  allThemes, applyVariables, artworkFor, fetchAccountTheme, removeTheme, saveArtwork, saveSelection, saveTheme as saveThemeRemote,
-  storeMode, storeSelection, storedMode, storedSelection, themeFor, variablesFor,
+  allThemes, applyVariables, artworkFor, fetchAccountTheme, removeDrawing, removeTheme, saveArtwork, saveSelection, saveTheme as saveThemeRemote,
+  storeMode, storeSelection, storedMode, storedSelection, themeFor, variablesFor, withDrawing,
   type AccountTheme, type ThemeMode, type ThemeSelection,
 } from '@/lib/theme/store';
 import { artworkSvg, parseArtwork, DEFAULT_STRENGTH, type Artwork } from '@/lib/theme/artwork';
@@ -55,6 +55,8 @@ interface ThemeCtx {
   deleteTheme: (id: string) => Promise<void>;
   /** Choose a theme's artwork (null = the theme's own). */
   setArtwork: (themeId: string, artwork: Artwork | null) => Promise<void>;
+  /** Remove a saved drawing from the library. */
+  deleteDrawing: (key: string) => Promise<void>;
   /** The drawing on screen now, or null. */
   artwork: ShownArtwork | null;
   /** Take the account's copy (after sign-in, on focus, after an agent changed it). */
@@ -121,7 +123,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const take = useCallback((account: AccountTheme) => {
     syncedRef.current = true;
     setSynced(true);
-    adopt({ light: account.light, dark: account.dark, themes: account.themes, artwork: account.artwork });
+    adopt({ light: account.light, dark: account.dark, themes: account.themes, artwork: account.artwork, drawings: account.drawings });
     if (!accountModeRef.current && account.mode) deviceModeRef.current = modeRef.current;
     accountModeRef.current = account.mode;
     if (account.mode) applyMode(account.mode);
@@ -170,7 +172,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       return;
     }
     const current = selectionRef.current;
-    adopt({ ...current, themes: [...current.themes.filter((t) => t.id !== file.id), file] });
+    const replaced = current.themes.find((t) => t.id === file.id)?.artwork;
+    adopt({
+      ...current,
+      themes: [...current.themes.filter((t) => t.id !== file.id), file],
+      drawings: withDrawing(withDrawing(current.drawings, replaced), file.artwork),
+    });
   }, [adopt, take]);
 
   const deleteTheme = useCallback(async (id: string) => {
@@ -182,7 +189,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const current = selectionRef.current;
     const artwork = { ...current.artwork };
     delete artwork[id];
-    adopt({ light: fallback(current.light), dark: fallback(current.dark), themes: current.themes.filter((t) => t.id !== id), artwork });
+    const gone = current.themes.find((t) => t.id === id)?.artwork;
+    adopt({
+      light: fallback(current.light), dark: fallback(current.dark), themes: current.themes.filter((t) => t.id !== id), artwork,
+      drawings: withDrawing(withDrawing(current.drawings, current.artwork[id]), gone),
+    });
   }, [adopt, take]);
 
   const setArtwork = useCallback(async (themeId: string, art: Artwork | null) => {
@@ -192,9 +203,20 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
     const current = selectionRef.current;
     const artwork = { ...current.artwork };
+    // Keep the drawing this replaces (and the new one) so it can be picked again.
+    const drawings = withDrawing(withDrawing(current.drawings, artwork[themeId]), art);
     if (art) artwork[themeId] = art;
     else delete artwork[themeId];
-    adopt({ ...current, artwork });
+    adopt({ ...current, artwork, drawings });
+  }, [adopt, take]);
+
+  const deleteDrawing = useCallback(async (key: string) => {
+    if (syncedRef.current) {
+      take(await removeDrawing(key));
+      return;
+    }
+    const current = selectionRef.current;
+    adopt({ ...current, drawings: current.drawings.filter((d) => d.key !== key) });
   }, [adopt, take]);
 
   const restore = useCallback(async (previous: ThemeUndo) => {
@@ -266,7 +288,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   return (
     <Ctx.Provider value={{
-      theme, mode, toggle, setTheme, setMode, selection, themes, pickTheme, saveTheme, deleteTheme, setArtwork, artwork,
+      theme, mode, toggle, setTheme, setMode, selection, themes, pickTheme, saveTheme, deleteTheme, setArtwork, deleteDrawing, artwork,
       refresh, restore, preview, setPreview, synced, detach,
     }}>
       {children}

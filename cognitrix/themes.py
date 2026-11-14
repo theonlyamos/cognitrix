@@ -12,6 +12,7 @@ Built-in ids must match ``frontend/src/lib/theme/presets.json``
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import pyexpat
@@ -42,6 +43,8 @@ ARTWORK_NAMES: dict[str, str] = {
 }
 MAX_ARTWORK_BYTES = 24 * 1024
 MAX_ARTWORK_ELEMENTS = 1500
+# Drawings kept in the person's library (newest first) so picking other artwork never loses one.
+MAX_DRAWINGS = 40
 
 TOKENS = (
     'bg', 'panel', 'panel-2', 'line', 'fg', 'fg-dim',
@@ -73,6 +76,9 @@ class ThemeSettings(Model):
     """JSON list of the person's own theme files (see ``clean_theme``)."""
     artwork: str = '{}'
     """JSON {theme id: artwork} the person or an agent chose; wins over the theme's own."""
+    drawings: str = '[]'
+    """JSON list of every drawing the person or an agent made ({key, name, svg}), newest first.
+    Choosing other artwork only changes ``artwork``; the drawing stays here to pick again."""
 
 
 # ---------------------------------------------------------------- validation
@@ -413,6 +419,63 @@ def _artwork_of(row: ThemeSettings) -> dict[str, dict]:
     return {k: v for k, v in items.items() if isinstance(k, str) and isinstance(v, dict)} if isinstance(items, dict) else {}
 
 
+def drawing_key(svg: str) -> str:
+    return hashlib.sha1(svg.encode('utf-8')).hexdigest()[:12]
+
+
+def _stored_drawings(row: ThemeSettings) -> list[dict]:
+    try:
+        items = json.loads(getattr(row, 'drawings', None) or '[]')
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(items, list):
+        return []
+    out = []
+    for d in items:
+        if isinstance(d, dict) and isinstance(d.get('svg'), str) and d['svg']:
+            out.append({'key': str(d.get('key') or drawing_key(d['svg'])),
+                        'name': str(d.get('name') or 'Your drawing')[:48], 'svg': d['svg']})
+    return out
+
+
+def _add_drawing(drawings: list[dict], art: dict | None) -> list[dict]:
+    """``drawings`` with ``art``'s drawing first (if it is one), without duplicates."""
+    if not art or not art.get('svg'):
+        return drawings
+    key = drawing_key(art['svg'])
+    rest = [d for d in drawings if d['key'] != key]
+    return [{'key': key, 'name': str(art.get('name') or 'Your drawing')[:48], 'svg': art['svg']}, *rest]
+
+
+def all_drawings(row: ThemeSettings) -> list[dict]:
+    """The library, plus any drawing still in use that predates it (artwork chosen or a theme's own)."""
+    drawings = _stored_drawings(row)
+    known = {d['key'] for d in drawings}
+    in_use = [*_artwork_of(row).values(), *(t.get('artwork') for t in _themes_of(row))]
+    for art in in_use:
+        if isinstance(art, dict) and art.get('svg') and drawing_key(art['svg']) not in known:
+            drawings.append({'key': drawing_key(art['svg']), 'name': str(art.get('name') or 'Your drawing')[:48],
+                             'svg': art['svg']})
+            known.add(drawings[-1]['key'])
+    return drawings
+
+
+def _drawings_with(row: ThemeSettings, art: dict | None) -> str:
+    """The library JSON after adding ``art``. Drops the oldest drawings not in use when full."""
+    drawings = _add_drawing(all_drawings(row), art)
+    if len(drawings) > MAX_DRAWINGS:
+        used = {drawing_key(a['svg']) for a in _artwork_of(row).values() if a.get('svg')}
+        used |= {drawing_key(t['artwork']['svg']) for t in _themes_of(row) if (t.get('artwork') or {}).get('svg')}
+        if art and art.get('svg'):
+            used.add(drawing_key(art['svg']))
+        while len(drawings) > MAX_DRAWINGS:
+            drop = next((i for i in range(len(drawings) - 1, -1, -1) if drawings[i]['key'] not in used), None)
+            if drop is None:
+                break
+            drawings.pop(drop)
+    return json.dumps(drawings)
+
+
 async def get_settings(user_id: str) -> ThemeSettings:
     row = await ThemeSettings.find_one({'user_id': str(user_id)})
     return row or ThemeSettings(user_id=str(user_id))
@@ -458,6 +521,7 @@ def project(row: ThemeSettings) -> dict:
         'dark': dark,
         'themes': custom,
         'artwork': _artwork_of(row),
+        'drawings': all_drawings(row),
     }
 
 
@@ -501,7 +565,8 @@ async def save_theme(user_id: str, raw: Any, *, theme_id: str | None = None) -> 
         if len(custom) >= MAX_CUSTOM_THEMES:
             raise ThemeError(f'You can keep up to {MAX_CUSTOM_THEMES} themes. Delete one first.')
         custom.append(theme)
-    changes: dict[str, Any] = {'themes': json.dumps(custom)}
+    # Keep drawings this replaces (and this theme's own) in the library.
+    changes: dict[str, Any] = {'themes': json.dumps(custom), 'drawings': _drawings_with(row, theme.get('artwork'))}
     # A theme that lost the variant it was picked for falls back to Signal.
     if row.light_theme == theme['id'] and 'light' not in theme:
         changes['light_theme'] = DEFAULT_THEME_ID
@@ -514,7 +579,8 @@ async def delete_theme(user_id: str, theme_id: str) -> dict:
     row = await get_settings(user_id)
     custom = [t for t in _themes_of(row) if t['id'] != theme_id]
     chosen = _artwork_of(row)
-    changes: dict[str, Any] = {'themes': json.dumps(custom)}
+    # Its drawings stay in the library.
+    changes: dict[str, Any] = {'themes': json.dumps(custom), 'drawings': _drawings_with(row, None)}
     if chosen.pop(theme_id, None) is not None:
         changes['artwork'] = json.dumps(chosen)
     if row.light_theme == theme_id:
@@ -549,7 +615,28 @@ async def set_artwork(user_id: str, theme_id: str, raw: Any) -> dict:
         chosen[theme_id] = clean_artwork(raw)
     if len(json.dumps(chosen)) > MAX_CUSTOM_THEMES * MAX_ARTWORK_BYTES:
         raise ThemeError('Too much artwork saved. Remove some first.')
-    return project(await _save(user_id, {'artwork': json.dumps(chosen)}))
+    # The library keeps the drawing this replaces (and the new one) so it can be picked again.
+    return project(await _save(user_id, {
+        'artwork': json.dumps(chosen), 'drawings': _drawings_with(row, chosen.get(theme_id)),
+    }))
+
+
+async def delete_drawing(user_id: str, key: str) -> dict:
+    """Remove a drawing from the library. One still in use stays until it is replaced."""
+    row = await get_settings(user_id)
+    drawings = [d for d in all_drawings(row) if d['key'] != key]
+    return project(await _save(user_id, {'drawings': json.dumps(drawings)}))
+
+
+def find_drawing(query: str, row: ThemeSettings) -> dict | None:
+    """A saved drawing by name (case-insensitive) or key."""
+    q = (query or '').strip().lower()
+    if not q:
+        return None
+    for d in all_drawings(row):
+        if q in (d['key'], d['name'].lower(), slugify(d['name'])):
+            return d
+    return None
 
 
 def find_theme(query: str, custom: list[dict]) -> str | None:
