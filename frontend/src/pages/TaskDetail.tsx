@@ -11,6 +11,7 @@ import { MobileHeaderActions, type MobileHeaderAction } from '@/components/mobil
 import { SelectionRow } from '@/components/SelectionRow';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { TranscriptView } from '@/components/TranscriptView';
+import { parseCard } from '@/lib/cards';
 import { TaskApprovals } from '@/components/TaskApprovals';
 import { AutomationPanel } from '@/components/AutomationPanel';
 import {
@@ -117,6 +118,13 @@ interface DurableViewData {
   result: TypedTaskResult | null;
   toolCalls: TranscriptTool[];
 }
+
+/** A Show Card card from the server is checked again before it is drawn. */
+const withCheckedCard = (tool: TranscriptTool): TranscriptTool => {
+  const { card, ...rest } = tool;
+  const checked = parseCard(card);
+  return checked ? { ...rest, card: checked } : rest;
+};
 
 interface RunSession {
   id: string;
@@ -486,7 +494,7 @@ export default function TaskDetail() {
           ...previous,
           [key]: {
             result: response.data.result,
-            toolCalls: response.data.tool_calls || [],
+            toolCalls: (response.data.tool_calls || []).map(withCheckedCard),
           },
         }));
       }

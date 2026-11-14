@@ -117,17 +117,21 @@ export function parsePress(text: string): { label: string; card: string; action:
 const ACTION_EVENT = 'cognitrix:card-action';
 
 /** Send a button press to the chat on screen. Returns false when no chat took it. */
-export function requestCardAction(text: string): boolean {
-  const event = new CustomEvent(ACTION_EVENT, { detail: { text }, cancelable: true });
-  return !window.dispatchEvent(event);
+/** Ask the open chat to send a card press. Returns null when no chat is
+ *  listening, otherwise whether the message was sent. */
+export function requestCardAction(text: string): Promise<boolean> | null {
+  const detail: { text: string; result?: Promise<boolean> } = { text };
+  const event = new CustomEvent(ACTION_EVENT, { detail, cancelable: true });
+  if (window.dispatchEvent(event)) return null;
+  return detail.result ?? Promise.resolve(true);
 }
 
-export function onCardAction(handler: (text: string) => void): () => void {
+export function onCardAction(handler: (text: string) => boolean | Promise<boolean>): () => void {
   const listener = (event: Event) => {
-    const text = (event as CustomEvent<{ text?: string }>).detail?.text;
-    if (!text) return;
+    const detail = (event as CustomEvent<{ text?: string; result?: Promise<boolean> }>).detail;
+    if (!detail?.text) return;
     event.preventDefault();
-    handler(text);
+    detail.result = Promise.resolve(handler(detail.text)).then((ok) => ok !== false, () => false);
   };
   window.addEventListener(ACTION_EVENT, listener);
   return () => window.removeEventListener(ACTION_EVENT, listener);

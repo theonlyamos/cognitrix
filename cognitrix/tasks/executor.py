@@ -197,6 +197,9 @@ class TaskStepExecutor:
                     else:
                         data["result"] = payload.get("result") or ""
                         data["status"] = "error" if status == "error" else "done"
+                        card = outcome.get("card") if isinstance(outcome, dict) else None
+                        if isinstance(card, dict):
+                            data["card"] = card
                     await self.emitter.emit(
                         kind,
                         session_id=session.id,

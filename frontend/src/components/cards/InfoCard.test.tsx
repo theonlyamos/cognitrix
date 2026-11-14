@@ -52,6 +52,26 @@ describe('agent cards', () => {
     expect(screen.getByText('Buttons work in the chat this card came from.')).toBeInTheDocument();
   });
 
+  it('gives the buttons back when the press could not be sent', async () => {
+    const off = onCardAction(() => Promise.resolve(false));
+    render(<InfoCard card={{ ...parseCard(RAW)!, id: 'card_failed' }} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Email to team' }));
+    expect(await screen.findByText(/Couldn't send that/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Email to team' })).not.toBeDisabled();
+    expect(localStorage.getItem('cognitrix:card-pressed') ?? '').not.toContain('card_failed');
+    off();
+  });
+
+  it('keeps bars visible on a full chart', () => {
+    const labels = Array.from({ length: 40 }, (_, i) => `d${i}`);
+    const series = Array.from({ length: 4 }, (_, s) => ({ name: `s${s}`, values: labels.map((_, i) => i + s) }));
+    const card = parseCard({ id: 'card_dense', title: 'Dense', blocks: [{ type: 'chart', kind: 'bar', title: 'Dense', labels, series }] })!;
+    const { container } = render(<InfoCard card={card} />);
+    const widths = [...container.querySelectorAll('rect')].map((r) => Number(r.getAttribute('width')));
+    expect(widths.length).toBeGreaterThanOrEqual(160);
+    expect(Math.min(...widths)).toBeGreaterThan(0);
+  });
+
   it('reads a press message back', () => {
     const card = parseCard(RAW)!;
     const text = buttonMessage(card, { label: 'Look into refunds', action: 'refunds', value: 'linen' });

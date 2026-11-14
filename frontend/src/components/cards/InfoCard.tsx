@@ -149,12 +149,22 @@ export function InfoCard({ card }: { card: Card }) {
 
   const press = (button: CardButton) => {
     if (pressed) return;
-    if (!requestCardAction(buttonMessage(card, button))) {
+    const sent = requestCardAction(buttonMessage(card, button));
+    if (!sent) {
       setNote('Buttons work in the chat this card came from.');
       return;
     }
+    // Hold the buttons while the press is sent; give them back if it fails.
     setPressed(button.label);
-    savePressed(card.id, button.label);
+    setNote(null);
+    void sent.then((ok) => {
+      if (ok) {
+        savePressed(card.id, button.label);
+      } else {
+        setPressed(null);
+        setNote("Couldn't send that. Check the connection and try again.");
+      }
+    });
   };
 
   return (

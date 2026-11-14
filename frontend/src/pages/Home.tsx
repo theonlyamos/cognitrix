@@ -1220,16 +1220,16 @@ export default function Home() {
 
   // Steering: a message typed while the agent works goes into its current
   // turn and is read after the step it is on.
-  const steer = useCallback(async (msg: string) => {
+  const steer = useCallback(async (msg: string, opts: { keepComposer?: boolean } = {}): Promise<boolean> => {
     const sessionId = activeRef.current;
-    setInput('');
+    if (!opts.keepComposer) setInput('');
     setSteerError(null);
     if (!sessionId) {
       // A brand-new chat has no id until its first reply arrives. Hold the
       // message here and send it as soon as the id is known.
       const held = { id: `${HELD_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, content: msg };
       setWaitingMsgs((prev) => [...prev, held]);
-      return;
+      return true;
     }
     try {
       const res = await api.post('/agents/chat', {
@@ -1250,14 +1250,16 @@ export default function Home() {
         setStreaming(false);
         setIsStreaming(true);
       }
+      return true;
     } catch (error) {
-      setInput((current) => current || msg);
+      if (!opts.keepComposer) setInput((current) => current || msg);
       setSteerError(errorMessage(error, 'Could not send that while the agent is working. Try again when it finishes.'));
+      return false;
     }
   }, [addMessage, agentId, setIsStreaming, streamId]);
 
   const send = useCallback(
-    async (text: string, executionMode: ExecutionMode = 'chat', replace: Rework | null = rework, opts: { keepComposer?: boolean } = {}) => {
+    async (text: string, executionMode: ExecutionMode = 'chat', replace: Rework | null = rework, opts: { keepComposer?: boolean } = {}): Promise<boolean> => {
       const msg = text.trim();
       const pending = opts.keepComposer ? [] : attachmentsRef.current;
       const pendingEditSource = opts.keepComposer ? null : editSource;
@@ -1265,15 +1267,14 @@ export default function Home() {
         busy && question === null && msg && pending.length === 0 && pendingEditSource === null
         && !replace && executionMode === 'chat' && !opts.keepComposer
       ) {
-        void steer(msg);
-        return;
+        return steer(msg);
       }
-      if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return;
-      if (executionMode === 'task' && (pending.length > 0 || pendingEditSource !== null)) return;
+      if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return false;
+      if (executionMode === 'task' && (pending.length > 0 || pendingEditSource !== null)) return false;
       if (replace) {
         // Take the old message and everything after it out of the saved chat
         // before the new wording goes in.
-        if (!activeSessionId) return;
+        if (!activeSessionId) return false;
         try {
           await api.post(`/sessions/${encodeURIComponent(activeSessionId)}/rewind`, {
             turn: replace.turn,
@@ -1285,7 +1286,7 @@ export default function Home() {
           setReworkError(status === 409
             ? errorMessage(error, 'This chat is still working. Stop it first.')
             : 'That message could not be replaced. Reload the chat and try again.');
-          return;
+          return false;
         }
         if (replace.keep) {
           // The message and its uploads stay; only its wording may change.
@@ -1357,6 +1358,7 @@ export default function Home() {
           await api.post('/agents/chat', payload);
         }
         window.setTimeout(() => void refreshRuns(), 600);
+        return true;
       } catch {
         if (!opts.keepComposer) {
           setInput(text);
@@ -1365,6 +1367,7 @@ export default function Home() {
         }
         addMessage('assistant', 'Unable to reach the agent. Check the connection and try again.');
         finishTurn();
+        return false;
       }
     },
     [busy, question, steer, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
@@ -1374,9 +1377,10 @@ export default function Home() {
   // While it is working the press is read between its steps; whatever the
   // person was typing stays in the box.
   useEffect(() => onCardAction((text) => {
-    if (busy) void steer(text);
-    else void send(text, 'chat', null, { keepComposer: true });
-  }), [busy, send, steer]);
+    if (!isConnected) return false;
+    if (busy) return steer(text, { keepComposer: true });
+    return send(text, 'chat', null, { keepComposer: true });
+  }), [busy, isConnected, send, steer]);
 
   // Messages the last turn never read go out as the next one, by themselves
   // (whatever is in the box stays there).

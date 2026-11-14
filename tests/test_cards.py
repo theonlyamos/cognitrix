@@ -210,3 +210,18 @@ def test_series_written_as_points():
     chart = card['blocks'][0]
     assert chart['labels'] == ['Mon', 'Tue']
     assert [s['values'] for s in chart['series']] == [[1, 2], [3, 4]]
+
+
+def test_task_step_tool_calls_keep_the_card():
+    from cognitrix.tasks.events import TaskRunEvent, project_step_tool_calls
+
+    card = normalize({'title': 'Done', 'fields': [{'label': 'Rows', 'value': '12'}]})
+    events = [
+        TaskRunEvent(run_id='r', step_index=0, sequence=1, kind='tool_started',
+                     data={'tool_call_id': 'c1', 'tool_name': 'Show Card', 'params': '{}'}),
+        TaskRunEvent(run_id='r', step_index=0, sequence=2, kind='tool_completed',
+                     data={'tool_call_id': 'c1', 'tool_name': 'Show Card', 'result': 'ok',
+                           'status': 'done', 'card': card}),
+    ]
+    [call] = project_step_tool_calls(events, 0)
+    assert call['status'] == 'done' and call['card'] == card

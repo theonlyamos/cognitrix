@@ -79,17 +79,18 @@ export function CardChart({ chart }: { chart: Chart }) {
         ))}
         {chart.kind === 'bar' && chart.series.map((s, si) => {
           const w = Math.min(34, (band * 0.7) / chart.series.length);
+          const bw = Math.max(0.6, w - Math.min(2, w * 0.25)); // dense charts get thinner gaps, never a negative width
           return s.values.map((v, i) => {
             const bx = x(i) - (w * chart.series.length) / 2 + si * w;
             const h = Math.abs(y(v) - y(0));
             const hi = i === peak;
             return (
               <g key={`${si}-${i}`}>
-                <rect x={bx} y={Math.min(y(v), y(0))} width={w - 2} height={Math.max(1, h)} rx="2"
+                <rect x={bx} y={Math.min(y(v), y(0))} width={bw} height={Math.max(1, h)} rx="2"
                   fill={chart.series.length > 1 ? SERIES[si] : hi ? 'rgb(var(--accent-rgb))' : 'rgb(var(--accent-ink-rgb) / 0.75)'}
                   stroke={hi && chart.series.length === 1 ? 'rgb(var(--accent-ink-rgb))' : 'none'} />
                 {n <= 12 && chart.series.length === 1 && (
-                  <text x={bx + (w - 2) / 2} y={Math.min(y(v), y(0)) - 4} textAnchor="middle" fontSize="9.5" fill="rgb(var(--fg-dim-rgb))" fontFamily="'JetBrains Mono', ui-monospace, monospace">{fmt(v)}</text>
+                  <text x={bx + bw / 2} y={Math.min(y(v), y(0)) - 4} textAnchor="middle" fontSize="9.5" fill="rgb(var(--fg-dim-rgb))" fontFamily="'JetBrains Mono', ui-monospace, monospace">{fmt(v)}</text>
                 )}
               </g>
             );
