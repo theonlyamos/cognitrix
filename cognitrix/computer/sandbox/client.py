@@ -346,11 +346,22 @@ class SandboxManager:
         """Move the user's computer onto the newest downloaded image. Open
         windows close; files and logins stay (they live in the home volume)."""
         name = self.container_name(user_id)
+        try:  # reopen the same desktops afterwards, so the panel can reconnect
+            old = self.existing(user_id)
+            names = [d['name'] for d in (old.desktops() if old else []) if d.get('name')]
+        except Exception:
+            names = []
         with self._guard:
             self._docker('rm', '-f', name, check=False)
             self._boxes.pop(name, None)
         self._local_image_id(fresh=True)
-        return self.sandbox(user_id)
+        box = self.sandbox(user_id)
+        for desktop in names:
+            try:
+                box.desktop(desktop)
+            except Exception:
+                logger.info("Couldn't reopen desktop %s after the update", desktop, exc_info=True)
+        return box
 
     def reset(self, user_id: Any) -> None:
         """Remove the container and its home volume: a fresh computer next time."""

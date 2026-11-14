@@ -370,14 +370,19 @@ def test_a_stopped_computer_on_an_old_image_starts_on_the_new_one(fake_manager):
     assert not any(c[:2] == ('volume', 'rm') for c in fake.calls)
 
 
-def test_a_running_computer_is_left_alone_until_asked(fake_manager):
+def test_a_running_computer_is_left_alone_until_asked(fake_manager, monkeypatch):
+    from cognitrix.computer.sandbox import client as sandbox_client
     mgr, fake = fake_manager
     fake.container['State'] = {'Running': True}
     box = mgr.sandbox('u1')
     assert box.image_id == 'sha256:old' and mgr.update_available(box)
     assert not any(c[0] in ('rm', 'run') for c in fake.calls)
+    opened = []
+    monkeypatch.setattr(sandbox_client.Sandbox, 'desktops', lambda self: [{'name': 'agent-a'}, {'name': 'main'}])
+    monkeypatch.setattr(sandbox_client.Sandbox, 'desktop', lambda self, n: opened.append(n) or {'name': n})
     box = mgr.update('u1')
     assert box.image_id == 'sha256:new' and not mgr.update_available(box)
+    assert opened == ['agent-a', 'main']  # the same desktops are back for the panel
     assert not any(c[:2] == ('volume', 'rm') for c in fake.calls)
 
 
