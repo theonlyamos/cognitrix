@@ -26,6 +26,7 @@ import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/Vo
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
 import ComposerMenu from '@/components/ComposerMenu';
+import ChatModelPicker, { type ChatModel } from '@/components/ChatModelPicker';
 import { getChatFolders, setChatFolders, type WorkFolder } from '@/lib/folders';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
@@ -495,6 +496,44 @@ export default function Home() {
     const left = incognitoSidRef.current;
     if (left) api.delete(`/sessions/${encodeURIComponent(left)}`).catch(() => {});
   }, []);
+  // ── Model for this chat ──
+  // Picked in the chat box; sent with each message, never saved on the
+  // agent. Remembered per chat in this browser.
+  const [chatModel, setChatModel] = useState<ChatModel | null>(null);
+  const chatModelRef = useRef<ChatModel | null>(null);
+  chatModelRef.current = chatModel;
+  const modelSidRef = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = modelSidRef.current;
+    modelSidRef.current = activeSessionId;
+    if (!activeSessionId) {
+      if (previous) setChatModel(null);
+      return;
+    }
+    let saved: ChatModel | null = null;
+    try {
+      const raw = localStorage.getItem(`chatModel:${activeSessionId}`);
+      saved = raw ? JSON.parse(raw) : null;
+    } catch { /* not remembered */ }
+    if (!previous && !saved && chatModelRef.current) {
+      // A new chat's first message: keep what was picked for it.
+      try { localStorage.setItem(`chatModel:${activeSessionId}`, JSON.stringify(chatModelRef.current)); } catch { /* not persisted */ }
+      return;
+    }
+    setChatModel(saved && saved.provider && saved.model ? saved : null);
+  }, [activeSessionId]);
+  useEffect(() => {
+    if (!activeRef.current) setChatModel(null);
+  }, [agentId]);
+  const changeChatModel = (next: ChatModel | null) => {
+    setChatModel(next);
+    const sid = activeRef.current;
+    if (!sid) return;
+    try {
+      if (next) localStorage.setItem(`chatModel:${sid}`, JSON.stringify(next));
+      else localStorage.removeItem(`chatModel:${sid}`);
+    } catch { /* not persisted */ }
+  };
   const waitingRef = useRef(false);
   waitingRef.current = waiting;
 
@@ -1285,6 +1324,7 @@ export default function Home() {
             : {}),
           ...(bypassRef.current ? { bypass_permissions: true } : {}),
           ...(reasoningRef.current ? { reasoning_effort: reasoningRef.current } : {}),
+          ...(chatModelRef.current ? { model: chatModelRef.current } : {}),
           ...(!activeRef.current && draftFoldersRef.current ? { folders: draftFoldersRef.current } : {}),
           ...(!activeRef.current && incognitoRef.current ? { incognito: true } : {}),
         };
@@ -1813,8 +1853,8 @@ export default function Home() {
             : empty ? 'Ask anything…' : `Reply to ${currentAgent?.name || 'the agent'}…`}
           className={cn('block min-h-11 max-h-48 w-full resize-none bg-transparent outline-none focus-visible:outline-none px-4 pb-1 pt-3.5 text-[15px] text-fg placeholder:text-fg-dim', voice.active && '!hidden')}
         />
-        <div className={cn('flex min-w-0 items-center gap-1 px-2 pb-2 pt-1', voice.active && '!hidden')}>
-          <div className="flex-none">
+        <div className={cn('flex min-w-0 items-center gap-0.5 px-2 pb-2 pt-1', voice.active && '!hidden')}>
+          <div className="min-w-0">
           <ComposerMenu
             onAttach={() => fileInputRef.current?.click()}
             onRunTask={() => void send(input, 'task')}
@@ -1832,23 +1872,26 @@ export default function Home() {
               : "Incognito: the chat isn't listed, doesn't use or change memory, and is deleted when you leave it."}
             reasoning={reasoning}
             onReasoning={changeReasoning}
-          />
+          >
+            {empty && (
+              <div className="min-w-0 flex-none">
+                <AgentPickerChip agents={agents} teams={teams} currentAgentId={agentId} onPick={startChatWith} />
+              </div>
+            )}
+            <ChatModelPicker agentLlm={currentAgent?.llm} value={chatModel} onChange={changeChatModel} />
+            <FolderChips
+              variant="button"
+              className="min-w-0"
+              folders={shownFolders}
+              onChange={changeFolders}
+              emptyLabel="Scratch folder"
+              disabled={busy}
+            />
+          </ComposerMenu>
           </div>
-          {empty && (
-            <div className="min-w-0 flex-none">
-              <AgentPickerChip agents={agents} teams={teams} currentAgentId={agentId} onPick={startChatWith} />
-            </div>
-          )}
-          <FolderChips
-            className="min-w-0"
-            folders={shownFolders}
-            onChange={changeFolders}
-            emptyLabel="private scratch folder"
-            disabled={busy}
-          />
           <span className="flex-1" />
           {!voice.active && !(busy && input.trim()) && (
-            <MicButton voice={voice} className="rounded-full" />
+            <MicButton voice={voice} className="rounded-lg" />
           )}
           {busy && !!input.trim() && !voice.active && (
             // While it works, typed text is sent into the running task;
@@ -1867,7 +1910,7 @@ export default function Home() {
             disabled={busy && !input.trim() ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
             aria-label={busy && !input.trim() ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
             className={cn(
-              'grid h-11 w-11 flex-none place-items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 hover:brightness-105 md:h-9 md:w-9',
+              'grid h-11 w-11 flex-none place-items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 hover:brightness-105 md:h-8 md:w-8',
               busy && !input.trim() ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
               voice.active && '!hidden',
             )}
@@ -1928,9 +1971,9 @@ export default function Home() {
             </h1>
           </div>
           <div className="flex flex-none items-center gap-1">
-            {agentModel(currentAgent) && (
+            {(chatModel || agentModel(currentAgent)) && (
               <span className="hidden max-w-[220px] truncate rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-dim lg:inline" title="Model">
-                {agentModel(currentAgent)}
+                {chatModel ? `${chatModel.provider} · ${chatModel.model}` : agentModel(currentAgent)}
               </span>
             )}
             {isConnected ? (

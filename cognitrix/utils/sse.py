@@ -605,6 +605,7 @@ class SSEManager:
             'session_id': requested_sid,
         }
         run: chat_runs.ChatRun | None = None
+        model_token = None
 
         async def emit(payload):
             current_sid = session.id if session is not None else requested_sid
@@ -775,6 +776,16 @@ class SSEManager:
             user_prompt = action['content']
             bypass = bool(action.get('bypass_permissions'))
             execution_mode = action.get('execution_mode', 'chat')
+            picked_model = action.get('chat_model')
+            if picked_model and self.agent.llm is not None:
+                # A model picked in the chat window: this turn's calls on the
+                # agent's own LLM go to it instead (providers.base).
+                from cognitrix.providers.base import build_turn_llm, turn_llm_override
+
+                model_token = turn_llm_override.set((
+                    self.agent.llm.id,
+                    build_turn_llm(self.agent.llm, picked_model['provider'], picked_model['model']),
+                ))
             if execution_mode == 'task':
                 await emit({
                     'type': 'status',
@@ -895,6 +906,10 @@ class SSEManager:
                 'content': _ATTACHMENT_UNAVAILABLE if has_media else str(exc),
             })
         finally:
+            if model_token is not None:
+                from cognitrix.providers.base import turn_llm_override
+
+                turn_llm_override.reset(model_token)
             cleanup_errors: list[BaseException] = []
             adoption_error: BaseException | None = None
             if adoption_task is not None:

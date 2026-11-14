@@ -75,6 +75,21 @@ async def list_provider_keys(ctx: AuthContext = Depends(jwt_only)) -> dict[str, 
     }
 
 
+@providers_api.get('/chat-options')
+async def chat_model_options(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Providers a chat can switch to: those the engine has a key or plan for
+    (Ollama when OLLAMA_BASE_URL is set). Feeds the chat window's model picker."""
+    from cognitrix.api.routes.onboarding import _provider_options
+
+    options = await asyncio.to_thread(_provider_options)
+    usable = [
+        {'id': o['id'], 'default_model': o['default_model']}
+        for o in options
+        if o['has_key'] or (o['id'] == 'ollama' and os.getenv('OLLAMA_BASE_URL'))
+    ]
+    return {'providers': usable}
+
+
 class KeyBody(BaseModel):
     api_key: str
 

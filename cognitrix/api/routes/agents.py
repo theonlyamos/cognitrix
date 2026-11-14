@@ -712,6 +712,21 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 detail='A turn is already running for this browser stream',
             )
 
+        chat_model = None
+        if data.get('model'):
+            # {provider, model} picked in the chat window for this message.
+            picked = data.get('model')
+            if not isinstance(picked, dict):
+                manager.finish_turn()
+                raise HTTPException(status_code=400, detail='model must be {provider, model}')
+            from ...providers.base import build_turn_llm
+            try:
+                build_turn_llm(agent.llm, picked.get('provider'), picked.get('model'))
+            except ValueError as exc:
+                manager.finish_turn()
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+            chat_model = {'provider': str(picked['provider']).strip().lower(), 'model': str(picked['model']).strip()}
+
         folders = None
         if data.get('folders') is not None and not data.get('session_id'):
             from cognitrix.common.folders import FolderError, folders_to_dicts, normalize_folders
@@ -745,6 +760,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'document_ids': data.get('document_ids') or (),
                 'bypass_permissions': bool(data.get('bypass_permissions')),
                 'reasoning_effort': normalize_reasoning_effort(data.get('reasoning_effort')),
+                **({'chat_model': chat_model} if chat_model else {}),
                 'execution_mode': execution_mode.value,
                 'timezone': _request_timezone(),
                 **({'folders': folders} if folders is not None else {}),

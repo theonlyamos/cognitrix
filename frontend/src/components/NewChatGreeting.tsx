@@ -6,6 +6,7 @@ import { ArtworkScene } from '@/components/ThemeArtwork';
 import { useOptionalTheme } from '@/context/ThemeContext';
 import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 import { cn } from '@/lib/utils';
+import { composerBtn } from '@/components/composerStyles';
 
 export const NEW_CHAT_SUGGESTIONS = [
   'What can you help me with?',
@@ -170,14 +171,14 @@ export function AgentPickerChip({
         aria-expanded={open}
         aria-label={`Chat with ${current.name}. Change`}
         onClick={() => setOpen((v) => !v)}
-        className="flex h-11 items-center gap-1.5 rounded-full border border-line pl-1.5 pr-2 text-[12.5px] text-fg transition-colors hover:border-fg-dim md:h-8"
+        className={cn(composerBtn, 'pl-1.5 text-fg', open && 'bg-panel-2')}
       >
         <AgentBadge name={current.name} avatar={current.avatar} />
-        <span className="max-w-[140px] truncate">{current.name}</span>
-        <ChevronDownIcon className="h-3.5 w-3.5 text-fg-dim" strokeWidth={2} aria-hidden="true" />
+        <span className="hidden max-w-[140px] truncate sm:inline">{current.name}</span>
+        <ChevronDownIcon className="hidden h-3.5 w-3.5 text-fg-dim sm:block" strokeWidth={2} aria-hidden="true" />
       </button>
       {open && (
-        <div role="menu" aria-label="Chat with" className="animate-rise absolute bottom-full left-0 z-30 mb-2 max-h-[min(60vh,420px)] w-[280px] overflow-y-auto rounded-xl border border-line bg-panel p-1.5 shadow-lg">
+        <div role="menu" aria-label="Chat with" className="animate-rise absolute bottom-full left-0 z-30 mb-2 max-h-[min(60vh,420px)] w-[min(280px,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-line bg-panel p-1.5 shadow-lg">
           <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-dim">Agents</div>
           {agents.map((a) => item({ kind: 'agent', id: a.id }, a.name, agentModel(a), a.avatar))}
           {teams.length > 0 && (

@@ -489,6 +489,46 @@ turn_reasoning_effort: contextvars.ContextVar[str | None] = contextvars.ContextV
 )
 
 
+# A per-turn model picked in the chat window: (id of the agent's own LLM, the
+# LLM to call instead). Only calls made on that exact LLM are redirected, so
+# sub-agents and the action reviewer keep their own models, and the saved
+# agent never changes.
+turn_llm_override: contextvars.ContextVar['tuple[str, LLM] | None'] = contextvars.ContextVar(
+    'turn_llm_override', default=None
+)
+
+# Providers a chat can switch to for one turn (not the coding agent CLIs,
+# which run as a different kind of agent).
+CHAT_MODEL_PROVIDERS = ('openrouter', 'openai', 'chatgpt', 'anthropic', 'google', 'groq', 'cerebras', 'ollama')
+
+
+def build_turn_llm(base: 'LLM', provider: str, model: str) -> 'LLM':
+    """The LLM for a turn that runs on another provider/model than the agent's.
+
+    The same provider keeps the agent's key and endpoint; another provider
+    uses the key the engine holds for it. Raises ValueError when the choice
+    can't be used (unknown provider, no key)."""
+    provider = str(provider or '').strip().lower()
+    model = str(model or '').strip()
+    from cognitrix.providers.harness import is_harness
+
+    if is_harness(base.provider):
+        raise ValueError('This agent runs on a coding agent CLI; change its model on the agent page.')
+    if provider not in CHAT_MODEL_PROVIDERS:
+        raise ValueError(f'{provider or "That provider"} can not be picked for a chat.')
+    if not model or len(model) > 200:
+        raise ValueError('Pick a model.')
+    if provider == (base.provider or '').lower():
+        return base.model_copy(update={'id': str(uuid.uuid4()), 'model': model, 'context_window': 0})
+    return LLM(
+        provider=provider,
+        model=model,
+        temperature=base.temperature,
+        max_tokens=base.max_tokens,
+        reasoning_effort=base.reasoning_effort,
+    )
+
+
 def normalize_reasoning_effort(value: Any) -> str:
     """'' for unset or unknown values, else one of REASONING_EFFORTS."""
     text = str(value or '').strip().lower()
@@ -654,6 +694,9 @@ class LLM(Model):
         return LLMManager.get_supported_models(self)
 
     async def __call__(self, prompt: list[dict[str, Any]], stream: bool = False, tools: Any = None, **kwds: Any):
+        override = turn_llm_override.get()
+        if override is not None and override[0] == self.id and override[1] is not self:
+            return await override[1](prompt, stream=stream, tools=tools, **kwds)
         if tools is None:
             tools = []
         # Imported lazily to keep the provider layer usable without the task
