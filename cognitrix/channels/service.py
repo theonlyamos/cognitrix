@@ -148,6 +148,8 @@ class ChannelService:
         """Thread keys whose running turn was started by someone other than the linked person."""
         self._button_text: dict[tuple[str, str, str], str] = {}
         """(channel id, chat id, message ref) -> text of a message with buttons."""
+        self._cards: dict[str, dict[str, Any]] = {}
+        """card id -> a card sent with buttons (Show Card), newest last, kept for presses."""
         self._link_failures: dict[str, int] = {}
         self._delivered: dict[str, set[tuple[str, str]]] = {}
         self._delivery_task: asyncio.Task | None = None
@@ -310,6 +312,41 @@ class ChannelService:
 
     async def send(self, channel: ChatChannel, chat_id: str, text: str) -> str:
         return await self._reply(channel, chat_id, text)
+
+    async def _send_card(self, channel: ChatChannel, chat_id: str, card: dict[str, Any], *,
+                         buttons: bool, thread_id: str = '') -> str:
+        """A Show Card card as text, with its action buttons as the app's own buttons."""
+        from cognitrix.cards import buttons_of, to_markdown
+
+        actions = buttons_of(card)[:8] if buttons else []
+        row = [Button(b['label'][:60], f'cd:{card.get("id")}:{i}',
+                      'primary' if b.get('style') == 'primary' else 'danger' if b.get('style') == 'danger' else '')
+               for i, b in enumerate(actions)]
+        if row:
+            self._cards[str(card.get('id'))] = card
+            while len(self._cards) > 200:
+                self._cards.pop(next(iter(self._cards)))
+        text = to_markdown(card, numbered_buttons=not buttons)
+        return await self._reply(channel, chat_id, text, row or None,
+                                 **({'thread_id': thread_id} if thread_id else {}))
+
+    async def _card_press(self, channel: ChatChannel, card_id: str, choice: str) -> str:
+        """A card button was pressed: tell the agent, like a message."""
+        from cognitrix.cards import button_message, buttons_of
+
+        card = self._cards.get(card_id)
+        actions = buttons_of(card)[:8] if card else []
+        if not card or not choice.isdigit() or int(choice) >= len(actions):
+            return 'This card has expired. Send a message instead.'
+        button = actions[int(choice)]
+        text = button_message(card, button)
+        turn = self._turns.get(channel.id)
+        if turn is not None and not turn.done():
+            if not self._steer(channel.id, text, channel.kind):
+                return 'Still working on your last message. Try again in a moment.'
+        else:
+            self._turns[channel.id] = asyncio.create_task(self._turn(channel, text))
+        return f'You pressed {button["label"]}.'
 
     def _is_owner(self, channel: ChatChannel, chat_id: str, sender_id: str) -> bool:
         return bool(channel.chat_id) and chat_id == channel.chat_id and sender_id == channel.peer_id
@@ -672,6 +709,13 @@ class ChannelService:
             run.record({**payload, 'session_id': str(session.id)})
             if payload.get('type') == 'generate' and payload.get('content'):
                 collected.append(str(payload['content']))
+            elif payload.get('type') == 'tool' and payload.get('status') == 'completed':
+                card = (payload.get('outcome') or {}).get('card') if isinstance(payload.get('outcome'), dict) else None
+                if isinstance(card, dict) and await self._still_linked(channel):
+                    await flush()
+                    # Buttons are the linked person's, in their own chat; in a
+                    # shared channel the options are listed to reply with.
+                    await self._send_card(channel, chat_id, card, buttons=not shared, **where)
 
         async def emit(event: dict[str, Any]) -> None:
             run.record({**event, 'session_id': str(session.id)})
@@ -796,6 +840,8 @@ class ChannelService:
             outcome = ('Approved.' if choice == '1' else 'Denied.') if ok else 'This request has already ended.'
         elif kind == 'q':
             outcome = await self._answer_question(channel, item_id, choice)
+        elif kind == 'cd':
+            outcome = await self._card_press(channel, item_id, choice)
         await transport.answer_button(press, outcome)
         if outcome:
             original = self._button_text.pop((channel.id, press.chat_id, press.message_ref), '')

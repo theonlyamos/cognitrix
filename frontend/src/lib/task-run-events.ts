@@ -1,4 +1,5 @@
 import type { TranscriptEntry, TranscriptTool } from '@/lib/transcript';
+import { parseCard } from '@/lib/cards';
 
 export type KnownTaskRunEventKind =
   | 'step_status'
@@ -155,6 +156,7 @@ export function taskRunLiveReducer(
   if (event.kind === 'tool_completed') {
     const toolId = asString(event.data.tool_call_id);
     const toolName = asString(event.data.tool_name) || 'tool';
+    const card = parseCard(event.data.card);
     let matched = false;
     const updated = entries.map((entry): LiveEntry => {
       if (entry.kind !== 'tool_calls' || entry.turnId !== turnId) return entry;
@@ -168,6 +170,7 @@ export function taskRunLiveReducer(
           ...tool,
           status: asString(event.data.status) === 'error' ? 'error' : 'done',
           result: asString(event.data.result),
+          ...(card ? { card } : {}),
         } satisfies TranscriptTool;
       });
       return { ...entry, tools };
@@ -183,6 +186,7 @@ export function taskRunLiveReducer(
           args: '',
           status: asString(event.data.status) === 'error' ? 'error' : 'done',
           result: asString(event.data.result),
+          ...(card ? { card } : {}),
         }],
         turnId,
       });

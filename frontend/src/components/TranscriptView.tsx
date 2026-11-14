@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
+import { InfoCard } from '@/components/cards/InfoCard';
 import { MemoryNotice } from '@/components/MemoryNotice';
 import { ThemeNotice } from '@/components/ThemeNotice';
 import { SignInNeededNotice, signInNeeded } from '@/components/SafetyNotices';
@@ -110,6 +111,7 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
                       {tool.artifacts?.map((artifact) => (
                         <ArtifactPreview key={artifact.id} artifact={artifact} />
                       ))}
+                      {tool.status === 'done' && tool.card && <InfoCard card={tool.card} />}
                     </div>
                   ))}
                 </div>

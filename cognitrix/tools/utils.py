@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from odbms import Model
 from PIL import Image
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from cognitrix.common.process_security import HostProcessMode
 
@@ -181,6 +181,16 @@ class ToolOutcome(BaseModel):
     entities: list[EntityRef] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     error: ToolError | None = None
+    card: dict[str, Any] | None = None
+    """A checked card (cognitrix/cards) the chat draws under the tool call."""
+
+    @model_serializer(mode='wrap')
+    def _skip_missing_card(self, handler):
+        # Most tools have no card; keep their stored outcome as it was.
+        data = handler(self)
+        if isinstance(data, dict) and data.get('card') is None:
+            data.pop('card', None)
+        return data
 
     @classmethod
     def success(cls, text: str, **kwargs: Any) -> 'ToolOutcome':

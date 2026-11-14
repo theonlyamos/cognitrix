@@ -16,6 +16,8 @@ import { parseChatEntries, toChatMessages } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
 import { ComputerPanel } from '@/components/ComputerPanel';
 import { ArtifactViewer } from '@/components/artifacts/ArtifactViewer';
+import { onCardAction, parseCard } from '@/lib/cards';
+import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { announceArtifactUpdate, onArtifactUpdate, onOpenArtifact, parseStamp, publishedFrom, type ArtifactList } from '@/lib/artifactPages';
 import { desktopName, sandboxStatus, type SandboxDesktop } from '@/lib/sandbox';
 import { ChatSidebar, loadSidebarOpen, saveSidebarOpen, type SidebarActivity, type SidebarWaiting } from '@/components/ChatSidebar';
@@ -118,6 +120,8 @@ interface Skill {
   argument_hint?: string;
   tags?: string[];
 }
+
+const humanizeToolName = (name: string) => name.replace(/_/g, ' ');
 
 interface ApprovalRequest {
   request_id: string;
@@ -983,7 +987,10 @@ export default function Home() {
             if (event.status === 'started')
               addToolCall(event.tool_name, { id: event.tool_call_id, params: event.params });
             else {
-              resolveToolCall(event.tool_name, event.status === 'error' ? 'error' : 'done', { id: event.tool_call_id, result: event.result, artifacts: event.artifacts });
+              resolveToolCall(event.tool_name, event.status === 'error' ? 'error' : 'done', {
+                id: event.tool_call_id, result: event.result, artifacts: event.artifacts,
+                card: parseCard((event as { outcome?: { card?: unknown } }).outcome?.card) ?? undefined,
+              });
               // A page was published: show it beside the chat (wide screens),
               // and tell an open viewer there is a new version.
               const published = event.status === 'error' ? null : publishedFrom(event.tool_name, event.result);
@@ -1155,16 +1162,16 @@ export default function Home() {
 
   // Steering: a message typed while the agent works goes into its current
   // turn and is read after the step it is on.
-  const steer = useCallback(async (msg: string) => {
+  const steer = useCallback(async (msg: string, opts: { keepComposer?: boolean } = {}): Promise<boolean> => {
     const sessionId = activeRef.current;
-    setInput('');
+    if (!opts.keepComposer) setInput('');
     setSteerError(null);
     if (!sessionId) {
       // A brand-new chat has no id until its first reply arrives. Hold the
       // message here and send it as soon as the id is known.
       const held = { id: `${HELD_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, content: msg };
       setWaitingMsgs((prev) => [...prev, held]);
-      return;
+      return true;
     }
     try {
       const res = await api.post('/agents/chat', {
@@ -1185,14 +1192,16 @@ export default function Home() {
         setStreaming(false);
         setIsStreaming(true);
       }
+      return true;
     } catch (error) {
-      setInput((current) => current || msg);
+      if (!opts.keepComposer) setInput((current) => current || msg);
       setSteerError(errorMessage(error, 'Could not send that while the agent is working. Try again when it finishes.'));
+      return false;
     }
   }, [addMessage, agentId, setIsStreaming, streamId]);
 
   const send = useCallback(
-    async (text: string, executionMode: ExecutionMode = 'chat', replace: Rework | null = rework, opts: { keepComposer?: boolean } = {}) => {
+    async (text: string, executionMode: ExecutionMode = 'chat', replace: Rework | null = rework, opts: { keepComposer?: boolean } = {}): Promise<boolean> => {
       const msg = text.trim();
       const pending = opts.keepComposer ? [] : attachmentsRef.current;
       const pendingEditSource = opts.keepComposer ? null : editSource;
@@ -1200,15 +1209,14 @@ export default function Home() {
         busy && question === null && msg && pending.length === 0 && pendingEditSource === null
         && !replace && executionMode === 'chat' && !opts.keepComposer
       ) {
-        void steer(msg);
-        return;
+        return steer(msg);
       }
-      if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return;
-      if (executionMode === 'task' && (pending.length > 0 || pendingEditSource !== null)) return;
+      if (!isConnected || uploadError || (!msg && pending.length === 0) || busy) return false;
+      if (executionMode === 'task' && (pending.length > 0 || pendingEditSource !== null)) return false;
       if (replace) {
         // Take the old message and everything after it out of the saved chat
         // before the new wording goes in.
-        if (!activeSessionId) return;
+        if (!activeSessionId) return false;
         try {
           await api.post(`/sessions/${encodeURIComponent(activeSessionId)}/rewind`, {
             turn: replace.turn,
@@ -1220,7 +1228,7 @@ export default function Home() {
           setReworkError(status === 409
             ? errorMessage(error, 'This chat is still working. Stop it first.')
             : 'That message could not be replaced. Reload the chat and try again.');
-          return;
+          return false;
         }
         if (replace.keep) {
           // The message and its uploads stay; only its wording may change.
@@ -1292,6 +1300,7 @@ export default function Home() {
           await api.post('/agents/chat', payload);
         }
         window.setTimeout(() => void refreshRuns(), 600);
+        return true;
       } catch {
         if (!opts.keepComposer) {
           setInput(text);
@@ -1300,10 +1309,20 @@ export default function Home() {
         }
         addMessage('assistant', 'Unable to reach the agent. Check the connection and try again.');
         finishTurn();
+        return false;
       }
     },
     [busy, question, steer, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
   );
+
+  // A button on an agent's card was pressed: tell the agent, as a message.
+  // While it is working the press is read between its steps; whatever the
+  // person was typing stays in the box.
+  useEffect(() => onCardAction((text) => {
+    if (!isConnected) return false;
+    if (busy) return steer(text, { keepComposer: true });
+    return send(text, 'chat', null, { keepComposer: true });
+  }), [busy, isConnected, send, steer]);
 
   // A draft handed over with "send it" (Create app): send once the chat is up.
   const [autoSendOnce] = useState(takeChatAutoSend);
@@ -2035,32 +2054,39 @@ export default function Home() {
           )}
 
           {approvals.map((a) => (
-            <div key={a.request_id} role="alert" className="animate-rise mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px] rounded-r-lg border-l-2 border-danger bg-danger/5 px-3 py-3 font-mono text-[12px]">
-              <div className="flex items-center gap-2">
-                <span className="text-danger-ink">⚠ approval required</span>
-                <span className="rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-fg-dim">{a.risk_level} risk</span>
-              </div>
-              <div className="mt-2 text-fg">
-                run <span className="text-accent-ink">{a.tool_name}</span>
-                {a.details && <span className="text-fg-dim"> — {a.details}</span>}
-              </div>
-              {a.params && Object.keys(a.params).length > 0 && (
-                <pre className="mt-2 max-h-32 overflow-auto rounded border border-line bg-panel-2 p-2 text-[11px] text-fg-dim">{JSON.stringify(a.params, null, 2)}</pre>
-              )}
-              <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                <button onClick={() => respondApproval(a.request_id, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent-ink md:min-h-0">approve</button>
-                {!a.always_ask && <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">approve for session</button>}
-                {a.full_shell && (
-                  <button onClick={() => respondApproval(a.request_id, true, true, true)} title="Run every shell command in this chat without asking, until the app restarts" className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">allow all commands in this chat</button>
-                )}
-                {a.app && (
+            <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
+              <PanelCard
+                tone="danger"
+                tag={<>⚠ approval</>}
+                title={<>Run <span className="text-accent-ink">{humanizeToolName(a.tool_name)}</span>?</>}
+                subtitle={a.details || undefined}
+                fields={[
+                  { label: 'Tool', value: humanizeToolName(a.tool_name) },
+                  { label: 'Risk', value: <span className={a.risk_level === 'high' || a.risk_level === 'critical' ? 'text-danger-ink' : undefined}>{a.risk_level}</span> },
+                  ...(a.app ? [{ label: 'App', value: a.app.label }] : []),
+                ]}
+                footer={(
                   <>
-                    <button onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={`Let agents click and type in ${a.app.label} in the background for the rest of this chat`} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">allow {a.app.label} in this chat</button>
-                    <button onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={`Never ask again before agents click and type in ${a.app.label} in the background. Change it in Settings, Agent access.`} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">always allow {a.app.label}</button>
+                    <PanelButton kind="primary" onClick={() => respondApproval(a.request_id, true)}>approve</PanelButton>
+                    {!a.always_ask && <PanelButton onClick={() => respondApproval(a.request_id, true, true)}>approve for session</PanelButton>}
+                    {a.full_shell && (
+                      <PanelButton onClick={() => respondApproval(a.request_id, true, true, true)} title="Run every shell command in this chat without asking, until the app restarts">allow all commands in this chat</PanelButton>
+                    )}
+                    {a.app && (
+                      <>
+                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={`Let agents click and type in ${a.app.label} in the background for the rest of this chat`}>allow {a.app.label} in this chat</PanelButton>
+                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={`Never ask again before agents click and type in ${a.app.label} in the background. Change it in Settings, Agent access.`}>always allow {a.app.label}</PanelButton>
+                      </>
+                    )}
+                    <span className="grow" />
+                    <PanelButton kind="danger" onClick={() => respondApproval(a.request_id, false)}>deny</PanelButton>
                   </>
                 )}
-                <button onClick={() => respondApproval(a.request_id, false)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:min-h-0">deny</button>
-              </div>
+              >
+                {a.params && Object.keys(a.params).length > 0 ? (
+                  <pre className="max-h-40 overflow-auto rounded border border-line bg-panel-2 p-2 font-mono text-[11px] text-fg-dim">{JSON.stringify(a.params, null, 2)}</pre>
+                ) : undefined}
+              </PanelCard>
             </div>
           ))}
         </div>

@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useState } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { ArtifactCard } from '@/components/artifacts/ArtifactCard';
+import { InfoCard, InfoCardPending } from '@/components/cards/InfoCard';
 import { AppCard } from '@/components/hosted-apps/AppCard';
 import { MemoryNotice } from '@/components/MemoryNotice';
 import { ThemeNotice } from '@/components/ThemeNotice';
@@ -8,12 +9,14 @@ import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import {
   BlockedEndpointNotice, RefusedNotice, SignInNeededNotice, blockedEndpoint, isRefusal, signInNeeded,
 } from '@/components/SafetyNotices';
+import { parsePress } from '@/lib/cards';
 import { speakText, stopSpeaking, useSpeechState } from '@/lib/speech';
 import { cn } from '@/lib/utils';
 
 const MarkdownMessage = lazy(() => import('@/components/MarkdownMessage'));
 
 const humanizeTool = (name: string) => name.replace(/_/g, ' ');
+const isShowCard = (name: string) => name.toLowerCase().replace(/_/g, ' ').trim() === 'show card';
 
 const prettyJson = (value: string) => {
   try {
@@ -141,6 +144,8 @@ export const ChatMessageRow = memo(function ChatMessageRow({
               {tool.status === 'done' && <MemoryNotice toolName={tool.name} result={tool.result} />}
               {tool.status === 'done' && <ThemeNotice toolName={tool.name} result={tool.result} />}
               {tool.status === 'done' && <ArtifactCard toolName={tool.name} result={tool.result} />}
+              {tool.status === 'done' && tool.card && <InfoCard card={tool.card} />}
+              {tool.status === 'running' && isShowCard(tool.name) && <InfoCardPending />}
               {tool.status === 'done' && <AppCard toolName={tool.name} result={tool.result} />}
               {tool.artifacts?.map((artifact) => (
                 <ArtifactPreview
@@ -160,6 +165,20 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   if (message.role === 'assistant' && !message.content.trim() && !(isLast && streaming)) return null;
 
   const isUser = message.role === 'user';
+  // A card button press: a small line, not a full message.
+  const press = isUser ? parsePress(message.content) : null;
+  if (press) {
+    return (
+      <div className="grid grid-cols-1 gap-2 border-b border-line px-4 py-2.5 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
+        <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-accent-ink">YOU</div>
+        <div className="font-mono text-[11.5px] text-fg-dim">
+          pressed <span className="text-fg">{press.label}</span>
+          {press.card && <> on <span className="text-fg">{press.card}</span></>}
+          {message.steered && ' · read while the agent was working'}
+        </div>
+      </div>
+    );
+  }
   const blockedUrl = isUser ? null : blockedEndpoint(message.content);
   return (
     <div className={cn('group/msg mx-auto flex w-full max-w-3xl flex-col px-4 py-2.5 sm:px-6', isUser && 'items-end')}>

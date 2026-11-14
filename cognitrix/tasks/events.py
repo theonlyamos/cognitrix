@@ -181,16 +181,13 @@ def project_step_tool_calls(
 
         status = 'error' if _event_text(data.get('status')) == 'error' else 'done'
         result = _event_text(data.get('result'))
+        done: dict[str, Any] = {'status': status, 'result': result}
+        if isinstance(data.get('card'), dict):
+            done['card'] = data['card']
         if index is None:
-            calls.append({
-                'id': call_id,
-                'name': name,
-                'args': '',
-                'status': status,
-                'result': result,
-            })
+            calls.append({'id': call_id, 'name': name, 'args': '', **done})
         else:
-            calls[index] = {**calls[index], 'status': status, 'result': result}
+            calls[index] = {**calls[index], **done}
 
     return calls
 
