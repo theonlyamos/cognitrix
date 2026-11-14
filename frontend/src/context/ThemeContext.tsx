@@ -4,10 +4,21 @@ import {
   storeMode, storeSelection, storedMode, storedSelection, variablesFor,
   type AccountTheme, type ThemeMode, type ThemeSelection,
 } from '@/lib/theme/store';
-import { themeVariables, type Appearance, type ThemeFile } from '@/lib/theme/themes';
+import { parseThemeFile, themeVariables, type Appearance, type ThemeFile } from '@/lib/theme/themes';
 
 type Theme = Appearance;
 export type { ThemeMode };
+
+/** What a Set Theme result says Undo should put back. */
+export interface ThemeUndo {
+  mode?: string;
+  light?: string;
+  dark?: string;
+  /** A theme definition the change overwrote. */
+  theme?: unknown;
+  /** A theme the change added. */
+  created?: string;
+}
 
 /** A theme being edited: shown on screen in one appearance until the editor closes. */
 export interface ThemePreview { theme: ThemeFile; appearance: Appearance }
@@ -31,7 +42,7 @@ interface ThemeCtx {
   /** Take the account's copy (after sign-in, on focus, after an agent changed it). */
   refresh: () => Promise<void>;
   /** Put the colours an agent's change replaced back. */
-  restore: (previous: { mode?: string; light?: string; dark?: string }) => Promise<void>;
+  restore: (previous: ThemeUndo) => Promise<void>;
   preview: ThemePreview | null;
   setPreview: (p: ThemePreview | null) => void;
   /** Whether changes go to the account (signed in) or stay on this device. */
@@ -59,6 +70,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preview, setPreview] = useState<ThemePreview | null>(null);
   const [synced, setSynced] = useState(false);
   const syncedRef = useRef(false);
+  // The latest selection, so back-to-back changes (save, then pick light, then
+  // pick dark) each build on the one before instead of a stale render's copy.
+  const selectionRef = useRef(selection);
+  // This device's own mode before the account's mode took over, for Undo.
+  const deviceModeRef = useRef<ThemeMode>(mode);
+  const modeRef = useRef<ThemeMode>(mode);
+  const accountModeRef = useRef<'' | ThemeMode>('');
 
   // Paint: the appearance class, then that appearance's theme variables
   // (or the theme being edited, in the appearance being edited).
@@ -69,11 +87,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme, selection, preview]);
 
   const adopt = useCallback((next: ThemeSelection) => {
+    selectionRef.current = next;
     setSelection(next);
     storeSelection(next);
   }, []);
 
   const applyMode = useCallback((m: ThemeMode) => {
+    modeRef.current = m;
     storeMode(m);
     setModeState(m);
     setThemeState(resolve(m));
@@ -84,6 +104,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     syncedRef.current = true;
     setSynced(true);
     adopt({ light: account.light, dark: account.dark, themes: account.themes });
+    if (!accountModeRef.current && account.mode) deviceModeRef.current = modeRef.current;
+    accountModeRef.current = account.mode;
     if (account.mode) applyMode(account.mode);
   }, [adopt, applyMode]);
 
@@ -103,15 +125,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setMode = useCallback((m: ThemeMode) => {
     applyMode(m);
-    if (syncedRef.current) void saveSelection({ mode: m }).catch(() => undefined);
+    if (syncedRef.current) {
+      accountModeRef.current = m;
+      void saveSelection({ mode: m }).catch(() => undefined);
+    }
   }, [applyMode]);
 
   const setTheme = useCallback((t: Theme) => setMode(t), [setMode]);
   const toggle = useCallback(() => setMode(currentTheme() === 'dark' ? 'light' : 'dark'), [setMode]);
 
   const pickTheme = useCallback(async (appearance: Appearance, id: string) => {
-    const before = selection;
-    adopt({ ...selection, [appearance]: id });
+    const before = selectionRef.current;
+    adopt({ ...before, [appearance]: id });
     if (!syncedRef.current) return;
     try {
       take(await saveSelection({ [appearance]: id }));
@@ -119,16 +144,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       adopt(before);
       throw e;
     }
-  }, [selection, adopt, take]);
+  }, [adopt, take]);
 
   const saveTheme = useCallback(async (file: ThemeFile) => {
     if (syncedRef.current) {
       take(await saveThemeRemote(file));
       return;
     }
-    const themes = [...selection.themes.filter((t) => t.id !== file.id), file];
-    adopt({ ...selection, themes });
-  }, [selection, adopt, take]);
+    const current = selectionRef.current;
+    adopt({ ...current, themes: [...current.themes.filter((t) => t.id !== file.id), file] });
+  }, [adopt, take]);
 
   const deleteTheme = useCallback(async (id: string) => {
     if (syncedRef.current) {
@@ -136,13 +161,26 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       return;
     }
     const fallback = (picked: string) => (picked === id ? 'signal' : picked);
-    adopt({ light: fallback(selection.light), dark: fallback(selection.dark), themes: selection.themes.filter((t) => t.id !== id) });
-  }, [selection, adopt, take]);
+    const current = selectionRef.current;
+    adopt({ light: fallback(current.light), dark: fallback(current.dark), themes: current.themes.filter((t) => t.id !== id) });
+  }, [adopt, take]);
 
-  const restore = useCallback(async (previous: { mode?: string; light?: string; dark?: string }) => {
-    const mode = previous.mode === 'light' || previous.mode === 'dark' || previous.mode === 'system' ? previous.mode : undefined;
-    take(await saveSelection({ light: previous.light, dark: previous.dark, ...(mode ? { mode } : {}) }));
-  }, [take]);
+  const restore = useCallback(async (previous: ThemeUndo) => {
+    // Put back a theme definition the change overwrote, or remove one it added.
+    if (previous.theme) {
+      try { take(await saveThemeRemote(parseThemeFile(previous.theme))); } catch { /* keep going: picks still restore */ }
+    }
+    const mode = previous.mode === 'light' || previous.mode === 'dark' || previous.mode === 'system' ? previous.mode
+      : previous.mode === '' ? '' : undefined;
+    const account = await saveSelection({ light: previous.light, dark: previous.dark, ...(mode !== undefined ? { mode } : {}) });
+    if (previous.created && previous.created !== previous.light && previous.created !== previous.dark) {
+      take(await removeTheme(previous.created));
+    } else {
+      take(account);
+    }
+    // The account had no mode of its own: give this device back the mode it had.
+    if (mode === '') applyMode(deviceModeRef.current);
+  }, [take, applyMode]);
 
   // Following the system: switch when the OS does.
   useEffect(() => {
@@ -156,9 +194,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Another tab on this device changed the theme.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key === null || e.key === 'cognitrix:theme:v1') setSelection(storedSelection());
+      if (e.key === null || e.key === 'cognitrix:theme:v1') {
+        selectionRef.current = storedSelection();
+        setSelection(selectionRef.current);
+      }
       if (e.key === null || e.key === 'darkMode') {
         const m = storedMode();
+        modeRef.current = m;
         setModeState(m);
         setThemeState(resolve(m));
       }

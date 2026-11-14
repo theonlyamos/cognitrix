@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useTheme } from '@/context/ThemeContext';
+import { useTheme, type ThemeUndo } from '@/context/ThemeContext';
 import { errorMessage } from '@/lib/api';
 
 export interface ThemeChange {
   name: string;
-  previous: { mode?: string; light?: string; dark?: string };
+  previous: ThemeUndo;
 }
 
 /** A Set Theme tool result: "Theme changed: Nord (light: …). Previous: {...}". */

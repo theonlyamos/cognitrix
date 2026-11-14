@@ -45,8 +45,15 @@ def _describe(state: dict) -> str:
             f'mode: {mode}')
 
 
-def _changed(name: str, before: dict, after: dict) -> ToolOutcome:
-    previous = {'mode': before['mode'], 'light': before['light'], 'dark': before['dark']}
+def _changed(name: str, before: dict, after: dict, *, replaced: dict | None = None,
+             created: str | None = None) -> ToolOutcome:
+    """The result line the chat reads (ThemeNotice): what Undo needs is after "Previous:".
+    ``theme`` is a definition this call overwrote; ``created`` a theme it added."""
+    previous: dict = {'mode': before['mode'], 'light': before['light'], 'dark': before['dark']}
+    if replaced:
+        previous['theme'] = replaced
+    if created:
+        previous['created'] = created
     return ToolOutcome.success(
         f'Theme changed: {name} ({_describe(after)}). Previous: {json.dumps(previous)}')
 
@@ -128,6 +135,7 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
             if existing in themes.BUILT_IN_THEMES:
                 existing = None
                 raw['name'] = f'{label} (custom)'
+            replaced = next((t for t in custom if t['id'] == existing), None) if existing else None
             saved, _ = await themes.save_theme(user_id, raw, theme_id=existing)
             modes = tuple(m for m in ('light', 'dark') if saved.get(m))
             if mode and mode not in themes.MODES:
@@ -139,7 +147,8 @@ async def set_theme(action: str, theme: str = '', mode: str = '', name: str = ''
                 light=saved['id'] if 'light' in modes else None,
                 dark=saved['id'] if 'dark' in modes else None,
             )
-            return _changed(saved['name'], before, after)
+            return _changed(saved['name'], before, after, replaced=replaced,
+                            created=None if replaced else saved['id'])
     except themes.ThemeError as exc:
         return ToolOutcome.failure('bad_theme', str(exc))
     return ToolOutcome.failure('bad_action', 'action must be "list", "apply", "mode" or "create".')

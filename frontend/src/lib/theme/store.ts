@@ -133,7 +133,7 @@ export async function fetchAccountTheme(): Promise<AccountTheme> {
   return fromAccount((await api.get<AccountTheme>('/theme')).data);
 }
 
-export async function saveSelection(change: { mode?: ThemeMode; light?: string; dark?: string }): Promise<AccountTheme> {
+export async function saveSelection(change: { mode?: '' | ThemeMode; light?: string; dark?: string }): Promise<AccountTheme> {
   return fromAccount((await api.put<AccountTheme>('/theme', change)).data);
 }
 

@@ -168,12 +168,15 @@ async def test_set_theme_tool_applies_lists_and_creates(db):
         made = _text(await _tool(action='create', name='Forest', dark_background='#0f1a14',
                                  dark_text='#e0f0e6', dark_accent='#5ad17a'))
         assert made.startswith('Theme changed: Forest')
+        assert json.loads(made.split('Previous: ', 1)[1])['created'] == 'forest'
         state = themes.project(await themes.get_settings(str(amy.id)))
         assert state['dark'] == 'forest' and state['light'] == 'tokyo-night' and state['mode'] == 'dark'
 
         again = _text(await _tool(action='create', name='Forest', dark_background='#0f1a14',
                                   dark_text='#e0f0e6', dark_accent='#ff0000'))
         assert again.startswith('Theme changed: Forest')
+        undo = json.loads(again.split('Previous: ', 1)[1])
+        assert undo['theme']['dark']['accent'] == '#5ad17a' and 'created' not in undo
         state = themes.project(await themes.get_settings(str(amy.id)))
         assert len(state['themes']) == 1 and state['themes'][0]['dark']['accent'] == '#ff0000'
 
