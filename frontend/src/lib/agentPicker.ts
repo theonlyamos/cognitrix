@@ -5,6 +5,7 @@ export interface PickerAgent {
   name: string;
   description?: string | null;
   llm?: { provider?: string | null; model?: string | null } | null;
+  avatar?: { emoji?: string; hue?: number | null } | null;
 }
 
 export interface PickerTeam {

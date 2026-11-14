@@ -42,6 +42,8 @@ interface ArtifactViewerProps {
   /** 'panel': beside a chat (Close, Expand, open full page). 'page': the /artifacts/:id page (Back). */
   variant: 'panel' | 'page';
   onClose?: () => void;
+  /** Panel beside a chat with its side panel open: go back to that panel. */
+  onBack?: () => void;
   expanded?: boolean;
   onToggleExpand?: () => void;
   /** Open the comments on this thread (from an Inbox alert link). */
@@ -50,7 +52,7 @@ interface ArtifactViewerProps {
 }
 
 /** One artifact: the page, its versions, source, comments and sharing. */
-export function ArtifactViewer({ pageId, variant, onClose, expanded, onToggleExpand, initialThread, onGone }: ArtifactViewerProps) {
+export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onToggleExpand, initialThread, onGone }: ArtifactViewerProps) {
   const navigate = useNavigate();
   const [page, setPage] = useState<PageDetail | null>(null);
   const [error, setError] = useState('');
@@ -225,6 +227,11 @@ export function ArtifactViewer({ pageId, variant, onClose, expanded, onToggleExp
       <header className={cn('flex flex-none items-center gap-1.5 border-b border-line py-1.5 pr-2 md:px-3', variant === 'page' ? 'app-page-header min-h-14 pl-16 md:min-h-12' : 'min-h-12 pl-2')}>
         {variant === 'page' && (
           <Link to="/artifacts" aria-label="All artifacts" className={iconButton}><ArrowLeft size={16} /></Link>
+        )}
+        {variant === 'panel' && onBack && !expanded && (
+          <button type="button" onClick={onBack} className="inline-flex h-9 flex-none items-center gap-1 rounded-lg px-2 font-mono text-[11.5px] text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8">
+            <span aria-hidden>‹</span> This chat
+          </button>
         )}
         <LayoutPanelTop size={15} className="ml-1 hidden flex-none text-fg-dim sm:block" aria-hidden />
         <h2 className="min-w-0 flex-shrink truncate text-[14px] font-semibold" title={page.title}>{page.title}</h2>

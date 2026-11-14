@@ -110,6 +110,10 @@ class Agent(Model):
     """One line about what the agent is for. Shown on the agent list and to
     teammates deciding who to hand work to."""
 
+    avatar: dict[str, Any] = Field(default_factory=dict)
+    """How the agent's thumbnail looks: emoji (shown instead of its first
+    letter) and hue (0-359, its colour). Empty means a colour made from the name."""
+
     reviewer: dict[str, Any] = Field(default_factory=dict)
     """Per-agent override for the second-model check
     (cognitrix/safety/action_reviewer.py): mode ('' = app setting, off,
@@ -154,7 +158,7 @@ class Agent(Model):
     def _sub_agents_default(cls, value):
         return True if value is None else value
 
-    @field_validator('reviewer', 'coding_agents', 'automation', 'memory', 'shared_with', mode='before')
+    @field_validator('reviewer', 'avatar', 'coding_agents', 'automation', 'memory', 'shared_with', mode='before')
     @classmethod
     def _dict_default(cls, value):
         if value in (None, ''):

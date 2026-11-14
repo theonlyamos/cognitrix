@@ -412,7 +412,7 @@ _AGENT_MIGRATION_COLUMNS = (
     ('folders', 'TEXT'), ('can_request_folders', 'BOOLEAN'),
     ('permission_level', 'TEXT'),
     ('tool_permissions', 'TEXT'),
-    ('description', 'TEXT'), ('reviewer', 'TEXT'), ('coding_agents', 'TEXT'),
+    ('description', 'TEXT'), ('avatar', 'TEXT'), ('reviewer', 'TEXT'), ('coding_agents', 'TEXT'),
     ('credentials', 'TEXT'), ('can_create_sub_agents', 'BOOLEAN'),
     ('sub_agent_model', 'TEXT'), ('automation', 'TEXT'),
     ('memory', 'TEXT'), ('knowledge', 'TEXT'), ('shared_with', 'TEXT'),

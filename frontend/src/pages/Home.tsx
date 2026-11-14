@@ -18,8 +18,10 @@ import { parseChatEntries, toChatMessages, fmtRelative } from '@/lib/transcript'
 import { Button } from '@/lib/components/ui/button';
 import { ComputerPanel } from '@/components/ComputerPanel';
 import { ArtifactViewer } from '@/components/artifacts/ArtifactViewer';
-import { announceArtifactUpdate, onOpenArtifact, publishedFrom } from '@/lib/artifactPages';
-import { sandboxStatus } from '@/lib/sandbox';
+import { announceArtifactUpdate, onArtifactUpdate, onOpenArtifact, parseStamp, publishedFrom, type ArtifactList } from '@/lib/artifactPages';
+import { desktopName, sandboxStatus, type SandboxDesktop } from '@/lib/sandbox';
+import { ChatSidebar, loadSidebarOpen, saveSidebarOpen, type SidebarActivity, type SidebarWaiting } from '@/components/ChatSidebar';
+import { ChatRail, type RailChat, type RailGroup } from '@/components/ChatRail';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { insertTranscript } from '@/lib/voice';
@@ -29,11 +31,11 @@ import { getChatFolders, setChatFolders, type WorkFolder } from '@/lib/folders';
 import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
-import type { PickTarget, PickerAgent, PickerTeam } from '@/lib/agentPicker';
+import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 import { takeChatDraft } from '@/lib/chatDraft';
 import {
   ARCHIVED_KEY, GROUP_PREVIEW, PANEL_DEFAULT, PANEL_MAX, PANEL_MIN, PINNED_KEY,
-  clampPanelWidth, groupChats, groupKey, loadClosedSections, loadPanelWidth, saveClosedSections, savePanelWidth,
+  clampPanelWidth, groupChats, groupKey, MINI_SNAP, RAIL_WIDTH, loadClosedSections, loadListMini, loadPanelWidth, saveClosedSections, saveListMini, savePanelWidth,
 } from '@/lib/chatGroups';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
@@ -98,6 +100,8 @@ interface ChatSummary extends ConvoSummary {
 }
 
 const sessionKey = (agentId: string) => `chatSession:${agentId}`;
+/** A screen wide enough for panels beside the chat (Tailwind's md). */
+const isWideScreen = () => typeof window === 'undefined' || !window.matchMedia || window.matchMedia('(min-width: 768px)').matches;
 const STOP_RECONCILE_DELAY_MS = 4_000;
 
 // ── Attachments ──
@@ -352,6 +356,12 @@ export default function Home() {
   const showArtifact = useCallback((id: string) => {
     setComputerOpen(false);
     setArtifactOpen(id);
+    setNewPageIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }, []);
   const closeArtifact = useCallback(() => {
     setArtifactOpen(null);
@@ -364,10 +374,21 @@ export default function Home() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [artifactExpanded]);
+  const [desktops, setDesktops] = useState<SandboxDesktop[]>([]);
   useEffect(() => {
     let alive = true;
-    sandboxStatus().then((s) => alive && setSandboxOn(s.enabled)).catch(() => alive && setSandboxOn(false));
+    sandboxStatus()
+      .then((s) => { if (alive) { setSandboxOn(s.enabled); setDesktops(s.desktops || []); } })
+      .catch(() => alive && setSandboxOn(false));
     return () => { alive = false; };
+  }, []);
+  // The chat's side panel (computer preview, artifacts, files...), and the
+  // chat list shrunk to a rail of agent thumbnails.
+  const [sidebarOpen, setSidebarOpen] = useState(() => loadSidebarOpen() === true && isWideScreen());
+  const [listMini, setListMini] = useState(loadListMini);
+  const setSidebar = useCallback((open: boolean) => {
+    setSidebarOpen(open);
+    saveSidebarOpen(open);
   }, []);
   const [agentId, setAgentId] = useState<string>(() => localStorage.getItem('selectedAgentId') || '');
 
@@ -523,6 +544,78 @@ export default function Home() {
 
   const busy = waiting || streaming || question !== null;
   const busyRef = useRef(busy);
+
+  // What this chat made (pages, documents), for its side panel.
+  const [chatItems, setChatItems] = useState<ArtifactList | null>(null);
+  const [newPageIds, setNewPageIds] = useState<Set<string>>(() => new Set());
+  const loadChatItems = useCallback(async (sessionId: string | null) => {
+    if (!sessionId) {
+      setChatItems(null);
+      return;
+    }
+    try {
+      const { data } = await api.get<ArtifactList>('/artifact-pages', { params: { session_id: sessionId } });
+      if (activeRef.current !== sessionId || !data) return;
+      setChatItems({
+        pages: Array.isArray(data.pages) ? data.pages : [],
+        images: Array.isArray(data.images) ? data.images : [],
+        files: Array.isArray(data.files) ? data.files : [],
+        public_links: !!data.public_links,
+      });
+    } catch {
+      // The panel keeps what it had; the chat itself is unaffected.
+    }
+  }, []);
+  useEffect(() => {
+    setChatItems(null);
+    setNewPageIds(new Set());
+    void loadChatItems(activeSessionId);
+  }, [activeSessionId, loadChatItems]);
+  useEffect(() => {
+    if (!busy) void loadChatItems(activeRef.current);
+  }, [busy, loadChatItems]);
+  useEffect(() => onArtifactUpdate((id) => {
+    setNewPageIds((prev) => new Set(prev).add(id));
+    void loadChatItems(activeRef.current);
+  }), [loadChatItems]);
+
+  // While the panel is open or the agent is working, keep an eye on whether
+  // its desktop is running, so the live preview appears and goes by itself.
+  useEffect(() => {
+    if (!sandboxOn || !(sidebarOpen || busy)) return;
+    let alive = true;
+    const check = () => {
+      if (document.hidden) return;
+      sandboxStatus().then((s) => alive && setDesktops(s.desktops || [])).catch(() => {});
+    };
+    check();
+    const timer = window.setInterval(check, 5000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [sandboxOn, sidebarOpen, busy]);
+  const agentDesktop = useMemo(
+    () => (agentId ? desktops.find((d) => d.running && d.name === desktopName(agentId)) ?? null : null),
+    [desktops, agentId],
+  );
+
+  // The first time a chat publishes a page or its agent starts the computer,
+  // the panel opens by itself (wide screens only). After that it stays how
+  // the person left it.
+  const hasChatPages = (chatItems?.pages.length ?? 0) > 0;
+  useEffect(() => {
+    if (loadSidebarOpen() !== null || !isWideScreen()) return;
+    if (hasChatPages || agentDesktop) setSidebar(true);
+  }, [hasChatPages, agentDesktop, setSidebar]);
+
+  // Ctrl+. (Cmd+. on a Mac) opens and closes the panel.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '.' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      setSidebar(!sidebarOpen);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sidebarOpen, setSidebar]);
   // Spoken replies: when a turn ends and "read replies aloud" is on, read the
   // answer. Sending a new message stops whatever was being read.
   const wasBusyRef = useRef(false);
@@ -1412,6 +1505,7 @@ export default function Home() {
         type="button"
         aria-expanded={open}
         aria-label={`${label.toLowerCase()} chats (${count})`}
+        data-chat-section={key}
         onClick={() => toggleSection(key)}
         className="flex min-h-11 w-full items-center gap-2 border-b border-line bg-panel pl-2.5 pr-4 text-left transition-colors hover:bg-panel-2 md:min-h-9"
       >
@@ -1484,7 +1578,7 @@ export default function Home() {
           </div>
         )}
       >
-        {!inSection && <span className="mt-0.5"><AgentBadge name={who || '?'} team={isTeam} size="sm" /></span>}
+        {!inSection && <span className="mt-0.5"><AgentBadge name={who || '?'} team={isTeam} size="sm" avatar={isTeam ? undefined : agentById.get(c.agent_id || '')?.avatar} /></span>}
         <div className="min-w-0 flex-1">
           {/* A new conversation has no saved messages (and so no title) until its first reply is done. */}
           <div className="truncate text-[13px]">
@@ -1509,6 +1603,51 @@ export default function Home() {
     );
   };
 
+  const minimizeList = (mini: boolean) => {
+    setListMini(mini);
+    saveListMini(mini);
+    if (mini) setChatQuery('');
+  };
+  // Back from the rail to the full list, with one section open and in view.
+  const expandList = (sectionKey?: string) => {
+    minimizeList(false);
+    if (!sectionKey) return;
+    setClosedSections((prev) => {
+      if (!prev.has(sectionKey)) return prev;
+      const next = new Set(prev);
+      next.delete(sectionKey);
+      saveClosedSections(next);
+      return next;
+    });
+    window.setTimeout(() => {
+      document.querySelector(`[data-chat-section="${CSS.escape(sectionKey)}"]`)?.scrollIntoView({ block: 'start' });
+    }, 0);
+  };
+  const railChat = (c: ChatSummary): RailChat => ({
+    id: c.id,
+    title: (c.message_count === 0 && chatRuns.find((run) => run.session_id === c.id)?.prompt) || c.title,
+    when: fmtRelative(c.updated_at),
+    running: chatIsRunning(c),
+    selected: !picking && c.kind !== 'team' && c.id === activeSessionId,
+  });
+  const railGroups: RailGroup[] = grouped.groups.map((group) => {
+    const isTeam = group.kind === 'team';
+    const agent = isTeam ? undefined : agentById.get(group.id);
+    return {
+      key: group.key,
+      kind: group.kind,
+      id: group.id,
+      name: (isTeam ? teamById.get(group.id)?.name : agent?.name) || '?',
+      avatar: agent?.avatar,
+      chats: group.chats.map(railChat),
+      current: !picking && !isTeam && group.id === agentId,
+    };
+  });
+  const openChatById = (id: string) => {
+    const chat = allChats.find((c) => c.id === id);
+    if (chat) openChat(chat);
+  };
+
   // Drag the panel's edge (or use the arrow keys on it) to resize; double
   // click puts it back. The width is remembered per browser.
   const resizeFrom = useRef<{ x: number; width: number } | null>(null);
@@ -1527,9 +1666,18 @@ export default function Home() {
         e.currentTarget.setPointerCapture?.(e.pointerId);
       }}
       onPointerMove={(e) => {
-        if (resizeFrom.current) setWidth(resizeFrom.current.width + e.clientX - resizeFrom.current.x);
+        if (!resizeFrom.current) return;
+        const width = resizeFrom.current.width + e.clientX - resizeFrom.current.x;
+        // Dragged well past the smallest width: minimize to thumbnails.
+        if (width < PANEL_MIN - MINI_SNAP) {
+          resizeFrom.current = null;
+          minimizeList(true);
+          return;
+        }
+        setWidth(width);
       }}
       onPointerUp={() => {
+        if (!resizeFrom.current) return;
         resizeFrom.current = null;
         savePanelWidth(panelWidth);
       }}
@@ -1546,6 +1694,49 @@ export default function Home() {
     />
   );
 
+  // ── The chat's side panel ──
+  const sidebarShown = sidebarOpen || !!artifactOpen || computerOpen;
+  const closeRightSide = () => {
+    closeArtifact();
+    setComputerOpen(false);
+    setSidebar(false);
+  };
+  const sidebarWaiting: SidebarWaiting[] = [
+    ...approvals.map((a): SidebarWaiting => ({ id: a.request_id, kind: 'approval', title: `Run ${a.tool_name}?`, detail: a.details || undefined })),
+    ...(question ? [{ id: question.request_id, kind: 'question' as const, title: question.prompt, detail: question.details || undefined }] : []),
+  ];
+  // Images in this chat (sent or made), newest first.
+  const chatImages = useMemo(() => {
+    const seen = new Set<string>();
+    const out: ToolArtifact[] = [];
+    for (let i = messages.length - 1; i >= 0 && out.length < 12; i -= 1) {
+      const message = messages[i];
+      for (const artifact of [...(message.artifacts || []), ...(message.tools || []).flatMap((t) => t.artifacts || [])]) {
+        if (!artifact.mime_type.startsWith('image/') || seen.has(artifact.id)) continue;
+        seen.add(artifact.id);
+        out.push(artifact);
+      }
+    }
+    return out;
+  }, [messages]);
+  // What the agent did since the last thing the person said.
+  const chatActivity = useMemo(() => {
+    let from = messages.length;
+    while (from > 0 && messages[from - 1].role !== 'user') from -= 1;
+    const steps: SidebarActivity[] = [];
+    for (const message of messages.slice(from)) {
+      (message.tools || []).forEach((tool, i) => steps.push({ key: `${message.id}:${tool.id || i}`, name: tool.name.replace(/_/g, ' '), status: tool.status }));
+    }
+    return steps.slice(-12);
+  }, [messages]);
+  const pageCount = chatItems?.pages.length ?? 0;
+  const sidebarSummary = [
+    agentDesktop ? 'Computer' : '',
+    pageCount ? `${pageCount} ${pageCount === 1 ? 'artifact' : 'artifacts'}` : '',
+  ].filter(Boolean).join(' · ');
+  const activeChat = allChats.find((c) => c.id === activeSessionId);
+  const chatStarted = parseStamp(activeChat?.datetime || activeChat?.updated_at)?.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+
   const conversationPanel = (
     <>
       <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
@@ -1554,6 +1745,15 @@ export default function Home() {
           <Button variant="outline" size="sm" onClick={startPicking}>
             + new
           </Button>
+          <button
+            type="button"
+            onClick={() => minimizeList(true)}
+            aria-label="Minimize the chat list"
+            title="Minimize to agent thumbnails"
+            className="hidden h-8 w-8 flex-none place-items-center rounded-lg text-fg-dim hover:bg-panel-2 hover:text-fg md:grid"
+          >
+            <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5" /></svg>
+          </button>
           <Button
             variant="ghost"
             size="icon"
@@ -1599,7 +1799,7 @@ export default function Home() {
               const busyHere = allChats.some((c) => groupKey(c) === group.key && chatIsRunning(c));
               const sectionId = `chat-section-${group.key.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
               return (
-                <section key={group.key} aria-label={`${name} chats`}>
+                <section key={group.key} aria-label={`${name} chats`} data-chat-section={group.key}>
                   <div className="flex min-h-11 items-center border-b border-line bg-panel transition-colors hover:bg-panel-2 md:min-h-10">
                     <button
                       type="button"
@@ -1610,7 +1810,7 @@ export default function Home() {
                       className="flex min-h-11 min-w-0 flex-1 items-center gap-2 pl-2.5 pr-1 text-left disabled:cursor-default md:min-h-10"
                     >
                       <span aria-hidden className={cn('w-3.5 flex-none text-center text-[9px] text-fg-dim transition-transform', !open && '-rotate-90')}>▼</span>
-                      <AgentBadge name={name} team={isTeam} />
+                      <AgentBadge name={name} team={isTeam} avatar={isTeam ? undefined : agentById.get(group.id)?.avatar} />
                       <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
                         {name}
                         {isTeam && <span className="ml-1.5 rounded-[3px] border border-line px-1 align-[1px] font-mono text-[9.5px] font-normal text-fg-dim">team</span>}
@@ -1696,44 +1896,49 @@ export default function Home() {
       {agentId && (
         <aside
           className="relative hidden min-h-0 flex-none flex-col border-r border-line bg-panel md:flex"
-          style={{ width: panelWidth }}
+          style={{ width: listMini ? RAIL_WIDTH : panelWidth }}
         >
-          {conversationPanel}
-          {resizeHandle}
+          {listMini ? (
+            <ChatRail
+              groups={railGroups}
+              pinned={grouped.pinned.map(railChat)}
+              archivedCount={grouped.archived.length}
+              onExpand={expandList}
+              onNew={startPicking}
+              onNewWith={(group) => startChatWith({ kind: group.kind, id: group.id })}
+              onOpenChat={openChatById}
+            />
+          ) : (
+            <>
+              {conversationPanel}
+              {resizeHandle}
+            </>
+          )}
         </aside>
       )}
 
       {/* Chat column */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {sandboxOn && !computerOpen && !artifactOpen && (
-          <button
-            type="button"
-            onClick={() => { closeArtifact(); setComputerOpen(true); }}
-            className="absolute right-3 top-2 z-10 hidden items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 py-1 text-[12px] text-fg-dim hover:bg-panel-2 hover:text-fg md:inline-flex"
-            title="Watch the agents' computer and take over"
-          >
-            <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5" /><path d="M8 20h8M12 16v4" /></svg>
-            Computer
-          </button>
-        )}
-        {/* Top bar: phones only (menu + chat list buttons). On desktop it
-            shows only while the event stream is down, for the reconnect button. */}
-        {isConnected && <h1 className="hidden sr-only md:block">{picking || !activeSessionId ? 'New chat' : 'Chat'}</h1>}
-        <header className={cn('app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:flex-wrap md:px-6', isConnected && 'md:hidden')}>
-          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-hidden">
-            <h1 className="truncate text-[15px] font-semibold">
+        {/* Top bar: the chat's name and who it is with, the chat list button
+            (phones), reconnect while the stream is down, and the side panel. */}
+        <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:min-h-12 md:py-1.5 md:pl-5 md:pr-3">
+          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2.5 overflow-hidden">
+            <h1 className="min-w-[5rem] truncate text-[15px] font-semibold md:text-[13.5px] md:font-medium">
               {picking || !activeSessionId
                 ? 'New chat'
                 : (allChats.find((c) => c.id === activeSessionId)?.title || 'Chat')}
             </h1>
             {!picking && agentById.get(agentId) && (
-              <span className="hidden flex-none items-center gap-1.5 text-[12.5px] text-fg-dim sm:flex" aria-label={`Chatting with ${agentById.get(agentId)!.name}`}>
-                <AgentBadge name={agentById.get(agentId)!.name} selected size="sm" />
+              <span className="hidden min-w-0 shrink-[99] items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12.5px] text-fg-dim sm:flex" aria-label={`Chatting with ${agentById.get(agentId)!.name}`}>
+                <AgentBadge name={agentById.get(agentId)!.name} avatar={agentById.get(agentId)!.avatar} size="sm" />
                 <span className="text-fg">{agentById.get(agentId)!.name}</span>
+                {agentModel(agentById.get(agentId)) && (
+                  <span className="hidden truncate font-mono text-[10.5px] xl:inline">· {agentModel(agentById.get(agentId))}</span>
+                )}
               </span>
             )}
           </div>
-          <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-3">
+          <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-2">
             {agentId && (
               <Button
                 ref={mobileConversationsTriggerRef}
@@ -1749,7 +1954,7 @@ export default function Home() {
               </Button>
             )}
             {isConnected ? (
-              <span aria-label="Connection status: connected" className="flex h-11 w-11 items-center justify-center text-fg-dim md:h-8 md:w-auto md:justify-start md:gap-2" title="Connected">
+              <span aria-label="Connection status: connected" className="flex h-11 w-11 items-center justify-center text-fg-dim md:hidden" title="Connected">
                 <svg aria-hidden="true" className="h-4 w-4 text-accent md:hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l4 4L19 6" /></svg>
                 <span aria-hidden="true" className="hidden h-1.5 w-1.5 rounded-full bg-accent md:block" />
                 <span className="sr-only md:not-sr-only">connected</span>
@@ -1766,6 +1971,27 @@ export default function Home() {
                 <svg aria-hidden="true" className={cn(reconnecting && 'animate-spin')} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11a8 8 0 1 0 2 5.5" /><path d="M20 5v6h-6" /></svg>
                 <span className="sr-only md:not-sr-only">{reconnecting ? 'reconnecting…' : 'reconnect'}</span>
               </Button>
+            )}
+            {agentId && !picking && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (sidebarShown) { closeArtifact(); setComputerOpen(false); setSidebar(false); }
+                  else setSidebar(true);
+                }}
+                aria-pressed={sidebarShown}
+                aria-label="Chat sidebar"
+                title={`${sidebarShown ? 'Close' : 'Open'} the chat sidebar (Ctrl+.)`}
+                className={cn(
+                  'relative inline-flex h-11 min-w-11 flex-none items-center justify-center gap-2 rounded-lg border border-line px-2.5 text-[12.5px] text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-8 md:min-w-0',
+                  sidebarShown && 'bg-panel-2 text-fg',
+                )}
+              >
+                {agentDesktop && <span aria-hidden className="h-[7px] w-[7px] flex-none animate-pulse rounded-full bg-accent" />}
+                {sidebarWaiting.length > 0 && <span aria-hidden className="h-[7px] w-[7px] flex-none rounded-full bg-[#ffb86b]" />}
+                {sidebarSummary && !sidebarShown && <span className="hidden whitespace-nowrap xl:inline">{sidebarSummary}</span>}
+                <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
+              </button>
             )}
           </div>
         </header>
@@ -2125,7 +2351,8 @@ export default function Home() {
           <ArtifactViewer
             pageId={artifactOpen}
             variant="panel"
-            onClose={closeArtifact}
+            onClose={closeRightSide}
+            onBack={sidebarOpen ? closeArtifact : undefined}
             onGone={closeArtifact}
             expanded={artifactExpanded}
             onToggleExpand={() => setArtifactExpanded((v) => !v)}
@@ -2137,7 +2364,46 @@ export default function Home() {
           <ComputerPanel
             agents={agents.map((a) => ({ id: String(a.id), name: a.name }))}
             focusAgentId={agentId}
-            onClose={() => setComputerOpen(false)}
+            onClose={closeRightSide}
+            onBack={sidebarOpen ? () => setComputerOpen(false) : undefined}
+          />
+        </aside>
+      )}
+      {sidebarOpen && !artifactOpen && !computerOpen && agentId && !picking && (
+        <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[320px] md:flex-none md:border-l">
+          <ChatSidebar
+            onClose={() => setSidebar(false)}
+            desktop={agentDesktop?.name ?? null}
+            sandboxOn={sandboxOn}
+            desktopHeldBy={agentDesktop?.held_by}
+            onOpenComputer={() => { closeArtifact(); setComputerOpen(true); }}
+            waiting={sidebarWaiting}
+            onApprove={(id) => void respondApproval(id, true)}
+            onDeny={(id) => void respondApproval(id, false)}
+            onShowWaiting={() => {
+              if (!isWideScreen()) setSidebar(false);
+              window.setTimeout(() => transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight }), 0);
+            }}
+            pages={chatItems?.pages ?? []}
+            newPageIds={newPageIds}
+            onOpenArtifact={showArtifact}
+            images={chatImages}
+            files={chatItems?.files ?? []}
+            activity={chatActivity}
+            busy={busy}
+            folders={shownFolders}
+            onChangeFolders={changeFolders}
+            foldersDisabled={busy}
+            about={{
+              agentId,
+              agentName: agentById.get(agentId)?.name || 'Agent',
+              avatar: agentById.get(agentId)?.avatar,
+              model: agentModel(agentById.get(agentId)),
+              reasoning: reasoning || 'agent default',
+              messages: messages.filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content.trim()).length,
+              started: chatStarted,
+              incognito,
+            }}
           />
         </aside>
       )}
