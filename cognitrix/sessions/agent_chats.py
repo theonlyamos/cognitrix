@@ -77,12 +77,20 @@ def is_running(user_key: str, session_id: str) -> bool:
     return bool(run and run.running)
 
 
-async def create_chat(user_key: str, agent: Any, started_by: dict[str, Any]) -> Any:
-    """Make a new chat owned by ``user_key`` with ``agent``."""
+async def create_chat(user_key: str, agent: Any, started_by: dict[str, Any],
+                      folders: list[dict[str, Any]] | None = None) -> Any:
+    """Make a new chat owned by ``user_key`` with ``agent``.
+
+    ``folders`` are the working folders of the chat that started this one. A
+    hand-off is about the same files, and without them the new chat would only
+    have an empty scratch folder. Both chats belong to the same person.
+    """
     from cognitrix.session_ownership import claim_new
     from cognitrix.sessions.base import Session
 
     session = Session(agent_id=str(agent.id), user_id=user_key, started_by=started_by)
+    if folders:
+        session.folders = [dict(f) for f in folders if isinstance(f, dict)]
     await session.save()
     try:
         await claim_new(str(session.id), user_key, str(agent.id))

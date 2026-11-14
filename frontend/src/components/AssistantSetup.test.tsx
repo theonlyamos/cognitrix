@@ -96,3 +96,31 @@ describe('first-run assistant setup', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });
+
+describe('starter team', () => {
+  beforeEach(() => {
+    apiGet.mockReset();
+    apiPost.mockReset();
+  });
+
+  const team = [
+    { key: 'researcher', name: 'Researcher', description: 'Finds things out', missing: true },
+    { key: 'coder', name: 'Coder', description: 'Writes code', missing: true },
+  ];
+
+  it('is added by default and can be turned off', async () => {
+    apiGet.mockResolvedValue({ data: status({ starter_team: team }) });
+    apiPost.mockResolvedValue({ data: { agent: { id: 'a1' } } });
+    renderSetup();
+
+    const box = await screen.findByRole('checkbox', { name: /Add a starter team/ });
+    expect(box).toBeChecked();
+    expect(screen.getByText(/Researcher, Coder\./)).toBeInTheDocument();
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: 'Create assistant' }));
+
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/onboarding/assistant', {
+      name: 'Assistant', provider: 'anthropic', model: 'claude-sonnet-5-5', starter_team: false,
+    }));
+  });
+});

@@ -145,7 +145,7 @@ async def test_memories_are_tagged_and_retrieved_per_user(monkeypatch):
     mgr.short_term.build_prompt = short_term
     seen = []
 
-    async def prompt_block(user_id, agent, query=''):
+    async def prompt_block(user_id, agent, query='', **_kwargs):
         seen.append((user_id, query))
         return '## What you remember about the user\n- Codename is Falcon.'
 

@@ -205,6 +205,7 @@ async def test_text_only_json_chat_behavior_and_queue_metadata_are_preserved(mon
         'bypass_permissions': True,
         'reasoning_effort': '',
         'execution_mode': 'chat',
+        'timezone': '',
     }]
 
 

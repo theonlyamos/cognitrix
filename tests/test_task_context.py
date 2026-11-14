@@ -35,10 +35,12 @@ async def test_task_context_uses_only_snapshot_prompt_and_ephemeral_history():
 
     prompt = await manager.build_prompt(agent, session)
 
-    assert prompt[0] == {"role": "system", "type": "text", "content": "Saved task prompt"}
+    assert prompt[0]["role"] == "system" and prompt[0]["type"] == "text"
+    # The frozen prompt, with today's date in front of it.
+    assert prompt[0]["content"].startswith("Today is ")
+    assert prompt[0]["content"].endswith("\n\nSaved task prompt")
     assert prompt[1]["content"] == "do it"
     combined = str(prompt)
-    assert "Today is" not in combined
     assert "Available Skills" not in combined
     assert "Available Subagents" not in combined
     assert "Relevant Past Context" not in combined
@@ -71,10 +73,9 @@ async def test_task_context_respects_small_model_window_without_a_two_thousand_t
 
     prompt = await manager.build_prompt(agent, session)
 
-    assert [message["content"] for message in prompt] == [
-        "Saved task prompt",
-        "current request",
-    ]
+    assert len(prompt) == 2
+    assert prompt[0]["content"].endswith("Saved task prompt")
+    assert prompt[1]["content"] == "current request"
 
 
 def test_dependency_context_enforces_one_total_budget():
@@ -167,3 +168,21 @@ def test_ancestor_steps_handles_diamonds_and_cycles():
     }
     assert _ancestor_steps(steps[3], steps) == [0]
     assert _ancestor_steps(steps[4], steps) == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_task_context_fills_in_the_agent_name():
+    snapshot = AgentRuntimeSnapshot(
+        agent_id="agent-1",
+        name="Ada",
+        system_prompt="You are {name}, a helper.",
+        llm=LLMRuntimeSnapshot(provider="openai", model="m"),
+    )
+    llm = LLM(provider="openai", base_url="http://x", api_key="k", model="m", max_tokens=100, context_window=4000)
+    agent = Agent(name="Ada", llm=llm, system_prompt="Live prompt")
+    session = Session(chat=[{"role": "User", "type": "text", "content": "do it"}])
+
+    prompt = await TaskContextManager(snapshot).build_prompt(agent, session)
+
+    assert "You are Ada, a helper." in prompt[0]["content"]
+    assert "{name}" not in prompt[0]["content"]

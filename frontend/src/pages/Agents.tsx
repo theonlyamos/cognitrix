@@ -1,10 +1,11 @@
-import { useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { agentFromFile } from '@/lib/agentImport';
 import { useResource } from '@/hooks/useResource';
 import { Button } from '@/lib/components/ui/button';
 import { PageHeader, LoadingState, ErrorState, EmptyState, Chevron } from '@/components/list-ui';
+import type { OnboardingStatus, StarterAgent } from '@/components/AssistantSetup';
 
 interface Agent {
   id: string;
@@ -24,6 +25,37 @@ export default function Agents() {
   const navigate = useNavigate();
   const fileInput = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState('');
+  // Specialists from the starter team this person doesn't have yet.
+  const [missingStarters, setMissingStarters] = useState<StarterAgent[]>([]);
+  const [addingStarters, setAddingStarters] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<OnboardingStatus>('/onboarding')
+      .then((r) => {
+        if (!cancelled) setMissingStarters((r.data?.starter_team ?? []).filter((a) => a.missing));
+      })
+      // An older engine, or an API key session: no starter team to offer.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const addStarterTeam = async () => {
+    setImportError('');
+    setAddingStarters(true);
+    try {
+      await api.post('/onboarding/starter-team');
+      setMissingStarters([]);
+      refetch();
+    } catch (e) {
+      setImportError(errorMessage(e, 'Could not add the starter team.'));
+    } finally {
+      setAddingStarters(false);
+    }
+  };
 
   const importFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -52,6 +84,17 @@ export default function Agents() {
       </PageHeader>
       {importError && (
         <p role="alert" className="border-b border-line px-6 py-2 text-[12.5px] text-danger-ink">{importError}</p>
+      )}
+      {missingStarters.length > 0 && agents.length > 0 && (
+        <div className="flex flex-col gap-2 border-b border-line bg-panel-2/60 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="min-w-0 text-[13px] leading-relaxed text-fg-dim">
+            <span className="font-medium text-fg">Starter team.</span>{' '}
+            Add {missingStarters.map((a) => a.name).join(', ')}: specialists your assistant can hand work to.
+          </p>
+          <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={() => void addStarterTeam()} disabled={addingStarters}>
+            {addingStarters ? 'Adding…' : 'Add starter team'}
+          </Button>
+        </div>
       )}
 
       <div className="flex-1 overflow-y-auto">
