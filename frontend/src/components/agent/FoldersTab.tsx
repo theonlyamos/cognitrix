@@ -165,6 +165,14 @@ export default function FoldersTab({ draft, update }: TabProps) {
           label="Let the agent ask for other folders"
           detail="It can request a folder or write access with a reason. You approve it in the chat or the Inbox. Unattended task runs pause until someone answers."
         />
+        <div className="mt-3.5">
+          <Check
+            checked={draft.runInSandbox}
+            onChange={(runInSandbox) => update({ runInSandbox })}
+            label="Run code in the sandbox"
+            detail="New chats run the agent's shell, file changes and tests in its sandboxed computer (Settings, Computer) instead of this computer. It copies these folders in, and changes come back only when you approve them. Each chat can switch it in the + menu."
+          />
+        </div>
         <p className="mt-3.5 text-[13px] text-fg-dim">
           Chats keep their own copy of these folders, so changing them here doesn't touch chats already open.
         </p>

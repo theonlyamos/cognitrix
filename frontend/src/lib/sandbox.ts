@@ -77,3 +77,43 @@ export async function getSandboxSettings(): Promise<SandboxSettings> {
 export async function setSandboxEnabled(enabled: boolean): Promise<SandboxSettings> {
   return (await api.put<SandboxSettings>('/computer/sandbox/settings', { enabled })).data;
 }
+
+/** Run in sandbox for one chat: its shell, files and tests work in the agents' sandboxed computer. */
+export interface ChatSandbox {
+  /** The chat's own choice; null follows the agent's default. */
+  run_in_sandbox: boolean | null;
+  agent_default: boolean;
+  effective: boolean;
+  /** The sandboxed computer is switched on for this server. */
+  available: boolean;
+}
+
+export async function getChatSandbox(sessionId: string): Promise<ChatSandbox> {
+  return (await api.get<ChatSandbox>(`/computer/sandbox/chats/${encodeURIComponent(sessionId)}`)).data;
+}
+
+export async function setChatSandbox(sessionId: string, on: boolean | null): Promise<ChatSandbox> {
+  return (await api.put<ChatSandbox>(`/computer/sandbox/chats/${encodeURIComponent(sessionId)}`, { run_in_sandbox: on })).data;
+}
+
+/** A variable every command in the person's sandbox gets. Values never come back, only a masked preview. */
+export interface SandboxEnvVar {
+  name: string;
+  preview?: string;
+  /** New value to save; left out keeps the saved one. */
+  value?: string;
+}
+
+export async function getSandboxEnv(): Promise<SandboxEnvVar[]> {
+  return (await api.get<{ variables: SandboxEnvVar[] }>('/computer/sandbox/env')).data.variables;
+}
+
+export async function saveSandboxEnv(variables: SandboxEnvVar[]): Promise<SandboxEnvVar[]> {
+  const body = { variables: variables.map((v) => (v.value !== undefined ? { name: v.name, value: v.value } : { name: v.name })) };
+  return (await api.put<{ variables: SandboxEnvVar[] }>('/computer/sandbox/env', body)).data.variables;
+}
+
+/** Answer an agent's Ask For Sign-in card: the value goes straight to Saved sign-ins. */
+export async function answerSignInRequest(requestId: string, values: { value?: string; username?: string; password?: string }): Promise<void> {
+  await api.post(`/credentials/requests/${encodeURIComponent(requestId)}`, values);
+}

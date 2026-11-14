@@ -134,6 +134,21 @@ _SANDBOX_WINDOW_TOOLS = frozenset({
 })
 
 
+# What Run in sandbox moves into the container (cognitrix/common/sandbox_work.py).
+_SANDBOX_CODE_TOOLS = frozenset({
+    'bash', 'bash_output', 'kill_shell', 'write', 'edit', 'read', 'glob', 'grep', 'coding_agent',
+    'copy_into_sandbox', 'sandbox_changes', 'run_tests',
+})
+
+
+def _turn_in_sandbox() -> bool:
+    try:
+        from cognitrix.common.sandbox_work import turn_in_sandbox
+        return turn_in_sandbox()
+    except Exception:
+        return False
+
+
 def _sandboxed_computer() -> bool:
     from cognitrix.computer.sandbox.client import sandbox_mode
 
@@ -343,6 +358,20 @@ class DestructiveOpDetector:
 
         if name in _KNOWN_LOW:
             return _low()
+        if name == 'copy_back_from_sandbox':
+            # Lands the sandbox's changes on the person's computer: always theirs to approve.
+            from cognitrix.tools.sandbox_work import copy_back_details
+            return RiskAssessment(RiskLevel.HIGH, ['sandbox_copy_back', 'file_overwrite'], copy_back_details(params))
+        if name in _SANDBOX_CODE_TOOLS and _turn_in_sandbox():
+            # Run in sandbox: the agent's own container, which can't reach this machine.
+            # Handing it saved sign-ins is the person's call.
+            names = params.get('credentials')
+            if names:
+                shown = ', '.join(str(n) for n in (names if isinstance(names, list) else [names]))[:200]
+                what = str(params.get('command') or '')[:200]
+                return RiskAssessment(RiskLevel.MEDIUM, ['sandbox_credentials'],
+                                      f'Gives the saved sign-in(s) {shown} to a command in the sandbox: {what}')
+            return RiskAssessment(RiskLevel.LOW, ['sandbox_code'], f"'{tool_name}' works in the agent's sandbox")
         if name in _CODING_AGENT_TOOLS:
             from cognitrix.common.coding_agents import risk as coding_agent_risk
             level, details = coding_agent_risk(params)

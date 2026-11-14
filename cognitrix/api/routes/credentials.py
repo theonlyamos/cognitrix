@@ -189,3 +189,47 @@ async def delete_credential(credential_id: str, ctx: AuthContext = Depends(jwt_o
     await Credential.delete_many({'id': row.id})
     forget_cached(owner_key(ctx.user))
     return {'deleted': True}
+
+
+class SignInAnswer(BaseModel):
+    value: str | None = None
+    username: str | None = None
+    password: str | None = None
+
+
+@credentials_api.post('/requests/{request_id}')
+async def answer_sign_in_request(request_id: str, body: SignInAnswer, ctx: AuthContext = Depends(jwt_only)):
+    """Answer an agent's Ask For Sign-in card: save what the person typed to
+    their saved sign-ins (new, or replacing the one with that name), then tell
+    the agent it was saved. The value never reaches the agent or the chat."""
+    from cognitrix.questions.broker import pending_secret, resolve_question
+
+    user_key = str(getattr(ctx.user, 'id', None) or getattr(ctx.user, 'email', 'anon'))
+    wanted = pending_secret(request_id, user_key)
+    if wanted is None:
+        raise HTTPException(status_code=404, detail='That request is no longer open.')
+    owner = owner_key(ctx.user)
+    try:
+        name = normalize_name(str(wanted.get('name') or ''))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    kind = 'basic' if wanted.get('kind') == 'basic' else 'token'
+    values = _values(kind, body.value, body.username, body.password)
+    existing = next((row for row in await load_rows(owner) if row.name == name), None)
+    if existing is not None:
+        changes: dict[str, Any] = {'secret': seal_secret(values), 'hint': hint_for(values), 'kind': kind}
+        hosts = [h for h in (wanted.get('hosts') or []) if h != 'sandbox.invalid']
+        if hosts:
+            changes['allowed_hosts'] = _hosts(list(dict.fromkeys([*existing.allowed_hosts, *hosts])))
+        await Credential.update_one({'id': existing.id}, changes)
+    else:
+        row = Credential(
+            owner_id=owner, name=name, kind=kind,
+            description=str(wanted.get('description') or '')[:500] or 'Asked for by an agent',
+            allowed_hosts=_hosts(list(wanted.get('hosts') or ['sandbox.invalid'])),
+            secret=seal_secret(values), hint=hint_for(values),
+        )
+        await row.save()
+    forget_cached(owner)
+    await resolve_question(request_id, user_key, 'answer', option_id='saved')
+    return {'saved': True, 'name': name}

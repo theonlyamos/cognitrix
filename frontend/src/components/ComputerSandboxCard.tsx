@@ -3,6 +3,7 @@ import { errorMessage } from '@/lib/api';
 import { getSandboxSettings, setSandboxEnabled, type SandboxSettings } from '@/lib/sandbox';
 import { SettingRow, StatusPill } from '@/components/settings/ui';
 import { Toggle } from '@/pages/Notifications';
+import { SandboxEnvCard } from '@/components/SandboxEnvCard';
 
 /** Settings › Agent access: give agents their own sandboxed computer. */
 export function ComputerSandboxCard() {
@@ -65,6 +66,11 @@ export function ComputerSandboxCard() {
         />
       </SettingRow>
       {error && <p role="alert" className="mt-1 text-[12px] text-danger-ink">{error}</p>}
+      {settings?.enabled && (
+        <div className="mt-3 border-t border-line pt-3">
+          <SandboxEnvCard />
+        </div>
+      )}
     </div>
   );
 }

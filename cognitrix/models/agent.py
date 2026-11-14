@@ -99,6 +99,10 @@ class Agent(Model):
     can_request_folders: bool = True
     """Whether the agent may ask (with approval) for more folders or write access."""
 
+    run_in_sandbox: bool = False
+    """New chats with this agent run code in the sandboxed computer (its shell,
+    files and tests work there); each chat can change it."""
+
     permission_level: str = 'auto'
     """How the agent asks before acting: auto (only risky actions ask), ask
     (every action asks) or allow (nothing asks). See cognitrix/safety/permissions.py."""

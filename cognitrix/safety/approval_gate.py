@@ -21,7 +21,7 @@ logger = logging.getLogger('cognitrix.log')
 
 # Tools a person must answer even with the browser's auto-approve on:
 # giving an agent a new folder or write access widens what it can touch.
-_NEVER_AUTO_APPROVED = frozenset({'request_folder'})
+_NEVER_AUTO_APPROVED = frozenset({'request_folder', 'copy_back_from_sandbox'})
 
 
 def _normal_name(name: str) -> str:

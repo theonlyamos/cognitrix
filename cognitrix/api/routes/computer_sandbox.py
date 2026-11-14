@@ -8,6 +8,10 @@
     POST /computer/sandbox/desktops/{name}/release hand back
     POST /computer/sandbox/update                  restart onto a newer image (files and logins stay)
     POST /computer/sandbox/reset                   throw the computer away (files and logins too)
+    GET  /computer/sandbox/env                     the person's sandbox environment variables (names only)
+    PUT  /computer/sandbox/env                     replace them (a value left out keeps the saved one)
+    GET  /computer/sandbox/chats/{session_id}      is Run in sandbox on for a chat
+    PUT  /computer/sandbox/chats/{session_id}      turn it on or off (null: follow the agent)
 
 Browser sessions only. The container's own ports listen on 127.0.0.1 and need
 a token the browser never sees; the screen stream goes through here so each
@@ -120,6 +124,81 @@ async def put_settings(body: SettingsBody, ctx: AuthContext = Depends(jwt_only))
         raise HTTPException(status_code=409, detail='COGNITRIX_COMPUTER_SANDBOX is set on the server, so it decides.')
     save_enabled(body.enabled)
     return await get_settings(ctx)
+
+
+class EnvVar(BaseModel):
+    name: str
+    value: str | None = None  # None keeps the saved value
+
+
+class EnvBody(BaseModel):
+    variables: list[EnvVar] = Field(default_factory=list)
+
+
+def _env_view(values: dict[str, str]) -> dict[str, Any]:
+    from cognitrix.common.sandbox_work import env_preview
+
+    return {'variables': [{'name': k, 'preview': env_preview(v)} for k, v in sorted(values.items())]}
+
+
+@sandbox_api.get('/env')
+async def get_env(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Variables every command, test run and coding agent in this person's
+    sandbox gets. Values never come back, only a masked preview."""
+    from cognitrix.common.sandbox_work import sandbox_env
+
+    return _env_view(await run_in_threadpool(sandbox_env, _owner(ctx)))
+
+
+@sandbox_api.put('/env')
+async def put_env(body: EnvBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.common.sandbox_work import save_sandbox_env
+
+    try:
+        saved = await run_in_threadpool(save_sandbox_env, _owner(ctx), [v.model_dump() for v in body.variables])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return _env_view(saved)
+
+
+class ChatSandboxBody(BaseModel):
+    run_in_sandbox: bool | None = None
+
+
+async def _chat_sandbox_view(session, ctx: AuthContext) -> dict[str, Any]:
+    from cognitrix.common.sandbox_work import sandbox_available, wants_sandbox
+
+    agent = None
+    if session.agent_id:
+        try:
+            from cognitrix.agents import Agent
+            agent = await Agent.find_one({'id': session.agent_id})
+        except Exception:
+            agent = None
+    return {'run_in_sandbox': session.run_in_sandbox, 'agent_default': bool(getattr(agent, 'run_in_sandbox', False)),
+            'effective': wants_sandbox(session.run_in_sandbox, agent), 'available': sandbox_available()}
+
+
+@sandbox_api.get('/chats/{session_id}')
+async def get_chat_sandbox(session_id: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.api.routes.sessions import _load_authorized_session
+
+    _, session = await _load_authorized_session(session_id, ctx)
+    return await _chat_sandbox_view(session, ctx)
+
+
+@sandbox_api.put('/chats/{session_id}')
+async def put_chat_sandbox(session_id: str, body: ChatSandboxBody,
+                           ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Run this chat's shell, files and tests in the sandbox (from its next message)."""
+    from cognitrix.api.routes.sessions import _load_authorized_session
+
+    _, session = await _load_authorized_session(session_id, ctx)
+    if session.run_id:
+        raise HTTPException(status_code=400, detail="A task run's setting can't be changed")
+    session.run_in_sandbox = body.run_in_sandbox
+    await session.save()
+    return await _chat_sandbox_view(session, ctx)
 
 
 @sandbox_api.post('/desktops/{name}/viewer')

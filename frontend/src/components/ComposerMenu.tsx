@@ -12,15 +12,18 @@ const ClipIcon = () => svg(<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l
 const TaskIcon = () => svg(<><path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9" /></>);
 const BoltIcon = ({ size = 15 }: { size?: number }) => svg(<path d="M13 2L3 14h9l-1 8 10-12h-9z" />, size);
 const EyeOffIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M17.94 17.94A10 10 0 0 1 12 20c-7 0-11-8-11-8a18 18 0 0 1 5.06-5.94M9.9 4.24A9 9 0 0 1 12 4c7 0 11 8 11 8a18 18 0 0 1-2.16 3.19" /><path d="M1 1l22 22" /></>, size);
+const BoxIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" /></>, size);
 const ClockIcon = ({ size = 15 }: { size?: number }) => svg(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>, size);
 
-function Switch({ on, tone }: { on: boolean; tone: 'danger' | 'warn' }) {
+function Switch({ on, tone }: { on: boolean; tone: 'danger' | 'warn' | 'accent' }) {
   return (
     <span
       aria-hidden
       className={cn(
         'relative h-[17px] w-[30px] flex-none rounded-full border transition-colors',
-        on ? (tone === 'danger' ? 'border-danger bg-danger' : 'border-warn-ink bg-warn-ink') : 'border-line bg-panel-2',
+        on
+          ? (tone === 'danger' ? 'border-danger bg-danger' : tone === 'accent' ? 'border-accent bg-accent' : 'border-warn-ink bg-warn-ink')
+          : 'border-line bg-panel-2',
       )}
     >
       <span className={cn('absolute top-[2px] h-[11px] w-[11px] rounded-full transition-all', on ? 'left-[15px] bg-white' : 'left-[2px] bg-fg-dim')} />
@@ -41,6 +44,8 @@ interface Props {
   incognitoTitle: string;
   reasoning: string;
   onReasoning: (value: string) => void;
+  /** Run in sandbox: shown when the sandboxed computer is on (or the chat already uses it). */
+  sandbox?: { on: boolean; available: boolean; onToggle: () => void };
   /** Shown between the + button and the on/off indicators (agent, model, folders). */
   children?: ReactNode;
 }
@@ -145,6 +150,24 @@ export default function ComposerMenu(p: Props) {
                 <span className="min-w-0 flex-1">Incognito<span className={sub}>New chats only, nothing remembered</span></span>
                 <Switch on={p.incognito} tone="warn" />
               </button>
+              {p.sandbox && (
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={p.sandbox.on}
+                  aria-label="Run in sandbox"
+                  title={p.sandbox.available
+                    ? "Run code, tests and file changes in the agent's sandboxed computer instead of this computer."
+                    : "The sandboxed computer is off. Turn it on in Settings, Computer."}
+                  disabled={!p.sandbox.available && !p.sandbox.on}
+                  className={item}
+                  onClick={p.sandbox.onToggle}
+                >
+                  <BoxIcon />
+                  <span className="min-w-0 flex-1">Run in sandbox<span className={sub}>Code and tests run on the agent's computer</span></span>
+                  <Switch on={p.sandbox.on} tone="accent" />
+                </button>
+              )}
               <div className="mx-1 my-1 h-px bg-line" />
               <div title="How hard the model thinks before answering. Default uses the level set on the agent.">
                 <div className="flex items-center gap-2.5 px-2.5 pb-1.5 pt-2 text-[14px] text-fg md:text-[13px]">
@@ -182,6 +205,20 @@ export default function ComposerMenu(p: Props) {
         <button type="button" onClick={() => setOpen(true)} title={`Reasoning: ${reasoningLabel(p.reasoning).toLowerCase()}. Click to change it.`} aria-label={`Reasoning ${reasoningLabel(p.reasoning).toLowerCase()}. Change`} className={cn(composerBtn)}>
           <ClockIcon size={15} />
           <span className="hidden sm:inline">{reasoningLabel(p.reasoning)}</span>
+        </button>
+      )}
+      {p.sandbox?.on && (
+        <button
+          type="button"
+          onClick={p.sandbox.onToggle}
+          title={p.sandbox.available
+            ? 'Run in sandbox is on: code, tests and file changes happen in the agent\'s sandboxed computer. Click to turn it off.'
+            : 'Run in sandbox is on, but the sandboxed computer is off (Settings, Computer). Click to turn it off.'}
+          aria-label="Turn off run in sandbox"
+          className={cn(composerBtn, 'text-accent-ink', !p.sandbox.available && composerWarn)}
+        >
+          <BoxIcon size={15} />
+          <span className="hidden sm:inline">Sandbox</span>
         </button>
       )}
       {p.bypass && (

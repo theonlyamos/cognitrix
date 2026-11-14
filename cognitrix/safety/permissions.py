@@ -185,6 +185,15 @@ def needs_person(tools: tuple, args: dict) -> bool:
     """
     if not any('approved' in (getattr(t, 'internal_params', None) or []) for t in tools if t is not None):
         return False
+    names = {re.sub(r'[\s\-]+', '_', str(getattr(t, 'name', '') or '')).lower() for t in tools if t is not None}
+    if 'copy_back_from_sandbox' in names:
+        return True  # changes land on the person's computer only when they say so
+    try:
+        from cognitrix.common.sandbox_work import turn_in_sandbox
+        if turn_in_sandbox():
+            return False  # Run in sandbox: commands run in the agent's own container
+    except Exception:
+        pass
     command = args.get('command') if isinstance(args, dict) else None
     if not isinstance(command, str) or not command.strip():
         return False

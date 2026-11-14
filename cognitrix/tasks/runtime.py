@@ -239,9 +239,13 @@ def _validate_secret_free_tool_schema(value: Any) -> None:
 # carry secret references. Http Request takes a saved credential's name in
 # ``credential`` and ``{{secret:NAME}}`` placeholders in ``headers``; the real
 # values are filled in when the request is sent and never reach the model or
-# the run record. Each parameter's own schema is still checked.
+# the run record. Bash and Run Tests take saved sign-in *names* in
+# ``credentials``; the values are added to the sandbox command's environment
+# when it runs. Each parameter's own schema is still checked.
 _VETTED_SECRET_LIKE_PARAMETERS: dict[str, frozenset[str]] = {
     "Http Request": frozenset({"headers", "credential"}),
+    "Bash": frozenset({"credentials"}),
+    "Run Tests": frozenset({"credentials"}),
 }
 
 

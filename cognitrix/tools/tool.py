@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import inspect
 from collections.abc import Callable
 from functools import wraps
@@ -8,6 +9,20 @@ from pydantic import TypeAdapter
 
 from cognitrix.models.tool import Tool
 from cognitrix.tools.utils import ToolCallResult, ToolOutcome
+
+# The event loop a sync tool was called from. Sync tools run in a worker
+# thread (which copies context variables); one that needs async work, such as
+# reading saved credentials from the database, schedules it on this loop.
+calling_loop: contextvars.ContextVar[asyncio.AbstractEventLoop | None] = contextvars.ContextVar(
+    'tool_calling_loop', default=None)
+
+
+def run_on_calling_loop(coro: Any, timeout: float = 30) -> Any:
+    """Run a coroutine from a sync tool's worker thread and wait for it."""
+    loop = calling_loop.get()
+    if loop is None:
+        return asyncio.run(coro)
+    return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout)
 
 
 def tool(*args: Any, **kwargs: Any):
@@ -22,7 +37,11 @@ def tool(*args: Any, **kwargs: Any):
                 # the whole server for every other user.
                 # Note: pyautogui GUI calls run in a worker thread here — fine on
                 # Windows/Linux; some macOS UI calls require the main thread.
-                return await asyncio.to_thread(func, *args, **kwargs)
+                token = calling_loop.set(asyncio.get_running_loop())
+                try:
+                    return await asyncio.to_thread(func, *args, **kwargs)
+                finally:
+                    calling_loop.reset(token)
             except Exception:
                 raise
 

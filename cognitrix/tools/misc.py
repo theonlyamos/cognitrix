@@ -180,6 +180,17 @@ class ManagedUploadAccessError(ValueError):
     pass
 
 
+
+def _sandbox():
+    """This turn's sandbox (Run in sandbox), None to work on this machine, or
+    an error text when the chat asks for the sandbox but it can't be used."""
+    from cognitrix.common import sandbox_work as sw
+    try:
+        return sw.for_turn()
+    except sw.SandboxWorkError as e:
+        return f'Error: {e.message}'
+
+
 def _inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
@@ -590,6 +601,8 @@ def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_
     """
     try:
         try:
+            # Files the person attached to the chat are read from here even
+            # when the chat runs in the sandbox.
             capability = _managed_document_capability(file_path)
             if capability is not None:
                 return _read_managed_document(
@@ -599,6 +612,11 @@ def Read(file_path: str, start_line: int = 1, end_line: int | None = None, show_
                     show_line_numbers=show_line_numbers,
                     page_range=page_range,
                 )
+            if (sandbox := _sandbox()) is not None:
+                if isinstance(sandbox, str):
+                    return sandbox
+                from cognitrix.tools import sandbox_work as _sbw
+                return _sbw.sb_read(sandbox, file_path, start_line, end_line, show_line_numbers)
             path = _resolve_tool_path(file_path)
         except (ManagedUploadAccessError, PathEscapesRoot) as e:
             return f"Error: {e}"
@@ -692,6 +710,11 @@ def Write(file_path: str, content: str, append: bool = False):
         - Write new file: Write("path/to/file.txt", "Hello world")
         - Append to file: Write("log.txt", "new entry\n", append=True)
     """
+    if (sandbox := _sandbox()) is not None:
+        if isinstance(sandbox, str):
+            return sandbox
+        from cognitrix.tools import sandbox_work as _sbw
+        return _sbw.sb_write(sandbox, file_path, content, append)
     try:
         try:
             path = _resolve_tool_path(file_path, write=True)
@@ -733,6 +756,11 @@ def Edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
         - Replace first occurrence: Edit("file.py", "old_text", "new_text")
         - Replace all occurrences: Edit("file.py", "old_text", "new_text", replace_all=True)
     """
+    if (sandbox := _sandbox()) is not None:
+        if isinstance(sandbox, str):
+            return sandbox
+        from cognitrix.tools import sandbox_work as _sbw
+        return _sbw.sb_edit(sandbox, file_path, old_string, new_string, replace_all, create_if_missing)
     try:
         try:
             path = _resolve_tool_path(file_path, write=True)
@@ -794,6 +822,11 @@ def Grep(pattern: str, path: str = ".", include: str | None = None, exclude: str
         - Search Python files only: Grep("TODO", include="*.py")
         - Search with 3 lines context: Grep("error", context=3)
     """
+    if (sandbox := _sandbox()) is not None:
+        if isinstance(sandbox, str):
+            return sandbox
+        from cognitrix.tools import sandbox_work as _sbw
+        return _sbw.sb_grep(sandbox, pattern, path, include, exclude, context, ignore_case, max_results)
 
     try:
         max_results = max(1, min(int(max_results), MAX_SEARCH_RESULTS))
@@ -979,6 +1012,11 @@ def Glob(pattern: str, path: str = ".", recursive: bool = True, include_dirs: bo
         - Recursive Python files: Glob("**/*.py", path="src")
         - TypeScript in src: Glob("*.ts", path="src")
     """
+    if (sandbox := _sandbox()) is not None:
+        if isinstance(sandbox, str):
+            return sandbox
+        from cognitrix.tools import sandbox_work as _sbw
+        return _sbw.sb_glob(sandbox, pattern, path, include_dirs, max_results)
     try:
         max_results = max(1, min(int(max_results), MAX_SEARCH_RESULTS))
         if len(pattern) > MAX_GLOB_PATTERN_CHARS:
@@ -1799,6 +1837,11 @@ Args:
         change the folder for later calls; use `cd` for that.
     run_in_background (bool, optional): Start the command and return at once
         with a shell id instead of waiting for it to finish.
+    credentials (list[str], optional): Only when the chat runs in the sandbox:
+        names of saved sign-ins (List Credentials) this command gets as
+        environment variables (a token as NAME, a username and password as
+        NAME_USERNAME and NAME_PASSWORD). The person approves it; the values
+        are hidden in the output.
 
 Returns:
     str: The command's output (stdout and stderr), its exit code when it
@@ -1821,10 +1864,23 @@ def bash(
     timeout: int | None = None,
     working_dir: str | None = None,
     run_in_background: bool = False,
+    credentials: list[str] | None = None,
     *,
     approved: bool = False,
 ) -> str:
     from cognitrix.common import shell as sh
+
+    # Run in sandbox: the command runs in the agent's sandboxed computer,
+    # which can't reach this machine, so it needs no approval or allowlist.
+    if (sandbox := _sandbox()) is not None:
+        if isinstance(sandbox, str):
+            return sandbox
+        from cognitrix.tools import sandbox_work as _sbw
+        return _sbw.sb_bash(sandbox, command, timeout, working_dir, sh.is_truthy(run_in_background), credentials)
+
+    if credentials:
+        return ("Error: Saved sign-ins can only be passed to commands in the sandbox. Use Http Request "
+                "with credential=... for an API, or ask the person to turn on Run in sandbox.")
 
     context = current_execution_context()
     try:
@@ -1944,6 +2000,11 @@ def bash_output(shell_id: str, filter: str | None = None) -> str:
     Returns:
         str: The new output and the command's status.
     """
+    if (sandbox := _sandbox()) is not None:
+        if isinstance(sandbox, str):
+            return sandbox
+        from cognitrix.tools import sandbox_work as _sbw
+        return _sbw.sb_bash_output(sandbox, shell_id, filter)
     from cognitrix.common import shell as sh
 
     context = current_execution_context()
@@ -1979,6 +2040,11 @@ def kill_shell(shell_id: str) -> str:
     Returns:
         str: Whether it was stopped.
     """
+    if (sandbox := _sandbox()) is not None:
+        if isinstance(sandbox, str):
+            return sandbox
+        from cognitrix.tools import sandbox_work as _sbw
+        return _sbw.sb_kill(sandbox, shell_id)
     from cognitrix.common import shell as sh
 
     context = current_execution_context()
@@ -2044,14 +2110,23 @@ def coding_agent(
     from cognitrix.common import shell as sh
 
     context = current_execution_context()
-    try:
-        require_host_process_authority(context.host_process_mode)
-    except HostProcessAccessError as e:
-        return f'Error: {e}'
+    in_sandbox = bool(getattr(context, 'sandbox', False))
+    if not in_sandbox:
+        try:
+            require_host_process_authority(context.host_process_mode)
+        except HostProcessAccessError as e:
+            return f'Error: {e}'
 
     try:
         which = ca.normalise_agent(agent)
         if which == 'list':
+            if in_sandbox:
+                from cognitrix.common import sandbox_work as sw
+                return '\n'.join(
+                    f"- {k} ({ca.CLIS[k].label}): in the sandbox, "
+                    + ('ready' if sw.cli_env(k) else f'needs {sw.PROVIDER_LABELS[sw.CLI_KEYS[k][0][0]]} API key '
+                       '(Settings, Models and keys)')
+                    for k in sw.SANDBOX_CLIS)
             return ca.describe_installed(sh.child_env().get('PATH'))
         run_mode = ca.normalise_mode(mode)
         model_name = ca.validate_model(model)
@@ -2064,6 +2139,14 @@ def coding_agent(
         return 'Error: Describe the task for the coding agent.'
     if len(task_text) > ca.MAX_TASK_CHARS:
         return f'Error: The task is too long ({len(task_text):,} characters, max {ca.MAX_TASK_CHARS:,}).'
+
+    # Run in sandbox: the CLI runs in the agent's sandboxed computer with the
+    # person's API key for it, so like Bash there it doesn't ask.
+    if (sandbox := _sandbox()) is not None:
+        if isinstance(sandbox, str):
+            return sandbox
+        from cognitrix.tools import sandbox_work as _sbw
+        return _sbw.sb_coding_agent(sandbox, which, run_mode, model_name, task_text, working_dir, wait_seconds)
 
     # A coding agent edits files and (in some modes) runs commands on its own,
     # so like the full shell it needs a person to approve this exact call.

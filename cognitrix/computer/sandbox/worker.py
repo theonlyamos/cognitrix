@@ -20,10 +20,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from cognitrix.computer import (
-    Actor, Blocked, Busy, Driver, DriverError, HumanControl, Stale, Unsupported, current_actor,
+    Actor,
+    Blocked,
+    Busy,
+    Driver,
+    DriverError,
+    HumanControl,
+    Stale,
+    Unsupported,
+    current_actor,
 )
 from cognitrix.computer.sandbox import (
-    event_to_dict, image_to_b64, result_to_dict, snapshot_to_dict, window_to_dict,
+    event_to_dict,
+    image_to_b64,
+    result_to_dict,
+    snapshot_to_dict,
+    window_to_dict,
 )
 
 logger = logging.getLogger('cognitrix.sandbox.worker')

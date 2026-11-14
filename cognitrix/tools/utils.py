@@ -49,6 +49,10 @@ class ToolExecutionContext:
     # Working folders for this turn (cognitrix.common.folders.Folder). Empty
     # means the app's working folder, read & write, as before folders existed.
     folders: tuple[Any, ...] = ()
+    # Run in sandbox: the shell, file tools, Coding Agent and Run Tests work in
+    # the user's sandboxed computer instead of this machine
+    # (cognitrix.common.sandbox_work).
+    sandbox: bool = False
 
     @property
     def restricted(self) -> bool:
@@ -118,6 +122,8 @@ def delegated_execution_context(
         host_process_mode=HostProcessMode.DENY,
         # Sub-agents may look at the same folders but never change them.
         folders=_read_only_folders(source.folders),
+        # A helper of a chat that works in the sandbox works there too.
+        sandbox=source.sandbox,
     )
 
 

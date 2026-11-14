@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
@@ -63,6 +63,10 @@ class QuestionSpec:
     allow_free_text: bool
     recommended_option_id: str | None
     auto_submit_recommended: bool
+    # Ask For Sign-in: the card shows a masked field instead of options, and
+    # the browser saves what's typed straight to the person's saved sign-ins
+    # ({name, kind, hosts}); the answer itself only says "saved".
+    secret: dict[str, Any] | None = field(default=None)
 
     @property
     def auto_submit_seconds(self) -> int | None:
@@ -115,6 +119,7 @@ class QuestionSpec:
             'allow_free_text': self.allow_free_text,
             'recommended_option_id': self.recommended_option_id,
             'auto_submit_seconds': self.auto_submit_seconds,
+            **({'secret': dict(self.secret)} if self.secret else {}),
         }
 
 

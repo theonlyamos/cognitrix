@@ -195,3 +195,11 @@ async def resolve_question(
         return False
     pending.future.set_result(QuestionAnswer.free_text(normalized_text))
     return True
+
+
+def pending_secret(request_id: str, user_key: str) -> dict[str, Any] | None:
+    """The sign-in an open Ask For Sign-in card asks this person for, or None."""
+    pending = _PENDING.get(str(request_id))
+    if pending is None or pending.context.user_key != str(user_key) or pending.future.done():
+        return None
+    return dict(pending.spec.secret) if pending.spec.secret else None

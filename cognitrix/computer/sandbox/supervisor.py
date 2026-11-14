@@ -19,6 +19,14 @@ accessibility bus. Every request except /health needs the container's token
     POST   /apps/<slug>/start|stop        wake / sleep
     POST   /apps/<slug>/promote           make a kept version live again
     GET    /apps/<slug>/logs              the end of the live version's output
+    POST   /work/<agent>/run              run a shell command in the agent's folder (see workspace.py)
+    GET    /work/<agent>/jobs             the agent's commands
+    POST   /work/<agent>/jobs/<id>/read|wait|stop|full
+    POST   /work/<agent>/files/<op>       read, write, edit, glob, grep, find
+    GET    /work/<agent>/projects         folders copied in from the person's computer
+    PUT    /work/<agent>/projects/<name>  copy a folder in (tar.gz body; ?replace=1)
+    POST   /work/<agent>/projects/<name>/changes|export|synced
+    DELETE /work/<agent>/projects/<name>
     DELETE /apps/<slug>                   remove an app, its versions and data
     *      /apps/<slug>/http/<path>       the app itself (woken if asleep); the
                                           token comes in X-Cognitrix-Sandbox-Token
@@ -47,6 +55,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cognitrix.computer.sandbox import SERVICE_PORT, check_name, token
 from cognitrix.computer.sandbox.apps import AppHost, AppHostError, unb64
+from cognitrix.computer.sandbox.workspace import Workspace, WorkspaceError
 
 logger = logging.getLogger('cognitrix.sandbox')
 
@@ -64,6 +73,7 @@ class Desktop:
     full_password: str  # mouse and keyboard, handed out on hold
     procs: dict[str, subprocess.Popen] = field(default_factory=dict)
     held_by: str | None = None
+    terminal: subprocess.Popen | None = None  # xterm following the agent's commands
     started: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
 
@@ -147,7 +157,30 @@ class Supervisor:
         except OSError:
             return False
 
+    def open_terminal(self, name: str, log: str) -> None:
+        """Show the agent's commands in a terminal on its desktop (started if
+        needed), so a person watching sees what runs."""
+        if not shutil.which('xterm'):
+            return
+        desk = self.ensure(name)
+        if desk.terminal is not None and desk.terminal.poll() is None:
+            return
+        if not os.path.exists(log):
+            open(log, 'a').close()  # noqa: SIM115
+        env = dict(os.environ, DISPLAY=desk.display)
+        env.pop('COGNITRIX_SANDBOX_TOKEN', None)
+        desk.terminal = subprocess.Popen(  # noqa: S603
+            ['xterm', '-T', 'Terminal', '-class', 'CognitrixTerminal', '-fa', 'DejaVu Sans Mono', '-fs', '11',
+             '-bg', '#1e1f22', '-fg', '#d8dade', '-cr', '#1e1f22', '-sl', '5000', '-b', '8',
+             '-e', 'tail', '-n', '400', '-F', log],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
     def _stop(self, desk: Desktop) -> None:
+        if desk.terminal is not None and desk.terminal.poll() is None:
+            try:
+                os.killpg(desk.terminal.pid, signal.SIGTERM)
+            except OSError:
+                pass
         for proc in reversed(list(desk.procs.values())):
             if proc.poll() is None:
                 try:
@@ -246,7 +279,7 @@ def proxy_to_app(handler: BaseHTTPRequestHandler, port: int, path: str, method: 
 
 
 def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str = '0.0.0.0',  # noqa: S104
-                apps: AppHost | None = None) -> ThreadingHTTPServer:
+                apps: AppHost | None = None, work: Workspace | None = None) -> ThreadingHTTPServer:
     secret = token()
     if not secret:
         raise SystemExit('COGNITRIX_SANDBOX_TOKEN is not set')
@@ -287,6 +320,9 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str = '0.0.0.0'
             if parts[:1] == ['apps']:
                 self._apps(method, parts)
                 return
+            if parts[:1] == ['work']:
+                self._work(method, parts)
+                return
             try:
                 if parts == ['desktops'] and method == 'GET':
                     self._reply(200, {'ok': True, 'desktops': [d.info() for d in sup.desktops.values()]})
@@ -313,6 +349,100 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str = '0.0.0.0'
                 self._reply(409, {'ok': False, 'error': 'limit', 'message': str(exc)})
             except OSError as exc:
                 self._reply(502, {'ok': False, 'error': 'worker_unreachable', 'message': str(exc)})
+
+        def _work(self, method: str, parts: list[str]) -> None:
+            from urllib.parse import parse_qs, unquote, urlsplit
+
+            if work is None:
+                self._reply(404, {'ok': False, 'error': 'no_workspace', 'message': 'Coding is off on this computer.'})
+                return
+            try:
+                parts = [unquote(p) for p in parts]
+                agent = check_name(parts[1] if len(parts) > 1 else '')
+                what = parts[2] if len(parts) > 2 else ''
+                if what == 'run' and method == 'POST':
+                    b = self._body()
+                    self._reply(200, {'ok': True, **work.run(
+                        agent, b.get('command', ''), b.get('cwd'), b.get('timeout') or 120, b.get('env') or {},
+                        bool(b.get('background')), b.get('stdin'), b.get('label'))})
+                elif what == 'jobs' and len(parts) == 3 and method == 'GET':
+                    self._reply(200, {'ok': True, 'jobs': work.list_jobs(agent)})
+                elif what == 'jobs' and len(parts) == 5 and method == 'POST':
+                    job_id, action = parts[3], parts[4]
+                    b = self._body()
+                    if action == 'read':
+                        self._reply(200, {'ok': True, **work.read(job_id, agent, b.get('filter'))})
+                    elif action == 'wait':
+                        self._reply(200, {'ok': True, **work.wait(job_id, agent, b.get('seconds') or 0)})
+                    elif action == 'stop':
+                        self._reply(200, {'ok': True, **work.stop(job_id, agent)})
+                    elif action == 'full':
+                        self._reply(200, {'ok': True, 'output': work.full_output(job_id, agent)})
+                    else:
+                        self._reply(404, {'ok': False, 'error': 'not_found'})
+                elif what == 'files' and len(parts) == 4 and method == 'POST':
+                    b = self._body()
+                    op = parts[3]
+                    if op == 'read':
+                        out = work.read_file(agent, b.get('path', ''), b.get('start') or 1, b.get('end'),
+                                             b.get('numbers', True), int(b.get('limit') or 30_000))
+                    elif op == 'write':
+                        out = work.write_file(agent, b.get('path', ''), b.get('content', ''), bool(b.get('append')))
+                    elif op == 'edit':
+                        out = work.edit_file(agent, b.get('path', ''), b.get('old', ''), b.get('new', ''),
+                                             bool(b.get('replace_all')), bool(b.get('create')))
+                    elif op == 'glob':
+                        out = work.glob(agent, b.get('pattern', '*'), b.get('path') or '.',
+                                        bool(b.get('include_dirs')), b.get('max_results') or 100)
+                    elif op == 'grep':
+                        out = work.grep(agent, b.get('pattern', ''), b.get('path') or '.', b.get('include'),
+                                        b.get('exclude'), b.get('context') or 0, b.get('ignore_case', True),
+                                        b.get('max_results') or 100)
+                    elif op == 'find':
+                        out = {'files': work.find_files(agent, b.get('path') or '.', float(b.get('since') or 0),
+                                                        tuple(b.get('suffixes') or ('.png',)),
+                                                        int(b.get('limit') or 4))}
+                    elif op == 'where':
+                        out = {'root': work.root(agent), 'cwd': work.cwd(agent), 'projects': work.projects(agent)}
+                    else:
+                        self._reply(404, {'ok': False, 'error': 'not_found'})
+                        return
+                    self._reply(200, {'ok': True, **out})
+                elif what == 'projects' and len(parts) == 3 and method == 'GET':
+                    self._reply(200, {'ok': True, 'projects': work.projects(agent)})
+                elif what == 'projects' and len(parts) >= 4:
+                    name = parts[3]
+                    action = parts[4] if len(parts) > 4 else ''
+                    if method == 'PUT' and not action:
+                        length = int(self.headers.get('Content-Length') or 0)
+                        data = self.rfile.read(length) if length else b''
+                        q = parse_qs(urlsplit(self.path).query)
+                        replace = (q.get('replace') or ['0'])[0] in ('1', 'true')
+                        source = (q.get('source') or [''])[0]
+                        self._reply(200, {'ok': True, **work.import_project(agent, name, data, replace, source)})
+                    elif method == 'DELETE' and not action:
+                        self._reply(200, work.remove_project(agent, name))
+                    elif method == 'POST' and action == 'changes':
+                        self._reply(200, {'ok': True, **work.changes(agent, name, bool(self._body().get('patch', True)))})
+                    elif method == 'POST' and action == 'export':
+                        self._reply(200, {'ok': True, **work.export(agent, name, self._body().get('paths') or None)})
+                    elif method == 'POST' and action == 'synced':
+                        self._reply(200, work.synced(agent, name, list(self._body().get('paths') or [])))
+                    else:
+                        self._reply(404, {'ok': False, 'error': 'not_found'})
+                else:
+                    self._reply(404, {'ok': False, 'error': 'not_found'})
+            except WorkspaceError as exc:
+                self._reply(400, {'ok': False, 'error': exc.code, 'message': exc.message})
+            except (ValueError, KeyError, TypeError) as exc:
+                self._reply(400, {'ok': False, 'error': 'bad_request', 'message': str(exc)})
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except OSError as exc:
+                try:
+                    self._reply(500, {'ok': False, 'error': 'os_error', 'message': str(exc)})
+                except OSError:
+                    pass
 
         def _apps(self, method: str, parts: list[str]) -> None:
             from urllib.parse import parse_qs, urlsplit
@@ -398,8 +528,16 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     sup = Supervisor()
     apps = AppHost(APPS_ROOT)
-    server = make_server(sup, apps=apps)
-    signal.signal(signal.SIGTERM, lambda *_: (sup.shutdown(), apps.shutdown(), os._exit(0)))
+
+    def show_terminal(agent: str, log: str) -> None:
+        try:
+            sup.open_terminal(agent, log)
+        except Exception:  # the desktop limit, or no X: commands still run
+            logger.info('no terminal for %s', agent, exc_info=True)
+
+    work = Workspace(terminal_opener=show_terminal)
+    server = make_server(sup, apps=apps, work=work)
+    signal.signal(signal.SIGTERM, lambda *_: (sup.shutdown(), apps.shutdown(), work.shutdown(), os._exit(0)))
     logger.info('sandbox supervisor on :%d (x11vnc %s)', SERVICE_PORT, shutil.which('x11vnc') or 'missing')
     server.serve_forever()
 
