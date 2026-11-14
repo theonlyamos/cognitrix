@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import pyexpat
 import xml.etree.ElementTree as ET
 from typing import Any
 
@@ -257,6 +258,33 @@ def _clean_element(el: ET.Element, budget: list[int]) -> str:
     return f'{opening}>{inner}</{name}>' if inner else f'{opening}/>'
 
 
+def _refuse_doctype(*_args: Any) -> None:
+    raise ThemeError('This drawing uses a DOCTYPE, which is not allowed.')
+
+
+def _parse_xml_without_entities(text: str) -> ET.Element:
+    """Parse XML with expat directly: DOCTYPEs and entity declarations are
+    refused by the parser itself, so nothing is ever expanded."""
+    builder = ET.TreeBuilder()
+    expat = pyexpat.ParserCreate(namespace_separator='}')
+    expat.SetParamEntityParsing(pyexpat.XML_PARAM_ENTITY_PARSING_NEVER)
+    expat.StartDoctypeDeclHandler = _refuse_doctype
+    expat.EntityDeclHandler = _refuse_doctype
+    expat.ExternalEntityRefHandler = _refuse_doctype
+
+    def qualify(name: str) -> str:
+        return '{' + name if '}' in name else name
+
+    expat.StartElementHandler = lambda name, attrs: builder.start(
+        qualify(name), {qualify(k): v for k, v in attrs.items()})
+    expat.EndElementHandler = lambda name: builder.end(qualify(name))
+    try:
+        expat.Parse(text, True)
+    except pyexpat.ExpatError as exc:
+        raise ET.ParseError(str(exc)) from None
+    return builder.close()
+
+
 def clean_artwork_svg(source: Any) -> str:
     """Clean an SVG drawing down to plain shapes. Raises ThemeError."""
     text = str(source or '').strip()
@@ -267,7 +295,7 @@ def clean_artwork_svg(source: Any) -> str:
     if re.search(r'<!(DOCTYPE|ENTITY)', text, re.I):
         raise ThemeError('This drawing uses a DOCTYPE, which is not allowed.')
     try:
-        root = ET.fromstring(text)
+        root = _parse_xml_without_entities(text)
     except ET.ParseError as exc:
         raise ThemeError(f'This is not valid SVG ({exc}).') from None
     ns, name = _local(root.tag)
