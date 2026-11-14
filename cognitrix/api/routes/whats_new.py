@@ -152,8 +152,9 @@ async def whats_new(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, A
     if seen_key is not None and seen_key >= current:
         return base
     releases = releases_between(seen, VERSION)
-    if not releases:
-        # A version with no bundled notes (a dev build): nothing to show, and
+    if not releases or parse_version(releases[0]['version']) != current:
+        # The running version has no bundled notes (a dev build): nothing to
+        # show, even if older releases weren't seen yet, and
         # nothing recorded, so the next real release still shows.
         return base
     return {**base, 'show': True, 'releases': releases, 'starter_team': await _starter_offer(user)}

@@ -137,6 +137,12 @@ async def test_downgrade_or_dev_build_shows_nothing(db, notes, monkeypatch):
     assert (await notes.whats_new(_ctx(fresh)))['show'] is False
     assert (await User.find_one({'id': user.id})).whats_new_seen == '0.5.5'
 
+    # Even someone behind on older releases gets no window on a dev build.
+    monkeypatch.setattr(notes, 'VERSION', '0.5.6.dev1')
+    await User.update_one({'id': user.id}, {'whats_new_seen': '0.5.3'})
+    fresh = await User.find_one({'id': user.id})
+    assert (await notes.whats_new(_ctx(fresh)))['show'] is False
+
 
 async def test_offers_missing_starter_agents(db, notes):
     user = await _user()
