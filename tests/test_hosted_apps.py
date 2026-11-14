@@ -89,6 +89,15 @@ def test_pack_skips_dependency_folders_and_unpack_stays_inside(tmp_path):
     assert not (tmp_path / 'escape.txt').exists()
 
 
+def test_app_paths_stay_inside_the_apps_folder(host):
+    from cognitrix.computer.sandbox.apps import AppHostError
+
+    assert host.release_dir('board', 2).endswith(os.path.join('releases', 'board', 'v2'))
+    for bad in ('../board', 'a/../../x', '', '.'):
+        with pytest.raises(AppHostError):
+            host.data_dir(bad)
+
+
 def test_new_version_goes_live_only_when_it_answers(host, tmp_path):
     from cognitrix.computer.sandbox.apps import pack_folder
 
@@ -236,6 +245,9 @@ async def test_proxy_access_sandboxing_and_headers(db, tmp_path):
         assert r.status_code == 302 and r.headers['location'] == '/apps/open/board'
         r = await client.get('/a/board/~nonsense/')
         assert r.status_code == 403
+        # Names that aren't app names never become redirects.
+        assert (await client.get('/a/Bad%5Cevil.com/')).status_code == 404
+        assert (await client.get('/a/board/~bad%5Ctoken')).status_code == 404
 
         token = store.open_token('board', str(amos.id))
         r = await client.get(f'/a/board/~{token}/items?q=1', headers={'Accept': 'application/json'})

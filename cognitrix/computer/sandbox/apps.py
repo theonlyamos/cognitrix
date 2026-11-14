@@ -186,14 +186,22 @@ class AppHost:
         with self._guard:
             return self._locks.setdefault(slug, threading.Lock())
 
+    def _under(self, *parts: str) -> str:
+        """A path inside the apps root; anything that would leave it is refused."""
+        path = os.path.realpath(os.path.join(self.root, *parts))
+        root = os.path.realpath(self.root)
+        if path == root or not path.startswith(root + os.sep):
+            raise AppHostError('bad_slug', 'That path is outside the apps folder.')
+        return path
+
     def release_dir(self, slug: str, version: int) -> str:
-        return os.path.join(self.root, 'releases', slug, f'v{int(version)}')
+        return self._under('releases', check_slug(slug), f'v{int(version)}')
 
     def data_dir(self, slug: str) -> str:
-        return os.path.join(self.root, 'data', slug)
+        return self._under('data', check_slug(slug))
 
     def log_file(self, slug: str, version: int) -> str:
-        return os.path.join(self.root, 'logs', slug, f'v{int(version)}.log')
+        return self._under('logs', check_slug(slug), f'v{int(version)}.log')
 
     # -- processes ------------------------------------------------------------
     def _spawn(self, slug: str, version: int, spec: dict, port: int) -> subprocess.Popen:
@@ -318,7 +326,7 @@ class AppHost:
                 'error': message + note, 'log': _tail(self.log_file(slug, version), 60)}
 
     def _prune(self, slug: str, live: int) -> None:
-        base = os.path.join(self.root, 'releases', slug)
+        base = self._under('releases', check_slug(slug))
         try:
             versions = sorted(int(n[1:]) for n in os.listdir(base) if n.startswith('v') and n[1:].isdigit())
         except OSError:
@@ -382,7 +390,7 @@ class AppHost:
             self._state.pop(slug, None)
             self._save()
             for part in ('releases', 'data', 'logs'):
-                shutil.rmtree(os.path.join(self.root, part, slug), ignore_errors=True)
+                shutil.rmtree(self._under(part, check_slug(slug)), ignore_errors=True)
         return {'ok': True}
 
     def status(self, slug: str) -> dict:

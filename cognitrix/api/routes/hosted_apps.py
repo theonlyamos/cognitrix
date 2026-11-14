@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -280,17 +281,30 @@ _METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 @app_proxy.api_route('/a/{slug}', methods=_METHODS, include_in_schema=False)
 @app_proxy.api_route('/a/{slug}/', methods=_METHODS, include_in_schema=False)
 async def app_no_token(slug: str):
-    return RedirectResponse(f'/apps/open/{html.escape(slug)}', status_code=302)
+    return _to_open_page(slug)
+
+
+_SLUG = re.compile(r'^[a-z0-9][a-z0-9-]{0,47}$')
+_TOKEN = re.compile(r'^[A-Za-z0-9_.-]{1,2048}$')
+
+
+def _to_open_page(slug: str) -> Response:
+    """Send a visit without a token to the sign-in page for that app (same site only)."""
+    if not _SLUG.match(slug):
+        return Response('No such app.', status_code=404, media_type='text/plain')
+    return RedirectResponse('/apps/open/' + slug, status_code=302)
 
 
 @app_proxy.api_route('/a/{slug}/{rest:path}', methods=_METHODS, include_in_schema=False)
 async def app_request(slug: str, rest: str, request: Request):
     if not rest.startswith('~'):
-        return RedirectResponse(f'/apps/open/{html.escape(slug)}', status_code=302)
+        return _to_open_page(slug)
     token, _, path = rest[1:].partition('/')
+    if not _SLUG.match(slug) or not _TOKEN.match(token):
+        return Response('No such app.', status_code=404, media_type='text/plain')
     if not path and not request.url.path.endswith('/'):
         # /a/x/~tok -> /a/x/~tok/ so the app's relative links resolve inside the prefix.
-        return RedirectResponse(f'/a/{slug}/~{token}/', status_code=302)
+        return RedirectResponse('/a/' + slug + '/~' + token + '/', status_code=302)
     if request.method == 'OPTIONS':
         return Response(status_code=204, headers=_cors({}))
     read = store.read_open_token(token, slug)
