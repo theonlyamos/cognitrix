@@ -24,7 +24,7 @@ import jwt
 
 from cognitrix.artifact_pages.models import EVERYONE, SHARE_ROLES
 from cognitrix.artifact_pages.store import ROLE_OWNER, can_edit, names, role_of, shares, task_info  # noqa: F401
-from cognitrix.computer.sandbox.apps import AppHostError, pack_folder
+from cognitrix.computer.sandbox.apps import AppHostError, pack_folder, unpack
 from cognitrix.hosted_apps.models import HostedApp, HostedAppVersion
 from cognitrix.hosted_apps.runner import RunnerError, default_runtime, runner_for
 
@@ -226,9 +226,11 @@ async def publish(
     A version that fails to start is recorded as failed; the live one keeps serving."""
     if not user_key:
         raise AppError('no_owner', 'Apps need a signed-in person to belong to.')
-    root = Path(str(folder or '')).expanduser()
-    if not root.is_dir():
-        raise AppError('no_folder', f'{folder} is not a folder on this machine. Write the app\'s files there first.')
+    if not str(folder or '').strip() and app_id:
+        known = await find(app_id)
+        if known is not None and known.folder and can_edit(role_of(known, user_key)):
+            folder = known.folder
+    source = _source_folder(folder, title)
     command = ' '.join(str(command or '').split())
     if not command:
         raise AppError('no_command', 'A start command is needed, e.g. "python3 app.py" or "npm start".')
@@ -277,8 +279,17 @@ async def publish(
                                branch=str(branch or '')[:120], agent_id=agent_id, session_id=session_id,
                                task_id=task_id, created=stamp)
         await row.save()
+        try:
+            # Every app's code lives in the apps folder (~/.cognitrix/apps/<name>);
+            # one published from elsewhere is copied there first.
+            archive, home = await asyncio.to_thread(_pack_into_apps_folder, source, app.slug)
+        except AppHostError as exc:
+            archive, home = b'', source
+            pack_error = exc.message
+        else:
+            pack_error = ''
         changes: dict[str, Any] = {
-            'latest': number, 'title': clean_title, 'folder': str(root), 'command': command,
+            'latest': number, 'title': clean_title, 'folder': str(home), 'command': command,
             'install': ' '.join(str(install or '').split()), 'port': int(port or 0), 'env': _clean_env(env),
             'branch': str(branch or '')[:120], 'updated': stamp,
         }
@@ -301,7 +312,8 @@ async def publish(
             run_env.update({'COGNITRIX_API_URL': api_url_for(app.runtime), 'COGNITRIX_API_KEY': secret})
 
         try:
-            archive = await asyncio.to_thread(pack_folder, str(root))
+            if pack_error:
+                raise AppHostError('no_folder', pack_error)
             runner = await asyncio.to_thread(runner_for, app.runtime, app.owner_id)
             out = await asyncio.to_thread(runner.deploy, app.slug, number, archive, app.command, app.install,
                                           run_env, int(app.port or 0))
@@ -328,6 +340,105 @@ async def publish(
             if new_key:
                 await _revoke_api_key(app, new_key)
         return app, row, created
+
+
+def apps_root() -> Path:
+    from cognitrix.common.folders import apps_root as root
+
+    return root()
+
+
+def _inside_apps(path: Path) -> bool:
+    from cognitrix.common.folders import in_apps_root
+
+    return in_apps_root(path)
+
+
+def _source_folder(folder: str, title: str) -> Path:
+    """The folder to publish. Empty means the app's own folder in the apps
+    folder (``~/.cognitrix/apps/<name>``)."""
+    raw = str(folder or '').strip()
+    if raw:
+        root = Path(raw).expanduser()
+        if not root.is_absolute():
+            root = apps_root() / root
+    else:
+        root = apps_root() / _slugify(title)
+    if not root.is_dir():
+        hint = f' Write the app\'s files into {apps_root() / _slugify(title)} first.'
+        raise AppError('no_folder', f'{root} is not a folder on this machine.{hint}')
+    return root
+
+
+def _pack_into_apps_folder(source: Path, slug: str) -> tuple[bytes, Path]:
+    """Pack ``source`` for the runner. A folder outside the apps folder is
+    copied to ``apps/<slug>`` (replacing an older copy), so every app's code
+    is kept in one place. Returns (archive, folder the app now lives in)."""
+    archive = pack_folder(str(source))
+    if _inside_apps(source):
+        return archive, Path(source).resolve()
+    home = apps_root() / slug
+    _replace_with(archive, home)
+    return archive, home
+
+
+def _replace_with(archive: bytes, home: Path) -> None:
+    import shutil
+
+    staging = home.with_name(f'.{home.name}.incoming')
+    shutil.rmtree(staging, ignore_errors=True)
+    unpack(archive, str(staging))
+    old = home.with_name(f'.{home.name}.old')
+    shutil.rmtree(old, ignore_errors=True)
+    if home.exists():
+        home.rename(old)
+    staging.rename(home)
+    shutil.rmtree(old, ignore_errors=True)
+
+
+def _local_release(slug: str, version: int) -> Path | None:
+    from cognitrix.hosted_apps.runner import local_host
+
+    try:
+        path = Path(local_host().release_dir(slug, int(version)))
+    except Exception:
+        return None
+    return path if path.is_dir() else None
+
+
+def _move_one(app: HostedApp) -> str | None:
+    """Copy an older app's code into the apps folder. Returns the new folder, or None."""
+    current = Path(app.folder).expanduser() if app.folder else None
+    if current is not None and current.is_dir() and _inside_apps(current):
+        return None
+    home = apps_root() / app.slug
+    if home.is_dir() and any(home.iterdir()):
+        return str(home)  # copied before
+    source = current if current is not None and current.is_dir() else None
+    if source is None and app.runtime == 'local' and app.version:
+        source = _local_release(app.slug, app.version)  # the code that's running now
+    if source is None:
+        return None
+    _replace_with(pack_folder(str(source)), home)
+    return str(home)
+
+
+async def move_into_apps_folder() -> int:
+    """Once at startup: apps published from other folders get their code copied
+    into the apps folder, which becomes their folder. Returns how many moved."""
+    moved = 0
+    for app in await HostedApp.all() or []:
+        try:
+            home = await asyncio.to_thread(_move_one, app)
+        except Exception as exc:
+            logger.info('app %s: could not copy its code into the apps folder: %s', app.slug, exc)
+            continue
+        if home and home != app.folder:
+            await _set(app, folder=home)
+            moved += 1
+    if moved:
+        logger.info('Copied %d app(s) into %s', moved, apps_root())
+    return moved
 
 
 async def promote(app: HostedApp, number: int) -> HostedApp:

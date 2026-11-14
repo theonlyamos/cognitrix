@@ -216,6 +216,14 @@ def _resolve_tool_path(path: Any) -> Path | None:
         return None
 
 
+def _in_apps_folder(target: Path) -> bool:
+    try:
+        from cognitrix.common.folders import in_apps_root
+        return in_apps_root(target)
+    except Exception:
+        return False
+
+
 def _write_risk(params: dict) -> RiskAssessment:
     """Writing a new file or appending is fine; replacing an existing file asks."""
     if params.get('append') in (True, 'true', 'True', 1):
@@ -226,6 +234,9 @@ def _write_risk(params: dict) -> RiskAssessment:
         # Can't tell where it goes: treat as a possible overwrite.
         return RiskAssessment(RiskLevel.MEDIUM, ['file_overwrite'], "May overwrite an existing file")
     if target.exists():
+        if _in_apps_folder(target):
+            # Agents build apps here; changing an app's files never asks.
+            return _low(f"Updates '{raw}' in the apps folder", 'file_write')
         return RiskAssessment(
             RiskLevel.MEDIUM, ['file_overwrite'], f"Overwrites the existing file '{raw}'"
         )

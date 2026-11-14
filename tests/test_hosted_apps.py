@@ -225,20 +225,23 @@ async def test_publish_app_tool_and_versions(db, tmp_path):
 
     amos = await _user('Amos', 'amos@example.com')
     _as(amos, session_id='s1', agent_id='a1')
-    cmd = make_app(tmp_path / 'build', 'v-one')
-    out = await _tool('publish_app', title='Support queue', folder=str(tmp_path / 'build'), start_command=cmd)
+    build = store.apps_root() / 'support-queue'
+    cmd = make_app(build, 'v-one')
+    # No folder: the app's own folder in the apps folder.
+    out = await _tool('publish_app', title='Support queue', start_command=cmd)
     assert out.status == 'success', out.text
     app = await store.get_app(out.entities[0].id)
     assert app.slug == 'support-queue' and app.status == 'online' and app.version == 1 and app.runtime == 'local'
+    assert app.folder == str(build.resolve())
 
-    bad = make_app(tmp_path / 'build', 'v-two', broken=True)
-    failed = await _tool('publish_app', title='Support queue', folder=str(tmp_path / 'build'), start_command=bad)
+    bad = make_app(build, 'v-two', broken=True)
+    failed = await _tool('publish_app', title='Support queue', folder=str(build), start_command=bad)
     assert failed.status != 'success' and 'Version 1 keeps serving' in failed.text
     app = await store.get_app(app.id)
     assert app.version == 1 and app.latest == 2 and app.status == 'online'
 
     # Same title from the same chat updates the app (no app_id needed).
-    again = await _tool('publish_app', title='Support queue', folder=str(tmp_path / 'build'), start_command=cmd,
+    again = await _tool('publish_app', title='Support queue', folder='support-queue', start_command=cmd,
                         note='fixed')
     assert again.status == 'success' and 'version 3' in again.text
     rows = await store.versions(await store.get_app(app.id))
@@ -253,6 +256,52 @@ async def test_publish_app_tool_and_versions(db, tmp_path):
     _as(bea, session_id='s2', agent_id='a2')
     denied = await _tool('app_status', app_id='support-queue')
     assert denied.status != 'success' and 'start command' not in denied.text
+
+
+async def test_app_from_another_folder_is_copied_into_the_apps_folder(db, tmp_path):
+    from cognitrix.common import folders as F
+    from cognitrix.hosted_apps import store
+    from cognitrix.tools.utils import reset_execution_context
+
+    amos = await _user('Amos', 'amos@example.com')
+    project = tmp_path / 'project'
+    cmd = make_app(project, 'from-project')  # has a node_modules folder
+    token = _as(amos, session_id='s1', agent_id='a1',
+                folders=(F.Folder(str(project.resolve()), F.WRITE, 'project', True),))
+    try:
+        out = await _tool('publish_app', title='Preview', folder=str(project), start_command=cmd)
+    finally:
+        reset_execution_context(token)
+    assert out.status == 'success', out.text
+    app = await store.get_app(out.entities[0].id)
+    home = store.apps_root() / app.slug
+    assert app.folder == str(home) and (home / 'app.py').is_file() and not (home / 'node_modules').exists()
+
+    # A folder the chat can't see can't be published.
+    secret = tmp_path / 'elsewhere'
+    make_app(secret, 'nope')
+    token = _as(amos, session_id='s1', agent_id='a1',
+                folders=(F.Folder(str(project.resolve()), F.WRITE, 'project', True),))
+    try:
+        refused = await _tool('publish_app', title='Other', folder=str(secret), start_command=cmd)
+    finally:
+        reset_execution_context(token)
+    assert refused.status != 'success' and 'outside the working folders' in refused.text
+
+
+async def test_older_apps_move_into_the_apps_folder(db, tmp_path):
+    from cognitrix.hosted_apps import store
+    from cognitrix.hosted_apps.models import HostedApp
+
+    old_src = tmp_path / 'old-place'
+    make_app(old_src, 'old')
+    await HostedApp(owner_id='u1', slug='old-one', title='Old one', runtime='local', folder=str(old_src)).save()
+    await HostedApp(owner_id='u1', slug='gone', title='Gone', runtime='sandbox', folder=str(tmp_path / 'missing')).save()
+    assert await store.move_into_apps_folder() == 1
+    moved = await store.by_slug('old-one')
+    assert moved.folder == str(store.apps_root() / 'old-one') and (store.apps_root() / 'old-one' / 'app.py').is_file()
+    assert (await store.by_slug('gone')).folder == str(tmp_path / 'missing')
+    assert await store.move_into_apps_folder() == 0
 
 
 async def test_proxy_access_sandboxing_and_headers(db, tmp_path):
