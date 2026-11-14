@@ -566,6 +566,12 @@ class Workspace:
                 self._git(agent, name, 'config', 'core.bare', 'false')
                 with open(os.path.join(git_dir, 'info', 'exclude'), 'w', encoding='utf-8') as fh:
                     fh.write('\n'.join(DEFAULT_EXCLUDES) + '\n')
+            # Keep the baseline byte-for-byte: a project's .gitattributes (eol=lf,
+            # filters) must not change what is stored, or the base hashes used to
+            # spot changes on the person's computer would never match.
+            os.makedirs(os.path.join(git_dir, 'info'), exist_ok=True)
+            with open(os.path.join(git_dir, 'info', 'attributes'), 'w', encoding='utf-8') as fh:
+                fh.write('* -text -filter -ident\n')
             for member in members:
                 dest = os.path.join(target, member.name)
                 if member.isdir():

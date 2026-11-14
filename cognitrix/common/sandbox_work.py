@@ -24,6 +24,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -149,13 +150,18 @@ def check_env_name(name: str) -> str:
     return name
 
 
+# One process writes the shared file; the lock stops two saves losing each other.
+_ENV_LOCK = threading.Lock()
+
+
 def save_sandbox_env(user_id: Any, variables: list[dict]) -> dict[str, str]:
     """Replace the person's variables. An entry without a value keeps the
     saved one (the UI never gets values back); names left out are removed."""
-    import json
-    import tempfile
+    with _ENV_LOCK:
+        return _save_sandbox_env(user_id, variables)
 
-    from cognitrix.common.secret_box import seal
+
+def _save_sandbox_env(user_id: Any, variables: list[dict]) -> dict[str, str]:
     current = sandbox_env(user_id)
     new: dict[str, str] = {}
     for item in variables or []:
@@ -171,6 +177,15 @@ def save_sandbox_env(user_id: Any, variables: list[dict]) -> dict[str, str]:
         new[name] = value
     if len(new) > MAX_ENV_VARS:
         raise ValueError(f'At most {MAX_ENV_VARS} variables.')
+    _write_env_entry(user_id, new)
+    return new
+
+
+def _write_env_entry(user_id: Any, new: dict[str, str]) -> None:
+    import json
+    import tempfile
+
+    from cognitrix.common.secret_box import seal
     data = _read_env_file()
     key = _env_key(user_id)
     if new:
@@ -194,7 +209,6 @@ def save_sandbox_env(user_id: Any, variables: list[dict]) -> dict[str, str]:
         except OSError:
             pass
         raise
-    return new
 
 
 def env_preview(value: str) -> str:

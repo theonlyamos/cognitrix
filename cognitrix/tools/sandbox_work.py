@@ -174,7 +174,9 @@ def sb_coding_agent(ws: sw.SandboxWork, which: str, run_mode: str, model: str | 
         return _err(e)
     intro = (f"{cli.label} is working in the sandbox in {out.get('cwd')} as {out['id']} (mode: {run_mode}, "
              f"{cli.mode_notes[run_mode]}).")
-    body = (read.get('output') or '').rstrip('\n') or '[No output yet]'
+    # The start call already returned what the CLI printed in its first moments.
+    first = (out.get('output') or '') + (read.get('output') or '')
+    body = first.rstrip('\n') or '[No output yet]'
     if not read.get('running'):
         return f'{intro}\n\n{_job_line(read)}\n{body}\nSee what it changed with Sandbox Changes or git status.'
     return (f"{intro}\nRead its progress and result with Bash Output (shell_id='{out['id']}') and stop it with "

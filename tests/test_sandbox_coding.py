@@ -127,6 +127,17 @@ def test_project_changes_export_and_baseline(workspace):
 
 
 @needs_git
+def test_baseline_keeps_original_bytes_despite_gitattributes(workspace):
+    original = 'one\r\ntwo\r\n'
+    workspace.import_project('a', 'crlf', _tar({'.gitattributes': '*.txt text eol=lf\n', 'notes.txt': original}))
+    root = Path(workspace.project_dir('a', 'crlf'))
+    assert workspace.changes('a', 'crlf')['files'] == []
+    (root / 'notes.txt').write_bytes(b'one\r\ntwo\r\nthree\r\n')
+    export = workspace.export('a', 'crlf', ['notes.txt'])
+    assert export['files'][0]['base'] == sw.git_blob_id(original.encode())
+
+
+@needs_git
 def test_copying_in_again_refuses_to_drop_unsynced_changes(workspace):
     archive = _tar({'a.txt': '1\n'})
     workspace.import_project('a', 'p', archive)
