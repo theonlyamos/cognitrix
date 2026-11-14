@@ -48,6 +48,22 @@ def _cmd(key, **kw):
     return h.build_command(key, 'prog', **args)
 
 
+def test_every_cli_gets_the_apps_folder():
+    apps = '/data/apps'
+    argv, _ = _cmd('claude-code', extra_dirs=[apps])
+    assert f'--add-dir={apps}' in argv
+    argv, _ = _cmd('codex', extra_dirs=[apps])
+    assert argv[argv.index('--add-dir') + 1] == apps and argv[-1] == '-'
+    argv, _ = _cmd('gemini-cli', extra_dirs=[apps])
+    assert argv[argv.index('--include-directories') + 1] == apps
+    argv, _ = _cmd('copilot-cli', extra_dirs=[apps])
+    assert f'--add-dir={apps}' in argv
+    _, env = _cmd('opencode', extra_dirs=[apps])
+    assert json.loads(env['OPENCODE_CONFIG_CONTENT'])['permission']['external_directory'] == {f'{apps}/**': 'allow'}
+    plain, _ = _cmd('claude-code')
+    assert not any(a.startswith('--add-dir') for a in plain)
+
+
 def test_claude_code_command():
     argv, env = _cmd('claude-code', mode='read_only', model='opus', resume='s1')
     assert argv[:2] == ['prog', '-p']
