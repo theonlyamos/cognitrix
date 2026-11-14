@@ -1,11 +1,12 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { UserProvider, useUser } from '@/context/AppContext';
 import { SessionProvider } from '@/context/SessionContext';
 import { AccountThemeSync, ThemeProvider } from '@/context/ThemeContext';
 import AppLayout from '@/components/AppLayout';
 import DesktopFrame from '@/components/DesktopFrame';
 import { isDesktop } from '@/lib/desktop';
+import { rememberAfterSignIn } from '@/lib/afterSignIn';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
 import OAuthComplete from '@/pages/OAuthComplete';
@@ -28,7 +29,10 @@ const TeamPage = lazy(() => import('@/pages/TeamPage'));
 const ApiKeys = lazy(() => import('@/pages/ApiKeys'));
 const Inbox = lazy(() => import('@/pages/Inbox'));
 const Automations = lazy(() => import('@/pages/Automations'));
-const Artifacts = lazy(() => import('@/pages/Artifacts'));
+const Apps = lazy(() => import('@/pages/Apps'));
+const AppDetail = lazy(() => import('@/pages/AppDetail'));
+const CreateApp = lazy(() => import('@/pages/CreateApp'));
+const OpenApp = lazy(() => import('@/pages/OpenApp'));
 const ArtifactPage = lazy(() => import('@/pages/ArtifactPage'));
 const PublicArtifact = lazy(() => import('@/pages/PublicArtifact'));
 const Knowledge = lazy(() => import('@/pages/Knowledge'));
@@ -54,8 +58,15 @@ function LoadingScreen({ waitingForServer = false }: { waitingForServer?: boolea
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading, waitingForServer } = useUser();
   if (isLoading) return <DesktopFrame><LoadingScreen waitingForServer={waitingForServer} /></DesktopFrame>;
-  if (!user) return <Navigate to="/" replace />;
+  if (!user) return <SignInFirst />;
   return <>{children}</>;
+}
+
+/** Signed out: remember an app link so signing in comes back to it. */
+function SignInFirst() {
+  const location = useLocation();
+  rememberAfterSignIn(location.pathname + location.search);
+  return <Navigate to="/" replace />;
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
@@ -77,6 +88,8 @@ function AppRoutes() {
         <Route path="/s/:token" element={<PublicArtifact />} />
         {/* The desktop app's Alt+Space window: no app shell around it. */}
         <Route path="/quick" element={<ProtectedRoute><QuickAsk /></ProtectedRoute>} />
+        {/* An app's stable link: signs you in, then goes to the running app. */}
+        <Route path="/apps/open/:slug" element={<ProtectedRoute><OpenApp /></ProtectedRoute>} />
 
         {/* Persistent shell: Sidebar mounts once, pages render in the Outlet. */}
         <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
@@ -98,7 +111,11 @@ function AppRoutes() {
           <Route path="/api-keys" element={<ApiKeys />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/automations" element={<Automations />} />
-          <Route path="/artifacts" element={<Artifacts />} />
+          <Route path="/apps" element={<Apps />} />
+          <Route path="/apps/new" element={<CreateApp />} />
+          <Route path="/apps/:appId" element={<AppDetail />} />
+          {/* Artifacts live under Apps now (Pages, Images, Docs tabs). */}
+          <Route path="/artifacts" element={<Navigate to="/apps?tab=pages" replace />} />
           <Route path="/artifacts/:artifactId" element={<ArtifactPage />} />
           <Route path="/knowledge" element={<Knowledge />} />
           <Route path="/meetings" element={<Meetings />} />

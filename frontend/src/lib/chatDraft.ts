@@ -11,3 +11,18 @@ export function takeChatDraft(): string {
     return '';
   }
 }
+
+/** Set beside a draft when the chat should send it as soon as it is connected
+ *  (Create app's Build button). */
+export const CHAT_AUTOSEND_KEY = 'cognitrix.chatDraftSend';
+
+export function takeChatAutoSend(): boolean {
+  try {
+    const on = sessionStorage.getItem(CHAT_AUTOSEND_KEY) === '1';
+    // Cleared a moment later, so a second render (React's strict mode) still sees it.
+    if (on) setTimeout(() => sessionStorage.removeItem(CHAT_AUTOSEND_KEY), 0);
+    return on;
+  } catch {
+    return false;
+  }
+}

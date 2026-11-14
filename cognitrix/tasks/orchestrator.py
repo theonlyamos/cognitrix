@@ -115,6 +115,10 @@ def _add_automation_tools(roster: Sequence[Agent], offers: bool = False) -> None
     from cognitrix.tools.artifact_pages import ARTIFACT_TOOL_CATEGORY
 
     extra.extend(ToolManager.get_tools_by_category(ARTIFACT_TOOL_CATEGORY))
+    # Apps too: a task can publish an app and keep it current.
+    from cognitrix.tools.hosted_apps import APP_TOOL_CATEGORY
+
+    extra.extend(ToolManager.get_tools_by_category(APP_TOOL_CATEGORY))
     for agent in roster:
         if not getattr(agent.llm, 'supports_tool_use', False):
             continue

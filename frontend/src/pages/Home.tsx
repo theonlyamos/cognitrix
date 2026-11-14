@@ -34,7 +34,7 @@ import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
 import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
-import { takeChatDraft } from '@/lib/chatDraft';
+import { takeChatAutoSend, takeChatDraft } from '@/lib/chatDraft';
 import {
   ARCHIVED_KEY, GROUP_PREVIEW, PANEL_DEFAULT, PANEL_MAX, PANEL_MIN, PINNED_KEY,
   clampPanelWidth, groupChats, groupKey, MINI_SNAP, RAIL_WIDTH, loadClosedSections, loadListMini, loadPanelWidth, saveClosedSections, saveListMini, savePanelWidth,
@@ -1363,6 +1363,15 @@ export default function Home() {
     },
     [busy, question, steer, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
   );
+
+  // A draft handed over with "send it" (Create app): send once the chat is up.
+  const [autoSendOnce] = useState(takeChatAutoSend);
+  const autoSendRef = useRef(autoSendOnce);
+  useEffect(() => {
+    if (!autoSendRef.current || !isConnected || busy || !input.trim()) return;
+    autoSendRef.current = false;
+    void send(input);
+  }, [isConnected, busy, input, send]);
 
   // Messages the last turn never read go out as the next one, by themselves
   // (whatever is in the box stays there).

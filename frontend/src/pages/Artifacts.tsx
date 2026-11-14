@@ -156,11 +156,30 @@ function FileReader({ file, onClose }: { file: FileItem; onClose: () => void }) 
   );
 }
 
-/** Everything agents made: published pages, generated images and written documents. */
-export default function Artifacts() {
+/** Which slice a tab of the Apps page shows. */
+export type ArtifactKind = 'pages' | 'images' | 'documents' | 'shared';
+const KIND_FILTERS: Record<ArtifactKind, Filter[]> = {
+  pages: ['pages', 'pinned', 'live', 'public'],
+  images: ['images'],
+  documents: ['documents'],
+  shared: ['shared'],
+};
+const KIND_EMPTY: Record<ArtifactKind, string> = {
+  pages: 'Pages agents publish beside a chat (reports, dashboards, checklists) show up here.',
+  images: 'Images agents generate show up here.',
+  documents: 'Documents agents write in your chats show up here.',
+  shared: 'Pages other people share with you show up here.',
+};
+
+/** Everything agents made: published pages, generated images and written
+ *  documents. On its own it's the old Artifacts page; ``kind`` shows one
+ *  slice of it inside a tab of the Apps page. */
+export default function Artifacts({ kind }: { kind?: ArtifactKind } = {}) {
   const [data, setData] = useState<ArtifactList | null>(null);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
+  const [filter, setFilter] = useState<Filter>(kind ? KIND_FILTERS[kind][0] : 'all');
+  useEffect(() => { if (kind) setFilter(KIND_FILTERS[kind][0]); }, [kind]);
+  const filters = kind ? FILTERS.filter((f) => KIND_FILTERS[kind].includes(f.id)) : FILTERS;
   const [query, setQuery] = useState('');
   const [reading, setReading] = useState<FileItem | null>(null);
 
@@ -199,20 +218,22 @@ export default function Artifacts() {
     }).sort((a, b) => b.when - a.when);
   }, [data, filter, query]);
 
-  const total = data ? data.pages.length + data.images.length + data.files.length : 0;
+  const total = !data ? 0 : !kind ? data.pages.length + data.images.length + data.files.length
+    : kind === 'images' ? data.images.length : kind === 'documents' ? data.files.length
+    : kind === 'shared' ? data.pages.filter((p) => p.role !== 'owner').length : data.pages.length;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PageHeader title="Artifacts" subtitle="pages, images and documents your agents made" />
-      {error && !data ? <ErrorState message={error} onRetry={() => void load()} /> : !data ? <LoadingState label="loading artifacts…" /> : total === 0 ? (
+      {!kind && <PageHeader title="Artifacts" subtitle="pages, images and documents your agents made" />}
+      {error && !data ? <ErrorState message={error} onRetry={() => void load()} /> : !data ? <LoadingState label="loading…" /> : total === 0 ? (
         <EmptyState icon={<LayoutPanelTop size={20} />} title="Nothing here yet"
-          desc="Ask an agent to make a report, a dashboard, an image or a document. What it makes shows up here."
+          desc={kind ? KIND_EMPTY[kind] : 'Ask an agent to make a report, a dashboard, an image or a document. What it makes shows up here.'}
           action={<Link to="/home" className="rounded-md bg-accent px-4 py-2 text-[13px] font-semibold text-accent-foreground">Open a chat</Link>} />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
             <div role="tablist" aria-label="Filter artifacts" className="-mx-4 flex flex-none gap-1.5 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:px-0">
-              {FILTERS.map((f) => (
+              {filters.length > 1 && filters.map((f) => (
                 <button key={f.id} type="button" role="tab" aria-selected={filter === f.id} onClick={() => setFilter(f.id)}
                   className={cn('h-9 flex-none whitespace-nowrap rounded-full border px-3 text-[12.5px] md:h-8',
                     filter === f.id ? 'border-fg bg-fg text-bg' : 'border-line text-fg-dim hover:text-fg')}>

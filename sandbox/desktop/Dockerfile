@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxtst6 libxss1 libxcomposite1 \
         chromium firefox-esr \
         python3 python3-pil \
+        python3-venv python3-pip nodejs npm sqlite3 git curl \
         fonts-dejavu-core fonts-liberation xdg-utils ca-certificates tini procps \
     && rm -rf /var/lib/apt/lists/*
 
@@ -53,7 +54,8 @@ RUN chmod 755 /usr/local/bin/* \
 
 USER agent
 WORKDIR /home/agent
-# Files, downloads and browser profiles live here; mount a volume to keep them.
+# Files, downloads, browser profiles and Apps (~/.cognitrix-apps) live here;
+# mount a volume to keep them. Apps need python3/node to run what agents build.
 VOLUME /home/agent
 
 EXPOSE 8790 6080

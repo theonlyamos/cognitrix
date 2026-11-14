@@ -226,7 +226,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
     <section aria-label={`Artifact: ${page.title}`} className="relative flex h-full min-h-0 flex-col bg-bg">
       <header className={cn('flex flex-none items-center gap-1.5 border-b border-line py-1.5 pr-2 md:px-3', variant === 'page' ? 'app-page-header min-h-14 pl-16 md:min-h-12' : 'min-h-12 pl-2')}>
         {variant === 'page' && (
-          <Link to="/artifacts" aria-label="All artifacts" className={iconButton}><ArrowLeft size={16} /></Link>
+          <Link to="/apps?tab=pages" aria-label="All pages" className={iconButton}><ArrowLeft size={16} /></Link>
         )}
         {variant === 'panel' && onBack && !expanded && (
           <button type="button" onClick={onBack} className="inline-flex h-9 flex-none items-center gap-1 rounded-lg px-2 font-mono text-[11.5px] text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8">

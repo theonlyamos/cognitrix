@@ -22,6 +22,7 @@ from ...api.routes.computer_sandbox import sandbox_api
 from ...api.routes.oauth import oauth_api
 from ...api.routes.onboarding import onboarding_api
 from ...api.routes.folders import folders_api
+from ...api.routes.hosted_apps import hosted_apps_api
 from ...api.routes.base import api_router
 from ...api.routes.providers import providers_api
 from ...api.routes.public import public_api
@@ -47,6 +48,7 @@ api_router.include_router(agents_api)
 api_router.include_router(tools_api)
 api_router.include_router(artifacts_api)
 api_router.include_router(artifact_pages_api)
+api_router.include_router(hosted_apps_api)
 api_router.include_router(skills_api)
 api_router.include_router(providers_api)
 api_router.include_router(automations_api)
