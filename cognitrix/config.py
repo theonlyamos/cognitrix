@@ -804,9 +804,11 @@ async def _ensure_schema():
     from cognitrix.tasks.automation import AgentNotification, TaskTrigger, TriggerEvent
     from cognitrix.tasks.standing import AgentOffer
     from cognitrix.artifact_pages.models import MODELS as ARTIFACT_PAGE_MODELS
+    from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
+        *HOSTED_APP_MODELS,
         AgentOffer,
         MeetingNote,
         PersonalSkill,

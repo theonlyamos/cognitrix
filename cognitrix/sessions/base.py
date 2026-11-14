@@ -593,9 +593,12 @@ class Session(Model):
             try:
                 from cognitrix.tools.artifact_pages import ARTIFACT_TOOL_CATEGORY
                 from cognitrix.tools.base import ToolManager
+                from cognitrix.tools.hosted_apps import APP_TOOL_CATEGORY
 
                 names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
-                extra = [t for t in ToolManager.get_tools_by_category(ARTIFACT_TOOL_CATEGORY)
+                # Apps (Publish App, App Status) ride along with artifacts.
+                extra = [t for category in (ARTIFACT_TOOL_CATEGORY, APP_TOOL_CATEGORY)
+                         for t in ToolManager.get_tools_by_category(category)
                          if t.name.lower() not in names]
                 if extra:
                     agent = agent.model_copy(update={'tools': [*agent.tools, *extra]})

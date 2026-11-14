@@ -16,6 +16,7 @@ from cognitrix.tools.computer import (
     type_in_window,
 )
 from cognitrix.tools.folders import request_folder
+from cognitrix.tools.hosted_apps import app_status, publish_app
 from cognitrix.tools.http import http_request, list_credentials
 from cognitrix.tools.image import generate_image
 from cognitrix.tools.knowledge import search_knowledge

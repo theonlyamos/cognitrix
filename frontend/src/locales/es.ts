@@ -10,6 +10,7 @@ const es: Messages = {
   'nav.automations': 'Automatizaciones',
   'nav.teams': 'Equipos',
   'nav.artifacts': 'Artefactos',
+  'nav.apps': 'Apps',
   'nav.knowledge': 'Conocimiento',
   'nav.meetings': 'Reuniones',
   'nav.settings': 'Ajustes',

@@ -30,7 +30,7 @@ import { getSendKey, isSendKey } from '@/lib/preferences';
 import { SendKeyHint } from '@/components/SendKeyHint';
 import { AgentBadge, StartChat } from '@/components/StartChat';
 import type { PickTarget, PickerAgent, PickerTeam } from '@/lib/agentPicker';
-import { takeChatDraft } from '@/lib/chatDraft';
+import { takeChatAutoSend, takeChatDraft } from '@/lib/chatDraft';
 import {
   ARCHIVED_KEY, GROUP_PREVIEW, PANEL_DEFAULT, PANEL_MAX, PANEL_MIN, PINNED_KEY,
   clampPanelWidth, groupChats, groupKey, loadClosedSections, loadPanelWidth, saveClosedSections, savePanelWidth,
@@ -1149,6 +1149,15 @@ export default function Home() {
     },
     [busy, addMessage, clearStopFallback, editSource, finishTurn, isConnected, setIsStreaming, setMessages, rework, agentId, activeSessionId, streamId, refreshRuns, revokePreviewUrl, uploadError],
   );
+
+  // A draft handed over with "send it" (Create app): send once the chat is up.
+  const [autoSendOnce] = useState(takeChatAutoSend);
+  const autoSendRef = useRef(autoSendOnce);
+  useEffect(() => {
+    if (!autoSendRef.current || !isConnected || busy || !input.trim()) return;
+    autoSendRef.current = false;
+    void send(input);
+  }, [isConnected, busy, input, send]);
 
   const stop = useCallback(async () => {
     if (!busy || stopping) return;

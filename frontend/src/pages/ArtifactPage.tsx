@@ -9,7 +9,7 @@ export default function ArtifactPage() {
   return (
     <div className="h-full min-h-0">
       <ArtifactViewer key={artifactId} pageId={artifactId} variant="page" initialThread={params.get('thread')}
-        onGone={() => navigate('/artifacts', { replace: true })} />
+        onGone={() => navigate('/apps?tab=pages', { replace: true })} />
     </div>
   );
 }
