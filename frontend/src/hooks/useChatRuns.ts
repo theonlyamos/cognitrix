@@ -10,6 +10,8 @@ export interface ChatRunSummary {
   prompt?: string;
   /** Saved history entries that existed before this turn started. */
   history_len?: number;
+  /** Messages sent while it runs that the agent hasn't read yet. */
+  inbox?: { id: string; content: string; source?: string }[];
 }
 
 const BUSY_POLL_MS = 3_000;

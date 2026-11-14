@@ -426,6 +426,7 @@ _SESSION_MIGRATION_COLUMNS = (
     ('started_by', 'TEXT'),
     ('incognito', 'BOOLEAN'),
     ('title', 'TEXT'), ('pinned', 'BOOLEAN'), ('archived', 'BOOLEAN'),
+    ('pending_messages', 'TEXT'),
 )
 
 _TASKRUN_INDEXES = (

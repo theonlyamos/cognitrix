@@ -256,3 +256,27 @@ async def test_agents_pause_after_many_replies_in_a_row(db, world, monkeypatch):
     await _settle()
     assert world == []
     assert [a.title for a in await unread_notifications('u1')] == ['Helper replied to Boss']
+
+
+async def test_report_limit_holds_while_the_parent_is_busy(db, world, monkeypatch):
+    from cognitrix.sessions import agent_chats
+    from cognitrix.sessions import runs as chat_runs
+    from cognitrix.tasks.automation import unread_notifications
+
+    monkeypatch.setattr(agent_chats, 'MAX_EXCHANGES', 2)
+    parent = await _parent(chat=[
+        {'role': 'User', 'content': 'please research'},
+        {'role': 'User', 'content': agent_chats.REPORT_PREFIX + 'one'},
+    ])
+    # The parent's running turn began with a report and has another waiting.
+    run = chat_runs.start_run('u1', BOSS.id, str(parent.id), prompt=agent_chats.REPORT_PREFIX + 'two')
+    run.steerable = True
+    try:
+        child = await agent_chats.create_chat('u1', HELPER, {
+            'agent_id': BOSS.id, 'agent_name': 'Boss', 'session_id': str(parent.id),
+            'depth': 1, 'report_back': True, 'exchanges': 1})
+        await agent_chats.report_back('u1', HELPER, child, 'complete', 'more')
+        assert run.inbox == []
+        assert [a.title for a in await unread_notifications('u1')] == ['Helper replied to Boss']
+    finally:
+        run.finish({'type': 'turn_complete', 'content': '', 'session_id': str(parent.id)})

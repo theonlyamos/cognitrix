@@ -194,6 +194,10 @@ class Session(Model):
     archived: bool | None = None
     """Hidden from the chat list until the person looks at archived chats."""
 
+    pending_messages: list[dict[str, Any]] | None = None
+    """Messages sent while the last turn ran that it never read. The next
+    turn clears them; a page that reopens the chat sends them."""
+
     started_by: dict[str, Any] | None = None
     """Set when an agent started this chat: {agent_id, agent_name, session_id
     (the chat it was started from), depth, report_back, exchanges}"""
@@ -437,6 +441,8 @@ class Session(Model):
                     lines.append(f"assistant: {content[:2000]} [called {calls}]".replace(':  [', ': ['))
                 elif str(m.get('role', '')).lower() == 'tool':
                     lines.append(f"tool result: {clip(content, cap // 2)}")
+                elif m.get('type') == 'steer':
+                    lines.append(f"the user, mid-task: {content[:2000]}")
                 elif content.strip():
                     lines.append(f"{m.get('role', '')}: {content[:2000]}")
         pieces: list[str] = []
@@ -471,6 +477,9 @@ class Session(Model):
             summary = text
 
         for i, m in [*earlier_summaries, *(item for rnd in fold for item in rnd)]:
+            # The person's own mid-task messages stay word for word.
+            if m.get('type') == 'steer':
+                continue
             self.chat[i] = {**m, 'folded': True}
         insert_at = rounds[-TURN_KEEP_ROUNDS][0][0]
         self.chat.insert(insert_at, {
@@ -1064,6 +1073,13 @@ class Session(Model):
                                     break
                                 last_denied_sig = sig if all_blocked else None
 
+                                # Messages the person sent while this round ran
+                                # go in now, after the tool results and before
+                                # compaction, so they are the newest thing the
+                                # model reads and are never folded away.
+                                if record_history:
+                                    await self._take_steering(interface, output, wsquery)
+
                                 if record_history:
                                     try:
                                         await self._maybe_compact_turn(agent)
@@ -1159,6 +1175,19 @@ class Session(Model):
                                 'about to use a tool, call it now.]'
                             ),
                         }]
+                        continue
+
+                    if (
+                        not called_tools
+                        and record_history
+                        and not wrap_up_requested
+                        and await self._take_steering(interface, output, wsquery)
+                    ):
+                        # A message arrived while the model was writing its
+                        # answer: keep the turn going so it gets read now
+                        # instead of waiting for another turn.
+                        prompt = await agent.get_context_manager().build_prompt(agent, self)
+                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders))
                         continue
 
                     if not called_tools:
@@ -1257,6 +1286,45 @@ class Session(Model):
             raise
         except Exception as e:
             logger.exception(e)
+
+    def _steering_run(self):
+        """The chat run whose inbox this turn reads, if any."""
+        from cognitrix.sessions import runs as chat_runs
+
+        run = chat_runs.current_run.get()
+        # A nested turn (Call Agent, a teammate) runs another session in the
+        # same context; only the chat the person is writing to reads the inbox.
+        if run is None or not run.running or run.session_id != str(self.id):
+            return None
+        return run
+
+    async def _take_steering(self, interface: str, output: Callable, wsquery: dict[str, str] | None) -> bool:
+        """Move messages sent during the turn into history. True if any."""
+        run = self._steering_run()
+        if run is None or not run.inbox:
+            return False
+        messages = run.take_inbox()
+        for message in messages:
+            self.update_history({
+                'role': 'User',
+                # Its own type: it belongs to the running turn rather than
+                # starting a new one (sessions/context.py partition_turns).
+                'type': 'steer',
+                'content': message.content,
+                'steer_id': message.id,
+                'source': message.source,
+            })
+        if interface != 'cli':
+            try:
+                await output({
+                    'type': 'message_delivered',
+                    'ids': [m.id for m in messages],
+                    'messages': [m.as_dict() for m in messages],
+                    'action': (wsquery or {}).get('action'),
+                })
+            except Exception:
+                logger.warning('Could not report delivered messages', exc_info=True)
+        return True
 
     def _cli_tool_caller(self, agent: 'Agent', interface: str, output: Callable, tool_context,
                          turn_folders: list, inherited_folders: tuple, record_history: bool | None = False):

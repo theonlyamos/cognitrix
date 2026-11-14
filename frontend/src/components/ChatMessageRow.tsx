@@ -168,7 +168,12 @@ export const ChatMessageRow = memo(function ChatMessageRow({
       <div className="min-w-0" aria-live={!isUser && isLast && streaming ? 'off' : undefined}>
         {blockedUrl && <BlockedEndpointNotice url={blockedUrl} />}
         {isUser ? (
-          <div className="whitespace-pre-wrap break-words leading-relaxed">{message.content}</div>
+          <>
+            <div className="whitespace-pre-wrap break-words leading-relaxed">{message.content}</div>
+            {message.steered && (
+              <div className="mt-1 font-mono text-[10.5px] text-fg-dim">sent while the agent was working</div>
+            )}
+          </>
         ) : isLast && streaming ? (
           <div className="whitespace-pre-wrap break-words leading-relaxed">
             {message.content}
