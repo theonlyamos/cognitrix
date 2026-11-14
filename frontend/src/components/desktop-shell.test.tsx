@@ -18,6 +18,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 vi.mock('@/context/AppContext', () => ({
+  useOptionalUser: () => ({ id: 'user-1', name: 'Test User', email: 'test@example.com' }),
   useUser: () => ({ user: { id: 'u1', name: 'Amos', email: 'a@example.com' }, isLoading: false, login: vi.fn(), logout: vi.fn(), checkAuth: vi.fn() }),
 }));
 
@@ -80,7 +81,7 @@ describe('desktop shell', () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText('New chat with Researcher')).toBeInTheDocument();
-    await userEvent.type(screen.getByRole('textbox', { name: /search commands/i }), 'matrix');
+    await userEvent.type(screen.getByRole('textbox', { name: /search chats/i }), 'matrix');
     expect(screen.getByText('Provider test matrix')).toBeInTheDocument();
     expect(screen.queryByText('New chat with Researcher')).not.toBeInTheDocument();
   });

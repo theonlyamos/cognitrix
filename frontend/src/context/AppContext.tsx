@@ -144,6 +144,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** The signed-in user, or null outside the provider (pages rendered alone in tests). */
+export function useOptionalUser() {
+  return useContext(UserContext)?.user ?? null;
+}
+
 export function useUser() {
   const context = useContext(UserContext);
   if (!context) throw new Error('useUser must be used within UserProvider');

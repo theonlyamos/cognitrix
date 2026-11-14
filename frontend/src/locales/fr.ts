@@ -20,6 +20,10 @@ const fr: Messages = {
   'nav.collapseSidebar': 'Réduire le menu',
   'nav.expandSidebar': 'Agrandir le menu',
   'nav.waiting': 'en attente',
+  'nav.newChat': 'Nouvelle discussion',
+  'nav.search': 'Rechercher',
+  'nav.more': 'Plus',
+  'nav.notifications': 'Notifications',
 
   'settings.title': 'Paramètres',
   'settings.search': 'Rechercher dans les paramètres',
