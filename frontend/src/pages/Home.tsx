@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArtworkScene } from '@/components/ThemeArtwork';
+import { ArtworkScene, ChatHorizon } from '@/components/ThemeArtwork';
 import { ChatMessageRow } from '@/components/ChatMessageRow';
 import { useSession, type ChatMessage, type ToolArtifact } from '@/context/SessionContext';
 import { MobileSheet } from '@/components/MobileSheet';
@@ -1706,6 +1706,8 @@ export default function Home() {
 
       {/* Chat column */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {/* The theme's drawing along the bottom, behind messages and the message box */}
+        <ChatHorizon className={cn((empty || picking) && 'hidden')} />
         {sandboxOn && !computerOpen && !artifactOpen && (
           <button
             type="button"
@@ -1777,7 +1779,7 @@ export default function Home() {
           role="log"
           aria-live="polite"
           aria-relevant="additions text"
-          className="min-h-0 flex-1 overscroll-contain overflow-y-auto"
+          className="relative min-h-0 flex-1 overscroll-contain overflow-y-auto"
         >
           {incognito && !picking && (
             <div role="note" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-dashed border-warn/60 bg-warn/10 px-3 py-2 text-[12.5px] leading-relaxed sm:mx-6">
@@ -1888,7 +1890,7 @@ export default function Home() {
         </div>
 
         {/* Composer (hidden while choosing who to talk to) */}
-        <div className={cn('flex-none border-t border-line px-6 py-4', picking && agents.length > 0 && 'hidden')}>
+        <div className={cn('relative flex-none border-t border-line px-6 py-4', picking && agents.length > 0 && 'hidden')}>
           <div className="relative mx-auto max-w-3xl">
             {skillMenuOpen && (
               <div

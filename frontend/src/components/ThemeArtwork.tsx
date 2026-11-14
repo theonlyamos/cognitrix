@@ -53,3 +53,22 @@ export function ArtworkScene({ className, fade = 'round' }: { className?: string
     </div>
   );
 }
+
+/**
+ * The bottom of the scene along the bottom of a chat, behind the message box.
+ * Messages scroll over it; it stays put and stays faint so text reads.
+ */
+export function ChatHorizon({ className }: { className?: string }) {
+  const art = useArtworkSrc('bg');
+  if (!art) return null;
+  return (
+    <div
+      aria-hidden="true"
+      data-testid="chat-horizon"
+      className={cn('pointer-events-none absolute inset-x-0 bottom-0 z-0 h-[200px] overflow-hidden [mask-image:linear-gradient(to_top,#000_30%,transparent)] md:h-[240px]', className)}
+      style={{ opacity: art.strength * 0.6 }}
+    >
+      <img src={art.src} alt="" draggable={false} className="h-full w-full select-none object-cover object-bottom" />
+    </div>
+  );
+}
