@@ -417,7 +417,7 @@ _AGENT_MIGRATION_COLUMNS = (
     ('folders', 'TEXT'), ('can_request_folders', 'BOOLEAN'),
     ('permission_level', 'TEXT'),
     ('tool_permissions', 'TEXT'),
-    ('description', 'TEXT'), ('reviewer', 'TEXT'), ('coding_agents', 'TEXT'),
+    ('description', 'TEXT'), ('avatar', 'TEXT'), ('reviewer', 'TEXT'), ('coding_agents', 'TEXT'),
     ('credentials', 'TEXT'), ('can_create_sub_agents', 'BOOLEAN'),
     ('sub_agent_model', 'TEXT'), ('automation', 'TEXT'),
     ('memory', 'TEXT'), ('knowledge', 'TEXT'), ('shared_with', 'TEXT'),
@@ -431,6 +431,7 @@ _SESSION_MIGRATION_COLUMNS = (
     ('started_by', 'TEXT'),
     ('incognito', 'BOOLEAN'),
     ('title', 'TEXT'), ('pinned', 'BOOLEAN'), ('archived', 'BOOLEAN'),
+    ('pending_messages', 'TEXT'),
 )
 
 _TASKRUN_INDEXES = (

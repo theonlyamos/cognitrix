@@ -71,8 +71,10 @@ def _file_row(row: ArtifactFile, agents: dict[str, str]) -> dict[str, Any]:
 
 
 @artifact_pages_api.get('')
-async def list_artifacts(ctx: AuthContext = Depends(jwt_only)):
-    """Pages I can open, and the images and documents my agents made."""
+async def list_artifacts(ctx: AuthContext = Depends(jwt_only), session_id: str = ''):
+    """Pages I can open, and the images and documents my agents made.
+
+    With ``session_id``, only what that chat made (the chat's side panel)."""
     from cognitrix.artifacts import Artifact
 
     me = _me(ctx)
@@ -90,6 +92,10 @@ async def list_artifacts(ctx: AuthContext = Depends(jwt_only)):
     images.sort(key=lambda r: r['created'] or '', reverse=True)
     files = [_file_row(r, agents) for r in await ArtifactFile.find({'owner_id': me}) or []]
     files.sort(key=lambda r: r['updated'] or '', reverse=True)
+    if session_id:
+        pages = [p for p in pages if str(p.get('session_id') or '') == session_id]
+        images = [r for r in images if str(r.get('session_id') or '') == session_id]
+        files = [r for r in files if str(r.get('session_id') or '') == session_id]
     return {'pages': pages, 'images': images, 'files': files, 'public_links': store.public_links_allowed()}
 
 

@@ -1,4 +1,6 @@
 import { useId, useState } from 'react';
+import { AgentBadge } from '@/components/StartChat';
+import { AVATAR_HUES } from '@/lib/agentAvatar';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import ModelPicker from '@/components/ModelPicker';
@@ -81,6 +83,43 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
               placeholder="What this agent is for, in one line" className={inputClass} />
             <span className="text-[12px] font-normal text-fg-dim">Shown on the agent list, and to teammates deciding who to hand work to.</span>
           </label>
+          <div className={cn(labelClass, 'md:col-span-2')}>
+            Thumbnail
+            <div className="flex flex-wrap items-center gap-3 font-normal">
+              <AgentBadge name={draft.name || agent.name} avatar={{ emoji: draft.avatarEmoji, hue: draft.avatarHue }} size="lg" />
+              <div role="radiogroup" aria-label="Thumbnail colour" className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={draft.avatarHue === null}
+                  onClick={() => update({ avatarHue: null })}
+                  className={cn('h-11 rounded-md border px-2.5 text-[12px] md:h-7', draft.avatarHue === null ? 'border-fg text-fg' : 'border-line text-fg-dim hover:border-fg-dim')}
+                >
+                  Auto
+                </button>
+                {AVATAR_HUES.map((hue) => (
+                  <button
+                    key={hue}
+                    type="button"
+                    role="radio"
+                    aria-checked={draft.avatarHue === hue}
+                    aria-label={`Colour ${AVATAR_HUES.indexOf(hue) + 1}`}
+                    onClick={() => update({ avatarHue: hue })}
+                    style={{ background: `hsl(${hue} 65% 52%)` }}
+                    className={cn('h-11 w-11 rounded-md border-2 md:h-7 md:w-7', draft.avatarHue === hue ? 'border-fg' : 'border-transparent')}
+                  />
+                ))}
+              </div>
+              <input
+                value={draft.avatarEmoji}
+                onChange={(e) => update({ avatarEmoji: e.target.value.replace(/\p{ASCII}/gu, "").slice(0, 8) })}
+                aria-label="Thumbnail emoji"
+                placeholder="Emoji"
+                className={cn(inputClass, 'w-24 text-center')}
+              />
+            </div>
+            <span className="text-[12px] font-normal text-fg-dim">Shown in the chat list and its minimized rail. Leave the emoji empty to show the first letter.</span>
+          </div>
         </div>
       </Card>
 

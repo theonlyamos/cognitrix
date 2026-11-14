@@ -51,6 +51,25 @@ def test_old_rows_load_with_defaults():
     assert agent.sub_agent_model == ''
 
 
+def test_thumbnail_keeps_only_an_emoji_and_a_hue():
+    agent = _agent(avatar='{"emoji": "🔭", "hue": 200}')
+    assert agent.avatar == {'emoji': '🔭', 'hue': 200}
+    assert _agent(avatar=None).avatar == {}
+
+    agent = _agent(avatar={'emoji': ' ✒ ', 'hue': '380', 'image': 'http://x/y.png'})
+    agent_routes._check_policy(agent, {'avatar': True}, None)
+    assert agent.avatar == {'emoji': '✒', 'hue': 20}
+
+    kept = _agent()
+    agent_routes._check_policy(kept, {'name': 'A'}, _agent(avatar={'hue': 78}))
+    assert kept.avatar == {'hue': 78}
+
+    for bad in ({'emoji': 'abc'}, {'emoji': '<b>'}, {'hue': 'green'}):
+        agent = _agent(avatar=bad)
+        with pytest.raises(HTTPException):
+            agent_routes._check_policy(agent, {'avatar': True}, None)
+
+
 def test_json_text_columns_are_read():
     agent = _agent(reviewer='{"mode": "always"}', credentials='["GITHUB_TOKEN"]')
     assert agent.reviewer == {'mode': 'always'}

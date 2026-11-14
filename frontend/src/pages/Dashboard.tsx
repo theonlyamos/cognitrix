@@ -612,7 +612,7 @@ export default function Dashboard() {
                       return (
                         <li key={c.id}>
                           <Link to={href} className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-panel-2/60">
-                            <AgentBadge name={name} team={c.kind === 'team'} />
+                            <AgentBadge name={name} team={c.kind === 'team'} avatar={c.kind === 'team' ? undefined : (agent as { avatar?: { emoji?: string; hue?: number | null } | null } | undefined)?.avatar} />
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-[13.5px] font-medium group-hover:text-accent-ink">{c.title || 'New chat'}</span>
                               <span className="block truncate text-[12px] text-fg-dim">
@@ -705,7 +705,7 @@ export default function Dashboard() {
                       return (
                         <li key={a.id}>
                           <Link to={`/agents/${a.id}`} className="group flex items-center gap-3 rounded-[10px] px-2.5 py-2 transition-colors hover:bg-panel-2">
-                            <AgentBadge name={a.name} size="lg" className="!h-8 !w-8 !text-[13px]" />
+                            <AgentBadge name={a.name} avatar={(a as { avatar?: { emoji?: string; hue?: number | null } | null }).avatar} size="lg" className="!h-8 !w-8 !text-[13px]" />
                             <span className="min-w-0 flex-1">
                               <span className="flex items-center gap-2">
                                 <span className="truncate text-[13.5px] font-medium group-hover:text-accent-ink">{a.name}</span>

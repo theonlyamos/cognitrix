@@ -18,11 +18,22 @@ interface ProviderOption {
   sign_in?: boolean;
 }
 
+/** A specialist the assistant can hand work to (cognitrix/agents/starter_team.py). */
+export interface StarterAgent {
+  key: string;
+  name: string;
+  description: string;
+  /** This person doesn't have it yet. */
+  missing: boolean;
+}
+
 export interface OnboardingStatus {
   needs_setup: boolean;
   has_agents: boolean;
   suggested: { name: string; provider: string; model: string };
   providers: ProviderOption[];
+  /** Absent on an older engine. */
+  starter_team?: StarterAgent[];
 }
 
 function keyNote(option: ProviderOption | undefined): string {
@@ -72,6 +83,8 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<'create' | 'skip' | null>(null);
   const [planConnected, setPlanConnected] = useState(false);
+  const starterAgents = status.starter_team ?? [];
+  const [starterTeam, setStarterTeam] = useState(true);
   const planSignIn = useChatGPTSignIn(() => setPlanConnected(true));
 
   const option = status.providers.find((p) => p.id === provider);
@@ -108,6 +121,7 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
         provider,
         model: model.trim(),
         ...(askForKey ? { api_key: apiKey.trim() } : {}),
+        ...(starterAgents.length ? { starter_team: starterTeam } : {}),
       });
       finish(res.data?.agent?.id);
     } catch (e) {
@@ -225,6 +239,24 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
               Ollama runs models on this computer. Start it and pull the model first, for example{' '}
               <span className="font-mono text-[11.5px]">ollama pull {model || 'llama3.2'}</span>.
             </p>
+          )}
+
+          {starterAgents.length > 0 && (
+            <label className="flex cursor-pointer items-start gap-2.5 rounded border border-line bg-panel-2 px-3.5 py-3">
+              <input
+                type="checkbox"
+                checked={starterTeam}
+                onChange={(e) => setStarterTeam(e.target.checked)}
+                className="mt-[3px] accent-[var(--accent)]"
+              />
+              <span className="min-w-0">
+                <span className="block text-[13.5px] font-medium">Add a starter team</span>
+                <span className="mt-0.5 block text-[12.5px] leading-relaxed text-fg-dim">
+                  {starterAgents.map((a) => a.name).join(', ')}. Your assistant hands bigger jobs to them and checks
+                  what comes back. They run on the same provider, and you can change or delete them later.
+                </span>
+              </span>
+            </label>
           )}
 
           {error && (

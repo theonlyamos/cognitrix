@@ -11,8 +11,10 @@ forget and search them. See docs/designs/global-memory.md.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+from collections import OrderedDict
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from typing import Any
@@ -245,8 +247,26 @@ PROMPT_HEADER = (
 )
 
 
+# One chat keeps the memory section it was first given, for as long as the
+# saved memories themselves don't change. When there are more memories than
+# fit, the section used to be re-picked against every new message, so the
+# system prompt changed on every turn and the provider's prompt cache (which
+# needs an unchanged start) never applied to a long chat.
+_BLOCK_CACHE_MAX = 512
+_block_cache: OrderedDict[tuple[str, str, str, int], tuple[str, str]] = OrderedDict()
+
+
+def _fingerprint(rows: list[Memory]) -> str:
+    # The text itself, not its timestamp: a correction made within the same
+    # second as the last save must still replace the old fact.
+    digest = hashlib.sha256()
+    for r in rows:
+        digest.update(f"{r.id}\x1f{int(bool(r.pinned))}\x1f{r.scope}\x1f{r.content}\x1e".encode('utf-8', 'replace'))
+    return digest.hexdigest()
+
+
 async def prompt_block(user_id: str | None, agent: Any, query: str = '',
-                       budget: int = PROMPT_BUDGET_CHARS) -> str:
+                       budget: int = PROMPT_BUDGET_CHARS, session_id: str | None = None) -> str:
     """The memory section of the system prompt, or '' when there's nothing to add."""
     if not user_id:
         return ''
@@ -256,6 +276,23 @@ async def prompt_block(user_id: str | None, agent: Any, query: str = '',
     rows = await visible_memories(user_id, agent)
     if not rows:
         return ''
+    key = None
+    if session_id:
+        key = (str(user_id), str(getattr(agent, 'id', '') or ''), str(session_id), int(budget))
+        cached = _block_cache.get(key)
+        if cached is not None and cached[0] == _fingerprint(rows):
+            _block_cache.move_to_end(key)
+            return cached[1]
+    block = _build_block(rows, query, budget)
+    if key is not None:
+        _block_cache[key] = (_fingerprint(rows), block)
+        _block_cache.move_to_end(key)
+        while len(_block_cache) > _BLOCK_CACHE_MAX:
+            _block_cache.popitem(last=False)
+    return block
+
+
+def _build_block(rows: list[Memory], query: str, budget: int) -> str:
     pinned = [r for r in rows if r.pinned]
     rest = [r for r in rows if not r.pinned]
     lines: list[str] = []

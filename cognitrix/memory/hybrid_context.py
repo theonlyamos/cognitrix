@@ -194,7 +194,8 @@ class HybridContextManager(BaseContextManager):
             try:
                 from cognitrix.memory.saved import prompt_block
 
-                block = await prompt_block(user_id, agent, query)
+                block = await prompt_block(
+                    user_id, agent, query, session_id=str(getattr(session, 'id', '') or '') or None)
                 if block:
                     system_content += "\n\n" + block
             except Exception:

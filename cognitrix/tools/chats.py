@@ -58,6 +58,40 @@ def _failure(exc: AgentChatError) -> ToolOutcome:
     return ToolOutcome.failure(exc.code, exc.message)
 
 
+def _shared_folders(current: Any, ctx: Any) -> list[dict[str, Any]] | None:
+    """The starting chat's real working folders (not its private scratch folder).
+
+    The running turn's own list comes first: on a chat's first turn the
+    folders are not saved with the chat yet.
+    """
+    from pathlib import Path
+
+    folders: list[dict[str, Any]] = []
+    for item in (getattr(ctx, 'folders', None) or ()):
+        to_dict = getattr(item, 'to_dict', None)
+        if callable(to_dict):
+            folders.append(to_dict())
+        elif isinstance(item, dict):
+            folders.append(dict(item))
+    if not folders:
+        folders = [dict(f) for f in (getattr(current, 'folders', None) or []) if isinstance(f, dict)]
+    if not folders:
+        return None
+
+    def same(a: str, b: str) -> bool:
+        try:
+            return Path(a).resolve() == Path(b).resolve()
+        except Exception:
+            return a == b
+
+    try:
+        scratch = str(current.scratch_path())
+    except Exception:
+        scratch = ''
+    kept = [f for f in folders if not scratch or not same(str(f.get('path') or ''), scratch)]
+    return kept or None
+
+
 def _message(text: Any) -> str:
     text = str(text or '').strip()
     if not text:
@@ -117,7 +151,8 @@ async def start_chat(message: str, agent: str = '', report_back: bool = True, *,
             'report_back': bool(report_back),
             'exchanges': 1,
         }
-        session = await agent_chats.create_chat(user_key, target, started_by)
+        session = await agent_chats.create_chat(
+            user_key, target, started_by, folders=_shared_folders(current, ctx))
     except AgentChatError as exc:
         return _failure(exc)
 

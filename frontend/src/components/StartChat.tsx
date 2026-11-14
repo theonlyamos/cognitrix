@@ -1,26 +1,33 @@
+import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { ArtworkScene } from '@/components/ThemeArtwork';
 import { cn } from '@/lib/utils';
+import { avatarEmoji, avatarHue, type AgentAvatar } from '@/lib/agentAvatar';
 import { agentModel, teamLine, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 
-/** Square letter badge used for agents and teams (teams get a dashed edge). */
+/** Square thumbnail for agents and teams (teams get a dashed edge): the first
+ *  letter, or the agent's emoji, on its own colour. */
 export function AgentBadge({
   name,
   team = false,
   selected = false,
   size = 'md',
+  avatar,
   className,
 }: {
   name: string;
   team?: boolean;
   selected?: boolean;
   size?: 'sm' | 'md' | 'lg';
+  avatar?: AgentAvatar | null;
   className?: string;
 }) {
   const letter = (name.trim()[0] || '?').toUpperCase();
+  const emoji = avatarEmoji(avatar);
   return (
     <span
       aria-hidden
+      style={selected ? undefined : ({ '--tint-h': avatarHue(name, avatar) } as CSSProperties)}
       className={cn(
         'inline-grid flex-none place-items-center border font-mono font-medium',
         size === 'sm' && 'h-[18px] w-[18px] rounded-[4px] text-[9.5px]',
@@ -28,10 +35,10 @@ export function AgentBadge({
         size === 'lg' && 'h-9 w-9 rounded-lg text-[15px]',
         team && 'border-dashed',
         className,
-        selected ? 'border-transparent bg-accent text-accent-foreground' : 'border-line bg-panel-2 text-fg',
+        selected ? 'border-transparent bg-accent text-accent-foreground' : 'agent-tint',
       )}
     >
-      {letter}
+      {emoji ? <span className={cn('leading-none', size === 'lg' ? 'text-[18px]' : size === 'md' ? 'text-[12px]' : 'text-[10px]')}>{emoji}</span> : letter}
     </span>
   );
 }
@@ -49,7 +56,7 @@ export function StartChat({
   recent?: PickTarget[];
   onPick: (target: PickTarget) => void;
 }) {
-  const card = (target: PickTarget, name: string, line: string, desc: string | null | undefined) => (
+  const card = (target: PickTarget, name: string, line: string, desc: string | null | undefined, avatar?: AgentAvatar | null) => (
     <button
       key={`${target.kind}:${target.id}`}
       type="button"
@@ -57,7 +64,7 @@ export function StartChat({
       className="flex flex-col gap-2.5 rounded-lg border border-line bg-panel p-3.5 text-left transition-colors hover:border-fg-dim"
     >
       <span className="flex min-w-0 items-center gap-2.5">
-        <AgentBadge name={name} team={target.kind === 'team'} size="lg" />
+        <AgentBadge name={name} team={target.kind === 'team'} avatar={avatar} size="lg" />
         <span className="flex min-w-0 flex-col">
           <span className="truncate text-[14.5px] font-medium">{name}</span>
           {line && <span className="truncate font-mono text-[10.5px] text-fg-dim">{line}</span>}
@@ -70,7 +77,7 @@ export function StartChat({
   const recentCards = recent.slice(0, 3).flatMap((target) => {
     if (target.kind === 'agent') {
       const a = agents.find((x) => x.id === target.id);
-      return a ? [card(target, a.name, agentModel(a), a.description)] : [];
+      return a ? [card(target, a.name, agentModel(a), a.description, a.avatar)] : [];
     }
     const t = teams.find((x) => x.id === target.id);
     return t ? [card(target, t.name, teamLine(t), t.description)] : [];
@@ -90,7 +97,7 @@ export function StartChat({
       )}
       <h3 className={cn(heading, 'mb-2', recentCards.length > 0 ? 'mt-6' : 'mt-7')}>Agents</h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {agents.map((a) => card({ kind: 'agent', id: a.id }, a.name, agentModel(a), a.description))}
+        {agents.map((a) => card({ kind: 'agent', id: a.id }, a.name, agentModel(a), a.description, a.avatar))}
         <Link to="/agents/new" className={addCard}>+ New agent</Link>
       </div>
       <h3 className={cn(heading, 'mb-2 mt-6')}>Teams</h3>

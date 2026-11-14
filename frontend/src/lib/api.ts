@@ -7,12 +7,24 @@ import { AUTH_EXPIRED_EVENT } from '@/lib/session';
  *  http://localhost:8000. */
 export const API_BASE = `${import.meta.env.VITE_BACKEND_URL ?? ''}/api/v1`;
 
+/** The browser's IANA timezone (for example "Africa/Accra"), or '' when unknown. */
+export function browserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {
+    return '';
+  }
+}
+
 /** Single axios instance. Auth token is attached from localStorage per request. */
 export const api = axios.create({ baseURL: API_BASE });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  // Agents are told today's date in the person's timezone, not the server's.
+  const timezone = browserTimezone();
+  if (timezone) config.headers['X-Timezone'] = timezone;
   return config;
 });
 

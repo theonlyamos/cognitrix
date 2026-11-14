@@ -66,7 +66,12 @@ class TaskContextManager(BaseContextManager):
         self.memory_accesses = 0
 
     async def build_prompt(self, agent, session) -> list[dict[str, Any]]:
-        system = self.snapshot.system_prompt
+        from cognitrix.common.clock import date_line
+
+        # The saved prompt is frozen with the run; today's date is not part of
+        # it, and without it a run has to guess or shell out to find the date.
+        # Snapshots made before the name was filled in still carry "{name}".
+        system = f"{date_line()}\n\n" + self.snapshot.system_prompt.replace('{name}', self.snapshot.name)
         budget = max(
             0,
             agent.llm.get_context_window()

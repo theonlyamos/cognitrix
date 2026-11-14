@@ -678,7 +678,9 @@ def build_runtime_snapshot(
     return AgentRuntimeSnapshot(
         agent_id=str(agent.id),
         name=agent.name,
-        system_prompt=strip_legacy_task_boilerplate(agent.system_prompt),
+        # Chats fill in the agent's name on every turn; a snapshot is used as
+        # saved, so fill it in here or the run is told "You are {name}".
+        system_prompt=strip_legacy_task_boilerplate(agent.system_prompt).replace('{name}', agent.name),
         llm=LLMRuntimeSnapshot(
             provider=llm.provider,
             model=llm.model,
