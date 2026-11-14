@@ -31,6 +31,17 @@ Settings › Agent access › Agents' computer (admins), or
 `COGNITRIX_SANDBOX_IMAGE` to use another one. Build locally with
 `docker build -f sandbox/desktop/Dockerfile -t cognitrix-desktop:latest .`
 
+## Updates
+
+Every 6 hours (`COGNITRIX_SANDBOX_UPDATE_CHECK_HOURS`, 0 = off) the engine
+runs `docker pull` on the image in the background when someone uses the
+computer. A stopped computer on an older image is recreated on the newer
+one when it next starts. A running one keeps going; the Computer panel shows
+**Update**, which restarts it (`POST /computer/sandbox/update`). Either way
+only the container is replaced: files and logins live in the
+`cognitrix-sandbox-home-*` volume and stay. Reset is different: it also
+deletes that volume.
+
 ## Driver behaviour in a sandbox
 
 `Driver(backend, sandbox=True)`:

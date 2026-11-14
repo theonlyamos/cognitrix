@@ -15,6 +15,8 @@ export interface SandboxStatus {
   enabled: boolean;
   running: boolean;
   desktops: SandboxDesktop[];
+  /** A newer version of the computer has been downloaded; restart to use it. */
+  update_available?: boolean;
   error?: string;
 }
 
@@ -36,6 +38,11 @@ export async function takeOver(desktop: string): Promise<string> {
 
 export async function handBack(desktop: string): Promise<void> {
   await api.post(`/computer/sandbox/desktops/${encodeURIComponent(desktop)}/release`);
+}
+
+/** Restart the computer on the newer version. Open windows close; files and logins stay. */
+export async function updateSandbox(): Promise<void> {
+  await api.post('/computer/sandbox/update');
 }
 
 /** Throw the computer away, files and logins included. */

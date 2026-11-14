@@ -57,6 +57,10 @@ MODE_ENV = 'COGNITRIX_COMPUTER_SANDBOX'
 IMAGE = os.environ.get('COGNITRIX_SANDBOX_IMAGE', 'ghcr.io/theonlyamos/cognitrix-desktop:latest')
 SETTINGS_FILE = Path.home() / '.cognitrix' / 'computer-sandbox.json'
 LABEL = 'cognitrix.sandbox'
+# How often the engine pulls the image to see whether a newer one was
+# published (only the changed layers download). 0 turns the check off.
+UPDATE_CHECK_HOURS_ENV = 'COGNITRIX_SANDBOX_UPDATE_CHECK_HOURS'
+_IMAGE_ID_TTL_S = 60.0
 
 _ERRORS = {'human_control': HumanControl, 'stale': Stale, 'busy': Busy, 'blocked': Blocked,
            'unsupported': Unsupported}
@@ -128,6 +132,7 @@ class Sandbox:
         self.token = token
         self.api = f'http://127.0.0.1:{api_port}'
         self.viewer_port = viewer_port
+        self.image_id = ''  # the image the container was made from (sha256:...)
         self.passwords: dict[str, str] = {}  # desktop -> VNC password
         # One driver per desktop, kept so its snapshots last between tool calls
         # (normalized-coordinate clicks read the last look's size).
@@ -166,6 +171,11 @@ class SandboxManager:
         self.docker = docker or shutil.which('docker') or 'docker'
         self._boxes: dict[str, Sandbox] = {}
         self._guard = threading.Lock()
+        # Newer-image check: a background `docker pull` every few hours.
+        self._pull_guard = threading.Lock()
+        self._pulling = False
+        self._last_pull = 0.0  # time.monotonic(); 0 = not yet
+        self._image_id_cache: tuple[float, str] = (0.0, '')
 
     # -- docker -------------------------------------------------------------
     def _docker(self, *args: str, check: bool = True, timeout: float = 120) -> subprocess.CompletedProcess:
@@ -224,7 +234,14 @@ class SandboxManager:
                 self._run(name, user_id)
                 info = self._inspect(name)
             elif not (info.get('State') or {}).get('Running'):
-                self._docker('start', name)
+                if self._outdated(info):
+                    # Nothing is running on it, so move it onto the newer
+                    # image now. Files and logins live in the home volume.
+                    logger.info('Recreating stopped sandbox %s on the newer image', name)
+                    self._docker('rm', '-f', name, check=False)
+                    self._run(name, user_id)
+                else:
+                    self._docker('start', name)
                 info = self._inspect(name)
             if info is None:
                 raise DriverError("The agents' computer didn't start.")
@@ -236,7 +253,9 @@ class SandboxManager:
             if box is None or box.token != token or not box.api.endswith(f':{api_port}'):
                 box = Sandbox(name, token, api_port, viewer_port)
                 self._boxes[name] = box
+            box.image_id = str(info.get('Image') or '')
         self._wait_healthy(box)
+        self.check_for_update()
         return box
 
     @staticmethod
@@ -264,6 +283,85 @@ class SandboxManager:
         name = self.container_name(user_id)
         self._docker('stop', name, check=False)
         self._boxes.pop(name, None)
+
+    # -- newer image ----------------------------------------------------------
+    def _local_image_id(self, fresh: bool = False) -> str:
+        """Id of the image the next container would start from ('' if none)."""
+        now = time.monotonic()
+        at, cached = self._image_id_cache
+        if not fresh and cached and now - at < _IMAGE_ID_TTL_S:
+            return cached
+        got = self._docker('image', 'inspect', '--format', '{{.Id}}', self.image, check=False, timeout=30)
+        image_id = got.stdout.strip() if got.returncode == 0 else ''
+        self._image_id_cache = (now, image_id)
+        return image_id
+
+    def _outdated(self, info: dict) -> bool:
+        current = str(info.get('Image') or '')
+        latest = self._local_image_id()
+        return bool(current and latest and current != latest)
+
+    def update_available(self, box: Sandbox) -> bool:
+        """True when a newer image has been downloaded than the one this
+        running computer was made from."""
+        latest = self._local_image_id()
+        return bool(box.image_id and latest and box.image_id != latest)
+
+    def check_for_update(self, force: bool = False) -> bool:
+        """Pull the image in the background when the last pull is old enough.
+        Returns True when a pull was started."""
+        try:
+            hours = float(os.environ.get(UPDATE_CHECK_HOURS_ENV, '6') or 0)
+        except ValueError:
+            hours = 6.0
+        if hours <= 0 and not force:
+            return False
+        with self._pull_guard:
+            now = time.monotonic()
+            if self._pulling or (not force and self._last_pull and now - self._last_pull < hours * 3600):
+                return False
+            self._pulling = True
+            self._last_pull = now
+        threading.Thread(target=self._pull, name='sandbox-image-pull', daemon=True).start()
+        return True
+
+    def _pull(self) -> None:
+        try:
+            got = self._docker('pull', '--quiet', self.image, check=False, timeout=1800)
+            if got.returncode != 0:
+                logger.info("Couldn't check for a newer sandbox image: %s",
+                            (got.stderr or got.stdout or '').strip()[-300:])
+            self._local_image_id(fresh=True)
+        except Exception:  # Docker missing or stopped; try again next time
+            logger.info("Couldn't check for a newer sandbox image", exc_info=True)
+        finally:
+            with self._pull_guard:
+                self._pulling = False
+
+    @property
+    def checking_for_update(self) -> bool:
+        return self._pulling
+
+    def update(self, user_id: Any) -> Sandbox:
+        """Move the user's computer onto the newest downloaded image. Open
+        windows close; files and logins stay (they live in the home volume)."""
+        name = self.container_name(user_id)
+        try:  # reopen the same desktops afterwards, so the panel can reconnect
+            old = self.existing(user_id)
+            names = [d['name'] for d in (old.desktops() if old else []) if d.get('name')]
+        except Exception:
+            names = []
+        with self._guard:
+            self._docker('rm', '-f', name, check=False)
+            self._boxes.pop(name, None)
+        self._local_image_id(fresh=True)
+        box = self.sandbox(user_id)
+        for desktop in names:
+            try:
+                box.desktop(desktop)
+            except Exception:
+                logger.info("Couldn't reopen desktop %s after the update", desktop, exc_info=True)
+        return box
 
     def reset(self, user_id: Any) -> None:
         """Remove the container and its home volume: a fresh computer next time."""

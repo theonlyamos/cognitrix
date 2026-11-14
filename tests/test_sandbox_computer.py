@@ -235,7 +235,8 @@ def api(monkeypatch):
 
     box = _ApiBox()
     mgr = SimpleNamespace(existing=lambda owner: box if owner == 'u1' else None, sandbox=lambda owner: box,
-                          reset=lambda owner: None)
+                          reset=lambda owner: None, update_available=lambda b: False,
+                          update=lambda owner: mgr.updated.append(owner), updated=[])
     monkeypatch.setenv('COGNITRIX_COMPUTER_SANDBOX', 'docker')
     monkeypatch.setattr('cognitrix.computer.sandbox.client.get_manager', lambda: mgr)
     app = FastAPI()
@@ -301,3 +302,104 @@ def test_viewer_ticket_is_one_use(api):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect('/computer/sandbox/screen?ticket=wrong'):
             pass
+
+
+def test_status_says_when_an_update_is_ready_and_update_restarts(api, monkeypatch):
+    from cognitrix.computer.sandbox import client as sandbox_client
+    client, _ = api
+    assert client.get('/computer/sandbox').json()['update_available'] is False
+    mgr = sandbox_client.get_manager()
+    monkeypatch.setattr(mgr, 'update_available', lambda b: True)
+    assert client.get('/computer/sandbox').json()['update_available'] is True
+    assert client.post('/computer/sandbox/update').json() == {'ok': True}
+    assert mgr.updated == ['u1']
+
+
+class _FakeDocker:
+    """Answers the docker commands SandboxManager runs."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, ...]] = []
+        self.latest = 'sha256:new'
+        self.container: dict | None = {'Image': 'sha256:old', 'State': {'Running': False},
+                                       'Config': {'Labels': {'cognitrix.sandbox.token': 't'}},
+                                       'NetworkSettings': {'Ports': {'8790/tcp': [{'HostPort': '5001'}],
+                                                                     '6080/tcp': [{'HostPort': '5002'}]}}}
+
+    def __call__(self, *args, check=True, timeout=120):
+        import json as _json
+        self.calls.append(args)
+        out, code = '', 0
+        if args[:2] == ('image', 'inspect'):
+            out = self.latest
+        elif args[0] == 'inspect':
+            if self.container is None:
+                code = 1
+            else:
+                out = _json.dumps([self.container])
+        elif args[0] == 'rm':
+            self.container = None
+        elif args[0] == 'run':
+            self.container = {**(self.container or {}), 'Image': self.latest, 'State': {'Running': True},
+                              'Config': {'Labels': {'cognitrix.sandbox.token': 't2'}},
+                              'NetworkSettings': {'Ports': {'8790/tcp': [{'HostPort': '5001'}],
+                                                            '6080/tcp': [{'HostPort': '5002'}]}}}
+        elif args[0] == 'start':
+            self.container['State'] = {'Running': True}
+        return SimpleNamespace(returncode=code, stdout=out, stderr='')
+
+
+@pytest.fixture
+def fake_manager(monkeypatch):
+    from cognitrix.computer.sandbox import client as sandbox_client
+    monkeypatch.setenv('COGNITRIX_SANDBOX_UPDATE_CHECK_HOURS', '0')
+    mgr = sandbox_client.SandboxManager(image='img', docker='docker')
+    fake = _FakeDocker()
+    monkeypatch.setattr(mgr, '_docker', fake)
+    monkeypatch.setattr(mgr, '_wait_healthy', lambda box: None)
+    return mgr, fake
+
+
+def test_a_stopped_computer_on_an_old_image_starts_on_the_new_one(fake_manager):
+    mgr, fake = fake_manager
+    box = mgr.sandbox('u1')
+    assert ('start', mgr.container_name('u1')) not in fake.calls
+    assert any(c[0] == 'rm' for c in fake.calls) and any(c[0] == 'run' for c in fake.calls)
+    assert box.image_id == 'sha256:new' and not mgr.update_available(box)
+    # The home volume (files, logins) is never removed by an update.
+    assert not any(c[:2] == ('volume', 'rm') for c in fake.calls)
+
+
+def test_a_running_computer_is_left_alone_until_asked(fake_manager, monkeypatch):
+    from cognitrix.computer.sandbox import client as sandbox_client
+    mgr, fake = fake_manager
+    fake.container['State'] = {'Running': True}
+    box = mgr.sandbox('u1')
+    assert box.image_id == 'sha256:old' and mgr.update_available(box)
+    assert not any(c[0] in ('rm', 'run') for c in fake.calls)
+    opened = []
+    monkeypatch.setattr(sandbox_client.Sandbox, 'desktops', lambda self: [{'name': 'agent-a'}, {'name': 'main'}])
+    monkeypatch.setattr(sandbox_client.Sandbox, 'desktop', lambda self, n: opened.append(n) or {'name': n})
+    box = mgr.update('u1')
+    assert box.image_id == 'sha256:new' and not mgr.update_available(box)
+    assert opened == ['agent-a', 'main']  # the same desktops are back for the panel
+    assert not any(c[:2] == ('volume', 'rm') for c in fake.calls)
+
+
+def test_a_stopped_computer_on_the_newest_image_just_starts(fake_manager):
+    mgr, fake = fake_manager
+    fake.latest = 'sha256:old'
+    mgr.sandbox('u1')
+    assert any(c[0] == 'start' for c in fake.calls) and not any(c[0] in ('rm', 'run') for c in fake.calls)
+
+
+def test_newer_image_check_is_throttled(fake_manager, monkeypatch):
+    mgr, fake = fake_manager
+    assert mgr.check_for_update() is False  # 0 hours = off
+    monkeypatch.setenv('COGNITRIX_SANDBOX_UPDATE_CHECK_HOURS', '6')
+    started = []
+    monkeypatch.setattr(mgr, '_pull', lambda: started.append(1))
+    assert mgr.check_for_update() is True
+    mgr._pulling = False
+    assert mgr.check_for_update() is False  # pulled moments ago
+    assert mgr.check_for_update(force=True) is True
