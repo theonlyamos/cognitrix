@@ -474,3 +474,44 @@ async def test_worker_reconnects_allowed_mcp_server_for_db_hydrated_tool(monkeyp
     assert resolved.name == "docs_search"
     assert registry.resolver_for("agent-mcp")("docs_admin") is None
     assert client.connect_calls == [config]
+
+
+SEEN_PARENTS: list = []
+
+
+@pytest.mark.asyncio
+async def test_task_run_tools_get_the_calling_agent_like_chat_tools(monkeypatch):
+    """Tools that take the calling agent (Find Tools, Run Code, memory, chats,
+    create_task...) used to get parent=None in task runs, because the
+    snapshot adapter dropped the tool's runtime-filled parameters."""
+    import cognitrix.agents  # noqa: F401  (attaches call_tools to Agent)
+    from cognitrix.tools.base import ToolManager
+    from cognitrix.tools.tool import tool
+
+    @tool(category="test")
+    async def who_calls(note: str = "", *, parent=None, interface=None) -> str:
+        """Report the calling agent."""
+        SEEN_PARENTS.append((getattr(parent, "id", None), interface))
+        return "ok"
+
+    find = ToolManager.get_by_name("find_tools")
+    source = _agent([who_calls, find])
+    source.id = "agent-1"
+    snapshot = build_runtime_snapshot(source, None)
+    registry = {t.name: t for t in (who_calls, find)}
+    runtime = instantiate_runtime(snapshot, tool_resolver=registry.get)
+
+    assert str(runtime.id) == "agent-1"
+    # The model never sees the runtime-filled parameters.
+    schema = runtime.tools[0].to_dict_format()["function"]["parameters"]["properties"]
+    assert "parent" not in schema and "interface" not in schema
+
+    SEEN_PARENTS.clear()
+    result = await runtime.call_tools([
+        {"name": "Who Calls", "arguments": {"note": "x"}, "tool_call_id": "c1"},
+        {"name": "Find Tools", "arguments": {"names": ["who_calls"]}, "tool_call_id": "c2"},
+    ], interface="task")
+    items = result["result"]
+    assert all(item["success"] for item in items), items
+    assert SEEN_PARENTS == [("agent-1", "task")]
+    assert "needs an agent" not in str(items[1].get("data"))

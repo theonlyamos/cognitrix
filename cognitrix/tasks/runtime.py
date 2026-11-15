@@ -561,6 +561,11 @@ class _SnapshotBoundTool(MCPTool):
             supported_interfaces=interfaces,
             approval_mode=approval_mode,
             mcp_schema=parameters,
+            # Runtime-filled values (the calling agent, the interface, the
+            # approval flag) that AgentManager.call_tools injects. Without
+            # them Find Tools, Run Code and every other tool that takes the
+            # calling agent got parent=None in task runs.
+            internal_params=list(getattr(delegate, "internal_params", None) or []),
         )
         # odbms models intercept unknown/private attributes, so runtime-only
         # state lives directly in ``__dict__`` (the same pattern Agent uses for
@@ -575,6 +580,10 @@ class _SnapshotBoundTool(MCPTool):
     def validate_parameters(self, params: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(params, dict):
             raise ValueError("tool parameters must be an object")
+        # Injected runtime values are not part of the model-facing schema.
+        internal = set(self.internal_params or [])
+        runtime = {k: v for k, v in params.items() if k in internal}
+        params = {k: v for k, v in params.items() if k not in internal}
         schema = self.__dict__["_persisted_schema"]["function"]["parameters"]
         properties = schema.get("properties") or {}
         required = schema.get("required") or []
@@ -602,7 +611,7 @@ class _SnapshotBoundTool(MCPTool):
                 raise ValueError(f"Invalid type for parameter: {name}")
             if "enum" in definition and value not in definition["enum"]:
                 raise ValueError(f"Invalid value for parameter: {name}")
-        return dict(params)
+        return {**params, **runtime}
 
     async def run(self, *args, **kwargs):
         result = self.__dict__["_delegate"].run(*args, **kwargs)
@@ -797,6 +806,9 @@ def instantiate_runtime(
         )
 
     runtime = Agent(
+        # The real agent's id (never saved from here): tools key memory,
+        # chats, the sandbox computer and self-assigned tasks on it.
+        **({"_id": snapshot.agent_id} if snapshot.agent_id not in ("", "None") else {}),
         name=snapshot.name,
         llm=llm,
         tools=tools,
