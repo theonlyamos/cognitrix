@@ -12,7 +12,16 @@ interface Totals {
   cost: number;
   unpriced_tokens: number;
 }
+export interface CapStatus {
+  cap: { source: 'own' | 'default' | 'none'; mode: string; monthly_cost: number; monthly_tokens: number };
+  used: { cost: number; tokens: number; unpriced_tokens: number; calls: number };
+  fraction: number;
+  reached: boolean;
+  month: string;
+  resets_on: string;
+}
 interface UsageSummary {
+  spending_cap?: CapStatus | null;
   days: number;
   prices_available: boolean;
   total: Totals;
@@ -36,6 +45,50 @@ export const formatCost = (n: number) => {
 };
 
 const tokensOf = (t: Totals) => t.prompt_tokens + t.completion_tokens;
+
+/** "$4.10 of $20.00" / "1.2M of 5M tokens" lines for a monthly cap. */
+export function capLines(state: CapStatus): string[] {
+  const lines: string[] = [];
+  if (state.cap.monthly_cost) lines.push(`${formatCost(state.used.cost)} of $${state.cap.monthly_cost.toFixed(2)}`);
+  if (state.cap.monthly_tokens) lines.push(`${formatTokens(state.used.tokens)} of ${formatTokens(state.cap.monthly_tokens)} tokens`);
+  return lines;
+}
+
+export function CapMeter({ state }: { state: CapStatus }) {
+  const percent = Math.min(100, Math.round(state.fraction * 100));
+  const tone = state.reached ? 'bg-danger' : state.fraction >= 0.8 ? 'bg-warn' : 'bg-accent';
+  return (
+    <div
+      className="h-1.5 overflow-hidden rounded-full bg-panel-2"
+      role="meter"
+      aria-label="Share of this month's spending limit used"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
+    >
+      <div className={`h-full rounded-full ${tone}`} style={{ width: `${Math.max(percent, state.fraction > 0 ? 2 : 0)}%` }} />
+    </div>
+  );
+}
+
+function CapCard({ state }: { state: CapStatus }) {
+  const percent = Math.round(state.fraction * 100);
+  return (
+    <div className="mb-4 rounded-[12px] border border-line bg-panel p-3.5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="font-mono text-[10.5px] tracking-[0.12em] text-fg-dim">THIS MONTH&apos;S LIMIT</div>
+        <div className="text-[12px] text-fg-dim">Resets {new Date(`${state.resets_on}T00:00:00Z`).toLocaleDateString()}</div>
+      </div>
+      <div className="mt-1 text-[15px] font-semibold tabular-nums">{capLines(state).join(' · ')}</div>
+      <div className="mt-2"><CapMeter state={state} /></div>
+      <p className={`mt-2 text-[12px] leading-relaxed ${state.reached ? 'text-danger-ink' : 'text-fg-dim'}`}>
+        {state.reached
+          ? 'You have reached your limit. Your agents can\u2019t use a model for you until it resets, unless an admin raises it.'
+          : `${percent}% used. Chats, tasks and swarm workers all count. ${state.cap.source === 'default' ? 'This is the limit an admin set for everyone.' : 'An admin set this limit for you.'}`}
+      </p>
+    </div>
+  );
+}
 
 function Stat({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
@@ -129,6 +182,7 @@ export function UsageSettings() {
       {!data && !error && <p className="text-[13px] text-fg-dim">Loading…</p>}
       {data && total && (
         <>
+          {data.spending_cap && data.spending_cap.cap.source !== 'none' && <CapCard state={data.spending_cap} />}
           <Group className="flex flex-wrap divide-y-0">
             {showCost && <Stat label="ESTIMATED COST" value={formatCost(total.cost)} />}
             <Stat label="TOKENS IN" value={formatTokens(total.prompt_tokens)} detail={total.cached_tokens > 0 ? `${Math.round((total.cached_tokens / total.prompt_tokens) * 100)}% read from cache` : undefined} />
