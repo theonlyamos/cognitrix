@@ -492,6 +492,15 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str = '0.0.0.0'
                     headers = {str(k): str(v) for k, v in (b.get('headers') or {}).items()}
                     self._reply(200, check_app_port(port_, path, phone=bool(b.get('phone')), headers=headers,
                                                     no_sandbox=True))
+                elif method == 'POST' and action == 'test':
+                    # Test App: click through a throwaway copy of the app.
+                    from cognitrix.computer.sandbox.apptest import test_app_copy
+
+                    b = self._body()
+                    headers = {str(k): str(v) for k, v in (b.get('headers') or {}).items()}
+                    self._reply(200, test_app_copy(apps, slug, b.get('steps') or [], str(b.get('path') or ''),
+                                                   data=str(b.get('data') or 'fresh'), phone=bool(b.get('phone')),
+                                                   headers=headers, no_sandbox=True))
                 elif method == 'POST' and action == 'start':
                     self._reply(200, apps.start(slug))
                 elif method == 'POST' and action == 'stop':
