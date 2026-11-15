@@ -721,6 +721,12 @@ async def _delete_owned(session_id: str, ctx: AuthContext) -> None:
         deleted = await Session.delete_many({'id': session_id})
         if deleted != 1 and not (resumed and deleted == 0):
             raise OwnershipConflict('Session changed concurrently')
+        try:
+            from cognitrix.sessions.side_questions import SideQuestion
+
+            await SideQuestion.delete_many({'session_id': session_id})
+        except Exception:
+            logger.debug('Could not delete side questions for %s', session_id, exc_info=True)
         # The binding is the last row deleted, after exact resource cleanup and
         # Session deletion both succeeded.
         await finish_delete(token)
@@ -798,6 +804,71 @@ async def get_pending_messages(
     """Messages sent while the last turn ran that it never read."""
     _, session = await _load_authorized_session(session_id, ctx)
     return JSONResponse({'messages': session.pending_messages or []})
+
+
+class SideQuestionBody(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+
+
+_side_recent: dict[str, list[float]] = {}
+SIDE_QUESTIONS_PER_MINUTE = 20
+
+
+def _side_rate(user_key: str) -> None:
+    import time
+
+    now = time.monotonic()
+    recent = [t for t in _side_recent.get(user_key, []) if now - t < 60]
+    if len(recent) >= SIDE_QUESTIONS_PER_MINUTE:
+        raise HTTPException(status_code=429, detail='Too many side questions. Wait a minute and try again.')
+    recent.append(now)
+    _side_recent[user_key] = recent
+
+
+@sessions_api.get('/{session_id}/side-questions')
+async def list_side_questions(session_id: str, ctx: AuthContext = Depends(get_auth_context)):
+    """Questions asked beside this chat, oldest first. They are not part of the chat."""
+    from cognitrix.sessions import side_questions
+
+    _, session = await _load_authorized_session(session_id, ctx)
+    rows = await side_questions.list_for(str(session.id), principal_key(ctx.user))
+    return {'questions': [side_questions.as_dict(r) for r in rows]}
+
+
+@sessions_api.post('/{session_id}/side-questions', dependencies=[Depends(jwt_only)])
+async def ask_side_question(
+    session_id: str,
+    body: SideQuestionBody,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Answer a quick question about this chat without steering, stopping or
+    adding to it. While a turn runs, its progress so far is part of the context."""
+    from cognitrix.sessions import runs as chat_runs
+    from cognitrix.sessions import side_questions
+
+    _, session = await _load_authorized_session(session_id, ctx)
+    user_key = principal_key(ctx.user)
+    _side_rate(user_key)
+    agent = await session.agent
+    if agent is None:
+        raise HTTPException(status_code=409, detail='This chat has no agent to answer.')
+    run_key = str(getattr(ctx.user, 'id', None) or getattr(ctx.user, 'email', 'anon'))
+    run = chat_runs.get_run(run_key, session_id)
+    events = list(run.events) if run is not None and run.running else None
+    row = await side_questions.ask(
+        session=session, agent=agent, user_id=user_key, question=body.question,
+        run_events=events, save=not bool(getattr(session, 'incognito', False)),
+    )
+    return side_questions.as_dict(row)
+
+
+@sessions_api.delete('/{session_id}/side-questions')
+async def clear_side_questions(session_id: str, ctx: AuthContext = Depends(get_auth_context)):
+    from cognitrix.sessions import side_questions
+
+    _, session = await _load_authorized_session(session_id, ctx)
+    removed = await side_questions.clear_for(str(session.id), principal_key(ctx.user))
+    return {'removed': removed}
 
 
 @sessions_api.delete('/{session_id}/chat')

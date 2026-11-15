@@ -5,7 +5,9 @@ app can update from). Each signature is matched to its installer by name:
 
     *-setup.exe.sig     -> windows-x86_64
     *.AppImage.sig      -> linux-x86_64
-    *.app.tar.gz.sig    -> darwin-aarch64
+    *_x64.app.tar.gz.sig     -> darwin-x86_64 (Intel Mac)
+    *_aarch64.app.tar.gz.sig -> darwin-aarch64 (Apple silicon)
+    *.app.tar.gz.sig    -> darwin-aarch64 (older releases, before Intel builds)
 
 Usage: make_update_manifest.py <version> <download base URL> [folder] [notes]
 """
@@ -19,6 +21,9 @@ from pathlib import Path
 PLATFORMS = (
     ('-setup.exe.sig', 'windows-x86_64'),
     ('.AppImage.sig', 'linux-x86_64'),
+    # Most specific first: the first matching suffix wins.
+    ('_x64.app.tar.gz.sig', 'darwin-x86_64'),
+    ('_aarch64.app.tar.gz.sig', 'darwin-aarch64'),
     ('.app.tar.gz.sig', 'darwin-aarch64'),
 )
 
@@ -29,11 +34,12 @@ def build(version: str, base_url: str, folder: Path, notes: str = '') -> dict:
         for suffix, platform in PLATFORMS:
             if sig.name.endswith(suffix):
                 installer = sig.name[:-len('.sig')]
-                platforms[platform] = {
+                platforms.setdefault(platform, {
                     'signature': sig.read_text(encoding='utf-8').strip(),
                     # GitHub turns spaces in an uploaded file's name into dots.
                     'url': f"{base_url.rstrip('/')}/{installer.replace(' ', '.')}",
-                }
+                })
+                break
     return {
         'version': version.lstrip('v'),
         'notes': notes,

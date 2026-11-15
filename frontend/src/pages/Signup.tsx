@@ -6,7 +6,7 @@ import { Input } from '@/lib/components/ui/input';
 import { Field } from '@/components/form';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import OAuthButtons from '@/components/OAuthButtons';
-import { useT } from '@/lib/i18n';
+import { useT, tr } from '@/lib/i18n';
 
 const GRID = {
   backgroundImage:
@@ -60,7 +60,7 @@ export default function Signup() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
           </span>
           <span className="font-mono text-[13px] font-bold tracking-[0.14em]">
-            COGNITRIX<span className="text-fg-dim font-medium"> /v{__APP_VERSION__}</span>
+            {tr('ui.signup.cognitrix')}<span className="text-fg-dim font-medium"> /v{__APP_VERSION__}</span>
           </span>
         </div>
         <div className="relative max-w-md">
@@ -72,15 +72,15 @@ export default function Signup() {
           </p>
         </div>
         <div className="relative font-mono text-[11px] text-fg-dim space-y-1.5">
-          <div className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-accent" /> local-first · bring your own keys</div>
-          <div className="text-fg-dim/70">encrypted · self-hosted · open source</div>
+          <div className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-accent" />{' '}{tr('ui.signup.localFirstBringYourOwn')}</div>
+          <div className="text-fg-dim/70">{tr('ui.signup.encryptedSelfHostedOpenSource')}</div>
         </div>
       </aside>
 
       {/* Form column */}
       <main className="flex flex-1 flex-col">
         <header className="flex min-h-14 flex-nowrap items-center justify-between p-6">
-          <span className="font-mono text-[11px] tracking-[0.16em] text-fg-dim lg:hidden">COGNITRIX</span>
+          <span className="font-mono text-[11px] tracking-[0.16em] text-fg-dim lg:hidden">{tr('ui.signup.cognitrix')}</span>
           <ThemeToggle className="ml-auto" />
         </header>
 
@@ -99,7 +99,7 @@ export default function Signup() {
 
             <OAuthButtons mode="signup" />
             <form onSubmit={handleSignup} className="mt-8 space-y-4">
-              <Field label={t('auth.name')}><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ada Lovelace" required autoComplete="name" autoFocus /></Field>
+              <Field label={t('auth.name')}><Input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('ui.signup.adaLovelace')} required autoComplete="name" autoFocus /></Field>
               <Field label={t('auth.email')}><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required autoComplete="email" /></Field>
               <Field label={t('auth.password')} hint={t('auth.passwordHint')}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required autoComplete="new-password" /></Field>
               <Field label={t('auth.confirm')}><Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••" required autoComplete="new-password" /></Field>

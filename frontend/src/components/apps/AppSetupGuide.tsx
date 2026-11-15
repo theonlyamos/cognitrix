@@ -13,6 +13,7 @@ import {
 } from '@/lib/apps';
 import { Group, StatusPill, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { CheckList } from './CheckList';
+import { tr } from '@/lib/i18n';
 
 function CopyBlock({ label, text }: { label: string; text: string }) {
   const [copied, setCopied] = useState(false);
@@ -29,8 +30,8 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
     <div className="mt-2 rounded-[10px] border border-line bg-bg">
       <div className="flex items-center justify-between gap-2 border-b border-line px-2.5 py-1">
         <span className="font-mono text-[10.5px] tracking-[0.1em] text-fg-dim">{label.toUpperCase()}</span>
-        <button type="button" onClick={() => void copy()} className={quietButtonClass} aria-label={`Copy ${label.toLowerCase()}`}>
-          {copied ? 'Copied' : 'Copy'}
+        <button type="button" onClick={() => void copy()} className={quietButtonClass} aria-label={tr('ui.apps.appSetupGuide.copyLabel', { label: label.toLowerCase() })}>
+          {copied ? tr('ui.apps.appSetupGuide.copied') : tr('ui.apps.appSetupGuide.copy')}
         </button>
       </div>
       <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all px-2.5 py-2 font-mono text-[11.5px] leading-relaxed">{text}</pre>
@@ -51,7 +52,7 @@ function ProviderGuide({ setup, onChanged }: { setup: ProviderSetup; onChanged: 
     try {
       await fn();
     } catch (e) {
-      setError(errorMessage(e, 'Something went wrong. Please try again.'));
+      setError(errorMessage(e, tr('ui.apps.appSetupGuide.somethingWentWrongPleaseTry')));
     } finally {
       setBusy(null);
     }
@@ -101,23 +102,23 @@ function ProviderGuide({ setup, onChanged }: { setup: ProviderSetup; onChanged: 
       </ol>
 
       {setup.can_edit ? (
-        <form onSubmit={save} aria-label={`${setup.label} client`} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="CLIENT ID" required>
+        <form onSubmit={save} aria-label={tr('ui.apps.appSetupGuide.labelClient', { label: setup.label })} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label={tr('ui.apps.appSetupGuide.clientId')} required>
             <Input autoComplete="off" value={clientId} onChange={(e) => setClientId(e.target.value)} />
           </Field>
-          <Field label="CLIENT SECRET" hint={ready ? 'Saved. Paste a new one to replace it.' : undefined} required>
+          <Field label={tr('ui.apps.appSetupGuide.clientSecret')} hint={ready ? tr('ui.apps.appSetupGuide.savedPasteANewOne') : undefined} required>
             <Input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} />
           </Field>
           <div className="flex flex-wrap gap-2 sm:col-span-2">
             <button type="submit" disabled={busy !== null || !clientId.trim() || !secret.trim()} className={primaryButtonClass}>
-              {busy === 'save' ? 'Saving…' : 'Save'}
+              {busy === 'save' ? tr('ui.apps.appSetupGuide.saving') : tr('ui.apps.appSetupGuide.save')}
             </button>
             <button type="button" disabled={busy !== null || !ready} onClick={() => void check()} className={buttonClass}>
-              {busy === 'check' ? 'Checking…' : 'Check'}
+              {busy === 'check' ? tr('ui.apps.appSetupGuide.checking') : tr('ui.apps.appSetupGuide.check')}
             </button>
             {ready && (
               <button type="button" disabled={busy !== null} onClick={() => void remove()} className={quietButtonClass}>
-                Remove
+                {tr('ui.apps.appSetupGuide.remove')}
               </button>
             )}
           </div>
@@ -125,15 +126,15 @@ function ProviderGuide({ setup, onChanged }: { setup: ProviderSetup; onChanged: 
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <p className="min-w-0 flex-1 basis-[220px] text-[12px] leading-relaxed text-fg-dim">
-            The client ID and secret come from the server's environment (<span className="font-mono">{setup.env_vars.join(', ')}</span>). Change them there.
+            {tr('ui.apps.appSetupGuide.theClientIdAndSecret')}<span className="font-mono">{setup.env_vars.join(', ')}</span>{tr('ui.apps.appSetupGuide.changeThemThere')}
           </p>
           <button type="button" disabled={busy !== null} onClick={() => void check()} className={buttonClass}>
-            {busy === 'check' ? 'Checking…' : 'Check'}
+            {busy === 'check' ? tr('ui.apps.appSetupGuide.checking') : tr('ui.apps.appSetupGuide.check')}
           </button>
         </div>
       )}
       {error && <p role="alert" className="text-[12px] text-danger-ink">{error}</p>}
-      {result && <CheckList result={result} label={`${setup.label} check`} />}
+      {result && <CheckList result={result} label={tr('ui.apps.appSetupGuide.labelCheck', { label: setup.label })} />}
     </div>
   );
 }
@@ -156,7 +157,7 @@ export function AppSetupGuide({
   useEffect(() => {
     getSetupGuide()
       .then(setProviders)
-      .catch((e) => setLoadError(errorMessage(e, 'Could not load the setup steps.')));
+      .catch((e) => setLoadError(errorMessage(e, tr('ui.apps.appSetupGuide.couldNotLoadTheSetup'))));
   }, []);
 
   if (loadError) return <p role="alert" className="text-[12.5px] text-danger-ink">{loadError}</p>;
@@ -168,11 +169,10 @@ export function AppSetupGuide({
   };
 
   return (
-    <section id="app-setup" aria-label="Set up sign-in">
-      <SubHeading>SET UP SIGN-IN · ADMIN</SubHeading>
+    <section id="app-setup" aria-label={tr('ui.apps.appSetupGuide.setUpSignIn')}>
+      <SubHeading>{tr('ui.apps.appSetupGuide.setUpSignInAdmin')}</SubHeading>
       <p className="-mt-1 mb-2 max-w-[70ch] text-[12px] leading-relaxed text-fg-dim">
-        Google, GitHub and Slack each need an app registered once for this server. Follow the steps, paste the client ID and
-        secret, and press Check. Other apps need none of this.
+        {tr('ui.apps.appSetupGuide.googleGithubAndSlackEach')}
       </p>
       <Group>
         {providers.map((setup) => {
@@ -183,9 +183,9 @@ export function AppSetupGuide({
                 <div className="min-w-0 flex-1 basis-[180px]">
                   <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium">
                     {setup.label}
-                    {setup.source === 'none' ? <StatusPill tone="off">not set up</StatusPill> : <StatusPill tone="ok">ready</StatusPill>}
+                    {setup.source === 'none' ? <StatusPill tone="off">{tr('ui.apps.appSetupGuide.notSetUp')}</StatusPill> : <StatusPill tone="ok">{tr('ui.apps.appSetupGuide.ready')}</StatusPill>}
                   </div>
-                  <div className="mt-0.5 text-[12px] leading-snug text-fg-dim">For {setup.apps.join(', ')}</div>
+                  <div className="mt-0.5 text-[12px] leading-snug text-fg-dim">{tr('ui.apps.appSetupGuide.forApps', { apps: setup.apps.join(', ') })}</div>
                 </div>
                 <button
                   type="button"
@@ -193,7 +193,7 @@ export function AppSetupGuide({
                   onClick={() => onOpen(isOpen ? null : setup.id)}
                   className={setup.source === 'none' ? buttonClass : quietButtonClass}
                 >
-                  {isOpen ? 'Hide steps' : setup.source === 'none' ? `Set up ${setup.label}` : 'Show steps'}
+                  {isOpen ? tr('ui.apps.appSetupGuide.hideSteps') : setup.source === 'none' ? tr('ui.apps.appSetupGuide.setUpLabel', { label: setup.label }) : tr('ui.apps.appSetupGuide.showSteps')}
                 </button>
               </div>
               {isOpen && <div className="border-t border-line"><ProviderGuide setup={setup} onChanged={replace} /></div>}

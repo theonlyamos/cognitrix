@@ -11,7 +11,7 @@ args:
     required: true
 tags: [apps, web, build, publish, dashboard]
 category: development
-version: "1.1.0"
+version: "1.2.0"
 author: cognitrix
 safety:
   risk-level: low
@@ -60,11 +60,30 @@ a second one: edit its folder and publish again with its `app_id`.
    same `app_id`. The previous live version keeps serving meanwhile.
 7. **Look at it** with `Check App` (its `app_id`): you get a screenshot plus script errors, console errors
    and failed requests. Check the main pages (`path`) and once with `phone: true`. Fix anything broken
-   or ugly, publish again and check again. Don't tell the user it's done while Check App shows errors.
-8. **Tell the user** in two or three sentences what the app does and that the card in the chat opens it.
-   It is private to them until they share it.
+   or ugly, publish again and check again.
+8. **Click through it** with `Test App`: write the steps a person would take for each thing the app is
+   for, and check the result after each action. For a todo list, for example:
+   `[{"fill": "Title", "with": "Buy milk"}, {"click": "Add"}, {"see": "Buy milk"},
+   {"reload": true}, {"see": "Buy milk"}, {"click": "Delete"}, {"not_see": "Buy milk"}]`.
+   - Each run starts a throwaway copy of the app with **empty data**, so write steps that create what
+     they need first. Use `data: "copy"` only to test against a copy of the real data. Test copies
+     get no Cognitrix API key (`APP_TEST=1` is set), so flows that run agents can't be clicked through.
+   - Target things by what people see: button text, field labels, placeholders. Use a CSS selector
+     (`#list li`) to count rows or when the text is ambiguous. If you control the markup, give
+     inputs a `<label>` and buttons clear text; that is good for people and makes tests readable.
+   - Cover the main flows (create, edit, delete, any filter or search), a reload to prove data is
+     saved, and the empty state. Run the most important flow once with `phone: true`.
+   - When a step fails, read why (the page text and the buttons and fields listed at that point, the
+     screenshot, the app log). Fix the app, publish again and re-run. Fix the step instead only when it
+     targeted the wrong thing.
+   - Give each test a `name` and `save: true`: once it passes it is kept in the app's
+     `app-tests.json` (you can also edit that file directly).
+   Don't tell the user it's done while Check App shows errors or a test fails.
+9. **Tell the user** in two or three sentences what the app does, which flows you tested, and that the
+   card in the chat opens it. It is private to them until they share it.
 
 ## Updating later
 
 Edit the files in the same folder, publish again with the app's `app_id` and a `note` saying what
-changed, then run `Check App` again. Never start a new app for a change to an existing one.
+changed, then run `Check App` and `Test App` with no steps (it re-runs every saved test). Add a saved test
+for what you changed. Never start a new app for a change to an existing one.

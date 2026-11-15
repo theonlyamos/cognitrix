@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI):
     scheduler = None
     recovery = None
     app_sleeper = None
+    knowledge_refresher = None
     maintenance_started = False
     try:
         scheduler = asyncio.create_task(scheduler_loop())
@@ -68,6 +69,8 @@ async def lifespan(app: FastAPI):
         maintenance_started = True
         from ..hosted_apps.store import sleeper_loop
         app_sleeper = asyncio.create_task(sleeper_loop())
+        from ..knowledge import refresher_loop
+        knowledge_refresher = asyncio.create_task(refresher_loop())
         try:
             # Apps published from other folders before the apps folder existed.
             from ..hosted_apps.store import move_into_apps_folder
@@ -116,7 +119,7 @@ async def lifespan(app: FastAPI):
             await stop_channels()
         except BaseException as exc:
             cleanup_errors.append(exc)
-        tasks = tuple(task for task in (scheduler, recovery, app_sleeper) if task is not None)
+        tasks = tuple(task for task in (scheduler, recovery, app_sleeper, knowledge_refresher) if task is not None)
         for task in tasks:
             task.cancel()
         for task in tasks:

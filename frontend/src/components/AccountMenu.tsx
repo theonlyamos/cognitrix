@@ -4,7 +4,7 @@ import { KeyRound, LogOut, Monitor, Moon, Settings, Sparkles, Sun, type LucideIc
 import { Link, useLocation } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
 import { useTheme, type ThemeMode } from '@/context/ThemeContext';
-import { useT } from '@/lib/i18n';
+import { useT, tr } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { OPEN_WHATS_NEW_EVENT } from '@/components/WhatsNew';
 
@@ -105,7 +105,7 @@ export default function AccountMenu({ collapsed, onNavigate }: { collapsed: bool
           {initial}
         </span>
         <span className={cn('min-w-0 flex-1 leading-tight', collapsed && 'md:hidden')}>
-          <span className="block truncate text-[13px] font-semibold">{user?.name || 'User'}</span>
+          <span className="block truncate text-[13px] font-semibold">{user?.name || tr('ui.accountMenu.user')}</span>
           <span className="block truncate font-mono text-[10.5px] text-fg-dim">{user?.email}</span>
         </span>
         <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
@@ -122,7 +122,7 @@ export default function AccountMenu({ collapsed, onNavigate }: { collapsed: bool
           className="animate-rise fixed z-[60] rounded-lg border border-line bg-panel p-1.5 text-fg shadow-lg"
         >
           <div className="px-2.5 pb-1.5 pt-1 leading-tight">
-            <div className="truncate text-[13px] font-semibold">{user?.name || 'User'}</div>
+            <div className="truncate text-[13px] font-semibold">{user?.name || tr('ui.accountMenu.user')}</div>
             <div className="truncate font-mono text-[10.5px] text-fg-dim">{user?.email}</div>
           </div>
           <div className="mx-1 my-1 h-px bg-line" />

@@ -17,10 +17,10 @@ from cognitrix.tools.computer import (
     type_in_window,
 )
 from cognitrix.tools.folders import request_folder
-from cognitrix.tools.hosted_apps import app_status, check_app, publish_app
+from cognitrix.tools.hosted_apps import app_status, check_app, publish_app, test_app
 from cognitrix.tools.http import http_request, list_credentials
 from cognitrix.tools.image import generate_image
-from cognitrix.tools.knowledge import search_knowledge
+from cognitrix.tools.knowledge import learn_from_website, search_knowledge
 from cognitrix.tools.management import (
     assign_task,
     cancel_task_run,
@@ -102,7 +102,7 @@ __all__ = [
     'request_folder',
     'start_chat', 'check_chat', 'message_chat',
     'spawn_workers', 'swarm', 'swarm_team',
-    'memory', 'search_chats', 'read_chat', 'set_theme',
+    'memory', 'search_chats', 'read_chat', 'set_theme', 'search_knowledge', 'learn_from_website',
     'take_screenshot', 'text_input', 'key_press', 'hot_key',
     'mouse_click', 'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
     'list_windows', 'open_app', 'look_at_window', 'click_element', 'set_text',

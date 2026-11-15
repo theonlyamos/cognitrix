@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useState } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { ArtifactCard } from '@/components/artifacts/ArtifactCard';
+import { AppViewCard } from '@/components/appviews/AppViewCard';
 import { InfoCard, InfoCardPending } from '@/components/cards/InfoCard';
 import { AppCard } from '@/components/hosted-apps/AppCard';
 import { MemoryNotice } from '@/components/MemoryNotice';
@@ -13,6 +14,7 @@ import { splitAuthor } from '@/lib/sharedChats';
 import { parsePress } from '@/lib/cards';
 import { speakText, stopSpeaking, useSpeechState } from '@/lib/speech';
 import { cn } from '@/lib/utils';
+import { tr, dateLocale } from '@/lib/i18n';
 
 const MarkdownMessage = lazy(() => import('@/components/MarkdownMessage'));
 
@@ -28,7 +30,7 @@ const prettyJson = (value: string) => {
 };
 
 const fmtTime = (value?: string | number) =>
-  value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '';
+  value ? new Date(value).toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '';
 
 interface ChatMessageRowProps {
   message: ChatMessage;
@@ -61,7 +63,7 @@ function CopyButton({ text }: { text: string }) {
         }).catch(() => {});
       }}
     >
-      {copied ? 'copied' : 'copy'}
+      {copied ? tr('ui.chatMessageRow.copied') : tr('ui.chatMessageRow.copy')}
     </button>
   );
 }
@@ -79,7 +81,7 @@ function ListenButton({ id, text }: { id: string; text: string }) {
         aria-pressed={active}
         onClick={() => (active ? stopSpeaking() : void speakText(id, text))}
       >
-        {active ? (speech.phase === 'loading' ? 'loading… stop' : 'stop') : 'listen'}
+        {active ? (speech.phase === 'loading' ? tr('ui.chatMessageRow.loadingStop') : tr('ui.chatMessageRow.stop')) : tr('ui.chatMessageRow.listen')}
       </button>
       {mine && speech.error && <span role="alert" className="font-mono text-[10.5px] text-danger-ink">{speech.error}</span>}
     </>
@@ -99,7 +101,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
     if (!message.tools?.length) return null;
     return (
       <div className="mx-auto w-full max-w-3xl px-4 py-1.5 sm:px-6">
-        <span className="sr-only">Tool steps</span>
+        <span className="sr-only">{tr('ui.chatMessageRow.toolSteps')}</span>
         <div className="flex min-w-0 flex-col items-start gap-1.5">
           {message.tools.map((tool, index) => (
             <div key={tool.id || index} className="w-full max-w-2xl space-y-2">
@@ -117,10 +119,10 @@ export const ChatMessageRow = memo(function ChatMessageRow({
                 <span className={cn('capitalize', tool.status === 'running' ? 'text-accent-ink' : 'text-fg-dim')}>
                   {humanizeTool(tool.name)}
                 </span>
-                {tool.status === 'running' && <span className="text-fg-dim">running…</span>}
-                {tool.status === 'done' && <span className="sr-only">Completed</span>}
-                {tool.status === 'error' && <span className="sr-only">Failed</span>}
-                {tool.status === 'stopped' && <span className="sr-only">Stopped</span>}
+                {tool.status === 'running' && <span className="text-fg-dim">{tr('ui.chatMessageRow.running')}</span>}
+                {tool.status === 'done' && <span className="sr-only">{tr('ui.chatMessageRow.completed')}</span>}
+                {tool.status === 'error' && <span className="sr-only">{tr('ui.chatMessageRow.failed')}</span>}
+                {tool.status === 'stopped' && <span className="sr-only">{tr('ui.chatMessageRow.stopped')}</span>}
                 <svg className="ml-0.5 text-fg-dim transition-transform group-open:rotate-90" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
               </summary>
               <div className="mt-1.5 space-y-2 rounded-xl border border-line bg-panel p-2.5 font-mono text-[11px]">
@@ -131,9 +133,9 @@ export const ChatMessageRow = memo(function ChatMessageRow({
                   </div>
                 )}
                 <div>
-                  <div className="mb-1 text-[10px] uppercase tracking-wider text-fg-dim">result</div>
+                  <div className="mb-1 text-[10px] uppercase tracking-wider text-fg-dim">{tr('ui.chatMessageRow.result')}</div>
                   {tool.status === 'running' ? (
-                    <span className="text-fg-dim">running…</span>
+                    <span className="text-fg-dim">{tr('ui.chatMessageRow.running')}</span>
                   ) : (
                     <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-fg-dim">{tool.result || '(no output)'}</pre>
                   )}
@@ -145,6 +147,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
               {tool.status === 'done' && <MemoryNotice toolName={tool.name} result={tool.result} />}
               {tool.status === 'done' && <ThemeNotice toolName={tool.name} result={tool.result} />}
               {tool.status === 'done' && <ArtifactCard toolName={tool.name} result={tool.result} />}
+              {tool.status === 'done' && <AppViewCard result={tool.result} />}
               {tool.status === 'done' && tool.card && <InfoCard card={tool.card} />}
               {tool.status === 'running' && isShowCard(tool.name) && <InfoCardPending />}
               {tool.status === 'done' && <AppCard toolName={tool.name} result={tool.result} />}
@@ -171,11 +174,11 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   if (press) {
     return (
       <div className="grid grid-cols-1 gap-2 border-b border-line px-4 py-2.5 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
-        <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-accent-ink">YOU</div>
+        <div className="pt-0.5 font-mono text-[11px] tracking-[0.06em] text-accent-ink">{tr('ui.chatMessageRow.you')}</div>
         <div className="font-mono text-[11.5px] text-fg-dim">
-          pressed <span className="text-fg">{press.label}</span>
-          {press.card && <> on <span className="text-fg">{press.card}</span></>}
-          {message.steered && ' · read while the agent was working'}
+          {tr('ui.chatMessageRow.pressed')}{' '}<span className="text-fg">{press.label}</span>
+          {press.card && <>{' '}{tr('ui.chatMessageRow.on')}{' '}<span className="text-fg">{press.card}</span></>}
+          {message.steered && tr('ui.chatMessageRow.readWhileTheAgentWas')}
         </div>
       </div>
     );
@@ -187,13 +190,13 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   return (
     <div className={cn('group/msg mx-auto flex w-full max-w-3xl flex-col px-4 py-2.5 sm:px-6', isUser && 'items-end')}>
       {isUser && guestAuthor ? (
-        <div className="mb-1 truncate text-[12px] font-semibold text-fg-dim" title={`${guestAuthor} wrote this in the shared chat`}>{guestAuthor}</div>
+        <div className="mb-1 truncate text-[12px] font-semibold text-fg-dim" title={tr('ui.chatMessageRow.guestWrote', { name: guestAuthor })}>{guestAuthor}</div>
       ) : isUser ? (
-        <span className="sr-only">You said:</span>
+        <span className="sr-only">{tr('ui.chatMessageRow.youSaid')}</span>
       ) : message.speaker ? (
         <div className="mb-1 truncate text-[12px] font-semibold text-fg-dim" title={message.speaker}>{message.speaker}</div>
       ) : (
-        <span className="sr-only">Agent:</span>
+        <span className="sr-only">{tr('ui.chatMessageRow.agent')}</span>
       )}
       <div
         className={cn('min-w-0', isUser ? 'max-w-[85%] rounded-2xl bg-panel-2 px-4 py-2.5' : 'w-full')}
@@ -204,7 +207,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
           <>
             <div className="whitespace-pre-wrap break-words leading-relaxed">{guestAuthor ? guest?.text : message.content}</div>
             {message.steered && (
-              <div className="mt-1 font-mono text-[10.5px] text-fg-dim">sent while the agent was working</div>
+              <div className="mt-1 font-mono text-[10.5px] text-fg-dim">{tr('ui.chatMessageRow.sentWhileTheAgentWas')}</div>
             )}
           </>
         ) : isLast && streaming ? (
@@ -239,10 +242,10 @@ export const ChatMessageRow = memo(function ChatMessageRow({
             <CopyButton text={message.content} />
             {!isUser && <ListenButton id={message.id} text={message.content} />}
             {isUser && onEdit && (
-              <button type="button" className={actionClass} onClick={() => onEdit(message)}>edit</button>
+              <button type="button" className={actionClass} onClick={() => onEdit(message)}>{tr('ui.chatMessageRow.edit')}</button>
             )}
             {!isUser && onRegenerate && (
-              <button type="button" className={actionClass} onClick={onRegenerate}>regenerate</button>
+              <button type="button" className={actionClass} onClick={onRegenerate}>{tr('ui.chatMessageRow.regenerate')}</button>
             )}
           </>
           )}

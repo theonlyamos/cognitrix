@@ -1,7 +1,9 @@
 name: desktop
 
-# Builds the desktop app for Windows, Linux and macOS:
+# Builds the desktop app for Windows, Linux and macOS (Apple silicon and Intel):
 # React UI -> PyInstaller engine -> Tauri app.
+# Windows and macOS builds are code-signed when the signing secrets are set
+# (see desktop/README.md, "Code signing"); without them they build unsigned.
 # Each OS uploads its installers as a "cognitrix-<os>" artifact, and attaches
 # them to the GitHub release when a release is published.
 on:
@@ -42,9 +44,16 @@ jobs:
               desktop/src-tauri/target/release/bundle/rpm/*.rpm
               desktop/src-tauri/target/release/bundle/appimage/*.AppImage
           - name: macos
-            # Apple silicon. PyInstaller can't cross-build, so Intel Macs
-            # would need an Intel runner.
+            # Apple silicon. PyInstaller can't cross-build, so each Mac
+            # architecture builds on its own runner.
             runner: macos-latest
+            arch: aarch64
+            bundles: app,dmg
+            files: |
+              desktop/src-tauri/target/release/bundle/dmg/*.dmg
+          - name: macos-intel
+            runner: macos-15-intel
+            arch: x64
             bundles: app,dmg
             files: |
               desktop/src-tauri/target/release/bundle/dmg/*.dmg
@@ -84,6 +93,77 @@ jobs:
       - name: Smoke-test the engine
         run: python desktop/scripts/smoke_engine.py
 
+      # --- Code signing (each step does nothing when its secrets are unset) ---
+
+      - name: Set up Windows signing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+        run: |
+          if ($env:AZURE_CLIENT_SECRET -and $env:AZURE_SIGNING_ACCOUNT) {
+            cargo install artifact-signing-cli --version 0.12.0 --locked
+          } elseif ($env:WINDOWS_CERTIFICATE) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'cognitrix-signing.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            Remove-Item $pfx
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+            "WINDOWS_CERTIFICATE_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+            "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+          }
+
+      - name: Sign the Windows engine
+        if: runner.os == 'Windows'
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        run: python desktop/scripts/code_signing.py windows desktop/signing.conf.json
+
+      - name: Set up macOS signing
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::notice::No Apple certificate is set, so this macOS build is unsigned (see desktop/README.md)."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/cognitrix-signing.keychain-db"
+          keychain_password=$(openssl rand -hex 16)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+          identity=$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application[^"]*"' | head -1 | tr -d '"')
+          if [ -z "$identity" ]; then
+            echo "::error::The Apple certificate isn't a \"Developer ID Application\" certificate."
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          if [ -n "$APPLE_API_PRIVATE_KEY" ]; then
+            printf '%s\n' "$APPLE_API_PRIVATE_KEY" > "$RUNNER_TEMP/notarize-key.p8"
+            echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/notarize-key.p8" >> "$GITHUB_ENV"
+          fi
+
+      - name: Sign the macOS engine
+        if: runner.os == 'macOS'
+        run: python desktop/scripts/code_signing.py macos-engine "${APPLE_SIGNING_IDENTITY:-}"
+
       - name: Build installers
         working-directory: desktop
         shell: bash
@@ -95,14 +175,29 @@ jobs:
           UPDATE_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           UPDATE_SIGNING_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           UPDATE_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          # Windows: Azure Artifact Signing reads these (signCommand from
+          # code_signing.py). macOS: Tauri signs with APPLE_SIGNING_IDENTITY
+          # (set by "Set up macOS signing") and notarizes with an App Store
+          # Connect API key or, failing that, an Apple ID.
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY != '' && vars.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_PRIVATE_KEY != '' && vars.APPLE_API_ISSUER || '' }}
+          APPLE_ID: ${{ secrets.APPLE_API_PRIVATE_KEY == '' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_API_PRIVATE_KEY == '' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_API_PRIVATE_KEY == '' && vars.APPLE_TEAM_ID || '' }}
         run: |
           npm ci --no-audit --no-fund
           config=()
+          if [ -s signing.conf.json ]; then
+            config+=(--config signing.conf.json)
+          fi
           if [ -n "$UPDATE_SIGNING_KEY" ] && [ -n "$UPDATE_PUBLIC_KEY" ]; then
             export TAURI_SIGNING_PRIVATE_KEY="$UPDATE_SIGNING_KEY"
             export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$UPDATE_SIGNING_KEY_PASSWORD"
             printf '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"%s"}}}' "$UPDATE_PUBLIC_KEY" > updater.conf.json
-            config=(--config updater.conf.json)
+            config+=(--config updater.conf.json)
           else
             echo "::notice::No update signing key is set, so this build can't update itself (see desktop/README.md)."
           fi
@@ -114,6 +209,15 @@ jobs:
             export LD_LIBRARY_PATH=$(find "$PWD/src-tauri/engine" -name '*.so*' -printf '%h\n' | sort -u | paste -sd:)
           fi
           npx tauri build --bundles ${{ matrix.bundles }} "${config[@]}"
+          if [ "$RUNNER_OS" = macOS ]; then
+            # Both Mac builds name their update bundle Cognitrix.app.tar.gz;
+            # tag it with the architecture so the release can hold both.
+            cd src-tauri/target/release/bundle/macos
+            for f in *.app.tar.gz *.app.tar.gz.sig; do
+              [ -e "$f" ] && mv "$f" "${f/.app.tar.gz/_${{ matrix.arch }}.app.tar.gz}"
+            done
+            true
+          fi
 
       - uses: actions/upload-artifact@v4
         with:

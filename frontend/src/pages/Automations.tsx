@@ -6,6 +6,7 @@ import { PageHeader, LoadingState, ErrorState, EmptyState, Chevron } from '@/com
 import type { TaskTriggerRow } from '@/components/AutomationPanel';
 import { utcToLocal } from '@/lib/time';
 import { cn } from '@/lib/utils';
+import { tr, trn } from '@/lib/i18n';
 
 interface Automation {
   id: string;
@@ -74,25 +75,25 @@ export default function Automations() {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <PageHeader title="Automations" subtitle="Tasks that run on their own: on a schedule, when the agent checks back, or when a webhook fires">
+      <PageHeader title={tr('ui.automations.automations')} subtitle={tr('ui.automations.tasksThatRunOnTheir')}>
         <Button asChild size="sm">
-          <Link to="/tasks/new">+ New task</Link>
+          <Link to="/tasks/new">{tr('ui.automations.newTask')}</Link>
         </Button>
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto">
         {loading && !data ? (
-          <LoadingState label="loading automations…" />
+          <LoadingState label={tr('ui.automations.loadingAutomations')} />
         ) : error ? (
           <ErrorState message={error} onRetry={refetch} />
         ) : items.length === 0 ? (
           <EmptyState
             icon={<AutomationIcon />}
-            title="No automations yet"
-            desc="Give a task a schedule, notes, or a webhook trigger and it shows up here. Agents in those runs can keep notes, pick their next check, and notify you."
+            title={tr('ui.automations.noAutomationsYet')}
+            desc={tr('ui.automations.giveATaskASchedule')}
             action={
               <Button asChild>
-                <Link to="/tasks">Open tasks</Link>
+                <Link to="/tasks">{tr('ui.automations.openTasks')}</Link>
               </Button>
             }
           />
@@ -111,28 +112,27 @@ export default function Automations() {
                     <div className="min-w-0">
                       <div className="truncate font-medium transition-colors group-hover:text-accent-ink">{a.title}</div>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                        {schedule && <Chip className={a.schedule_enabled ? '' : 'opacity-60'}>⏱ {schedule}{a.schedule_enabled ? '' : ' · paused'}</Chip>}
-                        {a.wake_pending && <Chip>↺ self-check</Chip>}
+                        {schedule && <Chip className={a.schedule_enabled ? '' : 'opacity-60'}>⏱ {schedule}{a.schedule_enabled ? '' : tr('ui.automations.paused')}</Chip>}
+                        {a.wake_pending && <Chip>{tr('ui.automations.selfCheck')}</Chip>}
                         {a.triggers.length > 0 && (
-                          <Chip>⚡ {enabledTriggers}/{a.triggers.length} webhook{a.triggers.length === 1 ? '' : 's'}</Chip>
+                          <Chip>⚡ {trn(a.triggers.length, 'ui.automations.webhooks_one', 'ui.automations.webhooks_other', { enabled: enabledTriggers })}</Chip>
                         )}
-                        {a.pending_events > 0 && <Chip className="text-accent-ink">{a.pending_events} event{a.pending_events === 1 ? '' : 's'} waiting</Chip>}
-                        {a.notes && <Chip>notes</Chip>}
+                        {a.pending_events > 0 && <Chip className="text-accent-ink">{trn(a.pending_events, 'ui.automations.eventsWaiting_one', 'ui.automations.eventsWaiting_other')}</Chip>}
+                        {a.notes && <Chip>{tr('ui.automations.notes')}</Chip>}
                       </div>
                       {a.wake_pending && a.wake_reason && (
-                        <div className="mt-1 truncate text-[12.5px] text-fg-dim">Next check: {a.wake_reason}</div>
+                        <div className="mt-1 truncate text-[12.5px] text-fg-dim">{tr('ui.automations.nextCheckWakeReason', { wake_reason: a.wake_reason })}</div>
                       )}
                       {a.last_run?.result && (
-                        <div className="mt-1 truncate text-[12.5px] text-fg-dim">Last result: {a.last_run.result}</div>
+                        <div className="mt-1 truncate text-[12.5px] text-fg-dim">{tr('ui.automations.lastResultResult', { result: a.last_run.result })}</div>
                       )}
                     </div>
                     <div className="flex items-center gap-4">
                       <div className="hidden text-right sm:block">
-                        {next && <div className="font-mono text-[10.5px] text-fg-dim">next {next}</div>}
+                        {next && <div className="font-mono text-[10.5px] text-fg-dim">{tr('ui.automations.nextNext', { next })}</div>}
                         {a.last_run && (
                           <div className={cn('font-mono text-[10.5px]', RUN_STATUS[a.last_run.status] || 'text-fg-dim')}>
-                            last {a.last_run.status}
-                            {a.last_run.completed_at ? ` · ${utcToLocal(a.last_run.completed_at)}` : ''}
+                            {tr('ui.automations.lastStatusValue', { status: a.last_run.status, value: a.last_run.completed_at ? ` · ${utcToLocal(a.last_run.completed_at)}` : '' })}
                           </div>
                         )}
                       </div>

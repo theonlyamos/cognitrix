@@ -70,3 +70,29 @@ export function withPrimary(folders: WorkFolder[], primaryPath?: string): WorkFo
   const marked = folders.map((f) => ({ ...f, primary: f.path === target }));
   return [...marked.filter((f) => f.primary), ...marked.filter((f) => !f.primary)];
 }
+
+/** One folder in the server folder browser. */
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  writable: boolean;
+}
+
+export interface BrowseListing {
+  /** null: the starting folders are listed. */
+  path: string | null;
+  /** null: can't go further up. */
+  parent: string | null;
+  entries: BrowseEntry[];
+  truncated: boolean;
+  writable?: boolean;
+}
+
+/** Subfolders of a folder on the machine running Cognitrix (web app browser). */
+export async function browseFolders(path?: string | null, hidden = false): Promise<BrowseListing> {
+  return (await api.get<BrowseListing>('/folders/browse', { params: { path: path || '', hidden } })).data;
+}
+
+export async function createFolder(parent: string, name: string): Promise<BrowseEntry> {
+  return (await api.post<BrowseEntry>('/folders/create', { parent, name })).data;
+}

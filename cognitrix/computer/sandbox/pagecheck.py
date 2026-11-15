@@ -148,6 +148,21 @@ class _DevTools:
         self.ws = ws
         self.next_id = 0
         self.events: list[dict] = []
+        self.dialog_answer: bool | str = True
+        """How a page's alert/confirm/prompt is answered: True accepts, False
+        dismisses, text is typed into a prompt. A dialog left open would freeze the page."""
+
+    def _note(self, data: dict) -> None:
+        self.events.append(data)
+        if data.get('method') == 'Page.javascriptDialogOpening':
+            answer = self.dialog_answer
+            params: dict = {'accept': answer is not False}
+            if isinstance(answer, str):
+                params['promptText'] = answer
+            msg = {'id': 900000 + len(self.events), 'method': 'Page.handleJavaScriptDialog', 'params': params}
+            if data.get('sessionId'):
+                msg['sessionId'] = data['sessionId']
+            self.ws.send(json.dumps(msg))
 
     def call(self, method: str, params: dict | None = None, session: str | None = None,
              timeout: float = 20) -> dict:
@@ -165,7 +180,7 @@ class _DevTools:
                     raise PageCheckError(f"{method}: {data['error'].get('message', 'failed')}")
                 return data.get('result') or {}
             if 'method' in data:
-                self.events.append(data)
+                self._note(data)
         raise PageCheckError(f'{method} timed out.')
 
     def pump(self, seconds: float) -> None:
@@ -181,7 +196,7 @@ class _DevTools:
             except TimeoutError:
                 return
             if 'method' in data:
-                self.events.append(data)
+                self._note(data)
 
     def wait_for(self, method: str, seconds: float) -> bool:
         deadline = time.monotonic() + seconds
@@ -273,65 +288,93 @@ def _summarise(events: list[dict], page_url: str) -> dict:
     return {'status': status, 'errors': dedupe(errors), 'console': dedupe(console), 'failed': dedupe(failed)}
 
 
+class _Page:
+    """A fresh headless browser with one tab sized like a desktop or a phone,
+    closed (profile and all) when the ``with`` block ends."""
+
+    def __init__(self, browser: str, *, phone: bool = False, headers: dict[str, str] | None = None,
+                 timeout: float = 30, no_sandbox: bool = False) -> None:
+        self.browser, self.phone, self.headers = browser, phone, headers
+        self.timeout, self.no_sandbox = timeout, no_sandbox
+        self.width, self.height = PHONE if phone else DESKTOP
+        self.proc: subprocess.Popen | None = None
+        self.ws: _WebSocket | None = None
+
+    def __enter__(self) -> _Page:
+        self.profile = tempfile.mkdtemp(prefix='cognitrix-check-')
+        try:
+            self.proc, ws_url = _launch(self.browser, self.profile, self.no_sandbox)
+            self.ws = _WebSocket(ws_url, self.timeout)
+            dt = self.dt = _DevTools(self.ws)
+            target = dt.call('Target.createTarget', {'url': 'about:blank'})['targetId']
+            self.session = dt.call('Target.attachToTarget', {'targetId': target, 'flatten': True})['sessionId']
+            for method in ('Page.enable', 'Runtime.enable', 'Log.enable', 'Network.enable'):
+                self.call(method)
+            if self.headers:
+                self.call('Network.setExtraHTTPHeaders', {'headers': self.headers})
+            self.call('Emulation.setDeviceMetricsOverride', {
+                'width': self.width, 'height': self.height, 'deviceScaleFactor': 2 if self.phone else 1,
+                'mobile': self.phone})
+            if self.phone:
+                self.call('Emulation.setUserAgentOverride', {'userAgent': (
+                    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 '
+                    '(KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1')})
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+        return self
+
+    def call(self, method: str, params: dict | None = None, timeout: float | None = None) -> dict:
+        return self.dt.call(method, params, session=self.session, timeout=timeout or self.timeout)
+
+    def screenshot(self) -> str:
+        return self.call('Page.captureScreenshot', {'format': 'png'}).get('data', '')
+
+    def __exit__(self, *exc) -> None:
+        if self.ws is not None:
+            try:
+                self.ws.send(json.dumps({'id': 999999, 'method': 'Browser.close'}))
+            except OSError:
+                pass
+            self.ws.close()
+        if self.proc is not None:
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                try:
+                    self.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+        shutil.rmtree(self.profile, ignore_errors=True)
+
+
 def check_page(url: str, *, browser: str, phone: bool = False, headers: dict[str, str] | None = None,
                timeout: float = 30, settle: float = 2.0, no_sandbox: bool = False) -> dict:
     """Load ``url`` and return ``{ok, status, title, text_length, screenshot (base64 PNG),
     errors, console, failed, width, height}``."""
-    width, height = PHONE if phone else DESKTOP
-    profile = tempfile.mkdtemp(prefix='cognitrix-check-')
-    proc = None
-    ws = None
     try:
-        proc, ws_url = _launch(browser, profile, no_sandbox)
-        ws = _WebSocket(ws_url, timeout)
-        dt = _DevTools(ws)
-        target = dt.call('Target.createTarget', {'url': 'about:blank'})['targetId']
-        session = dt.call('Target.attachToTarget', {'targetId': target, 'flatten': True})['sessionId']
-        for method in ('Page.enable', 'Runtime.enable', 'Log.enable', 'Network.enable'):
-            dt.call(method, session=session)
-        if headers:
-            dt.call('Network.setExtraHTTPHeaders', {'headers': headers}, session=session)
-        dt.call('Emulation.setDeviceMetricsOverride', {
-            'width': width, 'height': height, 'deviceScaleFactor': 2 if phone else 1, 'mobile': phone}, session=session)
-        if phone:
-            dt.call('Emulation.setUserAgentOverride', {'userAgent': (
-                'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 '
-                '(KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1')}, session=session)
-        nav = dt.call('Page.navigate', {'url': url}, session=session, timeout=timeout)
-        if nav.get('errorText'):
-            return {'ok': False, 'error': f"The page didn't load: {nav['errorText']}", 'errors': [], 'console': [],
-                    'failed': [], 'status': 0}
-        loaded = dt.wait_for('Page.loadEventFired', timeout)
-        dt.pump(settle)  # scripts that fetch data after load
-        info = dt.call('Runtime.evaluate', {
-            'expression': "JSON.stringify({title: document.title, text: document.body ? "
-                          "document.body.innerText.trim().length : 0})",
-            'returnByValue': True}, session=session)
-        page = json.loads(((info.get('result') or {}).get('value')) or '{}')
-        shot = dt.call('Page.captureScreenshot', {'format': 'png'}, session=session, timeout=timeout)
-        out = _summarise(dt.events, url)
-        out.update({'ok': True, 'title': _short(page.get('title', ''), 120), 'text_length': int(page.get('text') or 0),
-                    'screenshot': shot.get('data', ''), 'width': width, 'height': height, 'loaded': loaded})
-        return out
+        with _Page(browser, phone=phone, headers=headers, timeout=timeout, no_sandbox=no_sandbox) as page:
+            dt = page.dt
+            nav = page.call('Page.navigate', {'url': url})
+            if nav.get('errorText'):
+                return {'ok': False, 'error': f"The page didn't load: {nav['errorText']}", 'errors': [],
+                        'console': [], 'failed': [], 'status': 0}
+            loaded = dt.wait_for('Page.loadEventFired', timeout)
+            dt.pump(settle)  # scripts that fetch data after load
+            info = page.call('Runtime.evaluate', {
+                'expression': "JSON.stringify({title: document.title, text: document.body ? "
+                              "document.body.innerText.trim().length : 0})",
+                'returnByValue': True})
+            seen = json.loads(((info.get('result') or {}).get('value')) or '{}')
+            shot = page.screenshot()
+            out = _summarise(dt.events, url)
+            out.update({'ok': True, 'title': _short(seen.get('title', ''), 120),
+                        'text_length': int(seen.get('text') or 0), 'screenshot': shot,
+                        'width': page.width, 'height': page.height, 'loaded': loaded})
+            return out
     except (OSError, ValueError) as exc:
         raise PageCheckError(f'Could not drive the browser: {exc}') from None
-    finally:
-        if ws is not None:
-            try:
-                ws.send(json.dumps({'id': 999999, 'method': 'Browser.close'}))
-            except OSError:
-                pass
-            ws.close()
-        if proc is not None:
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass
-        shutil.rmtree(profile, ignore_errors=True)
 
 
 # ------------------------------------------------------------------ no browser: a text check
@@ -443,6 +486,14 @@ class _Hosting:
             def _forward(self):
                 if not (self.path == PREFIX or self.path.startswith(PREFIX + '/')):
                     self.send_response(404)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return
+                if self.command == 'OPTIONS':
+                    # The real proxy answers CORS preflights itself (routes/hosted_apps.py).
+                    self.send_response(204)
+                    for key, value in _CORS.items():
+                        self.send_header(key, value)
                     self.send_header('Content-Length', '0')
                     self.end_headers()
                     return

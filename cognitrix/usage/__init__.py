@@ -35,6 +35,11 @@ def reset_owner(token) -> None:
     _owner.reset(token)
 
 
+def current_owner() -> dict[str, str] | None:
+    """{'user_id', 'agent_id'} of the turn running now, if one set it."""
+    return _owner.get()
+
+
 def set_sink(sink) -> Any:
     """Also hand every model call's usage in this context to ``sink(usage)``."""
     return _sink.set(sink)

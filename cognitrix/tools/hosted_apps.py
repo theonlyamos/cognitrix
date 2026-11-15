@@ -30,6 +30,11 @@ def _agent_id(parent) -> str:
     return str(ctx.agent_id or getattr(parent, 'id', '') or '')
 
 
+def _has_saved_tests(app) -> bool:
+    path = store.tests_file(app)
+    return bool(path is not None and path.is_file())
+
+
 @tool(category=APP_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
 async def publish_app(title: str, start_command: str, folder: str = '', install_command: str = '', note: str = '',
                       app_id: str = '', description: str = '', use_cognitrix_api: bool = False, branch: str = '',
@@ -105,7 +110,9 @@ async def publish_app(title: str, start_command: str, folder: str = '', install_
     return ToolOutcome.success(
         f'{what} "{app.title}" (app_id {app.id}, version {row.number}), running on {where}. '
         f'It is private to the person until they share it; the link is /apps/open/{app.slug}. '
-        'The person sees a card in the chat that opens it. Now look at it with Check App before you say it is done.',
+        'The person sees a card in the chat that opens it. Now look at it with Check App and click through it '
+        'with Test App' + (' (no steps re-runs its saved tests)' if _has_saved_tests(app) else '')
+        + ' before you say it is done.',
         entities=entity,
     )
 
@@ -198,3 +205,147 @@ async def check_app(app_id: str, path: str = '', phone: bool = False, *, parent=
                      if queue_image('data:image/png;base64,' + shot)
                      else '(This chat cannot show you the screenshot.)')
     return ToolOutcome.success('\n'.join(lines), entities=[EntityRef(type='hosted_app', id=str(app.id), name=app.title)])
+
+
+def _test_report(title: str, label: str, out: dict) -> tuple[bool, list[str], list[str]]:
+    """(passed, report lines, screenshots as data URIs) for one test run."""
+    steps = out.get('steps') or []
+    total = int(out.get('total') or len(steps))
+    done = sum(1 for s in steps if s.get('ok'))
+    passed = bool(out.get('passed'))
+    verdict = 'PASSED' if passed else 'FAILED'
+    lines = [f'{label}: {verdict}, {done} of {total} steps passed.']
+    for row in steps:
+        mark = '✓' if row.get('ok') else '✗'
+        text = f'{row.get("n")}. {mark} {row.get("do")}'
+        if row.get('note'):
+            text += f' ({row["note"]})'
+        if not row.get('ok'):
+            text += f': {row.get("error")}'
+        lines.append(text)
+        for key, name in (('errors', 'script error'), ('console', 'console error'), ('failed', 'failed request')):
+            for item in row.get(key) or []:
+                lines.append(f'   {name}: {item}')
+        for item in row.get('dialogs') or []:
+            lines.append(f'   dialog: "{item}"')
+    if not passed and done == total and out.get('errors'):
+        lines.append('Every step passed, but the page threw script errors (listed above), so the test fails.')
+    if total > len(steps) and steps and not steps[-1].get('ok'):
+        lines.append(f'The {total - len(steps)} steps after it were not run.')
+    if out.get('address'):
+        lines.append(f'Address when it stopped: {out["address"]}')
+    if out.get('page_text'):
+        lines.append(f'Page text there: {out["page_text"]}')
+    if out.get('controls'):
+        lines.append('Buttons, links and fields there: ' + '; '.join(out['controls']))
+    if out.get('log'):
+        lines.append(f'Log of the test copy:\n{out["log"][-2000:]}')
+    shots = []
+    if not passed and out.get('screenshot'):
+        shots.append(out['screenshot'])
+    shots += [s.get('data', '') for s in out.get('shots') or [] if s.get('data')]
+    if passed and not shots and out.get('screenshot'):
+        shots.append(out['screenshot'])
+    return passed, lines, ['data:image/png;base64,' + s for s in shots]
+
+
+@tool(category=APP_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
+async def test_app(app_id: str, steps: list[dict] | None = None, name: str = '', save: bool = False,
+                   path: str = '', phone: bool = False, data: str = 'fresh', *, parent=None) -> ToolOutcome:
+    """Click through a published app like a person would and check it works: open pages, click
+    buttons, fill in forms, press keys, then check what shows. Each run uses a throwaway copy of the
+    live version with its own data (empty by default), so tests never change what people see. You get
+    each step passed or failed with the reason, the script errors and failed requests it caused, and a
+    screenshot where it stopped. With save true and a name, a passing test is kept in the app's
+    app-tests.json; run Test App with no steps to re-run every saved test after each publish.
+    Never asks for approval.
+
+    Args:
+        app_id (str): Id or name of the app.
+        steps (list[dict]): Steps in order, each an object with one action: {"go": "page"}, {"click": "Add item"}, {"fill": "Title", "with": "Milk"}, {"select": "Priority", "option": "High"}, {"check": "Done"}, {"uncheck": "Done"}, {"press": "Enter", "on": "Title"}, {"hover": "Menu"}, {"see": "text"}, {"not_see": "text"}, {"expect": "#list li", "count": 3} (or "text", "value", "checked", "enabled", "gone": true), {"url": "items?id="}, {"wait": 500 or "selector"}, {"reload": true}, {"js": "expression that must be true"}, {"screenshot": "label"}. Targets are a CSS selector or the visible text, label or placeholder ("css=..." or "text=..." forces one; "nth": 2 picks the second match). Any step can add "timeout" (seconds, default 5) and "dialog" ("accept", "dismiss" or text for a prompt). Empty runs the app's saved tests.
+        name (str): Name of the test, e.g. "add an item". With no steps, runs only the saved test with this name.
+        save (bool): Keep the steps under name in the app's app-tests.json if they pass.
+        path (str): The page to start on, e.g. "settings"; empty for the home page.
+        phone (bool): Run on a phone-sized screen (390 wide) instead of a desktop (1280 wide).
+        data (str): "fresh" (default) starts the copy with no data; "copy" starts it with a copy of the app's data.
+    """
+    import json
+
+    user_key = _owner()
+    if not user_key:
+        return ToolOutcome.failure('no_owner', 'Apps need a signed-in person.')
+    try:
+        app, role = await store.app_for(app_id, user_key)
+    except store.AppError as exc:
+        return ToolOutcome.failure(exc.code, exc.message)
+    if not store.can_edit(role):
+        return ToolOutcome.failure('not_allowed', f'You can use "{app.title}" but not test it. '
+                                   'Ask its owner for edit access.')
+    if isinstance(steps, str) and steps.strip():
+        try:
+            steps = json.loads(steps)
+        except ValueError as exc:
+            return ToolOutcome.failure('bad_steps', f'steps is not valid JSON: {exc}')
+    name = ' '.join(str(name or '').split())[:80]
+    data = 'copy' if str(data or '').strip().lower() == 'copy' else 'fresh'
+    if steps:
+        runs = [{'name': name or 'test', 'steps': steps, 'path': path, 'phone': bool(phone)}]
+    else:
+        try:
+            runs = store.saved_tests(app)
+        except store.AppError as exc:
+            return ToolOutcome.failure(exc.code, exc.message)
+        if name:
+            runs = [t for t in runs if t['name'].lower() == name.lower()]
+        if not runs:
+            where = store.tests_file(app)
+            return ToolOutcome.failure('no_tests', (f'No saved test called "{name}". ' if name else 'No saved tests. ')
+                                       + 'Pass steps, e.g. [{"click": "Add"}, {"see": "Added"}], and save: true '
+                                       'with a name to keep a test that passes'
+                                       + (f' (it goes in {where}).' if where else '.'))
+    entity = [EntityRef(type='hosted_app', id=str(app.id), name=app.title)]
+    reports: list[str] = []
+    images: list[str] = []
+    passed_all = True
+    for run in runs:
+        try:
+            out = await store.test(app, user_key, run['steps'], path=run.get('path', ''), phone=run.get('phone', False),
+                                   data=data)
+        except store.AppError as exc:
+            return ToolOutcome.failure(exc.code, exc.message)
+        if not out.get('ok'):
+            code = 'bad_steps' if out.get('bad_steps') else 'no_browser' if out.get('no_browser') else 'test_failed'
+            return ToolOutcome.failure(code, f'Test "{run["name"]}" could not run: {out.get("error") or "no answer"}')
+        size = 'phone' if run.get('phone') else 'desktop'
+        label = (f'Test "{run["name"]}" on a {"copy of the data" if data == "copy" else "fresh copy"} of '
+                 f'"{app.title}" v{out.get("version") or app.version} ({size})')
+        passed, lines, shots = _test_report(app.title, label, out)
+        passed_all = passed_all and passed
+        reports.append('\n'.join(lines))
+        images += shots
+    if steps and save:
+        if not name:
+            reports.append('Not saved: give the test a name to save it.')
+        elif not passed_all:
+            reports.append('Not saved, because it failed. Fix the app or the steps, run it again with save: true.')
+        else:
+            try:
+                where = store.save_test(app, name, runs[0]['steps'], path=str(path or '').strip().lstrip('/'),
+                                        phone=bool(phone))
+                reports.append(f'Saved as "{name}" in {where}. Run Test App with no steps to re-run all saved tests.')
+            except store.AppError as exc:
+                reports.append(f'Not saved: {exc.message}')
+    if len(runs) > 1:
+        count = sum(1 for r in reports if ': PASSED,' in r.split('\n', 1)[0])
+        reports.insert(0, f'{count} of {len(runs)} saved tests passed.')
+    from cognitrix.tools.misc import queue_image
+
+    shown = [img for img in images[:4] if queue_image(img)]
+    if shown:
+        reports.append('Screenshot attached (where the test stopped, or at the end, plus any screenshot steps).'
+                       if len(shown) == 1 else f'{len(shown)} screenshots attached.')
+    text = '\n\n'.join(reports)
+    if not passed_all:
+        text += ('\n\nFix the app (or a step that targets the wrong thing), publish again, and run the test again. '
+                 "Don't tell the user the app works while a test fails.")
+    return ToolOutcome.success(text, entities=entity)

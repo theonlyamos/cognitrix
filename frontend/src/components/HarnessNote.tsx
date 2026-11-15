@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import { ASK_HARNESSES, HARNESS_INSTALL, HARNESS_MODES, NO_TOOL_HARNESSES, PROVIDER_LABELS, isHarness } from '@/lib/providers';
 import { useSystemInfo } from '@/hooks/useSystemInfo';
+import { tr } from '@/lib/i18n';
 
 /** Under a provider picker set to a coding agent CLI: whether it's installed,
  *  how to get it, and what it may do to files. */
@@ -18,22 +19,21 @@ export default function HarnessNote({
   return (
     <div className="space-y-2 text-[12px] font-normal leading-relaxed text-fg-dim">
       <p>
-        Runs {label} on this computer, signed in with your own plan or key, so usage comes out of that account.
-        It works on files with {label}'s own tools in the agent's working folder
+        {tr('ui.harnessNote.runs')}{' '}{label}{' '}{tr('ui.harnessNote.onThisComputerSignedIn')}{' '}{label}{tr('ui.harnessNote.sOwnToolsInThe')}
         {NO_TOOL_HARNESSES.includes(provider)
-          ? ", but can't use this agent's Cognitrix tools (memory, tasks, connected apps)"
-          : ", and can also use this agent's Cognitrix tools (memory, tasks, connected apps), which ask for approval the usual way"}
-        . It works in the desktop app and the command line.
+          ? tr('ui.harnessNote.butCanTUseThis')
+          : tr('ui.harnessNote.andCanAlsoUseThis')}
+        {tr('ui.harnessNote.itWorksInTheDesktop')}
       </p>
       {info && !installed && (
         <p role="status" className="text-danger-ink">
-          {label} isn't installed on the computer running Cognitrix. Install it with:{' '}
+          {tr('ui.harnessNote.labelIsnTInstalledOn', { label })}{' '}
           <code className="font-mono text-fg">{HARNESS_INSTALL[provider]}</code>
         </p>
       )}
-      {info && installed && <p>{label} is installed. If it isn't signed in yet: {HARNESS_INSTALL[provider].split(', then ').pop()}.</p>}
+      {info && installed && <p>{tr('ui.harnessNote.labelIsInstalledIfIt', { label, pop: HARNESS_INSTALL[provider].split(', then ').pop() })}</p>}
       <label htmlFor={id} className="flex flex-col gap-1 text-[13px] font-medium text-fg">
-        What it can do
+        {tr('ui.harnessNote.whatItCanDo')}
         <select id={id} value={current.value} onChange={(e) => onModeChange(e.target.value)} className={selectClass}>
           {modes.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>

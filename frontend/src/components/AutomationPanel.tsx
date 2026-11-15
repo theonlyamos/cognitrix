@@ -3,6 +3,7 @@ import { api, API_BASE, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
 import { cn } from '@/lib/utils';
 import { utcToLocal } from '@/lib/time';
+import { tr, trn } from '@/lib/i18n';
 
 const NOTES_MAX = 8000;
 
@@ -96,7 +97,7 @@ export function AutomationPanel({
       setTriggers(t.data ?? []);
       setEvents(e.data ?? []);
     } catch (err) {
-      setError(errorMessage(err, 'Could not load triggers.'));
+      setError(errorMessage(err, tr('ui.automationPanel.couldNotLoadTriggers')));
     }
   }, [taskId]);
 
@@ -128,13 +129,13 @@ export function AutomationPanel({
       } finally {
         setSavingNotes(false);
       }
-    }, 'Could not save the notes.');
+    }, tr('ui.automationPanel.couldNotSaveTheNotes'));
 
   const cancelWake = () =>
     act('wake', async () => {
       await api.delete(`/tasks/${taskId}/wake`);
       await onChanged();
-    }, 'Could not cancel the check.');
+    }, tr('ui.automationPanel.couldNotCancelTheCheck'));
 
   const addTrigger = () =>
     act('add', async () => {
@@ -143,14 +144,14 @@ export function AutomationPanel({
       setCopied(false);
       setNewName('');
       await load();
-    }, 'Could not create the webhook.');
+    }, tr('ui.automationPanel.couldNotCreateTheWebhook'));
 
   const addMailTrigger = () =>
     act('add-mail', async () => {
       await api.post(`/tasks/${taskId}/triggers`, { kind: 'gmail', match: mailMatch.trim() });
       setMailMatch('');
       await load();
-    }, 'Could not start watching for new mail.');
+    }, tr('ui.automationPanel.couldNotStartWatchingFor'));
 
   const rotate = (id: string) =>
     act(`rotate:${id}`, async () => {
@@ -158,20 +159,20 @@ export function AutomationPanel({
       setCreated(data);
       setCopied(false);
       await load();
-    }, 'Could not make a new URL.');
+    }, tr('ui.automationPanel.couldNotMakeANew'));
 
   const toggle = (row: TaskTriggerRow) =>
     act(`toggle:${row.id}`, async () => {
       await api.patch(`/tasks/${taskId}/triggers/${row.id}`, { enabled: !row.enabled });
       await load();
-    }, 'Could not update the trigger.');
+    }, tr('ui.automationPanel.couldNotUpdateTheTrigger'));
 
   const remove = (id: string) =>
     act(`delete:${id}`, async () => {
       await api.delete(`/tasks/${taskId}/triggers/${id}`);
       if (created?.id === id) setCreated(null);
       await load();
-    }, 'Could not delete the trigger.');
+    }, tr('ui.automationPanel.couldNotDeleteTheTrigger'));
 
   const copy = async (text: string) => {
     try {
@@ -185,77 +186,76 @@ export function AutomationPanel({
   const notesDirty = notes !== savedNotes;
 
   return (
-    <section aria-label="Automation" className="flex flex-col gap-5 border-b border-line bg-panel px-6 py-4 max-md:px-4">
+    <section aria-label={tr('ui.automationPanel.automation')} className="flex flex-col gap-5 border-b border-line bg-panel px-6 py-4 max-md:px-4">
       {error && <p role="alert" className="font-mono text-[12px] text-danger-ink">{error}</p>}
 
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-          <SectionTitle>NOTES · KEPT BETWEEN RUNS</SectionTitle>
+          <SectionTitle>{tr('ui.automationPanel.notesKeptBetweenRuns')}</SectionTitle>
           <span className={cn('font-mono text-[10.5px] tnum', notes.length > NOTES_MAX ? 'text-danger-ink' : 'text-fg-dim')}>
             {notes.length}/{NOTES_MAX}
           </span>
         </div>
-        <label htmlFor="task-notes" className="sr-only">Task notes</label>
+        <label htmlFor="task-notes" className="sr-only">{tr('ui.automationPanel.taskNotes')}</label>
         <textarea
           id="task-notes"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           rows={4}
-          placeholder="Every run reads these. Agents update them too, e.g. the last version they saw."
+          placeholder={tr('ui.automationPanel.everyRunReadsTheseAgents')}
           className="w-full resize-y rounded-[9px] border border-line bg-bg px-3 py-2 font-mono text-[12.5px] leading-relaxed outline-none focus:border-accent"
         />
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={saveNotes} disabled={!notesDirty || savingNotes || notes.length > NOTES_MAX}>
-            {savingNotes ? 'Saving…' : 'Save notes'}
+            {savingNotes ? tr('ui.automationPanel.saving') : tr('ui.automationPanel.saveNotes')}
           </Button>
           {notesDirty && (
             <Button size="sm" variant="ghost" onClick={() => setNotes(savedNotes)}>
-              Discard
+              {tr('ui.automationPanel.discard')}
             </Button>
           )}
         </div>
       </div>
 
       <div className="flex flex-col gap-2">
-        <SectionTitle>NEXT CHECK · SET BY THE AGENT</SectionTitle>
+        <SectionTitle>{tr('ui.automationPanel.nextCheckSetByThe')}</SectionTitle>
         {task?.wake_pending && task.wake_at ? (
           <div className="flex flex-wrap items-center gap-3 text-[13px]">
             <span>
-              Checks again <span className="font-mono">{utcToLocal(task.wake_at)}</span>
+              {tr('ui.automationPanel.checksAgain')}{' '}<span className="font-mono">{utcToLocal(task.wake_at)}</span>
               {task.wake_reason ? <span className="text-fg-dim"> · {task.wake_reason}</span> : null}
             </span>
             <Button size="sm" variant="outline" onClick={cancelWake} disabled={busy === 'wake'}>
-              Cancel check
+              {tr('ui.automationPanel.cancelCheck')}
             </Button>
           </div>
         ) : (
           <p className="text-[13px] text-fg-dim">
-            None. During a run the agent can call Schedule Next Check to pick when to look again.
+            {tr('ui.automationPanel.noneDuringARunThe')}
           </p>
         )}
       </div>
 
       <div className="flex flex-col gap-2">
-        <SectionTitle>TRIGGERS</SectionTitle>
+        <SectionTitle>{tr('ui.automationPanel.triggers')}</SectionTitle>
         <p className="text-[12.5px] text-fg-dim">
-          A POST to a webhook's secret URL starts a run, and the request body is passed to the agents. New mail in your connected
-          Gmail can start a run too. When a run is already going, events wait their turn.
+          {tr('ui.automationPanel.aPostToAWebhook')}
         </p>
 
         {created && (
           <div role="status" className="rounded-[10px] border border-accent/50 bg-accent/5 p-3">
-            <p className="text-[12.5px] font-medium">Copy this URL now. It won't be shown again.</p>
+            <p className="text-[12.5px] font-medium">{tr('ui.automationPanel.copyThisUrlNowIt')}</p>
             <div className="mt-2 flex items-center gap-2">
               <code className="min-w-0 flex-1 break-all rounded bg-bg px-2 py-1.5 font-mono text-[11.5px]">{hookUrl(created.path)}</code>
               <Button size="sm" variant="outline" onClick={() => copy(hookUrl(created.path))}>
-                {copied ? 'Copied' : 'Copy'}
+                {copied ? tr('ui.automationPanel.copied') : tr('ui.automationPanel.copy')}
               </Button>
             </div>
             <p className="mt-2 font-mono text-[11px] text-fg-dim">
-              curl -X POST -H "Content-Type: application/json" -d '{'{"hello":"world"}'}' &lt;url&gt;
+              {tr('ui.automationPanel.curlXPostHContent')}{'{"hello":"world"}'}{tr('ui.automationPanel.url')}
             </p>
             <Button size="sm" variant="ghost" className="mt-1" onClick={() => setCreated(null)}>
-              Done
+              {tr('ui.automationPanel.done')}
             </Button>
           </div>
         )}
@@ -270,26 +270,26 @@ export function AutomationPanel({
                 <span className="text-[13px] font-medium">{row.name}</span>
                 {mail ? (
                   <span className="font-mono text-[11px] text-fg-dim">
-                    {row.match ? `only mail matching "${row.match}"` : 'all new mail'}
+                    {row.match ? tr('ui.automationPanel.onlyMailMatchingMatch', { match: row.match }) : tr('ui.automationPanel.allNewMail')}
                   </span>
                 ) : (
                   <span className="font-mono text-[11px] text-fg-dim">…{row.token_hint}</span>
                 )}
                 <span className="font-mono text-[11px] text-fg-dim">
-                  {row.fire_count} run{row.fire_count === 1 ? '' : 's'}
-                  {row.last_fired_at ? ` · last ${utcToLocal(row.last_fired_at)}` : ''}
+                  {trn(row.fire_count, 'ui.count.runs_one', 'ui.count.runs_other')}
+                  {row.last_fired_at ? tr('ui.automationPanel.lastUtctolocal', { utcToLocal: utcToLocal(row.last_fired_at) }) : ''}
                 </span>
                 <span className="flex-1" />
                 <Button size="sm" variant="ghost" onClick={() => toggle(row)} disabled={busy !== null}>
-                  {row.enabled ? 'Turn off' : 'Turn on'}
+                  {row.enabled ? tr('ui.automationPanel.turnOff') : tr('ui.automationPanel.turnOn')}
                 </Button>
                 {!mail && (
                   <Button size="sm" variant="ghost" onClick={() => rotate(row.id)} disabled={busy !== null}>
-                    New URL
+                    {tr('ui.automationPanel.newUrl')}
                   </Button>
                 )}
                 <Button size="sm" variant="ghost" className="hover:text-danger-ink" onClick={() => remove(row.id)} disabled={busy !== null}>
-                  Delete
+                  {tr('ui.automationPanel.delete')}
                 </Button>
                 {mail && row.error && (
                   <p role="alert" className="w-full pl-3.5 text-[12px] text-danger-ink">{row.error}</p>
@@ -307,50 +307,50 @@ export function AutomationPanel({
             void addTrigger();
           }}
         >
-          <label htmlFor="trigger-name" className="sr-only">Webhook name</label>
+          <label htmlFor="trigger-name" className="sr-only">{tr('ui.automationPanel.webhookName')}</label>
           <input
             id="trigger-name"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            placeholder="Name, e.g. GitHub releases"
+            placeholder={tr('ui.automationPanel.nameEGGithubReleases')}
             maxLength={80}
             className="h-9 min-w-0 flex-1 rounded-[9px] border border-line bg-bg px-3 text-[13px] outline-none focus:border-accent"
           />
           <Button size="sm" type="submit" disabled={busy === 'add'}>
-            {busy === 'add' ? 'Adding…' : '+ Add webhook'}
+            {busy === 'add' ? tr('ui.automationPanel.adding') : tr('ui.automationPanel.addWebhook')}
           </Button>
         </form>
 
         <form
           className="flex flex-wrap gap-2"
-          aria-label="Start on new mail"
+          aria-label={tr('ui.automationPanel.startOnNewMail')}
           onSubmit={(e) => {
             e.preventDefault();
             void addMailTrigger();
           }}
         >
-          <label htmlFor="trigger-mail-match" className="sr-only">Only mail whose sender or subject contains</label>
+          <label htmlFor="trigger-mail-match" className="sr-only">{tr('ui.automationPanel.onlyMailWhoseSenderOr')}</label>
           <input
             id="trigger-mail-match"
             value={mailMatch}
             onChange={(e) => setMailMatch(e.target.value)}
-            placeholder="Only mail from or about… (optional), e.g. invoice"
+            placeholder={tr('ui.automationPanel.onlyMailFromOrAbout')}
             maxLength={200}
             className="h-9 min-w-0 flex-1 rounded-[9px] border border-line bg-bg px-3 text-[13px] outline-none focus:border-accent"
           />
           <Button size="sm" type="submit" variant="outline" disabled={busy === 'add-mail'}>
-            {busy === 'add-mail' ? 'Adding…' : '+ Start on new Gmail'}
+            {busy === 'add-mail' ? tr('ui.automationPanel.adding') : tr('ui.automationPanel.startOnNewGmail')}
           </Button>
         </form>
 
         {events.length > 0 && (
           <div className="mt-1">
-            <div className="mb-1 font-mono text-[10px] tracking-[0.14em] text-fg-dim">RECENT EVENTS</div>
+            <div className="mb-1 font-mono text-[10px] tracking-[0.14em] text-fg-dim">{tr('ui.automationPanel.recentEvents')}</div>
             <ul className="flex flex-col gap-1">
               {events.slice(0, 5).map((ev) => (
                 <li key={ev.id} className="flex items-center gap-2 font-mono text-[11px] text-fg-dim">
                   <span className={cn(ev.status === 'dispatched' && 'text-ok', ev.status === 'dropped' && 'text-danger-ink')}>
-                    {ev.status === 'dispatched' ? 'ran' : ev.status === 'pending' ? 'waiting' : ev.status}
+                    {ev.status === 'dispatched' ? tr('ui.automationPanel.ran') : ev.status === 'pending' ? tr('ui.automationPanel.waiting') : ev.status}
                   </span>
                   <span>{ev.received_at ? utcToLocal(ev.received_at) : ''}</span>
                   <span className="min-w-0 flex-1 truncate">{ev.payload}</span>

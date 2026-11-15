@@ -5,7 +5,7 @@ import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import { desktop, isDesktop, type DesktopSettings, type UpdateInfo } from '@/lib/desktop';
 import { Toggle } from '@/pages/Notifications';
-import { useT, type MessageKey } from '@/lib/i18n';
+import { useT, type MessageKey, tr } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useSystemInfo } from '@/hooks/useSystemInfo';
 import { VoiceSettingsCard } from '@/components/VoiceSettingsCard';
@@ -25,6 +25,7 @@ import { SwarmSettings } from '@/components/settings/Swarms';
 import { PasswordChange } from '@/components/settings/PasswordChange';
 import { SpokenRepliesSettings } from '@/components/settings/SpokenReplies';
 import { PeopleSettings } from '@/components/settings/People';
+import { AuditLog } from '@/components/settings/AuditLog';
 import {
   Group, SectionHeader, SettingRow, SubHeading, buttonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -33,7 +34,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'people' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'people' | 'audit' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -47,20 +48,21 @@ interface SectionMeta {
 }
 
 const SECTIONS: SectionMeta[] = [
-  { id: 'account', label: 'Account', group: 'GENERAL', keywords: 'profile email name password export backup download data sign out devices api keys' },
-  { id: 'appearance', label: 'Appearance', group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
-  { id: 'models', label: 'Models and keys', group: 'AI', keywords: 'providers api key chatgpt plan subscription plus pro openai anthropic claude gemini google groq openrouter cerebras ollama' },
-  { id: 'usage', label: 'Usage', group: 'AI', keywords: 'cost spend tokens money bill price how much' },
-  { id: 'memory', label: 'Memory', group: 'AI', keywords: 'remember memories personalization forget history what agents know about me' },
-  { id: 'skills', label: 'Skills', group: 'AI', keywords: 'skill instructions learned how to slash commands playbook procedure reuse' },
-  { id: 'voice', label: 'Voice', group: 'AI', keywords: 'input mic microphone speech transcription dictation spoken replies read aloud listen text to speech tts' },
-  { id: 'apps', label: 'Connected apps', group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
-  { id: 'access', label: 'Agent access', group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
-  { id: 'swarms', label: 'Swarms', group: 'AGENTS', keywords: 'swarm workers parallel sub agents subagents fan out limit budget tokens concurrency how many at once' },
-  { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp bot alerts approvals mention channel' },
-  { id: 'people', label: 'People', group: 'SERVER', keywords: 'users admin invite invitation members roles disable accounts email smtp reset', adminOnly: true },
-  { id: 'desktop', label: 'Desktop app', group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
-  { id: 'engine', label: 'Engine', group: 'THIS COMPUTER', keywords: 'server status restart log version database queue worker data folder' },
+  { id: 'account', get label() { return tr('ui.settings.account'); }, group: 'GENERAL', keywords: 'profile email name password export backup download data sign out devices api keys' },
+  { id: 'appearance', get label() { return tr('ui.settings.appearance'); }, group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
+  { id: 'models', get label() { return tr('ui.settings.modelsAndKeys'); }, group: 'AI', keywords: 'providers api key chatgpt plan subscription plus pro openai anthropic claude gemini google groq openrouter cerebras ollama' },
+  { id: 'usage', get label() { return tr('ui.settings.usage'); }, group: 'AI', keywords: 'cost spend tokens money bill price how much' },
+  { id: 'memory', get label() { return tr('ui.settings.memory'); }, group: 'AI', keywords: 'remember memories personalization forget history what agents know about me' },
+  { id: 'skills', get label() { return tr('ui.settings.skills'); }, group: 'AI', keywords: 'skill instructions learned how to slash commands playbook procedure reuse' },
+  { id: 'voice', get label() { return tr('ui.settings.voice'); }, group: 'AI', keywords: 'input mic microphone speech transcription dictation spoken replies read aloud listen text to speech tts' },
+  { id: 'apps', get label() { return tr('ui.settings.connectedApps'); }, group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
+  { id: 'access', get label() { return tr('ui.settings.agentAccess'); }, group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
+  { id: 'swarms', get label() { return tr('ui.settings.swarms'); }, group: 'AGENTS', keywords: 'swarm workers parallel sub agents subagents fan out limit budget tokens concurrency how many at once' },
+  { id: 'chat-apps', get label() { return tr('ui.settings.chatApps'); }, group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp bot alerts approvals mention channel' },
+  { id: 'people', get label() { return tr('ui.settings.people'); }, group: 'SERVER', keywords: 'users admin invite invitation members roles disable remove delete accounts email smtp reset spending limit cap budget', adminOnly: true },
+  { id: 'audit', get label() { return tr('ui.settings.auditLog'); }, group: 'SERVER', keywords: 'audit log activity history who did what tool calls approvals sign ins security' },
+  { id: 'desktop', get label() { return tr('ui.settings.desktopApp'); }, group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
+  { id: 'engine', get label() { return tr('ui.settings.engine'); }, group: 'THIS COMPUTER', keywords: 'server status restart log version database queue worker data folder' },
 ];
 
 /** Old /settings#… links (from before sections had their own pages). */
@@ -78,7 +80,7 @@ function useDesktopPrefs(enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
     desktop.getSettings().then(setPrefs).catch((err: unknown) => {
-      setError(`Couldn't read the desktop settings: ${typeof err === 'string' ? err : err instanceof Error ? err.message : 'unknown error'}`);
+      setError(tr('ui.settings.couldnTReadTheDesktop', { value: typeof err === 'string' ? err : err instanceof Error ? err.message : 'unknown error' }));
     });
   }, [enabled]);
   const update = async (patch: Parameters<typeof desktop.setSettings>[0]) => {
@@ -107,7 +109,7 @@ function AccountSection() {
       logout();
       navigate('/');
     } catch (err) {
-      setSignOutError(errorMessage(err, 'Could not sign out of other devices.'));
+      setSignOutError(errorMessage(err, tr('ui.settings.couldNotSignOutOf')));
       setSigningOut(false);
     }
   };
@@ -126,7 +128,7 @@ function AccountSection() {
       link.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setExportError(errorMessage(err, 'Could not export your data.'));
+      setExportError(errorMessage(err, tr('ui.settings.couldNotExportYourData')));
     } finally {
       setExporting(false);
     }
@@ -134,7 +136,7 @@ function AccountSection() {
 
   return (
     <>
-      <SectionHeader title="Account" description="Who you're signed in as." />
+      <SectionHeader title={tr('ui.settings.account')} description={tr('ui.settings.whoYouReSignedIn')} />
       <Group>
         <SettingRow
           label={user?.name}
@@ -146,25 +148,25 @@ function AccountSection() {
           )}
         />
         <PasswordChange />
-        <SettingRow label="Cognitrix API keys" detail="For scripts and other apps that call this engine">
-          <Link to="/api-keys" className={buttonClass}>Manage</Link>
+        <SettingRow label={tr('ui.settings.cognitrixApiKeys')} detail={tr('ui.settings.forScriptsAndOtherApps')}>
+          <Link to="/api-keys" className={buttonClass}>{tr('ui.settings.manage')}</Link>
         </SettingRow>
         <SettingRow
-          label="Export your data"
-          detail="One file with your agents, chats, tasks, teams and memories. Keys, passwords and saved sign-ins are left out."
+          label={tr('ui.settings.exportYourData')}
+          detail={tr('ui.settings.oneFileWithYourAgents')}
         >
           <button type="button" onClick={exportData} disabled={exporting} className={buttonClass}>
-            {exporting ? 'Preparing…' : 'Download'}
+            {exporting ? tr('ui.settings.preparing') : tr('ui.settings.download')}
           </button>
         </SettingRow>
         {exportError && <p role="alert" className="px-3.5 pb-3 text-[12px] text-danger-ink">{exportError}</p>}
       </Group>
 
-      <SubHeading className="mt-7">DANGER ZONE</SubHeading>
+      <SubHeading className="mt-7">{tr('ui.settings.dangerZone')}</SubHeading>
       <Group danger>
         <SettingRow
-          label="Sign out of all devices"
-          detail="Ends every session, here and on other devices. API keys keep working until you revoke them."
+          label={tr('ui.settings.signOutOfAllDevices')}
+          detail={tr('ui.settings.endsEverySessionHereAnd')}
         >
           <button
             type="button"
@@ -172,7 +174,7 @@ function AccountSection() {
             disabled={signingOut}
             className="inline-flex h-9 items-center rounded-lg border border-danger/50 px-3 text-[12.5px] font-medium text-danger-ink hover:bg-danger/10 disabled:opacity-60 md:h-8"
           >
-            {signingOut ? 'Signing out…' : 'Sign out everywhere'}
+            {signingOut ? tr('ui.settings.signingOut') : tr('ui.settings.signOutEverywhere')}
           </button>
         </SettingRow>
         {signOutError && <p role="alert" className="px-3.5 pb-3 text-[12px] text-danger-ink">{signOutError}</p>}
@@ -196,41 +198,41 @@ function AccessSection({ desktopApp }: { desktopApp: boolean }) {
 
   return (
     <>
-      <SectionHeader title="Agent access" description="What agents can reach: files on this computer, extra tools, and services they sign in to." />
+      <SectionHeader title={tr('ui.settings.agentAccess')} description={tr('ui.settings.whatAgentsCanReachFiles')} />
 
-      <SubHeading>WORKING FOLDER</SubHeading>
+      <SubHeading>{tr('ui.settings.workingFolder')}</SubHeading>
       <Group>
         <SettingRow
           label={<span className="break-all font-mono text-[12.5px] font-normal">{info?.working_folder ?? prefs?.working_folder ?? '…'}</span>}
           detail={desktopApp
-            ? "Shell commands and file tools only work inside this folder. Commands that point anywhere else are refused."
-            : <>Shell commands and file tools only work inside this folder. Set it with <span className="font-mono">COGNITRIX_TOOLS_ROOT</span> on the server.</>}
+            ? tr('ui.settings.shellCommandsAndFileTools')
+            : <>{tr('ui.settings.shellCommandsAndFileTools_e639')}{' '}<span className="font-mono">COGNITRIX_TOOLS_ROOT</span>{' '}{tr('ui.settings.onTheServer')}</>}
         >
           {desktopApp && (
             <>
-              <button type="button" onClick={() => desktop.openFolder('working')} className={quietButtonClass}>Open</button>
-              <button type="button" onClick={changeFolder} className={buttonClass}>Change</button>
+              <button type="button" onClick={() => desktop.openFolder('working')} className={quietButtonClass}>{tr('ui.settings.open')}</button>
+              <button type="button" onClick={changeFolder} className={buttonClass}>{tr('ui.settings.change')}</button>
             </>
           )}
         </SettingRow>
       </Group>
 
-      <SubHeading className="mt-7" >MCP SERVERS</SubHeading>
+      <SubHeading className="mt-7" >{tr('ui.settings.mcpServers')}</SubHeading>
       <div id="mcp-servers" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
         <McpServersCard />
       </div>
 
-      <SubHeading className="mt-7">SAVED SIGN-INS</SubHeading>
+      <SubHeading className="mt-7">{tr('ui.settings.savedSignIns')}</SubHeading>
       <div id="saved-sign-ins" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
         <CredentialsCard />
       </div>
 
-      <SubHeading className="mt-7">AGENTS' COMPUTER</SubHeading>
+      <SubHeading className="mt-7">{tr('ui.settings.agentsComputer')}</SubHeading>
       <div id="computer-sandbox" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
         <ComputerSandboxCard />
       </div>
 
-      <SubHeading className="mt-7">APPS AGENTS CAN USE</SubHeading>
+      <SubHeading className="mt-7">{tr('ui.settings.appsAgentsCanUse')}</SubHeading>
       <div id="computer-apps" className="scroll-mt-4 rounded-[12px] border border-line bg-panel p-3.5">
         <ComputerAppsCard />
       </div>
@@ -256,7 +258,7 @@ function UpdateRow() {
       setInfo(await desktop.checkForUpdate());
       setChecked(byHand);
     } catch (err) {
-      setError(reason(err, "Couldn't check for updates."));
+      setError(reason(err, tr('ui.settings.couldnTCheckForUpdates')));
     } finally {
       setState('idle');
     }
@@ -270,7 +272,7 @@ function UpdateRow() {
     try {
       await desktop.installUpdate();
     } catch (err) {
-      setError(reason(err, "The update couldn't be installed."));
+      setError(reason(err, tr('ui.settings.theUpdateCouldnTBe')));
       setState('idle');
     }
   };
@@ -285,18 +287,18 @@ function UpdateRow() {
 
   return (
     <>
-      <SettingRow label={`Version ${info?.current ?? '…'}`} detail={detail}>
+      <SettingRow label={tr('ui.settings.versionCurrent', { current: info?.current ?? '…' })} detail={detail}>
         {info && !info.enabled && (
-          <button type="button" onClick={() => void desktop.openExternal(RELEASES_URL)} className={buttonClass}>Open releases</button>
+          <button type="button" onClick={() => void desktop.openExternal(RELEASES_URL)} className={buttonClass}>{tr('ui.settings.openReleases')}</button>
         )}
         {info?.enabled && !info.available && (
           <button type="button" onClick={() => void check(true)} disabled={state !== 'idle'} className={buttonClass}>
-            {state === 'checking' ? 'Checking…' : 'Check for updates'}
+            {state === 'checking' ? tr('ui.settings.checking') : tr('ui.settings.checkForUpdates')}
           </button>
         )}
         {info?.enabled && info.available && (
           <button type="button" onClick={() => void install()} disabled={state !== 'idle'} className={buttonClass}>
-            {state === 'installing' ? 'Installing…' : 'Install and restart'}
+            {state === 'installing' ? tr('ui.settings.installing') : tr('ui.settings.installAndRestart')}
           </button>
         )}
       </SettingRow>
@@ -319,35 +321,35 @@ function DesktopSection() {
   };
   return (
     <>
-      <SectionHeader title="Desktop app" description="How the app behaves on this computer." />
+      <SectionHeader title={tr('ui.settings.desktopApp')} description={tr('ui.settings.howTheAppBehavesOn')} />
       {!prefs ? (
-        !error && <p className="text-[13px] text-fg-dim">Loading…</p>
+        !error && <p className="text-[13px] text-fg-dim">{tr('ui.settings.loading')}</p>
       ) : (
         <Group>
-          <SettingRow label={onWindows ? 'Start with Windows' : 'Start at login'} detail="Adds Cognitrix to your startup apps. It opens in the tray and starts the engine, so agents and automations are ready">
-            <Toggle label={onWindows ? 'Start with Windows' : 'Start at login'} checked={prefs.start_with_windows} onChange={(v) => update({ start_with_windows: v })} />
+          <SettingRow label={onWindows ? tr('ui.settings.startWithWindows') : tr('ui.settings.startAtLogin')} detail={tr('ui.settings.addsCognitrixToYourStartup')}>
+            <Toggle label={onWindows ? tr('ui.settings.startWithWindows') : tr('ui.settings.startAtLogin')} checked={prefs.start_with_windows} onChange={(v) => update({ start_with_windows: v })} />
           </SettingRow>
-          <SettingRow label="Keep running in the tray when closed" detail="Tasks keep running while the window is closed">
-            <Toggle label="Keep running in the tray when closed" checked={prefs.close_to_tray} onChange={(v) => update({ close_to_tray: v })} />
+          <SettingRow label={tr('ui.settings.keepRunningInTheTray')} detail={tr('ui.settings.tasksKeepRunningWhileThe')}>
+            <Toggle label={tr('ui.settings.keepRunningInTheTray')} checked={prefs.close_to_tray} onChange={(v) => update({ close_to_tray: v })} />
           </SettingRow>
           {prefs.agent_cursor !== undefined && (
-            <SettingRow label="Show the agent cursor" detail="Shows where an agent clicks and types in other apps, with a Stop button">
-              <Toggle label="Show the agent cursor" checked={prefs.agent_cursor} onChange={(v) => update({ agent_cursor: v })} />
+            <SettingRow label={tr('ui.settings.showTheAgentCursor')} detail={tr('ui.settings.showsWhereAnAgentClicks')}>
+              <Toggle label={tr('ui.settings.showTheAgentCursor')} checked={prefs.agent_cursor} onChange={(v) => update({ agent_cursor: v })} />
             </SettingRow>
           )}
           <SettingRow
-            label={onWindows ? 'Windows notifications' : 'System notifications'}
-            detail={<>Choose which events under <Link to="/notifications" className="text-accent-ink hover:underline">Notifications</Link></>}
+            label={onWindows ? tr('ui.settings.windowsNotifications') : tr('ui.settings.systemNotifications')}
+            detail={<>{tr('ui.settings.chooseWhichEventsUnder')}{' '}<Link to="/notifications" className="text-accent-ink hover:underline">{tr('ui.settings.notifications')}</Link></>}
           >
-            <button type="button" onClick={() => void sendTest()} className={quietButtonClass}>Send test</button>
-            <Toggle label={onWindows ? 'Windows notifications' : 'System notifications'} checked={prefs.notify_desktop} onChange={(v) => update({ notify_desktop: v })} />
+            <button type="button" onClick={() => void sendTest()} className={quietButtonClass}>{tr('ui.settings.sendTest')}</button>
+            <Toggle label={onWindows ? tr('ui.settings.windowsNotifications') : tr('ui.settings.systemNotifications')} checked={prefs.notify_desktop} onChange={(v) => update({ notify_desktop: v })} />
           </SettingRow>
           {testResult && (
             <p role={testResult.ok ? 'status' : 'alert'} className={cn('px-3.5 py-2 text-[12.5px]', testResult.ok ? 'text-fg-dim' : 'text-danger-ink')}>
               {testResult.text}
             </p>
           )}
-          <SettingRow label="Quick ask hotkey" detail="Opens a small ask box from anywhere">
+          <SettingRow label={tr('ui.settings.quickAskHotkey')} detail={tr('ui.settings.opensASmallAskBox')}>
             <kbd className="rounded border border-line px-2 py-0.5 font-mono text-[11.5px]">{prefs.quick_ask_shortcut.replace('+', ' ')}</kbd>
           </SettingRow>
           <UpdateRow />
@@ -369,28 +371,28 @@ function EngineSection({ desktopApp }: { desktopApp: boolean }) {
   return (
     <>
       <SectionHeader
-        title={desktopApp ? 'Engine' : 'Server'}
-        description={desktopApp ? 'The engine runs your agents and their tasks on this computer.' : 'The Cognitrix server your agents run on.'}
+        title={desktopApp ? tr('ui.settings.engine') : tr('ui.settings.server')}
+        description={desktopApp ? tr('ui.settings.theEngineRunsYourAgents') : tr('ui.settings.theCognitrixServerYourAgents')}
       />
       <Group>
         <SettingRow
           label={STATUS_TEXT[engineState]}
-          detail={<span className="font-mono text-[11.5px]">{engineAddress} · v{info?.version ?? '…'}</span>}
+          detail={<span className="font-mono text-[11.5px]">{engineAddress}{' '}{tr('ui.settings.v')}{info?.version ?? '…'}</span>}
           lead={<span aria-hidden="true" className={cn('ml-1 h-2 w-2 flex-none rounded-full', dot)} />}
         >
           {desktopApp && (
             <>
-              <button type="button" onClick={() => desktop.openFolder('logs')} className={quietButtonClass}>Open log</button>
-              <button type="button" onClick={() => desktop.restartEngine()} className={buttonClass}>Restart</button>
+              <button type="button" onClick={() => desktop.openFolder('logs')} className={quietButtonClass}>{tr('ui.settings.openLog')}</button>
+              <button type="button" onClick={() => desktop.restartEngine()} className={buttonClass}>{tr('ui.settings.restart')}</button>
             </>
           )}
         </SettingRow>
         {engine?.error && <p role="alert" className="px-3.5 py-2 text-[12.5px] text-danger-ink">{engine.error}</p>}
-        <SettingRow label="Database">{value(info ? (info.database === 'sqlite' ? 'SQLite' : info.database) : '…')}</SettingRow>
-        <SettingRow label="Task queue">
+        <SettingRow label={tr('ui.settings.database')}>{value(info ? (info.database === 'sqlite' ? 'SQLite' : info.database) : '…')}</SettingRow>
+        <SettingRow label={tr('ui.settings.taskQueue')}>
           {value(info ? `${info.task_queue === 'filesystem' ? 'local queue' : 'Redis'}${info.worker_running == null ? '' : info.worker_running ? ' · worker running' : ' · worker idle'}` : '…')}
         </SettingRow>
-        <SettingRow label="Data folder">
+        <SettingRow label={tr('ui.settings.dataFolder')}>
           {desktopApp ? (
             <button type="button" onClick={() => desktop.openFolder('data')} className="hover:underline">{value(info?.data_folder ?? '…')}</button>
           ) : value(info?.data_folder ?? '…')}
@@ -416,17 +418,17 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
     case 'appearance':
       return <AppearanceSection />;
     case 'models':
-      return (<><SectionHeader title="Models and keys" description="Your ChatGPT plan, and API keys for the model providers your agents use." /><ChatGPTPlanCard /><ProviderKeys /></>);
+      return (<><SectionHeader title={tr('ui.settings.modelsAndKeys')} description={tr('ui.settings.yourChatgptPlanAndApi')} /><ChatGPTPlanCard /><ProviderKeys /></>);
     case 'usage':
-      return (<><SectionHeader title="Usage" description="How many tokens your agents used and roughly what that cost." /><UsageSettings /></>);
+      return (<><SectionHeader title={tr('ui.settings.usage')} description={tr('ui.settings.howManyTokensYourAgents')} /><UsageSettings /></>);
     case 'swarms':
-      return (<><SectionHeader title="Swarms" description="How many workers an agent may start for one job, and how much they may use." /><SwarmSettings /></>);
+      return (<><SectionHeader title={tr('ui.settings.swarms')} description={tr('ui.settings.howManyWorkersAnAgent')} /><SwarmSettings /></>);
     case 'memory':
       return (
         <>
           <SectionHeader
-            title="Memory"
-            description="What your agents remember about you between chats. Only you can see these, and agents never see another person's."
+            title={tr('ui.settings.memory')}
+            description={tr('ui.settings.whatYourAgentsRememberAbout')}
           />
           <MemorySettings />
         </>
@@ -435,8 +437,8 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
       return (
         <>
           <SectionHeader
-            title="Skills"
-            description="Instructions your agents load when a job comes up again. Your own skills are only used in your chats and tasks."
+            title={tr('ui.settings.skills')}
+            description={tr('ui.settings.instructionsYourAgentsLoadWhen')}
           />
           <SkillsSettings />
         </>
@@ -444,10 +446,10 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
     case 'voice':
       return (
         <>
-          <SectionHeader title="Voice" description="Talk to your agents and have their replies read to you." />
-          <SubHeading>VOICE INPUT</SubHeading>
+          <SectionHeader title={tr('ui.settings.voice')} description={tr('ui.settings.talkToYourAgentsAnd')} />
+          <SubHeading>{tr('ui.settings.voiceInput')}</SubHeading>
           <div className="rounded-[12px] border border-line bg-panel p-3.5"><VoiceSettingsCard /></div>
-          <SubHeading className="mt-7">SPOKEN REPLIES</SubHeading>
+          <SubHeading className="mt-7">{tr('ui.settings.spokenReplies')}</SubHeading>
           <SpokenRepliesSettings />
         </>
       );
@@ -455,8 +457,8 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
       return (
         <>
           <SectionHeader
-            title="Connected apps"
-            description="Sign in to apps so your agents can use them. Each connection is yours: other people on this server can't see or use it. Pick which apps an agent may use on its Connections tab."
+            title={tr('ui.settings.connectedApps')}
+            description={tr('ui.settings.signInToAppsSo')}
           />
           <ConnectedAppsCard />
         </>
@@ -466,8 +468,8 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
       return (
         <>
           <SectionHeader
-            title="Chat apps"
-            description="Chat with your agents from Telegram, Slack, Discord, Microsoft Teams or WhatsApp, and get alerts and task approvals there. You create the bot, so messages go only between your bot and this engine."
+            title={tr('ui.settings.chatApps')}
+            description={tr('ui.settings.chatWithYourAgentsFrom')}
           />
           <ChatChannelsCard />
         </>
@@ -475,8 +477,15 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
     case 'people':
       return (
         <>
-          <SectionHeader title="People" description="Who has an account on this server, what they used, and invitations for new people." />
+          <SectionHeader title={tr('ui.settings.people')} description={tr('ui.settings.whoHasAnAccountOn')} />
           <PeopleSettings />
+        </>
+      );
+    case 'audit':
+      return (
+        <>
+          <SectionHeader title={tr('ui.settings.auditLog')} description={tr('ui.settings.whoDidWhatOnThis')} />
+          <AuditLog />
         </>
       );
     case 'desktop': return <DesktopSection />;
@@ -561,7 +570,7 @@ export default function Settings() {
     <div className="flex h-full min-h-0 min-w-0 flex-1 bg-bg text-fg">
       {/* Section menu: a column on wide screens, the whole page on phones until a section is picked. */}
       <nav
-        aria-label="Settings sections"
+        aria-label={tr('ui.settings.settingsSections')}
         className={cn(
           'min-h-0 flex-none overflow-y-auto border-line md:flex md:w-[232px] md:flex-col md:border-r md:px-2.5 md:py-5',
           active ? 'hidden' : 'flex w-full flex-col px-4 py-5',

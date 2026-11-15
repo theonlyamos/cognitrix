@@ -6,6 +6,7 @@ import { useResource } from '@/hooks/useResource';
 import { Button } from '@/lib/components/ui/button';
 import { PageHeader, LoadingState, ErrorState, EmptyState, Chevron } from '@/components/list-ui';
 import type { OnboardingStatus, StarterAgent } from '@/components/AssistantSetup';
+import { tr, trn } from '@/lib/i18n';
 
 interface Agent {
   id: string;
@@ -51,7 +52,7 @@ export default function Agents() {
       setMissingStarters([]);
       refetch();
     } catch (e) {
-      setImportError(errorMessage(e, 'Could not add the starter team.'));
+      setImportError(errorMessage(e, tr('ui.agents.couldNotAddTheStarter')));
     } finally {
       setAddingStarters(false);
     }
@@ -67,19 +68,19 @@ export default function Agents() {
       if (res.data?.id) navigate(`/agents/${res.data.id}`);
       else refetch();
     } catch (e) {
-      setImportError(errorMessage(e, e instanceof Error ? e.message : 'Could not import the agent.'));
+      setImportError(errorMessage(e, e instanceof Error ? e.message : tr('ui.agents.couldNotImportTheAgent')));
     }
   };
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
-      <PageHeader title="Agents" subtitle={sharedWithMe
-        ? `${agents.length} agent${agents.length === 1 ? '' : 's'} · ${sharedWithMe} shared with you`
-        : `owner: you · private · ${agents.length} agent${agents.length === 1 ? "" : "s"} only you can see and run`}>
-        <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" aria-label="Agent file" onChange={importFile} />
-        <Button type="button" size="sm" variant="outline" onClick={() => fileInput.current?.click()}>Import</Button>
+      <PageHeader title={tr('ui.agents.agents')} subtitle={sharedWithMe
+        ? trn(agents.length, 'ui.agents.countShared_one', 'ui.agents.countShared_other', { shared: sharedWithMe })
+        : trn(agents.length, 'ui.agents.countPrivate_one', 'ui.agents.countPrivate_other')}>
+        <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" aria-label={tr('ui.agents.agentFile')} onChange={importFile} />
+        <Button type="button" size="sm" variant="outline" onClick={() => fileInput.current?.click()}>{tr('ui.agents.import')}</Button>
         <Button asChild size="sm">
-          <Link to="/agents/new">+ New agent</Link>
+          <Link to="/agents/new">{tr('ui.agents.newAgent')}</Link>
         </Button>
       </PageHeader>
       {importError && (
@@ -88,28 +89,27 @@ export default function Agents() {
       {missingStarters.length > 0 && agents.length > 0 && (
         <div className="flex flex-col gap-2 border-b border-line bg-panel-2/60 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="min-w-0 text-[13px] leading-relaxed text-fg-dim">
-            <span className="font-medium text-fg">Starter team.</span>{' '}
-            Add {missingStarters.map((a) => a.name).join(', ')}: specialists your assistant can hand work to.
+            <span className="font-medium text-fg">{tr('ui.agents.starterTeam')}</span>{' '}{tr('ui.agents.addMapSpecialistsYourAssistant', { map: missingStarters.map((a) => a.name).join(', ') })}
           </p>
           <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={() => void addStarterTeam()} disabled={addingStarters}>
-            {addingStarters ? 'Adding…' : 'Add starter team'}
+            {addingStarters ? tr('ui.agents.adding') : tr('ui.agents.addStarterTeam')}
           </Button>
         </div>
       )}
 
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <LoadingState label="loading agents…" />
+          <LoadingState label={tr('ui.agents.loadingAgents')} />
         ) : error ? (
           <ErrorState message={error} onRetry={refetch} />
         ) : agents.length === 0 ? (
           <EmptyState
             icon={<AgentIcon />}
-            title="No agents yet"
-            desc="Create an agent — pick a provider and model, give it a system prompt and tools."
+            title={tr('ui.agents.noAgentsYet')}
+            desc={tr('ui.agents.createAnAgentPickA')}
             action={
               <Button asChild>
-                <Link to="/agents/new">Create your first agent</Link>
+                <Link to="/agents/new">{tr('ui.agents.createYourFirstAgent')}</Link>
               </Button>
             }
           />
@@ -129,9 +129,9 @@ export default function Agents() {
                       <div className="flex min-w-0 items-center gap-2">
                         <span className="truncate font-medium transition-colors group-hover:text-accent-ink">{a.name}</span>
                         {a.owner_id && a.my_role && a.my_role !== 'owner' ? (
-                          <span className="flex-none rounded-sm border border-line px-1.5 py-px font-mono text-[10px] tracking-wide text-fg-dim">SHARED WITH YOU</span>
+                          <span className="flex-none rounded-sm border border-line px-1.5 py-px font-mono text-[10px] tracking-wide text-fg-dim">{tr('ui.agents.sharedWithYou')}</span>
                         ) : a.shared ? (
-                          <span className="flex-none rounded-sm border border-line px-1.5 py-px font-mono text-[10px] tracking-wide text-fg-dim">SHARED</span>
+                          <span className="flex-none rounded-sm border border-line px-1.5 py-px font-mono text-[10px] tracking-wide text-fg-dim">{tr('ui.agents.shared')}</span>
                         ) : null}
                       </div>
                       <div className="truncate font-mono text-[11px] text-fg-dim">
@@ -140,7 +140,7 @@ export default function Agents() {
                     </div>
                   </div>
                   <div className="flex items-center gap-4 font-mono text-[11px] text-fg-dim">
-                    <span className="tnum">{a.tools?.length ?? 0} tools</span>
+                    <span className="tnum">{tr('ui.agents.lengthTools', { length: a.tools?.length ?? 0 })}</span>
                     <Chevron />
                   </div>
                 </Link>

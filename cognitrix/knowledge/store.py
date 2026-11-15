@@ -40,19 +40,51 @@ def _collection(collection_id: str):
     return _chroma().get_or_create_collection(name=name, metadata={'hnsw:space': 'cosine'})
 
 
-def _add(collection_id: str, document_id: str, name: str, pieces: list[str]) -> None:
+def _add(collection_id: str, document_id: str, name: str, pieces: list[str],
+         urls: list[str] | None = None) -> None:
+    """Embed and keep ``pieces``. ``urls`` (one per piece) names the web page
+    each passage came from, for web sources."""
     collection = _collection(collection_id)
     for start in range(0, len(pieces), _BATCH):
         batch = pieces[start:start + _BATCH]
+        metadatas = []
+        for offset in range(len(batch)):
+            meta = {'document_id': str(document_id), 'name': name, 'position': start + offset}
+            if urls and start + offset < len(urls) and urls[start + offset]:
+                meta['url'] = urls[start + offset]
+            metadatas.append(meta)
         collection.add(
             ids=[f'{document_id}:{start + offset}' for offset in range(len(batch))],
             documents=batch,
             embeddings=_embed(batch),
-            metadatas=[
-                {'document_id': str(document_id), 'name': name, 'position': start + offset}
-                for offset in range(len(batch))
-            ],
+            metadatas=metadatas,
         )
+
+
+def _replace(collection_id: str, document_id: str, name: str, pieces: list[str],
+             urls: list[str] | None = None) -> None:
+    """Swap a document's passages for new ones. The new ones are written
+    first under fresh ids; the old ones go only once that has worked, so a
+    failure leaves the last good passages searchable."""
+    import uuid
+
+    collection = _collection(collection_id)
+    old_ids = collection.get(where={'document_id': str(document_id)}, include=[])['ids']
+    generation = f'{document_id}:{uuid.uuid4().hex[:8]}'
+    try:
+        _add(collection_id, generation, name, pieces, urls)
+    except Exception:
+        try:
+            collection.delete(where={'document_id': generation})
+        except Exception:
+            logger.debug('Could not clean up a failed refresh of %s', document_id, exc_info=True)
+        raise
+    # The new passages carry the generation id; label them as the document.
+    new = collection.get(where={'document_id': generation}, include=['metadatas'])
+    if new['ids']:
+        collection.update(ids=new['ids'], metadatas=[{**meta, 'document_id': str(document_id)} for meta in new['metadatas']])
+    if old_ids:
+        collection.delete(ids=old_ids)
 
 
 def _remove_document(collection_id: str, document_id: str) -> None:
@@ -90,6 +122,7 @@ def _search(collection_id: str, query: str, limit: int) -> list[dict[str, Any]]:
             'document_id': meta.get('document_id'),
             'name': meta.get('name'),
             'position': int(meta.get('position') or 0),
+            'url': meta.get('url') or None,
             'score': round(similarity + 0.25 * overlap, 4),
         })
     hits.sort(key=lambda hit: -hit['score'])
@@ -100,8 +133,14 @@ async def _threaded(func, *args):
     return await asyncio.get_running_loop().run_in_executor(None, func, *args)
 
 
-async def add(collection_id: str, document_id: str, name: str, pieces: list[str]) -> None:
-    await _threaded(_add, collection_id, document_id, name, pieces)
+async def add(collection_id: str, document_id: str, name: str, pieces: list[str],
+              urls: list[str] | None = None) -> None:
+    await _threaded(_add, collection_id, document_id, name, pieces, urls)
+
+
+async def replace(collection_id: str, document_id: str, name: str, pieces: list[str],
+                  urls: list[str] | None = None) -> None:
+    await _threaded(_replace, collection_id, document_id, name, pieces, urls)
 
 
 async def remove_document(collection_id: str, document_id: str) -> None:

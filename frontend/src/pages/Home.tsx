@@ -16,6 +16,8 @@ import { parseChatEntries, toChatMessages } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
 import { ComputerPanel } from '@/components/ComputerPanel';
 import { ArtifactViewer } from '@/components/artifacts/ArtifactViewer';
+import { AppViewPanel } from '@/components/appviews/AppViewPanel';
+import { announceAppViewUpdate, appViewFrom, listAppViews, onOpenAppView, type AppViewSummary } from '@/lib/appViews';
 import { onCardAction, parseCard } from '@/lib/cards';
 import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { announceArtifactUpdate, onArtifactUpdate, onOpenArtifact, parseStamp, publishedFrom, type ArtifactList } from '@/lib/artifactPages';
@@ -23,6 +25,9 @@ import { desktopName, getChatSandbox, sandboxStatus, setChatSandbox, type ChatSa
 import { ChatSidebar, loadSidebarOpen, saveSidebarOpen, type SidebarActivity, type SidebarWaiting } from '@/components/ChatSidebar';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
+import { LiveVoiceButton, LiveVoicePanel } from '@/components/LiveVoice';
+import { useLiveVoice } from '@/hooks/useLiveVoice';
+import { SideQuestionButton, SideQuestionsPanel } from '@/components/SideQuestions';
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
 import ComposerMenu from '@/components/ComposerMenu';
@@ -42,6 +47,7 @@ import { CHATS_EDITED, chatsStale, setChatNav, type ChatsEditedDetail } from '@/
 import { getSpeechPrefs, speakText, stopSpeaking } from '@/lib/speech';
 import { setViewingChat } from '@/lib/chatPresence';
 import { useApprovalSeen } from '@/hooks/useApprovalSeen';
+import { tr, dateLocale } from '@/lib/i18n';
 
 
 interface ConvoSummary {
@@ -347,8 +353,16 @@ export default function Home() {
   // whether it is expanded to fill the window.
   const [artifactOpen, setArtifactOpen] = useState<string | null>(null);
   const [artifactExpanded, setArtifactExpanded] = useState(false);
+  // A connected app's own screen open beside the chat (same place again).
+  const [appViewOpen, setAppViewOpen] = useState<string | null>(null);
+  const [appViewExpanded, setAppViewExpanded] = useState(false);
+  const closeAppView = useCallback(() => {
+    setAppViewOpen(null);
+    setAppViewExpanded(false);
+  }, []);
   const showArtifact = useCallback((id: string) => {
     setComputerOpen(false);
+    setAppViewOpen(null);
     setArtifactOpen(id);
     setNewPageIds((prev) => {
       if (!prev.has(id)) return prev;
@@ -362,6 +376,19 @@ export default function Home() {
     setArtifactExpanded(false);
   }, []);
   useEffect(() => onOpenArtifact(showArtifact), [showArtifact]);
+  const showAppView = useCallback((id: string) => {
+    setComputerOpen(false);
+    setArtifactOpen(null);
+    setArtifactExpanded(false);
+    setAppViewOpen(id);
+  }, []);
+  useEffect(() => onOpenAppView(showAppView), [showAppView]);
+  useEffect(() => {
+    if (!appViewExpanded) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setAppViewExpanded(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [appViewExpanded]);
   useEffect(() => {
     if (!artifactExpanded) return;
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setArtifactExpanded(false); };
@@ -576,6 +603,22 @@ export default function Home() {
   useEffect(() => {
     if (!busy) void loadChatItems(activeRef.current);
   }, [busy, loadChatItems]);
+  // Connected-app screens this chat opened, for its side panel.
+  const [chatAppViews, setChatAppViews] = useState<AppViewSummary[]>([]);
+  const [chatAppViewsStale, setChatAppViewsStale] = useState(0);
+  useEffect(() => {
+    // A screen belongs to its chat.
+    setAppViewOpen(null);
+    setAppViewExpanded(false);
+    setChatAppViews([]);
+  }, [activeSessionId]);
+  useEffect(() => {
+    const sid = activeSessionId;
+    if (!sid) return;
+    let alive = true;
+    listAppViews(sid).then((rows) => { if (alive && activeRef.current === sid) setChatAppViews(Array.isArray(rows) ? rows : []); }).catch(() => {});
+    return () => { alive = false; };
+  }, [activeSessionId, busy, chatAppViewsStale]);
   useEffect(() => onArtifactUpdate((id) => {
     setNewPageIds((prev) => new Set(prev).add(id));
     void loadChatItems(activeRef.current);
@@ -615,8 +658,9 @@ export default function Home() {
       event.preventDefault();
       // Same as the header button: with an artifact or the computer showing,
       // the shortcut closes the whole right column.
-      if (sidebarOpen || artifactOpen || computerOpen) {
+      if (sidebarOpen || artifactOpen || appViewOpen || computerOpen) {
         closeArtifact();
+        closeAppView();
         setComputerOpen(false);
         setSidebar(false);
       } else {
@@ -625,13 +669,18 @@ export default function Home() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sidebarOpen, artifactOpen, computerOpen, closeArtifact, setSidebar]);
+  }, [sidebarOpen, artifactOpen, appViewOpen, computerOpen, closeArtifact, closeAppView, setSidebar]);
   // Spoken replies: when a turn ends and "read replies aloud" is on, read the
   // answer. Sending a new message stops whatever was being read.
+  // Live voice mode reads replies itself and keeps speaking across turns.
+  const [liveVoice, setLiveVoice] = useState(false);
+  const liveVoiceRef = useRef(liveVoice);
+  liveVoiceRef.current = liveVoice;
   const wasBusyRef = useRef(false);
   useEffect(() => {
     const wasBusy = wasBusyRef.current;
     wasBusyRef.current = busy;
+    if (liveVoiceRef.current) return;
     if (busy && !wasBusy) stopSpeaking();
     if (!busy && wasBusy && question === null && getSpeechPrefs().autoRead) {
       const last = messagesRef.current[messagesRef.current.length - 1];
@@ -750,7 +799,7 @@ export default function Home() {
     const next: Attachment[] = [];
     for (const file of incoming) {
       if (attachmentsRef.current.length + next.length >= MAX_FILES) {
-        setUploadError('You can attach up to 20 files.');
+        setUploadError(tr('ui.home.youCanAttachUpTo'));
         break;
       }
       // Pasted/dropped files often arrive with an empty MIME type — derive it
@@ -761,16 +810,16 @@ export default function Home() {
       const isImage = !!imgMime;
       const isDoc = DOC_EXT.test(file.name) || /(pdf|word|excel|spreadsheet|presentation|officedocument|^text\/|rtf|csv|json)/i.test(file.type);
       if (!isImage && !isDoc) {
-        setUploadError('Only images and documents can be attached.');
+        setUploadError(tr('ui.home.onlyImagesAndDocumentsCan'));
         continue;
       }
       const bytes = file.size;
       if (bytes > MAX_FILE_BYTES) {
-        setUploadError(`${file.name} is larger than 10 MB.`);
+        setUploadError(tr('ui.home.nameIsLargerThan10', { name: file.name }));
         continue;
       }
       if (total + bytes > MAX_TOTAL_BYTES) {
-        setUploadError('Attachments exceed 25 MB total.');
+        setUploadError(tr('ui.home.attachmentsExceed25MbTotal'));
         break;
       }
       total += bytes;
@@ -1053,7 +1102,7 @@ export default function Home() {
           break;
         case 'error':
           takeUnsent(event);
-          if (event.content) addMessage('assistant', `Error: ${event.content}`);
+          if (event.content) addMessage('assistant', tr('ui.home.errorContent', { content: event.content }));
           if (event.content?.includes('no longer exists') && agentId) {
             localStorage.removeItem(sessionKey(agentId));
             setActiveSessionId(null);
@@ -1077,6 +1126,14 @@ export default function Home() {
               if (published) {
                 announceArtifactUpdate(published.id);
                 if (window.matchMedia?.('(min-width: 768px)').matches) showArtifact(published.id);
+              }
+              // A connected app opened (or changed) its own screen: show it
+              // beside the chat, or update the one already showing.
+              const appView = event.status === 'error' ? null : appViewFrom(event.result);
+              if (appView) {
+                announceAppViewUpdate(appView.id);
+                setChatAppViewsStale((n) => n + 1);
+                if (window.matchMedia?.('(min-width: 768px)').matches) showAppView(appView.id);
               }
             }
           }
@@ -1125,7 +1182,7 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos, showArtifact, takeUnsent],
+    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos, showArtifact, showAppView, takeUnsent],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
@@ -1143,7 +1200,7 @@ export default function Home() {
     const text = last?.role === 'assistant' && typeof last.content === 'string' ? last.content.replace(/\s+/g, ' ').trim() : '';
     notifications.push({
       event: 'chat_reply',
-      title: `${name} replied`,
+      title: tr('ui.home.nameReplied', { name }),
       body: text ? (text.length > 140 ? `${text.slice(0, 139)}…` : text) : 'Open the chat to read the reply.',
       href: '/home',
     });
@@ -1275,7 +1332,7 @@ export default function Home() {
       return true;
     } catch (error) {
       if (!opts.keepComposer) setInput((current) => current || msg);
-      setSteerError(errorMessage(error, 'Could not send that while the agent is working. Try again when it finishes.'));
+      setSteerError(errorMessage(error, tr('ui.home.couldNotSendThatWhile')));
       return false;
     }
   }, [addMessage, agentId, setIsStreaming, streamId]);
@@ -1306,8 +1363,8 @@ export default function Home() {
         } catch (error) {
           const status = (error as { response?: { status?: number } })?.response?.status;
           setReworkError(status === 409
-            ? errorMessage(error, 'This chat is still working. Stop it first.')
-            : 'That message could not be replaced. Reload the chat and try again.');
+            ? errorMessage(error, tr('ui.home.thisChatIsStillWorking'))
+            : tr('ui.home.thatMessageCouldNotBe'));
           return false;
         }
         if (replace.keep) {
@@ -1390,7 +1447,7 @@ export default function Home() {
           setAttachments(pending);
           setEditSource(pendingEditSource);
         }
-        addMessage('assistant', 'Unable to reach the agent. Check the connection and try again.');
+        addMessage('assistant', tr('ui.home.unableToReachTheAgent'));
         finishTurn();
         return false;
       }
@@ -1455,7 +1512,7 @@ export default function Home() {
       setWaitingMsgs((prev) => prev.filter((m) => m.id !== message.id));
       if (edit) setInput((current) => (current.trim() ? `${message.content}\n${current}` : message.content));
     } catch (error) {
-      setSteerError(errorMessage(error, 'The agent has already read that message.'));
+      setSteerError(errorMessage(error, tr('ui.home.theAgentHasAlreadyRead')));
     }
   }, []);
 
@@ -1493,7 +1550,7 @@ export default function Home() {
       }
       clearStopFallback();
       setStopping(false);
-      setStopError('Unable to stop the response. Try again.');
+      setStopError(tr('ui.home.unableToStopTheResponse'));
     }
   }, [agentId, busy, clearStopFallback, finishTurn, loadConversation, stopping, streamId]);
 
@@ -1686,14 +1743,15 @@ export default function Home() {
   }
 
   // ── The chat's side panel ──
-  const sidebarShown = sidebarOpen || !!artifactOpen || computerOpen;
+  const sidebarShown = sidebarOpen || !!artifactOpen || !!appViewOpen || computerOpen;
   const closeRightSide = () => {
     closeArtifact();
+    closeAppView();
     setComputerOpen(false);
     setSidebar(false);
   };
   const sidebarWaiting: SidebarWaiting[] = [
-    ...approvals.map((a): SidebarWaiting => ({ id: a.request_id, kind: 'approval', title: `Run ${a.tool_name}?`, detail: a.details || undefined })),
+    ...approvals.map((a): SidebarWaiting => ({ id: a.request_id, kind: 'approval', title: tr('ui.home.runToolName', { tool_name: a.tool_name }), detail: a.details || undefined })),
     ...(question ? [{ id: question.request_id, kind: 'question' as const, title: question.prompt, detail: question.details || undefined }] : []),
   ];
   // Images in this chat (sent or made), newest first.
@@ -1727,19 +1785,69 @@ export default function Home() {
   ].filter(Boolean).join(' · ');
   const activeChat = allChats.find((c) => c.id === activeSessionId);
   const currentAgent = agentById.get(agentId);
-  const chatStarted = parseStamp(activeChat?.datetime || activeChat?.updated_at)?.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  const chatStarted = parseStamp(activeChat?.datetime || activeChat?.updated_at)?.toLocaleString(dateLocale(), { dateStyle: 'medium', timeStyle: 'short' });
 
 
   // The message box: in the middle of a new chat's greeting, else at the bottom.
+  const lastReply = useMemo(() => {
+    const last = messages[messages.length - 1];
+    return last?.role === 'assistant' ? { id: last.id, content: last.content } : null;
+  }, [messages]);
+
+  // Side questions: asked beside the chat without interrupting it (Ctrl+/).
+  const [sideOpen, setSideOpen] = useState(false);
+  useEffect(() => {
+    if (!activeSessionId) setSideOpen(false);
+  }, [activeSessionId]);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault();
+        setSideOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeSessionId]);
+
+  const live = useLiveVoice({
+    enabled: liveVoice,
+    busy,
+    approvals,
+    question,
+    agentName: currentAgent?.name || '',
+    lastReply,
+    onSend: (text) => (busy ? steer(text, { keepComposer: true }) : send(text, 'chat', null, { keepComposer: true })),
+    onStop: () => void stop(),
+    onApproval: (id, approved) => void respondApproval(id, approved),
+    onAnswer: (q, answer) => {
+      const current = question;
+      if (current && current.request_id === q.request_id) void postQuestionAction(current, 'answer', answer).catch(() => undefined);
+    },
+    onExit: () => setLiveVoice(false),
+  });
+
   const composer = (
     <div className="relative mx-auto max-w-3xl">
+      {sideOpen && activeSessionId && (
+        <div className="animate-rise absolute bottom-full left-0 right-0 z-20 mb-2 md:left-auto md:w-[26rem]">
+          <SideQuestionsPanel
+            sessionId={activeSessionId}
+            busy={busy}
+            agentName={currentAgent?.name || ''}
+            onClose={() => { setSideOpen(false); inputRef.current?.focus(); }}
+            onUseInChat={(text) => { setInput(text); setSideOpen(false); inputRef.current?.focus(); }}
+          />
+        </div>
+      )}
       {skillMenuOpen && (
         <div
           id="skill-menu"
           role="listbox"
           className="animate-rise absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-md border border-line bg-panel shadow-lg"
         >
-          <div className="border-b border-line px-3 py-1.5 font-mono text-[10px] tracking-[0.18em] text-fg-dim">SKILLS</div>
+          <div className="border-b border-line px-3 py-1.5 font-mono text-[10px] tracking-[0.18em] text-fg-dim">{tr('ui.home.skills')}</div>
           <div className="max-h-64 overflow-y-auto">
             {filteredSkills.map((s, i) => (
               <button
@@ -1783,14 +1891,14 @@ export default function Home() {
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8" cy="9" r="1.5" /><path d="m4 18 5-5 3 3 3-3 5 5" /></svg>
             </div>
             <div className="min-w-0 flex-1">
-              <span className="block tracking-[0.12em] text-accent-ink">Editing image</span>
+              <span className="block tracking-[0.12em] text-accent-ink">{tr('ui.home.editingImage')}</span>
               <span className="block truncate text-fg" title={editSource.artifact.filename || editSource.artifact.id}>
-                {editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}`}
+                {editSource.artifact.filename || tr('ui.home.imageSlice', { slice: editSource.artifact.id.slice(0, 8) })}
               </span>
             </div>
             <button
               type="button"
-              aria-label={`Remove ${editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}`} edit source`}
+              aria-label={tr('ui.home.removeFilenameEditSource', { filename: editSource.artifact.filename || `image-${editSource.artifact.id.slice(0, 8)}` })}
               className="flex min-h-11 min-w-11 h-11 w-11 flex-none items-center justify-center text-fg-dim transition-colors hover:text-danger-ink md:h-8 md:w-8"
               onClick={() => setEditSource(null)}
             >
@@ -1808,9 +1916,9 @@ export default function Home() {
                 {a.kind === 'image' ? (
                   <button
                     type="button"
-                    aria-label={`Use ${a.name} as edit source`}
+                    aria-label={tr('ui.home.useNameAsEditSource', { name: a.name })}
                     aria-pressed={editSource?.type === 'attachment' && editSource.attachmentId === a.id}
-                    title="Use as edit source"
+                    title={tr('ui.home.useAsEditSource')}
                     className={cn(
                       'relative h-8 w-8 flex-none overflow-hidden rounded-sm border transition-colors',
                       editSource?.type === 'attachment' && editSource.attachmentId === a.id
@@ -1829,7 +1937,7 @@ export default function Home() {
                 <span className="truncate text-fg" title={a.name}>{a.name}</span>
                 <button
                   onClick={() => removeAttachment(a.id)}
-                  aria-label={`Remove ${a.name}`}
+                  aria-label={tr('ui.home.removeName', { name: a.name })}
                   className="grid h-11 w-11 flex-none place-items-center text-fg-dim transition-colors hover:text-danger-ink md:h-auto md:w-auto"
                 >
                   ✕
@@ -1839,27 +1947,32 @@ export default function Home() {
             {editSource?.type === 'attachment' && (
               <button
                 type="button"
-                aria-label="Clear edit source"
+                aria-label={tr('ui.home.clearEditSource')}
                 className="min-h-11 px-1 font-mono text-[10.5px] text-fg-dim transition-colors hover:text-danger-ink md:min-h-0"
                 onClick={() => setEditSource(null)}
               >
-                clear edit
+                {tr('ui.home.clearEdit')}
               </button>
             )}
           </div>
         )}
         {voice.active && <VoiceBar voice={voice} />}
+        {liveVoice && (
+          <div className="border-b border-line">
+            <LiveVoicePanel live={live} approvals={approvals} question={question} onExit={() => setLiveVoice(false)} />
+          </div>
+        )}
         {(rework || reworkError) && (
           <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-1.5 text-[12px] text-fg-dim" role="status">
             <span className={reworkError ? 'text-danger-ink' : undefined}>
-              {reworkError || 'Editing an earlier message. Sending replaces it and every reply after it.'}
+              {reworkError || tr('ui.home.editingAnEarlierMessageSending')}
             </span>
             <button
               type="button"
               className="min-h-11 flex-none font-mono text-[10.5px] hover:text-fg md:min-h-0"
               onClick={() => { setRework(null); setReworkError(null); setInput(''); }}
             >
-              cancel
+              {tr('ui.home.cancel')}
             </button>
           </div>
         )}
@@ -1894,13 +2007,13 @@ export default function Home() {
             }
           }}
           role="combobox"
-          aria-label="Message the agent"
+          aria-label={tr('ui.home.messageTheAgent')}
           aria-expanded={skillMenuOpen}
           aria-controls="skill-menu"
           aria-activedescendant={skillMenuOpen ? `skill-opt-${skillIndex}` : undefined}
           placeholder={busy && question === null
-            ? 'Add to what it’s doing…'
-            : empty ? 'Ask anything…' : `Reply to ${currentAgent?.name || 'the agent'}…`}
+            ? tr('ui.home.addToWhatItS')
+            : empty ? tr('ui.home.askAnything') : tr('ui.home.replyToName', { name: currentAgent?.name || 'the agent' })}
           className={cn('block min-h-11 max-h-48 w-full resize-none bg-transparent outline-none focus-visible:outline-none px-4 pb-1 pt-3.5 text-[15px] text-fg placeholder:text-fg-dim', voice.active && '!hidden')}
         />
         <div className={cn('flex min-w-0 items-center gap-0.5 px-2 pb-2 pt-1', voice.active && '!hidden')}>
@@ -1910,16 +2023,16 @@ export default function Home() {
             onRunTask={() => void send(input, 'task')}
             runTaskDisabled={busy || !!uploadError || !isConnected || !input.trim() || attachments.length > 0 || editSource !== null}
             runTaskTitle={attachments.length > 0 || editSource !== null
-              ? 'Task mode does not support attachments or edit sources yet.'
-              : 'Create a persisted task and run it with step tracking.'}
+              ? tr('ui.home.taskModeDoesNotSupport')
+              : tr('ui.home.createAPersistedTaskAnd')}
             bypass={bypass}
             onToggleBypass={toggleBypass}
             incognito={incognito}
             onToggleIncognito={() => setIncognito((v) => !v)}
             incognitoDisabled={!!activeSessionId}
             incognitoTitle={activeSessionId
-              ? (incognito ? 'This chat is incognito.' : 'Incognito can only be turned on for a new chat.')
-              : "Incognito: the chat isn't listed, doesn't use or change memory, and is deleted when you leave it."}
+              ? (incognito ? tr('ui.home.thisChatIsIncognito') : tr('ui.home.incognitoCanOnlyBeTurned'))
+              : tr('ui.home.incognitoTheChatIsnT')}
             reasoning={reasoning}
             onReasoning={changeReasoning}
             swarm={incognito ? undefined : { on: swarmOn, onToggle: () => setSwarmOn((v) => !v) }}
@@ -1940,14 +2053,20 @@ export default function Home() {
               className="min-w-0"
               folders={shownFolders}
               onChange={changeFolders}
-              emptyLabel="Scratch folder"
+              emptyLabel={tr('ui.home.scratchFolder')}
               disabled={busy}
             />
           </ComposerMenu>
           </div>
           <span className="flex-1" />
-          {!voice.active && !(busy && input.trim()) && (
-            <MicButton voice={voice} className="rounded-lg" />
+          {!voice.active && !liveVoice && !(busy && input.trim()) && (
+            <>
+              {activeSessionId && (
+                <SideQuestionButton onClick={() => setSideOpen((v) => !v)} active={sideOpen} className="rounded-lg" />
+              )}
+              <LiveVoiceButton onClick={() => setLiveVoice(true)} disabled={!isConnected} className="rounded-lg" />
+              <MicButton voice={voice} className="rounded-lg" />
+            </>
           )}
           {busy && !!input.trim() && !voice.active && (
             // While it works, typed text is sent into the running task;
@@ -1955,7 +2074,7 @@ export default function Home() {
             <button
               onClick={() => void stop()}
               disabled={stopping}
-              aria-label={stopping ? 'Stopping response' : 'Stop response'}
+              aria-label={stopping ? tr('ui.home.stoppingResponse') : tr('ui.home.stopResponse')}
               className="grid h-11 w-11 place-items-center rounded-full border border-line text-fg transition hover:border-danger hover:text-danger-ink disabled:opacity-60 md:h-9 md:w-9"
             >
               <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
@@ -1964,7 +2083,7 @@ export default function Home() {
           <button
             onClick={() => { if (busy && !input.trim()) void stop(); else void send(input); }}
             disabled={busy && !input.trim() ? stopping : (!!uploadError || !isConnected || (!input.trim() && attachments.length === 0))}
-            aria-label={busy && !input.trim() ? (stopping ? 'Stopping response' : 'Stop response') : 'Send'}
+            aria-label={busy && !input.trim() ? (stopping ? tr('ui.home.stoppingResponse') : tr('ui.home.stopResponse')) : tr('ui.home.send')}
             className={cn(
               'grid h-11 w-11 flex-none place-items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 hover:brightness-105 md:h-8 md:w-8',
               busy && !input.trim() ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
@@ -2016,35 +2135,35 @@ export default function Home() {
         <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-3 md:pl-5">
           <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2.5 overflow-hidden">
             {currentAgent && (
-              <span className="flex flex-none items-center gap-2" aria-label={`Chatting with ${currentAgent.name}`}>
+              <span className="flex flex-none items-center gap-2" aria-label={tr('ui.home.chattingWithName', { name: currentAgent.name })}>
                 <AgentBadge name={currentAgent.name} avatar={currentAgent.avatar} />
                 <span className="hidden text-[14px] font-semibold sm:inline">{currentAgent.name}</span>
               </span>
             )}
             {currentAgent && <span aria-hidden className="hidden flex-none text-fg-dim sm:inline">/</span>}
             <h1 className={cn('min-w-0 truncate text-[14px]', activeSessionId ? 'text-fg-dim max-sm:font-semibold max-sm:text-fg' : 'text-fg-dim')}>
-              {activeSessionId ? (activeChat?.title || 'Chat') : 'New chat'}
+              {activeSessionId ? (activeChat?.title || tr('ui.home.chat')) : tr('ui.home.newChat')}
             </h1>
           </div>
           <div className="flex flex-none items-center gap-1">
             {(chatModel || agentModel(currentAgent)) && (
-              <span className="hidden max-w-[220px] truncate rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-dim lg:inline" title="Model">
+              <span className="hidden max-w-[220px] truncate rounded-full border border-line px-2.5 py-1 text-[12px] text-fg-dim lg:inline" title={tr('ui.home.model')}>
                 {chatModel ? `${chatModel.provider} · ${chatModel.model}` : agentModel(currentAgent)}
               </span>
             )}
             {isConnected ? (
-              <span className="sr-only">Connection status: connected</span>
+              <span className="sr-only">{tr('ui.home.connectionStatusConnected')}</span>
             ) : (
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label={reconnecting ? 'Reconnecting, click to try now' : 'Reconnect'}
-                title={reconnecting ? 'Reconnecting… click to try now' : 'Reconnect'}
+                aria-label={reconnecting ? tr('ui.home.reconnectingClickToTryNow') : tr('ui.home.reconnect')}
+                title={reconnecting ? tr('ui.home.reconnectingClickToTryNow_6f7c') : tr('ui.home.reconnect')}
                 onClick={reconnect}
                 className="md:h-8 md:w-auto md:px-2"
               >
                 <svg aria-hidden="true" className={cn(reconnecting && 'animate-spin')} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11a8 8 0 1 0 2 5.5" /><path d="M20 5v6h-6" /></svg>
-                <span className="sr-only md:not-sr-only">{reconnecting ? 'reconnecting…' : 'reconnect'}</span>
+                <span className="sr-only md:not-sr-only">{reconnecting ? tr('ui.home.reconnecting') : tr('ui.home.reconnect_4804')}</span>
               </Button>
             )}
             {agentId && !picking && (
@@ -2055,8 +2174,8 @@ export default function Home() {
                   else setSidebar(true);
                 }}
                 aria-pressed={sidebarShown}
-                aria-label="Chat sidebar"
-                title={`${sidebarShown ? 'Close' : 'Open'} the chat sidebar (Ctrl+.)`}
+                aria-label={tr('ui.home.chatSidebar')}
+                title={tr('ui.home.valueTheChatSidebarCtrl', { value: sidebarShown ? 'Close' : 'Open' })}
                 className={cn(
                   'relative inline-flex h-11 min-w-11 flex-none items-center justify-center gap-2 rounded-lg px-2.5 text-[12.5px] text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-9 md:min-w-9',
                   sidebarShown && 'bg-panel-2 text-fg',
@@ -2083,8 +2202,7 @@ export default function Home() {
             <div role="note" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-dashed border-warn/60 bg-warn/10 px-3 py-2 text-[12.5px] leading-relaxed sm:mx-6">
               <svg aria-hidden="true" className="mt-0.5 flex-none text-warn-ink" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><path d="M3 3l18 18" /></svg>
               <span>
-                <span className="font-medium">Incognito.</span> This chat isn't saved to your chat list, doesn't use or change
-                memory, and is deleted when you leave it.
+                <span className="font-medium">{tr('ui.home.incognito')}</span>{' '}{tr('ui.home.thisChatIsnTSaved')}
               </span>
             </div>
           )}
@@ -2119,7 +2237,7 @@ export default function Home() {
                 <div role="status" className="mx-auto w-full max-w-3xl px-4 py-3 sm:px-6">
                   <div className="flex items-center gap-2.5 text-[13px] text-fg-dim">
                     <span className="think-bars"><i /><i /><i /><i /></span>
-                    {planning || 'Thinking…'}
+                    {planning || tr('ui.home.thinking')}
                   </div>
                 </div>
               )}
@@ -2148,9 +2266,9 @@ export default function Home() {
 
           {error && (
             <div role="alert" className="mx-auto my-4 flex w-[calc(100%-3rem)] max-w-[720px] items-center justify-between gap-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">
-              <span>connection error — the stream stopped after several retries.</span>
+              <span>{tr('ui.home.connectionErrorTheStreamStopped')}</span>
               <button onClick={reconnect} className="min-h-11 flex-none rounded border border-line px-2 py-0.5 transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">
-                ↻ retry
+                {tr('ui.home.retry')}
               </button>
             </div>
           )}
@@ -2168,29 +2286,29 @@ export default function Home() {
             <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
               <PanelCard
                 tone="danger"
-                tag={<>⚠ approval</>}
-                title={<>Run <span className="text-accent-ink">{humanizeToolName(a.tool_name)}</span>?</>}
+                tag={<>{tr('ui.home.approval')}</>}
+                title={<>{tr('ui.home.run')}{' '}<span className="text-accent-ink">{humanizeToolName(a.tool_name)}</span>?</>}
                 subtitle={a.details || undefined}
                 fields={[
-                  { label: 'Tool', value: humanizeToolName(a.tool_name) },
-                  { label: 'Risk', value: <span className={a.risk_level === 'high' || a.risk_level === 'critical' ? 'text-danger-ink' : undefined}>{a.risk_level}</span> },
-                  ...(a.app ? [{ label: 'App', value: a.app.label }] : []),
+                  { label: tr('ui.home.tool'), value: humanizeToolName(a.tool_name) },
+                  { label: tr('ui.home.risk'), value: <span className={a.risk_level === 'high' || a.risk_level === 'critical' ? 'text-danger-ink' : undefined}>{a.risk_level}</span> },
+                  ...(a.app ? [{ label: tr('ui.home.app'), value: a.app.label }] : []),
                 ]}
                 footer={(
                   <>
-                    <PanelButton kind="primary" onClick={() => respondApproval(a.request_id, true)}>approve</PanelButton>
-                    {!a.always_ask && <PanelButton onClick={() => respondApproval(a.request_id, true, true)}>approve for session</PanelButton>}
+                    <PanelButton kind="primary" onClick={() => respondApproval(a.request_id, true)}>{tr('ui.home.approve')}</PanelButton>
+                    {!a.always_ask && <PanelButton onClick={() => respondApproval(a.request_id, true, true)}>{tr('ui.home.approveForSession')}</PanelButton>}
                     {a.full_shell && (
-                      <PanelButton onClick={() => respondApproval(a.request_id, true, true, true)} title="Run every shell command in this chat without asking, until the app restarts">allow all commands in this chat</PanelButton>
+                      <PanelButton onClick={() => respondApproval(a.request_id, true, true, true)} title={tr('ui.home.runEveryShellCommandIn')}>{tr('ui.home.allowAllCommandsInThis')}</PanelButton>
                     )}
                     {a.app && (
                       <>
-                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={`Let agents click and type in ${a.app.label} in the background for the rest of this chat`}>allow {a.app.label} in this chat</PanelButton>
-                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={`Never ask again before agents click and type in ${a.app.label} in the background. Change it in Settings, Agent access.`}>always allow {a.app.label}</PanelButton>
+                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={tr('ui.home.letAgentsClickAndType', { label: a.app.label })}>{tr('ui.home.allowLabelInThisChat', { label: a.app.label })}</PanelButton>
+                        <PanelButton onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={tr('ui.home.neverAskAgainBeforeAgents', { label: a.app.label })}>{tr('ui.home.alwaysAllowLabel', { label: a.app.label })}</PanelButton>
                       </>
                     )}
                     <span className="grow" />
-                    <PanelButton kind="danger" onClick={() => respondApproval(a.request_id, false)}>deny</PanelButton>
+                    <PanelButton kind="danger" onClick={() => respondApproval(a.request_id, false)}>{tr('ui.home.deny')}</PanelButton>
                   </>
                 )}
               >
@@ -2223,7 +2341,21 @@ export default function Home() {
           />
         </aside>
       )}
-      {computerOpen && !artifactOpen && (
+      {appViewOpen && !artifactOpen && (
+        <aside className={cn('fixed inset-0 z-40 flex flex-col border-line',
+          !appViewExpanded && 'md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l')}>
+          <AppViewPanel
+            viewId={appViewOpen}
+            onClose={closeRightSide}
+            onBack={sidebarOpen ? closeAppView : undefined}
+            onGone={closeAppView}
+            expanded={appViewExpanded}
+            onToggleExpand={() => setAppViewExpanded((v) => !v)}
+            onSendMessage={(text) => { void send(text); }}
+          />
+        </aside>
+      )}
+      {computerOpen && !artifactOpen && !appViewOpen && (
         <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l">
           <ComputerPanel
             agents={agents.map((a) => ({ id: String(a.id), name: a.name }))}
@@ -2233,14 +2365,14 @@ export default function Home() {
           />
         </aside>
       )}
-      {sidebarOpen && !artifactOpen && !computerOpen && agentId && !picking && (
+      {sidebarOpen && !artifactOpen && !appViewOpen && !computerOpen && agentId && !picking && (
         <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[320px] md:flex-none md:border-l">
           <ChatSidebar
             onClose={() => setSidebar(false)}
             desktop={agentDesktop?.name ?? null}
             sandboxOn={sandboxOn}
             desktopHeldBy={agentDesktop?.held_by}
-            onOpenComputer={() => { closeArtifact(); setComputerOpen(true); }}
+            onOpenComputer={() => { closeArtifact(); closeAppView(); setComputerOpen(true); }}
             waiting={sidebarWaiting}
             onApprove={(id) => void respondApproval(id, true)}
             onDeny={(id) => void respondApproval(id, false)}
@@ -2251,6 +2383,8 @@ export default function Home() {
             pages={chatItems?.pages ?? []}
             newPageIds={newPageIds}
             onOpenArtifact={showArtifact}
+            appViews={chatAppViews}
+            onOpenAppView={showAppView}
             images={chatImages}
             files={chatItems?.files ?? []}
             activity={chatActivity}

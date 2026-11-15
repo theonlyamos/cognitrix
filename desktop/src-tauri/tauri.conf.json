@@ -37,6 +37,10 @@
       "nsis": {
         "installMode": "currentUser"
       }
+    },
+    "macOS": {
+      "entitlements": "./Entitlements.plist",
+      "hardenedRuntime": true
     }
   },
   "plugins": {

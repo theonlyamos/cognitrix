@@ -11,6 +11,7 @@ from ...api.routes.themes import themes_api
 from ...api.routes.swarms import swarms_api
 from ...api.routes.artifacts import artifacts_api
 from ...api.routes.artifact_pages import artifact_frame_api, artifact_pages_api
+from ...api.routes.app_views import app_view_frame_api, app_views_api
 from ...api.routes.assistant import assistant_api
 from ...api.routes.automations import automations_api, hooks_api
 from ...api.routes.audio import audio_api
@@ -39,11 +40,13 @@ from ...api.routes.teams import teams_api, teams_run_api
 from ...api.routes.tools import tools_api
 from ...api.routes.push import push_api
 from ...api.routes.usage import usage_api
+from ...api.routes.audit import audit_api
 
 api_router.include_router(public_api)
 api_router.include_router(public_agent_api)
 api_router.include_router(public_links_api)
 api_router.include_router(artifact_frame_api)
+api_router.include_router(app_view_frame_api)
 api_router.include_router(hooks_api)
 # Invoke/run-scoped routers MUST register before their crud twins: FastAPI
 # matches in registration order and e.g. GET /tasks/start/{id} would otherwise
@@ -54,6 +57,7 @@ api_router.include_router(agents_api)
 api_router.include_router(tools_api)
 api_router.include_router(artifacts_api)
 api_router.include_router(artifact_pages_api)
+api_router.include_router(app_views_api)
 api_router.include_router(hosted_apps_api)
 api_router.include_router(skills_api)
 api_router.include_router(providers_api)
@@ -79,6 +83,7 @@ api_router.include_router(memories_api)
 api_router.include_router(themes_api)
 api_router.include_router(swarms_api)
 api_router.include_router(usage_api)
+api_router.include_router(audit_api)
 api_router.include_router(push_api)
 api_router.include_router(account_api)
 api_router.include_router(knowledge_api)

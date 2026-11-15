@@ -120,10 +120,12 @@ def _stopped_tool_messages(tool_calls: list[dict[str, Any]]) -> list[dict[str, A
     return stopped
 
 
-def _with_folder_prompt(prompt, folders, sandbox: tuple | None = None) -> Any:
-    """The turn's additions to the system message: working folders, and the
-    Swarm switch when the person sent this message with it on."""
+def _with_folder_prompt(prompt, folders, sandbox: tuple | None = None, session_id: Any = None) -> Any:
+    """The turn's additions to the system message: working folders, what
+    open connected-app screens told the agent, and the Swarm switch when the
+    person sent this message with it on."""
     prompt = _with_folder_block(prompt, folders, sandbox)
+    prompt = _with_app_screens(prompt, session_id)
     try:
         from cognitrix.tools.swarm import SWARM_MODE_NOTE, swarm_requested
 
@@ -135,6 +137,25 @@ def _with_folder_prompt(prompt, folders, sandbox: tuple | None = None) -> Any:
             and isinstance(prompt[0].get('content'), str):
         return [{**prompt[0], 'content': prompt[0]['content'] + '\n\n' + SWARM_MODE_NOTE}, *prompt[1:]]
     return [{'role': 'system', 'content': SWARM_MODE_NOTE}, *prompt]
+
+
+def _with_app_screens(prompt, session_id: Any) -> Any:
+    """Add what connected-app screens beside the chat reported (MCP Apps
+    ``ui/update-model-context``) to the system message."""
+    if not isinstance(prompt, list) or not session_id:
+        return prompt
+    try:
+        from cognitrix.mcp.app_views import context_note
+
+        block = context_note(str(session_id))
+    except Exception:
+        return prompt
+    if not block:
+        return prompt
+    if prompt and isinstance(prompt[0], dict) and prompt[0].get('role') == 'system' \
+            and isinstance(prompt[0].get('content'), str):
+        return [{**prompt[0], 'content': prompt[0]['content'] + '\n\n' + block}, *prompt[1:]]
+    return [{'role': 'system', 'content': block}, *prompt]
 
 
 def _with_folder_block(prompt, folders, sandbox: tuple | None = None) -> Any:
@@ -532,9 +553,12 @@ class Session(Model):
     async def __call__(self, message: str | dict, agent: 'Agent', *args: Any, **kwargs: Any):
         # The action reviewer reads what this turn was asked to do.
         from cognitrix import usage
+        from cognitrix.memory import guard as memory_guard
         from cognitrix.safety.action_reviewer import _goal_text, turn_goal
 
         token = turn_goal.set(_goal_text(message))
+        # Memory saves after reading web or app content need the person's OK.
+        guard_token = memory_guard.start_turn()
         # Model calls in this turn count toward this person's usage totals.
         owner = self.user_id or getattr(kwargs.get('tool_context'), 'user_id', None)
         usage_token = usage.set_owner(owner, getattr(agent, 'id', None))
@@ -542,6 +566,7 @@ class Session(Model):
             return await self._run_turn(message, agent, *args, **kwargs)
         finally:
             usage.reset_owner(usage_token)
+            memory_guard.end_turn(guard_token)
             turn_goal.reset(token)
 
     async def _run_turn(self, message: str|dict, agent: 'Agent', interface: Literal['cli', 'task', 'web', 'ws', 'compat'] = 'cli', stream: bool = False, output: Callable = print, wsquery: dict[str, str] | None= None, save_history: bool = True, attachments: dict[str, Any] | None = None, tool_context=None, record_history: bool | None = None, persist_history: bool | None = None, compact_history: bool | None = None):
@@ -728,13 +753,14 @@ class Session(Model):
         # Search Knowledge is offered only to agents that were given at least
         # one document collection.
         try:
-            if getattr(agent, 'knowledge', None) and not any(
-                str(getattr(t, 'name', '')).lower() == 'search knowledge' for t in agent.tools
-            ):
+            if getattr(agent, 'knowledge', None):
                 from cognitrix.tools.base import ToolManager
-                knowledge_tool = ToolManager.get_by_name('search_knowledge')
-                if knowledge_tool:
-                    agent = agent.model_copy(update={'tools': [*agent.tools, knowledge_tool]})
+
+                names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
+                extra = [tool for tool in (ToolManager.get_by_name(n) for n in ('search_knowledge', 'learn_from_website'))
+                         if tool and tool.name.lower() not in names]
+                if extra:
+                    agent = agent.model_copy(update={'tools': [*agent.tools, *extra]})
         except Exception:
             logger.debug('Search Knowledge tool unavailable', exc_info=True)
 
@@ -876,7 +902,7 @@ class Session(Model):
 
         # Build the context-aware prompt using the manager
         prompt = await agent.get_context_manager().build_prompt(agent, self)
-        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
+        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
 
         # Tools set to "never" for this agent aren't offered to the model
         # (the agent loop refuses them too, see safety/permissions.py).
@@ -1203,7 +1229,7 @@ class Session(Model):
 
                                 prompt = await agent.get_context_manager().build_prompt(agent, self)
                                 # Keep the folder list (including any just granted) on every request.
-                                prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
+                                prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
                                 continue  # Continue the loop to re-prompt the LLM with the tool result
                             else:
                                 if interface == 'cli':
@@ -1251,7 +1277,7 @@ class Session(Model):
                                        'or give your final answer.]',
                         })
                         prompt = await agent.get_context_manager().build_prompt(agent, self)
-                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
+                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
                         continue
 
                     # Persist the final assistant text only when this response did
@@ -1300,7 +1326,7 @@ class Session(Model):
                         # answer: keep the turn going so it gets read now
                         # instead of waiting for another turn.
                         prompt = await agent.get_context_manager().build_prompt(agent, self)
-                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
+                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
                         continue
 
                     if not called_tools:

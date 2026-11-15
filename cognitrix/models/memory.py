@@ -13,7 +13,7 @@ from pydantic import field_validator
 
 SCOPES = ('global', 'agent')
 SOURCES = ('user', 'agent', 'import')
-AUTO_SAVE_MODES = ('auto', 'explicit')
+AUTO_SAVE_MODES = ('auto', 'ask', 'explicit')
 
 
 class Memory(Model):
@@ -27,16 +27,23 @@ class Memory(Model):
     source_session_id: str = ''
     """The chat it was saved from, if any."""
     pinned: bool = False
+    pending: bool = False
+    """Proposed but not yet approved by the person ("Ask me first", a save
+    after the agent read web or app content, or an import). Pending memories
+    are never shown to agents."""
+    replaces: str = ''
+    """For a pending change to an existing memory: that memory's id. Approving
+    the change deletes the old one."""
     created: str = ''
     updated: str = ''
     """UTC 'YYYY-MM-DD HH:MM:SS'."""
 
-    @field_validator('agent_id', 'source_session_id', 'created', 'updated', mode='before')
+    @field_validator('agent_id', 'source_session_id', 'created', 'updated', 'replaces', mode='before')
     @classmethod
     def _text_default(cls, value):
         return '' if value is None else str(value)
 
-    @field_validator('pinned', mode='before')
+    @field_validator('pinned', 'pending', mode='before')
     @classmethod
     def _pinned_default(cls, value):
         return bool(value) if value is not None else False
@@ -51,7 +58,8 @@ class MemorySettings(Model):
     """Agents may search and read this person's past chats (Search Chats / Read Chat)."""
     auto_save: str = 'auto'
     """``auto``: agents save what seems worth keeping (a note shows in the
-    chat). ``explicit``: only when the person asks them to remember something."""
+    chat). ``ask``: agents propose memories and the person approves each one.
+    ``explicit``: only when the person asks them to remember something."""
 
     @field_validator('enabled', 'history_enabled', mode='before')
     @classmethod

@@ -205,6 +205,106 @@ def allowed_roots() -> list[Path] | None:
     return [Path(_settings().tools_root).expanduser().resolve()]
 
 
+# ---------------------------------------------------------------------------
+# Server-side folder browser (web app; the desktop app uses the OS picker)
+# ---------------------------------------------------------------------------
+
+MAX_BROWSE_ENTRIES = 1000
+_BAD_FOLDER_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def browse_roots() -> list[Path]:
+    """Where the folder browser starts: the allowed roots, else the home folder."""
+    roots = allowed_roots()
+    return roots if roots is not None else [Path.home().resolve()]
+
+
+def _browsable(path: Path) -> bool:
+    """A folder people may open in the browser and add from."""
+    if is_blocked(path) or _inside(_norm(path), _norm(workspaces_root())):
+        return False
+    roots = allowed_roots()
+    return roots is None or any(_inside(path, r) for r in roots)
+
+
+def _open_browsable(raw: str) -> Path:
+    candidate = Path(str(raw or '').strip()).expanduser()
+    if not str(raw or '').strip() or not candidate.is_absolute():
+        raise FolderError('Give a full folder path')
+    try:
+        resolved = candidate.resolve()
+    except OSError as exc:
+        raise FolderError(f"Can't open '{raw}': {exc}") from None
+    if not resolved.is_dir():
+        raise FolderError(f"'{raw}' is not a folder on this machine")
+    if not _browsable(resolved):
+        raise FolderError(f"'{raw}' can't be opened here")
+    return resolved
+
+
+def _entry(path: Path, name: str | None = None) -> dict[str, Any]:
+    return {'name': name or path.name or str(path), 'path': str(path), 'writable': os.access(path, os.W_OK)}
+
+
+def browse_folder(path: str | None = None, *, hidden: bool = False) -> dict[str, Any]:
+    """List the subfolders of ``path`` (never files) for the web folder browser.
+
+    With no path it lists the starting folders. Every listed folder resolves
+    inside the allowed roots: a link that points elsewhere is left out, and so
+    are protected locations and chats' private scratch folders.
+    """
+    roots = browse_roots()
+    if not path:
+        return {'path': None, 'parent': None, 'entries': [_entry(r, str(r)) for r in roots if r.is_dir()],
+                'truncated': False}
+    folder = _open_browsable(path)
+    parent = folder.parent
+    restricted = allowed_roots() is not None
+    if parent == folder or not _browsable(parent) or (restricted and any(_norm(folder) == _norm(r) for r in roots)):
+        parent_path = None
+    else:
+        parent_path = str(parent)
+    entries: list[dict[str, Any]] = []
+    truncated = False
+    try:
+        children = sorted(folder.iterdir(), key=lambda p: p.name.lower())
+    except OSError as exc:
+        raise FolderError(f"Can't read '{folder}': {exc.strerror or exc}") from None
+    for child in children:
+        if not hidden and child.name.startswith('.'):
+            continue
+        try:
+            if not child.is_dir():
+                continue
+            target = child.resolve()
+        except OSError:
+            continue
+        if not _browsable(target):
+            continue
+        if len(entries) >= MAX_BROWSE_ENTRIES:
+            truncated = True
+            break
+        entries.append(_entry(target, child.name))
+    return {'path': str(folder), 'parent': parent_path, 'entries': entries, 'truncated': truncated,
+            'writable': os.access(folder, os.W_OK)}
+
+
+def create_folder(parent: str, name: str) -> dict[str, Any]:
+    """Make a new empty folder inside a browsable folder."""
+    base = _open_browsable(parent)
+    clean = str(name or '').strip()
+    if not clean or clean in ('.', '..') or len(clean) > 120 or _BAD_FOLDER_NAME.search(clean):
+        raise FolderError('Use a folder name without / \\ : * ? " < > |')
+    target = base / clean
+    try:
+        target.mkdir()
+    except FileExistsError:
+        raise FolderError(f"'{clean}' already exists") from None
+    except OSError as exc:
+        raise FolderError(f"Can't create '{clean}': {exc.strerror or exc}") from None
+    return _entry(target.resolve(), clean)
+
+
 def validate_folder(
     path: str, access: str = READ, name: str = '', primary: bool = False,
     *, scratch: str | None = None,

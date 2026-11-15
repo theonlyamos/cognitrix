@@ -27,6 +27,32 @@ logger = logging.getLogger('cognitrix.log')
 # loop) forever. Cap every server call.
 DEFAULT_MCP_TIMEOUT = 30
 
+# Tell servers this client can show their screens (MCP Apps). Servers only
+# attach UI to tools for clients that say so.
+UI_EXTENSION = 'io.modelcontextprotocol/ui'
+UI_MIME_TYPE = 'text/html;profile=mcp-app'
+CLIENT_EXTENSIONS = {UI_EXTENSION: {'mimeTypes': [UI_MIME_TYPE]}}
+
+
+def tool_ui(meta: Any) -> dict[str, Any] | None:
+    """The screen a tool declares in its ``_meta``, or None.
+
+    ``_meta.ui.resourceUri`` (and the older flat ``_meta["ui/resourceUri"]``)
+    must be a ``ui://`` address. ``visibility`` says who may call the tool:
+    ``model`` (the agent), ``app`` (its screen), or both (the default).
+    """
+    if not isinstance(meta, dict):
+        return None
+    ui = meta.get('ui') if isinstance(meta.get('ui'), dict) else {}
+    uri = ui.get('resourceUri') or meta.get('ui/resourceUri')
+    visibility = ui.get('visibility')
+    if not isinstance(visibility, list) or not visibility:
+        visibility = ['model', 'app']
+    visibility = [v for v in visibility if v in ('model', 'app')] or ['model', 'app']
+    if not isinstance(uri, str) or not uri.startswith('ui://') or len(uri) > 2000:
+        return {'resource_uri': '', 'visibility': visibility} if 'visibility' in ui else None
+    return {'resource_uri': uri, 'visibility': visibility}
+
 class DynamicMCPClient:
     """Dynamic MCP client that can connect to multiple server types"""
 
@@ -37,6 +63,9 @@ class DynamicMCPClient:
         # connection key -> tool name -> MCP tool annotations (readOnlyHint,
         # destructiveHint, ...), filled by list_tools.
         self.tool_annotations: dict[str, dict[str, dict[str, Any]]] = {}
+        # connection key -> tool name -> the tool's screen (MCP Apps), as
+        # {'resource_uri', 'visibility'}; only tools that have one.
+        self.tool_ui: dict[str, dict[str, dict[str, Any]]] = {}
 
     async def connect_to_server(self, server_config: MCPServerConfig) -> bool:
         """Connect to an MCP server based on its configuration"""
@@ -126,7 +155,7 @@ class DynamicMCPClient:
                 )
                 read_stream, write_stream = stdio_transport
                 session = await exit_stack.enter_async_context(
-                    ClientSession(read_stream, write_stream)
+                    ClientSession(read_stream, write_stream, extensions=CLIENT_EXTENSIONS)
                 )
                 await session.initialize()
 
@@ -171,7 +200,7 @@ class DynamicMCPClient:
                 )
                 read_stream, write_stream = sse_transport
                 session = await exit_stack.enter_async_context(
-                    ClientSession(read_stream, write_stream)
+                    ClientSession(read_stream, write_stream, extensions=CLIENT_EXTENSIONS)
                 )
                 await session.initialize()
 
@@ -223,7 +252,7 @@ class DynamicMCPClient:
                     streamable_http_client(server_config.url, http_client=http_client)
                 )
                 session = await exit_stack.enter_async_context(
-                    ClientSession(read_stream, write_stream)
+                    ClientSession(read_stream, write_stream, extensions=CLIENT_EXTENSIONS)
                 )
                 await session.initialize()
 
@@ -260,6 +289,7 @@ class DynamicMCPClient:
                 del self.connections[server_name]
 
             self.tool_annotations.pop(server_name, None)
+            self.tool_ui.pop(server_name, None)
 
             # Update connection status
             update_connection_status(server_name, False)
@@ -307,17 +337,24 @@ class DynamicMCPClient:
             response = await asyncio.wait_for(session.list_tools(), timeout=DEFAULT_MCP_TIMEOUT)
             tools = []
             annotations: dict[str, dict[str, Any]] = {}
+            screens: dict[str, dict[str, Any]] = {}
             for tool in response.tools:
                 notes = getattr(tool, 'annotations', None)
                 notes = notes.model_dump(exclude_none=True, by_alias=True) if hasattr(notes, 'model_dump') else {}
                 annotations[tool.name] = notes
-                tools.append({
+                info = {
                     'name': tool.name,
                     'description': tool.description,
                     'input_schema': dict(tool.input_schema) if tool.input_schema else {},
                     'annotations': notes,
-                })
+                }
+                ui = tool_ui(getattr(tool, 'meta', None))
+                if ui:
+                    screens[tool.name] = ui
+                    info['ui'] = ui
+                tools.append(info)
             self.tool_annotations[server_name] = annotations
+            self.tool_ui[server_name] = screens
             return tools
         except TimeoutError:
             logger.error(f"Timeout listing tools for server {server_name} after {DEFAULT_MCP_TIMEOUT}s")
@@ -337,7 +374,9 @@ class DynamicMCPClient:
             result = await asyncio.wait_for(
                 session.call_tool(tool_name, arguments), timeout=DEFAULT_MCP_TIMEOUT
             )
-            return result.content
+            content = ToolContent(getattr(result, 'content', None) or [])
+            content.result = result
+            return content
         except TimeoutError:
             logger.error(f"Timeout calling tool {tool_name} on {server_name} after {DEFAULT_MCP_TIMEOUT}s")
             return f"Error: MCP tool '{tool_name}' timed out after {DEFAULT_MCP_TIMEOUT}s"
@@ -357,6 +396,19 @@ class DynamicMCPClient:
             return [resource.model_dump() for resource in response.resources]
         except Exception as e:
             logger.error(f"Error listing resources for server {server_name}: {e}")
+            return None
+
+    async def read_resource(self, server_name: str, uri: str) -> Any | None:
+        """Read one resource (such as a tool's ``ui://`` screen). None on failure."""
+        if server_name not in self.sessions:
+            logger.error(f"Not connected to server: {server_name}")
+            return None
+        try:
+            return await asyncio.wait_for(
+                self.sessions[server_name].read_resource(uri), timeout=DEFAULT_MCP_TIMEOUT
+            )
+        except Exception as e:
+            logger.error(f"Error reading resource {uri} on server {server_name}: {e}")
             return None
 
     async def test_connection(self, server_config: MCPServerConfig) -> dict[str, Any]:
@@ -395,6 +447,13 @@ class DynamicMCPClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.disconnect_all()
+
+class ToolContent(list):
+    """A tool's content blocks, as callers always got them, carrying the
+    whole result (``structured_content``, ``meta``) for a screen to show."""
+
+    result: Any = None
+
 
 # Global dynamic client instance
 _dynamic_client = None

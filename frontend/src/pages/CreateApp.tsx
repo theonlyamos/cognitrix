@@ -4,21 +4,22 @@ import { ArrowLeft, BarChart3, ClipboardCheck, Copy, FileInput, HeartPulse, List
 import { api } from '@/lib/api';
 import { CHAT_AUTOSEND_KEY, CHAT_DRAFT_KEY } from '@/lib/chatDraft';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 interface Agent { id: string; name: string; automation?: { standing?: { primary?: boolean } } | null }
 
 const TEMPLATES = [
-  { icon: BarChart3, title: 'Metrics dashboard', detail: 'Charts of the numbers you watch, refreshed on a schedule.',
+  { icon: BarChart3, get title() { return tr('ui.createApp.metricsDashboard'); }, get detail() { return tr('ui.createApp.chartsOfTheNumbersYou'); },
     prompt: 'A metrics dashboard with a few key numbers at the top and charts below. Ask me which numbers and where they come from.' },
-  { icon: ClipboardCheck, title: 'Review queue', detail: 'A list of items to approve or reject, with notes.',
+  { icon: ClipboardCheck, get title() { return tr('ui.createApp.reviewQueue'); }, get detail() { return tr('ui.createApp.aListOfItemsTo'); },
     prompt: 'A review queue: a list of items people approve or reject with a note, saved so everyone sees the same state.' },
-  { icon: ListChecks, title: 'Project status page', detail: 'Milestones, owners and what is blocked.',
+  { icon: ListChecks, get title() { return tr('ui.createApp.projectStatusPage'); }, get detail() { return tr('ui.createApp.milestonesOwnersAndWhatIs'); },
     prompt: 'A project status page showing milestones, owners, dates and blockers, that people on the team can update.' },
-  { icon: FileInput, title: 'Request form', detail: 'A form people fill in, with a table of what came in.',
+  { icon: FileInput, get title() { return tr('ui.createApp.requestForm'); }, get detail() { return tr('ui.createApp.aFormPeopleFillIn'); },
     prompt: 'A request form people fill in, with a table of the requests that came in and their status.' },
-  { icon: HeartPulse, title: 'Customer health', detail: 'Accounts with a health score and recent activity.',
+  { icon: HeartPulse, get title() { return tr('ui.createApp.customerHealth'); }, get detail() { return tr('ui.createApp.accountsWithAHealthScore'); },
     prompt: 'A customer health page listing accounts with a health score, recent activity and who owns each one.' },
-  { icon: Copy, title: 'Staging copy of a site', detail: 'Run a branch of a web project to try it out.',
+  { icon: Copy, get title() { return tr('ui.createApp.stagingCopyOfASite'); }, get detail() { return tr('ui.createApp.runABranchOfA'); },
     prompt: 'Run a copy of one of my web projects so I can try a branch. Ask me which folder and branch.' },
 ] as const;
 
@@ -70,34 +71,34 @@ export default function CreateApp() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-3xl px-4 pb-16 pt-5 md:px-8 md:pt-8">
-        <Link to="/apps" className="inline-flex items-center gap-1.5 text-[13px] text-fg-dim hover:text-fg"><ArrowLeft size={14} aria-hidden />Apps</Link>
-        <h1 className="mt-3 text-[22px] font-semibold tracking-tight">Create an app</h1>
-        <p className="mt-1 text-[13.5px] text-fg-dim">Describe what you need. An agent builds it, runs it for you and gives you a private link that only people you share it with can open.</p>
+        <Link to="/apps" className="inline-flex items-center gap-1.5 text-[13px] text-fg-dim hover:text-fg"><ArrowLeft size={14} aria-hidden />{tr('ui.createApp.apps')}</Link>
+        <h1 className="mt-3 text-[22px] font-semibold tracking-tight">{tr('ui.createApp.createAnApp')}</h1>
+        <p className="mt-1 text-[13.5px] text-fg-dim">{tr('ui.createApp.describeWhatYouNeedAn')}</p>
 
         <form onSubmit={build} className="mt-5 rounded-[12px] border border-line bg-panel p-3">
-          <label htmlFor="app-idea" className="sr-only">What should the app do?</label>
+          <label htmlFor="app-idea" className="sr-only">{tr('ui.createApp.whatShouldTheAppDo')}</label>
           <textarea id="app-idea" value={idea} onChange={(e) => setIdea(e.target.value)} rows={4}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) build(); }}
-            placeholder="A page where the team logs support calls, with a weekly summary chart…"
+            placeholder={tr('ui.createApp.aPageWhereTheTeam')}
             className="w-full resize-y bg-transparent text-[14px] leading-relaxed outline-none placeholder:text-fg-dim" />
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <label className="flex min-w-0 items-center gap-2 text-[12.5px] text-fg-dim">
-              Agent
-              <select value={agentId} onChange={(e) => setAgentId(e.target.value)} aria-label="Agent that builds it"
+              {tr('ui.createApp.agent')}
+              <select value={agentId} onChange={(e) => setAgentId(e.target.value)} aria-label={tr('ui.createApp.agentThatBuildsIt')}
                 className="h-9 min-w-0 max-w-[220px] rounded-md border border-line bg-bg px-2 text-[12.5px] text-fg md:h-8">
-                {!agents.length && <option value="">No agents yet</option>}
+                {!agents.length && <option value="">{tr('ui.createApp.noAgentsYet')}</option>}
                 {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             </label>
             <span className="flex-1" />
             <button type="submit" disabled={!idea.trim()}
               className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3.5 text-[13px] font-semibold text-accent-foreground disabled:opacity-50 md:h-8">
-              <Sparkles size={14} aria-hidden />Build app
+              <Sparkles size={14} aria-hidden />{tr('ui.createApp.buildApp')}
             </button>
           </div>
         </form>
 
-        <h2 className="mt-8 font-mono text-[11px] uppercase tracking-wider text-fg-dim">Start from a template</h2>
+        <h2 className="mt-8 font-mono text-[11px] uppercase tracking-wider text-fg-dim">{tr('ui.createApp.startFromATemplate')}</h2>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {TEMPLATES.map((t) => (
             <button key={t.title} type="button" onClick={() => setIdea(t.prompt)}

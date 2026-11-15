@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Trash2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const buttonClass = 'inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-[13px] font-medium disabled:opacity-60 md:h-8';
 
@@ -39,20 +40,20 @@ export function DeleteAppDialog({ title, folder, onCancel, onConfirm }: {
       <div role="alertdialog" aria-modal="true" aria-labelledby="delete-app-title" aria-describedby="delete-app-body"
         className="w-full rounded-t-2xl border border-line bg-panel shadow-2xl md:w-[440px] md:rounded-2xl">
         <header className="flex items-center gap-2 border-b border-line px-4 py-3">
-          <h2 id="delete-app-title" className="min-w-0 flex-1 truncate text-[15px] font-semibold">Delete “{title}”?</h2>
-          <button type="button" onClick={onCancel} disabled={busy} aria-label="Close"
+          <h2 id="delete-app-title" className="min-w-0 flex-1 truncate text-[15px] font-semibold">{tr('ui.hostedApps.deleteAppDialog.deleteTitle', { title })}</h2>
+          <button type="button" onClick={onCancel} disabled={busy} aria-label={tr('ui.hostedApps.deleteAppDialog.close')}
             className="grid h-9 w-9 place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg"><X size={16} /></button>
         </header>
         <div id="delete-app-body" className="space-y-2 px-4 py-4 text-[13px]">
-          <p>The app stops, its link stops working for everyone it’s shared with, and all its versions, logs and saved data are deleted. This can’t be undone.</p>
-          {folder && <p className="text-fg-dim">Its code stays in <span className="break-all font-mono text-[12px]">{folder}</span>.</p>}
+          <p>{tr('ui.hostedApps.deleteAppDialog.theAppStopsItsLink')}</p>
+          {folder && <p className="text-fg-dim">{tr('ui.hostedApps.deleteAppDialog.itsCodeStaysIn')}{' '}<span className="break-all font-mono text-[12px]">{folder}</span>.</p>}
         </div>
         <footer className="flex justify-end gap-2 border-t border-line px-4 py-3">
           <button ref={cancel} type="button" onClick={onCancel} disabled={busy}
-            className={cn(buttonClass, 'border-line hover:bg-panel-2')}>Cancel</button>
+            className={cn(buttonClass, 'border-line hover:bg-panel-2')}>{tr('ui.hostedApps.deleteAppDialog.cancel')}</button>
           <button type="button" onClick={() => void confirm()} disabled={busy}
             className={cn(buttonClass, 'border-danger-ink/40 bg-danger-ink/10 text-danger-ink hover:bg-danger-ink/15')}>
-            <Trash2 size={14} />{busy ? 'Deleting…' : 'Delete app'}
+            <Trash2 size={14} />{busy ? tr('ui.hostedApps.deleteAppDialog.deleting') : tr('ui.hostedApps.deleteAppDialog.deleteApp')}
           </button>
         </footer>
       </div>

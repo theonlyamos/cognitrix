@@ -14,6 +14,11 @@ const lib = vi.hoisted(() => ({
   saveMemorySettings: vi.fn(),
   legacyMemoryCount: vi.fn(),
   deleteLegacyMemory: vi.fn(),
+  approveMemory: vi.fn(),
+  settlePendingMemories: vi.fn(),
+  importMemories: vi.fn(),
+  convertLegacyMemory: vi.fn(),
+  exportMemories: vi.fn(),
 }));
 
 vi.mock('@/lib/memories', async (importOriginal) => ({
@@ -100,5 +105,43 @@ describe('MemorySettings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete all memories' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete all' }));
     await waitFor(() => expect(lib.deleteAllMemories).toHaveBeenCalled());
+  });
+});
+
+describe('memory phase 3', () => {
+  it('reads a proposal and ignores the note for the agent', () => {
+    expect(memoryChange('Memory', 'Memory proposed (id 7, agent): Lives in Accra.\nYou read outside content this turn.')).toEqual({
+      kind: 'proposed', id: '7', scope: 'agent', content: 'Lives in Accra.',
+    });
+  });
+
+  it('asks before saving a proposed memory', async () => {
+    lib.approveMemory.mockResolvedValue({ ...short, id: '7' });
+    render(<MemoryRouter><MemoryNotice toolName="Memory" result={'Memory proposed (id 7, global): Lives in Accra.\nWaiting.'} /></MemoryRouter>);
+    expect(screen.getByText('Save to memory?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(lib.approveMemory).toHaveBeenCalledWith('7'));
+    expect(await screen.findByText('Memory saved:')).toBeInTheDocument();
+  });
+
+  it('lists memories waiting for an OK apart from saved ones', async () => {
+    const waiting: SavedMemory = { ...short, id: 'p1', content: 'Lives in Lisbon.', pinned: false, pending: true, source: 'import' };
+    lib.listMemories.mockResolvedValue(list([short, waiting]));
+    lib.settlePendingMemories.mockResolvedValue(undefined);
+    renderSettings();
+    expect(await screen.findByText('WAITING FOR YOUR OK · 1')).toBeInTheDocument();
+    expect(screen.getByText('SAVED MEMORIES · 1')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save all' }));
+    await waitFor(() => expect(lib.settlePendingMemories).toHaveBeenCalledWith(true));
+  });
+
+  it('imports a paste and says how many wait for review', async () => {
+    lib.importMemories.mockResolvedValue({ proposed: 2, duplicates: 0, skipped: [] });
+    renderSettings();
+    fireEvent.click(await screen.findByRole('button', { name: 'Import…' }));
+    fireEvent.change(screen.getByLabelText('Memories to import'), { target: { value: '- Likes tea\n- Lives in Accra' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(lib.importMemories).toHaveBeenCalledWith('- Likes tea\n- Lives in Accra'));
+    expect(await screen.findByText(/2 memories from your import waiting for your OK/)).toBeInTheDocument();
   });
 });

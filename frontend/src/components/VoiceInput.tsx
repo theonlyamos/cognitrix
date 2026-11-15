@@ -4,6 +4,7 @@ import { errorMessage } from '@/lib/api';
 import { formatDuration, getVoiceSettings, transcribeAudio, type VoiceSettings } from '@/lib/voice';
 import { micErrorMessage, useVoiceRecorder } from '@/hooks/useVoiceRecorder';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 export type VoiceStatus = 'idle' | 'starting' | 'recording' | 'transcribing';
 
@@ -61,9 +62,9 @@ export function useVoiceInput({ onText }: { onText: (text: string) => void }) {
     try {
       const text = await transcribeAudio(audio, controller.signal);
       if (text.trim()) onTextRef.current(text);
-      else setError('No speech was picked up. Try again a little closer to the mic.');
+      else setError(tr('ui.voiceInput.noSpeechWasPickedUp'));
     } catch (err) {
-      if (!controller.signal.aborted) setError(errorMessage(err, 'Could not transcribe the recording.'));
+      if (!controller.signal.aborted) setError(errorMessage(err, tr('ui.voiceInput.couldNotTranscribeTheRecording')));
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
       setTranscribing(false);
@@ -176,8 +177,8 @@ export function MicButton({ voice, disabled, className }: { voice: VoiceInput; d
       type="button"
       onClick={() => void voice.start()}
       disabled={disabled || voice.status === 'starting'}
-      aria-label="Voice input"
-      title="Voice input"
+      aria-label={tr('ui.voiceInput.voiceInput')}
+      title={tr('ui.voiceInput.voiceInput')}
       className={cn(
         'grid h-11 w-11 place-items-center rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-60 md:h-8 md:w-8',
         voice.status === 'starting' && 'animate-pulse text-accent-ink',
@@ -194,12 +195,12 @@ export function VoiceBar({ voice }: { voice: VoiceInput }) {
   const transcribing = voice.status === 'transcribing';
   const nearLimit = voice.maxSeconds - voice.elapsed <= 30;
   return (
-    <div className="flex min-h-11 items-center gap-2 px-1.5 py-1" role="group" aria-label="Voice recording">
+    <div className="flex min-h-11 items-center gap-2 px-1.5 py-1" role="group" aria-label={tr('ui.voiceInput.voiceRecording')}>
       <button
         type="button"
         onClick={voice.cancel}
-        aria-label={transcribing ? 'Cancel transcription' : 'Cancel recording'}
-        title="Cancel (Esc)"
+        aria-label={transcribing ? tr('ui.voiceInput.cancelTranscription') : tr('ui.voiceInput.cancelRecording')}
+        title={tr('ui.voiceInput.cancelEsc')}
         className="grid h-11 w-11 flex-none place-items-center rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-danger-ink md:h-8 md:w-8"
       >
         <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
@@ -208,7 +209,7 @@ export function VoiceBar({ voice }: { voice: VoiceInput }) {
         {transcribing ? (
           <div className="flex h-8 items-center gap-2 font-mono text-[11.5px] text-fg-dim">
             <svg className="h-3.5 w-3.5 animate-spin text-accent-ink" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
-            Transcribing…
+            {tr('ui.voiceInput.transcribing_1e75')}
           </div>
         ) : (
           <Waveform analyser={voice.analyser} />
@@ -221,14 +222,14 @@ export function VoiceBar({ voice }: { voice: VoiceInput }) {
         {transcribing ? '' : formatDuration(voice.elapsed)}
       </span>
       <span className="sr-only" role="status" aria-live="polite">
-        {transcribing ? 'Transcribing' : 'Recording. Press Enter or the stop button when you are done.'}
+        {transcribing ? tr('ui.voiceInput.transcribing') : tr('ui.voiceInput.recordingPressEnterOrThe')}
       </span>
       <button
         type="button"
         onClick={() => void voice.stop()}
         disabled={transcribing}
-        aria-label="Stop recording"
-        title="Stop (Enter)"
+        aria-label={tr('ui.voiceInput.stopRecording')}
+        title={tr('ui.voiceInput.stopEnter')}
         className="grid h-11 w-11 flex-none place-items-center rounded bg-danger text-bg transition hover:brightness-105 disabled:opacity-50 md:h-8 md:w-8"
       >
         <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
@@ -242,9 +243,9 @@ export function VoiceNotice({ voice }: { voice: VoiceInput }) {
   if (voice.needsSetup) {
     return (
       <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-fg-dim">
-        Voice input needs a speech-to-text provider.{' '}
-        <Link to="/settings/voice" className="text-accent-ink hover:underline">Set it up in Settings</Link>
-        <button type="button" onClick={voice.dismiss} className="ml-2 hover:text-fg" aria-label="Dismiss">✕</button>
+        {tr('ui.voiceInput.voiceInputNeedsASpeech')}{' '}
+        <Link to="/settings/voice" className="text-accent-ink hover:underline">{tr('ui.voiceInput.setItUpInSettings')}</Link>
+        <button type="button" onClick={voice.dismiss} className="ml-2 hover:text-fg" aria-label={tr('ui.voiceInput.dismiss')}>✕</button>
       </div>
     );
   }
@@ -252,7 +253,7 @@ export function VoiceNotice({ voice }: { voice: VoiceInput }) {
   return (
     <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">
       {voice.error}
-      <button type="button" onClick={voice.dismiss} className="ml-2 text-fg-dim hover:text-fg" aria-label="Dismiss">✕</button>
+      <button type="button" onClick={voice.dismiss} className="ml-2 text-fg-dim hover:text-fg" aria-label={tr('ui.voiceInput.dismiss')}>✕</button>
     </div>
   );
 }

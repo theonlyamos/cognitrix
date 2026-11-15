@@ -379,6 +379,11 @@ async def start_swarm(
     run_id: str = '',
     step_index: int = -1,
 ) -> SwarmRun:
+    from cognitrix.usage import caps
+
+    capped = await caps.blocked_message(str(user_key))
+    if capped:
+        raise SwarmError('spending_cap', capped)
     settings = await get_settings(user_key)
     limits = effective_limits(settings)
     if len(specs) > limits['max_workers']:

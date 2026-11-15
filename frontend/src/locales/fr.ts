@@ -1,4 +1,5 @@
 import type { Messages } from './en';
+import ui from './ui.fr';
 
 const fr: Messages = {
   'nav.workspace': 'ESPACE DE TRAVAIL',
@@ -40,12 +41,14 @@ const fr: Messages = {
   'settings.section.appearance': 'Apparence',
   'settings.section.models': 'Modèles et clés',
   'settings.section.usage': 'Utilisation',
+  'settings.section.swarms': 'Essaims',
   'settings.section.memory': 'Mémoire',
   'settings.section.voice': 'Voix',
   'settings.section.apps': 'Applications connectées',
   'settings.section.access': 'Accès des agents',
   'settings.section.chat-apps': 'Applications de messagerie',
   'settings.section.people': 'Personnes',
+  'settings.section.audit': "Journal d'activité",
   'settings.section.skills': 'Compétences',
   'settings.section.desktop': 'Application de bureau',
   'settings.section.engine': 'Moteur',
@@ -131,6 +134,8 @@ const fr: Messages = {
   'reset.save': 'Enregistrer le nouveau mot de passe',
   'reset.saving': 'Enregistrement…',
   'reset.failed': "Le mot de passe n'a pas pu être modifié.",
+
+  ...ui,
 };
 
 export default fr;

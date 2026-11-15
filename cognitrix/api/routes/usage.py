@@ -19,4 +19,10 @@ async def get_usage(days: int = Query(30, ge=1, le=365), ctx: AuthContext = Depe
     names = {str(a.id): a.name for a in await agent_access.visible_agents(owner)}
     for row in result['by_agent']:
         row['agent_name'] = names.get(row['agent_id']) or ('Deleted agent' if row['agent_id'] else 'Other')
+    try:
+        from cognitrix.usage import caps
+
+        result['spending_cap'] = await caps.status(owner)
+    except Exception:
+        result['spending_cap'] = None
     return result

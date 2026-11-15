@@ -1,4 +1,5 @@
 import type { CardBlock } from '@/lib/cards';
+import { tr, dateLocale } from '@/lib/i18n';
 
 type Chart = Extract<CardBlock, { type: 'chart' }>;
 
@@ -9,7 +10,7 @@ const fmt = (n: number): string => {
   const abs = Math.abs(n);
   if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
   if (abs >= 10_000) return `${(n / 1000).toFixed(abs >= 100_000 ? 0 : 1)}k`;
-  return Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return Number.isInteger(n) ? n.toLocaleString(dateLocale()) : n.toLocaleString(dateLocale(), { maximumFractionDigits: 2 });
 };
 
 function niceMax(value: number): number {
@@ -35,7 +36,7 @@ function Pie({ chart }: { chart: Chart }) {
   });
   return (
     <div className="flex flex-wrap items-center gap-5">
-      <svg viewBox="0 0 120 120" width="120" height="120" role="img" aria-label={chart.title || 'Pie chart'}>{slices}</svg>
+      <svg viewBox="0 0 120 120" width="120" height="120" role="img" aria-label={chart.title || tr('ui.cards.cardChart.pieChart')}>{slices}</svg>
       <ul className="space-y-1 text-[12.5px]">
         {chart.labels.map((label, i) => (
           <li key={i} className="flex items-center gap-2">
@@ -70,7 +71,7 @@ export function CardChart({ chart }: { chart: Chart }) {
   const peak = chart.series.length === 1 ? chart.series[0].values.indexOf(Math.max(...chart.series[0].values)) : -1;
   return (
     <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label={chart.title || `${chart.kind} chart`}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label={chart.title || tr('ui.cards.cardChart.kindChart', { kind: chart.kind })}>
         {ticks.map((t, i) => (
           <g key={i}>
             <line x1={left} x2={W} y1={y(t)} y2={y(t)} stroke="var(--line)" strokeDasharray={t === 0 ? undefined : '2 3'} />
@@ -113,7 +114,7 @@ export function CardChart({ chart }: { chart: Chart }) {
       {chart.series.length > 1 && (
         <div className="mt-1 flex flex-wrap gap-3 text-[11.5px] text-fg-dim">
           {chart.series.map((s, i) => (
-            <span key={i} className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: SERIES[i] }} />{s.name || `Series ${i + 1}`}</span>
+            <span key={i} className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: SERIES[i] }} />{s.name || tr('ui.cards.cardChart.seriesValue', { value: i + 1 })}</span>
           ))}
         </div>
       )}

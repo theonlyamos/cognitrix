@@ -370,7 +370,7 @@ _TASK_MIGRATION_COLUMNS = (
     ('wake_reason', 'TEXT'), ('wake_requested_by', 'TEXT'),
     ('wake_authority_kind', 'TEXT'), ('wake_authority_id', 'TEXT'),
     ('max_runs_per_day', 'INTEGER'), ('standing_agent_id', 'TEXT'),
-    ('swarm', 'BOOLEAN'),
+    ('swarm', 'BOOLEAN'), ('read_memory', 'BOOLEAN'),
 )
 
 _USER_MIGRATION_COLUMNS = (
@@ -410,6 +410,15 @@ _CHANNEL_MIGRATION_COLUMNS = (
 )
 
 # Theme artwork choices and saved drawings (cognitrix/themes.py ThemeSettings).
+_KNOWLEDGE_DOCUMENT_MIGRATION_COLUMNS = (
+    ('source_url', 'TEXT'), ('max_pages', 'INTEGER'), ('pages_read', 'INTEGER'),
+    ('refresh_days', 'INTEGER'), ('refreshed', 'TEXT'),
+)
+
+_MEMORY_MIGRATION_COLUMNS = (
+    ('pending', 'BOOLEAN'), ('replaces', 'TEXT'),
+)
+
 _THEME_MIGRATION_COLUMNS = (
     ('artwork', "TEXT DEFAULT '{}'"),
     ('drawings', "TEXT DEFAULT '[]'"),
@@ -674,6 +683,8 @@ async def _migrate_relational_task_schema(database) -> None:
         ('agentnotifications', _NOTIFICATION_MIGRATION_COLUMNS),
         ('tasktriggers', _TRIGGER_MIGRATION_COLUMNS),
         ('chatchannels', _CHANNEL_MIGRATION_COLUMNS),
+        ('knowledgedocuments', _KNOWLEDGE_DOCUMENT_MIGRATION_COLUMNS),
+        ('memories', _MEMORY_MIGRATION_COLUMNS),
     ):
         for column, ctype in columns:
             clause = (
@@ -779,6 +790,8 @@ async def _ensure_schema():
     from cognitrix.models.push_subscription import PushSubscription
     from cognitrix.models.computer_app import ComputerAppPermission
     from cognitrix.models.usage import UsageDay
+    from cognitrix.usage.caps import SpendingCap
+    from cognitrix.audit import AuditEvent
     from cognitrix.sessions.index import ChatIndex
     from cognitrix.models.voice_settings import VoiceSettings
     from cognitrix.themes import ThemeSettings
@@ -816,17 +829,21 @@ async def _ensure_schema():
     from cognitrix.tasks.standing import AgentOffer
     from cognitrix.artifact_pages.models import MODELS as ARTIFACT_PAGE_MODELS
     from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
+    from cognitrix.mcp.app_views import MODELS as APP_VIEW_MODELS
     from cognitrix.swarms.models import MODELS as SWARM_MODELS
     from cognitrix.public_agents.models import MODELS as PUBLIC_AGENT_MODELS
     from cognitrix.sessions.sharing import MODELS as CHAT_SHARE_MODELS
+    from cognitrix.sessions.side_questions import SideQuestion
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
         *HOSTED_APP_MODELS,
+        *APP_VIEW_MODELS,
         *SWARM_MODELS,
         *PUBLIC_AGENT_MODELS,
         *CHAT_SHARE_MODELS,
         AgentOffer,
+        SideQuestion,
         MeetingNote,
         PersonalSkill,
         SkillDraft,
@@ -851,6 +868,8 @@ async def _ensure_schema():
         MemorySettings,
         ThemeSettings,
         UsageDay,
+        SpendingCap,
+        AuditEvent,
         ChatIndex,
         KnowledgeCollection,
         KnowledgeDocument,
@@ -913,6 +932,8 @@ async def _ensure_schema():
         ('tasktriggers', _TRIGGER_MIGRATION_COLUMNS),
         ('chatchannels', _CHANNEL_MIGRATION_COLUMNS),
         ('themesetting', _THEME_MIGRATION_COLUMNS),
+        ('knowledgedocuments', _KNOWLEDGE_DOCUMENT_MIGRATION_COLUMNS),
+        ('memories', _MEMORY_MIGRATION_COLUMNS),
     ):
         try:
             cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')
