@@ -344,9 +344,119 @@ def test_settings_show_fly_without_the_token(fly_api):
     assert data['fly']['app'] == 'cog-sandboxes' and 'secret-token' not in json.dumps(data)
 
 
-def test_docker_only_features_say_so_on_fly(fly):
+def test_docker_only_calls_say_so_on_fly(fly):
     mgr, _ = fly
-    with pytest.raises(Unsupported, match='HIDE_KEYS'):
-        mgr.key_proxy_env('u1')
     with pytest.raises(Unsupported, match='Fly'):
         mgr._docker('exec', 'x')
+
+
+# -- running scripts in the computer over /exec (snapshots, key proxy) ----------
+
+@pytest.fixture
+def exec_box(monkeypatch, tmp_path):
+    """A real supervisor (exec routes only) on localhost, and a Sandbox for it."""
+    from cognitrix.computer.sandbox import supervisor, workspace
+    from cognitrix.computer.sandbox.client import Sandbox
+
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setattr(workspace, 'HOME', str(home))
+    monkeypatch.setattr(supervisor, 'STATE', str(tmp_path))
+    monkeypatch.setenv(TOKEN_ENV, 'secret')
+    port = _free_port()
+    server = supervisor.make_server(SimpleNamespace(desktops={}), port=port, host='127.0.0.1',
+                                    work=SimpleNamespace(jobs={}))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    box = Sandbox('cognitrix-sandbox-x', 'secret', port, 6080)
+    try:
+        yield box, home
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_exec_runs_scripts_as_the_computer_with_input(fly, exec_box):
+    mgr, _ = fly
+    box, home = exec_box
+    code, out, err = mgr.exec_script(box, 'cat > got.txt && echo saved && echo warn >&2', input=b'pem')
+    assert (code, out.strip(), err.strip()) == (0, 'saved', 'warn')
+    assert (home / 'got.txt').read_bytes() == b'pem'
+    assert mgr.exec_script(box, 'exit 3')[0] == 3
+
+
+def test_exec_streams_big_output_and_input(fly, exec_box, tmp_path):
+    import io
+
+    mgr, _ = fly
+    box, home = exec_box
+    data = bytes(range(256)) * 20000  # ~5 MB
+    (home / 'big.bin').write_bytes(data)
+    out = io.BytesIO()
+    code, err = mgr.exec_out(box, 'cat big.bin; echo done >&2', out)
+    assert code == 0 and out.getvalue() == data and err.strip() == 'done'
+    src = tmp_path / 'src.bin'
+    src.write_bytes(data[::-1])
+    with open(src, 'rb') as fh:
+        code, err = mgr.exec_in(box, 'cat > copy.bin', fh)
+    assert code == 0 and (home / 'copy.bin').read_bytes() == data[::-1]
+    with open(src, 'rb') as fh:
+        assert mgr.exec_in(box, 'exit 5', fh)[0] == 5  # stops reading early: still answers
+
+
+def test_exec_on_an_older_image_says_update(fly, monkeypatch):
+    from cognitrix.computer.sandbox.client import Sandbox
+
+    mgr, _ = fly
+    box = Sandbox('x', 't', 1, 2)
+    box._client = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(404, json={'ok': False, 'error': 'not_found'})))
+    with pytest.raises(Unsupported, match='update it'):
+        mgr.exec_script(box, 'true')
+
+
+def test_restore_replaces_home_then_stops_the_machine(fly, monkeypatch):
+    import io
+
+    mgr, api = fly
+    box = mgr.sandbox('u1')
+    closed, ran = [], []
+    monkeypatch.setattr(type(box), 'desktops', lambda self: [{'name': 'main'}, {'name': 'agent-a'}])
+    monkeypatch.setattr(type(box), 'request', lambda self, m, path, body=None, timeout=None: closed.append((m, path)))
+    monkeypatch.setattr(mgr, 'exec_in', lambda b, script, src, timeout=3600: (ran.append(script), (0, ''))[1])
+    mgr.replace_home('u1', io.BytesIO(b'tgz'))
+    assert closed == [('DELETE', '/desktops/main'), ('DELETE', '/desktops/agent-a')]
+    assert 'find . -mindepth 1 -delete' in ran[0] and 'tar -xzf -' in ran[0]
+    mid = next(iter(api.machines_))
+    assert api.machines_[mid]['state'] == 'stopped'
+    assert mgr.sandbox('u1').container_id == mid  # wakes again for the desktops to reopen
+
+
+def test_key_proxy_listens_on_the_private_network(fly, monkeypatch):
+    mgr, _ = fly
+    for name in ('COGNITRIX_SANDBOX_PROXY_BIND', 'COGNITRIX_SANDBOX_PROXY_HOST', 'FLY_PRIVATE_IP', 'FLY_APP_NAME'):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(Unsupported, match='PROXY_HOST'):
+        mgr._proxy_addresses()
+    monkeypatch.setenv('FLY_APP_NAME', 'cognitrix')
+    assert mgr._proxy_addresses() == ('::', 'cognitrix.internal')
+    mgr._proxy_where = None
+    monkeypatch.setenv('FLY_PRIVATE_IP', 'fdaa:0:1::2')
+    assert mgr._proxy_addresses() == ('::', '[fdaa:0:1::2]')
+
+
+def test_hidden_keys_reach_a_fly_computer(fly, monkeypatch):
+    from cognitrix.common import key_proxy
+
+    mgr, _ = fly
+    monkeypatch.setenv('FLY_PRIVATE_IP', 'fdaa::9')
+    started, scripts = [], []
+    fake = SimpleNamespace(ensure_started=lambda bind: (started.append(bind), (bind, 4242))[1],
+                           ca=SimpleNamespace(pem=b'PEM', fingerprint='fp'), token_for=lambda key: 'tok')
+    monkeypatch.setattr(key_proxy, 'get_proxy', lambda: fake)
+    monkeypatch.setattr(mgr, 'exec_script', lambda box, script, input=None, timeout=120:
+                        (scripts.append(input), (0, '', ''))[1])
+    env = mgr.key_proxy_env('u1')
+    assert started == ['::'] and scripts == [b'PEM']
+    assert 'cognitrix:tok@[fdaa::9]:4242' in json.dumps(env)
+    mgr.key_proxy_env('u1')
+    assert scripts == [b'PEM']  # the certificate is installed once per machine

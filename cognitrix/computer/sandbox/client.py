@@ -441,6 +441,65 @@ class SandboxManager:
         self._docker('volume', 'rm', '-f', f'cognitrix-sandbox-home-{user_key(user_id)}', check=False)
         self._boxes.pop(name, None)
 
+    # -- running scripts in the computer (snapshots, the key proxy) --------------
+    # As the computer's own unprivileged user. Docker: `docker exec`; Fly
+    # (fly.py) goes through the supervisor's /exec routes instead.
+    def exec_script(self, box: Sandbox, script: str, input: bytes | None = None,
+                    timeout: float = 120) -> tuple[int, str, str]:
+        """Run a short script; returns (exit code, output, errors)."""
+        try:
+            got = subprocess.run([self.docker, 'exec', *(['-i'] if input is not None else []), '-u', 'agent',  # noqa: S603
+                                  box.name, 'sh', '-c', script], input=input, capture_output=True, timeout=timeout)
+        except FileNotFoundError:
+            raise Unsupported("The agents' computer needs Docker, and Docker isn't installed here.") from None
+        except subprocess.TimeoutExpired:
+            raise TimeoutError('It took too long.') from None
+        return got.returncode, got.stdout.decode('utf-8', 'replace'), got.stderr.decode('utf-8', 'replace')
+
+    def exec_out(self, box: Sandbox, script: str, out: Any, timeout: float = 3600) -> tuple[int, str]:
+        """Run a script whose output (maybe large) goes into the file ``out``.
+        Returns (exit code, the end of its errors)."""
+        try:
+            got = subprocess.run([self.docker, 'exec', '-u', 'agent', box.name, 'sh', '-c', script],  # noqa: S603
+                                 stdout=out, stderr=subprocess.PIPE, timeout=timeout)
+        except FileNotFoundError:
+            raise Unsupported("The agents' computer needs Docker, and Docker isn't installed here.") from None
+        except subprocess.TimeoutExpired:
+            raise TimeoutError('It took too long.') from None
+        return got.returncode, (got.stderr or b'')[-4000:].decode('utf-8', 'replace')
+
+    def exec_in(self, box: Sandbox, script: str, source: Any, timeout: float = 3600) -> tuple[int, str]:
+        """Run a script that reads the file ``source`` (maybe large) as input."""
+        return self._run_with_input([self.docker, 'exec', '-i', '-u', 'agent', box.name, 'sh', '-c', script],
+                                    source, timeout)
+
+    @staticmethod
+    def _run_with_input(args: list[str], source: Any, timeout: float) -> tuple[int, str]:
+        try:
+            got = subprocess.run(args, stdin=source, capture_output=True, timeout=timeout)  # noqa: S603
+        except FileNotFoundError:
+            raise Unsupported("The agents' computer needs Docker, and Docker isn't installed here.") from None
+        except subprocess.TimeoutExpired:
+            raise TimeoutError('It took too long.') from None
+        return got.returncode, (got.stderr or b'')[-4000:].decode('utf-8', 'replace')
+
+    def replace_home(self, user_id: Any, source: Any) -> None:
+        """Empty the computer's home folder and unpack the archive file
+        ``source`` into it, with the computer stopped. The caller starts it again."""
+        name = self.container_name(user_id)
+        with self._guard:
+            self._docker('rm', '-f', name, check=False)
+            self._boxes.pop(name, None)
+        # A throwaway container on the same home volume, without network,
+        # empties it and unpacks the snapshot as the agent user.
+        code, err = self._run_with_input(
+            [self.docker, 'run', '--rm', '-i', '--network', 'none', '--cap-drop', 'ALL',
+             '--security-opt', 'no-new-privileges', '-u', 'agent',
+             '-v', f'cognitrix-sandbox-home-{user_key(user_id)}:/home/agent', '--entrypoint', 'sh', self.image,
+             '-c', 'cd /home/agent && find . -mindepth 1 -delete && tar -xzf - --no-same-owner'], source, 3600)
+        if code != 0:
+            raise DriverError(f"Couldn't restore the snapshot: {err.strip()[-300:]}")
+
     # -- keys the agent never sees ---------------------------------------------
     def _proxy_addresses(self) -> tuple[str, str]:
         """(address the key proxy listens on, host containers reach it at).
@@ -474,7 +533,9 @@ class SandboxManager:
         script = ('umask 022; d="$HOME/.cognitrix-sandbox/proxy"; mkdir -p "$d" && cat > "$d/ca.pem.tmp" '
                   '&& mv -f "$d/ca.pem.tmp" "$d/ca.pem" && cat /etc/ssl/certs/ca-certificates.crt "$d/ca.pem" '
                   '> "$d/bundle.pem.tmp" && mv -f "$d/bundle.pem.tmp" "$d/bundle.pem"')
-        self._docker('exec', '-i', '-u', 'agent', box.name, 'sh', '-c', script, input=pem.decode(), timeout=60)
+        code, _, err = self.exec_script(box, script, input=pem, timeout=60)
+        if code != 0:
+            raise DriverError(f"Couldn't give the agents' computer the key proxy's certificate: {err.strip()[-300:]}")
         self._ca_installed[box.name] = f'{box.container_id}:{fingerprint}'
 
     def key_proxy_env(self, user_id: Any) -> dict[str, str]:
@@ -488,7 +549,7 @@ class SandboxManager:
         try:
             _, port = proxy.ensure_started(bind)
         except OSError:
-            if bind in ('0.0.0.0', '127.0.0.1') or os.environ.get('COGNITRIX_SANDBOX_PROXY_BIND'):  # noqa: S104
+            if bind in ('0.0.0.0', '127.0.0.1', '::') or os.environ.get('COGNITRIX_SANDBOX_PROXY_BIND'):  # noqa: S104
                 raise
             # The gateway isn't an address here (the engine runs in a
             # container itself): listen everywhere; the password still guards it.

@@ -7,6 +7,11 @@ accessibility bus. Every request except /health needs the container's token
 (``Authorization: Bearer <COGNITRIX_SANDBOX_TOKEN>``):
 
     GET    /health
+    POST   /exec                          run a short shell script as this computer's user: {script, input?}
+                                          -> {code, stdout, stderr} (the engine's snapshots and key proxy
+                                          use these where Docker can't reach in, e.g. on Fly)
+    POST   /exec/out                      run {script}; the answer body is its output (X-Exit-Code header)
+    POST   /exec/in                       run the script in X-Exec-Script (base64) with the body as input
     GET    /activity                      seconds since the last request, and whether work is running
                                           (the engine stops an idle computer; this call doesn't count)
     GET    /desktops                      list desktops
@@ -383,6 +388,9 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
             if parts[:1] == ['work']:
                 self._work(method, parts)
                 return
+            if parts[:1] == ['exec'] and method == 'POST':
+                self._exec(parts[1:2])
+                return
             try:
                 if parts == ['desktops'] and method == 'GET':
                     self._reply(200, {'ok': True, 'desktops': [d.info() for d in sup.desktops.values()]})
@@ -409,6 +417,75 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
                 self._reply(409, {'ok': False, 'error': 'limit', 'message': str(exc)})
             except OSError as exc:
                 self._reply(502, {'ok': False, 'error': 'worker_unreachable', 'message': str(exc)})
+
+        def _exec(self, kind: list[str]) -> None:
+            import base64
+            import tempfile
+
+            from cognitrix.computer.sandbox.workspace import child_env
+
+            env = child_env()
+            if not kind:  # short: everything in one JSON answer
+                body = self._body()
+                script = str(body.get('script') or '')
+                data = base64.b64decode(body['input']) if body.get('input') else b''
+                try:
+                    got = subprocess.run(['sh', '-c', script], input=data, capture_output=True,  # noqa: S603, S607
+                                         env=env, cwd=env['HOME'], timeout=float(body.get('timeout') or 300))
+                except subprocess.TimeoutExpired:
+                    self._reply(200, {'ok': True, 'code': 124, 'stdout': '', 'stderr': 'timed out'})
+                    return
+                self._reply(200, {'ok': True, 'code': got.returncode,
+                                  'stdout': got.stdout[-1_000_000:].decode('utf-8', 'replace'),
+                                  'stderr': got.stderr[-4000:].decode('utf-8', 'replace')})
+                return
+            if kind == ['out']:  # the output can be big (a snapshot): via a file, then streamed
+                script = str(self._body().get('script') or '')
+                with tempfile.TemporaryFile(dir=STATE) as out, tempfile.TemporaryFile(dir=STATE) as err:
+                    code = subprocess.run(['sh', '-c', script], stdout=out, stderr=err,  # noqa: S603, S607
+                                          env=env, cwd=env['HOME'], timeout=3600).returncode
+                    size = out.tell()
+                    err.seek(max(0, err.tell() - 2000))
+                    tail = base64.b64encode(err.read()).decode()
+                    out.seek(0)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/octet-stream')
+                    self.send_header('Content-Length', str(size))
+                    self.send_header('X-Exit-Code', str(code))
+                    self.send_header('X-Stderr', tail)
+                    self.end_headers()
+                    shutil.copyfileobj(out, self.wfile, 1 << 20)
+                return
+            if kind == ['in']:  # the input can be big: streamed into the script
+                self.close_connection = True  # the body may not all be read
+                script = base64.b64decode(self.headers.get('X-Exec-Script', '')).decode()
+                length = int(self.headers.get('Content-Length') or 0)
+                proc = subprocess.Popen(['sh', '-c', script], stdin=subprocess.PIPE,  # noqa: S603, S607
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env, cwd=env['HOME'])
+                err: list[bytes] = []
+                reader = threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)
+                reader.start()
+                try:
+                    left = length
+                    while left > 0:
+                        chunk = self.rfile.read(min(left, 1 << 20))
+                        if not chunk:
+                            break
+                        left -= len(chunk)
+                        proc.stdin.write(chunk)
+                except BrokenPipeError:
+                    pass
+                finally:
+                    try:
+                        proc.stdin.close()
+                    except OSError:
+                        pass
+                code = proc.wait(timeout=3600)
+                reader.join(timeout=10)
+                self._reply(200, {'ok': True, 'code': code,
+                                  'stderr': (err[0] if err else b'')[-4000:].decode('utf-8', 'replace')})
+                return
+            self._reply(404, {'ok': False, 'error': 'not_found'})
 
         def _work(self, method: str, parts: list[str]) -> None:
             from urllib.parse import parse_qs, unquote, urlsplit

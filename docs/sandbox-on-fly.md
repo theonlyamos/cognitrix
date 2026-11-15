@@ -82,11 +82,25 @@ Two ways to roll out a new image:
 - With `:latest`, Reset (or deleting a machine in the Fly dashboard) makes a
   fresh machine on the newest image; the volume is kept unless you Reset.
 
-## Not on Fly yet
+## Hidden keys and snapshots
 
-Hidden keys (the key proxy) and computer snapshots need local Docker, so a
-computer hosted on Fly says they aren't available. To pass keys into Fly
-computers directly, set `COGNITRIX_SANDBOX_HIDE_KEYS=0` on the engine.
+Both work on Fly too. There's no `docker exec` into a Fly Machine, so the
+engine runs the few scripts they need (unpacking or packing the home folder,
+installing the key proxy's certificate) through the machine's own API, as
+its unprivileged `agent` user. Computers on an image older than this change
+say "update it" instead; press Update in the Computer panel.
+
+- **Hidden keys.** The key proxy runs inside the engine and listens on
+  `::` (all IPv6 addresses), so machines reach it over the private network
+  at the engine's `FLY_PRIVATE_IP` (set by Fly). Each request still needs
+  that person's own proxy password, which is also why the proxy never
+  answers the public internet: the `cognitrix` app's `fly.toml` doesn't
+  expose its port. Set `COGNITRIX_SANDBOX_PROXY_BIND` / `_HOST` to change
+  where it listens or the address the computers use.
+- **Snapshots** are kept on the engine (its data volume), like on Docker.
+  Restoring the whole computer closes its desktops, empties the home folder,
+  unpacks the snapshot, then stops the machine; it wakes on the next request
+  with the restored files.
 
 ## Cost
 

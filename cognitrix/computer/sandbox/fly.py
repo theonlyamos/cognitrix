@@ -36,6 +36,7 @@ See docs/sandbox-on-fly.md for the one-time setup.
 """
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import secrets
@@ -293,6 +294,7 @@ class FlyManager(SandboxManager):
         if box is None or box.token != token or box.machine_id != machine['id'] or host not in box.api:
             box = Sandbox(name, token, SERVICE_PORT, VIEWER_PORT, host=host)
             box.machine_id = machine['id']
+            box.container_id = machine['id']
             self._boxes[name] = box
         box.image_id = str((machine.get('config') or {}).get('image') or '')
         return box
@@ -412,15 +414,119 @@ class FlyManager(SandboxManager):
     def check_for_update(self, force: bool = False) -> bool:
         return False
 
-    # -- Docker-only features ------------------------------------------------------
-    # Hidden keys (the key proxy) and snapshots work through `docker exec` and
-    # an engine-local proxy, which a Fly Machine can't use yet.
+    # -- running scripts in the computer (snapshots, the key proxy) ------------
+    # There's no `docker exec` into a Fly Machine, so these go through the
+    # supervisor's /exec routes (as the computer's own unprivileged user).
     def _docker(self, *args: str, check: bool = True, timeout: float = 120, input: str | None = None):
-        raise Unsupported("That isn't available yet for agent computers hosted on Fly (it needs local Docker).")
+        raise Unsupported("That needs local Docker, and this server's agent computers run on Fly.")
 
-    def key_proxy_env(self, user_id: Any) -> dict[str, str]:
-        raise Unsupported("Hidden keys aren't available yet for agent computers hosted on Fly. Set "
-                          'COGNITRIX_SANDBOX_HIDE_KEYS=0 on the server to pass keys in directly.')
+    @staticmethod
+    def _exec_answer(resp: httpx.Response) -> None:
+        if resp.status_code == 404:
+            raise Unsupported("The agents' computer is on an older image: update it (Computer panel, Update) "
+                              'and try again.')
+        if resp.status_code != 200:
+            raise DriverError(f"The agent's computer answered {resp.status_code}.")
+
+    def exec_script(self, box: Sandbox, script: str, input: bytes | None = None,
+                    timeout: float = 120) -> tuple[int, str, str]:
+        body: dict[str, Any] = {'script': script, 'timeout': timeout}
+        if input is not None:
+            body['input'] = base64.b64encode(input).decode()
+        try:
+            resp = box._client.post(box.api + '/exec', json=body, timeout=timeout + 30)
+        except httpx.TimeoutException:
+            raise TimeoutError('It took too long.') from None
+        except httpx.HTTPError as exc:
+            raise DriverError(f"The agent's computer is not responding ({type(exc).__name__}).") from None
+        self._exec_answer(resp)
+        out = resp.json()
+        return int(out.get('code', 1)), str(out.get('stdout') or ''), str(out.get('stderr') or '')
+
+    def exec_out(self, box: Sandbox, script: str, out: Any, timeout: float = 3600) -> tuple[int, str]:
+        try:
+            with box._client.stream('POST', box.api + '/exec/out', json={'script': script},
+                                    timeout=httpx.Timeout(timeout, connect=30)) as resp:
+                if resp.status_code != 200:
+                    resp.read()
+                self._exec_answer(resp)
+                for chunk in resp.iter_bytes(1 << 20):
+                    out.write(chunk)
+                code = int(resp.headers.get('X-Exit-Code', '1'))
+                err = base64.b64decode(resp.headers.get('X-Stderr', '')).decode('utf-8', 'replace')
+        except httpx.TimeoutException:
+            raise TimeoutError('It took too long.') from None
+        except httpx.HTTPError as exc:
+            raise DriverError(f"The agent's computer stopped answering ({type(exc).__name__}).") from None
+        return code, err
+
+    def exec_in(self, box: Sandbox, script: str, source: Any, timeout: float = 3600) -> tuple[int, str]:
+        start = source.tell()
+        size = source.seek(0, os.SEEK_END) - start
+        source.seek(start)
+
+        def chunks():
+            while True:
+                chunk = source.read(1 << 20)
+                if not chunk:
+                    return
+                yield chunk
+
+        headers = {'X-Exec-Script': base64.b64encode(script.encode()).decode(),
+                   'Content-Length': str(size), 'Content-Type': 'application/octet-stream'}
+        try:
+            resp = box._client.post(box.api + '/exec/in', content=chunks(), headers=headers,
+                                    timeout=httpx.Timeout(timeout, connect=30))
+        except httpx.TimeoutException:
+            raise TimeoutError('It took too long.') from None
+        except httpx.HTTPError as exc:
+            raise DriverError(f"The agent's computer stopped answering ({type(exc).__name__}).") from None
+        self._exec_answer(resp)
+        out = resp.json()
+        return int(out.get('code', 1)), str(out.get('stderr') or '')
+
+    def replace_home(self, user_id: Any, source: Any) -> None:
+        """Close every desktop, then empty the home folder and unpack the
+        snapshot in place; the machine is stopped after, so nothing that was
+        running keeps old files open. The next request wakes it."""
+        box = self.sandbox(user_id)
+        for desktop in box.desktops():
+            if desktop.get('name'):
+                try:
+                    box.request('DELETE', f"/desktops/{desktop['name']}", timeout=30)
+                except DriverError:
+                    logger.info("Couldn't close desktop %s before the restore", desktop['name'], exc_info=True)
+        code, err = self.exec_in(box, 'cd /home/agent && find . -mindepth 1 -delete && '
+                                      'tar -xzf - --no-same-owner', source)
+        if code != 0:
+            raise DriverError(f"Couldn't restore the snapshot: {err.strip()[-300:]}")
+        machine = self._find(user_id)
+        if machine is not None and machine.get('state') == 'started':
+            api = self._need_api()
+            api.stop(machine['id'])
+            try:
+                api.wait(machine['id'], 'stopped', 60)
+            except Exception:
+                logger.info('Agent computer %s took a while to stop after the restore', machine['id'], exc_info=True)
+        self._boxes.pop(self.machine_name(user_id), None)
+
+    # -- keys the agent never sees ---------------------------------------------
+    def _proxy_addresses(self) -> tuple[str, str]:
+        """The key proxy runs in the engine. Machines reach the engine over
+        Fly's private network, so it listens on IPv6 (every proxied request
+        still needs this person's own proxy password)."""
+        if self._proxy_where is None:
+            bind = os.environ.get('COGNITRIX_SANDBOX_PROXY_BIND', '').strip() or '::'
+            host = os.environ.get('COGNITRIX_SANDBOX_PROXY_HOST', '').strip()
+            if not host:
+                private = os.environ.get('FLY_PRIVATE_IP', '').strip()
+                app = os.environ.get('FLY_APP_NAME', '').strip()
+                host = f'[{private}]' if private else (f'{app}.internal' if app else '')
+            if not host:
+                raise Unsupported("Hidden keys on Fly need the server to run on Fly (or set "
+                                  'COGNITRIX_SANDBOX_PROXY_HOST to an address the computers can reach).')
+            self._proxy_where = (bind, host)
+        return self._proxy_where
 
     # -- idle shutdown ------------------------------------------------------------
     def _reap_loop(self) -> None:
