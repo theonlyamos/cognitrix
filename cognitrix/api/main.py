@@ -90,6 +90,13 @@ async def lifespan(app: FastAPI):
             import logging
             logging.getLogger('cognitrix.log').exception('Could not load skills at startup')
         try:
+            # Swarms that were running when the engine stopped carry on.
+            from ..swarms.service import recover as recover_swarms
+            await recover_swarms()
+        except Exception:
+            import logging
+            logging.getLogger('cognitrix.log').exception('Could not pick up running swarms')
+        try:
             from ..agents.templates import upgrade_default_assistants
             await upgrade_default_assistants()
         except Exception:

@@ -171,6 +171,14 @@ async def stop_all(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
     agent_id = str(agent.id)
     me = _me(ctx)
 
+    stopped_swarms = 0
+    try:
+        from cognitrix.swarms import service as swarm_service
+
+        stopped_swarms = await swarm_service.stop_all(me, agent_id)
+    except Exception:
+        logger.exception('Stop all: could not stop swarms')
+
     stopped_chats = 0
     own = {run.session_id for run in chat_runs.active_runs(me, agent_id)}
     for run in chat_runs.active_runs(me):
@@ -204,7 +212,8 @@ async def stop_all(agent_id: str, ctx: AuthContext = Depends(get_auth_context)):
                 cancelled_checks += 1
         except Exception:
             logger.exception('Stop all: could not stop task %s', task.id)
-    return {'chats': stopped_chats, 'task_runs': stopped_runs, 'checks': cancelled_checks}
+    return {'chats': stopped_chats, 'task_runs': stopped_runs, 'checks': cancelled_checks,
+            'swarms': stopped_swarms}
 
 
 # --- offers ---------------------------------------------------------------------

@@ -155,12 +155,14 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
                       agent_refs: list[str] | None = None, team_ref: str | None = None,
                       start_now: bool = False, schedule_at: str | None = None,
                       schedule_interval_seconds: int | None = None, schedule_cron: str | None = None,
-                      schedule_enabled: bool | None = None) -> ToolOutcome:
-    """Create a task, optionally assign it, schedule it, or queue it once now."""
+                      schedule_enabled: bool | None = None, swarm: bool = False) -> ToolOutcome:
+    """Create a task, optionally assign it, schedule it, or queue it once now. Set swarm to true for a
+    big job that splits into many parallel parts: each step may then fan out to workers (Spawn Workers)."""
     from cognitrix.tasks.base import Task
     from cognitrix.tasks.scheduler import compute_next_run, normalize_schedule_at, validate_schedule
     _require_scope('write')
-    if not isinstance(start_now, bool) or (schedule_enabled is not None and not isinstance(schedule_enabled, bool)):
+    if (not isinstance(start_now, bool) or not isinstance(swarm, bool)
+            or (schedule_enabled is not None and not isinstance(schedule_enabled, bool))):
         return ToolOutcome.failure('invalid_task', 'Boolean task options must be true or false')
     if schedule_interval_seconds is not None and not isinstance(schedule_interval_seconds, int):
         return ToolOutcome.failure('invalid_schedule', 'schedule_interval_seconds must be an integer')
@@ -191,7 +193,7 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
                     owner_id=current_execution_context().user_id,
                     assigned_agents=agent_ids, team_id=str(team.id) if team else None, autostart=False,
                     schedule_at=schedule_at, schedule_interval=schedule_interval_seconds,
-                    schedule_cron=schedule_cron, schedule_enabled=enabled)
+                    schedule_cron=schedule_cron, schedule_enabled=enabled, swarm=swarm)
         if enabled:
             authority = current_execution_context()
             task.schedule_requested_by = authority.user_id
@@ -276,13 +278,15 @@ def _clear_wake(task: Any) -> None:
 async def update_task(task_ref: str, title: str | None = None, description: str | None = None,
                       steps: list[str] | None = None, schedule_at: str | None = None,
                       schedule_interval_seconds: int | None = None, schedule_cron: str | None = None,
-                      schedule_enabled: bool | None = None, clear_schedule: bool = False) -> ToolOutcome:
-    """Change an existing task's title, description, steps or schedule. Only the fields you pass change.
+                      schedule_enabled: bool | None = None, clear_schedule: bool = False,
+                      swarm: bool | None = None) -> ToolOutcome:
+    """Change an existing task's title, description, steps, schedule or swarm mode. Only the fields you pass change.
     steps replaces all steps. Setting one of schedule_at / schedule_interval_seconds / schedule_cron replaces
     the schedule; schedule_enabled alone pauses or resumes it; clear_schedule removes it."""
     from cognitrix.tasks.scheduler import compute_next_run, normalize_schedule_at, validate_schedule
     _require_scope('write')
-    if not isinstance(clear_schedule, bool) or (schedule_enabled is not None and not isinstance(schedule_enabled, bool)):
+    if (not isinstance(clear_schedule, bool) or (swarm is not None and not isinstance(swarm, bool))
+            or (schedule_enabled is not None and not isinstance(schedule_enabled, bool))):
         return ToolOutcome.failure('invalid_task', 'Boolean task options must be true or false')
     if schedule_interval_seconds is not None and (
             isinstance(schedule_interval_seconds, bool) or not isinstance(schedule_interval_seconds, int)):
@@ -295,7 +299,7 @@ async def update_task(task_ref: str, title: str | None = None, description: str 
     if clear_schedule and (new_type or schedule_enabled):
         return ToolOutcome.failure('invalid_schedule', 'clear_schedule cannot be combined with a new schedule')
     if not (title is not None or description is not None or steps is not None or new_type
-            or schedule_enabled is not None or clear_schedule):
+            or schedule_enabled is not None or clear_schedule or swarm is not None):
         return ToolOutcome.failure('nothing_to_update', 'Pass at least one field to change')
     try:
         task = await _task(task_ref)
@@ -306,6 +310,8 @@ async def update_task(task_ref: str, title: str | None = None, description: str 
             task.description = description.strip()
         if steps is not None:
             task.step_instructions = _steps(steps)
+        if swarm is not None:
+            task.swarm = swarm
 
         schedule_touched = new_type or clear_schedule or schedule_enabled is not None
         if clear_schedule:

@@ -26,6 +26,8 @@ import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/Vo
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
 import ComposerMenu from '@/components/ComposerMenu';
+import { SwarmCard } from '@/components/SwarmCard';
+import { useChatSwarms } from '@/lib/swarms';
 import ChatModelPicker, { type ChatModel } from '@/components/ChatModelPicker';
 import { getChatFolders, setChatFolders, type WorkFolder } from '@/lib/folders';
 import { getSendKey, isSendKey } from '@/lib/preferences';
@@ -270,6 +272,10 @@ export default function Home() {
   const [bypass, setBypass] = useState(() => localStorage.getItem('bypassPermissions') === '1');
   const bypassRef = useRef(bypass);
   bypassRef.current = bypass;
+  // Swarm: the agent splits the next messages' jobs across parallel workers.
+  const [swarmOn, setSwarmOn] = useState(false);
+  const swarmRef = useRef(swarmOn);
+  swarmRef.current = swarmOn;
   // Reasoning level for this chat; '' keeps the agent's own setting.
   const [reasoning, setReasoning] = useState(() => {
     try { return localStorage.getItem('chatReasoningEffort') ?? ''; } catch { return ''; }
@@ -538,6 +544,7 @@ export default function Home() {
   waitingRef.current = waiting;
 
   const busy = waiting || streaming || question !== null;
+  const chatSwarms = useChatSwarms(incognito ? null : activeSessionId, busy);
   const busyRef = useRef(busy);
 
   // What this chat made (pages, documents), for its side panel.
@@ -1357,6 +1364,7 @@ export default function Home() {
             ? { edit_source_image_index: editSourceImageIndex }
             : {}),
           ...(bypassRef.current ? { bypass_permissions: true } : {}),
+          ...(swarmRef.current && executionMode === 'chat' && !incognitoRef.current ? { swarm: true } : {}),
           ...(reasoningRef.current ? { reasoning_effort: reasoningRef.current } : {}),
           ...(chatModelRef.current ? { model: chatModelRef.current } : {}),
           ...(!activeRef.current && draftFoldersRef.current ? { folders: draftFoldersRef.current } : {}),
@@ -1577,6 +1585,13 @@ export default function Home() {
     setPicking(false);
     localStorage.setItem(sessionKey(chat.agent_id), chat.id);
     switchAgent(chat.agent_id);
+  };
+
+  // A swarm worker's chat is not in the chat list; it opens from the Swarm card.
+  const openWorkerChat = (chatId: string) => {
+    const worker = chatSwarms.swarms.flatMap((s) => s.workers).find((w) => w.chat_id === chatId);
+    if (!isWideScreen()) setSidebar(false);
+    openChat({ id: chatId, kind: 'agent', agent_id: worker?.agent_id || agentId } as ChatSummary);
   };
 
   // /home?chat=<id> (from an Inbox alert) opens that chat once the list has it.
@@ -1907,6 +1922,7 @@ export default function Home() {
               : "Incognito: the chat isn't listed, doesn't use or change memory, and is deleted when you leave it."}
             reasoning={reasoning}
             onReasoning={changeReasoning}
+            swarm={incognito ? undefined : { on: swarmOn, onToggle: () => setSwarmOn((v) => !v) }}
             sandbox={sandboxOn || runInSandbox ? {
               on: runInSandbox,
               available: sandboxOn,
@@ -2108,6 +2124,18 @@ export default function Home() {
                 </div>
               )}
 
+              {chatSwarms.swarms.filter((s, i) => s.status === 'running' || i === 0).reverse().map((swarm) => (
+                <div key={swarm.id} className="mx-auto w-full max-w-3xl px-4 py-2 sm:px-6">
+                  <SwarmCard
+                    swarm={swarm}
+                    onStop={chatSwarms.stop}
+                    onStopWorker={chatSwarms.stopWorker}
+                    onMerge={chatSwarms.merge}
+                    onOpenChat={openWorkerChat}
+                  />
+                </div>
+              ))}
+
               <WaitingMessages
                 messages={waitingMsgs}
                 onSendNow={() => void stop()}
@@ -2226,6 +2254,11 @@ export default function Home() {
             images={chatImages}
             files={chatItems?.files ?? []}
             activity={chatActivity}
+            swarms={chatSwarms.swarms}
+            onStopSwarm={chatSwarms.stop}
+            onStopWorker={chatSwarms.stopWorker}
+            onMergeWorker={chatSwarms.merge}
+            onOpenChat={openWorkerChat}
             busy={busy}
             folders={shownFolders}
             onChangeFolders={changeFolders}

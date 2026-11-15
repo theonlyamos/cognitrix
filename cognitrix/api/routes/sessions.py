@@ -167,6 +167,8 @@ def _started_by(session: Session) -> dict | None:
         'agent_id': str(started_by.get('agent_id')),
         'agent_name': str(started_by.get('agent_name') or ''),
         'session_id': started_by.get('session_id'),
+        # A swarm worker's chat: opened from the Swarm card, not listed with the chats.
+        **({'swarm_id': str(started_by['swarm_id'])} if started_by.get('swarm_id') else {}),
     }
 
 
@@ -437,6 +439,9 @@ async def all_chats(ctx: AuthContext = Depends(get_auth_context)):
         # Access comes from the live binding, not from the index row.
         binding = bindings.get(row.session_id)
         if binding is None or not ctx.agent_allowed(binding.agent_id):
+            continue
+        if (row.started_by or {}).get('swarm_id'):
+            # A swarm can have dozens of workers; their chats open from its card.
             continue
         chats.append({
             'id': row.session_id,

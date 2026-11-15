@@ -69,7 +69,9 @@ def depth_of(session: Any) -> int:
 
 
 def running_agent_chats(user_key: str) -> int:
-    return sum(1 for run in chat_runs.active_runs(user_key) if run.started_by_agent)
+    # Swarm workers have their own limits (cognitrix/swarms).
+    return sum(1 for run in chat_runs.active_runs(user_key)
+               if run.started_by_agent and not run.swarm_id)
 
 
 def is_running(user_key: str, session_id: str) -> bool:
@@ -107,21 +109,27 @@ def run_in_background(
     text: str,
     *,
     on_done: Callable[[str, str], Awaitable[None]] | None = None,
+    setup: Callable[[], None] | None = None,
+    tool_context: Any = None,
+    swarm_id: str = '',
 ) -> chat_runs.ChatRun:
     """Run one turn of ``session`` as a background task the page can follow.
 
     ``on_done(status, reply)`` runs after the turn ends, with status
-    complete / stopped / error.
+    complete / stopped / error. ``setup`` runs first inside the turn's own
+    context (to set context variables for it). ``tool_context`` replaces the
+    turn's default authority.
     """
     run = chat_runs.start_run(
         user_key, str(agent.id), str(session.id), prompt=text,
         history_len=len(getattr(session, 'chat', None) or []),
     )
     run.started_by_agent = True
+    run.swarm_id = swarm_id
     # A fresh context: the new chat must not inherit the starting turn's
     # approval prompt, question channel or tool authority.
     task = asyncio.get_running_loop().create_task(
-        _turn(user_key, agent, session, text, run, on_done),
+        _turn(user_key, agent, session, text, run, on_done, setup, tool_context),
         context=contextvars.Context(),
     )
     _TASKS.add(task)
@@ -137,6 +145,8 @@ async def _turn(
     text: str,
     run: chat_runs.ChatRun,
     on_done: Callable[[str, str], Awaitable[None]] | None,
+    setup: Callable[[], None] | None = None,
+    tool_context: Any = None,
 ) -> None:
     from cognitrix.api.routes.agents import CHAT_TIMEOUT
     from cognitrix.questions.broker import QuestionTurnContext, question_turn_ctx
@@ -170,15 +180,18 @@ async def _turn(
     run.steerable = True
     run.follows_up = True
     chat_runs.current_run.set(run)  # this task has its own context
+    timeout = CHAT_TIMEOUT
     try:
+        if setup is not None:
+            timeout = setup() or CHAT_TIMEOUT
         await asyncio.wait_for(
             session(text, agent, interface='web', stream=True, output=output,
                     wsquery={'type': 'generate', 'action': 'chat_message'},
-                    tool_context=ToolExecutionContext(
+                    tool_context=tool_context or ToolExecutionContext(
                         session_id=sid, user_id=user_key, agent_id=str(agent.id),
                         host_process_mode=signed_in_host_process_mode(),
                     )),
-            timeout=CHAT_TIMEOUT,
+            timeout=timeout,
         )
     except asyncio.CancelledError:
         terminal = {'type': 'turn_stopped', 'content': '', 'session_id': sid}
@@ -199,7 +212,8 @@ async def _turn(
         # Arrived too late for this turn: they start the next one, which
         # then reports back in this one's place.
         follow_up = '\n\n'.join(str(m.get('content') or '') for m in run.unsent)
-        run_in_background(user_key, agent, session, follow_up, on_done=on_done)
+        run_in_background(user_key, agent, session, follow_up, on_done=on_done, setup=setup,
+                          tool_context=tool_context, swarm_id=run.swarm_id)
         return
     if on_done is not None:
         try:
@@ -373,3 +387,55 @@ def _deliver(user_key: str, agent: Any, parent_agent: Any, parent: Any, session:
                           parent_reply[:300] or 'Open the chat to see the reply.')
 
     run_in_background(user_key, parent_agent, parent, text, on_done=told)
+
+
+async def deliver_report(user_key: str, parent_agent_id: str, parent_id: str, text: str, *,
+                         sender: str, wait_seconds: float = REPORT_WAIT_SECONDS) -> str:
+    """Hand ``text`` (which must start with REPORT_PREFIX) to a chat as news
+    from agents it started: steered into its running turn when it has one,
+    else as a new turn once the chat is free.
+
+    Returns 'steered', 'started', 'paused' (agents replied too many times in
+    a row; the person was alerted instead) or 'dropped'.
+    """
+    from cognitrix.agents.access import find_visible_agent
+    from cognitrix.sessions.base import Session
+
+    parent_agent = await find_visible_agent(user_key, agent_id=parent_agent_id)
+    if parent_agent is None:
+        return 'dropped'
+    async with _report_lock(user_key, parent_id):
+        run = chat_runs.get_run(user_key, parent_id)
+        if run is not None and run.running and run.steerable:
+            parent = await Session.get(parent_id)
+            if parent is not None and _reports_in_a_row(parent, run) >= MAX_EXCHANGES:
+                await _alert_once(user_key, parent_id, f'{sender} reported to {parent_agent.name}',
+                                  'Agents paused after several replies in a row. Open the chat to carry on.')
+                return 'paused'
+            try:
+                if run.steer(text, source='agent') is not None:
+                    return 'steered'
+            except Exception:
+                logger.debug('Could not steer a report into chat %s', parent_id, exc_info=True)
+        waited = 0.0
+        while is_running(user_key, parent_id) and waited < wait_seconds:
+            await asyncio.sleep(REPORT_POLL_SECONDS)
+            waited += REPORT_POLL_SECONDS
+        if is_running(user_key, parent_id):
+            return 'dropped'
+        parent = await Session.get(parent_id)
+        if parent is None or str(parent.agent_id or '') != str(parent_agent_id) or str(parent.user_id or '') != user_key:
+            return 'dropped'
+        if reports_since_person(parent) >= MAX_EXCHANGES:
+            await _alert_once(user_key, parent_id, f'{sender} reported to {parent_agent.name}',
+                              'Agents paused after several replies in a row. Open the chat to carry on.')
+            return 'paused'
+
+        async def told(parent_status: str, parent_reply: str) -> None:
+            if parent_status != 'complete':
+                return
+            await _alert_once(user_key, parent_id, f'{parent_agent.name} heard back from {sender}',
+                              parent_reply[:300] or 'Open the chat to see the reply.')
+
+        run_in_background(user_key, parent_agent, parent, text, on_done=told)
+        return 'started'

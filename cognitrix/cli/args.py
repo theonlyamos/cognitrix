@@ -56,6 +56,20 @@ def get_arguments():
                               help='The new password. Leave out to be asked for it.')
     reset_parser.set_defaults(func=reset_password)
 
+    # Swarm evals: a set of jobs run with and without workers, scored by a judge model.
+    from cognitrix.swarms.evals import command as swarm_evals
+
+    evals_parser = subparsers.add_parser(
+        'swarm-evals', help="Measure swarms on a set of jobs (makes real model calls)")
+    evals_parser.add_argument('email', type=str, help='Email address of the account to run as')
+    evals_parser.add_argument('--agent', type=str, default='Assistant', help='The agent that leads (default Assistant)')
+    evals_parser.add_argument('--jobs', type=str, default='all',
+                              help='A number, or job ids or kinds (list, parts, best_of, small), comma separated')
+    evals_parser.add_argument('--baseline', action='store_true', help='Also run each job without workers')
+    evals_parser.add_argument('--timeout', type=float, default=1200, help='Seconds allowed per job')
+    evals_parser.add_argument('--out', type=str, default='', help='Save the full results to this JSON file')
+    evals_parser.set_defaults(func=swarm_evals)
+
     # Main arguments
     parser.add_argument('--name', type=str, default='Assistant', help='Set name of agent')
     parser.add_argument('--provider', default='google', help='LLM provider. Config from env: AI_PROVIDER, *_BASE_URL, *_API_KEY, *_MODEL')

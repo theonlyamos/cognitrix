@@ -121,6 +121,23 @@ def _stopped_tool_messages(tool_calls: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def _with_folder_prompt(prompt, folders, sandbox: tuple | None = None) -> Any:
+    """The turn's additions to the system message: working folders, and the
+    Swarm switch when the person sent this message with it on."""
+    prompt = _with_folder_block(prompt, folders, sandbox)
+    try:
+        from cognitrix.tools.swarm import SWARM_MODE_NOTE, swarm_requested
+
+        if not swarm_requested.get() or not isinstance(prompt, list):
+            return prompt
+    except Exception:
+        return prompt
+    if prompt and isinstance(prompt[0], dict) and prompt[0].get('role') == 'system' \
+            and isinstance(prompt[0].get('content'), str):
+        return [{**prompt[0], 'content': prompt[0]['content'] + '\n\n' + SWARM_MODE_NOTE}, *prompt[1:]]
+    return [{'role': 'system', 'content': SWARM_MODE_NOTE}, *prompt]
+
+
+def _with_folder_block(prompt, folders, sandbox: tuple | None = None) -> Any:
     """Add the working-folders block to the system message. With Run in
     sandbox (``sandbox`` is (agent id, user id)), the block says the shell and
     files are in the sandbox and the folders can be copied in."""
@@ -647,6 +664,32 @@ class Session(Model):
                         agent = agent.model_copy(update={'tools': [*agent.tools, theme_tool]})
             except Exception:
                 logger.debug('Set Theme tool unavailable', exc_info=True)
+
+        # Swarms (cognitrix/swarms): a chat's agent can start workers with
+        # Spawn Workers and steer them with Swarm; a worker's own chat gets
+        # Swarm Team instead. Added per turn, not stored on the agent.
+        if (interface in ('web', 'ws') and owner and not self.task_id and not self.group_chat
+                and not getattr(self, 'incognito', False) and getattr(agent.llm, 'supports_tool_use', True)):
+            try:
+                from cognitrix.tools.base import ToolManager
+                from cognitrix.tools.swarm import SWARM_TOOL_CATEGORY, SWARM_WORKER_TOOL_CATEGORY
+
+                category = None
+                if (self.started_by or {}).get('swarm_id'):
+                    category = SWARM_WORKER_TOOL_CATEGORY
+                elif getattr(agent, 'can_create_sub_agents', True) is not False:
+                    from cognitrix.swarms.service import get_settings as swarm_settings
+
+                    if (await swarm_settings(str(owner))).enabled:
+                        category = SWARM_TOOL_CATEGORY
+                if category:
+                    names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
+                    extra = [t for t in ToolManager.get_tools_by_category(category)
+                             if t.name.lower() not in names]
+                    if extra:
+                        agent = agent.model_copy(update={'tools': [*agent.tools, *extra]})
+            except Exception:
+                logger.debug('Swarm tools unavailable', exc_info=True)
 
         # Propose Skill lets an agent suggest saving how it did a job; the
         # person reviews the draft before it is used (skills/drafts.py).

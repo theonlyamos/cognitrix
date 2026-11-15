@@ -676,7 +676,7 @@ def build_runtime_snapshot(
         chosen = {tool.name for tool in tools}
         tools = [*tools, *(
             tool for tool in (agent.tools or [])
-            if tool.category == "automation" and tool.name not in chosen
+            if tool.category in ("automation", "swarm") and tool.name not in chosen
         )]
     llm = agent.llm
     return AgentRuntimeSnapshot(

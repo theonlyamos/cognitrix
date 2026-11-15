@@ -606,6 +606,7 @@ class SSEManager:
         }
         run: chat_runs.ChatRun | None = None
         model_token = None
+        swarm_token = None
 
         async def emit(payload):
             current_sid = session.id if session is not None else requested_sid
@@ -789,6 +790,12 @@ class SSEManager:
                     self.agent.llm.id,
                     build_turn_llm(self.agent.llm, picked_model['provider'], picked_model['model']),
                 ))
+            if action.get('swarm'):
+                # The Swarm switch in the composer: the agent is told to split
+                # the job across workers and may start them without asking.
+                from cognitrix.tools.swarm import swarm_requested
+
+                swarm_token = swarm_requested.set(True)
             if execution_mode == 'task':
                 await emit({
                     'type': 'status',
@@ -913,6 +920,10 @@ class SSEManager:
                 from cognitrix.providers.base import turn_llm_override
 
                 turn_llm_override.reset(model_token)
+            if swarm_token is not None:
+                from cognitrix.tools.swarm import swarm_requested
+
+                swarm_requested.reset(swarm_token)
             cleanup_errors: list[BaseException] = []
             adoption_error: BaseException | None = None
             if adoption_task is not None:

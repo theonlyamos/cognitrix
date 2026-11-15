@@ -93,9 +93,35 @@ MAX_PLAN_STEPS = 10
 _automation_brief: ContextVar[str] = ContextVar('task_automation_brief', default='')
 
 
+# Set for the run of a swarm task (Task.swarm): tells step agents they may
+# split a step across parallel workers.
+_swarm_note: ContextVar[str] = ContextVar('task_swarm_note', default='')
+
+SWARM_TASK_NOTE = (
+    'This is a swarm task. When a step splits into independent parts, or repeats the same work over a '
+    'list, call Spawn Workers once with one worker per part (or items plus a brief). It runs them at the '
+    'same time and returns one combined report, which you check and build the step result from. Do a '
+    'small step yourself.'
+)
+
+
 def _with_automation_brief(text: str) -> str:
-    brief = _automation_brief.get()
+    brief = '\n\n'.join(part for part in (_automation_brief.get(), _swarm_note.get()) if part)
     return f"{text}\n\n{brief}" if brief else text
+
+
+def _add_swarm_tools(roster: Sequence[Agent]) -> None:
+    """Give every tool-capable agent of a swarm task Spawn Workers (in memory only)."""
+    from cognitrix.tools.base import ToolManager
+
+    spawn = ToolManager.get_by_name('spawn_workers')
+    if spawn is None:
+        return
+    for agent in roster:
+        if not getattr(agent.llm, 'supports_tool_use', False):
+            continue
+        if not any(tool.name == spawn.name for tool in agent.tools or []):
+            agent.tools = [*(agent.tools or []), spawn]
 
 
 def _add_automation_tools(roster: Sequence[Agent], offers: bool = False) -> None:
@@ -1391,6 +1417,10 @@ async def run(
             # Only automation runs (scheduled, woken, webhook, or with notes
             # or triggers) get the automation tools automatically.
             _add_automation_tools(roster, offers=standing_offers)
+        _swarm_note.set('')
+        if getattr(task, 'swarm', False) and not getattr(task, 'standing_agent_id', None):
+            _add_swarm_tools(roster)
+            _swarm_note.set(SWARM_TASK_NOTE)
         if (
             run_rec.acl_version != 1
             or run_rec.acl_team_id != (str(task.team_id) if task.team_id else None)

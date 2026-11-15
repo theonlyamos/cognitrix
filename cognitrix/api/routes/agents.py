@@ -759,6 +759,7 @@ async def chat_endpoint(request: Request, user=Depends(get_current_user)):
                 'edit_source_image_index': data.get('edit_source_image_index'),
                 'document_ids': data.get('document_ids') or (),
                 'bypass_permissions': bool(data.get('bypass_permissions')),
+                **({'swarm': True} if data.get('swarm') else {}),
                 'reasoning_effort': normalize_reasoning_effort(data.get('reasoning_effort')),
                 **({'chat_model': chat_model} if chat_model else {}),
                 'execution_mode': execution_mode.value,

@@ -18,6 +18,9 @@ TOKEN_FIELDS = ('prompt_tokens', 'completion_tokens', 'cached_tokens', 'cache_wr
 
 _owner: ContextVar[dict[str, str] | None] = ContextVar('cognitrix_usage_owner', default=None)
 _model: ContextVar[tuple[str, str] | None] = ContextVar('cognitrix_usage_model', default=None)
+# Called with each model call's usage inside the context that set it. A swarm
+# worker's turn uses it to count its own tokens (cognitrix/swarms).
+_sink: ContextVar[Any] = ContextVar('cognitrix_usage_sink', default=None)
 _lock = asyncio.Lock()
 _pending: set[asyncio.Task] = set()
 
@@ -30,6 +33,11 @@ def set_owner(user_id: Any, agent_id: Any = None):
 
 def reset_owner(token) -> None:
     _owner.reset(token)
+
+
+def set_sink(sink) -> Any:
+    """Also hand every model call's usage in this context to ``sink(usage)``."""
+    return _sink.set(sink)
 
 
 def note_model(provider: str | None, model: str | None) -> None:
@@ -66,6 +74,12 @@ async def add(user_id: str, agent_id: str, provider: str, model: str, usage: dic
 
 def log(usage: dict | None) -> None:
     """Record one model call's usage for the current owner, without waiting."""
+    sink = _sink.get()
+    if sink is not None and usage:
+        try:
+            sink(dict(usage))
+        except Exception:
+            logger.debug('usage sink failed', exc_info=True)
     owner = _owner.get()
     if not owner or not usage:
         return
