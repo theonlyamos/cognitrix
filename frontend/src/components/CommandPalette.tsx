@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { chatHref, newChatHref } from '@/lib/chatNav';
+import { tr } from '@/lib/i18n';
 
 interface AgentLite {
   id: string;
@@ -93,24 +94,24 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
   const items = useMemo<Item[]>(() => {
     const go = (to: string) => () => navigate(to);
     const actions: Item[] = [
-      { id: 'new-chat', group: 'Actions', label: 'New chat', hint: 'Talk to your selected agent', shortcut: 'Ctrl N', run: go(newChatHref()) },
-      { id: 'run-task', group: 'Actions', label: 'Run task…', hint: 'Plan and execute with an agent or team in the background', run: go('/tasks/new') },
-      { id: 'inbox', group: 'Actions', label: 'Open inbox', hint: 'Approvals, questions and agent alerts waiting on you', run: go('/inbox') },
-      { id: 'automations', group: 'Actions', label: 'Open automations', hint: 'Scheduled, self-checking and webhook tasks', run: go('/automations') },
-      { id: 'new-agent', group: 'Actions', label: 'New agent', run: go('/agents/new') },
-      { id: 'new-team', group: 'Actions', label: 'New team', run: go('/teams/new') },
-      { id: 'notifications', group: 'Actions', label: 'Notifications', keywords: 'alerts bell', run: go('/notifications') },
-      { id: 'settings', group: 'Actions', label: 'Settings', keywords: 'engine providers keys sign out preferences', run: go('/settings') },
-      { id: 'settings-models', group: 'Actions', label: 'Settings: Models and keys', keywords: 'provider api key openai anthropic gemini groq', run: go('/settings/models') },
-      { id: 'settings-appearance', group: 'Actions', label: 'Settings: Appearance', keywords: 'theme dark light', run: go('/settings/appearance') },
-      { id: 'settings-access', group: 'Actions', label: 'Settings: Agent access', keywords: 'working folder mcp servers saved sign-ins', run: go('/settings/access') },
-      { id: 'settings-chat-apps', group: 'Actions', label: 'Settings: Chat apps', keywords: 'telegram slack', run: go('/settings/chat-apps') },
-      { id: 'api-keys', group: 'Actions', label: 'API keys', keywords: 'tokens access', run: go('/api-keys') },
+      { id: 'new-chat', group: 'Actions', label: tr('ui.commandPalette.newChat'), hint: tr('ui.commandPalette.talkToYourSelectedAgent'), shortcut: 'Ctrl N', run: go(newChatHref()) },
+      { id: 'run-task', group: 'Actions', label: tr('ui.commandPalette.runTask'), hint: tr('ui.commandPalette.planAndExecuteWithAn'), run: go('/tasks/new') },
+      { id: 'inbox', group: 'Actions', label: tr('ui.commandPalette.openInbox'), hint: tr('ui.commandPalette.approvalsQuestionsAndAgentAlerts'), run: go('/inbox') },
+      { id: 'automations', group: 'Actions', label: tr('ui.commandPalette.openAutomations'), hint: tr('ui.commandPalette.scheduledSelfCheckingAndWebhook'), run: go('/automations') },
+      { id: 'new-agent', group: 'Actions', label: tr('ui.commandPalette.newAgent'), run: go('/agents/new') },
+      { id: 'new-team', group: 'Actions', label: tr('ui.commandPalette.newTeam'), run: go('/teams/new') },
+      { id: 'notifications', group: 'Actions', label: tr('ui.commandPalette.notifications'), keywords: 'alerts bell', run: go('/notifications') },
+      { id: 'settings', group: 'Actions', label: tr('ui.commandPalette.settings'), keywords: 'engine providers keys sign out preferences', run: go('/settings') },
+      { id: 'settings-models', group: 'Actions', label: tr('ui.commandPalette.settingsModelsAndKeys'), keywords: 'provider api key openai anthropic gemini groq', run: go('/settings/models') },
+      { id: 'settings-appearance', group: 'Actions', label: tr('ui.commandPalette.settingsAppearance'), keywords: 'theme dark light', run: go('/settings/appearance') },
+      { id: 'settings-access', group: 'Actions', label: tr('ui.commandPalette.settingsAgentAccess'), keywords: 'working folder mcp servers saved sign-ins', run: go('/settings/access') },
+      { id: 'settings-chat-apps', group: 'Actions', label: tr('ui.commandPalette.settingsChatApps'), keywords: 'telegram slack', run: go('/settings/chat-apps') },
+      { id: 'api-keys', group: 'Actions', label: tr('ui.commandPalette.apiKeys'), keywords: 'tokens access', run: go('/api-keys') },
     ];
     const agentItems: Item[] = agents.map((a) => ({
       id: `agent-${a.id}`,
       group: 'Agents',
-      label: `New chat with ${a.name}`,
+      label: tr('ui.commandPalette.newChatWithName', { name: a.name }),
       hint: [a.llm?.provider, a.llm?.model].filter(Boolean).join(' · '),
       run: go(newChatHref({ kind: 'agent', id: a.id })),
     }));
@@ -123,7 +124,7 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
     }));
     const teamItems: Item[] = teams.flatMap((t) => [
       { id: `team-${t.id}`, group: 'Teams' as const, label: t.name, run: go(`/teams/${t.id}`) },
-      { id: `team-chat-${t.id}`, group: 'Teams' as const, label: `Group chat: ${t.name}`, run: go(`/teams/${t.id}/chat`) },
+      { id: `team-chat-${t.id}`, group: 'Teams' as const, label: tr('ui.commandPalette.groupChatName', { name: t.name }), run: go(`/teams/${t.id}/chat`) },
     ]);
     const byId = new Map(chats.map((c) => [c.id, c]));
     const chatItems: Item[] = chats.filter((c) => !c.archived).map((c) => ({
@@ -185,7 +186,7 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Command palette"
+        aria-label={tr('ui.commandPalette.commandPalette')}
         onMouseDown={(e) => e.stopPropagation()}
         className="mx-auto mt-[12vh] w-[660px] max-w-[calc(100vw-24px)] overflow-hidden rounded-2xl border border-line bg-panel shadow-panel"
       >
@@ -196,16 +197,16 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Search chats, agents, tasks or commands"
-            aria-label="Search chats, commands, agents and tasks"
+            placeholder={tr('ui.commandPalette.searchChatsAgentsTasksOr')}
+            aria-label={tr('ui.commandPalette.searchChatsCommandsAgentsAnd')}
             aria-controls="palette-results"
             aria-activedescendant={items[active] ? `palette-${items[active].id}` : undefined}
             className="flex-1 border-0 bg-transparent text-[17px] text-fg outline-none placeholder:text-fg-dim"
           />
           <kbd className="rounded border border-line px-1.5 py-0.5 font-mono text-[10.5px] text-fg-dim">Esc</kbd>
         </div>
-        <div ref={listRef} id="palette-results" role="listbox" aria-label="Results" className="max-h-[52vh] overflow-y-auto p-2">
-          {items.length === 0 && <p className="px-3 py-8 text-center text-[13px] text-fg-dim">No matches.</p>}
+        <div ref={listRef} id="palette-results" role="listbox" aria-label={tr('ui.commandPalette.results')} className="max-h-[52vh] overflow-y-auto p-2">
+          {items.length === 0 && <p className="px-3 py-8 text-center text-[13px] text-fg-dim">{tr('ui.commandPalette.noMatches')}</p>}
           {items.map((item, index) => {
             const header = item.group !== lastGroup ? item.group : null;
             lastGroup = item.group;
@@ -237,10 +238,10 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
           })}
         </div>
         <div className="flex gap-4 border-t border-line bg-panel-2/60 px-4 py-2.5 font-mono text-[11px] text-fg-dim">
-          <span>↑↓ navigate</span>
-          <span>Enter select</span>
+          <span>{tr('ui.commandPalette.navigate')}</span>
+          <span>{tr('ui.commandPalette.enterSelect')}</span>
           <span className="flex-1" />
-          <span>Ctrl K to toggle</span>
+          <span>{tr('ui.commandPalette.ctrlKToToggle')}</span>
         </div>
       </div>
     </div>

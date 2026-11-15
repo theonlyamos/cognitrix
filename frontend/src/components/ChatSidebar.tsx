@@ -13,19 +13,20 @@ import { AgentBadge } from '@/components/StartChat';
 import { SwarmCard } from '@/components/SwarmCard';
 import type { Swarm } from '@/lib/swarms';
 import type { AppViewSummary } from '@/lib/appViews';
+import { tr } from '@/lib/i18n';
 
 export type SidebarSection = 'swarm' | 'computer' | 'waiting' | 'artifacts' | 'apps' | 'files' | 'activity' | 'folders' | 'about';
 
 export const SIDEBAR_SECTIONS: { id: SidebarSection; label: string }[] = [
-  { id: 'swarm', label: 'Swarm' },
-  { id: 'computer', label: 'Computer' },
-  { id: 'waiting', label: 'Waiting on you' },
-  { id: 'artifacts', label: 'Artifacts' },
-  { id: 'apps', label: 'Connected apps' },
-  { id: 'files', label: 'Files' },
-  { id: 'activity', label: 'Activity' },
-  { id: 'folders', label: 'Folders' },
-  { id: 'about', label: 'About this chat' },
+  { id: 'swarm', get label() { return tr('ui.chatSidebar.swarm'); } },
+  { id: 'computer', get label() { return tr('ui.chatSidebar.computer'); } },
+  { id: 'waiting', get label() { return tr('ui.chatSidebar.waitingOnYou'); } },
+  { id: 'artifacts', get label() { return tr('ui.chatSidebar.artifacts'); } },
+  { id: 'apps', get label() { return tr('ui.chatSidebar.connectedApps'); } },
+  { id: 'files', get label() { return tr('ui.chatSidebar.files'); } },
+  { id: 'activity', get label() { return tr('ui.chatSidebar.activity'); } },
+  { id: 'folders', get label() { return tr('ui.chatSidebar.folders'); } },
+  { id: 'about', get label() { return tr('ui.chatSidebar.aboutThisChat'); } },
 ];
 
 const CLOSED_STORE = 'chatSidebar.closed';
@@ -187,24 +188,24 @@ export function ChatSidebar(props: ChatSidebarProps) {
   const swarmsRunning = swarms.filter((s) => s.status === 'running').length;
 
   return (
-    <section aria-label="This chat" className="flex h-full min-h-0 flex-col bg-panel">
+    <section aria-label={tr('ui.chatSidebar.thisChat')} className="flex h-full min-h-0 flex-col bg-panel">
       <header className="flex min-h-14 flex-none items-center gap-1 border-b border-line pl-3.5 pr-2 md:min-h-12">
-        <h2 className="mr-auto text-[13.5px] font-semibold">This chat</h2>
+        <h2 className="mr-auto text-[13.5px] font-semibold">{tr('ui.chatSidebar.thisChat')}</h2>
         <div ref={menuRef} className="relative">
           <button
             type="button"
             aria-haspopup="menu"
             aria-expanded={customizing}
-            aria-label="Choose sections"
-            title="Choose sections"
+            aria-label={tr('ui.chatSidebar.chooseSections')}
+            title={tr('ui.chatSidebar.chooseSections')}
             onClick={() => setCustomizing((v) => !v)}
             className={iconButton}
           >
             <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
           </button>
           {customizing && (
-            <div role="menu" aria-label="Sections" className="absolute right-0 top-full z-30 mt-1 w-52 rounded-lg border border-line bg-panel p-1.5 shadow-lg">
-              <div className="px-2 pb-1 pt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-fg-dim">Show sections</div>
+            <div role="menu" aria-label={tr('ui.chatSidebar.sections')} className="absolute right-0 top-full z-30 mt-1 w-52 rounded-lg border border-line bg-panel p-1.5 shadow-lg">
+              <div className="px-2 pb-1 pt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-fg-dim">{tr('ui.chatSidebar.showSections')}</div>
               {SIDEBAR_SECTIONS.map((s) => (
                 <label key={s.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded px-2 text-[13px] hover:bg-panel-2 md:min-h-8">
                   <input type="checkbox" checked={!hidden.has(s.id)} onChange={() => toggleHidden(s.id)} className="accent-[var(--accent)]" />
@@ -214,14 +215,14 @@ export function ChatSidebar(props: ChatSidebarProps) {
             </div>
           )}
         </div>
-        <button type="button" onClick={onClose} aria-label="Close the chat sidebar" title="Close (Ctrl+.)" className={iconButton}>
+        <button type="button" onClick={onClose} aria-label={tr('ui.chatSidebar.closeTheChatSidebar')} title={tr('ui.chatSidebar.closeCtrl')} className={iconButton}>
           <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
         </button>
       </header>
 
       <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto">
         {section('swarm', swarmsRunning ? 'running' : swarms.length || '', swarms.length === 0
-          ? empty('When the agent splits a job across workers, they show here with what each one is doing.')
+          ? empty(tr('ui.chatSidebar.whenTheAgentSplitsA'))
           : (
             <div className="flex flex-col gap-2">
               {swarms.slice(0, 5).map((swarm) => (
@@ -244,19 +245,19 @@ export function ChatSidebar(props: ChatSidebarProps) {
             <div className="mt-2 flex items-center gap-2 text-[12.5px]">
               <AgentBadge name={about.agentName} avatar={about.avatar} size="sm" />
               <span className="min-w-0 flex-1 truncate">
-                {props.desktopHeldBy ? `${props.desktopHeldBy} has control` : `${about.agentName}'s desktop`}
+                {props.desktopHeldBy ? tr('ui.chatSidebar.desktopheldbyHasControl', { desktopHeldBy: props.desktopHeldBy }) : tr('ui.chatSidebar.agentnameSDesktop', { agentName: about.agentName })}
               </span>
-              <button type="button" onClick={props.onOpenComputer} className={smallButton}>Open</button>
+              <button type="button" onClick={props.onOpenComputer} className={smallButton}>{tr('ui.chatSidebar.open')}</button>
             </div>
           </>
         ) : sandboxOn ? (
           <>
-            {empty(`${about.agentName} isn't using its computer right now. A live picture shows here when it does.`)}
-            <button type="button" onClick={props.onOpenComputer} className={cn(smallButton, 'mt-2')}>Open the computer panel</button>
+            {empty(tr('ui.chatSidebar.agentnameIsnTUsingIts', { agentName: about.agentName }))}
+            <button type="button" onClick={props.onOpenComputer} className={cn(smallButton, 'mt-2')}>{tr('ui.chatSidebar.openTheComputerPanel')}</button>
           </>
-        ) : empty('The sandboxed computer is off. Turn it on in Settings to give agents their own desktop you can watch.'))}
+        ) : empty(tr('ui.chatSidebar.theSandboxedComputerIsOff')))}
 
-        {section('waiting', waiting.length || '', waiting.length === 0 ? empty('Nothing is waiting on you.') : (
+        {section('waiting', waiting.length || '', waiting.length === 0 ? empty(tr('ui.chatSidebar.nothingIsWaitingOnYou')) : (
           <ul className="flex flex-col gap-2">
             {waiting.map((item) => (
               <li key={item.id} className="rounded-lg border border-[#ffb86b]/50 bg-[#ffb86b]/10 px-2.5 py-2 text-[12.5px]">
@@ -265,18 +266,18 @@ export function ChatSidebar(props: ChatSidebarProps) {
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {item.kind === 'approval' && (
                     <>
-                      <button type="button" onClick={() => props.onApprove(item.id)} className={cn(smallButton, 'border-transparent bg-accent text-accent-foreground hover:bg-accent')}>Approve</button>
-                      <button type="button" onClick={() => props.onDeny(item.id)} className={smallButton}>Deny</button>
+                      <button type="button" onClick={() => props.onApprove(item.id)} className={cn(smallButton, 'border-transparent bg-accent text-accent-foreground hover:bg-accent')}>{tr('ui.chatSidebar.approve')}</button>
+                      <button type="button" onClick={() => props.onDeny(item.id)} className={smallButton}>{tr('ui.chatSidebar.deny')}</button>
                     </>
                   )}
-                  <button type="button" onClick={props.onShowWaiting} className={smallButton}>{item.kind === 'question' ? 'Answer in chat' : 'Show'}</button>
+                  <button type="button" onClick={props.onShowWaiting} className={smallButton}>{item.kind === 'question' ? tr('ui.chatSidebar.answerInChat') : tr('ui.chatSidebar.show')}</button>
                 </div>
               </li>
             ))}
           </ul>
         ))}
 
-        {section('artifacts', pages.length || '', pages.length === 0 ? empty('Pages this chat publishes show here.') : (
+        {section('artifacts', pages.length || '', pages.length === 0 ? empty(tr('ui.chatSidebar.pagesThisChatPublishesShow')) : (
           <ul className="-mx-1.5 flex flex-col">
             {pages.map((page) => (
               <li key={page.id}>
@@ -292,8 +293,8 @@ export function ChatSidebar(props: ChatSidebarProps) {
                     <span className="block truncate text-[13px] font-medium">{page.title}</span>
                     <span className="block truncate font-mono text-[10.5px] text-fg-dim">
                       v{page.version} · {ago(page.updated)}
-                      {page.live && ' · live'}
-                      {props.newPageIds?.has(page.id) && <span className="ml-1.5 rounded-[3px] bg-accent px-1 text-[9.5px] text-accent-foreground">NEW</span>}
+                      {page.live && tr('ui.chatSidebar.live')}
+                      {props.newPageIds?.has(page.id) && <span className="ml-1.5 rounded-[3px] bg-accent px-1 text-[9.5px] text-accent-foreground">{tr('ui.chatSidebar.new')}</span>}
                     </span>
                   </span>
                 </button>
@@ -324,7 +325,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
           </ul>
         ))}
 
-        {section('files', images.length + files.length || '', images.length + files.length === 0 ? empty('Images and documents from this chat show here.') : (
+        {section('files', images.length + files.length || '', images.length + files.length === 0 ? empty(tr('ui.chatSidebar.imagesAndDocumentsFromThis')) : (
           <div className="flex flex-col gap-2.5">
             {images.length > 0 && (
               <div className="grid grid-cols-3 gap-1.5 [&_img]:aspect-square [&_img]:w-full [&_img]:object-cover">
@@ -344,7 +345,7 @@ export function ChatSidebar(props: ChatSidebarProps) {
         ))}
 
         {section('activity', props.busy ? 'working' : activity.length ? `${activity.length} steps` : '', activity.length === 0
-          ? empty(props.busy ? 'Thinking…' : 'Steps the agent takes in its latest reply show here.')
+          ? empty(props.busy ? tr('ui.chatSidebar.thinking') : tr('ui.chatSidebar.stepsTheAgentTakesIn'))
           : (
             <ol className="flex flex-col gap-1.5 text-[12.5px]">
               {activity.map((step) => (
@@ -360,20 +361,20 @@ export function ChatSidebar(props: ChatSidebarProps) {
           ))}
 
         {section('folders', props.folders.length || '', (
-          <FolderChips folders={props.folders} onChange={props.onChangeFolders} emptyLabel="private scratch folder" disabled={props.foldersDisabled} />
+          <FolderChips folders={props.folders} onChange={props.onChangeFolders} emptyLabel={tr('ui.chatSidebar.privateScratchFolder')} disabled={props.foldersDisabled} />
         ))}
 
         {section('about', '', (
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[12.5px]">
-            <dt className={term}>agent</dt>
+            <dt className={term}>{tr('ui.chatSidebar.agent')}</dt>
             <dd className="min-w-0 truncate">
               <Link to={`/agents/${about.agentId}`} className="hover:underline">{about.agentName}</Link>
             </dd>
-            {about.model && (<><dt className={term}>model</dt><dd className="min-w-0 truncate" title={about.model}>{about.model}</dd></>)}
-            {about.reasoning && (<><dt className={term}>reasoning</dt><dd className="min-w-0 truncate">{about.reasoning}</dd></>)}
-            <dt className={term}>messages</dt><dd>{about.messages}</dd>
-            {about.started && (<><dt className={term}>started</dt><dd className="min-w-0 truncate">{about.started}</dd></>)}
-            {about.incognito && (<><dt className={term}>mode</dt><dd>Incognito</dd></>)}
+            {about.model && (<><dt className={term}>{tr('ui.chatSidebar.model')}</dt><dd className="min-w-0 truncate" title={about.model}>{about.model}</dd></>)}
+            {about.reasoning && (<><dt className={term}>{tr('ui.chatSidebar.reasoning')}</dt><dd className="min-w-0 truncate">{about.reasoning}</dd></>)}
+            <dt className={term}>{tr('ui.chatSidebar.messages')}</dt><dd>{about.messages}</dd>
+            {about.started && (<><dt className={term}>{tr('ui.chatSidebar.started')}</dt><dd className="min-w-0 truncate">{about.started}</dd></>)}
+            {about.incognito && (<><dt className={term}>{tr('ui.chatSidebar.mode')}</dt><dd>{tr('ui.chatSidebar.incognito')}</dd></>)}
           </dl>
         ))}
       </div>
@@ -409,14 +410,14 @@ function FileRow({ file }: { file: FileItem }) {
         type="button"
         disabled={busy}
         onClick={() => void download()}
-        title={`Download ${file.title}`}
+        title={tr('ui.chatSidebar.downloadTitle', { title: file.title })}
         className="flex min-h-11 w-full items-center gap-2.5 rounded-md px-1.5 py-1.5 text-left hover:bg-panel-2 disabled:opacity-60"
       >
         <svg aria-hidden className="h-4 w-4 flex-none text-fg-dim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px]">{file.title}</span>
           <span className={cn('block truncate font-mono text-[10.5px]', failed ? 'text-danger-ink' : 'text-fg-dim')}>
-            {failed ? "Couldn't download it. Try again." : `${sizeLabel(file.size_bytes)} · ${ago(file.updated)}`}
+            {failed ? tr('ui.chatSidebar.couldnTDownloadItTry') : `${sizeLabel(file.size_bytes)} · ${ago(file.updated)}`}
           </span>
         </span>
       </button>

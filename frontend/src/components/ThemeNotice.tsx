@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTheme, type ThemeUndo } from '@/context/ThemeContext';
 import { errorMessage } from '@/lib/api';
+import { tr } from '@/lib/i18n';
 
 export interface ThemeChange {
   name: string;
@@ -48,21 +49,21 @@ function ThemeChangeNote({ change }: { change: ThemeChange }) {
       setState('undone');
     } catch (e) {
       setState('idle');
-      setError(errorMessage(e, 'Could not undo.'));
+      setError(errorMessage(e, tr('ui.themeNotice.couldNotUndo')));
     }
   };
 
   return (
     <div role="note" className="inline-flex max-w-2xl flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-line bg-panel px-3 py-2 text-[12.5px]">
       <span className="text-accent-ink" aria-hidden>◐</span>
-      <span className="text-fg-dim">{state === 'undone' ? 'Theme change undone:' : 'Theme changed:'}</span>
+      <span className="text-fg-dim">{state === 'undone' ? tr('ui.themeNotice.themeChangeUndone') : tr('ui.themeNotice.themeChanged')}</span>
       <span className={state === 'undone' ? 'text-fg-dim line-through' : 'font-medium'}>{change.name}</span>
       {state !== 'undone' && (
         <button type="button" onClick={() => void undo()} disabled={state === 'busy'}
-          className="text-accent-ink hover:underline disabled:opacity-60">Undo</button>
+          className="text-accent-ink hover:underline disabled:opacity-60">{tr('ui.themeNotice.undo')}</button>
       )}
       <span className="text-fg-dim" aria-hidden>·</span>
-      <Link to="/settings/appearance" className="text-accent-ink hover:underline">Customize</Link>
+      <Link to="/settings/appearance" className="text-accent-ink hover:underline">{tr('ui.themeNotice.customize')}</Link>
       {error && <span role="alert" className="text-danger-ink">{error}</span>}
     </div>
   );

@@ -3,6 +3,7 @@ import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { cn } from '@/lib/utils';
 import { errorMessage } from '@/lib/api';
 import { answerSignInRequest } from '@/lib/sandbox';
+import { tr } from '@/lib/i18n';
 
 export interface QuestionOption {
   id: string;
@@ -56,7 +57,7 @@ export function QuestionCard({
       await onAnswer(answer);
     } catch {
       setSubmitting(false);
-      setError('Could not send your answer. Try again.');
+      setError(tr('ui.questionCard.couldNotSendYourAnswer'));
     }
   }, [onAnswer, submitting]);
 
@@ -81,7 +82,7 @@ export function QuestionCard({
         })).catch(() => {
           automaticSubmissionStarted.current = false;
           setSubmitting(false);
-          setError('The automatic answer could not be sent. Choose an option to continue.');
+          setError(tr('ui.questionCard.theAutomaticAnswerCouldNot'));
         });
       }
     };
@@ -100,7 +101,7 @@ export function QuestionCard({
       setSubmitting(false);
     } catch {
       setSubmitting(false);
-      setError('Could not stop the countdown. Try again.');
+      setError(tr('ui.questionCard.couldNotStopTheCountdown'));
     }
   };
 
@@ -112,7 +113,7 @@ export function QuestionCard({
       await onCancel();
     } catch {
       setSubmitting(false);
-      setError('Could not cancel the question. Try again.');
+      setError(tr('ui.questionCard.couldNotCancelTheQuestion'));
     }
   };
 
@@ -129,13 +130,13 @@ export function QuestionCard({
           <>
             {remaining !== null && (
               <div className="flex items-center gap-2 font-mono text-[10.5px] tracking-wide text-fg-dim">
-                <span role="timer" aria-live="off">Using recommendation in {remaining}s</span>
-                <PanelButton onClick={() => void stopTimer()} disabled={submitting}>Stop countdown</PanelButton>
+                <span role="timer" aria-live="off">{tr('ui.questionCard.usingRecommendationIn')}{' '}{remaining}s</span>
+                <PanelButton onClick={() => void stopTimer()} disabled={submitting}>{tr('ui.questionCard.stopCountdown')}</PanelButton>
               </div>
             )}
             <div aria-live="polite" className="text-[12px] text-danger-ink">{error}</div>
             <span className="grow" />
-            <PanelButton kind="quiet" disabled={submitting} onClick={() => void cancel()}>{question.secret ? "Don't share" : 'Cancel question'}</PanelButton>
+            <PanelButton kind="quiet" disabled={submitting} onClick={() => void cancel()}>{question.secret ? tr('ui.questionCard.donTShare') : tr('ui.questionCard.cancelQuestion')}</PanelButton>
           </>
         )}
       >
@@ -166,7 +167,7 @@ export function QuestionCard({
                     <span>{option.label}</span>
                     {recommended && (
                       <span className="rounded border border-accent/50 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-accent-ink">
-                        recommended
+                        {tr('ui.questionCard.recommended')}
                       </span>
                     )}
                   </span>
@@ -191,18 +192,18 @@ export function QuestionCard({
             }}
           >
             <label className="min-w-0 flex-1">
-              <span className="sr-only">Your answer</span>
+              <span className="sr-only">{tr('ui.questionCard.yourAnswer')}</span>
               <input
-                aria-label="Your answer"
+                aria-label={tr('ui.questionCard.yourAnswer')}
                 value={freeText}
                 maxLength={4000}
                 disabled={submitting}
                 onChange={(event) => setFreeText(event.target.value)}
-                placeholder="Type a different answer…"
+                placeholder={tr('ui.questionCard.typeADifferentAnswer')}
                 className="h-11 w-full rounded-md border border-line bg-panel px-3 text-[13px] text-fg outline-none transition-colors placeholder:text-fg-dim focus:border-accent md:h-9"
               />
             </label>
-            <PanelButton type="submit" kind="primary" disabled={submitting || !freeText.trim()}>Submit answer</PanelButton>
+            <PanelButton type="submit" kind="primary" disabled={submitting || !freeText.trim()}>{tr('ui.questionCard.submitAnswer')}</PanelButton>
           </form>
         )}
       </PanelCard>
@@ -234,7 +235,7 @@ function SecretForm({ question, disabled, onSaved }: { question: QuestionRequest
       onSaved();
     } catch (err) {
       setSaving(false);
-      setError(errorMessage(err, "Couldn't save it. Try again."));
+      setError(errorMessage(err, tr('ui.questionCard.couldnTSaveItTry')));
     }
   }
 
@@ -242,21 +243,21 @@ function SecretForm({ question, disabled, onSaved }: { question: QuestionRequest
     <form onSubmit={(e) => void save(e)} className="flex flex-col gap-2" autoComplete="off">
       {basic ? (
         <div className="flex flex-col gap-2 sm:flex-row">
-          <input aria-label="Username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username"
+          <input aria-label={tr('ui.questionCard.username')} value={username} onChange={(e) => setUsername(e.target.value)} placeholder={tr('ui.questionCard.username')}
             disabled={disabled || saving} className={fieldCls} autoComplete="off" />
-          <input aria-label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password" disabled={disabled || saving} className={fieldCls} autoComplete="new-password" />
+          <input aria-label={tr('ui.questionCard.password')} type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+            placeholder={tr('ui.questionCard.password')} disabled={disabled || saving} className={fieldCls} autoComplete="new-password" />
         </div>
       ) : (
         <input aria-label={secret.name} type="password" value={value} onChange={(e) => setValue(e.target.value)}
-          placeholder={`${secret.name} value`} disabled={disabled || saving} className={fieldCls} autoComplete="new-password" />
+          placeholder={tr('ui.questionCard.nameValue', { name: secret.name })} disabled={disabled || saving} className={fieldCls} autoComplete="new-password" />
       )}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[12px] text-fg-dim">
-          Saved as <span className="font-mono">{secret.name}</span> in Settings, Saved sign-ins. The agent only gets the name.
+          {tr('ui.questionCard.savedAs')}{' '}<span className="font-mono">{secret.name}</span>{' '}{tr('ui.questionCard.inSettingsSavedSignIns')}
         </span>
         <span className="grow" />
-        <PanelButton type="submit" kind="primary" disabled={disabled || saving || !ready}>{saving ? 'Saving…' : 'Save'}</PanelButton>
+        <PanelButton type="submit" kind="primary" disabled={disabled || saving || !ready}>{saving ? tr('ui.questionCard.saving') : tr('ui.questionCard.save')}</PanelButton>
       </div>
       {error && <p role="alert" className="text-[12px] text-danger-ink">{error}</p>}
     </form>

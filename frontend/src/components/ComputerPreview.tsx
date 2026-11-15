@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { openViewer } from '@/lib/sandbox';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 /** A small, view-only live picture of one agent desktop. Clicking it opens
  *  the full computer panel; nothing typed or clicked here reaches the desktop. */
@@ -54,17 +55,17 @@ export function ComputerPreview({ desktop, label, onOpen, className }: {
       <button
         type="button"
         onClick={onOpen}
-        aria-label={`Open ${label}'s computer`}
-        title="Open the computer"
+        aria-label={tr('ui.computerPreview.openLabelSComputer', { label })}
+        title={tr('ui.computerPreview.openTheComputer')}
         className="absolute inset-0 grid place-items-center bg-black/0 text-[12.5px] font-medium text-white transition-colors hover:bg-black/45 focus-visible:bg-black/45"
       >
         <span className="rounded-md border border-white/50 px-2.5 py-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-          Open computer
+          {tr('ui.computerPreview.openComputer')}
         </span>
       </button>
       <span className="pointer-events-none absolute left-1.5 top-1.5 inline-flex items-center gap-1.5 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[9.5px] tracking-[0.1em] text-white">
         <span className={cn('h-1.5 w-1.5 rounded-full', state === 'live' ? 'bg-accent' : 'bg-white/50')} />
-        {state === 'live' ? 'LIVE' : state === 'connecting' ? 'CONNECTING' : 'RECONNECTING'}
+        {state === 'live' ? tr('ui.computerPreview.live') : state === 'connecting' ? tr('ui.computerPreview.connecting') : tr('ui.computerPreview.reconnecting')}
       </span>
     </div>
   );

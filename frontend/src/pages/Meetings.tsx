@@ -7,6 +7,7 @@ import { Select } from '@/lib/components/ui/select';
 import MarkdownMessage from '@/components/MarkdownMessage';
 import { PageHeader, LoadingState, ErrorState, EmptyState } from '@/components/list-ui';
 import { cn } from '@/lib/utils';
+import { tr, dateLocale } from '@/lib/i18n';
 
 type Status = 'queued' | 'transcribing' | 'writing' | 'done' | 'error';
 
@@ -40,13 +41,13 @@ const working = (status: Status) => status === 'queued' || status === 'transcrib
 function length(seconds: number): string {
   if (!seconds) return '';
   const minutes = Math.round(seconds / 60);
-  if (minutes < 1) return `${Math.round(seconds)} sec`;
-  return minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
+  if (minutes < 1) return tr('ui.meetings.roundSec', { round: Math.round(seconds) });
+  return minutes >= 60 ? tr('ui.meetings.floorHValueMin', { floor: Math.floor(minutes / 60), value: minutes % 60 }) : tr('ui.meetings.minutesMin', { minutes });
 }
 
 function day(stamp: string): string {
   const date = new Date(stamp.includes('T') ? stamp : `${stamp.replace(' ', 'T')}Z`);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function statusText(meeting: MeetingSummary): string {
@@ -63,7 +64,7 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
   const [busy, setBusy] = useState(false);
 
   const load = () => api.get<Meeting>(`/meetings/${id}`).then((r) => setMeeting(r.data))
-    .catch((e) => setError(errorMessage(e, 'Could not load this meeting.')));
+    .catch((e) => setError(errorMessage(e, tr('ui.meetings.couldNotLoadThisMeeting'))));
 
   useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
 
@@ -75,7 +76,7 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busyOnServer, id]);
 
-  if (!meeting) return <p className="px-4 py-3 text-[13px] text-fg-dim">{error || 'Loading…'}</p>;
+  if (!meeting) return <p className="px-4 py-3 text-[13px] text-fg-dim">{error || tr('ui.meetings.loading')}</p>;
 
   const text = tab === 'notes' ? meeting.notes : meeting.transcript;
   const copy = async () => {
@@ -109,16 +110,16 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
   };
   const again = (agentId?: string) => act(
     () => api.post(`/meetings/${id}/notes`, agentId === undefined ? {} : { agent_id: agentId }),
-    'Could not write the notes again.',
+    tr('ui.meetings.couldNotWriteTheNotes'),
   );
   const remove = async () => {
-    if (!window.confirm(`Delete “${meeting.title}”, its notes and its transcript?`)) return;
+    if (!window.confirm(tr('ui.meetings.deleteTitleItsNotesAnd', { title: meeting.title }))) return;
     setBusy(true);
     try {
       await api.delete(`/meetings/${id}`);
       onChanged();
     } catch (e) {
-      setError(errorMessage(e, 'Could not delete the meeting.'));
+      setError(errorMessage(e, tr('ui.meetings.couldNotDeleteTheMeeting')));
       setBusy(false);
     }
   };
@@ -128,7 +129,7 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
       {busyOnServer ? (
         <p className="flex items-center gap-2 text-[13px] text-fg-dim" aria-live="polite">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden />
-          {meeting.progress || 'Working'}… You can leave this page; it keeps going.
+          {tr('ui.meetings.progressYouCanLeaveThis', { progress: meeting.progress || tr('ui.meetings.working') })}
         </p>
       ) : (
         <>
@@ -136,7 +137,7 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
           {(meeting.notes || meeting.transcript) && (
             <>
               <div className="mb-3 flex flex-wrap items-center gap-2">
-                <div role="tablist" aria-label="Meeting view" className="flex rounded-lg border border-line p-0.5 text-[12.5px]">
+                <div role="tablist" aria-label={tr('ui.meetings.meetingView')} className="flex rounded-lg border border-line p-0.5 text-[12.5px]">
                   {(['notes', 'transcript'] as const).map((name) => (
                     <button key={name} type="button" role="tab" aria-selected={tab === name} onClick={() => setTab(name)}
                       className={cn('min-h-9 rounded-md px-3 capitalize md:min-h-7', tab === name ? 'bg-panel-2 text-fg' : 'text-fg-dim hover:text-fg')}>
@@ -145,12 +146,12 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
                   ))}
                 </div>
                 <span className="flex-1" />
-                <Button type="button" size="sm" variant="ghost" onClick={copy} disabled={!text}>{copied ? 'Copied' : 'Copy'}</Button>
-                <Button type="button" size="sm" variant="ghost" onClick={download}>Download</Button>
+                <Button type="button" size="sm" variant="ghost" onClick={copy} disabled={!text}>{copied ? tr('ui.meetings.copied') : tr('ui.meetings.copy')}</Button>
+                <Button type="button" size="sm" variant="ghost" onClick={download}>{tr('ui.meetings.download')}</Button>
               </div>
               {tab === 'notes' ? (
                 meeting.notes ? <div className="md break-words text-[14px]"><MarkdownMessage content={meeting.notes} /></div>
-                  : <p className="text-[13px] text-fg-dim">No notes yet. The transcript is saved, so they can be written again.</p>
+                  : <p className="text-[13px] text-fg-dim">{tr('ui.meetings.noNotesYetTheTranscript')}</p>
               ) : (
                 <p className="max-h-[420px] overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-fg-dim">{meeting.transcript}</p>
               )}
@@ -159,17 +160,17 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 text-[12.5px]">
             {meeting.has_transcript && (
               <>
-                <span className="text-fg-dim">Notes written by</span>
-                <Select value={meeting.agent_id} disabled={busy} aria-label="Agent that writes the notes"
+                <span className="text-fg-dim">{tr('ui.meetings.notesWrittenBy')}</span>
+                <Select value={meeting.agent_id} disabled={busy} aria-label={tr('ui.meetings.agentThatWritesTheNotes')}
                   className="h-9 w-auto min-w-[150px]" onChange={(e) => void again(e.target.value)}>
-                  {!agents.some((a) => a.id === meeting.agent_id) && <option value={meeting.agent_id}>Your main agent</option>}
+                  {!agents.some((a) => a.id === meeting.agent_id) && <option value={meeting.agent_id}>{tr('ui.meetings.yourMainAgent')}</option>}
                   {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </Select>
-                <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void again()}>Write again</Button>
+                <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void again()}>{tr('ui.meetings.writeAgain')}</Button>
               </>
             )}
             <span className="flex-1" />
-            <button type="button" disabled={busy} onClick={() => void remove()} className="min-h-9 px-2 text-danger-ink hover:underline disabled:opacity-60">Delete</button>
+            <button type="button" disabled={busy} onClick={() => void remove()} className="min-h-9 px-2 text-danger-ink hover:underline disabled:opacity-60">{tr('ui.meetings.delete')}</button>
           </div>
         </>
       )}
@@ -206,23 +207,23 @@ export default function Meetings() {
     if (!file) return;
     setUploadError('');
     if (data && file.size > data.max_bytes) {
-      setUploadError('That recording is too large (1 GB at most).');
+      setUploadError(tr('ui.meetings.thatRecordingIsTooLarge'));
       return;
     }
     const form = new FormData();
     form.append('file', file, file.name);
     if (agentId) form.append('agent_id', agentId);
-    setUploading(`Uploading ${file.name}…`);
+    setUploading(tr('ui.meetings.uploadingName', { name: file.name }));
     try {
       const res = await api.post<Meeting>('/meetings', form, {
         onUploadProgress: (p) => {
-          if (p.total) setUploading(`Uploading ${file.name}… ${Math.round((p.loaded / p.total) * 100)}%`);
+          if (p.total) setUploading(tr('ui.meetings.uploadingNameRound', { name: file.name, round: Math.round((p.loaded / p.total) * 100) }));
         },
       });
       setOpen(res.data.id);
       refetch({ silent: true });
     } catch (e) {
-      setUploadError(errorMessage(e, 'Could not upload the recording.'));
+      setUploadError(errorMessage(e, tr('ui.meetings.couldNotUploadTheRecording')));
     } finally {
       setUploading('');
     }
@@ -230,36 +231,35 @@ export default function Meetings() {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <PageHeader title="Meetings" subtitle="upload a recording, get the notes, decisions and action items · private to you">
-        <input ref={fileInput} type="file" accept={ACCEPT} className="hidden" aria-label="Meeting recording" onChange={upload} />
+      <PageHeader title={tr('ui.meetings.meetings')} subtitle={tr('ui.meetings.uploadARecordingGetThe')}>
+        <input ref={fileInput} type="file" accept={ACCEPT} className="hidden" aria-label={tr('ui.meetings.meetingRecording')} onChange={upload} />
         <Button type="button" size="sm" disabled={!!uploading || (data ? !data.voice_ready : true)} onClick={() => fileInput.current?.click()}>
-          {uploading ? 'Uploading…' : 'Upload recording'}
+          {uploading ? tr('ui.meetings.uploading') : tr('ui.meetings.uploadRecording')}
         </Button>
       </PageHeader>
       <div className="flex-1 overflow-y-auto">
         {loading && !data ? (
-          <LoadingState label="loading meetings…" />
+          <LoadingState label={tr('ui.meetings.loadingMeetings')} />
         ) : error ? (
           <ErrorState message={error} onRetry={refetch} />
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-5 md:px-6">
             {data && !data.voice_ready && (
               <p className="rounded-[10px] border border-line bg-panel px-3 py-2.5 text-[13px] leading-relaxed">
-                Meeting notes use your speech-to-text provider to transcribe the recording.{' '}
-                <Link to="/settings/voice" className="text-accent-ink hover:underline">Add a key under Settings › Voice</Link> first.
+                {tr('ui.meetings.meetingNotesUseYourSpeech')}{' '}
+                <Link to="/settings/voice" className="text-accent-ink hover:underline">{tr('ui.meetings.addAKeyUnderSettings')}</Link>{' '}{tr('ui.meetings.first')}
               </p>
             )}
             {data && data.voice_ready && !data.ffmpeg && (
               <p className="rounded-[10px] border border-line bg-panel px-3 py-2.5 text-[12.5px] leading-relaxed text-fg-dim">
-                ffmpeg isn't installed where Cognitrix runs, so only WAV files and audio files under 25 MB work.
-                Install ffmpeg to use video and long recordings in any format.
+                {tr('ui.meetings.ffmpegIsnTInstalledWhere')}
               </p>
             )}
             {agents.length > 1 && (
               <label className="flex flex-wrap items-center gap-2 text-[12.5px] text-fg-dim">
-                Notes written by
-                <Select value={agentId} onChange={(e) => setAgentId(e.target.value)} aria-label="Agent for new recordings" className="h-9 w-auto min-w-[160px]">
-                  <option value="">Your main agent</option>
+                {tr('ui.meetings.notesWrittenBy')}
+                <Select value={agentId} onChange={(e) => setAgentId(e.target.value)} aria-label={tr('ui.meetings.agentForNewRecordings')} className="h-9 w-auto min-w-[160px]">
+                  <option value="">{tr('ui.meetings.yourMainAgent')}</option>
                   {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </Select>
               </label>
@@ -271,8 +271,8 @@ export default function Meetings() {
             {meetings.length === 0 ? (
               <EmptyState
                 icon={<span aria-hidden className="font-mono text-lg">◉</span>}
-                title="No meetings yet"
-                desc="Upload the audio or video of a meeting (up to 4 hours). It is transcribed with your voice provider, then one of your agents writes a summary, the decisions and who agreed to do what. The recording is deleted once it has been transcribed."
+                title={tr('ui.meetings.noMeetingsYet')}
+                desc={tr('ui.meetings.uploadTheAudioOrVideo')}
               />
             ) : (
               <ul className="divide-y divide-line rounded-[10px] border border-line bg-panel">

@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
 import { CheckList } from '@/components/form';
+import { tr } from '@/lib/i18n';
 
 export interface TaskRecord {
   id: string;
@@ -95,9 +96,9 @@ export function TaskAssignmentPanel({
           const firstFailure = results.find(
             (result): result is PromiseRejectedResult => result.status === 'rejected',
           );
-          setError(errorMessage(firstFailure?.reason, 'Could not assign the selected tasks.'));
+          setError(errorMessage(firstFailure?.reason, tr('ui.taskAssignmentPanel.couldNotAssignTheSelected')));
         } else {
-          setError(`Could not assign ${failed.size} of ${chosen.length} selected tasks.`);
+          setError(tr('ui.taskAssignmentPanel.couldNotAssignSizeOf', { size: failed.size, length: chosen.length }));
         }
       } else {
         setSelected(new Set());
@@ -105,7 +106,7 @@ export function TaskAssignmentPanel({
         restoreFocusRef.current = true;
       }
     } catch (assignError) {
-      setError(errorMessage(assignError, 'Could not assign the selected tasks.'));
+      setError(errorMessage(assignError, tr('ui.taskAssignmentPanel.couldNotAssignTheSelected')));
     } finally {
       setSaving(false);
     }
@@ -122,26 +123,26 @@ export function TaskAssignmentPanel({
         onClick={() => (open ? close() : setOpen(true))}
         disabled={saving}
       >
-        Assign task
+        {tr('ui.taskAssignmentPanel.assignTask')}
       </Button>
       {open && (
         <div ref={panelRef} id={panelId} className="mt-3 space-y-3 rounded border border-line bg-panel p-3">
-          <p id={labelId} className="font-mono text-[11px] tracking-[0.12em] text-fg-dim">Tasks available to assign</p>
+          <p id={labelId} className="font-mono text-[11px] tracking-[0.12em] text-fg-dim">{tr('ui.taskAssignmentPanel.tasksAvailableToAssign')}</p>
           <CheckList
             options={eligible.map((task) => ({ value: task.id, label: task.title, sub: task.status || 'pending' }))}
             selected={selected}
             onToggle={toggle}
             disabled={saving}
             aria-labelledby={labelId}
-            empty={`no tasks available for this ${mode}`}
+            empty={tr('ui.taskAssignmentPanel.noTasksAvailableForThis', { mode })}
           />
           {error && <p role="alert" className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[11px] text-danger-ink">{error}</p>}
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={close} disabled={saving}>Cancel</Button>
+            <Button variant="ghost" size="sm" onClick={close} disabled={saving}>{tr('ui.taskAssignmentPanel.cancel')}</Button>
             <Button size="sm" onClick={assign} disabled={saving || selected.size === 0}>
-              {saving ? 'Assigning…' : 'Assign selected'}
+              {saving ? tr('ui.taskAssignmentPanel.assigning') : tr('ui.taskAssignmentPanel.assignSelected')}
             </Button>
-            {saving && <span role="status" className="sr-only">Assigning selected tasks…</span>}
+            {saving && <span role="status" className="sr-only">{tr('ui.taskAssignmentPanel.assigningSelectedTasks')}</span>}
           </div>
         </div>
       )}

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Bot, Database, Download, LayoutPanelTop, Plug } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import { POWER_COPY, type PageDetail, type PagePower } from '@/lib/artifactPages';
+import { tr } from '@/lib/i18n';
 
 const ICONS: Record<PagePower, JSX.Element> = {
   apps: <Plug size={15} />, ask: <Bot size={15} />, data: <Database size={15} />, download: <Download size={15} />,
@@ -20,20 +21,20 @@ export function ConsentDialog({ page, onDone }: { page: PageDetail; onDone: () =
       await api.put(`/artifact-pages/${page.id}/consent`, { allowed });
       onDone();
     } catch (e) {
-      setError(errorMessage(e, 'Could not save your answer.'));
+      setError(errorMessage(e, tr('ui.artifacts.consentDialog.couldNotSaveYourAnswer')));
       setBusy(false);
     }
   };
 
   return (
     <div className="absolute inset-0 z-30 flex items-end justify-center bg-black/45 md:items-center">
-      <div role="dialog" aria-modal="true" aria-label="This page wants to use"
+      <div role="dialog" aria-modal="true" aria-label={tr('ui.artifacts.consentDialog.thisPageWantsToUse')}
         className="flex max-h-full w-full flex-col overflow-hidden rounded-t-2xl border border-line bg-panel shadow-2xl md:w-[480px] md:rounded-2xl">
         <header className="flex flex-none items-center gap-3 border-b border-line px-4 py-3.5">
           <span className="grid h-9 w-9 flex-none place-items-center rounded-lg bg-accent/15 text-accent-ink"><LayoutPanelTop size={17} /></span>
           <span className="min-w-0">
-            <span className="block text-[15px] font-semibold">This page wants to use</span>
-            <span className="block truncate text-[12.5px] text-fg-dim">{page.title}{page.agent?.name ? ` · made by ${page.agent.name}` : ''}</span>
+            <span className="block text-[15px] font-semibold">{tr('ui.artifacts.consentDialog.thisPageWantsToUse')}</span>
+            <span className="block truncate text-[12.5px] text-fg-dim">{page.title}{page.agent?.name ? tr('ui.artifacts.consentDialog.madeByName', { name: page.agent.name }) : ''}</span>
           </span>
         </header>
         <ul className="min-h-0 flex-1 overflow-y-auto px-4">
@@ -53,11 +54,11 @@ export function ConsentDialog({ page, onDone }: { page: PageDetail; onDone: () =
         </ul>
         {error && <p role="alert" className="px-4 pb-2 text-[12.5px] text-danger-ink">{error}</p>}
         <footer className="flex flex-none items-center gap-2 border-t border-line px-4 py-3">
-          <span className="min-w-0 flex-1 text-[12px] text-fg-dim">Change this later from the page's menu.</span>
+          <span className="min-w-0 flex-1 text-[12px] text-fg-dim">{tr('ui.artifacts.consentDialog.changeThisLaterFromThe')}</span>
           <button type="button" disabled={busy} onClick={() => void answer([])}
-            className="inline-flex h-9 items-center rounded-md border border-line px-3 text-[13px] hover:bg-panel-2 md:h-8">Not now</button>
+            className="inline-flex h-9 items-center rounded-md border border-line px-3 text-[13px] hover:bg-panel-2 md:h-8">{tr('ui.artifacts.consentDialog.notNow')}</button>
           <button type="button" disabled={busy} onClick={() => void answer(picked)}
-            className="inline-flex h-9 items-center rounded-md bg-accent px-3.5 text-[13px] font-semibold text-accent-foreground md:h-8">Allow</button>
+            className="inline-flex h-9 items-center rounded-md bg-accent px-3.5 text-[13px] font-semibold text-accent-foreground md:h-8">{tr('ui.artifacts.consentDialog.allow')}</button>
         </footer>
       </div>
     </div>

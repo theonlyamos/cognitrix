@@ -16,6 +16,7 @@ import {
   type ChannelUpdate,
   type ChatChannel,
 } from '@/lib/channels';
+import { tr } from '@/lib/i18n';
 
 interface AgentLite { id: string; name: string }
 
@@ -43,12 +44,11 @@ function Setup({ kind, manifest }: { kind: ChannelKind; manifest: Record<string,
     return (
       <ol className="list-decimal space-y-1 pl-5 text-[12.5px] leading-relaxed text-fg-dim">
         <li>
-          In Telegram, open{' '}
-          <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">@BotFather</a>{' '}
-          and send <span className="font-mono">/newbot</span>.
+          {tr('ui.chatChannelsCard.inTelegramOpen')}{' '}
+          <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">@BotFather</a>{' '}{tr('ui.chatChannelsCard.andSend')}{' '}<span className="font-mono">/newbot</span>.
         </li>
-        <li>Pick a name and username. BotFather replies with a token like <span className="font-mono">123456:ABC…</span>.</li>
-        <li>Paste the token below. Then send the bot the code Cognitrix shows you.</li>
+        <li>{tr('ui.chatChannelsCard.pickANameAndUsername')}{' '}<span className="font-mono">123456:ABC…</span>.</li>
+        <li>{tr('ui.chatChannelsCard.pasteTheTokenBelowThen')}</li>
       </ol>
     );
   }
@@ -56,13 +56,12 @@ function Setup({ kind, manifest }: { kind: ChannelKind; manifest: Record<string,
     return (
       <ol className="list-decimal space-y-1 pl-5 text-[12.5px] leading-relaxed text-fg-dim">
         <li>
-          Open the{' '}
-          <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">Discord Developer Portal</a>,
-          choose New Application, then open its Bot page.
+          {tr('ui.chatChannelsCard.openThe')}{' '}
+          <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">{tr('ui.chatChannelsCard.discordDeveloperPortal')}</a>{tr('ui.chatChannelsCard.chooseNewApplicationThenOpen')}
         </li>
-        <li>Press Reset Token and copy the token. No extra permissions or intents are needed.</li>
-        <li>Paste the token below. Cognitrix then shows a link that adds the bot to one of your servers, which Discord needs before you can message it.</li>
-        <li>Send the bot a direct message with the code Cognitrix shows you.</li>
+        <li>{tr('ui.chatChannelsCard.pressResetTokenAndCopy')}</li>
+        <li>{tr('ui.chatChannelsCard.pasteTheTokenBelowCognitrix')}</li>
+        <li>{tr('ui.chatChannelsCard.sendTheBotADirect')}</li>
       </ol>
     );
   }
@@ -70,19 +69,18 @@ function Setup({ kind, manifest }: { kind: ChannelKind; manifest: Record<string,
     return (
       <div className="space-y-2">
         <p className="rounded-[10px] border border-line bg-bg px-3 py-2 text-[12.5px] leading-relaxed text-fg-dim">
-          WhatsApp sends messages to the bot, so this needs Cognitrix running on a server with a public
-          <span className="font-mono"> https://</span> address. It does not work from the desktop app on its own.
+          {tr('ui.chatChannelsCard.whatsappSendsMessagesToThe')}
+          <span className="font-mono"> https://</span>{' '}{tr('ui.chatChannelsCard.addressItDoesNotWork')}
         </p>
         <ol className="list-decimal space-y-1 pl-5 text-[12.5px] leading-relaxed text-fg-dim">
           <li>
-            On{' '}
-            <a href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">developers.facebook.com</a>,
-            create a Business app and add the WhatsApp product. Meta gives you a test number, or you can add your own.
+            {tr('ui.chatChannelsCard.on')}{' '}
+            <a href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">developers.facebook.com</a>{tr('ui.chatChannelsCard.createABusinessAppAnd')}
           </li>
-          <li>From WhatsApp › API Setup copy the Phone number ID and an access token. For a token that doesn't expire, create a system user in Business Settings.</li>
-          <li>From App settings › Basic copy the App secret. Paste all three below.</li>
-          <li>Cognitrix then shows a callback URL and verify token. Paste them under WhatsApp › Configuration and subscribe to the <span className="font-mono">messages</span> field.</li>
-          <li>Send the bot's number the code Cognitrix shows you.</li>
+          <li>{tr('ui.chatChannelsCard.fromWhatsappApiSetupCopy')}</li>
+          <li>{tr('ui.chatChannelsCard.fromAppSettingsBasicCopy')}</li>
+          <li>{tr('ui.chatChannelsCard.cognitrixThenShowsACallback')}{' '}<span className="font-mono">{tr('ui.chatChannelsCard.messages')}</span>{' '}{tr('ui.chatChannelsCard.field')}</li>
+          <li>{tr('ui.chatChannelsCard.sendTheBotSNumber')}</li>
         </ol>
       </div>
     );
@@ -91,18 +89,17 @@ function Setup({ kind, manifest }: { kind: ChannelKind; manifest: Record<string,
     return (
       <div className="space-y-2">
         <p className="rounded-[10px] border border-line bg-bg px-3 py-2 text-[12.5px] leading-relaxed text-fg-dim">
-          Twilio sends texts to Cognitrix, so this needs Cognitrix running on a server with a public
-          <span className="font-mono"> https://</span> address. Each text in and out costs a little on your Twilio account.
+          {tr('ui.chatChannelsCard.twilioSendsTextsToCognitrix')}
+          <span className="font-mono"> https://</span>{' '}{tr('ui.chatChannelsCard.addressEachTextInAnd')}
         </p>
         <ol className="list-decimal space-y-1 pl-5 text-[12.5px] leading-relaxed text-fg-dim">
           <li>
-            On{' '}
-            <a href="https://console.twilio.com" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">console.twilio.com</a>,
-            buy a phone number that can send and receive SMS. US numbers also need an A2P 10DLC registration before carriers deliver their texts.
+            {tr('ui.chatChannelsCard.on')}{' '}
+            <a href="https://console.twilio.com" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">console.twilio.com</a>{tr('ui.chatChannelsCard.buyAPhoneNumberThat')}
           </li>
-          <li>Copy the Account SID and Auth Token from the console's home page, and paste them below with the number.</li>
-          <li>Cognitrix then shows a webhook URL. In the number's settings, under Messaging › A message comes in, choose Webhook, paste it and keep HTTP POST.</li>
-          <li>Text the number the code Cognitrix shows you, from your own phone.</li>
+          <li>{tr('ui.chatChannelsCard.copyTheAccountSidAnd')}</li>
+          <li>{tr('ui.chatChannelsCard.cognitrixThenShowsAWebhook')}</li>
+          <li>{tr('ui.chatChannelsCard.textTheNumberTheCode')}</li>
         </ol>
       </div>
     );
@@ -111,18 +108,17 @@ function Setup({ kind, manifest }: { kind: ChannelKind; manifest: Record<string,
     return (
       <div className="space-y-2">
         <p className="rounded-[10px] border border-line bg-bg px-3 py-2 text-[12.5px] leading-relaxed text-fg-dim">
-          Teams sends messages to the bot, so this needs Cognitrix running on a server with a public
-          <span className="font-mono"> https://</span> address. It does not work from the desktop app on its own.
+          {tr('ui.chatChannelsCard.teamsSendsMessagesToThe')}
+          <span className="font-mono"> https://</span>{' '}{tr('ui.chatChannelsCard.addressItDoesNotWork')}
         </p>
         <ol className="list-decimal space-y-1 pl-5 text-[12.5px] leading-relaxed text-fg-dim">
           <li>
-            In the{' '}
-            <a href="https://portal.azure.com/#create/Microsoft.AzureBot" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">Azure portal</a>,
-            create an Azure Bot with a single-tenant app, and add the Microsoft Teams channel to it.
+            {tr('ui.chatChannelsCard.inThe')}{' '}
+            <a href="https://portal.azure.com/#create/Microsoft.AzureBot" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">{tr('ui.chatChannelsCard.azurePortal')}</a>{tr('ui.chatChannelsCard.createAnAzureBotWith')}
           </li>
-          <li>Copy the Microsoft App ID and the tenant ID from its Configuration page, and create a client secret.</li>
-          <li>Paste all three below. Cognitrix then shows the messaging endpoint to paste back into the bot's Configuration page.</li>
-          <li>Add the bot to Teams (a Teams app package with the same App ID), then send it the code Cognitrix shows you in a direct chat.</li>
+          <li>{tr('ui.chatChannelsCard.copyTheMicrosoftAppId')}</li>
+          <li>{tr('ui.chatChannelsCard.pasteAllThreeBelowCognitrix')}</li>
+          <li>{tr('ui.chatChannelsCard.addTheBotToTeams')}</li>
         </ol>
       </div>
     );
@@ -137,21 +133,19 @@ function Setup({ kind, manifest }: { kind: ChannelKind; manifest: Record<string,
   return (
     <ol className="list-decimal space-y-1 pl-5 text-[12.5px] leading-relaxed text-fg-dim">
       <li>
-        Copy the{' '}
+        {tr('ui.chatChannelsCard.copyThe')}{' '}
         <button type="button" onClick={copy} className="text-accent-ink hover:underline">
-          {copied ? 'manifest (copied)' : 'app manifest'}
+          {copied ? tr('ui.chatChannelsCard.manifestCopied') : tr('ui.chatChannelsCard.appManifest')}
         </button>
-        , then on{' '}
-        <a href="https://api.slack.com/apps?new_app=1" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">api.slack.com/apps</a>{' '}
-        choose Create New App › From a manifest and paste it.
+        {tr('ui.chatChannelsCard.thenOn')}{' '}
+        <a href="https://api.slack.com/apps?new_app=1" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">api.slack.com/apps</a>{' '}{tr('ui.chatChannelsCard.chooseCreateNewAppFrom')}
       </li>
-      <li>Install the app to your workspace and copy the Bot User OAuth Token (<span className="font-mono">xoxb-…</span>).</li>
+      <li>{tr('ui.chatChannelsCard.installTheAppToYour')}<span className="font-mono">xoxb-…</span>).</li>
       <li>
-        Under Basic Information › App-Level Tokens, generate one with the <span className="font-mono">connections:write</span> scope
-        (<span className="font-mono">xapp-…</span>).
+        {tr('ui.chatChannelsCard.underBasicInformationAppLevel')}{' '}<span className="font-mono">connections:write</span>{' '}{tr('ui.chatChannelsCard.scope')}<span className="font-mono">xapp-…</span>).
       </li>
-      <li>Paste both below, then open the app in Slack and send it the code Cognitrix shows you.</li>
-      <li>To use it in a channel, invite the app there and @mention it. It replies in a thread.</li>
+      <li>{tr('ui.chatChannelsCard.pasteBothBelowThenOpen')}</li>
+      <li>{tr('ui.chatChannelsCard.toUseItInA')}</li>
     </ol>
   );
 }
@@ -188,7 +182,7 @@ function ChannelPanel({
       if (done) setNote(done);
       return true;
     } catch (e) {
-      setError(errorMessage(e, `Could not update ${label}.`));
+      setError(errorMessage(e, tr('ui.chatChannelsCard.couldNotUpdateLabel', { label })));
       return false;
     } finally {
       setBusy(false);
@@ -238,51 +232,51 @@ function ChannelPanel({
     <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); void connect(); }}>
       {kind === 'teams' && (
         <>
-          <Field label="MICROSOFT APP ID">
-            <Input autoComplete="off" aria-label="Teams App ID" placeholder="00000000-0000-0000-0000-000000000000"
+          <Field label={tr('ui.chatChannelsCard.microsoftAppId')}>
+            <Input autoComplete="off" aria-label={tr('ui.chatChannelsCard.teamsAppId')} placeholder="00000000-0000-0000-0000-000000000000"
               value={appId} onChange={(e) => setAppId(e.target.value)} disabled={busy} />
           </Field>
-          <Field label="TENANT ID">
-            <Input autoComplete="off" aria-label="Teams tenant ID" placeholder="00000000-0000-0000-0000-000000000000"
+          <Field label={tr('ui.chatChannelsCard.tenantId')}>
+            <Input autoComplete="off" aria-label={tr('ui.chatChannelsCard.teamsTenantId')} placeholder="00000000-0000-0000-0000-000000000000"
               value={tenantId} onChange={(e) => setTenantId(e.target.value)} disabled={busy} />
           </Field>
         </>
       )}
       {kind === 'sms' && (
         <>
-          <Field label="ACCOUNT SID">
-            <Input autoComplete="off" aria-label="Twilio Account SID" placeholder="AC…"
+          <Field label={tr('ui.chatChannelsCard.accountSid')}>
+            <Input autoComplete="off" aria-label={tr('ui.chatChannelsCard.twilioAccountSid')} placeholder={tr('ui.chatChannelsCard.ac')}
               value={appId} onChange={(e) => setAppId(e.target.value)} disabled={busy} />
           </Field>
-          <Field label="TWILIO NUMBER" hint="with country code">
-            <Input autoComplete="off" inputMode="tel" aria-label="Twilio phone number" placeholder="+15550102000"
+          <Field label={tr('ui.chatChannelsCard.twilioNumber')} hint={tr('ui.chatChannelsCard.withCountryCode')}>
+            <Input autoComplete="off" inputMode="tel" aria-label={tr('ui.chatChannelsCard.twilioPhoneNumber')} placeholder="+15550102000"
               value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
           </Field>
         </>
       )}
       {kind === 'whatsapp' && (
-        <Field label="PHONE NUMBER ID">
-          <Input autoComplete="off" inputMode="numeric" aria-label="WhatsApp phone number ID" placeholder="106540352242922"
+        <Field label={tr('ui.chatChannelsCard.phoneNumberId')}>
+          <Input autoComplete="off" inputMode="numeric" aria-label={tr('ui.chatChannelsCard.whatsappPhoneNumberId')} placeholder="106540352242922"
             value={appId} onChange={(e) => setAppId(e.target.value)} disabled={busy} />
         </Field>
       )}
-      <Field label={kind === 'slack' ? 'BOT TOKEN (xoxb-…)' : kind === 'teams' ? 'CLIENT SECRET' : kind === 'whatsapp' ? 'ACCESS TOKEN' : kind === 'sms' ? 'AUTH TOKEN' : 'BOT TOKEN'}>
+      <Field label={kind === 'slack' ? tr('ui.chatChannelsCard.botTokenXoxb') : kind === 'teams' ? tr('ui.chatChannelsCard.clientSecret') : kind === 'whatsapp' ? tr('ui.chatChannelsCard.accessToken') : kind === 'sms' ? tr('ui.chatChannelsCard.authToken') : tr('ui.chatChannelsCard.botToken')}>
         <Input
           type="password"
           autoComplete="off"
-          aria-label={kind === 'teams' ? 'Teams client secret' : kind === 'whatsapp' ? 'WhatsApp access token' : kind === 'sms' ? 'Twilio Auth Token' : `${label} bot token`}
-          placeholder={channel.bot_token_hint ? `saved ${channel.bot_token_hint}` : kind === 'slack' ? 'xoxb-…' : kind === 'teams' ? 'client secret value' : kind === 'whatsapp' ? 'EAAG…' : kind === 'sms' ? 'from the Twilio console' : '123456:ABC…'}
+          aria-label={kind === 'teams' ? tr('ui.chatChannelsCard.teamsClientSecret') : kind === 'whatsapp' ? tr('ui.chatChannelsCard.whatsappAccessToken') : kind === 'sms' ? tr('ui.chatChannelsCard.twilioAuthToken') : tr('ui.chatChannelsCard.labelBotToken', { label })}
+          placeholder={channel.bot_token_hint ? tr('ui.chatChannelsCard.savedBotTokenHint', { bot_token_hint: channel.bot_token_hint }) : kind === 'slack' ? 'xoxb-…' : kind === 'teams' ? tr('ui.chatChannelsCard.clientSecretValue') : kind === 'whatsapp' ? 'EAAG…' : kind === 'sms' ? tr('ui.chatChannelsCard.fromTheTwilioConsole') : '123456:ABC…'}
           value={botToken}
           onChange={(e) => setBotToken(e.target.value)}
           disabled={busy}
         />
       </Field>
       {kind === 'slack' && (
-        <Field label="APP-LEVEL TOKEN (xapp-…)">
+        <Field label={tr('ui.chatChannelsCard.appLevelTokenXapp')}>
           <Input
             type="password"
             autoComplete="off"
-            aria-label="Slack app-level token"
+            aria-label={tr('ui.chatChannelsCard.slackAppLevelToken')}
             placeholder="xapp-…"
             value={appToken}
             onChange={(e) => setAppToken(e.target.value)}
@@ -291,9 +285,9 @@ function ChannelPanel({
         </Field>
       )}
       {kind === 'whatsapp' && (
-        <Field label="APP SECRET">
-          <Input type="password" autoComplete="off" aria-label="WhatsApp app secret"
-            placeholder={channel.configured ? 'saved, leave empty to keep it' : 'from App settings › Basic'}
+        <Field label={tr('ui.chatChannelsCard.appSecret')}>
+          <Input type="password" autoComplete="off" aria-label={tr('ui.chatChannelsCard.whatsappAppSecret')}
+            placeholder={channel.configured ? tr('ui.chatChannelsCard.savedLeaveEmptyToKeep') : tr('ui.chatChannelsCard.fromAppSettingsBasic')}
             value={appSecret} onChange={(e) => setAppSecret(e.target.value)} disabled={busy} />
         </Field>
       )}
@@ -303,11 +297,11 @@ function ChannelPanel({
           disabled={busy || missing}
           className="h-10 rounded-lg bg-accent px-3 text-[13px] font-medium text-accent-foreground disabled:opacity-60"
         >
-          {busy ? 'Checking…' : channel.configured ? 'Save tokens' : `Connect ${label}`}
+          {busy ? tr('ui.chatChannelsCard.checking') : channel.configured ? tr('ui.chatChannelsCard.saveTokens') : tr('ui.chatChannelsCard.connectLabel', { label })}
         </button>
         {channel.configured && (
           <button type="button" onClick={() => setEditing(false)} className="h-10 rounded-lg border border-line px-3 text-[13px] hover:bg-panel-2">
-            Cancel
+            {tr('ui.chatChannelsCard.cancel')}
           </button>
         )}
       </div>
@@ -320,7 +314,7 @@ function ChannelPanel({
         <div className="mb-2 flex items-center justify-between gap-3">
           <StatusDot channel={channel} />
           <Toggle
-            label={`${label} on`}
+            label={tr('ui.chatChannelsCard.labelOn', { label })}
             checked={channel.enabled}
             disabled={busy}
             onChange={(v) => void update({ enabled: v })}
@@ -345,25 +339,25 @@ function ChannelPanel({
             <div className="rounded-[10px] border border-line bg-panel px-3 py-2.5 text-[12.5px]">
               <p className="text-fg-dim">
                 {kind === 'whatsapp'
-                  ? 'Callback URL for WhatsApp › Configuration in your Meta app:'
+                  ? tr('ui.chatChannelsCard.callbackUrlForWhatsappConfiguration')
                   : kind === 'sms'
-                  ? "Webhook URL for your Twilio number (Messaging › A message comes in, HTTP POST):"
-                  : "Messaging endpoint for the bot's Configuration page in Azure:"}
+                  ? tr('ui.chatChannelsCard.webhookUrlForYourTwilio')
+                  : tr('ui.chatChannelsCard.messagingEndpointForTheBot')}
               </p>
               <div className="mt-1 flex flex-wrap items-center gap-3">
-                <span className="select-all break-all font-mono text-[12px]" aria-label="Messaging endpoint">{endpoint}</span>
+                <span className="select-all break-all font-mono text-[12px]" aria-label={tr('ui.chatChannelsCard.messagingEndpoint')}>{endpoint}</span>
                 <button type="button" onClick={copyEndpoint} className="text-accent-ink hover:underline">
-                  {copiedUrl ? 'Copied' : 'Copy'}
+                  {copiedUrl ? tr('ui.chatChannelsCard.copied') : tr('ui.chatChannelsCard.copy')}
                 </button>
               </div>
               {channel.verify_token && (
                 <p className="mt-1.5 text-fg-dim">
-                  Verify token: <span className="select-all break-all font-mono text-[12px] text-fg" aria-label="Verify token">{channel.verify_token}</span>
+                  {tr('ui.chatChannelsCard.verifyToken_942c')}{' '}<span className="select-all break-all font-mono text-[12px] text-fg" aria-label={tr('ui.chatChannelsCard.verifyToken')}>{channel.verify_token}</span>
                 </p>
               )}
               {!endpoint.startsWith('https://') && (
                 <p className="mt-1.5 text-[11.5px] text-danger-ink">
-                  {label} only calls public https addresses. Open Cognitrix at its public address to get the right one.
+                  {tr('ui.chatChannelsCard.labelOnlyCallsPublicHttps', { label })}
                 </p>
               )}
             </div>
@@ -371,51 +365,51 @@ function ChannelPanel({
 
           {channel.linked ? (
             <p className="text-[12.5px] text-fg-dim">
-              Linked to {channel.peer_name ? <span className="text-fg">{channel.peer_name}</span> : 'your chat'}.{' '}
+              {tr('ui.chatChannelsCard.linkedTo')}{' '}{channel.peer_name ? <span className="text-fg">{channel.peer_name}</span> : tr('ui.chatChannelsCard.yourChat')}.{' '}
               {channel.mentions
-                ? 'It answers that chat, and you when you @mention it in a channel it was added to.'
-                : 'Only that chat is answered.'}
+                ? tr('ui.chatChannelsCard.itAnswersThatChatAnd')
+                : tr('ui.chatChannelsCard.onlyThatChatIsAnswered')}
             </p>
           ) : channel.link_code ? (
             <div className="rounded-[10px] border border-line bg-panel px-3 py-2.5 text-[12.5px]">
               <p className="text-fg-dim">
                 {kind === 'telegram'
-                  ? 'Open the bot and send this code'
+                  ? tr('ui.chatChannelsCard.openTheBotAndSend')
                   : kind === 'discord'
-                    ? 'Add the bot to a server you are in, then send it this code in a direct message'
+                    ? tr('ui.chatChannelsCard.addTheBotToA')
                     : kind === 'teams'
-                      ? 'Open a direct chat with the bot in Teams and send this code'
+                      ? tr('ui.chatChannelsCard.openADirectChatWith')
                     : kind === 'whatsapp'
-                      ? "After saving the callback URL in Meta, message the bot's number on WhatsApp with this code"
+                      ? tr('ui.chatChannelsCard.afterSavingTheCallbackUrl')
                     : kind === 'sms'
-                      ? `After saving the webhook URL in Twilio, text ${channel.bot_name} this code from your phone`
-                      : 'Open the app in Slack (Apps › Cognitrix › Messages) and send this code'}:
+                      ? tr('ui.chatChannelsCard.afterSavingTheWebhookUrl', { bot_name: channel.bot_name })
+                      : tr('ui.chatChannelsCard.openTheAppInSlack')}:
               </p>
               <div className="mt-1.5 flex flex-wrap items-center gap-3">
-                <span className="select-all font-mono text-[18px] tracking-[0.18em]" aria-label="Link code">{channel.link_code}</span>
+                <span className="select-all font-mono text-[18px] tracking-[0.18em]" aria-label={tr('ui.chatChannelsCard.linkCode')}>{channel.link_code}</span>
                 {channel.link_url && (
                   <a href={channel.link_url} target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">
-                    {kind === 'discord' ? `Add ${channel.bot_name} to a server` : kind === 'whatsapp' ? `Message ${channel.bot_name} on WhatsApp` : kind === 'sms' ? `Text ${channel.bot_name}` : `Open ${channel.bot_name} in Telegram`}
+                    {kind === 'discord' ? tr('ui.chatChannelsCard.addBotNameToA', { bot_name: channel.bot_name }) : kind === 'whatsapp' ? tr('ui.chatChannelsCard.messageBotNameOnWhatsapp', { bot_name: channel.bot_name }) : kind === 'sms' ? tr('ui.chatChannelsCard.textBotName', { bot_name: channel.bot_name }) : tr('ui.chatChannelsCard.openBotNameInTelegram', { bot_name: channel.bot_name })}
                   </a>
                 )}
               </div>
-              <p className="mt-1.5 text-[11.5px] text-fg-dim">The code works for 30 minutes. This page updates once the chat is linked.</p>
+              <p className="mt-1.5 text-[11.5px] text-fg-dim">{tr('ui.chatChannelsCard.theCodeWorksFor30')}</p>
             </div>
           ) : (
             <p className="text-[12.5px] text-fg-dim">
-              The link code expired.{' '}
-              <button type="button" onClick={() => void run(() => relinkChannel(kind))} className="text-accent-ink hover:underline">Get a new code</button>
+              {tr('ui.chatChannelsCard.theLinkCodeExpired')}{' '}
+              <button type="button" onClick={() => void run(() => relinkChannel(kind))} className="text-accent-ink hover:underline">{tr('ui.chatChannelsCard.getANewCode')}</button>
             </p>
           )}
 
-          <Field label="AGENT" hint="new conversations use it; change it in chat with /agent">
+          <Field label={tr('ui.chatChannelsCard.agent')} hint={tr('ui.chatChannelsCard.newConversationsUseItChange')}>
             <Select
               value={channel.agent_id}
               disabled={busy}
-              onChange={(e) => void update({ agent_id: e.target.value }, 'Agent saved.')}
-              aria-label={`${label} agent`}
+              onChange={(e) => void update({ agent_id: e.target.value }, tr('ui.chatChannelsCard.agentSaved'))}
+              aria-label={tr('ui.chatChannelsCard.labelAgent', { label })}
             >
-              <option value="">Your first agent</option>
+              <option value="">{tr('ui.chatChannelsCard.yourFirstAgent')}</option>
               {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </Select>
           </Field>
@@ -423,67 +417,63 @@ function ChannelPanel({
           <div className="divide-y divide-line">
             <div className="flex items-center justify-between gap-4 py-2">
               <div>
-                <div className="text-[13px]">Agent alerts</div>
+                <div className="text-[13px]">{tr('ui.chatChannelsCard.agentAlerts')}</div>
                 <div className="text-[12px] text-fg-dim">
-                  Messages agents send with Notify Me.
-                  {kind === 'whatsapp' && ' WhatsApp only delivers them within 24 hours of your last message to the bot; later ones stay in your Inbox.'}
+                  {tr('ui.chatChannelsCard.messagesAgentsSendWithNotify', { value: kind === 'whatsapp' && tr('ui.chatChannelsCard.whatsappOnlyDeliversThemWithin') })}
                 </div>
               </div>
-              <Toggle label={`${label} agent alerts`} checked={channel.send_alerts} disabled={busy}
+              <Toggle label={tr('ui.chatChannelsCard.labelAgentAlerts', { label })} checked={channel.send_alerts} disabled={busy}
                 onChange={(v) => void update({ send_alerts: v })} />
             </div>
             <div className="flex items-center justify-between gap-4 py-2">
               <div>
-                <div className="text-[13px]">Task approvals</div>
-                <div className="text-[12px] text-fg-dim">Approve or deny with buttons. Chats started here always ask here.</div>
+                <div className="text-[13px]">{tr('ui.chatChannelsCard.taskApprovals')}</div>
+                <div className="text-[12px] text-fg-dim">{tr('ui.chatChannelsCard.approveOrDenyWithButtons')}</div>
               </div>
-              <Toggle label={`${label} task approvals`} checked={channel.send_approvals} disabled={busy}
+              <Toggle label={tr('ui.chatChannelsCard.labelTaskApprovals', { label })} checked={channel.send_approvals} disabled={busy}
                 onChange={(v) => void update({ send_approvals: v })} />
             </div>
             {channel.mentions && (
               <div className="flex items-center justify-between gap-4 py-2">
                 <div>
-                  <div className="text-[13px]">Answer other people in channels</div>
+                  <div className="text-[13px]">{tr('ui.chatChannelsCard.answerOtherPeopleInChannels')}</div>
                   <div className="text-[12px] leading-snug text-fg-dim">
-                    Off: only your own @mentions are answered. On: anyone in a channel the bot was added to can ask.
-                    For them the agent can only look things up in its folders, knowledge and the web, on your model key.
-                    It can't change anything or use your connected apps, memory, chats or sign-ins.
+                    {tr('ui.chatChannelsCard.offOnlyYourOwnMentions')}
                   </div>
                 </div>
-                <Toggle label={`${label} answer other people`} checked={!!channel.answer_others} disabled={busy}
+                <Toggle label={tr('ui.chatChannelsCard.labelAnswerOtherPeople', { label })} checked={!!channel.answer_others} disabled={busy}
                   onChange={(v) => void update({ answer_others: v })} />
               </div>
             )}
           </div>
           {kind === 'slack' && (
             <p className="text-[12px] leading-snug text-fg-dim">
-              Connected before channel mentions existed? In your Slack app add the <span className="font-mono">app_mentions:read</span> scope
-              and the <span className="font-mono">app_mention</span> bot event, then reinstall it.
+              {tr('ui.chatChannelsCard.connectedBeforeChannelMentionsExisted')}{' '}<span className="font-mono">app_mentions:read</span>{' '}{tr('ui.chatChannelsCard.scopeAndThe')}{' '}<span className="font-mono">app_mention</span>{' '}{tr('ui.chatChannelsCard.botEventThenReinstallIt')}
             </p>
           )}
 
           <div className="flex flex-wrap gap-2 text-[12.5px]">
             {channel.linked && (
               <button type="button" disabled={busy || !channel.connected}
-                onClick={() => void run(() => testChannel(kind), 'Test message sent.')}
+                onClick={() => void run(() => testChannel(kind), tr('ui.chatChannelsCard.testMessageSent'))}
                 className="h-9 rounded-lg border border-line px-3 hover:bg-panel-2 disabled:opacity-60">
-                Send test message
+                {tr('ui.chatChannelsCard.sendTestMessage')}
               </button>
             )}
             {channel.linked && (
               <button type="button" disabled={busy} onClick={() => void run(() => relinkChannel(kind))}
                 className="h-9 rounded-lg border border-line px-3 hover:bg-panel-2 disabled:opacity-60">
-                Link a different chat
+                {tr('ui.chatChannelsCard.linkADifferentChat')}
               </button>
             )}
             <button type="button" disabled={busy} onClick={() => setEditing(true)}
               className="h-9 rounded-lg border border-line px-3 hover:bg-panel-2 disabled:opacity-60">
-              {kind === 'teams' || kind === 'whatsapp' || kind === 'sms' ? 'Change credentials' : 'Change token'}
+              {kind === 'teams' || kind === 'whatsapp' || kind === 'sms' ? tr('ui.chatChannelsCard.changeCredentials') : tr('ui.chatChannelsCard.changeToken')}
             </button>
             <button type="button" disabled={busy}
-              onClick={() => void run(async () => { await deleteChannel(kind); return null; }, `${label} disconnected.`)}
+              onClick={() => void run(async () => { await deleteChannel(kind); return null; }, tr('ui.chatChannelsCard.labelDisconnected', { label }))}
               className="h-9 rounded-lg px-3 text-danger-ink hover:underline disabled:opacity-60">
-              Disconnect
+              {tr('ui.chatChannelsCard.disconnect')}
             </button>
           </div>
         </div>
@@ -507,9 +497,9 @@ const BLURB: Record<ChannelKind, string> = {
 
 function summary(channel: ChatChannel): string {
   if (!channel.configured) return BLURB[channel.kind];
-  if (!channel.enabled) return `${channel.bot_name || LABEL[channel.kind]} · off`;
-  if (channel.status === 'error') return 'Needs attention';
-  if (!channel.linked) return 'Waiting for the link code';
+  if (!channel.enabled) return tr('ui.chatChannelsCard.botNameOff', { bot_name: channel.bot_name || LABEL[channel.kind] });
+  if (channel.status === 'error') return tr('ui.chatChannelsCard.needsAttention');
+  if (!channel.linked) return tr('ui.chatChannelsCard.waitingForTheLinkCode');
   return [channel.bot_name, channel.peer_name && `linked to ${channel.peer_name}`].filter(Boolean).join(' · ');
 }
 
@@ -550,7 +540,7 @@ function ChannelRow({
               : channel.configured ? 'border border-line hover:bg-panel-2' : 'bg-accent font-medium text-accent-foreground',
           )}
         >
-          {open ? 'Close' : channel.configured ? 'Manage' : 'Set up'}
+          {open ? tr('ui.chatChannelsCard.close') : channel.configured ? tr('ui.chatChannelsCard.manage') : tr('ui.chatChannelsCard.setUp')}
           <span className="sr-only"> {label}</span>
         </button>
       </div>
@@ -582,7 +572,7 @@ export function ChatChannelsCard() {
   const load = () =>
     listChannels()
       .then(setList)
-      .catch((e) => setLoadError(errorMessage(e, 'Could not load chat apps.')));
+      .catch((e) => setLoadError(errorMessage(e, tr('ui.chatChannelsCard.couldNotLoadChatApps'))));
 
   useEffect(() => {
     void load();
@@ -598,7 +588,7 @@ export function ChatChannelsCard() {
   }, [waiting]);
 
   if (loadError) return <p role="alert" className="text-[12.5px] text-danger-ink">{loadError}</p>;
-  if (!list) return <p className="text-[13px] text-fg-dim">Loading…</p>;
+  if (!list) return <p className="text-[13px] text-fg-dim">{tr('ui.chatChannelsCard.loading')}</p>;
 
   const replace = (kind: ChannelKind, next: ChatChannel | null) => {
     if (next === null) {
@@ -615,7 +605,7 @@ export function ChatChannelsCard() {
     <div className="space-y-3">
       {!list.available && (
         <p className="rounded-[10px] border border-line bg-bg px-3 py-2 text-[12.5px] text-fg-dim">
-          Chat apps are turned off on this engine (<span className="font-mono">COGNITRIX_CHANNELS=0</span>).
+          {tr('ui.chatChannelsCard.chatAppsAreTurnedOff')}<span className="font-mono">COGNITRIX_CHANNELS=0</span>).
         </p>
       )}
       <div className="divide-y divide-line rounded-[12px] border border-line bg-panel">

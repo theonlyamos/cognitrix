@@ -8,6 +8,7 @@ import AssistantSetup from '@/components/AssistantSetup';
 import WhatsNew from '@/components/WhatsNew';
 import { NotificationsProvider } from '@/context/NotificationsContext';
 import { isDesktop, onDesktopEvent } from '@/lib/desktop';
+import { tr } from '@/lib/i18n';
 
 /** Persistent shell: the sidebar (with every chat) and alerts mount once;
  *  pages swap through the Outlet. */
@@ -82,7 +83,7 @@ function AppShell() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
       <button
         type="button"
-        aria-label="Open navigation"
+        aria-label={tr('ui.appLayout.openNavigation')}
         aria-controls="primary-navigation"
         aria-expanded={mobileNavOpen}
         onClick={() => setMobileNavOpen(true)}
@@ -103,7 +104,7 @@ function AppShell() {
       {mobileNavOpen && (
         <button
           type="button"
-          aria-label="Close navigation"
+          aria-label={tr('ui.appLayout.closeNavigation')}
           className="fixed inset-0 z-40 bg-bg/70 md:hidden"
           onClick={() => setMobileNavOpen(false)}
         />

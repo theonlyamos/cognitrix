@@ -7,6 +7,7 @@ import {
   type ProviderKey, type ProviderKeyList,
 } from '@/lib/providerKeys';
 import { Group, SettingRow, StatusPill, buttonClass, primaryButtonClass, quietButtonClass } from './ui';
+import { tr } from '@/lib/i18n';
 
 const SHORT: Record<string, string> = {
   openrouter: 'OR', openai: 'AI', anthropic: 'A\\', google: 'G', groq: 'GQ', cerebras: 'CB', ollama: 'OL',
@@ -16,10 +17,10 @@ type Result = { ok: boolean; message: string };
 
 function Status({ row }: { row: ProviderKey }) {
   switch (row.source) {
-    case 'env': return <StatusPill tone="ok">FROM .ENV</StatusPill>;
-    case 'saved': return <StatusPill tone="ok">SAVED</StatusPill>;
-    case 'local': return <StatusPill tone="off">NO KEY NEEDED</StatusPill>;
-    default: return <StatusPill tone="off">NOT SET</StatusPill>;
+    case 'env': return <StatusPill tone="ok">{tr('ui.settings.providerKeys.fromEnv')}</StatusPill>;
+    case 'saved': return <StatusPill tone="ok">{tr('ui.settings.providerKeys.saved')}</StatusPill>;
+    case 'local': return <StatusPill tone="off">{tr('ui.settings.providerKeys.noKeyNeeded')}</StatusPill>;
+    default: return <StatusPill tone="off">{tr('ui.settings.providerKeys.notSet')}</StatusPill>;
   }
 }
 
@@ -36,7 +37,7 @@ function ProviderRow({ row, canEdit, onChange }: { row: ProviderKey; canEdit: bo
     try {
       setResult(await testProviderKey(row.id));
     } catch (e) {
-      setResult({ ok: false, message: errorMessage(e, 'Could not run the test.') });
+      setResult({ ok: false, message: errorMessage(e, tr('ui.settings.providerKeys.couldNotRunTheTest')) });
     } finally {
       setBusy(null);
     }
@@ -52,7 +53,7 @@ function ProviderRow({ row, canEdit, onChange }: { row: ProviderKey; canEdit: bo
       setBusy('test');
       setResult(await testProviderKey(row.id));
     } catch (e) {
-      setResult({ ok: false, message: errorMessage(e, 'Could not save the key.') });
+      setResult({ ok: false, message: errorMessage(e, tr('ui.settings.providerKeys.couldNotSaveTheKey')) });
     } finally {
       setBusy(null);
     }
@@ -64,7 +65,7 @@ function ProviderRow({ row, canEdit, onChange }: { row: ProviderKey; canEdit: bo
     try {
       onChange(await removeProviderKey(row.id));
     } catch (e) {
-      setResult({ ok: false, message: errorMessage(e, 'Could not remove the key.') });
+      setResult({ ok: false, message: errorMessage(e, tr('ui.settings.providerKeys.couldNotRemoveTheKey')) });
     } finally {
       setBusy(null);
     }
@@ -90,19 +91,19 @@ function ProviderRow({ row, canEdit, onChange }: { row: ProviderKey; canEdit: bo
       >
         {row.source !== 'none' && (
           <button type="button" onClick={test} disabled={!!busy} className={quietButtonClass}>
-            {busy === 'test' ? 'Testing…' : row.source === 'local' ? 'Check' : 'Test'}
+            {busy === 'test' ? tr('ui.settings.providerKeys.testing') : row.source === 'local' ? tr('ui.settings.providerKeys.check') : tr('ui.settings.providerKeys.test')}
           </button>
         )}
         {editable && row.source === 'saved' && !adding && (
           <>
-            <button type="button" onClick={() => setAdding(true)} disabled={!!busy} className={quietButtonClass}>Replace</button>
+            <button type="button" onClick={() => setAdding(true)} disabled={!!busy} className={quietButtonClass}>{tr('ui.settings.providerKeys.replace')}</button>
             <button type="button" onClick={remove} disabled={!!busy} className={quietButtonClass}>
-              {busy === 'remove' ? 'Removing…' : 'Remove'}
+              {busy === 'remove' ? tr('ui.settings.providerKeys.removing') : tr('ui.settings.providerKeys.remove')}
             </button>
           </>
         )}
         {editable && row.source === 'none' && !adding && (
-          <button type="button" onClick={() => setAdding(true)} className={buttonClass}>Add key</button>
+          <button type="button" onClick={() => setAdding(true)} className={buttonClass}>{tr('ui.settings.providerKeys.addKey')}</button>
         )}
       </SettingRow>
 
@@ -115,20 +116,20 @@ function ProviderRow({ row, canEdit, onChange }: { row: ProviderKey; canEdit: bo
             type="password"
             autoComplete="off"
             autoFocus
-            aria-label={`${label} API key`}
-            placeholder={`${label} API key`}
+            aria-label={tr('ui.settings.providerKeys.labelApiKey', { label })}
+            placeholder={tr('ui.settings.providerKeys.labelApiKey', { label })}
             value={key}
             onChange={(e) => setKey(e.target.value)}
             disabled={!!busy}
             className="min-w-0 flex-1 basis-[220px] md:h-9"
           />
           <button type="submit" disabled={!!busy || !key.trim()} className={primaryButtonClass}>
-            {busy === 'save' ? 'Saving…' : 'Save key'}
+            {busy === 'save' ? tr('ui.settings.providerKeys.saving') : tr('ui.settings.providerKeys.saveKey')}
           </button>
-          <button type="button" onClick={() => { setAdding(false); setKey(''); }} disabled={!!busy} className={quietButtonClass}>Cancel</button>
+          <button type="button" onClick={() => { setAdding(false); setKey(''); }} disabled={!!busy} className={quietButtonClass}>{tr('ui.settings.providerKeys.cancel')}</button>
           {KEY_URLS[row.id] && (
             <a href={KEY_URLS[row.id]} target="_blank" rel="noreferrer" className="w-full text-[12px] text-accent-ink hover:underline">
-              Get a {label} key
+              {tr('ui.settings.providerKeys.getALabelKey', { label })}
             </a>
           )}
         </form>
@@ -149,11 +150,11 @@ export function ProviderKeys() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    listProviderKeys().then(setList).catch((e) => setError(errorMessage(e, 'Could not load provider keys.')));
+    listProviderKeys().then(setList).catch((e) => setError(errorMessage(e, tr('ui.settings.providerKeys.couldNotLoadProviderKeys'))));
   }, []);
 
   if (error) return <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>;
-  if (!list) return <p className="text-[13px] text-fg-dim">Loading…</p>;
+  if (!list) return <p className="text-[13px] text-fg-dim">{tr('ui.settings.providerKeys.loading')}</p>;
 
   const replace = (next: ProviderKey) =>
     setList((cur) => cur && { ...cur, providers: cur.providers.map((p) => (p.id === next.id ? next : p)) });
@@ -166,9 +167,8 @@ export function ProviderKeys() {
         ))}
       </Group>
       <p className="mt-3 max-w-[70ch] text-[12px] leading-relaxed text-fg-dim">
-        {list.can_edit ? 'Saved keys are encrypted on this engine and used by every agent. ' : 'Only the admin can change these keys. '}
-        Keys from the engine's environment or <span className="font-mono">.env</span> take priority and can't be changed here.
-        A custom base URL only gets a stored key if it's the provider's own address or listed in{' '}
+        {list.can_edit ? tr('ui.settings.providerKeys.savedKeysAreEncryptedOn') : tr('ui.settings.providerKeys.onlyTheAdminCanChange')}
+        {tr('ui.settings.providerKeys.keysFromTheEngineS')}{' '}<span className="font-mono">.env</span>{' '}{tr('ui.settings.providerKeys.takePriorityAndCanT')}{' '}
         <span className="font-mono">COGNITRIX_TRUSTED_BASE_URLS</span>.
       </p>
     </>

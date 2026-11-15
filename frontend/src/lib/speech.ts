@@ -192,8 +192,19 @@ function speakWithBrowser(pieces: string[], voiceName: string, mine: number): Pr
       if (index >= pieces.length) return resolve();
       const utterance = new SpeechSynthesisUtterance(pieces[index++]);
       if (voice) utterance.voice = voice;
-      utterance.onend = next;
-      utterance.onerror = (e) => (e.error === 'canceled' || e.error === 'interrupted' ? resolve() : reject(new Error('The browser could not read this aloud.')));
+      // Some browsers queue speech that never starts (no voices installed,
+      // headless): give up rather than wait forever.
+      const watchdog = window.setTimeout(() => {
+        synth.cancel();
+        reject(new Error('The browser could not read this aloud.'));
+      }, 5000);
+      utterance.onstart = () => window.clearTimeout(watchdog);
+      utterance.onend = () => { window.clearTimeout(watchdog); next(); };
+      utterance.onerror = (e) => {
+        window.clearTimeout(watchdog);
+        if (e.error === 'canceled' || e.error === 'interrupted') resolve();
+        else reject(new Error('The browser could not read this aloud.'));
+      };
       synth.speak(utterance);
     };
     next();
@@ -217,15 +228,17 @@ async function describe(err: unknown): Promise<string> {
   return err instanceof Error && err.message ? err.message : 'Could not read this aloud.';
 }
 
-/** Read `markdown` aloud. Reading something else, or the same thing again, stops what was playing. */
+/** Read `markdown` aloud. Reading something else, or the same thing again, stops what was playing.
+ *  When the service picked automatically fails (no credit, rate limit), the
+ *  next ready one is tried, then the browser's own voices. */
 export async function speakText(id: string, markdown: string, options?: SpeechOptions | null): Promise<void> {
   stopSpeaking();
   const text = speakableText(markdown);
   if (!text) return;
   const mine = ++run;
   const prefs = getSpeechPrefs();
-  let provider = prefs.provider;
-  if (provider !== 'browser') {
+  let order: string[] = ['browser'];
+  if (prefs.provider !== 'browser') {
     let known = options;
     if (!known) {
       try {
@@ -235,39 +248,58 @@ export async function speakText(id: string, markdown: string, options?: SpeechOp
       }
       if (mine !== run) return;
     }
-    const ready = known?.providers.filter((p) => p.ready) ?? [];
-    provider = ready.find((p) => p.id === provider)?.id ?? (provider ? '' : ready[0]?.id ?? '');
-    if (!provider) provider = 'browser';
+    const ready = (known?.providers.filter((p) => p.ready) ?? []).map((p) => p.id);
+    if (prefs.provider && ready.includes(prefs.provider)) {
+      // A service the person chose: no quiet switching to another one.
+      order = [prefs.provider];
+    } else if (!prefs.provider) {
+      order = [...ready, 'browser'];
+    }
   }
 
   set({ id, phase: 'loading', error: null });
-  try {
-    if (provider === 'browser') {
-      if (!browserSpeechAvailable()) throw new Error('This browser has no voices. Add an OpenAI or Gemini key under Settings, Voice.');
-      set({ id, phase: 'playing', error: null });
-      await speakWithBrowser(speechPieces(text, 220), prefs.provider === 'browser' ? prefs.voice : '', mine);
-    } else {
-      const controller = new AbortController();
-      abort = controller;
-      const pieces = speechPieces(text);
-      const voice = prefs.provider === provider ? prefs.voice : '';
-      // Ask for the next piece while the current one plays, so there's no gap.
-      let pending = fetchPiece(pieces[0], provider, voice, controller.signal);
-      for (let i = 0; i < pieces.length; i += 1) {
-        const blob = await pending;
-        if (mine !== run) return;
-        if (i + 1 < pieces.length) {
-          pending = fetchPiece(pieces[i + 1], provider, voice, controller.signal);
-          pending.catch(() => {});
-        }
-        set({ id, phase: 'playing', error: null });
-        await playBlob(blob, mine);
-        if (mine !== run) return;
-      }
+  let lastError: unknown = null;
+  for (const provider of order) {
+    if (provider === 'browser' && !browserSpeechAvailable()) {
+      lastError = lastError ?? new Error('This browser has no voices. Add an OpenAI or Gemini key under Settings, Voice.');
+      continue;
     }
-    if (mine === run) set({ id: null, phase: 'idle', error: null });
-  } catch (err) {
-    if (mine !== run) return;
-    set({ id, phase: 'idle', error: await describe(err) });
+    let started = false;
+    try {
+      if (provider === 'browser') {
+        set({ id, phase: 'playing', error: null });
+        started = true;
+        await speakWithBrowser(speechPieces(text, 220), prefs.provider === 'browser' ? prefs.voice : '', mine);
+      } else {
+        const controller = new AbortController();
+        abort = controller;
+        const pieces = speechPieces(text);
+        const voice = prefs.provider === provider ? prefs.voice : '';
+        // Ask for the next piece while the current one plays, so there's no gap.
+        let pending = fetchPiece(pieces[0], provider, voice, controller.signal);
+        for (let i = 0; i < pieces.length; i += 1) {
+          const blob = await pending;
+          if (mine !== run) return;
+          if (i + 1 < pieces.length) {
+            pending = fetchPiece(pieces[i + 1], provider, voice, controller.signal);
+            pending.catch(() => {});
+          }
+          set({ id, phase: 'playing', error: null });
+          started = true;
+          await playBlob(blob, mine);
+          if (mine !== run) return;
+        }
+      }
+      if (mine === run) set({ id: null, phase: 'idle', error: null });
+      return;
+    } catch (err) {
+      if (mine !== run) return;
+      lastError = err;
+      // Halfway through a reply, starting over in another voice would repeat it.
+      if (started) break;
+      set({ id, phase: 'loading', error: null });
+    }
   }
+  if (mine !== run) return;
+  set({ id, phase: 'idle', error: await describe(lastError) });
 }

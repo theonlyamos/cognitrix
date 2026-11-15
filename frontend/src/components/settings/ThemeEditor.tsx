@@ -9,11 +9,12 @@ import {
 } from '@/lib/theme/themes';
 import { cn } from '@/lib/utils';
 import { buttonClass, primaryButtonClass } from './ui';
+import { tr } from '@/lib/i18n';
 
 const BASE_FIELDS: { key: 'background' | 'text' | 'accent'; label: string }[] = [
-  { key: 'background', label: 'Background' },
-  { key: 'text', label: 'Text' },
-  { key: 'accent', label: 'Accent' },
+  { key: 'background', get label() { return tr('ui.settings.themeEditor.background'); } },
+  { key: 'text', get label() { return tr('ui.settings.themeEditor.text'); } },
+  { key: 'accent', get label() { return tr('ui.settings.themeEditor.accent'); } },
 ];
 
 /** A colour swatch (opens the system picker) beside a hex box. */
@@ -41,7 +42,7 @@ function ColorField({ label, value, placeholder, onChange, allowRgba }: {
       <span className="relative h-7 w-7 flex-none overflow-hidden rounded-md border border-line" style={{ background: shown || 'transparent' }}>
         <input
           type="color"
-          aria-label={`${label} colour`}
+          aria-label={tr('ui.settings.themeEditor.labelColour', { label })}
           value={swatch}
           onChange={(e) => onChange(e.target.value)}
           className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
@@ -49,7 +50,7 @@ function ColorField({ label, value, placeholder, onChange, allowRgba }: {
       </span>
       <input
         type="text"
-        aria-label={`${label} value`}
+        aria-label={tr('ui.settings.themeEditor.labelValue', { label })}
         value={text}
         placeholder={placeholder}
         spellCheck={false}
@@ -134,7 +135,7 @@ export function ThemeEditor({ initial, isNew, onClose }: { initial: ThemeFile; i
       if (file.dark) await pickTheme('dark', file.id);
       onClose();
     } catch (e) {
-      setError(errorMessage(e, 'Could not save this theme.'));
+      setError(errorMessage(e, tr('ui.settings.themeEditor.couldNotSaveThisTheme')));
       setBusy(false);
     }
   };
@@ -144,41 +145,41 @@ export function ThemeEditor({ initial, isNew, onClose }: { initial: ThemeFile; i
       ref={panel}
       role="dialog"
       aria-modal="false"
-      aria-label={isNew ? 'Create theme' : `Edit ${initial.name}`}
+      aria-label={isNew ? tr('ui.settings.themeEditor.createTheme') : tr('ui.settings.themeEditor.editName', { name: initial.name })}
       className="fixed inset-x-0 bottom-0 z-50 flex max-h-[78dvh] flex-col rounded-t-2xl border border-line bg-panel shadow-panel md:inset-x-auto md:bottom-3 md:right-3 md:top-3 md:max-h-none md:w-[380px] md:rounded-2xl"
     >
       <header className="flex flex-none items-center gap-2 border-b border-line px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="font-mono text-[10.5px] tracking-[0.14em] text-fg-dim">{isNew ? 'NEW THEME' : 'EDIT THEME'}</div>
+          <div className="font-mono text-[10.5px] tracking-[0.14em] text-fg-dim">{isNew ? tr('ui.settings.themeEditor.newTheme') : tr('ui.settings.themeEditor.editTheme')}</div>
           <input
-            aria-label="Theme name"
+            aria-label={tr('ui.settings.themeEditor.themeName')}
             value={draft.name}
             maxLength={48}
             onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
             className="mt-0.5 w-full bg-transparent text-[15px] font-semibold outline-none"
           />
         </div>
-        <button type="button" aria-label="Close without saving" onClick={onClose}
+        <button type="button" aria-label={tr('ui.settings.themeEditor.closeWithoutSaving')} onClick={onClose}
           className="grid h-9 w-9 place-items-center rounded-lg text-fg-dim hover:bg-panel-2 hover:text-fg">
           <X size={16} />
         </button>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        <div role="tablist" aria-label="Appearance" className="mb-3 grid grid-cols-2 gap-0.5 rounded-lg border border-line p-0.5">
+        <div role="tablist" aria-label={tr('ui.settings.themeEditor.appearance')} className="mb-3 grid grid-cols-2 gap-0.5 rounded-lg border border-line p-0.5">
           {(['light', 'dark'] as const).map((m) => (
             <button key={m} type="button" role="tab" aria-selected={tab === m} onClick={() => setTab(m)}
               className={cn('h-8 rounded-md text-[12.5px]', tab === m ? 'bg-panel-2 font-medium text-fg' : 'text-fg-dim hover:text-fg')}>
-              {m === 'light' ? 'Light' : 'Dark'}{draft[m] ? '' : ' (off)'}
+              {m === 'light' ? tr('ui.settings.themeEditor.light') : tr('ui.settings.themeEditor.dark')}{draft[m] ? '' : ' (off)'}
             </button>
           ))}
         </div>
 
         {!variant ? (
           <div className="rounded-lg border border-dashed border-line px-3 py-4 text-center text-[12.5px] text-fg-dim">
-            <p>This theme has no {tab} version, so {tab} mode keeps using another theme.</p>
+            <p>{tr('ui.settings.themeEditor.thisThemeHasNoTab', { tab })}</p>
             <button type="button" className={cn(buttonClass, 'mt-2')} onClick={() => setVariant(starterVariant(tab))}>
-              Add a {tab} version
+              {tr('ui.settings.themeEditor.addATabVersion', { tab })}
             </button>
           </div>
         ) : (
@@ -188,13 +189,13 @@ export function ThemeEditor({ initial, isNew, onClose }: { initial: ThemeFile; i
             ))}
             <label className="block py-2">
               <span className="flex items-center justify-between text-[12.5px]">
-                <span>Contrast</span>
+                <span>{tr('ui.settings.themeEditor.contrast')}</span>
                 <span className="font-mono text-[11px] text-fg-dim">{draft.contrast ?? 50}</span>
               </span>
-              <input type="range" min={0} max={100} step={5} value={draft.contrast ?? 50} aria-label="Contrast"
+              <input type="range" min={0} max={100} step={5} value={draft.contrast ?? 50} aria-label={tr('ui.settings.themeEditor.contrast')}
                 onChange={(e) => setDraft((d) => ({ ...d, contrast: Number(e.target.value) }))}
                 className="mt-1 w-full accent-accent-ink" />
-              <span className="block text-[11.5px] text-fg-dim">How strongly borders and secondary text stand out.</span>
+              <span className="block text-[11.5px] text-fg-dim">{tr('ui.settings.themeEditor.howStronglyBordersAndSecondary')}</span>
             </label>
 
             {warnings.length > 0 && (
@@ -205,11 +206,11 @@ export function ThemeEditor({ initial, isNew, onClose }: { initial: ThemeFile; i
 
             <details className="group mt-2 rounded-lg border border-line">
               <summary className="cursor-pointer select-none px-3 py-2 text-[12.5px] font-medium">
-                Advanced colours
-                <span className="ml-1 font-normal text-fg-dim">· {Object.keys(variant.colors ?? {}).length} set by hand</span>
+                {tr('ui.settings.themeEditor.advancedColours')}
+                <span className="ml-1 font-normal text-fg-dim">{tr('ui.settings.themeEditor.lengthSetByHand', { length: Object.keys(variant.colors ?? {}).length })}</span>
               </summary>
               <div className="border-t border-line px-3 py-1">
-                <p className="py-1.5 text-[11.5px] leading-snug text-fg-dim">Empty boxes are worked out from the three colours above. Set one to override it.</p>
+                <p className="py-1.5 text-[11.5px] leading-snug text-fg-dim">{tr('ui.settings.themeEditor.emptyBoxesAreWorkedOut')}</p>
                 {TOKENS.filter((n) => n !== 'bg' && n !== 'fg' && n !== 'accent').map((name) => (
                   <div key={name} className="flex items-center">
                     <div className="min-w-0 flex-1">
@@ -221,7 +222,7 @@ export function ThemeEditor({ initial, isNew, onClose }: { initial: ThemeFile; i
                         onChange={(v) => setToken(name, v)}
                       />
                     </div>
-                    <button type="button" aria-label={`Reset ${TOKEN_LABELS[name]}`} disabled={!variant.colors?.[name]}
+                    <button type="button" aria-label={tr('ui.settings.themeEditor.resetItem', { item: TOKEN_LABELS[name] })} disabled={!variant.colors?.[name]}
                       onClick={() => setToken(name, '')}
                       className="ml-1 grid h-7 w-7 flex-none place-items-center rounded text-fg-dim hover:text-fg disabled:opacity-25">
                       <RotateCcw size={13} />
@@ -233,20 +234,20 @@ export function ThemeEditor({ initial, isNew, onClose }: { initial: ThemeFile; i
 
             {otherHas && (
               <button type="button" className="mt-2 text-[12px] text-danger-ink hover:underline" onClick={() => setVariant(undefined)}>
-                Remove the {tab} version
+                {tr('ui.settings.themeEditor.removeTheTabVersion', { tab })}
               </button>
             )}
           </>
         )}
 
-        <div className="mt-4 font-mono text-[10.5px] tracking-[0.14em] text-fg-dim">FONTS</div>
-        <p className="mt-1 text-[11.5px] text-fg-dim">The name of a font installed on your computer. Leave empty for the default.</p>
+        <div className="mt-4 font-mono text-[10.5px] tracking-[0.14em] text-fg-dim">{tr('ui.settings.themeEditor.fonts')}</div>
+        <p className="mt-1 text-[11.5px] text-fg-dim">{tr('ui.settings.themeEditor.theNameOfAFont')}</p>
         {(['ui', 'code'] as const).map((key) => (
           <label key={key} className="flex items-center gap-2.5 py-1.5">
-            <span className="min-w-0 flex-1 text-[12.5px]">{key === 'ui' ? 'Interface font' : 'Code font'}</span>
+            <span className="min-w-0 flex-1 text-[12.5px]">{key === 'ui' ? tr('ui.settings.themeEditor.interfaceFont') : tr('ui.settings.themeEditor.codeFont')}</span>
             <input
               value={draft.fonts?.[key] ?? ''}
-              placeholder={key === 'ui' ? 'Space Grotesk' : 'JetBrains Mono'}
+              placeholder={key === 'ui' ? tr('ui.settings.themeEditor.spaceGrotesk') : tr('ui.settings.themeEditor.jetbrainsMono')}
               maxLength={64}
               onChange={(e) => setFont(key, e.target.value)}
               className="h-8 w-[160px] flex-none rounded-md border border-line bg-panel-2 px-2 text-[12px] outline-none focus:border-accent"
@@ -257,9 +258,9 @@ export function ThemeEditor({ initial, isNew, onClose }: { initial: ThemeFile; i
 
       {error && <p role="alert" className="px-4 pb-2 text-[12.5px] text-danger-ink">{error}</p>}
       <footer className="flex flex-none items-center justify-end gap-2 border-t border-line px-4 py-3">
-        <button type="button" className={buttonClass} onClick={onClose}>Cancel</button>
+        <button type="button" className={buttonClass} onClick={onClose}>{tr('ui.settings.themeEditor.cancel')}</button>
         <button type="button" className={primaryButtonClass} disabled={busy || !draft.name.trim()} onClick={() => void save()}>
-          {busy ? 'Saving…' : 'Save and use'}
+          {busy ? tr('ui.settings.themeEditor.saving') : tr('ui.settings.themeEditor.saveAndUse')}
         </button>
       </footer>
     </div>

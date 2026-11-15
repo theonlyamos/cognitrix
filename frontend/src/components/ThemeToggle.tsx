@@ -1,5 +1,6 @@
 import { useTheme } from '@/context/ThemeContext';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 /** Compact icon toggle. Shows the icon of the mode you'll switch TO. */
 export function ThemeToggle({ className }: { className?: string }) {
@@ -9,8 +10,8 @@ export function ThemeToggle({ className }: { className?: string }) {
     <button
       type="button"
       onClick={toggle}
-      aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-      title={dark ? 'Light mode' : 'Dark mode'}
+      aria-label={dark ? tr('ui.themeToggle.switchToLightMode') : tr('ui.themeToggle.switchToDarkMode')}
+      title={dark ? tr('ui.themeToggle.lightMode') : tr('ui.themeToggle.darkMode')}
       className={cn(
         'grid h-11 w-11 place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-9 md:w-9',
         className,

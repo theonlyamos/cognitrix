@@ -6,23 +6,24 @@ import { useNotifications, type InboxApproval, type InboxItem, type InboxNotific
 import { LoadingState } from '@/components/list-ui';
 import { cn } from '@/lib/utils';
 import { answerApproval } from '@/lib/approvals';
+import { tr } from '@/lib/i18n';
 
 function itemTitle(item: InboxItem): string {
-  if (item.kind === 'approval') return `Run ${item.tool_name}`;
+  if (item.kind === 'approval') return tr('ui.inbox.runToolName', { tool_name: item.tool_name });
   if (item.kind === 'notification' || item.kind === 'offer') return item.title;
-  if (item.kind === 'skill_draft') return `Review the skill "${item.name}"`;
+  if (item.kind === 'skill_draft') return tr('ui.inbox.reviewTheSkillName', { name: item.name });
   return String(item.question.prompt || 'An agent asked a question');
 }
 
 function itemSource(item: InboxItem): string {
-  if (item.kind === 'approval' && item.source === 'chat') return `${item.agent_name || 'Agent'} · chat`;
+  if (item.kind === 'approval' && item.source === 'chat') return tr('ui.inbox.agentNameChat', { agent_name: item.agent_name || 'Agent' });
   if (item.kind === 'approval') {
     const step = item.step_index != null ? ` · step ${item.step_index + 1}` : '';
     return `${item.task_title || 'Task run'}${step}`;
   }
   if (item.kind === 'notification') return item.task_title || (item.session_id ? 'Chat' : 'Agent');
-  if (item.kind === 'offer') return `${item.agent_name || 'Your assistant'} · check-in`;
-  if (item.kind === 'skill_draft') return item.agent_name ? `Learned by ${item.agent_name}` : 'Learned from a chat';
+  if (item.kind === 'offer') return tr('ui.inbox.agentNameCheckIn', { agent_name: item.agent_name || 'Your assistant' });
+  if (item.kind === 'skill_draft') return item.agent_name ? tr('ui.inbox.learnedByAgentName', { agent_name: item.agent_name }) : tr('ui.inbox.learnedFromAChat');
   return 'Chat';
 }
 
@@ -56,7 +57,7 @@ function ApprovalDetail({ item, onDone }: { item: InboxApproval; onDone: () => v
       await answerApproval(item, approved);
       onDone();
     } catch (err) {
-      setError(errorMessage(err, 'Could not send your answer.'));
+      setError(errorMessage(err, tr('ui.inbox.couldNotSendYourAnswer')));
     } finally {
       setBusy(null);
     }
@@ -81,27 +82,27 @@ function ApprovalDetail({ item, onDone }: { item: InboxApproval; onDone: () => v
       <PanelCard
         tone="danger"
         tag="⚠ approval"
-        title={fromChat ? `${item.agent_name || 'The agent'} wants to run ${item.tool_name}` : `The agent wants to run ${item.tool_name}`}
+        title={fromChat ? tr('ui.inbox.agentNameWantsToRun', { agent_name: item.agent_name || 'The agent', tool_name: item.tool_name }) : tr('ui.inbox.theAgentWantsToRun', { tool_name: item.tool_name })}
         subtitle={item.details || itemSource(item)}
         fields={[
-          { label: 'Tool', value: <span className="font-mono text-[13px]">{item.tool_name}</span> },
-          ...(item.risk_level ? [{ label: 'Risk', value: <span className="text-danger-ink">{item.risk_level}</span> }] : []),
-          { label: 'From', value: itemSource(item) },
+          { label: tr('ui.inbox.tool'), value: <span className="font-mono text-[13px]">{item.tool_name}</span> },
+          ...(item.risk_level ? [{ label: tr('ui.inbox.risk'), value: <span className="text-danger-ink">{item.risk_level}</span> }] : []),
+          { label: tr('ui.inbox.from'), value: itemSource(item) },
         ]}
         footer={(
           <>
             <PanelButton kind="primary" disabled={busy !== null} onClick={() => void decide(true)}>
-              {busy === 'approve' ? 'Approving…' : 'Approve'}
+              {busy === 'approve' ? tr('ui.inbox.approving') : tr('ui.inbox.approve')}
             </PanelButton>
             <PanelButton kind="danger" disabled={busy !== null} onClick={() => void decide(false)}>
-              {busy === 'deny' ? 'Denying…' : 'Deny'}
+              {busy === 'deny' ? tr('ui.inbox.denying') : tr('ui.inbox.deny')}
             </PanelButton>
-            <span className="font-mono text-[11px] text-fg-dim">A / D</span>
+            <span className="font-mono text-[11px] text-fg-dim">{tr('ui.inbox.aD')}</span>
             <span className="flex-1" />
             {fromChat && item.href ? (
-              <Link to={item.href} className="text-[13px] text-accent-ink hover:underline">Open chat</Link>
+              <Link to={item.href} className="text-[13px] text-accent-ink hover:underline">{tr('ui.inbox.openChat')}</Link>
             ) : item.task_id && (
-              <Link to={`/tasks/${item.task_id}`} className="text-[13px] text-accent-ink hover:underline">Open task</Link>
+              <Link to={`/tasks/${item.task_id}`} className="text-[13px] text-accent-ink hover:underline">{tr('ui.inbox.openTask')}</Link>
             )}
           </>
         )}
@@ -113,8 +114,8 @@ function ApprovalDetail({ item, onDone }: { item: InboxApproval; onDone: () => v
       {error && <p role="alert" className="text-[13px] text-danger-ink">{error}</p>}
       <p className="text-[12.5px] leading-relaxed text-fg-dim">
         {fromChat
-          ? 'The same request shows in the chat, so you can answer in either place. The agent waits until you do.'
-          : 'The same approval shows on the task page, so you can answer in either place. Until then the run stays paused and never continues on its own. Unanswered approvals expire after 30 minutes and count as denied.'}
+          ? tr('ui.inbox.theSameRequestShowsIn')
+          : tr('ui.inbox.theSameApprovalShowsOn')}
       </p>
     </div>
   );
@@ -133,7 +134,7 @@ function QuestionDetail({ item, onDone }: { item: InboxQuestion; onDone: () => v
       await api.post('/agents/question', { request_id: item.id, action: 'answer', ...body });
       onDone();
     } catch (err) {
-      setError(errorMessage(err, 'Could not send your answer.'));
+      setError(errorMessage(err, tr('ui.inbox.couldNotSendYourAnswer')));
     } finally {
       setBusy(false);
     }
@@ -147,9 +148,9 @@ function QuestionDetail({ item, onDone }: { item: InboxQuestion; onDone: () => v
         subtitle={typeof q.details === 'string' && q.details ? q.details : itemSource(item)}
         footer={(
           <>
-            <span className="text-[12.5px] text-fg-dim">Chat questions answer themselves with the recommended option if nobody replies in time.</span>
+            <span className="text-[12.5px] text-fg-dim">{tr('ui.inbox.chatQuestionsAnswerThemselvesWith')}</span>
             <span className="flex-1" />
-            <Link to="/home" className="text-[13px] text-accent-ink hover:underline">Open the chat</Link>
+            <Link to="/home" className="text-[13px] text-accent-ink hover:underline">{tr('ui.inbox.openTheChat')}</Link>
           </>
         )}
       >
@@ -180,15 +181,15 @@ function QuestionDetail({ item, onDone }: { item: InboxQuestion; onDone: () => v
               if (text.trim()) void answer({ text: text.trim() });
             }}
           >
-            <label htmlFor="inbox-answer" className="sr-only">Your answer</label>
+            <label htmlFor="inbox-answer" className="sr-only">{tr('ui.inbox.yourAnswer')}</label>
             <input
               id="inbox-answer"
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="Type an answer…"
+              placeholder={tr('ui.inbox.typeAnAnswer')}
               className="h-10 flex-1 rounded-md border border-line bg-panel px-3 text-[13.5px] outline-none focus:border-accent"
             />
-            <PanelButton type="submit" kind="primary" disabled={busy || !text.trim()}>Send</PanelButton>
+            <PanelButton type="submit" kind="primary" disabled={busy || !text.trim()}>{tr('ui.inbox.send')}</PanelButton>
           </form>
         )}
       </PanelCard>
@@ -208,7 +209,7 @@ function NotificationDetail({ item, onDone }: { item: InboxNotification; onDone:
       await api.post(`/notifications/${item.id}/read`);
       onDone();
     } catch (err) {
-      setError(errorMessage(err, 'Could not dismiss this alert.'));
+      setError(errorMessage(err, tr('ui.inbox.couldNotDismissThisAlert')));
     } finally {
       setBusy(false);
     }
@@ -223,22 +224,22 @@ function NotificationDetail({ item, onDone }: { item: InboxNotification; onDone:
         footer={(
           <>
             <PanelButton kind="primary" disabled={busy} onClick={() => void dismiss()}>
-              {busy ? 'Dismissing…' : 'Dismiss'}
+              {busy ? tr('ui.inbox.dismissing') : tr('ui.inbox.dismiss')}
             </PanelButton>
             <span className="flex-1" />
             {item.link && item.link.startsWith('/') && (
               <Link to={item.link} className="text-[13px] font-medium text-accent-ink hover:underline">
-                {item.title.startsWith('Reconnect ') ? item.title : 'Open'}
+                {item.title.startsWith('Reconnect ') ? item.title : tr('ui.inbox.open')}
               </Link>
             )}
             {item.task_id && (
               <Link to={`/tasks/${item.task_id}`} className="text-[13px] text-accent-ink hover:underline">
-                Open task
+                {tr('ui.inbox.openTask')}
               </Link>
             )}
             {!item.task_id && item.session_id && (
               <Link to={`/home?chat=${encodeURIComponent(item.session_id)}`} className="text-[13px] text-accent-ink hover:underline">
-                Open chat
+                {tr('ui.inbox.openChat')}
               </Link>
             )}
           </>
@@ -264,7 +265,7 @@ function OfferDetail({ item, onDone }: { item: InboxOffer; onDone: () => void })
       onDone();
       if (action === 'accept' && data.session_id) navigate(`/home?chat=${encodeURIComponent(data.session_id)}`);
     } catch (err) {
-      setError(errorMessage(err, 'Could not send your answer.'));
+      setError(errorMessage(err, tr('ui.inbox.couldNotSendYourAnswer')));
       setBusy(null);
     }
   };
@@ -272,14 +273,14 @@ function OfferDetail({ item, onDone }: { item: InboxOffer; onDone: () => void })
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <div className="font-mono text-[10.5px] tracking-[0.14em] text-ok">OFFER TO HELP</div>
+        <div className="font-mono text-[10.5px] tracking-[0.14em] text-ok">{tr('ui.inbox.offerToHelp')}</div>
         <div className="mt-1 font-mono text-[12px] text-fg-dim">{itemSource(item)}</div>
         <h2 className="mt-2 text-[20px] font-semibold leading-snug">{item.title}</h2>
         {item.details && <p className="mt-2 whitespace-pre-wrap text-[13.5px] leading-relaxed text-fg">{item.details}</p>}
       </div>
       {item.plan && (
         <div className="rounded-xl border border-line bg-panel">
-          <div className="border-b border-line px-3.5 py-2.5 text-[12.5px] font-medium">What it will do if you accept</div>
+          <div className="border-b border-line px-3.5 py-2.5 text-[12.5px] font-medium">{tr('ui.inbox.whatItWillDoIf')}</div>
           <p className="whitespace-pre-wrap px-3.5 py-3 text-[13px] leading-relaxed text-fg">{item.plan}</p>
         </div>
       )}
@@ -287,17 +288,17 @@ function OfferDetail({ item, onDone }: { item: InboxOffer; onDone: () => void })
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" disabled={busy !== null} onClick={() => void answer('accept')}
           className="h-10 rounded-[9px] bg-accent px-5 text-[13.5px] font-semibold text-accent-foreground disabled:opacity-60">
-          {busy === 'accept' ? 'Starting…' : 'Accept'}
+          {busy === 'accept' ? tr('ui.inbox.starting') : tr('ui.inbox.accept')}
         </button>
         <button type="button" disabled={busy !== null} onClick={() => void answer('dismiss')}
           className="h-10 rounded-[9px] border border-line px-5 text-[13.5px] disabled:opacity-60">
-          {busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}
+          {busy === 'dismiss' ? tr('ui.inbox.dismissing') : tr('ui.inbox.dismiss')}
         </button>
         <span className="flex-1" />
-        <Link to={`/agents/${item.agent_id}/checkins`} className="text-[13px] text-accent-ink hover:underline">Check-in settings</Link>
+        <Link to={`/agents/${item.agent_id}/checkins`} className="text-[13px] text-accent-ink hover:underline">{tr('ui.inbox.checkInSettings')}</Link>
       </div>
       <p className="text-[12.5px] leading-relaxed text-fg-dim">
-        Accepting starts a chat where {item.agent_name || 'the agent'} does this. Risky steps still ask you first. A dismissed offer isn't made again.
+        {tr('ui.inbox.acceptingStartsAChatWhere', { agent_name: item.agent_name || tr('ui.inbox.theAgent') })}
       </p>
     </div>
   );
@@ -331,7 +332,7 @@ function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () 
       else await api.post(`/skill-drafts/${item.id}/approve`, { everyone: action === 'share' });
       onDone();
     } catch (err) {
-      setError(errorMessage(err, 'Could not save that.'));
+      setError(errorMessage(err, tr('ui.inbox.couldNotSaveThat')));
       setBusy(null);
     }
   };
@@ -340,23 +341,23 @@ function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () 
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <div className="font-mono text-[10.5px] tracking-[0.14em] text-violet-ink">SKILL TO REVIEW</div>
+        <div className="font-mono text-[10.5px] tracking-[0.14em] text-violet-ink">{tr('ui.inbox.skillToReview')}</div>
         <div className="mt-1 font-mono text-[12px] text-fg-dim">{itemSource(item)}</div>
-        <h2 className="mt-2 text-[20px] font-semibold leading-snug">Save “{item.name}” as a skill?</h2>
+        <h2 className="mt-2 text-[20px] font-semibold leading-snug">{tr('ui.inbox.saveNameAsASkill', { name: item.name })}</h2>
         <p className="mt-2 text-[13.5px] leading-relaxed text-fg-dim">
-          A skill is a set of instructions your agents can load when a job like this comes up again. Read it, fix anything that's off, then save it. Until then nothing uses it.
+          {tr('ui.inbox.aSkillIsASet')}
         </p>
       </div>
       <label className="flex flex-col gap-1.5 text-[13px] font-medium">
-        Name
+        {tr('ui.inbox.name')}
         <input value={name} onChange={(e) => setName(e.target.value)} maxLength={64} className={cn(field, 'h-10 font-mono')} />
       </label>
       <label className="flex flex-col gap-1.5 text-[13px] font-medium">
-        When to use it
+        {tr('ui.inbox.whenToUseIt')}
         <input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1024} className={cn(field, 'h-10')} />
       </label>
       <label className="flex flex-col gap-1.5 text-[13px] font-medium">
-        Instructions
+        {tr('ui.inbox.instructions')}
         <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={16}
           className={cn(field, 'resize-y py-2.5 font-mono text-[12.5px] leading-relaxed')} />
       </label>
@@ -364,34 +365,34 @@ function SkillDraftDetail({ item, onDone }: { item: InboxSkillDraft; onDone: () 
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" disabled={busy !== null} onClick={() => void run('approve')}
           className="h-10 rounded-[9px] bg-accent px-5 text-[13.5px] font-semibold text-accent-foreground disabled:opacity-60">
-          {busy === 'approve' ? 'Saving…' : 'Save to my skills'}
+          {busy === 'approve' ? tr('ui.inbox.saving') : tr('ui.inbox.saveToMySkills')}
         </button>
         {item.can_share && (
           <button type="button" disabled={busy !== null} onClick={() => void run('share')}
             className="h-10 rounded-[9px] border border-line px-5 text-[13.5px] disabled:opacity-60">
-            {busy === 'share' ? 'Saving…' : 'Save for everyone'}
+            {busy === 'share' ? tr('ui.inbox.saving') : tr('ui.inbox.saveForEveryone')}
           </button>
         )}
         {edited && (
           <button type="button" disabled={busy !== null} onClick={() => void run('save')}
             className="h-10 rounded-[9px] border border-line px-5 text-[13.5px] disabled:opacity-60">
-            {busy === 'save' ? 'Saving…' : 'Save edits'}
+            {busy === 'save' ? tr('ui.inbox.saving') : tr('ui.inbox.saveEdits')}
           </button>
         )}
         <button type="button" disabled={busy !== null} onClick={() => void run('reject')}
           className="h-10 rounded-[9px] border border-danger/40 px-5 text-[13.5px] text-danger-ink disabled:opacity-60">
-          {busy === 'reject' ? 'Rejecting…' : 'Reject'}
+          {busy === 'reject' ? tr('ui.inbox.rejecting') : tr('ui.inbox.reject')}
         </button>
-        {saved && <span role="status" className="text-[13px] text-fg-dim">Edits saved.</span>}
+        {saved && <span role="status" className="text-[13px] text-fg-dim">{tr('ui.inbox.editsSaved')}</span>}
         <span className="flex-1" />
         {item.session_id && item.mine && (
-          <Link to={`/home?chat=${encodeURIComponent(item.session_id)}`} className="text-[13px] text-accent-ink hover:underline">Open the chat it came from</Link>
+          <Link to={`/home?chat=${encodeURIComponent(item.session_id)}`} className="text-[13px] text-accent-ink hover:underline">{tr('ui.inbox.openTheChatItCame')}</Link>
         )}
       </div>
       <p className="text-[12.5px] leading-relaxed text-fg-dim">
-        Your own skills are only used in your chats and tasks. {item.can_share
-          ? 'Saving for everyone lets every agent on this server load it.'
-          : 'An admin can share a skill with everyone on this server.'} Manage them in <Link to="/settings/skills" className="text-accent-ink hover:underline">Settings › Skills</Link>.
+        {tr('ui.inbox.yourOwnSkillsAreOnly', { value: item.can_share
+          ? tr('ui.inbox.savingForEveryoneLetsEvery')
+          : tr('ui.inbox.anAdminCanShareA') })}{' '}<Link to="/settings/skills" className="text-accent-ink hover:underline">{tr('ui.inbox.settingsSkills')}</Link>.
       </p>
     </div>
   );
@@ -414,19 +415,19 @@ export default function Inbox() {
   return (
     <div className="flex h-full min-w-0 flex-1 overflow-hidden bg-bg text-fg">
       <aside
-        aria-label="Waiting on you"
+        aria-label={tr('ui.inbox.waitingOnYou')}
         className={cn('flex w-[320px] flex-none flex-col border-r border-line bg-panel max-md:w-full max-md:border-r-0', selectedId && 'max-md:hidden')}
       >
         <div className="border-b border-line px-4 py-4">
-          <h1 className="text-[17px] font-semibold">Inbox</h1>
+          <h1 className="text-[17px] font-semibold">{tr('ui.inbox.inbox')}</h1>
           <p className="mt-1 text-[12.5px] text-fg-dim">
             {inbox.length === 0
-              ? 'Nothing is waiting on you.'
+              ? tr('ui.inbox.nothingIsWaitingOnYou')
               : `${inbox.length} waiting${approvals ? ` · ${approvals} ${waitingWord}` : ''}`}
           </p>
         </div>
         <ul className="flex-1 overflow-y-auto p-2">
-          {!inboxLoaded && <LoadingState label="loading inbox…" />}
+          {!inboxLoaded && <LoadingState label={tr('ui.inbox.loadingInbox')} />}
           {inbox.map((item) => (
             <li key={item.id}>
               <button
@@ -452,7 +453,7 @@ export default function Inbox() {
         {selected ? (
           <div className="mx-auto max-w-[760px]">
             <button type="button" onClick={() => setSelectedId(null)} className="mb-4 text-[13px] text-fg-dim hover:text-fg md:hidden">
-              ← All items
+              {tr('ui.inbox.allItems')}
             </button>
             {selected.kind === 'approval' ? (
               <ApprovalDetail key={selected.id} item={selected} onDone={done} />
@@ -470,8 +471,8 @@ export default function Inbox() {
           inboxLoaded && (
             <div className="grid h-full place-items-center text-center">
               <div>
-                <div className="text-[15px] font-medium">You're all caught up</div>
-                <p className="mt-1 text-[13px] text-fg-dim">When a task pauses on a risky step, an agent asks something, offers to help or drafts a skill, or an automation sends an alert, it shows up here.</p>
+                <div className="text-[15px] font-medium">{tr('ui.inbox.youReAllCaughtUp')}</div>
+                <p className="mt-1 text-[13px] text-fg-dim">{tr('ui.inbox.whenATaskPausesOn')}</p>
               </div>
             </div>
           )

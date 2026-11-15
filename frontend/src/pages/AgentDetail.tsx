@@ -32,6 +32,7 @@ import ConnectionsTab from '@/components/agent/ConnectionsTab';
 import TasksTab from '@/components/agent/TasksTab';
 import TeamsTab from '@/components/agent/TeamsTab';
 import SharingTab from '@/components/agent/SharingTab';
+import { tr } from '@/lib/i18n';
 
 const TAB_VIEWS: Record<TabId, (props: TabProps) => JSX.Element> = {
   overview: OverviewTab,
@@ -112,10 +113,10 @@ export default function AgentDetail() {
     try {
       const res = await api.post<AgentRecord>('/agents', payloadFrom(agent.id, draft, catalog || [], agent.tools || []));
       setAgent(res.data);
-      setNotice('Saved. New chats and task runs use these settings.');
+      setNotice(tr('ui.agentDetail.savedNewChatsAndTask'));
       refetchOverview({ silent: true });
     } catch (e) {
-      setSaveError(errorMessage(e, 'Could not save the agent.'));
+      setSaveError(errorMessage(e, tr('ui.agentDetail.couldNotSaveTheAgent')));
     } finally {
       setSaving(false);
     }
@@ -127,13 +128,13 @@ export default function AgentDetail() {
   };
 
   const remove = async () => {
-    if (!agent || !window.confirm('Delete this agent? This cannot be undone.')) return;
+    if (!agent || !window.confirm(tr('ui.agentDetail.deleteThisAgentThisCannot'))) return;
     try {
       setSaved(draft);
       await api.delete(`/agents/${agent.id}`);
       navigate('/agents');
     } catch (e) {
-      setSaveError(errorMessage(e, 'Could not delete the agent.'));
+      setSaveError(errorMessage(e, tr('ui.agentDetail.couldNotDeleteTheAgent')));
     }
   };
 
@@ -155,19 +156,19 @@ export default function AgentDetail() {
   };
 
   if (loading && !agent) {
-    return <div className="flex h-full min-w-0 flex-1 flex-col bg-bg"><LoadingState label="loading agent…" /></div>;
+    return <div className="flex h-full min-w-0 flex-1 flex-col bg-bg"><LoadingState label={tr('ui.agentDetail.loadingAgent')} /></div>;
   }
   if (loadError || !agent || !draft) {
     return (
       <div className="flex h-full min-w-0 flex-1 flex-col bg-bg">
-        <ErrorState message={loadError || 'Agent not found.'} onRetry={refetch} />
+        <ErrorState message={loadError || tr('ui.agentDetail.agentNotFound')} onRetry={refetch} />
       </div>
     );
   }
 
   const mobileActions: MobileHeaderAction[] = [
-    { key: 'task', label: 'New task', to: `/tasks/new?agentId=${encodeURIComponent(agent.id)}` },
-    ...(role === 'owner' ? [{ key: 'delete', label: 'Delete agent', destructive: true, onSelect: remove }] : []),
+    { key: 'task', label: tr('ui.agentDetail.newTask'), to: `/tasks/new?agentId=${encodeURIComponent(agent.id)}` },
+    ...(role === 'owner' ? [{ key: 'delete', label: tr('ui.agentDetail.deleteAgent'), destructive: true, onSelect: remove }] : []),
   ];
   const running = overview?.stats.running_chats || 0;
   const View = TAB_VIEWS[tab];
@@ -180,16 +181,16 @@ export default function AgentDetail() {
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
       <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-8">
-        <nav aria-label="Breadcrumb" className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] text-fg-dim">
-          <Link to="/agents" className="hover:text-fg hover:underline">Agents</Link>
+        <nav aria-label={tr('ui.agentDetail.breadcrumb')} className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] text-fg-dim">
+          <Link to="/agents" className="hover:text-fg hover:underline">{tr('ui.agentDetail.agents')}</Link>
           <span aria-hidden>›</span>
           <span className="truncate text-fg" aria-current="page">{agent.name}</span>
         </nav>
         <div className="flex flex-none items-center gap-2">
           <button type="button" onClick={() => openChat()} className={cn(primaryButtonClass, 'px-3 md:px-4')}>
-            Chat<span className="hidden sm:inline">&nbsp;with agent</span>
+            {tr('ui.agentDetail.chat_2ced')}<span className="hidden sm:inline">{' '}{tr('ui.agentDetail.withAgent')}</span>
           </button>
-          <Link to={`/tasks/new?agentId=${encodeURIComponent(agent.id)}`} className={cn(buttonClass, 'hidden md:inline-flex')}>New task</Link>
+          <Link to={`/tasks/new?agentId=${encodeURIComponent(agent.id)}`} className={cn(buttonClass, 'hidden md:inline-flex')}>{tr('ui.agentDetail.newTask')}</Link>
           <MobileHeaderActions id={`agent-${agent.id}-actions`} actions={mobileActions} />
         </div>
       </header>
@@ -210,7 +211,7 @@ export default function AgentDetail() {
                 {running > 0 && (
                   <span className="inline-flex items-center gap-1.5 text-ok">
                     <span aria-hidden className="h-[7px] w-[7px] rounded-full bg-ok" />
-                    {running} {running === 1 ? 'chat' : 'chats'} running
+                    {tr('ui.agentDetail.runningValueRunning', { running, value: running === 1 ? tr('ui.agentDetail.chat') : tr('ui.agentDetail.chats') })}
                   </span>
                 )}
               </div>
@@ -219,15 +220,13 @@ export default function AgentDetail() {
           </div>
           {role !== 'owner' && (
             <p role="note" className="mt-4 rounded-md border border-line bg-panel px-3.5 py-2.5 text-[13px] leading-relaxed text-fg-dim">
-              <strong className="font-medium text-fg">Shared with you.</strong>{' '}
-              {role === 'edit'
-                ? 'You can chat with this agent and change its instructions, model, tools and approval rules.'
-                : 'You can chat with this agent and give it tasks, but not change it.'}{' '}
-              It uses the model key and apps its owner connected. Your chats with it stay yours.
+              <strong className="font-medium text-fg">{tr('ui.agentDetail.sharedWithYou')}</strong>{' '}{tr('ui.agentDetail.valueItUsesTheModel', { value: role === 'edit'
+                ? tr('ui.agentDetail.youCanChatWithThis')
+                : tr('ui.agentDetail.youCanChatWithThis_7517') })}
             </p>
           )}
 
-          <div role="tablist" aria-label="Agent sections" className="-mx-4 mt-5 flex gap-1 overflow-x-auto border-b border-line px-4 md:mx-0 md:px-0">
+          <div role="tablist" aria-label={tr('ui.agentDetail.agentSections')} className="-mx-4 mt-5 flex gap-1 overflow-x-auto border-b border-line px-4 md:mx-0 md:px-0">
             {tabs.map((t, i) => (
               <button
                 key={t.id}
@@ -260,13 +259,13 @@ export default function AgentDetail() {
         <div className="flex-none border-t border-line bg-panel px-4 py-3 md:px-8">
           <div className="mx-auto flex w-full max-w-[864px] flex-wrap items-center gap-2.5">
             <p role="status" className={cn('min-w-[200px] flex-1 text-[13px]', saveError ? 'text-danger-ink' : 'text-fg-dim')}>
-              {saveError || (dirty ? 'You have unsaved changes. Chats already running keep their old settings.' : notice)}
+              {saveError || (dirty ? tr('ui.agentDetail.youHaveUnsavedChangesChats') : notice)}
             </p>
             {dirty && (
               <>
-                <button type="button" onClick={discard} disabled={saving} className={buttonClass}>Discard</button>
+                <button type="button" onClick={discard} disabled={saving} className={buttonClass}>{tr('ui.agentDetail.discard')}</button>
                 <button type="button" onClick={() => void save()} disabled={saving} className={primaryButtonClass}>
-                  {saving ? 'Saving…' : 'Save changes'}
+                  {saving ? tr('ui.agentDetail.saving') : tr('ui.agentDetail.saveChanges')}
                 </button>
               </>
             )}
