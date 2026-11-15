@@ -35,6 +35,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -129,7 +130,7 @@ HARNESSES: dict[str, Harness] = {
         'antigravity-cli', 'Antigravity CLI', 'agy',
         ('curl -fsSL https://antigravity.google/cli/install.sh | bash (Windows PowerShell: '
          'irm https://antigravity.google/cli/install.ps1 | iex), then run `agy` once and sign in'),
-        ('gemini-3.8-flash-low', 'gemini-3.1-pro-high', 'gemini-3.1-pro-low'), False),
+        ('gemini-3.8-flash-medium', 'gemini-4-carbon-high', 'gemini-4-hydrogen-high', 'gemini-3.1-pro-high'), False),
 }
 
 
@@ -302,6 +303,8 @@ def remember(chat_id: str | None, key: str, model: str, cwd: str, session: str, 
 
 # --- command lines ---------------------------------------------------------------
 
+_EFFORT_SUFFIX = re.compile(r'-(?:minimal|low|medium|high|xhigh|max)$')
+
 def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
                   resume: str | None, new_session: str | None, cwd: str,
                   tools_url: str | None = None, settings_file: str | None = None,
@@ -424,10 +427,11 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
             argv += ['--session', resume]
         return argv, env
     if key == 'antigravity-cli':
-        # https://antigravity.google/docs/cli/headless/ - with stdin not a
-        # terminal, agy reads the prompt from it and runs headless. No -p: it
-        # takes the prompt as its value and would swallow the next flag.
-        argv = [program, '--output-format', 'stream-json']
+        # https://antigravity.google/docs/cli/headless/ - the message goes in
+        # as one stream-json "user" event on stdin (stdin_message); closing
+        # stdin ends the session after that turn. No -p: streaming input drops
+        # a prompt given on the command line.
+        argv = [program, '--input-format', 'stream-json', '--output-format', 'stream-json']
         if mode == 'full':
             argv += ['--dangerously-skip-permissions']
         else:
@@ -437,12 +441,20 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
             argv += ['--add-dir', d]
         if model:
             argv += ['--model', model]
-        if effort in ('low', 'medium', 'high', 'xhigh', 'max'):
+        # Slugs like gemini-3.8-flash-medium carry their own effort.
+        if effort in ('low', 'medium', 'high', 'xhigh', 'max') and not _EFFORT_SUFFIX.search(model):
             argv += ['--effort', effort]
         if resume:
             argv += ['--conversation', resume]
         return argv, env
     raise HarnessError(f'Unknown coding agent {key!r}.')
+
+
+def stdin_message(key: str, text: str) -> str:
+    """What goes on the CLI's stdin for this message."""
+    if key == 'antigravity-cli':
+        return json.dumps({'event': 'user', 'message': {'content': text}}, ensure_ascii=False) + '\n'
+    return text
 
 
 # --- reading the output ------------------------------------------------------------
@@ -613,35 +625,40 @@ def parse_line(key: str, line: str) -> list[Event]:
             events.append(Event(error=_short(msg or err or 'OpenCode failed', 400)))
         return events
     if key == 'antigravity-cli':
-        if t == 'step_update':
-            step = e.get('step_type')
+        # Each line is {"event": <type>, <type>: {...payload}}.
+        kind = e.get('event')
+        body = e.get(kind) if isinstance(kind, str) else None
+        if not isinstance(body, dict):
+            return []
+        if kind == 'step_update':
+            step = body.get('step_type')
             if step == 'agent_response':
-                if e.get('text_delta'):
-                    return [Event(text=str(e['text_delta']))]
+                if body.get('text_delta'):
+                    return [Event(text=str(body['text_delta']))]
                 # Keep one reply step's text apart from the next one's.
-                return [Event(text='\n\n')] if e.get('state') == 'DONE' else []
-            if step == 'tool' and e.get('state') == 'DONE':
-                tool = e.get('tool_info') or {}
-                line = _tool_line(str(tool.get('name') or e.get('tool_name') or 'tool'), tool.get('parameters'))
+                return [Event(text='\n\n')] if body.get('state') == 'DONE' else []
+            if step == 'tool' and body.get('state') == 'DONE':
+                tool = body.get('tool_info') or {}
+                line = _tool_line(str(tool.get('name') or body.get('tool_name') or 'tool'), tool.get('parameters'))
                 err = tool.get('error')
                 if isinstance(err, dict) and err.get('message'):
                     line += f" (failed: {_short(err['message'], 120)})"
                 return [Event(activity=line + '\n')]
             return []
-        if t == 'result':
-            u = e.get('usage') or {}
-            events = [Event(session=str(e.get('conversation_id') or ''),
+        if kind == 'result':
+            u = body.get('usage') or {}
+            # input_tokens includes cached reads, output_tokens includes thinking.
+            events = [Event(session=str(body.get('conversation_id') or ''),
                             usage={'prompt_tokens': int(u.get('input_tokens') or 0),
-                                   'completion_tokens': int(u.get('output_tokens') or 0)
-                                   + int(u.get('thinking_tokens') or 0),
+                                   'completion_tokens': int(u.get('output_tokens') or 0),
                                    'cached_tokens': int(u.get('cache_read_tokens') or 0)})]
-            status = str(e.get('status') or 'SUCCESS').upper()
-            if status != 'SUCCESS' or e.get('error'):
-                err = e.get('error')
+            status = str(body.get('status') or 'SUCCESS').upper()
+            if status != 'SUCCESS' or body.get('error'):
+                err = body.get('error')
                 msg = err.get('message') if isinstance(err, dict) else err
                 events.append(Event(error=_short(msg or f'Antigravity CLI ended with status {status}', 400)))
             else:
-                events.append(Event(final_text=str(e.get('response') or '')))
+                events.append(Event(final_text=str(body.get('response') or '')))
             return events
         return []
     return []
@@ -808,7 +825,7 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
                                         settings_file=settings_file, extra_dirs=extra_dirs)
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
-        proc = _spawn(argv, text, cwd, env_extra, loop, queue)
+        proc = _spawn(argv, stdin_message(key, text), cwd, env_extra, loop, queue)
         session = resume or new_session or ''
         usage: dict[str, int] | None = None
         errors: list[str] = []

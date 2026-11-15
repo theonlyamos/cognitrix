@@ -1,7 +1,8 @@
 """Google's Antigravity CLI (agy) as an agent harness and a Coding Agent CLI.
 
 The events below follow https://antigravity.google/docs/cli/headless/
-(--output-format stream-json: init, step_update, result).
+(--output-format stream-json: {"event": <type>, <type>: {...}} for init,
+step_update and result).
 """
 import asyncio
 import json
@@ -41,8 +42,8 @@ def test_listed_as_a_harness():
 
 def test_command_lines_per_mode():
     argv, env = _cmd()
-    # The prompt goes on stdin: -p would take the next flag as its value.
-    assert argv[:3] == ['agy', '--output-format', 'stream-json']
+    # The prompt goes on stdin as a stream-json user event, never -p.
+    assert argv[:5] == ['agy', '--input-format', 'stream-json', '--output-format', 'stream-json']
     assert '-p' not in argv and '--print' not in argv
     assert argv[argv.index('--mode') + 1] == 'accept-edits'
     assert env == {}
@@ -56,13 +57,27 @@ def test_command_lines_per_mode():
 
 
 def test_model_effort_resume_and_apps_folder():
-    argv, _ = _cmd(model='gemini-3.1-pro-high', effort='high', resume='conv-1', extra_dirs=['/data/apps'])
-    assert argv[argv.index('--model') + 1] == 'gemini-3.1-pro-high'
+    argv, _ = _cmd(model='gemini-pro-orchestrator', effort='high', resume='conv-1', extra_dirs=['/data/apps'])
+    assert argv[argv.index('--model') + 1] == 'gemini-pro-orchestrator'
     assert argv[argv.index('--effort') + 1] == 'high'
     assert argv[argv.index('--conversation') + 1] == 'conv-1'
     assert argv[argv.index('--add-dir') + 1] == '/data/apps'
     plain, _ = _cmd(effort='minimal')
     assert '--effort' not in plain and '--conversation' not in plain and '--add-dir' not in plain
+    # A slug that names its own effort doesn't also get --effort.
+    slug, _ = _cmd(model='gemini-3.8-flash-medium', effort='high')
+    assert '--effort' not in slug
+
+
+def test_message_goes_on_stdin_as_a_user_event():
+    line = h.stdin_message('antigravity-cli', 'Fix "this" & that')
+    assert line.endswith('\n')
+    assert json.loads(line) == {'event': 'user', 'message': {'content': 'Fix "this" & that'}}
+    assert h.stdin_message('claude-code', 'hi') == 'hi'
+
+
+def _ev(kind, **body):
+    return {'event': kind, kind: body}
 
 
 def _events(*lines):
@@ -74,37 +89,42 @@ def _events(*lines):
 
 def test_parse_stream_json():
     ev = _events(
-        {'type': 'init', 'cwd': '/w', 'tools': [], 'permission_mode': 'request-review'},
-        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 0, 'state': 'DONE', 'step_type': 'user_input'},
-        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 1, 'state': 'ACTIVE',
-         'step_type': 'tool', 'tool_name': 'run_command'},
-        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 1, 'state': 'DONE', 'step_type': 'tool',
-         'tool_name': 'run_command', 'tool_info': {'name': 'run_command', 'parameters': {'command': 'ls'}}},
-        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 2, 'state': 'ACTIVE',
-         'step_type': 'agent_response', 'text_delta': 'Fo'},
-        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 2, 'state': 'ACTIVE',
-         'step_type': 'agent_response', 'text_delta': 'ur.'},
-        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 2, 'state': 'DONE',
-         'step_type': 'agent_response'},
-        {'type': 'result', 'conversation_id': 'c1', 'status': 'SUCCESS', 'response': 'Four.',
-         'usage': {'input_tokens': 9, 'output_tokens': 2, 'thinking_tokens': 3, 'cache_read_tokens': 4}},
+        {'event': 'init', 'conversation_id': 'c1',
+         'init': {'cwd': '/w', 'tools': ['run_command'], 'permission_mode': 'request-review'}},
+        _ev('step_update', conversation_id='c1', step_index=0, state='DONE', step_type='user_input'),
+        _ev('step_update', conversation_id='c1', step_index=1, state='ACTIVE', step_type='tool',
+            tool_name='run_command'),
+        _ev('step_update', conversation_id='c1', step_index=1, state='DONE', step_type='tool', tool_name='run_command',
+            tool_info={'name': 'run_command', 'parameters': {'CommandLine': 'ls'}, 'output': 'a.py\r\n'}),
+        _ev('step_update', conversation_id='c1', step_index=2, state='ACTIVE', step_type='agent_response',
+            text_delta='Fo'),
+        _ev('step_update', conversation_id='c1', step_index=2, state='DONE', step_type='agent_response',
+            text_delta='ur.\n'),
+        _ev('step_update', conversation_id='c1', step_index=3, state='DONE', step_type='agent_response'),
+        _ev('step_update', conversation_id='c1', step_index=4, state='DONE', step_type='checkpoint'),
+        # The documented example: total = input + output, so output already counts thinking.
+        _ev('result', conversation_id='c1', status='SUCCESS', response='Four.\n', num_turns=1,
+            usage={'input_tokens': 10415, 'output_tokens': 657, 'thinking_tokens': 616,
+                   'cache_read_tokens': 8113, 'total_tokens': 11072}),
+        {'type': 'result', 'status': 'SUCCESS', 'response': 'old shape is ignored'},
     )
-    assert ev[0].activity == '› run_command: ls\n'
-    assert [e.text for e in ev[1:4]] == ['Fo', 'ur.', '\n\n']
+    assert ev[0].activity == '› run_command: {"CommandLine": "ls"}\n'
+    assert [e.text for e in ev[1:4]] == ['Fo', 'ur.\n', '\n\n']
     assert ev[4].session == 'c1'
-    assert ev[4].usage == {'prompt_tokens': 9, 'completion_tokens': 5, 'cached_tokens': 4}
-    assert ev[5].final_text == 'Four.'
+    assert ev[4].usage == {'prompt_tokens': 10415, 'completion_tokens': 657, 'cached_tokens': 8113}
+    assert ev[5].final_text == 'Four.\n'
     assert len(ev) == 6
 
 
 def test_parse_failures():
-    failed_tool = _events({'type': 'step_update', 'state': 'DONE', 'step_type': 'tool',
-                           'tool_info': {'name': 'write_file', 'parameters': {'path': 'a.py'},
-                                         'error': {'type': 'denied', 'message': 'needs approval'}}})
-    assert failed_tool[0].activity == '› write_file: a.py (failed: needs approval)\n'
-    err = _events({'type': 'result', 'conversation_id': 'c1', 'status': 'ERROR', 'error': 'authentication required'})
-    assert err[-1].error == 'authentication required'
-    canceled = _events({'type': 'result', 'status': 'CANCELED'})
+    failed_tool = _events(_ev('step_update', state='DONE', step_type='tool',
+                              tool_info={'name': 'write_to_file', 'parameters': {'path': 'a.py'},
+                                         'error': {'type': 'denied', 'message': 'needs approval'}}))
+    assert failed_tool[0].activity == '› write_to_file: a.py (failed: needs approval)\n'
+    err = _events(_ev('result', conversation_id='', status='ERROR', response='',
+                      error='invalid model selection (--model "x" --effort ""): model x is not recognized'))
+    assert err[-1].error.startswith('invalid model selection')
+    canceled = _events(_ev('result', status='CANCELED'))
     assert 'CANCELED' in canceled[-1].error
 
 
@@ -112,22 +132,26 @@ def test_parse_failures():
 
 FAKE_AGY = textwrap.dedent('''\
     import json, os, sys
-    prompt = sys.stdin.read()
+    lines = [json.loads(line) for line in sys.stdin if line.strip()]
+    prompt = lines[0]['message']['content'] if lines and lines[0].get('event') == 'user' else None
     with open(os.environ['FAKE_LOG'], 'a') as fh:
         fh.write(json.dumps({'argv': sys.argv[1:], 'stdin': prompt}) + '\\n')
-    def out(o):
-        print(json.dumps(o), flush=True)
+    def out(kind, **body):
+        print(json.dumps({'event': kind, kind: body}), flush=True)
     if os.environ.get('FAKE_FAIL'):
-        out({'type': 'result', 'status': 'ERROR', 'error': 'authentication required'})
+        out('result', conversation_id='', status='ERROR', response='', error='authentication required')
         sys.exit(1)
-    out({'type': 'init', 'cwd': os.getcwd(), 'tools': [], 'permission_mode': 'request-review'})
-    out({'type': 'step_update', 'conversation_id': 'conv-9', 'step_index': 1, 'state': 'DONE',
-         'step_type': 'tool', 'tool_info': {'name': 'view_file', 'parameters': {'path': 'a.py'}}})
-    for word in ['Four', '.']:
-        out({'type': 'step_update', 'conversation_id': 'conv-9', 'step_index': 2, 'state': 'ACTIVE',
-             'step_type': 'agent_response', 'text_delta': word})
-    out({'type': 'result', 'conversation_id': 'conv-9', 'status': 'SUCCESS', 'response': 'Four.',
-         'usage': {'input_tokens': 10, 'output_tokens': 2}})
+    print(json.dumps({'event': 'init', 'conversation_id': 'conv-9',
+                      'init': {'cwd': os.getcwd(), 'tools': [], 'permission_mode': 'request-review'}}), flush=True)
+    out('step_update', conversation_id='conv-9', step_index=1, state='DONE', step_type='tool',
+        tool_info={'name': 'view_file', 'parameters': {'path': 'a.py'}})
+    out('step_update', conversation_id='conv-9', step_index=2, state='ACTIVE', step_type='agent_response',
+        text_delta='Four')
+    out('step_update', conversation_id='conv-9', step_index=2, state='DONE', step_type='agent_response',
+        text_delta='.\\n')
+    out('result', conversation_id='conv-9', status='SUCCESS', response='Four.\\n', num_turns=1,
+        usage={'input_tokens': 10, 'output_tokens': 2, 'thinking_tokens': 1, 'cache_read_tokens': 0,
+               'total_tokens': 12})
 ''')
 
 
@@ -170,7 +194,7 @@ def test_turn_streams_then_resumes_the_conversation(workdir, fake_agy, tmp_path)
     folder = Folder(str(tmp_path), WRITE, 'work', True)
     first = [{'role': 'system', 'content': 'Be brief.'}, {'role': 'user', 'content': 'What is 2+2?'}]
     shown, last = asyncio.run(_run(_llm(), first, folder))
-    assert shown == '<think>› view_file: a.py\n\n</think>\nFour.'
+    assert shown == '<think>› view_file: a.py\n\n</think>\nFour.\n'
     assert last.llm_response == 'Four.'
     assert last.usage == {'prompt_tokens': 10, 'completion_tokens': 2, 'cached_tokens': 0}
 

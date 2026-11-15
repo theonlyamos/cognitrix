@@ -95,8 +95,9 @@ def _copilot_args(mode: str, model: str | None) -> list[str]:
 
 
 def _antigravity_args(mode: str, model: str | None) -> list[str]:
-    # The task comes in on stdin: with stdin not a terminal, agy runs headless
-    # and reads the prompt from it (https://antigravity.google/docs/cli/headless/).
+    # The task comes in on stdin as plain text (--input-format defaults to
+    # text, which reads the prompt from stdin; no -p, which takes the prompt
+    # as its value): https://antigravity.google/docs/cli/headless/
     # Approvals nobody is there to give are soft-denied.
     args = ['--output-format', 'text']
     if mode == 'full':

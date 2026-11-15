@@ -96,7 +96,7 @@ export const MODELS: Record<string, string[]> = {
   'copilot-cli': ['auto', 'claude-sonnet-5-5', 'gpt-6.1-sol'],
   opencode: ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5', 'github-copilot/gpt-5.5'],
   // `agy models` lists what a signed-in account can use; the slug carries the effort.
-  'antigravity-cli': ['gemini-3.8-flash-low', 'gemini-3.1-pro-high', 'gemini-3.1-pro-low'],
+  'antigravity-cli': ['gemini-3.8-flash-medium', 'gemini-4-carbon-high', 'gemini-4-hydrogen-high', 'gemini-3.1-pro-high'],
 };
 
 // Where to create an API key for each provider.
