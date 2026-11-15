@@ -358,7 +358,7 @@ async def chat_page(token: str):
     info = _public_info(link, agent)
     page = _CHAT_PAGE.replace('{{NONCE}}', nonce).replace(
         '{{TITLE}}', html.escape(info['title'])).replace(
-        '{{CONFIG}}', json.dumps({'token': token, **info}).replace('<', '\\u003c'))
+        '{{CONFIG}}', _script_json({'token': link.token, **info}))
     return HTMLResponse(page, headers={
         'Content-Security-Policy': _page_csp(link, nonce),
         'Cache-Control': 'no-store',
@@ -374,12 +374,20 @@ async def chat_widget(token: str, request: Request):
         return Response(body, media_type='application/javascript', status_code=404)
     link, agent, _ = found
     origin = f'{request.url.scheme}://{request.url.netloc}'
-    config = json.dumps({
-        'src': f'{origin}/chat/{token}?embed=1',
+    config = _script_json({
+        'src': f'{origin}/chat/{link.token}?embed=1',
         'title': link.title or agent.name,
-    }).replace('<', '\\u003c')
+    })
     return Response(_WIDGET_JS.replace('{{CONFIG}}', config), media_type='application/javascript',
                     headers={'Cache-Control': 'no-cache', 'Cross-Origin-Resource-Policy': 'cross-origin'})
+
+
+def _script_json(value: dict[str, Any]) -> str:
+    """JSON safe to put inside a <script> element. The page and widget use the
+    link's stored token, never the request path, so nothing the visitor typed
+    is written into them."""
+    return (json.dumps(value).replace('&', '\\u0026').replace('<', '\\u003c')
+            .replace('>', '\\u003e').replace('\u2028', '\\u2028').replace('\u2029', '\\u2029'))
 
 
 def _unavailable_page() -> str:
