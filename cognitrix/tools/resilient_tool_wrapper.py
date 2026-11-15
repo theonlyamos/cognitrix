@@ -14,6 +14,9 @@ from cognitrix.tools.base import Tool
 
 logger = logging.getLogger('cognitrix.log')
 
+# Filled in by Agent.call_tools, never by the model (see agents/base.py).
+_RUNTIME_PARAMS = frozenset({'parent', 'interface', 'approved'})
+
 
 @dataclass
 class ToolResult:
@@ -131,11 +134,17 @@ class ResilientToolManager:
         if not self.llm:
             return None
 
+        # Runtime-filled values (the calling agent, the interface, approval)
+        # are not the model's to fix and are not JSON: keep them out of the
+        # prompt and put them back on whatever comes back.
+        runtime = {k: v for k, v in original_params.items() if k in _RUNTIME_PARAMS}
+        model_params = {k: v for k, v in original_params.items() if k not in _RUNTIME_PARAMS}
+
         prompt = f"""The following tool call failed. Fix the parameters.
 
 Tool: {self._sanitize_for_prompt(tool.name)}
 Description: {self._sanitize_for_prompt(tool.description)}
-Original parameters: {self._sanitize_for_prompt(json.dumps(original_params, indent=2))}
+Original parameters: {self._sanitize_for_prompt(json.dumps(model_params, indent=2, default=str))}
 Error: {self._sanitize_for_prompt(error)}
 
 Provide corrected parameters as valid JSON only. If unrecoverable, return {{"_unrecoverable": true}}.
@@ -153,10 +162,10 @@ Provide corrected parameters as valid JSON only. If unrecoverable, return {{"_un
             if json_match:
                 recovered = json.loads(json_match.group())
 
-                if recovered.get('_unrecoverable'):
+                if not isinstance(recovered, dict) or recovered.get('_unrecoverable'):
                     return None
 
-                return recovered
+                return {**{k: v for k, v in recovered.items() if k not in _RUNTIME_PARAMS}, **runtime}
 
         except ExecutionControlError:
             raise

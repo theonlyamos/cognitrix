@@ -155,9 +155,11 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
                       agent_refs: list[str] | None = None, team_ref: str | None = None,
                       start_now: bool = False, schedule_at: str | None = None,
                       schedule_interval_seconds: int | None = None, schedule_cron: str | None = None,
-                      schedule_enabled: bool | None = None, swarm: bool = False) -> ToolOutcome:
-    """Create a task, optionally assign it, schedule it, or queue it once now. Set swarm to true for a
-    big job that splits into many parallel parts: each step may then fan out to workers (Spawn Workers)."""
+                      schedule_enabled: bool | None = None, swarm: bool = False, *, parent=None) -> ToolOutcome:
+    """Create a task, optionally assign it, schedule it, or queue it once now. A task that starts now or
+    runs on a schedule needs an agent to run it: pass agent_refs or team_ref, or leave both out to have
+    you (the calling agent) run it. Set swarm to true for a big job that splits into many parallel parts:
+    each step may then fan out to workers (Spawn Workers)."""
     from cognitrix.tasks.base import Task
     from cognitrix.tasks.scheduler import compute_next_run, normalize_schedule_at, validate_schedule
     _require_scope('write')
@@ -185,8 +187,19 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
             return ToolOutcome.failure('invalid_schedule', 'An enabled schedule requires exactly one schedule type')
         if start_now or enabled:
             _require_scope('run')
+        if (start_now or enabled) and not agent_ids and not team:
+            # An agent that schedules work without naming who runs it means
+            # itself (e.g. "check my PRs every 15 minutes").
+            self_id = str(getattr(parent, 'id', '') or '')
+            if self_id:
+                _authorize_agent_ids([self_id])
+                agent_ids = [self_id]
         if (start_now or enabled) and not agent_ids:
-            return ToolOutcome.failure('task_owner_required', 'Starting or scheduling a task requires an owner')
+            return ToolOutcome.failure(
+                'task_owner_required',
+                'A task that starts now or runs on a schedule needs an agent to run it. '
+                'Pass agent_refs (agent names or ids) or team_ref. This is about which agent runs '
+                'the task, not about the person being signed in.')
         if schedule_at:
             schedule_at = normalize_schedule_at(schedule_at)
         task = Task(title=title.strip(), description=description.strip(), step_instructions=_steps(steps),
@@ -336,7 +349,10 @@ async def update_task(task_ref: str, title: str | None = None, description: str 
         if task.schedule_enabled:
             _require_scope('run')
             if not task.assigned_agents:
-                return ToolOutcome.failure('task_owner_required', 'Scheduling a task requires an owner')
+                return ToolOutcome.failure(
+                    'task_owner_required',
+                    'A scheduled task needs an agent to run it. Assign one with assign_task first '
+                    '(this is about which agent runs the task, not about the person being signed in).')
         if task.schedule_enabled:
             # Any edit of an enabled schedule, even to its instructions only,
             # makes the editor its authority (as save_task does). Otherwise a
@@ -655,7 +671,8 @@ async def start_task(task_ref: str, resume: bool = False) -> ToolOutcome:
     except ValueError as exc:
         return ToolOutcome.failure('invalid_task_reference', str(exc))
     if not task.assigned_agents:
-        return ToolOutcome.failure('task_owner_required', 'Assign an agent or team to the task before starting it')
+        return ToolOutcome.failure('task_owner_required', 'Assign an agent or team to the task (assign_task) '
+                                   'before starting it')
     ctx = current_execution_context()
     if ctx.task_id and str(ctx.task_id) == str(task.id):
         return ToolOutcome.failure('task_running', 'This task is already running: it is the run you are in.')

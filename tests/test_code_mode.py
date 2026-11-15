@@ -257,3 +257,34 @@ async def test_hyphenated_tool_names_are_reachable_by_their_script_alias():
     assert 'read ok' in outcome.text
     hits = code_mode._search([mcp_like.to_dict_format()], '', ['my_server_read_file'], limit=8)
     assert len(hits) == 1
+
+
+@tool(category='test')
+async def who_am_i() -> str:
+    """Report the caller's user and API key scopes."""
+    from cognitrix.tools.utils import current_execution_context
+    ctx = current_execution_context()
+    return f"{ctx.user_id}|{','.join(sorted(ctx.scopes or [])) or 'all'}"
+
+
+async def test_tools_called_from_a_script_keep_the_callers_context():
+    """A tool called from Run Code sees the same signed-in user and API key
+    limits as a direct call. mini-racer runs the Python callback outside the
+    caller's context, which used to drop them (create_task then saw nobody)."""
+    from cognitrix.tools.utils import (
+        ToolExecutionContext,
+        reset_execution_context,
+        set_execution_context,
+    )
+
+    agent = _agent([who_am_i, _run_code()])
+    token = set_execution_context(ToolExecutionContext(user_id='user-1', scopes=frozenset({'read'})))
+    try:
+        outcome = await _run(agent, """
+            const both = await Promise.all([tools.who_am_i({}), tools.who_am_i({})]);
+            return both;
+        """)
+    finally:
+        reset_execution_context(token)
+    assert outcome.status == 'success', outcome.text
+    assert outcome.text.count('user-1|read') == 2
