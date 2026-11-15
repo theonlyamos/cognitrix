@@ -66,7 +66,8 @@ a second one: edit its folder and publish again with its `app_id`.
    `[{"fill": "Title", "with": "Buy milk"}, {"click": "Add"}, {"see": "Buy milk"},
    {"reload": true}, {"see": "Buy milk"}, {"click": "Delete"}, {"not_see": "Buy milk"}]`.
    - Each run starts a throwaway copy of the app with **empty data**, so write steps that create what
-     they need first. Use `data: "copy"` only to test against a copy of the real data.
+     they need first. Use `data: "copy"` only to test against a copy of the real data. Test copies
+     get no Cognitrix API key (`APP_TEST=1` is set), so flows that run agents can't be clicked through.
    - Target things by what people see: button text, field labels, placeholders. Use a CSS selector
      (`#list li`) to count rows or when the text is ambiguous. If you control the markup, give
      inputs a `<label>` and buttons clear text; that is good for people and makes tests readable.

@@ -150,13 +150,16 @@ def test_scratch_copy_has_its_own_port_and_data(tmp_path):
     host = AppHost(str(tmp_path / 'host'))
     try:
         cmd = make_app(tmp_path / 'src', 'hi')
-        assert host.deploy('demo', 1, pack_folder(str(tmp_path / 'src')), cmd, '', {}, 0)['ok']
+        env = {'COGNITRIX_API_KEY': 'live-key', 'COGNITRIX_API_URL': 'http://x'}
+        assert host.deploy('demo', 1, pack_folder(str(tmp_path / 'src')), cmd, '', env, 0)['ok']
+        assert json.loads(urllib.request.urlopen(f'http://127.0.0.1:{host.port_for("demo")}/').read())['api']
         live = host.data_dir('demo')
         with open(f'{live}/keep.txt', 'w') as fh:
             fh.write('real data')
         with host.scratch('demo') as copy:
             assert copy.port != host.port_for('demo') and copy.version == 1
             got = json.loads(urllib.request.urlopen(f'http://127.0.0.1:{copy.port}/').read())
+            assert not got['api']  # no live Cognitrix API key in a test copy
             assert got['msg'] == 'hi' and got['data'] != live and not (tmp_path / got['data'] / 'keep.txt').exists()
             fresh_dir = got['data']
         assert not (tmp_path / fresh_dir).exists()  # removed afterwards
@@ -244,6 +247,14 @@ def test_a_failed_step_says_why_and_what_is_on_the_page(tmp_path):
         assert 'Nothing on the page matches "Save changes"' in out['steps'][1]['error']
         assert 'button "Add item"' in out['controls'] and 'Todo' in out['page_text']
         assert out['screenshot'] and 'log' in out
+        # A hidden button is not "clicked" at (0, 0), and nth means that match.
+        hidden = test_app_copy(host, 'todo', [{'js': "document.getElementById('broken').style.display = 'none'; true"},
+                                              {'click': 'css=#broken', 'timeout': 1}], no_sandbox=True)
+        assert 'is hidden' in hidden['steps'][1]['error']
+        nth = test_app_copy(host, 'todo', [{'fill': 'Title', 'with': 'One'}, {'press': 'Enter'},
+                                           {'expect': '#list li', 'nth': 2, 'text': 'One', 'timeout': 1}],
+                            no_sandbox=True)
+        assert 'Only 1 match' in nth['steps'][2]['error']
         # Script errors are tied to the step that caused them and fail the test.
         broken = test_app_copy(host, 'todo', [{'click': 'Break'}], no_sandbox=True)
         assert broken['steps'][0]['ok'] and not broken['passed']

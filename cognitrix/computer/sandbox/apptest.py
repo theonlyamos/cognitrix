@@ -149,6 +149,7 @@ _HELPER = r'''
     el.scrollIntoView({block: 'center', inline: 'center'});
     let target = el;
     if (!shown(el) && el.labels && el.labels.length) target = [...el.labels].find(shown) || el;
+    if (!shown(target)) return {ok: false, wait: true, msg: describe(el) + ' is hidden.'};
     const r = target.getBoundingClientRect();
     const x = r.left + r.width / 2, y = r.top + r.height / 2;
     const hit = document.elementFromPoint(x, y);
@@ -219,7 +220,9 @@ _HELPER = r'''
     }
     if (a.gone) return els.length ? {ok: false, wait: true, msg: JSON.stringify(a.target) + ' is still on the page.'} : {ok: true};
     if (!els.length) return {ok: false, wait: true, msg: 'Nothing on the page matches ' + JSON.stringify(a.target) + '.'};
-    const el = els[Math.max(1, a.nth || 1) - 1] || els[0];
+    const n = Math.max(1, a.nth || 1);
+    if (els.length < n) return {ok: false, wait: true, msg: 'Only ' + els.length + ' match ' + JSON.stringify(a.target) + '.'};
+    const el = els[n - 1];
     if (a.text != null && !norm(el.innerText || el.value).includes(norm(a.text))) {
       return {ok: false, wait: true, msg: describe(el) + ' does not contain ' + JSON.stringify(a.text) + '.'};
     }

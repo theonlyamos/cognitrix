@@ -478,6 +478,8 @@ class AppHost:
         version = int(spec['version'])
         spec = {k: v for k, v in spec.items() if k not in ('version', 'updated')}
         spec['port'] = 0  # never the live one's fixed port; the app reads $PORT
+        # The live Cognitrix API key would let a test start real chats and tasks on the owner's account.
+        spec['env'] = {k: v for k, v in (spec.get('env') or {}).items() if not str(k).startswith('COGNITRIX_API')}
         base = self._under('scratch', f'{slug}-{os.urandom(4).hex()}')
         data_dir = os.path.join(base, 'data')
         os.makedirs(data_dir, exist_ok=True)
