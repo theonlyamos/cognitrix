@@ -9,7 +9,7 @@ export type PagePower = 'ask' | 'data' | 'download' | 'apps';
 export interface PageSummary {
   id: string;
   title: string;
-  format: 'html' | 'markdown';
+  format: 'html' | 'markdown' | 'sheet' | 'whiteboard';
   version: number;
   viewer_version: number;
   size_bytes: number;

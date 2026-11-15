@@ -209,6 +209,16 @@ def _runtime_tag() -> str:
 def render(source: str, fmt: str, title: str) -> str:
     """The full document for one version of a page."""
     safe_title = html.escape(title or 'Artifact')
+    if fmt in ('sheet', 'whiteboard'):
+        # Read-only view (public links, viewers, the dashboard); editors use the app's own editor.
+        from cognitrix.artifact_pages import documents
+
+        return (
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{safe_title}</title><style>{BASE_STYLE}</style>{_runtime_tag()}</head>'
+            f'<body>{documents.render(fmt, source)}</body></html>'
+        )
     if fmt == 'markdown':
         payload = json.dumps(source).replace('</', '<\\/')
         return (

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Download, FileText, LayoutPanelTop, MessageCircle, Pin, Search, X } from 'lucide-react';
+import { Download, FileText, LayoutPanelTop, MessageCircle, Pin, Plus, Search, Shapes, Table2, X } from 'lucide-react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { AccessBadge, LiveBadge } from '@/components/artifacts/ArtifactViewer';
 import { EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/list-ui';
@@ -8,7 +8,7 @@ import { api, errorMessage } from '@/lib/api';
 import { ago, parseStamp, sizeLabel, type ArtifactList, type FileItem, type ImageItem, type PageSummary } from '@/lib/artifactPages';
 import { cn } from '@/lib/utils';
 
-type Filter = 'all' | 'pages' | 'pinned' | 'live' | 'shared' | 'public' | 'images' | 'documents';
+type Filter = 'all' | 'pages' | 'pinned' | 'live' | 'shared' | 'public' | 'images' | 'documents' | 'boards' | 'sheets' | 'whiteboards';
 type Item =
   | { kind: 'page'; key: string; when: number; page: PageSummary }
   | { kind: 'image'; key: string; when: number; image: ImageItem }
@@ -17,6 +17,9 @@ type Item =
 const FILTERS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'pages', label: 'Pages' },
+  { id: 'boards', label: 'Sheets & boards' },
+  { id: 'sheets', label: 'Sheets' },
+  { id: 'whiteboards', label: 'Whiteboards' },
   { id: 'images', label: 'Images' },
   { id: 'documents', label: 'Documents' },
   { id: 'pinned', label: 'Pinned' },
@@ -28,6 +31,8 @@ const FILTERS: { id: Filter; label: string }[] = [
 const PAGEABLE = ['text/markdown', 'text/plain', 'text/html'];
 const READABLE = /^(text\/|application\/(json|xml)$)/;
 const when = (stamp: string) => parseStamp(stamp)?.getTime() ?? 0;
+/** Sheets and whiteboards people edit, as opposed to pages they look at. */
+export const isDataPage = (page: PageSummary) => page.format === 'sheet' || page.format === 'whiteboard';
 const card = 'flex min-w-0 flex-col rounded-[12px] border border-line bg-panel transition-colors';
 const smallButton = 'inline-flex h-8 items-center gap-1 rounded-md border border-line px-2 text-[12px] hover:bg-panel-2 disabled:opacity-50';
 
@@ -35,7 +40,9 @@ function PageCard({ page }: { page: PageSummary }) {
   return (
     <Link to={`/artifacts/${page.id}`} className={cn(card, 'group hover:border-fg-dim')}>
       <div className="relative flex h-28 items-center justify-center rounded-t-[12px] border-b border-line bg-panel-2">
-        <LayoutPanelTop size={30} className="text-fg-dim/60" aria-hidden />
+        {page.format === 'sheet' ? <Table2 size={30} className="text-fg-dim/60" aria-label="Sheet" />
+          : page.format === 'whiteboard' ? <Shapes size={30} className="text-fg-dim/60" aria-label="Whiteboard" />
+          : <LayoutPanelTop size={30} className="text-fg-dim/60" aria-hidden />}
         <span className="absolute left-2.5 top-2.5 flex items-center gap-1.5">
           {page.live && <LiveBadge />}
           {page.pinned && <span className="inline-flex items-center gap-1 rounded-md bg-panel px-1.5 py-0.5 font-mono text-[10.5px] text-fg-dim"><Pin size={10} />Pinned</span>}
@@ -45,7 +52,7 @@ function PageCard({ page }: { page: PageSummary }) {
       <div className="flex min-w-0 flex-col gap-1.5 p-3">
         <h3 className="truncate text-[14px] font-semibold group-hover:text-accent-ink" title={page.title}>{page.title}</h3>
         <p className="truncate font-mono text-[11px] text-fg-dim">
-          {page.role === 'owner' ? (page.agent?.name ? `by ${page.agent.name}` : 'page') : `shared by ${page.owner.name}`} · {ago(page.updated)}
+          {page.role === 'owner' ? (page.agent?.name ? `by ${page.agent.name}` : page.format === 'sheet' ? 'sheet' : page.format === 'whiteboard' ? 'whiteboard' : 'page') : `shared by ${page.owner.name}`} · {ago(page.updated)}
         </p>
         <div className="flex items-center gap-2">
           <AccessBadge access={page.access} />
@@ -156,16 +163,49 @@ function FileReader({ file, onClose }: { file: FileItem; onClose: () => void }) 
   );
 }
 
+/** Start a blank sheet or whiteboard and open it. */
+export function NewDocumentButtons() {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const start = async (format: 'sheet' | 'whiteboard') => {
+    setBusy(true);
+    setError('');
+    try {
+      const { data } = await api.post<{ id: string }>('/artifact-pages', { format });
+      navigate(`/artifacts/${data.id}`);
+    } catch (e) {
+      setError(errorMessage(e, 'Could not start it.'));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button type="button" disabled={busy} onClick={() => void start('sheet')}
+        className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-semibold text-accent-foreground disabled:opacity-60 md:h-8">
+        <Plus size={14} aria-hidden /><Table2 size={14} aria-hidden /> New sheet
+      </button>
+      <button type="button" disabled={busy} onClick={() => void start('whiteboard')}
+        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-line bg-panel px-3 text-[13px] font-medium hover:bg-panel-2 disabled:opacity-60 md:h-8">
+        <Plus size={14} aria-hidden /><Shapes size={14} aria-hidden /> New whiteboard
+      </button>
+      {error && <p role="alert" className="w-full text-[12px] text-danger-ink">{error}</p>}
+    </div>
+  );
+}
+
 /** Which slice a tab of the Apps page shows. */
-export type ArtifactKind = 'pages' | 'images' | 'documents' | 'shared';
+export type ArtifactKind = 'pages' | 'boards' | 'images' | 'documents' | 'shared';
 const KIND_FILTERS: Record<ArtifactKind, Filter[]> = {
   pages: ['pages', 'pinned', 'live', 'public'],
+  boards: ['boards', 'sheets', 'whiteboards'],
   images: ['images'],
   documents: ['documents'],
   shared: ['shared'],
 };
 const KIND_EMPTY: Record<ArtifactKind, string> = {
   pages: 'Pages agents publish beside a chat (reports, dashboards, checklists) show up here.',
+  boards: 'Spreadsheets and whiteboards you and your agents both edit. Start one here, or ask an agent for a budget, tracker or diagram.',
   images: 'Images agents generate show up here.',
   documents: 'Documents agents write in your chats show up here.',
   shared: 'Pages other people share with you show up here.',
@@ -179,7 +219,7 @@ export default function Artifacts({ kind }: { kind?: ArtifactKind } = {}) {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<Filter>(kind ? KIND_FILTERS[kind][0] : 'all');
   useEffect(() => { if (kind) setFilter(KIND_FILTERS[kind][0]); }, [kind]);
-  const filters = kind ? FILTERS.filter((f) => KIND_FILTERS[kind].includes(f.id)) : FILTERS;
+  const filters = kind ? FILTERS.filter((f) => KIND_FILTERS[kind].includes(f.id)) : FILTERS.filter((f) => f.id !== 'sheets' && f.id !== 'whiteboards');
   const [query, setQuery] = useState('');
   const [reading, setReading] = useState<FileItem | null>(null);
 
@@ -207,7 +247,10 @@ export default function Artifacts({ kind }: { kind?: ArtifactKind } = {}) {
       if (needle && !title.toLowerCase().includes(needle)) return false;
       switch (filter) {
         case 'all': return true;
-        case 'pages': return item.kind === 'page';
+        case 'pages': return item.kind === 'page' && (!kind || !isDataPage(item.page));
+        case 'boards': return item.kind === 'page' && isDataPage(item.page);
+        case 'sheets': return item.kind === 'page' && item.page.format === 'sheet';
+        case 'whiteboards': return item.kind === 'page' && item.page.format === 'whiteboard';
         case 'images': return item.kind === 'image';
         case 'documents': return item.kind === 'file';
         case 'pinned': return item.kind === 'page' && item.page.pinned;
@@ -216,11 +259,12 @@ export default function Artifacts({ kind }: { kind?: ArtifactKind } = {}) {
         case 'public': return item.kind === 'page' && item.page.access === 'public';
       }
     }).sort((a, b) => b.when - a.when);
-  }, [data, filter, query]);
+  }, [data, filter, query, kind]);
 
   const total = !data ? 0 : !kind ? data.pages.length + data.images.length + data.files.length
     : kind === 'images' ? data.images.length : kind === 'documents' ? data.files.length
-    : kind === 'shared' ? data.pages.filter((p) => p.role !== 'owner').length : data.pages.length;
+    : kind === 'shared' ? data.pages.filter((p) => p.role !== 'owner').length
+    : kind === 'boards' ? data.pages.filter(isDataPage).length : data.pages.filter((p) => !isDataPage(p)).length;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -228,7 +272,7 @@ export default function Artifacts({ kind }: { kind?: ArtifactKind } = {}) {
       {error && !data ? <ErrorState message={error} onRetry={() => void load()} /> : !data ? <LoadingState label="loading…" /> : total === 0 ? (
         <EmptyState icon={<LayoutPanelTop size={20} />} title="Nothing here yet"
           desc={kind ? KIND_EMPTY[kind] : 'Ask an agent to make a report, a dashboard, an image or a document. What it makes shows up here.'}
-          action={<Link to="/home" className="rounded-md bg-accent px-4 py-2 text-[13px] font-semibold text-accent-foreground">Open a chat</Link>} />
+          action={kind === 'boards' ? <NewDocumentButtons /> : <Link to="/home" className="rounded-md bg-accent px-4 py-2 text-[13px] font-semibold text-accent-foreground">Open a chat</Link>} />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
@@ -241,7 +285,8 @@ export default function Artifacts({ kind }: { kind?: ArtifactKind } = {}) {
                 </button>
               ))}
             </div>
-            <label className="relative md:ml-auto md:w-64">
+            {kind === 'boards' && <div className="md:ml-auto"><NewDocumentButtons /></div>}
+            <label className={cn('relative md:w-64', kind !== 'boards' && 'md:ml-auto')}>
               <span className="sr-only">Search artifacts</span>
               <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" aria-hidden />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" type="search"

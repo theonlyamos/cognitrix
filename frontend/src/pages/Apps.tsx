@@ -15,6 +15,7 @@ type Filter = 'all' | 'online' | 'asleep' | 'pinned' | 'mine';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'apps', label: 'Apps' },
   { id: 'pages', label: 'Pages' },
+  { id: 'boards', label: 'Sheets & boards' },
   { id: 'images', label: 'Images' },
   { id: 'documents', label: 'Docs' },
   { id: 'shared', label: 'Shared with me' },

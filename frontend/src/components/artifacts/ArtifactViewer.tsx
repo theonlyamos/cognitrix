@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Clock, Code2, ExternalLink, Eye, Globe, LayoutPanelTop, Lock, Maximize2, MessageCircle, Minimize2,
-  MoreHorizontal, Share, Users, X,
+  MoreHorizontal, Shapes, Share, Table2, Users, X,
 } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import {
@@ -13,6 +13,7 @@ import { ArtifactFrame, type FramePin } from '@/components/artifacts/ArtifactFra
 import { CommentsRail } from '@/components/artifacts/CommentsRail';
 import { ConsentDialog } from '@/components/artifacts/ConsentDialog';
 import { ShareDialog } from '@/components/artifacts/ShareDialog';
+import { DataDocument } from '@/components/boards/DataDocument';
 import { cn } from '@/lib/utils';
 
 const POLL_MS = 5000;
@@ -221,19 +222,30 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
   const behind = pinnedVersion !== null && pinnedVersion !== page.version;
   const openCount = threads.filter((t) => !t.resolved).length;
   const wide = variant === 'page' || !!expanded;
+  const dataFormat = page.format === 'sheet' || page.format === 'whiteboard' ? page.format : null;
+  // People who may edit get the editor on the newest version; everyone else
+  // (and older versions, and placing a comment pin) gets the read-only page.
+  const editing = !!dataFormat && editor && !behind && shownVersion === page.version && view === 'preview' && !picking;
+  const download = {
+    html: { type: 'text/html', ext: 'html', label: 'HTML' },
+    markdown: { type: 'text/markdown', ext: 'md', label: 'Markdown' },
+    sheet: { type: 'application/json', ext: 'json', label: 'JSON' },
+    whiteboard: { type: 'application/json', ext: 'json', label: 'JSON' },
+  }[page.format];
+  const FormatIcon = page.format === 'sheet' ? Table2 : page.format === 'whiteboard' ? Shapes : LayoutPanelTop;
 
   return (
     <section aria-label={`Artifact: ${page.title}`} className="relative flex h-full min-h-0 flex-col bg-bg">
       <header className={cn('flex flex-none items-center gap-1.5 border-b border-line py-1.5 pr-2 md:px-3', variant === 'page' ? 'app-page-header min-h-14 pl-16 md:min-h-12' : 'min-h-12 pl-2')}>
         {variant === 'page' && (
-          <Link to="/apps?tab=pages" aria-label="All pages" className={iconButton}><ArrowLeft size={16} /></Link>
+          <Link to={dataFormat ? '/apps?tab=boards' : '/apps?tab=pages'} aria-label={dataFormat ? 'All sheets and whiteboards' : 'All pages'} className={iconButton}><ArrowLeft size={16} /></Link>
         )}
         {variant === 'panel' && onBack && !expanded && (
           <button type="button" onClick={onBack} className="inline-flex h-9 flex-none items-center gap-1 rounded-lg px-2 font-mono text-[11.5px] text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8">
             <span aria-hidden>‹</span> This chat
           </button>
         )}
-        <LayoutPanelTop size={15} className="ml-1 hidden flex-none text-fg-dim sm:block" aria-hidden />
+        <FormatIcon size={15} className="ml-1 hidden flex-none text-fg-dim sm:block" aria-hidden />
         <h2 className="min-w-0 flex-shrink truncate text-[14px] font-semibold" title={page.title}>{page.title}</h2>
         {page.live && <LiveBadge />}
         {page.versions.length > 1 ? (
@@ -303,16 +315,16 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
                 onClick={() => {
                   setMenuOpen(false);
                   void api.get<{ source: string }>(`/artifact-pages/${page.id}/source`, { params: { v: shownVersion } }).then(({ data }) => {
-                    const blob = new Blob([data.source], { type: page.format === 'markdown' ? 'text/markdown' : 'text/html' });
+                    const blob = new Blob([data.source], { type: download.type });
                     const href = URL.createObjectURL(blob);
                     const link = document.createElement('a');
                     link.href = href;
-                    link.download = `${page.title.replace(/[\\/:*?"<>|]/g, '_')}.${page.format === 'markdown' ? 'md' : 'html'}`;
+                    link.download = `${page.title.replace(/[\\/:*?"<>|]/g, '_')}.${download.ext}`;
                     link.click();
                     window.setTimeout(() => URL.revokeObjectURL(href), 1000);
                   }).catch((e) => setNotice(errorMessage(e, 'Could not download it.')));
                 }}>
-                Download {page.format === 'markdown' ? 'Markdown' : 'HTML'}
+                Download {download.label}
               </button>
               {owner && (
                 <button type="button" role="menuitem" className={cn(menuItem, 'text-danger-ink')}
@@ -376,6 +388,8 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
               <pre className="h-full overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-[12px] leading-relaxed text-fg-dim">
                 {source?.version === shownVersion ? source.text : 'loading…'}
               </pre>
+            ) : editing ? (
+              <DataDocument pageId={page.id} format={dataFormat!} latest={page.version} onSaved={() => void load()} />
             ) : frame ? (
               <ArtifactFrame url={frame.url} title={page.title} pageId={page.id} allowed={page.allowed_powers} pins={pins}
                 picking={picking} onPin={(id) => { if (id !== 'draft') { setActiveThread(id); setCommentsOpen(true); } }}

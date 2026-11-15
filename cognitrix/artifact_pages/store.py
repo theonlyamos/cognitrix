@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cognitrix.artifact_pages import documents
 from cognitrix.artifact_pages.models import (
     EVERYONE,
     FORMATS,
@@ -161,7 +162,7 @@ def _clean_format(fmt: str) -> str:
     value = str(fmt or 'html').strip().lower()
     value = {'md': 'markdown', 'htm': 'html'}.get(value, value)
     if value not in FORMATS:
-        raise PageError('bad_format', "format is 'html' or 'markdown'")
+        raise PageError('bad_format', "format is 'html', 'markdown', 'sheet' or 'whiteboard'")
     return value
 
 
@@ -228,6 +229,11 @@ async def publish(
                         'Use SVG or CSS instead of embedded images, or summarise the data.')
     clean_title = _clean_title(title)
     clean_format = _clean_format(fmt)
+    if clean_format in documents.DATA_FORMATS:
+        try:
+            raw = documents.normalize(clean_format, text).encode('utf-8')
+        except documents.DocumentError as exc:
+            raise PageError('bad_content', f'That {clean_format} could not be read: {exc}')
     clean_powers = _clean_powers(powers) if powers is not None else None
     stamp = now()
 
@@ -244,6 +250,13 @@ async def publish(
                 continue
             rows = await ArtifactPage.find({'owner_id': user_key, field: value}) or []
             page = next((r for r in rows if r.title.lower() == clean_title.lower()), None)
+
+    if page is not None and page.format != clean_format and (
+            page.format in documents.DATA_FORMATS or clean_format in documents.DATA_FORMATS):
+        if page_id:
+            raise PageError('format_change', f'This artifact is a {page.format}; publish it as a {page.format}, '
+                            'or leave artifact_id empty to make a new one.')
+        page = None  # Same title, different kind: a new artifact.
 
     digest = hashlib.sha256(raw).hexdigest()
     if page is None:
@@ -283,6 +296,59 @@ async def publish(
         setattr(page, key, value)
     _prune(str(page.id), number, keep=int(page.share_version or 0))
     return page, False
+
+
+EDIT_MERGE_SECONDS = 120
+
+
+async def save_edit(page: ArtifactPage, *, user_key: str, name: str, content: str, base_version: int) -> ArtifactPage:
+    """A person's edit to a sheet or whiteboard.
+
+    ``base_version`` is the version their editor started from: if an agent
+    (or someone else) saved since, the edit is refused (409) so it can't
+    silently wipe that change. Saves by the same person within a couple of
+    minutes go into the same version, so typing doesn't make hundreds."""
+    if page.format not in documents.DATA_FORMATS:
+        raise PageError('not_editable', 'Only sheets and whiteboards are edited here', 400)
+    if not can_edit(role_of(page, user_key)):
+        raise PageError('read_only', 'You can look at this but not change it', 403)
+    if int(base_version) != int(page.version):
+        raise PageError('stale', f'This changed since you opened it (now version {page.version}). '
+                        'Reload to see the change, then edit again.', 409)
+    try:
+        raw = documents.normalize(page.format, str(content or '')).encode('utf-8')
+    except documents.DocumentError as exc:
+        raise PageError('bad_content', str(exc))
+    if len(raw) > MAX_BYTES:
+        raise PageError('too_big', 'This is too large to save', 413)
+    note = f'Edited by {name}'[:MAX_NOTE]
+    rows = await ArtifactVersion.find({'page_id': str(page.id), 'number': int(page.version)}) or []
+    last = rows[0] if rows else None
+    if last is not None and last.note == note and not last.agent_id and not last.task_id and _seconds_since(last.created) < EDIT_MERGE_SECONDS:
+        _write_source(str(page.id), int(page.version), raw)
+        stamp = now()
+        await ArtifactVersion.update_one({'id': str(last.id)}, {'size_bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest(),
+                                                                 'created': stamp})
+        await ArtifactPage.update_one({'id': str(page.id)}, {'size_bytes': len(raw), 'updated': stamp})
+        page.size_bytes, page.updated = len(raw), stamp
+        return page
+    updated, _ = await publish(user_key=user_key, title=page.title, content=raw.decode('utf-8'), fmt=page.format,
+                               page_id=str(page.id), note=note, session_id='', task_id='')
+    if page.task_id:
+        # A person's edit doesn't end a task keeping the page fresh.
+        await ArtifactPage.update_one({'id': str(page.id)}, {'task_id': page.task_id})
+        updated.task_id = page.task_id
+    return updated
+
+
+def _seconds_since(stamp: str) -> float:
+    try:
+        when = datetime.fromisoformat(str(stamp).replace(' ', 'T').replace('Z', '+00:00'))
+    except ValueError:
+        return float('inf')
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - when).total_seconds()
 
 
 def read_source(page: ArtifactPage, number: int | None = None) -> str:

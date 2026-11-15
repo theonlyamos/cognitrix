@@ -9,7 +9,7 @@ stored on the agent); see ``Session._run_turn`` and
 from __future__ import annotations
 
 from cognitrix.artifact_pages import comments as page_comments
-from cognitrix.artifact_pages import store
+from cognitrix.artifact_pages import documents, store
 from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import EntityRef, ToolOutcome, current_execution_context
 
@@ -38,9 +38,10 @@ def _failure(exc: store.PageError) -> ToolOutcome:
       supported_interfaces=['web', 'ws', 'task'])
 async def publish_artifact(title: str, content: str, format: str = 'html', artifact_id: str = '',
                            note: str = '', powers: list[str] | None = None, *, parent=None) -> ToolOutcome:
-    """Publish a web page the person opens beside the chat, can share with a link, and comment on.
-    Use it when your answer is easier to look at or use than to read: a report, comparison, dashboard,
-    chart, plan, checklist, interactive tool or a document someone else will read.
+    """Publish a web page, spreadsheet or whiteboard the person opens beside the chat, can share with a link,
+    and comment on. Use it when your answer is easier to look at or use than to read: a report, comparison,
+    dashboard, chart, plan, checklist, interactive tool or a document someone else will read. Use "sheet" for
+    a budget, tracker or table people will keep editing, and "whiteboard" for a diagram, brainstorm or map.
 
     The page is ONE self-contained file. format "html": a full page with inline <style> and <script>;
     scripts may also come from cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com
@@ -48,14 +49,26 @@ async def publish_artifact(title: str, content: str, format: str = 'html', artif
     The page cannot fetch other websites. Make it readable in light and dark (prefers-color-scheme) and
     at phone width. format "markdown": a document rendered with clean styling.
 
+    format "sheet": a spreadsheet people can edit, as JSON {"tabs": [{"name": "Budget", "rows": [["Item", "Cost"],
+    ["Rent", 1200], ["Total", "=SUM(B2:B3)"]]}]} (or "cells": {"A1": "Item", ...}; optional "styles":
+    {"B4": {"bold": true, "fmt": "currency"|"percent"|"number"}} and "widths": {"A": 180}; a cell may also be
+    {"value": 640, "bold": true, "fmt": "currency"}). Formulas start with "="
+    and support + - * / ^ &, comparisons, A1 and A1:B9 references (Tab!A1 for another tab), SUM, AVERAGE, MIN, MAX,
+    COUNT, COUNTA, IF, ROUND, ABS, CONCAT, LEN, UPPER, LOWER, AND, OR, NOT.
+    format "whiteboard": a board people can edit, as JSON {"items": [{"id": "n1", "type": "note", "text": "Goal",
+    "x": 40, "y": 40, "w": 180, "h": 120, "color": "yellow"}, {"type": "arrow", "from": "n1", "to": "n2"}]}.
+    Types: note, rect, ellipse, text, arrow, line (from/to ids or "points"), draw ("points"). Colors: yellow, green,
+    blue, pink, purple, orange, gray, white. Leave out x/y to have items laid out in a grid.
+    People edit sheets and whiteboards too: Read Artifact first to see their changes, then publish the whole JSON.
+
     To change a page, publish again with its artifact_id: that adds a new version at the same link and
     anyone looking at it sees the update. Publishing again with the same title from the same chat or
     task also updates it. The person sees a card in the chat that opens the page.
 
     Args:
         title (str): Short name, 2-6 words.
-        content (str): The whole page source (HTML or Markdown), at most 5 MB.
-        format (str): "html" (default) or "markdown".
+        content (str): The whole page source (HTML, Markdown, or sheet / whiteboard JSON), at most 5 MB.
+        format (str): "html" (default), "markdown", "sheet" or "whiteboard".
         artifact_id (str): Id of an artifact to update; empty for a new one.
         note (str): One line on what changed in this version.
         powers (list[str] | None): Optional things the page may do, each viewer is asked first:
@@ -118,6 +131,9 @@ async def read_artifact(artifact_id: str, version: int = 0, *, parent=None) -> T
             lines.append(f'- thread {thread["id"]}{where}: {thread["author_name"]}: {thread["body"][:300]}')
             for reply in thread['replies'][-3:]:
                 lines.append(f'    {reply["author_name"]}: {reply["body"][:300]}')
+    if page.format in documents.DATA_FORMATS:
+        lines.append('Contents (people may have edited it; publish the whole JSON again to change it):')
+        lines.append(documents.summary(page.format, source)[:READ_LIMIT])
     lines.append('Source:' + (' (cut short)' if cut else ''))
     lines.append(source[:READ_LIMIT])
     return ToolOutcome.success('\n'.join(lines))
