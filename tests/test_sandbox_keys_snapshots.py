@@ -285,7 +285,12 @@ def test_agent_setup_scripts_save_restore_and_copy(tmp_path):
     subprocess.run(['sh', '-c', snap.copy_script('a1', 'c3')], env=env, check=True)
     assert (home / 'work/c3/proj/f.txt').read_text() == 'from a1'
     assert not (home / '.profiles/c3/chromium/SingletonLock').is_symlink()
-    assert subprocess.run(['sh', '-c', snap.copy_script('nobody', 'c4')], env=env).returncode == 3
+    # Nothing to copy, or an archive that won't unpack: the target keeps its own setup.
+    assert subprocess.run(['sh', '-c', snap.copy_script('nobody', 'c3')], env=env).returncode == 3
+    assert (home / 'work/c3/proj/f.txt').read_text() == 'from a1'
+    bad = subprocess.run(['sh', '-c', snap.agent_restore_script('c3')], env=env, input=b'not a tar.gz')
+    assert bad.returncode == 4 and (home / 'work/c3/proj/f.txt').read_text() == 'from a1'
+    assert not (home / '.cognitrix-sandbox/staging/c3').exists()
     with pytest.raises(snap.SnapshotError):
         snap.copy_script('a1', 'a1')
     with pytest.raises(ValueError):

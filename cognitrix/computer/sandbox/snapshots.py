@@ -43,6 +43,7 @@ _ID = re.compile(r'^[a-z0-9]{12}$')
 # Never worth keeping: job logs, the key proxy's files (made again on use),
 # browser caches and the locks a running browser holds.
 _EXCLUDES = ('--exclude=./.cognitrix-sandbox/jobs', '--exclude=./.cognitrix-sandbox/proxy',
+             '--exclude=./.cognitrix-sandbox/staging',
              '--exclude=Cache_Data', '--exclude=Code Cache', '--exclude=GPUCache', '--exclude=GrShaderCache',
              '--exclude=SingletonLock', '--exclude=SingletonSocket', '--exclude=SingletonCookie')
 _AGENT_PARTS = (('work', 'agent/work'), ('.profiles', 'agent/profiles'),
@@ -167,25 +168,38 @@ def agent_save_script(agent: str) -> str:
             f'exec tar --warning=no-file-changed {" ".join(_quote(e) for e in _EXCLUDES)} {transforms} -czf - "$@"')
 
 
+def _swap_in(agent: str) -> str:
+    """Shell that replaces ``agent``'s setup with what was staged in $S/agent,
+    run only after staging worked, so a failed copy or restore never loses
+    the agent's own setup."""
+    moves = [f'rm -rf "{base}/{agent}"; if [ -e "$S/{inner}" ]; then mkdir -p "{base}" && mv "$S/{inner}" "{base}/{agent}"; fi'
+             for base, inner in _AGENT_PARTS]
+    return '; '.join(moves) + '; rm -rf "$S"'
+
+
+def _staging(agent: str) -> str:
+    return f'S="$HOME/.cognitrix-sandbox/staging/{agent}"; rm -rf "$S" && mkdir -p "$S"'
+
+
 def agent_restore_script(agent: str) -> str:
     agent = check_name(agent)
-    pairs = _agent_paths(agent)
-    remove = ' '.join(f'"{src}"' for src, _ in pairs)
-    transforms = ' '.join(f"--transform='s,^{_bre(inner)},{src},S'" for src, inner in pairs)
-    return (f'cd "$HOME" || exit 2; rm -rf {remove} && mkdir -p work .profiles .cognitrix-sandbox/baselines '
-            f'&& tar -xzf - --no-same-owner {transforms}')
+    return (f'cd "$HOME" || exit 2; {_staging(agent)} || exit 4; '
+            'tar -xzf - --no-same-owner -C "$S" || { rm -rf "$S"; exit 4; }; '
+            '[ -d "$S/agent" ] || { rm -rf "$S"; exit 3; }; '
+            f'{_swap_in(agent)}')
 
 
 def copy_script(source: str, target: str) -> str:
     source, target = check_name(source), check_name(target)
     if source == target:
         raise SnapshotError('Pick two different agents.')
-    steps = [f'rm -rf "{base}/{target}"' for base, _ in _AGENT_PARTS]
-    copied = [f'if [ -e "{base}/{source}" ]; then mkdir -p "{base}" && cp -a "{base}/{source}" "{base}/{target}" '
-              f'&& n=$((n+1)); fi' for base, _ in _AGENT_PARTS]
-    return (f'cd "$HOME" || exit 2; n=0; {"; ".join(steps)}; {"; ".join(copied)}; '
-            'find .profiles -maxdepth 3 -name "Singleton*" -path "*/' + target + '/*" -exec rm -f {} + 2>/dev/null; '
-            '[ "$n" -gt 0 ] || exit 3')
+    exists = ' || '.join(f'[ -e "{base}/{source}" ]' for base, _ in _AGENT_PARTS)
+    staged = [f'if [ -e "{base}/{source}" ]; then cp -a "{base}/{source}" "$S/{inner}" || {{ rm -rf "$S"; exit 4; }}; fi'
+              for base, inner in _AGENT_PARTS]
+    return (f'cd "$HOME" || exit 2; {{ {exists}; }} || exit 3; {_staging(target)} && mkdir -p "$S/agent" || exit 4; '
+            f'{"; ".join(staged)}; '
+            f'find "$S/agent/profiles" -name "Singleton*" -exec rm -f {{}} + 2>/dev/null; '
+            f'{_swap_in(target)}')
 
 
 def _bre(text: str) -> str:
