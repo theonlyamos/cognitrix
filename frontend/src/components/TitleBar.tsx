@@ -1,5 +1,6 @@
 import { isDesktop, windowAction } from '@/lib/desktop';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 export function BellIcon({ className = 'h-[17px] w-[17px]' }: { className?: string }) {
   return (
@@ -15,13 +16,13 @@ export function WindowControls({ height = 42 }: { height?: number }) {
   const cell = 'grid w-[46px] place-items-center text-fg-dim hover:text-fg';
   return (
     <div className="flex items-center" style={{ height }}>
-      <button type="button" aria-label="Minimize" onClick={() => windowAction('minimize')} className={cn(cell, 'h-full hover:bg-panel-2')}>
+      <button type="button" aria-label={tr('ui.titleBar.minimize')} onClick={() => windowAction('minimize')} className={cn(cell, 'h-full hover:bg-panel-2')}>
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" /></svg>
       </button>
-      <button type="button" aria-label="Maximize" onClick={() => windowAction('toggleMaximize')} className={cn(cell, 'h-full hover:bg-panel-2')}>
+      <button type="button" aria-label={tr('ui.titleBar.maximize')} onClick={() => windowAction('toggleMaximize')} className={cn(cell, 'h-full hover:bg-panel-2')}>
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor" /></svg>
       </button>
-      <button type="button" aria-label="Close" onClick={() => windowAction('close')} className={cn(cell, 'h-full hover:bg-[#c42b1c] hover:text-white')}>
+      <button type="button" aria-label={tr('ui.titleBar.close')} onClick={() => windowAction('close')} className={cn(cell, 'h-full hover:bg-[#c42b1c] hover:text-white')}>
         <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0 0 10" stroke="currentColor" /></svg>
       </button>
     </div>

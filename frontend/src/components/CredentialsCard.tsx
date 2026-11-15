@@ -10,6 +10,7 @@ import {
   updateCredential,
   type Credential,
 } from '@/lib/credentials';
+import { tr } from '@/lib/i18n';
 
 interface Draft {
   id: string | null;
@@ -55,12 +56,12 @@ export function CredentialsCard() {
   const load = () =>
     listCredentials()
       .then(setItems)
-      .catch((e) => setLoadError(errorMessage(e, 'Could not load saved sign-ins.')));
+      .catch((e) => setLoadError(errorMessage(e, tr('ui.credentialsCard.couldNotLoadSavedSign'))));
 
   useEffect(() => { void load(); }, []);
 
   if (loadError) return <p role="alert" className="text-[12.5px] text-danger-ink">{loadError}</p>;
-  if (!items) return <p className="text-[13px] text-fg-dim">Loading…</p>;
+  if (!items) return <p className="text-[13px] text-fg-dim">{tr('ui.credentialsCard.loading')}</p>;
 
   const save = async () => {
     if (!draft) return;
@@ -90,7 +91,7 @@ export function CredentialsCard() {
       setDraft(null);
       await load();
     } catch (e) {
-      setError(errorMessage(e, 'Could not save the sign-in.'));
+      setError(errorMessage(e, tr('ui.credentialsCard.couldNotSaveTheSign')));
     } finally {
       setBusy(false);
     }
@@ -103,7 +104,7 @@ export function CredentialsCard() {
       await deleteCredential(c.id);
       await load();
     } catch (e) {
-      setError(errorMessage(e, 'Could not remove the sign-in.'));
+      setError(errorMessage(e, tr('ui.credentialsCard.couldNotRemoveTheSign')));
     } finally {
       setBusy(false);
     }
@@ -112,14 +113,11 @@ export function CredentialsCard() {
   return (
     <div className="space-y-3">
       <p className="text-[13px] leading-relaxed text-fg-dim">
-        Save API tokens and passwords here so agents can sign in to services without ever seeing them. An agent only
-        knows the name: it writes <span className="font-mono text-[12px]">{'{{secret:NAME}}'}</span> in a request (or picks the
-        sign-in in the HTTP Request tool) and Cognitrix adds the value as the request goes out, only to the hosts you list.
-        Values are encrypted on disk and hidden from anything a tool sends back. MCP server headers can use the same placeholder.
+        {tr('ui.credentialsCard.saveApiTokensAndPasswords')}{' '}<span className="font-mono text-[12px]">{'{{secret:NAME}}'}</span>{' '}{tr('ui.credentialsCard.inARequestOrPicks')}
       </p>
 
       {items.length === 0 ? (
-        <p className="rounded-[10px] border border-line bg-bg px-3 py-3 text-[12.5px] text-fg-dim">No saved sign-ins yet.</p>
+        <p className="rounded-[10px] border border-line bg-bg px-3 py-3 text-[12.5px] text-fg-dim">{tr('ui.credentialsCard.noSavedSignInsYet')}</p>
       ) : (
         <ul className="divide-y divide-line rounded-[10px] border border-line bg-bg">
           {items.map((c) => (
@@ -127,24 +125,24 @@ export function CredentialsCard() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-[13px]">{c.name}</span>
                 <span className="rounded border border-line px-1.5 font-mono text-[10.5px] text-fg-dim">
-                  {c.kind === 'basic' ? 'username + password' : c.kind}
+                  {c.kind === 'basic' ? tr('ui.credentialsCard.usernamePassword') : c.kind}
                 </span>
                 {c.hint && <span className="font-mono text-[11.5px] text-fg-dim">{c.hint}</span>}
                 <span className="flex-1" />
                 <button type="button" onClick={() => { setError(null); setDraft(draftFrom(c)); }}
                   className="text-[12.5px] text-fg-dim hover:text-fg">
-                  Edit
+                  {tr('ui.credentialsCard.edit')}
                 </button>
                 <button type="button" onClick={() => void remove(c)} disabled={busy}
                   className="text-[12.5px] text-danger-ink hover:underline disabled:opacity-60">
-                  Remove
+                  {tr('ui.credentialsCard.remove')}
                 </button>
               </div>
               <p className="mt-1 text-[12px] text-fg-dim">
                 {c.allowed_hosts.length === 1 && c.allowed_hosts[0] === 'sandbox.invalid'
-                  ? 'Only for commands in the sandbox'
-                  : `Only sent to ${c.allowed_hosts.filter((h) => h !== 'sandbox.invalid').join(', ')}`}
-                {c.last_used_at ? ` · last used ${c.last_used_at} UTC` : ' · not used yet'}
+                  ? tr('ui.credentialsCard.onlyForCommandsInThe')
+                  : tr('ui.credentialsCard.onlySentToFilter', { filter: c.allowed_hosts.filter((h) => h !== 'sandbox.invalid').join(', ') })}
+                {c.last_used_at ? tr('ui.credentialsCard.lastUsedLastUsedAt', { last_used_at: c.last_used_at }) : tr('ui.credentialsCard.notUsedYet')}
               </p>
               {c.description && <p className="mt-0.5 text-[12px] text-fg-dim">{c.description}</p>}
             </li>
@@ -160,7 +158,7 @@ export function CredentialsCard() {
       ) : (
         <button type="button" onClick={() => { setError(null); setDraft({ ...EMPTY }); }}
           className="h-9 rounded-lg border border-line px-3 text-[13px] hover:bg-panel-2">
-          Add sign-in
+          {tr('ui.credentialsCard.addSignIn')}
         </button>
       )}
     </div>
@@ -178,55 +176,55 @@ function CredentialForm({ draft, setDraft, busy, onSave, onCancel }: {
   const editing = Boolean(draft.id);
   return (
     <form
-      aria-label={editing ? `Edit ${draft.name}` : 'Add sign-in'}
+      aria-label={editing ? tr('ui.credentialsCard.editName', { name: draft.name }) : tr('ui.credentialsCard.addSignIn')}
       className="space-y-3 rounded-[10px] border border-line bg-bg p-3"
       onSubmit={(e) => { e.preventDefault(); onSave(); }}
     >
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="NAME" hint="what agents call it" required>
+        <Field label={tr('ui.credentialsCard.name')} hint={tr('ui.credentialsCard.whatAgentsCallIt')} required>
           <Input value={draft.name} disabled={editing} onChange={(e) => set({ name: e.target.value })} placeholder="GITHUB_TOKEN" />
         </Field>
-        <Field label="TYPE">
+        <Field label={tr('ui.credentialsCard.type')}>
           <Select value={draft.kind} disabled={editing} onChange={(e) => set({ kind: e.target.value as Draft['kind'] })}>
-            <option value="token">Token or API key</option>
-            <option value="basic">Username and password</option>
+            <option value="token">{tr('ui.credentialsCard.tokenOrApiKey')}</option>
+            <option value="basic">{tr('ui.credentialsCard.usernameAndPassword')}</option>
           </Select>
         </Field>
       </div>
-      <Field label="ONLY SEND TO" hint="hosts, separated by commas; *.example.com covers subdomains" required>
+      <Field label={tr('ui.credentialsCard.onlySendTo')} hint={tr('ui.credentialsCard.hostsSeparatedByCommasExample')} required>
         <Input value={draft.hosts} onChange={(e) => set({ hosts: e.target.value })} placeholder="api.github.com" />
       </Field>
       {draft.kind === 'token' ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="TOKEN" hint={editing ? 'leave blank to keep' : 'never shown again'} required={!editing}>
+          <Field label={tr('ui.credentialsCard.token')} hint={editing ? tr('ui.credentialsCard.leaveBlankToKeep') : tr('ui.credentialsCard.neverShownAgain')} required={!editing}>
             <Input type="password" autoComplete="off" value={draft.value}
-              onChange={(e) => set({ value: e.target.value })} placeholder={editing ? 'saved' : 'ghp_…'} />
+              onChange={(e) => set({ value: e.target.value })} placeholder={editing ? tr('ui.credentialsCard.saved') : 'ghp_…'} />
           </Field>
-          <Field label="HEADER" hint="blank = Authorization: Bearer">
+          <Field label={tr('ui.credentialsCard.header')} hint={tr('ui.credentialsCard.blankAuthorizationBearer')}>
             <Input value={draft.header} onChange={(e) => set({ header: e.target.value })} placeholder="X-API-Key" />
           </Field>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="USERNAME" required>
+          <Field label={tr('ui.credentialsCard.username')} required>
             <Input autoComplete="off" value={draft.username} onChange={(e) => set({ username: e.target.value })} />
           </Field>
-          <Field label="PASSWORD" hint={editing ? 'leave blank to keep' : 'never shown again'} required={!editing}>
+          <Field label={tr('ui.credentialsCard.password')} hint={editing ? tr('ui.credentialsCard.leaveBlankToKeep') : tr('ui.credentialsCard.neverShownAgain')} required={!editing}>
             <Input type="password" autoComplete="new-password" value={draft.password}
-              onChange={(e) => set({ password: e.target.value })} placeholder={editing ? 'saved' : ''} />
+              onChange={(e) => set({ password: e.target.value })} placeholder={editing ? tr('ui.credentialsCard.saved') : ''} />
           </Field>
         </div>
       )}
-      <Field label="DESCRIPTION" hint="tells agents when to use it">
-        <Input value={draft.description} onChange={(e) => set({ description: e.target.value })} placeholder="GitHub API, read and write issues" />
+      <Field label={tr('ui.credentialsCard.description')} hint={tr('ui.credentialsCard.tellsAgentsWhenToUse')}>
+        <Input value={draft.description} onChange={(e) => set({ description: e.target.value })} placeholder={tr('ui.credentialsCard.githubApiReadAndWrite')} />
       </Field>
       <div className="flex gap-2">
         <button type="submit" disabled={busy}
           className="h-9 rounded-lg bg-accent px-3 text-[13px] font-medium text-accent-foreground hover:opacity-90 disabled:opacity-60">
-          {busy ? 'Saving…' : editing ? 'Save' : 'Add'}
+          {busy ? tr('ui.credentialsCard.saving') : editing ? tr('ui.credentialsCard.save') : tr('ui.credentialsCard.add')}
         </button>
         <button type="button" onClick={onCancel} className="h-9 rounded-lg border border-line px-3 text-[13px] hover:bg-panel-2">
-          Cancel
+          {tr('ui.credentialsCard.cancel')}
         </button>
       </div>
     </form>

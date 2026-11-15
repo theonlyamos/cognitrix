@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MobileSheet } from '@/components/MobileSheet';
 import { Button } from '@/lib/components/ui/button';
+import { tr } from '@/lib/i18n';
 
 type MobileHeaderActionBase = {
   key: string;
@@ -36,7 +37,7 @@ export function MobileHeaderActions({
         variant="outline"
         size="icon"
         className="md:hidden"
-        aria-label="More actions"
+        aria-label={tr('ui.mobileHeaderActions.moreActions')}
         aria-controls={id}
         aria-expanded={open}
         onClick={() => setOpen(true)}
@@ -51,7 +52,7 @@ export function MobileHeaderActions({
       <MobileSheet id={id} label={label} open={open} onClose={() => setOpen(false)} triggerRef={triggerRef}>
         <div className="flex min-h-14 items-center justify-between border-b border-line px-4">
           <h2 className="font-mono text-[11px] tracking-[0.14em] text-fg-dim">{label}</h2>
-          <Button type="button" variant="ghost" size="icon" aria-label="Close page actions" onClick={() => setOpen(false)}>
+          <Button type="button" variant="ghost" size="icon" aria-label={tr('ui.mobileHeaderActions.closePageActions')} onClick={() => setOpen(false)}>
             <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </Button>
         </div>

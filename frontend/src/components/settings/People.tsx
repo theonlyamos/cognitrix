@@ -4,6 +4,7 @@ import { formatCost, formatTokens } from '@/components/settings/Usage';
 import {
   Group, SettingRow, StatusPill, SubHeading, buttonClass, primaryButtonClass, quietButtonClass,
 } from '@/components/settings/ui';
+import { tr, dateLocale } from '@/lib/i18n';
 
 interface Person {
   id: string;
@@ -47,7 +48,7 @@ export function PeopleSettings() {
       setInvites(pending.data);
       setError('');
     } catch (err) {
-      setError(errorMessage(err, 'Could not load the people on this server.'));
+      setError(errorMessage(err, tr('ui.settings.people.couldNotLoadThePeople')));
     }
   }, []);
 
@@ -60,7 +61,7 @@ export function PeopleSettings() {
       const { data } = await api.patch(`/admin/users/${person.id}`, patch);
       setPeople((list) => (list ?? []).map((p) => (p.id === person.id ? data : p)));
     } catch (err) {
-      setError(errorMessage(err, 'Could not save that change.'));
+      setError(errorMessage(err, tr('ui.settings.people.couldNotSaveThatChange')));
     } finally {
       setBusy('');
     }
@@ -69,9 +70,9 @@ export function PeopleSettings() {
   return (
     <>
       {error && <p role="alert" className="mb-3 text-[12.5px] text-danger-ink">{error}</p>}
-      <SubHeading>PEOPLE</SubHeading>
+      <SubHeading>{tr('ui.settings.people.people')}</SubHeading>
       {!people ? (
-        !error && <p className="text-[13px] text-fg-dim">Loading…</p>
+        !error && <p className="text-[13px] text-fg-dim">{tr('ui.settings.people.loading')}</p>
       ) : (
         <Group>
           {people.map((person) => (
@@ -80,17 +81,17 @@ export function PeopleSettings() {
         </Group>
       )}
 
-      <SubHeading className="mt-7">INVITATIONS</SubHeading>
+      <SubHeading className="mt-7">{tr('ui.settings.people.invitations')}</SubHeading>
       <InviteMaker onMade={load} />
       {invites.length > 0 && (
         <Group className="mt-3">
           {invites.map((invite) => (
             <SettingRow
               key={invite.id}
-              label={invite.email || 'Anyone with the link'}
+              label={invite.email || tr('ui.settings.people.anyoneWithTheLink')}
               detail={invite.state === 'used'
-                ? `Used by ${invite.used_by ?? 'someone'}`
-                : `${invite.role === 'admin' ? 'Admin' : 'Member'} · ${invite.state === 'expired' ? 'expired' : 'expires'} ${new Date(invite.expires_at * 1000).toLocaleDateString()}`}
+                ? tr('ui.settings.people.usedByUsedBy', { used_by: invite.used_by ?? 'someone' })
+                : `${invite.role === 'admin' ? 'Admin' : 'Member'} · ${invite.state === 'expired' ? 'expired' : 'expires'} ${new Date(invite.expires_at * 1000).toLocaleDateString(dateLocale())}`}
             >
               <StatusPill tone={invite.state === 'open' ? 'accent' : 'off'}>{invite.state}</StatusPill>
               {invite.state !== 'used' && (
@@ -102,11 +103,11 @@ export function PeopleSettings() {
                       await api.delete(`/admin/invites/${invite.id}`);
                       await load();
                     } catch (err) {
-                      setError(errorMessage(err, 'Could not withdraw the invitation.'));
+                      setError(errorMessage(err, tr('ui.settings.people.couldNotWithdrawTheInvitation')));
                     }
                   }}
                 >
-                  Withdraw
+                  {tr('ui.settings.people.withdraw')}
                 </button>
               )}
             </SettingRow>
@@ -114,7 +115,7 @@ export function PeopleSettings() {
         </Group>
       )}
 
-      <SubHeading className="mt-7">EMAIL</SubHeading>
+      <SubHeading className="mt-7">{tr('ui.settings.people.email')}</SubHeading>
       <EmailCheck ready={emailReady} />
     </>
   );
@@ -154,31 +155,30 @@ function PersonRow({ person, busy, onChange }: {
         label={(
           <span className="flex flex-wrap items-center gap-2">
             {person.name}
-            {person.you && <span className="font-mono text-[10.5px] text-fg-dim">you</span>}
-            {person.role === 'admin' && <StatusPill tone="accent">admin</StatusPill>}
-            {person.disabled && <StatusPill tone="warn">disabled</StatusPill>}
+            {person.you && <span className="font-mono text-[10.5px] text-fg-dim">{tr('ui.settings.people.you')}</span>}
+            {person.role === 'admin' && <StatusPill tone="accent">{tr('ui.settings.people.admin')}</StatusPill>}
+            {person.disabled && <StatusPill tone="warn">{tr('ui.settings.people.disabled')}</StatusPill>}
           </span>
         )}
         detail={(
           <>
             <span className="font-mono text-[11.5px]">{person.email}</span>
             <span className="block">
-              Last 30 days: {formatTokens(usage.tokens)} tokens, {formatCost(usage.cost)}
-              {saved && ' · New password saved'}
+              {tr('ui.settings.people.last30DaysTokensTokens', { tokens: formatTokens(usage.tokens), cost: formatCost(usage.cost), value: saved && tr('ui.settings.people.newPasswordSaved') })}
             </span>
             {capped && (
               <span className="block">
-                Swarm limits: {person.swarm_concurrency ? `${person.swarm_concurrency} workers at once` : 'server limit at once'}, {person.swarm_max_workers ? `${person.swarm_max_workers} per swarm` : 'server limit per swarm'}
+                {tr('ui.settings.people.swarmLimitsValueValue2', { value: person.swarm_concurrency ? tr('ui.settings.people.swarmConcurrencyWorkersAtOnce', { swarm_concurrency: person.swarm_concurrency }) : tr('ui.settings.people.serverLimitAtOnce'), value2: person.swarm_max_workers ? tr('ui.settings.people.swarmMaxWorkersPerSwarm', { swarm_max_workers: person.swarm_max_workers }) : tr('ui.settings.people.serverLimitPerSwarm') })}
               </span>
             )}
           </>
         )}
       >
         <button type="button" className={quietButtonClass} disabled={busy} onClick={() => { setSaved(false); setSettingPassword((v) => !v); }}>
-          Set password
+          {tr('ui.settings.people.setPassword')}
         </button>
         <button type="button" className={quietButtonClass} disabled={busy} onClick={() => setSettingCaps((v) => !v)}>
-          Swarm limits
+          {tr('ui.settings.people.swarmLimits')}
         </button>
         {!person.you && (
           <>
@@ -188,7 +188,7 @@ function PersonRow({ person, busy, onChange }: {
               disabled={busy}
               onClick={() => void onChange({ role: person.role === 'admin' ? 'member' : 'admin' })}
             >
-              {person.role === 'admin' ? 'Make member' : 'Make admin'}
+              {person.role === 'admin' ? tr('ui.settings.people.makeMember') : tr('ui.settings.people.makeAdmin')}
             </button>
             <button
               type="button"
@@ -196,42 +196,42 @@ function PersonRow({ person, busy, onChange }: {
               disabled={busy}
               onClick={() => void onChange({ disabled: !person.disabled })}
             >
-              {person.disabled ? 'Enable' : 'Disable'}
+              {person.disabled ? tr('ui.settings.people.enable') : tr('ui.settings.people.disable')}
             </button>
           </>
         )}
       </SettingRow>
       {settingCaps && (
-        <form onSubmit={saveCaps} className="flex flex-wrap items-end gap-2 px-3.5 pb-3" aria-label={`Swarm limits for ${person.name}`}>
+        <form onSubmit={saveCaps} className="flex flex-wrap items-end gap-2 px-3.5 pb-3" aria-label={tr('ui.settings.people.swarmLimitsForName', { name: person.name })}>
           <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
-            Workers at once
+            {tr('ui.settings.people.workersAtOnce')}
             <input type="number" min={0} max={64} value={atOnce} onChange={(e) => setAtOnce(e.target.value)} className={`${inputClass} w-28`} />
           </label>
           <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
-            Workers per swarm
+            {tr('ui.settings.people.workersPerSwarm')}
             <input type="number" min={0} max={500} value={perSwarm} onChange={(e) => setPerSwarm(e.target.value)} className={`${inputClass} w-28`} />
           </label>
-          <button type="submit" disabled={busy} className={primaryButtonClass}>Save</button>
-          <button type="button" className={quietButtonClass} onClick={() => setSettingCaps(false)}>Cancel</button>
-          <p className="basis-full text-[12px] text-fg-dim">0 leaves the server's own limit. A person can set their own limits lower, never higher.</p>
+          <button type="submit" disabled={busy} className={primaryButtonClass}>{tr('ui.settings.people.save')}</button>
+          <button type="button" className={quietButtonClass} onClick={() => setSettingCaps(false)}>{tr('ui.settings.people.cancel')}</button>
+          <p className="basis-full text-[12px] text-fg-dim">{tr('ui.settings.people.n0LeavesTheServerS')}</p>
         </form>
       )}
       {settingPassword && (
-        <form onSubmit={savePassword} className="flex flex-wrap items-center gap-2 px-3.5 pb-3" aria-label={`Set a password for ${person.name}`}>
+        <form onSubmit={savePassword} className="flex flex-wrap items-center gap-2 px-3.5 pb-3" aria-label={tr('ui.settings.people.setAPasswordForName', { name: person.name })}>
           <input
             type="password"
             autoComplete="new-password"
             required
             minLength={8}
             autoFocus
-            placeholder="New password, 8 characters or more"
-            aria-label="New password"
+            placeholder={tr('ui.settings.people.newPassword8CharactersOr')}
+            aria-label={tr('ui.settings.people.newPassword')}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className={`${inputClass} flex-1 basis-[220px]`}
           />
-          <button type="submit" disabled={busy} className={primaryButtonClass}>Save</button>
-          <button type="button" className={quietButtonClass} onClick={() => setSettingPassword(false)}>Cancel</button>
+          <button type="submit" disabled={busy} className={primaryButtonClass}>{tr('ui.settings.people.save')}</button>
+          <button type="button" className={quietButtonClass} onClick={() => setSettingPassword(false)}>{tr('ui.settings.people.cancel')}</button>
         </form>
       )}
     </div>
@@ -257,7 +257,7 @@ function InviteMaker({ onMade }: { onMade: () => Promise<void> }) {
       setEmail('');
       await onMade();
     } catch (err) {
-      setError(errorMessage(err, 'Could not create the invitation.'));
+      setError(errorMessage(err, tr('ui.settings.people.couldNotCreateTheInvitation')));
     } finally {
       setMaking(false);
     }
@@ -266,32 +266,32 @@ function InviteMaker({ onMade }: { onMade: () => Promise<void> }) {
   return (
     <div className="rounded-[12px] border border-line bg-panel p-3.5">
       <p className="mb-2.5 text-[12.5px] leading-relaxed text-fg-dim">
-        An invitation is a link that lets one person create an account. It works for 7 days.
+        {tr('ui.settings.people.anInvitationIsALink')}
       </p>
-      <form onSubmit={make} className="flex flex-wrap items-center gap-2" aria-label="Invite someone">
+      <form onSubmit={make} className="flex flex-wrap items-center gap-2" aria-label={tr('ui.settings.people.inviteSomeone')}>
         <input
           type="email"
-          placeholder="Their email (optional)"
-          aria-label="Their email (optional)"
+          placeholder={tr('ui.settings.people.theirEmailOptional')}
+          aria-label={tr('ui.settings.people.theirEmailOptional')}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           className={`${inputClass} flex-1 basis-[200px]`}
         />
         <select
-          aria-label="Role"
+          aria-label={tr('ui.settings.people.role')}
           value={role}
           onChange={(e) => setRole(e.target.value as 'member' | 'admin')}
           className={inputClass}
         >
-          <option value="member">Member</option>
-          <option value="admin">Admin</option>
+          <option value="member">{tr('ui.settings.people.member')}</option>
+          <option value="admin">{tr('ui.settings.people.admin_4e7a')}</option>
         </select>
-        <button type="submit" disabled={making} className={primaryButtonClass}>{making ? 'Creating…' : 'Create link'}</button>
+        <button type="submit" disabled={making} className={primaryButtonClass}>{making ? tr('ui.settings.people.creating') : tr('ui.settings.people.createLink')}</button>
       </form>
       {error && <p role="alert" className="mt-2 text-[12px] text-danger-ink">{error}</p>}
       {link && (
         <div className="mt-3 rounded-lg border border-line bg-panel-2 p-2.5" role="status">
-          <div className="text-[12px] text-fg-dim">Send this link to them. It is shown only once.</div>
+          <div className="text-[12px] text-fg-dim">{tr('ui.settings.people.sendThisLinkToThem')}</div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <code className="min-w-0 flex-1 basis-[220px] break-all font-mono text-[11.5px]">{link}</code>
             <button
@@ -301,7 +301,7 @@ function InviteMaker({ onMade }: { onMade: () => Promise<void> }) {
                 void navigator.clipboard?.writeText(link).then(() => setCopied(true)).catch(() => {});
               }}
             >
-              {copied ? 'Copied' : 'Copy'}
+              {copied ? tr('ui.settings.people.copied') : tr('ui.settings.people.copy')}
             </button>
           </div>
         </div>
@@ -318,11 +318,9 @@ function EmailCheck({ ready }: { ready: boolean }) {
   if (!ready) {
     return (
       <p className="rounded-[12px] border border-line bg-panel p-3.5 text-[12.5px] leading-relaxed text-fg-dim">
-        No email service is set up, so people can't reset a forgotten password by email. You can still set a
-        password for them above. To turn it on, set <span className="font-mono">COGNITRIX_SMTP_HOST</span>,{' '}
+        {tr('ui.settings.people.noEmailServiceIsSet')}{' '}<span className="font-mono">COGNITRIX_SMTP_HOST</span>,{' '}
         <span className="font-mono">COGNITRIX_SMTP_USER</span>, <span className="font-mono">COGNITRIX_SMTP_PASSWORD</span>,{' '}
-        <span className="font-mono">COGNITRIX_SMTP_FROM</span> and <span className="font-mono">COGNITRIX_PUBLIC_URL</span> on
-        the server and restart it.
+        <span className="font-mono">COGNITRIX_SMTP_FROM</span>{' '}{tr('ui.settings.people.and')}{' '}<span className="font-mono">COGNITRIX_PUBLIC_URL</span>{' '}{tr('ui.settings.people.onTheServerAndRestart')}
       </p>
     );
   }
@@ -335,7 +333,7 @@ function EmailCheck({ ready }: { ready: boolean }) {
       const { data } = await api.post('/admin/email-test', { to });
       setResult({ ok: true, text: data.message });
     } catch (err) {
-      setResult({ ok: false, text: errorMessage(err, 'The test email could not be sent.') });
+      setResult({ ok: false, text: errorMessage(err, tr('ui.settings.people.theTestEmailCouldNot')) });
     } finally {
       setSending(false);
     }
@@ -343,18 +341,18 @@ function EmailCheck({ ready }: { ready: boolean }) {
 
   return (
     <div className="rounded-[12px] border border-line bg-panel p-3.5">
-      <p className="mb-2.5 text-[12.5px] text-fg-dim">Email is set up. People can reset a forgotten password from the sign-in page.</p>
-      <form onSubmit={send} className="flex flex-wrap items-center gap-2" aria-label="Send a test email">
+      <p className="mb-2.5 text-[12.5px] text-fg-dim">{tr('ui.settings.people.emailIsSetUpPeople')}</p>
+      <form onSubmit={send} className="flex flex-wrap items-center gap-2" aria-label={tr('ui.settings.people.sendATestEmail')}>
         <input
           type="email"
           required
-          placeholder="Send a test to"
-          aria-label="Send a test to"
+          placeholder={tr('ui.settings.people.sendATestTo')}
+          aria-label={tr('ui.settings.people.sendATestTo')}
           value={to}
           onChange={(e) => setTo(e.target.value)}
           className={`${inputClass} flex-1 basis-[200px]`}
         />
-        <button type="submit" disabled={sending} className={buttonClass}>{sending ? 'Sending…' : 'Send test'}</button>
+        <button type="submit" disabled={sending} className={buttonClass}>{sending ? tr('ui.settings.people.sending') : tr('ui.settings.people.sendTest')}</button>
       </form>
       {result && <p role={result.ok ? 'status' : 'alert'} className={`mt-2 text-[12px] ${result.ok ? 'text-fg-dim' : 'text-danger-ink'}`}>{result.text}</p>}
     </div>

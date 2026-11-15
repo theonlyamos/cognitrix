@@ -4,6 +4,7 @@ import { getSandboxSettings, setSandboxEnabled, type SandboxSettings } from '@/l
 import { SettingRow, StatusPill } from '@/components/settings/ui';
 import { Toggle } from '@/pages/Notifications';
 import { SandboxEnvCard } from '@/components/SandboxEnvCard';
+import { tr } from '@/lib/i18n';
 
 /** Settings › Agent access: give agents their own sandboxed computer. */
 export function ComputerSandboxCard() {
@@ -15,7 +16,7 @@ export function ComputerSandboxCard() {
     try {
       setSettings(await getSandboxSettings());
     } catch (err) {
-      setError(errorMessage(err, "Couldn't load this setting."));
+      setError(errorMessage(err, tr('ui.computerSandboxCard.couldnTLoadThisSetting')));
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -26,7 +27,7 @@ export function ComputerSandboxCard() {
     try {
       setSettings(await setSandboxEnabled(enabled));
     } catch (err) {
-      setError(errorMessage(err, "Couldn't change this setting."));
+      setError(errorMessage(err, tr('ui.computerSandboxCard.couldnTChangeThisSetting')));
     } finally {
       setBusy(false);
     }
@@ -36,30 +37,29 @@ export function ComputerSandboxCard() {
   const dockerNote = !docker
     ? null
     : !docker.installed
-      ? <StatusPill tone="warn">Docker not installed</StatusPill>
+      ? <StatusPill tone="warn">{tr('ui.computerSandboxCard.dockerNotInstalled')}</StatusPill>
       : !docker.running
-        ? <StatusPill tone="warn">Docker not running</StatusPill>
+        ? <StatusPill tone="warn">{tr('ui.computerSandboxCard.dockerNotRunning')}</StatusPill>
         : docker.image
-          ? <StatusPill tone="ok">ready</StatusPill>
-          : <StatusPill tone="off">downloads on first use</StatusPill>;
+          ? <StatusPill tone="ok">{tr('ui.computerSandboxCard.ready')}</StatusPill>
+          : <StatusPill tone="off">{tr('ui.computerSandboxCard.downloadsOnFirstUse')}</StatusPill>;
 
   return (
     <div>
       <SettingRow
         className="px-0 py-1"
-        label="Give agents their own computer"
+        label={tr('ui.computerSandboxCard.giveAgentsTheirOwnComputer')}
         detail={
           <>
-            Agents work on a Linux desktop in a container instead of this computer's screen, each agent on its own desktop.
-            Watch and take over from <span className="font-medium">Computer</span> in chat. Needs{' '}
-            <a className="text-accent-ink hover:underline" href="https://www.docker.com/products/docker-desktop/" target="_blank" rel="noreferrer">Docker Desktop</a>.
-            {settings?.from_env && ' Set by the server (COGNITRIX_COMPUTER_SANDBOX).'}
+            {tr('ui.computerSandboxCard.agentsWorkOnALinux')}{' '}<span className="font-medium">{tr('ui.computerSandboxCard.computer')}</span>{' '}{tr('ui.computerSandboxCard.inChatNeeds')}{' '}
+            <a className="text-accent-ink hover:underline" href="https://www.docker.com/products/docker-desktop/" target="_blank" rel="noreferrer">{tr('ui.computerSandboxCard.dockerDesktop')}</a>.
+            {settings?.from_env && tr('ui.computerSandboxCard.setByTheServerCognitrix')}
           </>
         }
       >
         {dockerNote}
         <Toggle
-          label="Give agents their own computer"
+          label={tr('ui.computerSandboxCard.giveAgentsTheirOwnComputer')}
           checked={!!settings?.enabled}
           onChange={(v) => void change(v)}
           disabled={!settings || busy || settings.from_env}

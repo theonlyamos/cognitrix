@@ -5,6 +5,7 @@ import { usePolling } from '@/hooks/usePolling';
 import { useUser } from '@/context/AppContext';
 import { isLookingAtChat } from '@/lib/chatPresence';
 import { answerApproval, approvalPreview, approvalTitle } from '@/lib/approvals';
+import { tr } from '@/lib/i18n';
 
 /** Events the app can notify about. Matches the rows on the Notifications screen. */
 export type NotificationEvent =
@@ -18,14 +19,14 @@ export type NotificationEvent =
   | 'engine';
 
 export const EVENT_LABELS: Record<NotificationEvent, { title: string; detail: string; alwaysInApp?: boolean }> = {
-  approval: { title: 'Approval needed', detail: 'A chat or task is waiting on a risky step', alwaysInApp: true },
-  question: { title: 'Agent asks a question', detail: 'A chat is waiting for your answer', alwaysInApp: true },
-  agent_alert: { title: 'Agent alert', detail: 'An agent used Notify Me, offered to help, or drafted a skill for review' },
-  chat_reply: { title: 'Chat reply', detail: 'An agent finished replying while you were in another window' },
-  task_finished: { title: 'Task finished', detail: 'Only when the window isn’t focused' },
-  task_failed: { title: 'Task failed', detail: 'With the reason and a link to retry' },
-  refused: { title: 'Command refused or address blocked', detail: 'Outside the working folder, or a blocked provider URL' },
-  engine: { title: 'Engine stopped', detail: 'The local engine quit or failed to start', alwaysInApp: true },
+  approval: { get title() { return tr('ui.notificationsContext.approvalNeeded'); }, get detail() { return tr('ui.notificationsContext.aChatOrTaskIs'); }, alwaysInApp: true },
+  question: { get title() { return tr('ui.notificationsContext.agentAsksAQuestion'); }, get detail() { return tr('ui.notificationsContext.aChatIsWaitingFor'); }, alwaysInApp: true },
+  agent_alert: { get title() { return tr('ui.notificationsContext.agentAlert'); }, get detail() { return tr('ui.notificationsContext.anAgentUsedNotifyMe'); } },
+  chat_reply: { get title() { return tr('ui.notificationsContext.chatReply'); }, get detail() { return tr('ui.notificationsContext.anAgentFinishedReplyingWhile'); } },
+  task_finished: { get title() { return tr('ui.notificationsContext.taskFinished'); }, get detail() { return tr('ui.notificationsContext.onlyWhenTheWindowIsn'); } },
+  task_failed: { get title() { return tr('ui.notificationsContext.taskFailed'); }, get detail() { return tr('ui.notificationsContext.withTheReasonAndA'); } },
+  refused: { get title() { return tr('ui.notificationsContext.commandRefusedOrAddressBlocked'); }, get detail() { return tr('ui.notificationsContext.outsideTheWorkingFolderOr'); } },
+  engine: { get title() { return tr('ui.notificationsContext.engineStopped'); }, get detail() { return tr('ui.notificationsContext.theLocalEngineQuitOr'); }, alwaysInApp: true },
 };
 
 export interface ChannelPrefs {
@@ -284,7 +285,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
             }
             push({
               event: 'approval',
-              title: `Approval needed: ${approvalTitle(item)}`,
+              title: tr('ui.notificationsContext.approvalNeededApprovaltitle', { approvalTitle: approvalTitle(item) }),
               body: approvalPreview(item) || (item.task_title ? `${item.task_title} is paused until you answer.` : 'Paused until you answer.'),
               href: item.source === 'chat' ? item.href || '/inbox' : '/inbox',
               tag: `approval-${item.id}`,
@@ -300,7 +301,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           } else if (item.kind === 'offer') {
             push({
               event: 'agent_alert',
-              title: `${item.agent_name || 'Your assistant'} offers: ${item.title}`,
+              title: tr('ui.notificationsContext.agentNameOffersTitle', { agent_name: item.agent_name || 'Your assistant', title: item.title }),
               body: item.details || 'Open the inbox to accept or dismiss it.',
               href: '/inbox',
               tag: `offer-${item.id}`,
@@ -308,7 +309,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           } else if (item.kind === 'skill_draft') {
             push({
               event: 'agent_alert',
-              title: `Skill to review: ${item.name}`,
+              title: tr('ui.notificationsContext.skillToReviewName', { name: item.name }),
               body: item.description || 'Open the inbox to review it.',
               href: '/inbox',
             });
@@ -319,7 +320,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
             }
             push({
               event: 'question',
-              title: 'An agent asked a question',
+              title: tr('ui.notificationsContext.anAgentAskedAQuestion'),
               body: String(item.question.prompt ?? item.question.header ?? 'Open the inbox to answer.'),
               href: '/inbox',
             });
@@ -350,9 +351,9 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           const now = task.status ?? 'pending';
           if (!before || before === now) continue;
           if (now === 'completed') {
-            push({ event: 'task_finished', title: `Task finished: ${task.title}`, body: 'The report is ready to review.', href: `/tasks/${task.id}` });
+            push({ event: 'task_finished', title: tr('ui.notificationsContext.taskFinishedTitle', { title: task.title }), body: 'The report is ready to review.', href: `/tasks/${task.id}` });
           } else if (now === 'failed') {
-            push({ event: 'task_failed', title: `Task failed: ${task.title}`, body: 'Open the task to see why and run it again.', href: `/tasks/${task.id}` });
+            push({ event: 'task_failed', title: tr('ui.notificationsContext.taskFailedTitle', { title: task.title }), body: 'Open the task to see why and run it again.', href: `/tasks/${task.id}` });
           }
         }
       }
@@ -378,7 +379,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     void onDesktopEvent<EngineStatus>('engine-status', (s) => {
       setEngine(s);
       if ((s.status === 'stopped' || s.status === 'failed') && last !== s.status) {
-        push({ event: 'engine', title: 'The local engine stopped', body: s.error ?? 'Restart it from Settings or the tray.', href: '/settings/engine' });
+        push({ event: 'engine', title: tr('ui.notificationsContext.theLocalEngineStopped'), body: s.error ?? 'Restart it from Settings or the tray.', href: '/settings/engine' });
       }
       last = s.status;
     }).then((fn) => (stop = fn));
@@ -394,7 +395,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       if (!item) return;
       answerApproval(item, approved)
         .catch(() => {
-          push({ event: 'approval', title: 'That approval has already ended', body: 'It was answered elsewhere or timed out.', href: '/inbox' });
+          push({ event: 'approval', title: tr('ui.notificationsContext.thatApprovalHasAlreadyEnded'), body: 'It was answered elsewhere or timed out.', href: '/inbox' });
         })
         .finally(() => void refreshInbox());
     }).then((fn) => (stop = fn));

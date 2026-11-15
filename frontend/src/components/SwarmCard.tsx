@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { ENDED, progressLabel, tokensLabel, type Swarm, type SwarmWorker } from '@/lib/swarms';
+import { tr, trn } from '@/lib/i18n';
 
 interface Props {
   swarm: Swarm;
@@ -18,12 +19,12 @@ const WORD: Record<string, string> = {
 };
 
 function detail(w: SwarmWorker): string {
-  if (w.status === 'failed') return w.error || 'It failed.';
+  if (w.status === 'failed') return w.error || tr('ui.swarmCard.itFailed');
   if (w.status === 'stopped') return w.error || 'Stopped.';
   if (w.status === 'done') return w.summary || 'Done.';
-  if (w.status === 'queued') return w.depends_on.length ? `Waits for ${w.depends_on.join(', ')}` : 'Waiting for a free slot';
-  if (w.stalled) return 'Nothing new for a while. It may be stuck.';
-  return w.last_step ? `Using ${w.last_step}` : w.brief;
+  if (w.status === 'queued') return w.depends_on.length ? tr('ui.swarmCard.waitsForDependsOn', { depends_on: w.depends_on.join(', ') }) : tr('ui.swarmCard.waitingForAFreeSlot');
+  if (w.stalled) return tr('ui.swarmCard.nothingNewForAWhile');
+  return w.last_step ? tr('ui.swarmCard.usingLastStep', { last_step: w.last_step }) : w.brief;
 }
 
 /** A swarm as the person sees it: how far along it is, and one row per worker. */
@@ -43,7 +44,7 @@ export function SwarmCard({ swarm, compact = false, onStop, onStopWorker, onMerg
       const result = await fn();
       if (typeof result === 'string') setNote(result);
     } catch {
-      setNote("That didn't work. Try again.");
+      setNote(tr('ui.swarmCard.thatDidnTWorkTry'));
     } finally {
       setBusy('');
     }
@@ -51,7 +52,7 @@ export function SwarmCard({ swarm, compact = false, onStop, onStopWorker, onMerg
 
   return (
     <section
-      aria-label={`Swarm ${swarm.title}`}
+      aria-label={tr('ui.swarmCard.swarmTitle', { title: swarm.title })}
       className={cn('rounded-xl border border-line bg-panel text-[13px]', compact ? 'px-2.5 py-2.5' : 'px-3.5 py-3')}
     >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
@@ -65,7 +66,7 @@ export function SwarmCard({ swarm, compact = false, onStop, onStopWorker, onMerg
           <span className="min-w-0 flex-1">
             <span className="block truncate font-medium">{swarm.title}</span>
             <span className="block truncate font-mono text-[10.5px] text-fg-dim">
-              {swarm.mode === 'best_of' ? 'best of ' + l.total : 'swarm'} · {swarm.status === 'stopped' ? 'stopped' : running ? 'running' : 'finished'} · {progressLabel(swarm)} · {tokensLabel(l.tokens)} tokens
+              {tr('ui.swarmCard.valueValue2ProgresslabelKenslabelTokens', { value: swarm.mode === 'best_of' ? 'best of ' + l.total : tr('ui.swarmCard.swarm'), value2: swarm.status === 'stopped' ? tr('ui.swarmCard.stopped') : running ? tr('ui.swarmCard.running') : tr('ui.swarmCard.finished'), progressLabel: progressLabel(swarm), kensLabel: tokensLabel(l.tokens) })}
             </span>
           </span>
         </button>
@@ -76,13 +77,13 @@ export function SwarmCard({ swarm, compact = false, onStop, onStopWorker, onMerg
             onClick={() => void act('stop', () => onStop(swarm.id))}
             className={cn(button, 'border-danger/40 text-danger-ink hover:bg-danger/10')}
           >
-            Stop all
+            {tr('ui.swarmCard.stopAll')}
           </button>
         )}
       </div>
       <div
         role="progressbar"
-        aria-label="Workers finished"
+        aria-label={tr('ui.swarmCard.workersFinished')}
         aria-valuemin={0}
         aria-valuemax={l.total}
         aria-valuenow={ended}
@@ -113,22 +114,22 @@ export function SwarmCard({ swarm, compact = false, onStop, onStopWorker, onMerg
                     <span className="font-mono text-[10.5px] text-fg-dim">
                       {[w.role || w.agent_name, w.model, WORD[w.status], w.tokens ? `${tokensLabel(w.tokens)} tokens` : ''].filter(Boolean).join(' · ')}
                     </span>
-                    {winner && <span className="rounded-[3px] bg-accent px-1 font-mono text-[9.5px] text-accent-foreground">PICKED</span>}
+                    {winner && <span className="rounded-[3px] bg-accent px-1 font-mono text-[9.5px] text-accent-foreground">{tr('ui.swarmCard.picked')}</span>}
                   </div>
                   <div className={cn('text-[12px] leading-snug text-fg-dim [overflow-wrap:anywhere]', compact ? 'line-clamp-2' : 'line-clamp-3')}>{detail(w)}</div>
                   <div className="mt-1 flex flex-wrap gap-1.5 empty:hidden">
                     {w.chat_id && onOpenChat && (
-                      <button type="button" onClick={() => onOpenChat(w.chat_id)} className={button}>Open its chat</button>
+                      <button type="button" onClick={() => onOpenChat(w.chat_id)} className={button}>{tr('ui.swarmCard.openItsChat')}</button>
                     )}
                     {live && (
-                      <button type="button" disabled={busy === w.name} onClick={() => void act(w.name, () => onStopWorker(swarm.id, w.name))} className={button}>Stop</button>
+                      <button type="button" disabled={busy === w.name} onClick={() => void act(w.name, () => onStopWorker(swarm.id, w.name))} className={button}>{tr('ui.swarmCard.stop')}</button>
                     )}
                     {w.status === 'done' && w.branch && w.changed > 0 && !w.merged && onMerge && (
                       <button type="button" disabled={busy === w.name} onClick={() => void act(w.name, () => onMerge(swarm.id, w.name))} className={button}>
-                        Merge {w.changed} changed file{w.changed === 1 ? '' : 's'}
+                        {trn(w.changed, 'ui.swarmCard.mergeChangedFiles_one', 'ui.swarmCard.mergeChangedFiles_other')}
                       </button>
                     )}
-                    {w.merged && <span className="font-mono text-[10.5px] text-fg-dim">merged</span>}
+                    {w.merged && <span className="font-mono text-[10.5px] text-fg-dim">{tr('ui.swarmCard.merged')}</span>}
                   </div>
                 </div>
               </li>

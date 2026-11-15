@@ -5,6 +5,7 @@ import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { PageHeader, LoadingState, ErrorState, EmptyState } from '@/components/list-ui';
 import { cn } from '@/lib/utils';
+import { tr, trn } from '@/lib/i18n';
 
 interface KnowledgeDocument {
   id: string;
@@ -53,7 +54,7 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
       try {
         await api.post(`/knowledge/${collection.id}/documents`, form);
       } catch (e) {
-        setError(`${file.name}: ${errorMessage(e, 'could not be added.')}`);
+        setError(`${file.name}: ${errorMessage(e, tr('ui.knowledge.couldNotBeAdded'))}`);
       }
     }
     setBusy(false);
@@ -65,17 +66,17 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
       await api.delete(`/knowledge/${collection.id}/documents/${doc.id}`);
       onChanged();
     } catch (e) {
-      setError(errorMessage(e, 'Could not remove the document.'));
+      setError(errorMessage(e, tr('ui.knowledge.couldNotRemoveTheDocument')));
     }
   };
 
   const removeCollection = async () => {
-    if (!window.confirm(`Delete “${collection.name}” and its documents? Agents will no longer be able to search it.`)) return;
+    if (!window.confirm(tr('ui.knowledge.deleteNameAndItsDocuments', { name: collection.name }))) return;
     try {
       await api.delete(`/knowledge/${collection.id}`);
       onChanged();
     } catch (e) {
-      setError(errorMessage(e, 'Could not delete the collection.'));
+      setError(errorMessage(e, tr('ui.knowledge.couldNotDeleteTheCollection')));
     }
   };
 
@@ -86,7 +87,7 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
       const res = await api.post<Hit[]>(`/knowledge/${collection.id}/search`, { query });
       setHits(res.data);
     } catch (e) {
-      setError(errorMessage(e, 'Could not search.'));
+      setError(errorMessage(e, tr('ui.knowledge.couldNotSearch')));
     }
   };
 
@@ -96,14 +97,14 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-[15px] font-semibold">{collection.name}</h2>
           <p className="text-[12px] text-fg-dim">
-            {collection.description || `${collection.documents.length} document${collection.documents.length === 1 ? '' : 's'}`}
+            {collection.description || trn(collection.documents.length, 'ui.count.documents_one', 'ui.count.documents_other')}
           </p>
         </div>
-        <input ref={fileInput} type="file" multiple accept={ACCEPT} className="hidden" aria-label={`Add documents to ${collection.name}`} onChange={upload} />
+        <input ref={fileInput} type="file" multiple accept={ACCEPT} className="hidden" aria-label={tr('ui.knowledge.addDocumentsToName', { name: collection.name })} onChange={upload} />
         <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => fileInput.current?.click()}>
-          {busy ? 'Adding…' : 'Add documents'}
+          {busy ? tr('ui.knowledge.adding') : tr('ui.knowledge.addDocuments')}
         </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={removeCollection}>Delete</Button>
+        <Button type="button" size="sm" variant="ghost" onClick={removeCollection}>{tr('ui.knowledge.delete')}</Button>
       </div>
       {error && <p role="alert" className="border-t border-line px-4 py-2 text-[12.5px] text-danger-ink">{error}</p>}
       {collection.documents.length > 0 && (
@@ -112,27 +113,27 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
             <li key={doc.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-2 last:border-b-0">
               <span className="min-w-0 flex-1 truncate text-[13.5px]">{doc.name}</span>
               <span className={cn('font-mono text-[11px]', doc.status === 'failed' ? 'text-danger-ink' : 'text-fg-dim')}>
-                {doc.status === 'queued' ? 'reading…' : doc.status === 'failed' ? doc.error || 'failed' : `${size(doc.size_bytes)} · ${doc.passages} passages`}
+                {doc.status === 'queued' ? tr('ui.knowledge.reading') : doc.status === 'failed' ? doc.error || tr('ui.knowledge.failed') : tr('ui.knowledge.sizePassagesPassages', { size: size(doc.size_bytes), passages: doc.passages })}
               </span>
-              <button type="button" onClick={() => void remove(doc)} aria-label={`Remove ${doc.name}`}
-                className="min-h-11 px-1 font-mono text-[11px] text-fg-dim hover:text-danger-ink md:min-h-0">remove</button>
+              <button type="button" onClick={() => void remove(doc)} aria-label={tr('ui.knowledge.removeName', { name: doc.name })}
+                className="min-h-11 px-1 font-mono text-[11px] text-fg-dim hover:text-danger-ink md:min-h-0">{tr('ui.knowledge.remove')}</button>
             </li>
           ))}
         </ul>
       )}
       {collection.documents.some((d) => d.status === 'ready') && (
         <form onSubmit={search} className="flex gap-2 border-t border-line px-4 py-3">
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Try a search, the way an agent would" aria-label={`Search ${collection.name}`} />
-          <Button type="submit" size="sm" variant="outline">Search</Button>
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr('ui.knowledge.tryASearchTheWay')} aria-label={tr('ui.knowledge.searchName', { name: collection.name })} />
+          <Button type="submit" size="sm" variant="outline">{tr('ui.knowledge.search')}</Button>
         </form>
       )}
       {hits && (
         <div className="border-t border-line px-4 py-3">
-          {hits.length === 0 ? <p className="text-[13px] text-fg-dim">Nothing matches.</p> : (
+          {hits.length === 0 ? <p className="text-[13px] text-fg-dim">{tr('ui.knowledge.nothingMatches')}</p> : (
             <ol className="space-y-3">
               {hits.map((hit, i) => (
                 <li key={`${hit.name}-${hit.position}-${i}`}>
-                  <div className="font-mono text-[11px] text-fg-dim">{hit.name} · part {hit.position + 1}</div>
+                  <div className="font-mono text-[11px] text-fg-dim">{tr('ui.knowledge.namePartValue', { name: hit.name, value: hit.position + 1 })}</div>
                   <p className="mt-0.5 line-clamp-4 whitespace-pre-wrap text-[13px] leading-relaxed">{hit.text}</p>
                 </li>
               ))}
@@ -159,30 +160,30 @@ export default function Knowledge() {
       setName('');
       refetch({ silent: true });
     } catch (e) {
-      setCreateError(errorMessage(e, 'Could not create the collection.'));
+      setCreateError(errorMessage(e, tr('ui.knowledge.couldNotCreateTheCollection')));
     }
   };
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <PageHeader title="Knowledge" subtitle="documents your agents can search and quote from · private to you" />
+      <PageHeader title={tr('ui.knowledge.knowledge')} subtitle={tr('ui.knowledge.documentsYourAgentsCanSearch')} />
       <div className="flex-1 overflow-y-auto">
         {loading && !data ? (
-          <LoadingState label="loading collections…" />
+          <LoadingState label={tr('ui.knowledge.loadingCollections')} />
         ) : error ? (
           <ErrorState message={error} onRetry={refetch} />
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-5 md:px-6">
             <form onSubmit={create} className="flex gap-2">
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="New collection, for example Company handbook" aria-label="New collection name" maxLength={80} />
-              <Button type="submit" size="sm" disabled={!name.trim()}>Create</Button>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('ui.knowledge.newCollectionForExampleCompany')} aria-label={tr('ui.knowledge.newCollectionName')} maxLength={80} />
+              <Button type="submit" size="sm" disabled={!name.trim()}>{tr('ui.knowledge.create')}</Button>
             </form>
             {createError && <p role="alert" className="text-[12.5px] text-danger-ink">{createError}</p>}
             {collections.length === 0 ? (
               <EmptyState
                 icon={<span aria-hidden className="font-mono text-lg">¶</span>}
-                title="No collections yet"
-                desc="Create a collection, add PDFs, Word files or notes, then turn it on for an agent on its Connections tab. Files are read on this computer."
+                title={tr('ui.knowledge.noCollectionsYet')}
+                desc={tr('ui.knowledge.createACollectionAddPdfs')}
               />
             ) : (
               collections.map((c) => <CollectionCard key={c.id} collection={c} onChanged={() => refetch({ silent: true })} />)

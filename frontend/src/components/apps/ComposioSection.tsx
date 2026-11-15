@@ -16,6 +16,7 @@ import {
 } from '@/lib/apps';
 import { Group, StatusPill, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { CheckList } from './CheckList';
+import { tr } from '@/lib/i18n';
 
 /** More apps through the person's own Composio account. Off until they add a key. */
 export function ComposioSection({ state, onChanged }: { state: ComposioState; onChanged: () => void | Promise<void> }) {
@@ -39,7 +40,7 @@ export function ComposioSection({ state, onChanged }: { state: ComposioState; on
       const result = await action();
       if (result && result.status === 'error') setErrors((cur) => ({ ...cur, [name]: result.error || 'Sign-in failed.' }));
     } catch (e) {
-      setErrors((cur) => ({ ...cur, [name]: errorMessage(e, 'Something went wrong. Please try again.') }));
+      setErrors((cur) => ({ ...cur, [name]: errorMessage(e, tr('ui.apps.composioSection.somethingWentWrongPleaseTry')) }));
     } finally {
       setBusy(null);
       if (reload) await onChanged();
@@ -84,28 +85,26 @@ export function ComposioSection({ state, onChanged }: { state: ComposioState; on
   const connected = new Map(state.connections.map((c) => [c.slug, c]));
 
   return (
-    <section aria-label="More apps with Composio">
-      <SubHeading>MORE APPS WITH COMPOSIO · OPTIONAL</SubHeading>
+    <section aria-label={tr('ui.apps.composioSection.moreAppsWithComposio')}>
+      <SubHeading>{tr('ui.apps.composioSection.moreAppsWithComposioOptional')}</SubHeading>
       <p className="-mt-1 mb-2 max-w-[70ch] text-[12px] leading-relaxed text-fg-dim">
-        Composio is a separate service with ready-made sign-ins for hundreds of apps. Add your own Composio API key to use it.
-        Sign-ins made here are kept by Composio, and what your agents read or send through these apps passes through its
-        servers. Leave this off to keep everything between this server and each app.
+        {tr('ui.apps.composioSection.composioIsASeparateService')}
       </p>
 
       {!state.has_key && !adding && (
-        <button type="button" onClick={() => setAdding(true)} className={buttonClass}>Add a Composio API key</button>
+        <button type="button" onClick={() => setAdding(true)} className={buttonClass}>{tr('ui.apps.composioSection.addAComposioApiKey')}</button>
       )}
       {!state.has_key && adding && (
-        <form onSubmit={saveKey} aria-label="Composio API key" className="flex flex-wrap items-end gap-2 rounded-[12px] border border-line bg-panel p-3.5">
+        <form onSubmit={saveKey} aria-label={tr('ui.apps.composioSection.composioApiKey')} className="flex flex-wrap items-end gap-2 rounded-[12px] border border-line bg-panel p-3.5">
           <div className="min-w-[220px] flex-1">
-            <Field label="COMPOSIO API KEY" hint="From your Composio dashboard, under Settings › API keys.">
+            <Field label={tr('ui.apps.composioSection.composioApiKey_22c4')} hint={tr('ui.apps.composioSection.fromYourComposioDashboardUnder')}>
               <Input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} />
             </Field>
           </div>
           <button type="submit" disabled={!key.trim() || busy === 'key'} className={primaryButtonClass}>
-            {busy === 'key' ? 'Checking…' : 'Save key'}
+            {busy === 'key' ? tr('ui.apps.composioSection.checking') : tr('ui.apps.composioSection.saveKey')}
           </button>
-          <button type="button" onClick={() => setAdding(false)} className={quietButtonClass}>Cancel</button>
+          <button type="button" onClick={() => setAdding(false)} className={quietButtonClass}>{tr('ui.apps.composioSection.cancel')}</button>
         </form>
       )}
       {errors.key && <p role="alert" className="mt-2 text-[12px] text-danger-ink">{errors.key}</p>}
@@ -113,11 +112,11 @@ export function ComposioSection({ state, onChanged }: { state: ComposioState; on
       {state.has_key && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
-            <StatusPill tone="ok">key saved</StatusPill>
+            <StatusPill tone="ok">{tr('ui.apps.composioSection.keySaved')}</StatusPill>
             <span className="font-mono text-fg-dim">{state.hint}</span>
             <span className="flex-1" />
             <button type="button" disabled={busy === 'key'} onClick={() => void removeKey()} className={quietButtonClass}>
-              Remove key
+              {tr('ui.apps.composioSection.removeKey')}
             </button>
           </div>
 
@@ -132,37 +131,37 @@ export function ComposioSection({ state, onChanged }: { state: ComposioState; on
                       <div className="min-w-0 flex-1 basis-[180px]">
                         <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium">
                           {c.name}
-                          {stale ? <StatusPill tone="warn">needs sign-in</StatusPill> : <StatusPill tone="ok">connected</StatusPill>}
+                          {stale ? <StatusPill tone="warn">needs sign-in</StatusPill> : <StatusPill tone="ok">{tr('ui.apps.composioSection.connected')}</StatusPill>}
                         </div>
                         <div className="mt-0.5 text-[12px] leading-snug text-fg-dim">
-                          {c.account ? <>Signed in as <span className="font-mono">{c.account}</span> · </> : null}through Composio
+                          {c.account ? <>{tr('ui.apps.composioSection.signedInAs')}{' '}<span className="font-mono">{c.account}</span> · </> : null}{tr('ui.apps.composioSection.throughComposio')}
                         </div>
                       </div>
                       <div className="flex flex-none flex-wrap items-center gap-2">
                         {stale ? (
                           <button type="button" disabled={busy === name} onClick={() => void connect(c.slug, c.name)} className={primaryButtonClass}>
-                            {busy === name ? 'Waiting for sign-in…' : 'Sign in'}
+                            {busy === name ? tr('ui.apps.composioSection.waitingForSignIn') : tr('ui.apps.composioSection.signIn')}
                           </button>
                         ) : (
                           <button
                             type="button"
                             disabled={busy === name}
-                            aria-label={`Test ${c.name}`}
+                            aria-label={tr('ui.apps.composioSection.testName', { name: c.name })}
                             onClick={() => void run(name, async () => {
                               const result = await testComposioApp(c.server_id);
                               setResults((cur) => ({ ...cur, [c.server_id]: result }));
                             }, false)}
                             className={quietButtonClass}
                           >
-                            {busy === name ? 'Testing…' : 'Test'}
+                            {busy === name ? tr('ui.apps.composioSection.testing') : tr('ui.apps.composioSection.test')}
                           </button>
                         )}
-                        <button type="button" disabled={busy === name} aria-label={`Disconnect ${c.name}`} onClick={() => void run(name, () => disconnectComposioApp(c.server_id))} className={quietButtonClass}>
-                          Disconnect
+                        <button type="button" disabled={busy === name} aria-label={tr('ui.apps.composioSection.disconnectName', { name: c.name })} onClick={() => void run(name, () => disconnectComposioApp(c.server_id))} className={quietButtonClass}>
+                          {tr('ui.apps.composioSection.disconnect')}
                         </button>
                       </div>
                     </div>
-                    {results[c.server_id] && <CheckList result={results[c.server_id]} label={`${c.name} test`} />}
+                    {results[c.server_id] && <CheckList result={results[c.server_id]} label={tr('ui.apps.composioSection.nameTest', { name: c.name })} />}
                     {errors[name] && <p role="alert" className="mt-2 text-[12px] text-danger-ink">{errors[name]}</p>}
                   </div>
                 );
@@ -170,16 +169,16 @@ export function ComposioSection({ state, onChanged }: { state: ComposioState; on
             </Group>
           )}
 
-          <form onSubmit={search} role="search" aria-label="Find an app on Composio" className="flex flex-wrap gap-2">
-            <label htmlFor="composio-search" className="sr-only">Find an app</label>
-            <Input id="composio-search" className="min-w-[200px] flex-1" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find an app, e.g. HubSpot" />
+          <form onSubmit={search} role="search" aria-label={tr('ui.apps.composioSection.findAnAppOnComposio')} className="flex flex-wrap gap-2">
+            <label htmlFor="composio-search" className="sr-only">{tr('ui.apps.composioSection.findAnApp')}</label>
+            <Input id="composio-search" className="min-w-[200px] flex-1" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr('ui.apps.composioSection.findAnAppEG')} />
             <button type="submit" disabled={busy === 'search'} className={buttonClass}>
-              {busy === 'search' ? 'Searching…' : found === null && !query.trim() ? 'Browse apps' : 'Search'}
+              {busy === 'search' ? tr('ui.apps.composioSection.searching') : found === null && !query.trim() ? tr('ui.apps.composioSection.browseApps') : tr('ui.apps.composioSection.search')}
             </button>
           </form>
           {errors.search && <p role="alert" className="text-[12px] text-danger-ink">{errors.search}</p>}
 
-          {found !== null && found.length === 0 && <p className="text-[12.5px] text-fg-dim">No apps match that.</p>}
+          {found !== null && found.length === 0 && <p className="text-[12.5px] text-fg-dim">{tr('ui.apps.composioSection.noAppsMatchThat')}</p>}
           {found !== null && found.length > 0 && (
             <Group>
               {found.map((t) => {
@@ -192,17 +191,17 @@ export function ComposioSection({ state, onChanged }: { state: ComposioState; on
                         <div className="text-[13.5px] font-medium">{t.name}</div>
                         <div className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-fg-dim">
                           {t.description || t.categories.join(', ')}
-                          {t.tools_count ? ` · ${t.tools_count} tools` : ''}
+                          {t.tools_count ? tr('ui.apps.composioSection.toolsCountTools', { tools_count: t.tools_count }) : ''}
                         </div>
                       </div>
                       {have && have.status === 'connected' ? (
-                        <StatusPill tone="ok">connected</StatusPill>
+                        <StatusPill tone="ok">{tr('ui.apps.composioSection.connected')}</StatusPill>
                       ) : t.connectable ? (
-                        <button type="button" disabled={busy === name} aria-label={`Connect ${t.name}`} onClick={() => void connect(t.slug, t.name)} className={buttonClass}>
-                          {busy === name ? 'Waiting for sign-in…' : 'Connect'}
+                        <button type="button" disabled={busy === name} aria-label={tr('ui.apps.composioSection.connectName', { name: t.name })} onClick={() => void connect(t.slug, t.name)} className={buttonClass}>
+                          {busy === name ? tr('ui.apps.composioSection.waitingForSignIn') : tr('ui.apps.composioSection.connect')}
                         </button>
                       ) : (
-                        <span className="max-w-[220px] text-[12px] text-fg-dim">Needs its own sign-in set up in your Composio dashboard</span>
+                        <span className="max-w-[220px] text-[12px] text-fg-dim">{tr('ui.apps.composioSection.needsItsOwnSignIn')}</span>
                       )}
                     </div>
                     {errors[name] && !have && <p role="alert" className="mt-2 text-[12px] text-danger-ink">{errors[name]}</p>}
@@ -212,7 +211,7 @@ export function ComposioSection({ state, onChanged }: { state: ComposioState; on
             </Group>
           )}
           {found !== null && nextCursor && (
-            <button type="button" disabled={busy === 'search'} onClick={() => void more()} className={quietButtonClass}>Show more</button>
+            <button type="button" disabled={busy === 'search'} onClick={() => void more()} className={quietButtonClass}>{tr('ui.apps.composioSection.showMore')}</button>
           )}
         </div>
       )}

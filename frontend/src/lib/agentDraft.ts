@@ -1,6 +1,7 @@
 import { folderName, type WorkFolder } from '@/lib/folders';
 import { isHarness } from '@/lib/providers';
 
+import { dateLocale, tr } from '@/lib/i18n';
 export type AgentLevel = 'auto' | 'ask' | 'allow';
 export type ToolLevel = 'auto' | 'allow' | 'ask' | 'told' | 'handoff' | 'deny';
 export type ReviewerMode = '' | 'off' | 'unattended' | 'always';
@@ -249,12 +250,12 @@ export function timeAgo(value: string | null | undefined, now = Date.now()): str
   if (t === null) return '';
   const diff = Math.round((now - t) / 1000);
   if (diff < 0) return timeUntil(value, now);
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} h ago`;
+  if (diff < 60) return tr('ui.time.justNow');
+  if (diff < 3600) return tr('ui.time.minAgo', { n: Math.floor(diff / 60) });
+  if (diff < 86400) return tr('ui.time.hAgo', { n: Math.floor(diff / 3600) });
   if (diff < 86400 * 2) return 'yesterday';
-  if (diff < 86400 * 7) return `${Math.floor(diff / 86400)} days ago`;
-  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (diff < 86400 * 7) return tr('ui.time.daysAgo', { n: Math.floor(diff / 86400) });
+  return new Date(t).toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' });
 }
 
 export function timeUntil(value: string | null | undefined, now = Date.now()): string {
@@ -269,7 +270,7 @@ export function timeUntil(value: string | null | undefined, now = Date.now()): s
     const m = minutes % 60;
     return m ? `in ${h} h ${m} min` : `in ${h} h`;
   }
-  return new Date(t).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  return new Date(t).toLocaleString(dateLocale(), { weekday: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
 export function parseUtc(value: string | null | undefined): number | null {

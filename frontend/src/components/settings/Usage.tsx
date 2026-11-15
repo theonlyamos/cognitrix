@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { Group, Segmented, SubHeading } from '@/components/settings/ui';
 import { CHATGPT_USAGE_URL } from '@/lib/chatgptPlan';
+import { tr, dateLocale } from '@/lib/i18n';
 
 interface Totals {
   calls: number;
@@ -54,7 +55,7 @@ function DayBars({ days, byCost }: { days: UsageSummary['by_day']; byCost: boole
     `${d.day}: ${byCost ? formatCost(d.cost) : `${formatTokens(tokensOf(d))} tokens`}`;
   return (
     <div className="rounded-[12px] border border-line bg-panel p-3.5">
-      <ul className="flex h-28 items-end gap-px" aria-label={byCost ? 'Cost per day' : 'Tokens per day'}>
+      <ul className="flex h-28 items-end gap-px" aria-label={byCost ? tr('ui.settings.usage.costPerDay') : tr('ui.settings.usage.tokensPerDay')}>
         {days.map((d) => (
           <li key={d.day} className="group relative flex h-full min-w-0 flex-1 items-end" title={label(d)}>
             <span className="sr-only">{label(d)}</span>
@@ -84,12 +85,12 @@ function Breakdown({ rows, showCost }: { rows: { key: string; name: string; sub?
             {row.sub && <div className="font-mono text-[10.5px] text-fg-dim">{row.sub}</div>}
           </div>
           <div className="text-right text-[12px] tabular-nums text-fg-dim">
-            {formatTokens(row.totals.prompt_tokens)} in · {formatTokens(row.totals.completion_tokens)} out
-            {row.totals.cached_tokens > 0 && ` · ${Math.round((row.totals.cached_tokens / row.totals.prompt_tokens) * 100)}% cached`}
+            {formatTokens(row.totals.prompt_tokens)}{' '}{tr('ui.settings.usage.in')}{' '}{formatTokens(row.totals.completion_tokens)}{' '}{tr('ui.settings.usage.out')}
+            {row.totals.cached_tokens > 0 && tr('ui.settings.usage.roundCached', { round: Math.round((row.totals.cached_tokens / row.totals.prompt_tokens) * 100) })}
           </div>
           {showCost && (
             <div className="w-[92px] text-right text-[13px] font-medium tabular-nums">
-              {row.totals.unpriced_tokens > 0 && row.totals.cost === 0 ? 'no price' : formatCost(row.totals.cost)}
+              {row.totals.unpriced_tokens > 0 && row.totals.cost === 0 ? tr('ui.settings.usage.noPrice') : formatCost(row.totals.cost)}
             </div>
           )}
         </div>
@@ -108,7 +109,7 @@ export function UsageSettings() {
     setError('');
     api.get<UsageSummary>('/usage', { params: { days: Number(range) } })
       .then((res) => { if (live) setData(res.data); })
-      .catch((err) => { if (live) setError(errorMessage(err, 'Could not load usage.')); });
+      .catch((err) => { if (live) setError(errorMessage(err, tr('ui.settings.usage.couldNotLoadUsage'))); });
     return () => { live = false; };
   }, [range]);
 
@@ -119,36 +120,36 @@ export function UsageSettings() {
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <Segmented<Range>
-          label="Period"
+          label={tr('ui.settings.usage.period')}
           value={range}
           onChange={setRange}
-          options={[{ value: '7', label: '7 days' }, { value: '30', label: '30 days' }, { value: '90', label: '90 days' }]}
+          options={[{ value: '7', label: tr('ui.settings.usage.n7Days') }, { value: '30', label: tr('ui.settings.usage.n30Days') }, { value: '90', label: tr('ui.settings.usage.n90Days') }]}
         />
       </div>
       {error && <p role="alert" className="mb-3 text-[13px] text-danger-ink">{error}</p>}
-      {!data && !error && <p className="text-[13px] text-fg-dim">Loading…</p>}
+      {!data && !error && <p className="text-[13px] text-fg-dim">{tr('ui.settings.usage.loading')}</p>}
       {data && total && (
         <>
           <Group className="flex flex-wrap divide-y-0">
-            {showCost && <Stat label="ESTIMATED COST" value={formatCost(total.cost)} />}
-            <Stat label="TOKENS IN" value={formatTokens(total.prompt_tokens)} detail={total.cached_tokens > 0 ? `${Math.round((total.cached_tokens / total.prompt_tokens) * 100)}% read from cache` : undefined} />
-            <Stat label="TOKENS OUT" value={formatTokens(total.completion_tokens)} />
-            <Stat label="MODEL CALLS" value={total.calls.toLocaleString()} />
+            {showCost && <Stat label={tr('ui.settings.usage.estimatedCost')} value={formatCost(total.cost)} />}
+            <Stat label={tr('ui.settings.usage.tokensIn')} value={formatTokens(total.prompt_tokens)} detail={total.cached_tokens > 0 ? tr('ui.settings.usage.roundReadFromCache', { round: Math.round((total.cached_tokens / total.prompt_tokens) * 100) }) : undefined} />
+            <Stat label={tr('ui.settings.usage.tokensOut')} value={formatTokens(total.completion_tokens)} />
+            <Stat label={tr('ui.settings.usage.modelCalls')} value={total.calls.toLocaleString(dateLocale())} />
           </Group>
           {total.calls === 0 ? (
             <p className="mt-4 text-[13px] text-fg-dim">
-              Nothing yet for this period. Usage is counted from the chats and tasks your agents run from now on.
+              {tr('ui.settings.usage.nothingYetForThisPeriod')}
             </p>
           ) : (
             <>
-              <SubHeading>{showCost ? 'COST PER DAY' : 'TOKENS PER DAY'}</SubHeading>
+              <SubHeading>{showCost ? tr('ui.settings.usage.costPerDay_64c3') : tr('ui.settings.usage.tokensPerDay_3811')}</SubHeading>
               <DayBars days={data.by_day} byCost={showCost} />
-              <SubHeading>BY MODEL</SubHeading>
+              <SubHeading>{tr('ui.settings.usage.byModel')}</SubHeading>
               <Breakdown
                 showCost={showCost}
                 rows={data.by_model.map((m) => ({ key: `${m.provider}/${m.model}`, name: m.model || 'Unknown model', sub: m.provider, totals: m }))}
               />
-              <SubHeading>BY AGENT</SubHeading>
+              <SubHeading>{tr('ui.settings.usage.byAgent')}</SubHeading>
               <Breakdown
                 showCost={showCost}
                 rows={data.by_agent.map((a) => ({ key: a.agent_id || 'other', name: a.agent_name, totals: a }))}
@@ -157,13 +158,13 @@ export function UsageSettings() {
           )}
           <p className="mt-4 max-w-[62ch] text-[12px] leading-relaxed text-fg-dim">
             {showCost
-              ? 'Costs are estimates from public list prices, so your provider’s bill is the final word.'
-              : 'Costs are not shown because model prices could not be loaded.'}
-            {showCost && total.unpriced_tokens > 0 && ` ${formatTokens(total.unpriced_tokens)} tokens went to models with no known price and are not in the cost.`}
+              ? tr('ui.settings.usage.costsAreEstimatesFromPublic')
+              : tr('ui.settings.usage.costsAreNotShownBecause')}
+            {showCost && total.unpriced_tokens > 0 && tr('ui.settings.usage.tokensTokensWentToModels', { tokens: formatTokens(total.unpriced_tokens) })}
             {data?.by_model.some((m) => m.provider === 'chatgpt') && (
               <>
-                {' '}ChatGPT plan use is counted at no cost here because it comes out of your plan.{' '}
-                <a href={CHATGPT_USAGE_URL} target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">Manage usage</a>
+                {' '}{tr('ui.settings.usage.chatgptPlanUseIsCounted')}{' '}
+                <a href={CHATGPT_USAGE_URL} target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">{tr('ui.settings.usage.manageUsage')}</a>
               </>
             )}
           </p>

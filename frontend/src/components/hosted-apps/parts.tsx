@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AppWindow, Lock, Users } from 'lucide-react';
 import { APP_FRAME_SANDBOX, STATUS_LABEL, type AppAccess, type AppStatus, type AppSummary } from '@/lib/hostedApps';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const DOT: Record<AppStatus, string> = {
   online: 'bg-accent shadow-[0_0_0_3px_rgb(var(--accent-rgb)/0.22)]',
@@ -23,7 +24,7 @@ export function AppStatusBadge({ app, className }: { app: Pick<AppSummary, 'stat
     <span className={cn('inline-flex items-center gap-1.5 whitespace-nowrap font-mono text-[11px]', TEXT[status], className)}>
       <span className={cn('h-[7px] w-[7px] flex-none rounded-full', DOT[status])} aria-hidden />
       {STATUS_LABEL[status]}{app.version > 0 && status !== 'building' ? ` · v${app.version}` : ''}
-      {failedUpdate && <span className="text-danger-ink">· v{app.latest} failed</span>}
+      {failedUpdate && <span className="text-danger-ink">{tr('ui.hostedApps.parts.v')}{app.latest}{' '}{tr('ui.hostedApps.parts.failed')}</span>}
     </span>
   );
 }
@@ -39,7 +40,7 @@ export function Sparkline({ values, width = 90, height = 24, label }: { values: 
   const points = values.map((v, i) => `${(i * (width - 4) / Math.max(1, values.length - 1) + 2).toFixed(1)},${(height - 3 - (v / max) * (height - 6)).toFixed(1)}`).join(' ');
   const total = values.reduce((a, b) => a + b, 0);
   return (
-    <svg width={width} height={height} role="img" aria-label={label ?? `${total} visits in the last ${values.length} days`} className="flex-none overflow-visible">
+    <svg width={width} height={height} role="img" aria-label={label ?? tr('ui.hostedApps.parts.totalVisitsInTheLast', { total, length: values.length })} className="flex-none overflow-visible">
       <polyline points={points} fill="none" className="stroke-accent-ink" strokeWidth={1.6} strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );
@@ -71,7 +72,7 @@ export function AppThumbnail({ app, className }: { app: AppSummary; className?: 
       ) : (
         <div className={cn('absolute inset-0 grid place-items-center', app.status === 'building' ? 'text-warn-ink' : 'text-fg-dim/50')}>
           {app.status === 'building'
-            ? <span className="font-mono text-[12px]">building v{Math.max(1, app.latest)}…</span>
+            ? <span className="font-mono text-[12px]">{tr('ui.hostedApps.parts.buildingV')}{Math.max(1, app.latest)}…</span>
             : <AppWindow size={28} strokeWidth={1.5} />}
         </div>
       )}

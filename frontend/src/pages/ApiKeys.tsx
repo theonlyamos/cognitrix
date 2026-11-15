@@ -6,6 +6,7 @@ import { Input } from '@/lib/components/ui/input';
 import { PageHeader, LoadingState, ErrorState, EmptyState } from '@/components/list-ui';
 import { Field, CheckList } from '@/components/form';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 interface ApiKey {
   id: string;
@@ -73,7 +74,7 @@ function CopyRow({ id, label, value }: { id: string; label: string; value: strin
           className="h-11 w-full rounded border border-line bg-bg px-3 font-mono text-[12px] text-fg md:h-10"
         />
         <Button type="button" variant="outline" size="sm" onClick={copy} className="flex-none">
-          {copied ? 'Copied' : 'Copy'}
+          {copied ? tr('ui.apiKeys.copied') : tr('ui.apiKeys.copy')}
         </Button>
       </div>
     </div>
@@ -115,8 +116,8 @@ export default function ApiKeys() {
   };
 
   const create = async () => {
-    if (!name.trim()) return setFormError('Name is required.');
-    if (scopes.size === 0) return setFormError('Select at least one scope.');
+    if (!name.trim()) return setFormError(tr('ui.apiKeys.nameIsRequired'));
+    if (scopes.size === 0) return setFormError(tr('ui.apiKeys.selectAtLeastOneScope'));
     setSaving(true);
     setFormError(null);
     try {
@@ -144,7 +145,7 @@ export default function ApiKeys() {
   };
 
   const revoke = async (key: ApiKey) => {
-    if (!window.confirm(`Revoke "${key.name}"? Any client using it stops working immediately.`)) return;
+    if (!window.confirm(tr('ui.apiKeys.revokeNameAnyClientUsing', { name: key.name }))) return;
     try {
       await api.delete(`/api-keys/${key.id}`);
       refetch({ silent: true });
@@ -155,9 +156,9 @@ export default function ApiKeys() {
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
-      <PageHeader title="API Keys" subtitle={`programmatic access · ${keys.length}`}>
+      <PageHeader title={tr('ui.apiKeys.apiKeys')} subtitle={tr('ui.apiKeys.programmaticAccessLength', { length: keys.length })}>
         <Button size="sm" onClick={() => { setShowForm((s) => !s); setCreated(null); }}>
-          {showForm ? 'Close' : '+ New key'}
+          {showForm ? tr('ui.apiKeys.close') : tr('ui.apiKeys.newKey')}
         </Button>
       </PageHeader>
 
@@ -167,15 +168,15 @@ export default function ApiKeys() {
           {created && (
             <div className="space-y-4 rounded border border-accent/50 bg-accent/5 p-5">
               <div>
-                <h2 className="text-[15px] font-semibold">Key created — copy it now</h2>
+                <h2 className="text-[15px] font-semibold">{tr('ui.apiKeys.keyCreatedCopyItNow')}</h2>
                 <p className="mt-1 text-[13px] text-fg-dim">
-                  This is the only time the secret and webhook signing key are shown. Store them somewhere safe.
+                  {tr('ui.apiKeys.thisIsTheOnlyTime')}
                 </p>
               </div>
-              <CopyRow id="created-api-key" label="API KEY" value={created.key} />
-              <CopyRow id="created-webhook-secret" label="WEBHOOK SECRET" value={created.webhook_secret} />
+              <CopyRow id="created-api-key" label={tr('ui.apiKeys.apiKey')} value={created.key} />
+              <CopyRow id="created-webhook-secret" label={tr('ui.apiKeys.webhookSecret')} value={created.webhook_secret} />
               <div className="flex justify-end">
-                <Button variant="outline" size="sm" onClick={() => setCreated(null)}>Done</Button>
+                <Button variant="outline" size="sm" onClick={() => setCreated(null)}>{tr('ui.apiKeys.done')}</Button>
               </div>
             </div>
           )}
@@ -186,59 +187,59 @@ export default function ApiKeys() {
               {formError && (
                 <p role="alert" className="border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{formError}</p>
               )}
-              <Field label="NAME" required>
+              <Field label={tr('ui.apiKeys.name')} required>
                 <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. ci-pipeline" />
               </Field>
-              <Field label={`SCOPES · ${scopes.size}`} required hint="what this key may do" composite>
+              <Field label={tr('ui.apiKeys.scopesSize', { size: scopes.size })} required hint={tr('ui.apiKeys.whatThisKeyMayDo')} composite>
                 <CheckList
                   options={SCOPES}
                   selected={scopes}
                   onToggle={(v) => toggle(scopes, setScopes, v)}
                 />
               </Field>
-              <Field label={`AGENT ALLOWLIST · ${agents.size}`} hint="empty = all agents" composite>
+              <Field label={tr('ui.apiKeys.agentAllowlistSize', { size: agents.size })} hint={tr('ui.apiKeys.emptyAllAgents')} composite>
                 <CheckList
                   options={(agentList || []).map((a) => ({ value: a.id, label: a.name, sub: `${a.llm?.provider || '—'} · ${a.llm?.model || '—'}` }))}
                   selected={agents}
                   onToggle={(v) => toggle(agents, setAgents, v)}
-                  empty="no agents"
+                  empty={tr('ui.apiKeys.noAgents')}
                 />
               </Field>
-              <Field label={`TEAM ALLOWLIST · ${teams.size}`} hint="empty = all teams" composite>
+              <Field label={tr('ui.apiKeys.teamAllowlistSize', { size: teams.size })} hint={tr('ui.apiKeys.emptyAllTeams')} composite>
                 <CheckList
                   options={(teamList || []).map((t) => ({ value: t.id, label: t.name }))}
                   selected={teams}
                   onToggle={(v) => toggle(teams, setTeams, v)}
-                  empty="no teams"
+                  empty={tr('ui.apiKeys.noTeams')}
                 />
               </Field>
               <div className="grid grid-cols-2 gap-4">
-                <Field label="EXPIRES" hint="optional">
+                <Field label={tr('ui.apiKeys.expires')} hint={tr('ui.apiKeys.optional')}>
                   <Input type="datetime-local" min={localNowMin()} value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
                 </Field>
-                <Field label="RATE LIMIT" hint="req/min, optional">
-                  <Input type="number" min={1} value={rateLimit} onChange={(e) => setRateLimit(e.target.value)} placeholder="default" />
+                <Field label={tr('ui.apiKeys.rateLimit')} hint={tr('ui.apiKeys.reqMinOptional')}>
+                  <Input type="number" min={1} value={rateLimit} onChange={(e) => setRateLimit(e.target.value)} placeholder={tr('ui.apiKeys.default')} />
                 </Field>
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="ghost" size="sm" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</Button>
-                <Button size="sm" onClick={create} disabled={saving}>{saving ? 'Creating…' : 'Create key'}</Button>
-                {saving && <span role="status" className="sr-only">Creating…</span>}
+                <Button variant="ghost" size="sm" onClick={() => { setShowForm(false); resetForm(); }}>{tr('ui.apiKeys.cancel')}</Button>
+                <Button size="sm" onClick={create} disabled={saving}>{saving ? tr('ui.apiKeys.creating') : tr('ui.apiKeys.createKey')}</Button>
+                {saving && <span role="status" className="sr-only">{tr('ui.apiKeys.creating')}</span>}
               </div>
             </div>
           )}
 
           {/* List */}
           {loading ? (
-            <LoadingState label="loading keys…" />
+            <LoadingState label={tr('ui.apiKeys.loadingKeys')} />
           ) : error ? (
             <ErrorState message={error} onRetry={refetch} />
           ) : keys.length === 0 && !showForm ? (
             <EmptyState
               icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="15" r="4" /><path d="M10.85 12.15 19 4M18 5l2 2M15 8l2 2" /></svg>}
-              title="No API keys"
-              desc="Create a key to call agents, run teams, or use the OpenAI-compatible endpoint from your own apps."
-              action={<Button size="sm" onClick={() => setShowForm(true)}>+ New key</Button>}
+              title={tr('ui.apiKeys.noApiKeys')}
+              desc={tr('ui.apiKeys.createAKeyToCall')}
+              action={<Button size="sm" onClick={() => setShowForm(true)}>{tr('ui.apiKeys.newKey')}</Button>}
             />
           ) : (
             <ul className="rounded border border-line">
@@ -248,24 +249,24 @@ export default function ApiKeys() {
                     <div className="flex items-center gap-2">
                       <span className="truncate text-[14px] font-medium">{k.name}</span>
                       <span className="font-mono text-[11px] text-fg-dim">{k.prefix}…</span>
-                      {k.revoked && <span className="rounded border border-danger/40 px-1.5 py-px font-mono text-[10px] text-danger-ink">REVOKED</span>}
+                      {k.revoked && <span className="rounded border border-danger/40 px-1.5 py-px font-mono text-[10px] text-danger-ink">{tr('ui.apiKeys.revoked')}</span>}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       {k.scopes.map((s) => (
                         <span key={s} className={cn('rounded border px-1.5 py-px font-mono text-[10px]', SCOPE_BADGE[s] || 'border-line text-fg-dim')}>{s}</span>
                       ))}
                       <span className="font-mono text-[10.5px] text-fg-dim">
-                        {k.allowed_agents.length ? `${k.allowed_agents.length} agent(s)` : 'all agents'}
+                        {k.allowed_agents.length ? tr('ui.apiKeys.lengthAgentS', { length: k.allowed_agents.length }) : tr('ui.apiKeys.allAgents')}
                         {' · '}
-                        {k.allowed_teams.length ? `${k.allowed_teams.length} team(s)` : 'all teams'}
-                        {k.rate_limit ? ` · ${k.rate_limit}/min` : ''}
-                        {k.expires_at ? ` · expires ${k.expires_at.slice(0, 16)}` : ''}
+                        {k.allowed_teams.length ? tr('ui.apiKeys.lengthTeamS', { length: k.allowed_teams.length }) : tr('ui.apiKeys.allTeams')}
+                        {k.rate_limit ? tr('ui.apiKeys.rateLimitMin', { rate_limit: k.rate_limit }) : ''}
+                        {k.expires_at ? tr('ui.apiKeys.expiresSlice', { slice: k.expires_at.slice(0, 16) }) : ''}
                         {` · ${k.last_used_at ? `used ${k.last_used_at.slice(0, 16)}` : 'never used'}`}
                       </span>
                     </div>
                   </div>
                   {!k.revoked && (
-                    <Button variant="ghost" size="sm" onClick={() => revoke(k)} className="flex-none hover:text-danger-ink">Revoke</Button>
+                    <Button variant="ghost" size="sm" onClick={() => revoke(k)} className="flex-none hover:text-danger-ink">{tr('ui.apiKeys.revoke')}</Button>
                   )}
                 </li>
               ))}
