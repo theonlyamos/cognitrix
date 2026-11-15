@@ -460,6 +460,9 @@ class _Hosting:
                     for key, value in resp.getheaders():
                         if key.lower() in _DROP_OUT:
                             continue
+                        # Headers are passed on as-is; never let a line break through.
+                        key = key.replace('\r', '').replace('\n', '')
+                        value = value.replace('\r', '').replace('\n', '')
                         if key.lower() == 'location' and value.startswith('/') and not value.startswith('//'):
                             value = PREFIX + value
                         self.send_header(key, value)
