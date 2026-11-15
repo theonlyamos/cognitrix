@@ -101,6 +101,23 @@ describe('AppViewPanel', () => {
     open.mockRestore();
   });
 
+  it('never sends a slow answer to a different app screen', async () => {
+    let finish: (value: unknown) => void = () => {};
+    apiPost.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const { rerender } = render(<AppViewPanel viewId="v1" onClose={() => {}} />);
+    await waitFor(() => expect(document.querySelector('iframe')).not.toBeNull());
+    const first = frameMessages();
+    await first.fromFrame({ id: 3, method: 'tools/call', params: { name: 'show_board', arguments: {} } });
+
+    apiGet.mockResolvedValue({ data: { ...VIEW, id: 'v2', app: 'Secrets', title: 'Secrets: List', frame_url: '/api/v1/app-view-frame/other' } });
+    rerender(<AppViewPanel viewId="v2" onClose={() => {}} />);
+    await waitFor(() => expect(document.querySelector('iframe')!.getAttribute('src')).toContain('other'));
+    const second = frameMessages();
+    await act(async () => { finish({ data: { content: [{ type: 'text', text: 'private' }] } }); });
+    expect(second.sent.some((m) => m.id === 3)).toBe(false);
+    expect(first.sent.some((m) => m.id === 3)).toBe(false);
+  });
+
   it('ignores messages from anywhere but its own frame', async () => {
     const onSend = vi.fn();
     render(<AppViewPanel viewId="v1" onClose={() => {}} onSendMessage={onSend} />);

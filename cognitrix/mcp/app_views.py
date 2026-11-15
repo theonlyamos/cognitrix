@@ -251,6 +251,9 @@ async def connection_for(view: AppView) -> tuple[Any, Any]:
     config = await resolve(view.server_id, view.owner_id)
     if config is None:
         raise ViewError(f'{view.app_name or "This app"} is no longer connected.', 404)
+    if not getattr(config, 'enabled', True):
+        # Switched off in Settings: a screen left open must not turn it back on.
+        raise ViewError(f'{view.app_name or "This app"} is switched off.', 409)
     client = await get_dynamic_client()
     problem = await prepare(client, config)
     if problem:
@@ -388,13 +391,31 @@ async def call_from_screen(view: AppView, name: str, arguments: Any, *, confirme
     ask = level != 'allow' and (level != 'auto' or needs_confirm(info))
     if ask and not confirmed:
         raise ViewError('confirm', 409)
-    result = await apps.call_tool(client, config, name, arguments if isinstance(arguments, dict) else {})
+    args = arguments if isinstance(arguments, dict) else {}
+    result = await apps.call_tool(client, config, name, args)
     full = getattr(result, 'result', None)
-    if full is not None:
-        return result_json(full)
     if result is None:
         return {'content': [{'type': 'text', 'text': f'{name} failed.'}], 'isError': True}
-    return result_json(result)
+    data = result_json(full if full is not None else result)
+    if ui and ui.get('resource_uri') == view.resource_uri and not data.get('isError'):
+        # The screen changed what it shows: keep it, so reopening the screen
+        # (or the agent's next look) starts from here, not the agent's last call.
+        await _keep_screen_result(view, name, args, data)
+    return data
+
+
+async def _keep_screen_result(view: AppView, name: str, args: dict[str, Any], data: dict[str, Any]) -> None:
+    version = int(view.version or 1) + 1
+    stamp = _now()
+    try:
+        await AppView.update_one({'id': view.id}, {
+            'tool_name': name, 'tool_input': json.dumps(args, default=str),
+            'tool_result': json.dumps(data, default=str), 'version': version, 'updated': stamp,
+        })
+    except Exception:
+        logger.exception('Could not keep the screen result of %s', name)
+        return
+    view.tool_name, view.tool_input, view.tool_result, view.version, view.updated = name, dict(args), data, version, stamp
 
 
 def needs_confirm(tool: dict[str, Any]) -> bool:
