@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -22,6 +23,9 @@ from cognitrix.session_ownership import (
     require_active_owned,
 )
 from cognitrix.sessions import sharing
+
+# How often a live stream rechecks that the chat is still shared with you.
+RECHECK_SECONDS = 2.0
 
 chat_sharing_api = APIRouter(prefix='/shared-chats', dependencies=[Depends(jwt_only)])
 
@@ -266,9 +270,16 @@ async def follow_shared(session_id: str, request: Request, ctx: AuthContext = De
             if run is not None and run.running and run.run_id not in followed:
                 followed.add(run.run_id)
                 yield {'event': 'message', 'data': json.dumps({'type': 'run_started', 'run_id': run.run_id})}
-                async for item in run.follow():
+                checked = time.monotonic()
+                async for item in run.follow(idle_timeout=RECHECK_SECONDS * 2):
                     if await request.is_disconnected():
                         return
+                    # Unsharing mid-reply ends the stream before anything more is sent.
+                    if item is chat_runs.IDLE or time.monotonic() - checked >= RECHECK_SECONDS:
+                        checked = time.monotonic()
+                        if not await still_allowed():
+                            yield {'event': 'message', 'data': json.dumps({'type': 'gone'})}
+                            return
                     if item is chat_runs.IDLE:
                         yield {'event': 'ping', 'data': ''}
                         continue
@@ -309,9 +320,12 @@ async def send_shared(session_id: str, body: SharedMessage, ctx: AuthContext = D
         raise HTTPException(status_code=400, detail='Write in your own chat from the chat page')
     if role != sharing.ROLE_CHAT:
         raise HTTPException(status_code=403, detail='You can read this chat but not write in it')
+    from cognitrix.sessions.base import Session
+
     owner = str(binding.user_id)
+    busy = HTTPException(status_code=409, detail='The agent is still answering. Try again when it’s done.')
     if _running(owner, str(session.id)) is not None:
-        raise HTTPException(status_code=409, detail='The agent is still answering. Try again when it’s done.')
+        raise busy
     agent = await Agent.find_one({'id': str(binding.agent_id)})
     if agent is None or not agent_access.can_view(agent, owner):
         raise HTTPException(status_code=409, detail='This chat’s agent is gone')
@@ -321,5 +335,12 @@ async def send_shared(session_id: str, body: SharedMessage, ctx: AuthContext = D
     people = await _people()
     name = people.get(me, {}).get('name') or 'Someone'
     owner_name = people.get(owner, {}).get('name') or 'the owner'
+    session = await Session.get(str(session_id))  # what was saved while we looked things up
+    if session is None:
+        raise _not_found()
+    # Last check and registering the run with no await in between, so two
+    # writers (or the owner) can't both start a turn on the same chat.
+    if _running(owner, str(session.id)) is not None:
+        raise busy
     run = sharing.start_guest_turn(owner, agent, session, sharing.guest_text(name, owner_name, text))
     return {'status': 'started', 'run_id': run.run_id}

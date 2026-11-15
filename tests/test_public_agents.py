@@ -89,6 +89,8 @@ def fake_turn(monkeypatch):
         seen['user_id'] = getattr(kwargs.get('tool_context'), 'user_id', None)
         self.update_history({'role': 'user', 'type': 'text', 'content': message})
         await kwargs['output']({'type': 'generate', 'content': 'Hello '})
+        if seen.get('hold'):
+            await seen['hold'].wait()
         await kwargs['output']({'type': 'generate', 'content': 'there<think>secret</think>'})
         self.update_history({'role': 'assistant', 'type': 'text', 'content': 'Hello there<think>secret</think>'})
         await self.save()
@@ -257,6 +259,38 @@ async def test_limits(db, fake_turn, monkeypatch):
     await routes.public_new_chat(token, _request('9.9.9.9'))
     with pytest.raises(HTTPException):
         await routes.public_new_chat(token, _request('9.9.9.9'))
+
+
+async def test_a_burst_cannot_get_past_the_limits(db, fake_turn, monkeypatch):
+    from cognitrix.api.routes import public_agents as routes
+    from cognitrix.public_agents import service
+
+    amos = await _user('Amos', 'amos@example.com')
+    agent = await _agent(amos)
+    token = (await routes.set_link(agent.id, routes.LinkUpdate(), _ctx(amos)))['link']['url'].rsplit('/', 1)[1]
+    monkeypatch.setattr(service, 'MAX_RUNNING_PER_LINK', 2)
+    fake_turn['hold'] = asyncio.Event()
+
+    async def send(chat, visitor, host):
+        try:
+            await routes.public_send(token, chat, routes.VisitorMessage(message='hi'),
+                                     _request(host), x_visitor_token=visitor)
+            return 200
+        except HTTPException as error:
+            return error.status_code
+
+    # One chat, several messages at once: only one turn starts.
+    a = await routes.public_new_chat(token, _request('1.1.1.1'))
+    codes = await asyncio.gather(*(send(a['chat_id'], a['visitor_token'], '1.1.1.1') for _ in range(4)))
+    assert sorted(codes) == [200, 409, 409, 409]
+
+    # Many chats at once: no more than MAX_RUNNING_PER_LINK run.
+    chats = [await routes.public_new_chat(token, _request(f'2.2.2.{i}')) for i in range(5)]
+    codes = await asyncio.gather(*(send(c['chat_id'], c['visitor_token'], f'2.2.2.{i}') for i, c in enumerate(chats)))
+    assert codes.count(200) == 1 and codes.count(503) == 4
+    fake_turn['hold'].set()
+    await asyncio.sleep(0.05)
+    assert not service._RUNNING_BY_LINK and not service._RESERVED
 
 
 async def test_visitor_chats_have_no_owner_memories(db):

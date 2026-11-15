@@ -204,6 +204,7 @@ _IP_CHATS: dict[str, deque] = {}
 _RUNNING: dict[str, asyncio.Task] = {}
 _RUNNING_BY_LINK: dict[str, set[str]] = {}
 _TASKS: set[asyncio.Task] = set()
+_RESERVED: set[str] = set()  # slots taken by take_message, not yet started
 _DAY_LOCK = asyncio.Lock()
 
 
@@ -226,29 +227,58 @@ def check_new_chat(ip: str) -> None:
     hits.append(time.monotonic())
 
 
-async def take_message(link: PublicAgentLink, visitor: str, ip: str) -> None:
-    """Count one visitor message against every limit, or raise LimitError."""
-    visitor_hits = _recent(_VISITOR_HITS, (str(link.id), visitor))
-    if len(visitor_hits) >= (link.visitor_hourly_limit or DEFAULT_VISITOR_HOURLY_LIMIT):
-        raise LimitError("You've sent a lot of messages. Please wait a while and try again.")
-    ip_hits = _recent(_IP_HITS, ip or '?')
-    if len(ip_hits) >= IP_HOURLY_LIMIT:
-        raise LimitError('Too many messages from your network. Please wait a while and try again.')
-    if len(_RUNNING_BY_LINK.get(str(link.id), ())) >= MAX_RUNNING_PER_LINK:
-        raise LimitError('This assistant is busy right now. Try again in a minute.', 503)
+async def take_message(link: PublicAgentLink, visitor: str, ip: str, session_id: str) -> None:
+    """Count one visitor message against every limit and reserve its running
+    slot, or raise LimitError. Checks and reservations happen together under
+    one lock, so a burst can't all pass against the same earlier state. The
+    caller must call ``start_turn`` (or ``release``) next, with no await in
+    between."""
+    sid = str(session_id)
     async with _DAY_LOCK:
+        if is_running(sid):
+            raise LimitError('Still answering your last message.', 409)
+        visitor_hits = _recent(_VISITOR_HITS, (str(link.id), visitor))
+        if len(visitor_hits) >= (link.visitor_hourly_limit or DEFAULT_VISITOR_HOURLY_LIMIT):
+            raise LimitError("You've sent a lot of messages. Please wait a while and try again.")
+        ip_hits = _recent(_IP_HITS, ip or '?')
+        if len(ip_hits) >= IP_HOURLY_LIMIT:
+            raise LimitError('Too many messages from your network. Please wait a while and try again.')
+        if len(_RUNNING_BY_LINK.get(str(link.id), ())) >= MAX_RUNNING_PER_LINK:
+            raise LimitError('This assistant is busy right now. Try again in a minute.', 503)
         fresh = await PublicAgentLink.get(link.id) or link
         today = utc_day()
         count = fresh.day_count if fresh.day == today else 0
         if count >= (fresh.daily_limit or DEFAULT_DAILY_LIMIT):
             raise LimitError("This assistant has answered all the messages it can today. Please come back tomorrow.")
-        await PublicAgentLink.update_one({'id': link.id}, {'day': today, 'day_count': count + 1})
-    now = time.monotonic()
-    visitor_hits.append(now)
-    ip_hits.append(now)
+        # Reserve before the write's await lets the next request in.
+        _RESERVED.add(sid)
+        _RUNNING_BY_LINK.setdefault(str(link.id), set()).add(sid)
+        now = time.monotonic()
+        visitor_hits.append(now)
+        ip_hits.append(now)
+        try:
+            await PublicAgentLink.update_one({'id': link.id}, {'day': today, 'day_count': count + 1})
+        except BaseException:
+            release(link, sid)
+            raise
+
+
+def release(link: PublicAgentLink, session_id: str) -> None:
+    """Give back a slot reserved by ``take_message`` that no turn used."""
+    sid = str(session_id)
+    _RESERVED.discard(sid)
+    if sid in _RUNNING:
+        return
+    running = _RUNNING_BY_LINK.get(str(link.id))
+    if running is not None:
+        running.discard(sid)
+        if not running:
+            _RUNNING_BY_LINK.pop(str(link.id), None)
 
 
 def is_running(session_id: str) -> bool:
+    if str(session_id) in _RESERVED:
+        return True
     task = _RUNNING.get(str(session_id))
     return bool(task and not task.done())
 
@@ -342,6 +372,7 @@ def start_turn(link: PublicAgentLink, agent: Any, owner: str, session: Any, text
     )
     _TASKS.add(task)
     _RUNNING[sid] = task
+    _RESERVED.discard(sid)
     _RUNNING_BY_LINK.setdefault(str(link.id), set()).add(sid)
 
     def done(finished: asyncio.Task) -> None:
@@ -457,6 +488,7 @@ async def delete_link_chats(link_id: str) -> int:
 
 def reset_limits() -> None:
     """For tests."""
+    _RESERVED.clear()
     _VISITOR_HITS.clear()
     _IP_HITS.clear()
     _IP_CHATS.clear()

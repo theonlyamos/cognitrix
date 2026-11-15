@@ -312,11 +312,17 @@ async def public_send(token: str, chat_id: str, body: VisitorMessage, request: R
         raise HTTPException(status_code=409, detail='Still answering your last message.')
     if service.user_message_count(session) >= service.MAX_VISITOR_MESSAGES_PER_CHAT:
         raise HTTPException(status_code=429, detail='This chat is full. Start a new one to keep going.')
+    owner_display = await service.owner_name(owner)
     try:
-        await service.take_message(link, session.visitor_key or '', _ip(request))
+        await service.take_message(link, session.visitor_key or '', _ip(request), str(session.id))
     except service.LimitError as error:
         raise HTTPException(status_code=error.status, detail=error.message) from None
-    queue = service.start_turn(link, agent, owner, session, text, await service.owner_name(owner))
+    # No await between reserving the slot and starting the turn.
+    try:
+        queue = service.start_turn(link, agent, owner, session, text, owner_display)
+    except BaseException:
+        service.release(link, str(session.id))
+        raise
 
     async def events():
         async for item in service.follow(queue):

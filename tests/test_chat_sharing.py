@@ -167,6 +167,69 @@ async def test_guest_waits_while_a_turn_runs(db, fake_turn):
     await asyncio.sleep(0.05)
 
 
+async def test_two_writers_at_once_start_one_turn(db, fake_turn):
+    from cognitrix.api.routes import chat_sharing as routes
+
+    amos = await _user('Amos', 'amos@example.com')
+    kofi = await _user('Kofi', 'kofi@example.com')
+    ama = await _user('Ama', 'ama@example.com')
+    _, session = await _chat(amos)
+    sid = str(session.id)
+    await routes.set_people(sid, routes.SharingUpdate(people=[
+        routes.SharedPerson(user_id=str(kofi.id), role='chat'),
+        routes.SharedPerson(user_id=str(ama.id), role='chat'),
+    ]), _ctx(amos))
+    fake_turn['hold'] = asyncio.Event()
+
+    async def send(who, text):
+        try:
+            await routes.send_shared(sid, routes.SharedMessage(message=text), _ctx(who))
+            return 200
+        except HTTPException as error:
+            return error.status_code
+
+    codes = await asyncio.gather(send(kofi, 'one'), send(ama, 'two'))
+    assert sorted(codes) == [200, 409]
+    fake_turn['hold'].set()
+    await asyncio.sleep(0.05)
+
+
+async def test_unsharing_ends_a_live_stream_mid_reply(db, fake_turn, monkeypatch):
+    from cognitrix.api.routes import chat_sharing as routes
+
+    amos = await _user('Amos', 'amos@example.com')
+    kofi = await _user('Kofi', 'kofi@example.com')
+    ama = await _user('Ama', 'ama@example.com')
+    _, session = await _chat(amos)
+    sid = str(session.id)
+    await routes.set_people(sid, routes.SharingUpdate(people=[
+        routes.SharedPerson(user_id=str(kofi.id), role='chat'),
+        routes.SharedPerson(user_id=str(ama.id), role='view'),
+    ]), _ctx(amos))
+    monkeypatch.setattr(routes, 'RECHECK_SECONDS', 0.05)
+    fake_turn['hold'] = asyncio.Event()
+    await routes.send_shared(sid, routes.SharedMessage(message='one'), _ctx(kofi))
+
+    async def connected():
+        return False
+    response = await routes.follow_shared(sid, SimpleNamespace(is_disconnected=connected), _ctx(ama))
+    stream = response.body_iterator
+    seen = []
+    async def read():
+        async for item in stream:
+            if isinstance(item, dict) and item.get('data'):
+                seen.append(item['data'])
+                if '"gone"' in item['data']:
+                    return
+    reader = asyncio.create_task(read())
+    await asyncio.sleep(0.05)
+    await routes.set_people(sid, routes.SharingUpdate(people=[routes.SharedPerson(user_id=str(kofi.id), role='chat')]), _ctx(amos))
+    await asyncio.wait_for(reader, 2)
+    assert '"gone"' in seen[-1]
+    fake_turn['hold'].set()
+    await asyncio.sleep(0.05)
+
+
 async def test_incognito_and_others_chats_cannot_be_shared(db):
     from cognitrix.api.routes import chat_sharing as routes
 
