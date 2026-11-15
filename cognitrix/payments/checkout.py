@@ -68,7 +68,13 @@ class Page:
     scale: float
 
     def text(self) -> str:
-        return ' | '.join(b for el in self.elements for b in (_norm(el.name), _norm(el.value)[:300]) if b)
+        """Everything the page shows, without the browser's address bar."""
+        return ' | '.join(b for el in self.elements if not self._is_address(el)
+                          for b in (_norm(el.name), _norm(el.value)[:300]) if b)
+
+    @staticmethod
+    def _is_address(el: Any) -> bool:
+        return el.role.lower() in TEXT_ROLES and any(label in _norm(el.name) for label in ADDRESS_BAR)
 
     def address(self) -> str:
         for el in self.elements:
@@ -115,6 +121,32 @@ def amount_texts(cents: int, currency: str) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+CURRENCY_MARKS = {
+    'USD': ('$', 'usd'), 'EUR': ('€', 'eur'), 'GBP': ('£', 'gbp'), 'JPY': ('¥', '円', 'jpy'),
+    'CAD': ('$', 'cad'), 'AUD': ('$', 'aud'), 'NZD': ('$', 'nzd'), 'CHF': ('chf', 'fr'), 'INR': ('₹', 'inr', 'rs'),
+    'GHS': ('₵', 'ghs', 'gh¢'), 'NGN': ('₦', 'ngn'), 'KES': ('ksh', 'kes'), 'ZAR': ('zar', 'r'),
+    'SEK': ('kr', 'sek'), 'NOK': ('kr', 'nok'), 'DKK': ('kr', 'dkk'), 'PLN': ('zł', 'pln'), 'BRL': ('r$', 'brl'),
+    'MXN': ('$', 'mxn'), 'SGD': ('$', 'sgd'), 'HKD': ('$', 'hkd'), 'CNY': ('¥', 'cny', 'rmb'),
+}
+
+
+def shows_amount(body: str, cents: int, currency: str) -> bool:
+    """Whether ``body`` shows exactly this total with its currency next to it.
+
+    The number must stand alone (24.99 does not match 124.99 or 24.990) and a
+    currency sign or code must sit within a few characters of it, so an order
+    number or a quantity can't pass for the total."""
+    marks = tuple(CURRENCY_MARKS.get(currency, ())) + ((currency or '').lower(),)
+    marks = tuple(m for m in marks if m)
+    for amount in amount_texts(cents, currency):
+        pattern = r'(?<![\d.,])' + re.escape(amount) + r'(?!\d|[.,]\d)'
+        for match in re.finditer(pattern, body):
+            near = body[max(0, match.start() - 5):match.start()] + ' ' + body[match.end():match.end() + 5]
+            if any(mark in near for mark in marks):
+                return True
+    return False
+
+
 def _look(driver: Any, window_id: int, viewer: str) -> Page:
     _image, snap, _shown, _note = driver.look(window_id, None, 1, viewer=viewer)
     return Page(window_id, snap.id, list(snap.elements), tuple(snap.origin), float(snap.scale or 1.0))
@@ -151,7 +183,7 @@ def find_checkout(driver: Any, site: str, cents: int, currency: str, viewer: str
             raise CheckoutError(f'The card form on {host} has no expiry field I can fill. Ask the person to take '
                                 'over and pay themselves.')
         body = page.text()
-        if not any(amount in body for amount in amount_texts(cents, currency)):
+        if not shows_amount(body, cents, currency):
             raise CheckoutError(f'The approved total does not show on the page on {host}. If the total changed, '
                                 'cancel this payment and ask again with the new total.')
         return Checkout(page, host)

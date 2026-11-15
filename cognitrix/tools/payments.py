@@ -149,7 +149,7 @@ async def pay(request_id: str, *, parent: Any | None = None):
     except service.PaymentError as exc:
         return _fail(exc)
     try:
-        outcome, message = await asyncio.to_thread(run, checkout.fill_and_pay, found, card)
+        outcome, message = await asyncio.to_thread(run, checkout.fill_and_pay, found, card, viewer)
     except Exception:
         outcome, message = 'unconfirmed', ('Something went wrong while paying. Look at the page and tell the '
                                            'person; they should check whether the card was charged.')

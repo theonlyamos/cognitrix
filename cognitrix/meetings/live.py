@@ -614,11 +614,15 @@ async def _cleanup(desk: _Desk | None, joined: bool) -> None:
         await desk.audio('POST', 'stop')
     except Exception:
         logger.debug('Could not stop listening', exc_info=True)
-    if joined:
-        try:
+    try:
+        if joined:
             await desk.do(leave, desk.screen)
-        except Exception:
-            logger.debug('Could not leave the call', exc_info=True)
+        else:
+            # Still in the lobby (or stopped while joining): close the page so the
+            # host can't let the agent in after it gave up.
+            await desk.do(desk.screen.close)
+    except Exception:
+        logger.debug('Could not leave the call', exc_info=True)
 
 
 async def _finish(meeting_id: str, desk: _Desk, joined: bool, lines: list[str], agent: Any,

@@ -36,10 +36,10 @@ from cognitrix.payments.models import (
     PAID,
     PAYING,
     PENDING,
+    UNCONFIRMED,
     PaymentCard,
     PaymentRequest,
     PaymentSettings,
-    UNCONFIRMED,
 )
 
 logger = logging.getLogger('cognitrix.log')

@@ -342,3 +342,23 @@ def test_joining_a_call_asks_first_and_following_it_does_not():
     assert risk.risk_level == RiskLevel.MEDIUM and 'out loud' in risk.details
     for name in ('Meeting Transcript', 'Leave Meeting', 'Say In Meeting'):
         assert d.analyze(name, {}).risk_level == RiskLevel.LOW
+
+
+async def test_stopping_in_the_lobby_closes_the_page():
+    from cognitrix.meetings import live
+
+    calls = []
+
+    class Desk:
+        screen = SimpleNamespace(close=lambda: calls.append('close'))
+
+        async def audio(self, method, action=''):
+            calls.append(f'audio {action}')
+            return {'ok': True}
+
+        async def do(self, fn, *args):
+            calls.append(getattr(fn, '__name__', 'fn'))
+            return fn(*args)
+
+    await live._cleanup(Desk(), joined=False)
+    assert calls[-1] == 'close'

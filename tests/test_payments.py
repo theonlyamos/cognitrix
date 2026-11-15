@@ -225,6 +225,42 @@ def test_the_card_goes_in_only_on_the_approved_site_with_the_approved_total(shop
     assert outcome == 'failed' and 'declined' in message and declined.cleared >= 1
 
 
+def test_the_total_must_match_exactly_with_its_currency():
+    from cognitrix.payments.checkout import shows_amount
+
+    assert shows_amount('order summary | pay $24.99', 2499, 'USD')
+    assert shows_amount('total | usd 24.99', 2499, 'USD')
+    assert shows_amount('gesamt | 1.234,50 €', 123450, 'EUR')
+    assert not shows_amount('pay $124.99', 2499, 'USD')        # a bigger total
+    assert not shows_amount('pay $24.995', 2499, 'USD')
+    assert not shows_amount('order 24.99 items', 2499, 'USD')  # no currency next to it
+    assert shows_amount('pay $24', 2400, 'USD')
+    assert not shows_amount('qty 24 | pay $31.50', 2400, 'USD')  # a bare whole number elsewhere
+    assert not shows_amount('pay $24.50', 2400, 'USD')
+
+
+async def test_pay_tool_fills_the_form_and_pays(pay, shop, monkeypatch):
+    from cognitrix.computer.sandbox import client
+    from cognitrix.tools import computer as computer_tools
+    from cognitrix.tools import payments as tools
+    from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
+
+    await _ready(pay.service)
+    row = await _ask(pay.service)
+    await pay.service.approve('u1', str(row.id), amount_cents=2499)
+    page = shop()
+    monkeypatch.setattr(client, 'sandbox_mode', lambda: 'local')
+    monkeypatch.setattr(computer_tools, '_actor', lambda parent: None)
+    monkeypatch.setattr(computer_tools, '_driver', lambda actor: page)
+    token = set_execution_context(ToolExecutionContext(user_id='u1', agent_id='a1', session_id='s1'))
+    try:
+        out = await tools.pay.run(request_id=str(row.id), parent=SimpleNamespace(id='a1', name='Ada'))
+    finally:
+        reset_execution_context(token)
+    assert 'Paid $24.99 to Acme Books' in str(out.content)
+    assert page.values['Card number'] == CARD and CARD not in str(out.content)
+
+
 # --- the app ----------------------------------------------------------------------
 
 
