@@ -50,6 +50,18 @@ CLI_KEYS = {
 }
 SANDBOX_CLIS = tuple(CLI_KEYS)
 PROVIDER_LABELS = {'anthropic': 'an Anthropic', 'openai': 'an OpenAI', 'google': 'a Google (Gemini)'}
+# The only sites each provider's API key goes to from the sandbox: the
+# container gets a placeholder, and the key proxy fills the real key in
+# requests to these hosts (cognitrix/common/key_proxy.py).
+PROVIDER_HOSTS = {
+    'anthropic': ('api.anthropic.com',),
+    'openai': ('api.openai.com',),
+    'google': ('generativelanguage.googleapis.com',),
+}
+# Hosts for a sign-in saved only for the sandbox: the .invalid name never
+# resolves, so Http Request can't send it anywhere. These values reach
+# sandbox commands as they are (they're for things inside the sandbox).
+SANDBOX_ONLY_HOST = 'sandbox.invalid'
 
 
 class SandboxWorkError(Exception):
@@ -129,15 +141,40 @@ def _env_key(user_id: Any) -> str:
     return user_key(user_id)
 
 
-def sandbox_env(user_id: Any) -> dict[str, str]:
-    """The person's saved variables, unsealed: every command, test run and
-    coding agent in their sandbox gets them."""
+def _unpack(raw: Any) -> tuple[str, list[str]] | None:
+    """A saved entry: a sealed string, or {'v': sealed, 'hosts': [...]}."""
     from cognitrix.common.secret_box import unseal_or_empty
+    if isinstance(raw, str):
+        return unseal_or_empty(raw), []
+    if isinstance(raw, dict) and isinstance(raw.get('v'), str):
+        hosts = [str(h) for h in (raw.get('hosts') or []) if isinstance(h, str) and h.strip()]
+        return unseal_or_empty(raw['v']), hosts
+    return None
+
+
+def sandbox_env_hosts(user_id: Any) -> dict[str, list[str]]:
+    """Each saved variable's "Only sent to" sites (empty: a plain variable)."""
     raw = _read_env_file().get(_env_key(user_id)) or {}
     out = {}
-    for name, sealed in raw.items():
-        if isinstance(name, str) and isinstance(sealed, str) and _ENV_NAME.match(name):
-            out[name] = unseal_or_empty(sealed)
+    for name, item in raw.items():
+        got = _unpack(item) if isinstance(name, str) and _ENV_NAME.match(name) else None
+        if got is not None:
+            out[name] = got[1]
+    return out
+
+
+def sandbox_env(user_id: Any) -> dict[str, str]:
+    """The person's saved variables, unsealed: every command, test run and
+    coding agent in their sandbox gets them. A variable with "Only sent to"
+    sites comes back as a HiddenValue, which reaches the container as a
+    placeholder the key proxy fills in for those sites only."""
+    from cognitrix.common.key_proxy import hidden_if_hosts
+    raw = _read_env_file().get(_env_key(user_id)) or {}
+    out = {}
+    for name, item in raw.items():
+        got = _unpack(item) if isinstance(name, str) and _ENV_NAME.match(name) else None
+        if got is not None:
+            out[name] = hidden_if_hosts(got[0], got[1], name)
     return out
 
 
@@ -156,14 +193,38 @@ _ENV_LOCK = threading.Lock()
 
 def save_sandbox_env(user_id: Any, variables: list[dict]) -> dict[str, str]:
     """Replace the person's variables. An entry without a value keeps the
-    saved one (the UI never gets values back); names left out are removed."""
+    saved one (the UI never gets values back); names left out are removed.
+    ``hosts`` (optional) limits a value to those sites: commands then get a
+    placeholder and only requests to those sites carry the real value."""
     with _ENV_LOCK:
         return _save_sandbox_env(user_id, variables)
 
 
+def _clean_hosts(raw: Any, name: str) -> list[str]:
+    from cognitrix.credentials import normalize_host
+    if raw in (None, '', []):
+        return []
+    items = raw if isinstance(raw, list) else str(raw).split(',')
+    hosts: list[str] = []
+    for item in items:
+        if not str(item or '').strip():
+            continue
+        try:
+            host = normalize_host(str(item))
+        except ValueError as exc:
+            raise ValueError(f'{name}: {exc}') from None
+        if host not in hosts:
+            hosts.append(host)
+    if len(hosts) > 10:
+        raise ValueError(f'{name}: at most 10 sites.')
+    return hosts
+
+
 def _save_sandbox_env(user_id: Any, variables: list[dict]) -> dict[str, str]:
     current = sandbox_env(user_id)
+    current_hosts = sandbox_env_hosts(user_id)
     new: dict[str, str] = {}
+    hosts: dict[str, list[str]] = {}
     for item in variables or []:
         name = check_env_name(item.get('name', ''))
         value = item.get('value')
@@ -175,13 +236,15 @@ def _save_sandbox_env(user_id: Any, variables: list[dict]) -> dict[str, str]:
         if len(value) > MAX_ENV_VALUE:
             raise ValueError(f'{name} is too long ({len(value):,} characters, max {MAX_ENV_VALUE:,}).')
         new[name] = value
+        hosts[name] = (_clean_hosts(item['hosts'], name) if 'hosts' in item and item['hosts'] is not None
+                       else current_hosts.get(name, []))
     if len(new) > MAX_ENV_VARS:
         raise ValueError(f'At most {MAX_ENV_VARS} variables.')
-    _write_env_entry(user_id, new)
-    return new
+    _write_env_entry(user_id, new, hosts)
+    return sandbox_env(user_id)
 
 
-def _write_env_entry(user_id: Any, new: dict[str, str]) -> None:
+def _write_env_entry(user_id: Any, new: dict[str, str], hosts: dict[str, list[str]] | None = None) -> None:
     import json
     import tempfile
 
@@ -189,7 +252,8 @@ def _write_env_entry(user_id: Any, new: dict[str, str]) -> None:
     data = _read_env_file()
     key = _env_key(user_id)
     if new:
-        data[key] = {k: seal(v) for k, v in new.items()}
+        data[key] = {k: ({'v': seal(str(v)), 'hosts': (hosts or {})[k]} if (hosts or {}).get(k) else seal(str(v)))
+                     for k, v in new.items()}
     else:
         data.pop(key, None)
     path = _env_file()
@@ -242,19 +306,24 @@ def credential_names(raw: Any) -> list[str]:
     return names
 
 
-def credential_vars(name: str, kind: str, values: dict[str, str]) -> dict[str, str]:
+def credential_vars(name: str, kind: str, values: dict[str, str], hosts: list[str] | None = None) -> dict[str, str]:
     """Environment variables for one saved sign-in: NAME for a token (or an
     app sign-in's access token), NAME_USERNAME and NAME_PASSWORD for a
-    username and password."""
+    username and password. With allowed ``hosts`` the values are hidden: the
+    command gets placeholders the key proxy fills in for those sites only. A
+    sandbox-only sign-in (or one without sites) arrives as it is."""
+    from cognitrix.common.key_proxy import hidden_if_hosts
+    sites = [h for h in (hosts or []) if h and h != SANDBOX_ONLY_HOST]
     if kind == 'basic':
         out = {}
         if values.get('username'):
+            # A username isn't secret, and tools often print it.
             out[f'{name}_USERNAME'] = values['username']
         if values.get('password'):
-            out[f'{name}_PASSWORD'] = values['password']
+            out[f'{name}_PASSWORD'] = hidden_if_hosts(values['password'], sites, name)
         return out
     value = values.get('access_token') if kind == 'oauth' else values.get('value')
-    return {name: value} if value else {}
+    return {name: hidden_if_hosts(value, sites, name)} if value else {}
 
 
 async def _load_credentials(owner: Any, agent_id: Any, names: list[str]) -> dict[str, str]:
@@ -275,7 +344,7 @@ async def _load_credentials(owner: Any, agent_id: Any, names: list[str]) -> dict
         if row is None:
             missing.append(name)
             continue
-        env.update(credential_vars(name, row.kind, open_secret(row)))
+        env.update(credential_vars(name, row.kind, open_secret(row), list(getattr(row, 'allowed_hosts', None) or [])))
     if missing:
         raise SandboxWorkError('unknown_credential', f"No saved sign-in this agent may use is called {', '.join(missing)}. "
                                'Use List Credentials to see the names.')
@@ -341,10 +410,37 @@ class SandboxWork:
     def run(self, command: str, cwd: str | None = None, timeout: float = 120, background: bool = False,
             env: dict | None = None, stdin: str | None = None, label: str | None = None) -> dict:
         # The person's saved variables (Settings, Computer), then the call's own.
-        merged = {**sandbox_env(self.user_id), **(env or {})}
+        merged = self.hide_keys({**sandbox_env(self.user_id), **(env or {})})
         body = {'command': command, 'cwd': cwd, 'timeout': timeout, 'background': background,
                 'env': merged, 'stdin': stdin, 'label': label}
         return self._call('POST', '/run', body, timeout=(15 if background else float(timeout) + 30))
+
+    def hide_keys(self, env: dict[str, str]) -> dict[str, str]:
+        """Swap every hidden value for its placeholder and send the command's
+        HTTPS through the key proxy, which fills the real values in for their
+        own sites only. The real values never reach the container."""
+        from cognitrix.common.key_proxy import HiddenValue, hiding_enabled
+        hidden = {k: v for k, v in env.items() if isinstance(v, HiddenValue)}
+        if not hidden:
+            return env
+        if not hiding_enabled():
+            return {k: str(v) for k, v in env.items()}
+        from cognitrix.common.key_proxy import get_proxy
+        from cognitrix.computer import DriverError, Unsupported
+        from cognitrix.computer.sandbox.client import get_manager, user_key
+        try:
+            extra = get_manager().key_proxy_env(self.user_id)
+        except (DriverError, Unsupported) as exc:
+            raise SandboxWorkError('no_sandbox', str(exc)) from None
+        except Exception as exc:
+            logger.warning("The sandbox key proxy didn't start", exc_info=True)
+            raise SandboxWorkError('key_proxy', "This command needs keys the sandbox only gets through Cognitrix's key "
+                                   f"proxy, and the proxy didn't start ({exc}). Ask the person to check Docker, or "
+                                   'to set COGNITRIX_SANDBOX_HIDE_KEYS=0 to pass keys in directly.') from None
+        proxy, person = get_proxy(), user_key(self.user_id)
+        out = {k: (proxy.placeholder(person, k, v) if isinstance(v, HiddenValue) else v) for k, v in env.items()}
+        out.update(extra)
+        return out
 
     def read_job(self, job_id: str, filter_re: str | None = None) -> dict:
         return self._call('POST', f'/jobs/{self._q(job_id)}/read', {'filter': filter_re})
@@ -617,12 +713,15 @@ def describe_changes(files: list[dict], limit: int = 40) -> str:
 
 def cli_env(key: str) -> dict[str, str]:
     """API key variables for a coding agent CLI run in the sandbox."""
+    from cognitrix.common.key_proxy import HiddenValue
     from cognitrix.providers.saved_keys import env_key, get_saved_key
     env: dict[str, str] = {}
     for provider, var in CLI_KEYS.get(key, ()):
         value = env_key(provider) or get_saved_key(provider)
         if value:
-            env[var] = value
+            # The CLI gets a placeholder; the key proxy fills the real key in
+            # only for the provider's own API host.
+            env[var] = HiddenValue(value, PROVIDER_HOSTS[provider], var)
     return env
 
 
@@ -677,6 +776,10 @@ def sandbox_prompt(folders: Any, agent_id: Any, user_id: Any = None) -> str:
     if names:
         lines.append('- Environment variables the person set for the sandbox (every command gets them; '
                      "don't print their values): " + ', '.join(names[:60]))
+    lines.append('- API keys and tokens with approved sites (coding agent keys, saved sign-ins, some variables) '
+                 'arrive as placeholders containing "cgxph". They work as they are: HTTPS requests to the approved '
+                 'sites carry the real value, filled in outside the sandbox. Use them normally; don\'t try to '
+                 'decode them, and keep the proxy variables (HTTPS_PROXY, SSL_CERT_FILE) as they are.')
     lines.append('- To use a saved sign-in (List Credentials) in a command, pass its name in Bash or Run Tests '
                  '`credentials`: a token arrives as the variable NAME, a username and password as NAME_USERNAME '
                  'and NAME_PASSWORD, only for that command, and the person approves it. Never print them.')

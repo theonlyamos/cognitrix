@@ -14,6 +14,7 @@ export function SandboxEnvCard() {
   const [vars, setVars] = useState<SandboxEnvVar[] | null>(null);
   const [name, setName] = useState('');
   const [value, setValue] = useState('');
+  const [hosts, setHosts] = useState('');
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -49,9 +50,13 @@ export function SandboxEnvCard() {
       return;
     }
     const rest = (vars ?? []).filter((v) => v.name !== clean).map((v) => ({ name: v.name }));
-    if (await save([...rest, { name: clean, value }])) {
+    const sites = hosts.split(/[\s,]+/).map((h) => h.trim()).filter(Boolean);
+    // Changing only the sites keeps the saved value.
+    const keep = editing !== null && value === '';
+    if (await save([...rest, { name: clean, value: keep ? undefined : value, hosts: sites }])) {
       setName('');
       setValue('');
+      setHosts('');
       setEditing(null);
     }
   }
@@ -64,7 +69,8 @@ export function SandboxEnvCard() {
         <p className="text-[13.5px] font-medium">Environment variables</p>
         <p className="text-[12.5px] text-fg-dim">
           Every command, test run and coding agent in your sandbox gets these, for example DATABASE_URL or NODE_ENV.
-          Values are stored encrypted and hidden here. For tokens agents should use only when you approve, add a saved sign-in instead.
+          Values are stored encrypted and hidden here. For an API key or token, fill in <span className="font-medium">Only sent to</span>:
+          the agent then gets a stand-in, and Cognitrix swaps in the real value only on requests to those sites, so the key never enters the sandbox.
         </p>
       </div>
       {vars && vars.length > 0 && (
@@ -72,9 +78,15 @@ export function SandboxEnvCard() {
           {vars.map((v) => (
             <li key={v.name} className="flex flex-wrap items-center gap-2 px-3 py-2">
               <span className="font-mono text-[13px]">{v.name}</span>
-              <span className="font-mono text-[11.5px] text-fg-dim">{v.preview}</span>
+              {v.hosts && v.hosts.length > 0 ? (
+                <span className="text-[11.5px] text-fg-dim" title="The sandbox gets a stand-in; the real value is only sent to these sites">
+                  Hidden · only sent to {v.hosts.join(', ')}
+                </span>
+              ) : (
+                <span className="font-mono text-[11.5px] text-fg-dim">{v.preview}</span>
+              )}
               <span className="flex-1" />
-              <button type="button" onClick={() => { setEditing(v.name); setName(v.name); setValue(''); setError(''); }}
+              <button type="button" onClick={() => { setEditing(v.name); setName(v.name); setValue(''); setHosts((v.hosts ?? []).join(', ')); setError(''); }}
                 className="text-[12.5px] text-fg-dim hover:text-fg">
                 Change
               </button>
@@ -90,13 +102,15 @@ export function SandboxEnvCard() {
         <Input aria-label="Variable name" value={name} onChange={(e) => setName(e.target.value.toUpperCase().replace(/\s+/g, '_'))}
           placeholder="NAME" className="h-9 w-44 font-mono text-[13px]" readOnly={editing !== null} />
         <Input aria-label="Variable value" type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)}
-          placeholder={editing ? 'New value' : 'Value'} className="h-9 min-w-[10rem] flex-1 font-mono text-[13px]" />
+          placeholder={editing ? 'New value (empty keeps it)' : 'Value'} className="h-9 min-w-[10rem] flex-1 font-mono text-[13px]" />
+        <Input aria-label="Only sent to" value={hosts} onChange={(e) => setHosts(e.target.value)}
+          placeholder="Only sent to (optional), e.g. api.github.com" className="h-9 w-full font-mono text-[13px] sm:w-64" />
         <button type="submit" disabled={busy || !name.trim()}
           className="h-9 rounded-lg bg-accent px-3 text-[13px] font-medium text-accent-foreground hover:opacity-90 disabled:opacity-60">
           {busy ? 'Saving…' : editing ? 'Save' : 'Add'}
         </button>
         {editing && (
-          <button type="button" onClick={() => { setEditing(null); setName(''); setValue(''); }}
+          <button type="button" onClick={() => { setEditing(null); setName(''); setValue(''); setHosts(''); }}
             className="h-9 rounded-lg border border-line px-3 text-[13px] hover:bg-panel-2">
             Cancel
           </button>
