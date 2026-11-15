@@ -33,7 +33,7 @@ from cognitrix.tools.management import (
     update_task,
 )
 from cognitrix.tools.mcp import list_mcp_tools, run_mcp_tool
-from cognitrix.tools.meetings import join_meeting, leave_meeting, meeting_transcript, say_in_meeting
+from cognitrix.tools.meetings import join_meeting, leave_meeting, meeting_transcript, say_in_meeting, upcoming_calls
 from cognitrix.tools.memory import memory
 from cognitrix.tools.payments import cancel_payment, pay, request_payment
 from cognitrix.tools.sandbox_work import (
@@ -106,7 +106,7 @@ __all__ = [
     'start_chat', 'check_chat', 'message_chat',
     'spawn_workers', 'swarm', 'swarm_team',
     'memory', 'search_chats', 'read_chat', 'set_theme', 'search_knowledge', 'learn_from_website', 'send_email',
-    'join_meeting', 'meeting_transcript', 'say_in_meeting', 'leave_meeting',
+    'join_meeting', 'meeting_transcript', 'say_in_meeting', 'leave_meeting', 'upcoming_calls',
     'request_payment', 'pay', 'cancel_payment',
     'take_screenshot', 'text_input', 'key_press', 'hot_key',
     'mouse_click', 'mouse_double_click', 'mouse_right_click', 'mouse_scroll',

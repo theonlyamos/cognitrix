@@ -7,6 +7,7 @@ import { Input } from '@/lib/components/ui/input';
 import { Select } from '@/lib/components/ui/select';
 import { ComputerPanel } from '@/components/ComputerPanel';
 import MarkdownMessage from '@/components/MarkdownMessage';
+import { UpcomingCalls } from '@/components/UpcomingCalls';
 import { PageHeader, LoadingState, ErrorState, EmptyState } from '@/components/list-ui';
 import { cn } from '@/lib/utils';
 import { tr, dateLocale } from '@/lib/i18n';
@@ -396,17 +397,20 @@ export default function Meetings() {
   const [agentId, setAgentId] = useState('');
   const [params, setParams] = useSearchParams();
   const [open, setOpen] = useState<string | null>(params.get('open'));
+  const [callId] = useState<string | null>(params.get('call'));
   const [joining, setJoining] = useState(false);
   const [uploading, setUploading] = useState('');
   const [uploadError, setUploadError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const meetings = data?.meetings ?? [];
 
-  // An Inbox alert links here with ?open=<id>; keep the address clean after.
+  // An Inbox alert links here with ?open=<id> (a meeting) or ?call=<id> (a
+  // calendar call); keep the address clean after.
   useEffect(() => {
-    if (params.get('open')) {
+    if (params.get('open') || params.get('call')) {
       const next = new URLSearchParams(params);
       next.delete('open');
+      next.delete('call');
       setParams(next, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -485,6 +489,8 @@ export default function Meetings() {
               <JoinCall agents={agents} live={data?.live} onCancel={() => setJoining(false)}
                 onJoined={(id) => { setJoining(false); setOpen(id); refetch({ silent: true }); }} />
             )}
+            <UpcomingCalls agents={agents} highlight={callId}
+              onOpenMeeting={(id) => { setOpen(id); refetch({ silent: true }); }} />
             {agents.length > 1 && (
               <label className="flex flex-wrap items-center gap-2 text-[12.5px] text-fg-dim">
                 {tr('ui.meetings.notesWrittenBy')}

@@ -5,7 +5,9 @@ from the browser on its desktop in the agents' sandboxed computer. It asks
 the person first (see destructive_ops). Once in, the agent listens, keeps a
 transcript, answers when someone says its name, and writes notes when the
 call ends. Meeting Transcript reads what was said so far, Say In Meeting
-speaks or writes in the call, and Leave Meeting brings it back.
+speaks or writes in the call, and Leave Meeting brings it back. Upcoming
+Calls lists the calls found in the person's Google Calendar
+(cognitrix/meetings/calendar_calls.py); it can't send an agent to one.
 
 A chat's agent gets these tools for its turns while the sandboxed computer
 is on (``sessions/base.py``).
@@ -18,7 +20,7 @@ from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import ToolOutcome
 
 MEETING_TOOL_CATEGORY = 'meetings'
-MEETING_TOOL_NAMES = ('join_meeting', 'meeting_transcript', 'say_in_meeting', 'leave_meeting')
+MEETING_TOOL_NAMES = ('join_meeting', 'meeting_transcript', 'say_in_meeting', 'leave_meeting', 'upcoming_calls')
 
 
 def _who(parent: Any) -> tuple[str, str]:
@@ -139,3 +141,38 @@ async def leave_meeting(meeting_id: str | None = None, *, parent: Any | None = N
     if row is None or not live.request_leave(str(row.id)):
         return ToolOutcome.failure('not_in_call', 'You are not in a call right now.')
     return 'Leaving the call. The notes will be on the Meetings page in a minute.'
+
+
+@tool(category=MEETING_TOOL_CATEGORY, supported_interfaces=['web', 'ws', 'task'])
+async def upcoming_calls(hours: int = 24, *, parent: Any | None = None):
+    """List the person's upcoming Google Meet, Teams and Zoom calls from their connected Google Calendar, and
+    whether an agent will join each. You can mention them or suggest sitting in on one, but only the person
+    decides, on the Meetings page.
+    Args:
+        hours (int, optional): How far ahead to look, up to 24 hours.
+    """
+    from datetime import timedelta
+
+    from cognitrix.meetings import calendar_calls as cc
+    from cognitrix.meetings.live import PLATFORM_LABELS
+
+    user_id, _agent_id = _who(parent)
+    if not user_id:
+        return ToolOutcome.failure('no_owner', 'Only the person who owns this agent has a calendar here.')
+    if await cc.calendar_connection(user_id) is None:
+        return ToolOutcome.failure('no_calendar', 'Google Calendar is not connected. The person can connect it '
+                                   'in Settings › Connected apps.')
+    now = cc.utcnow()
+    until = (now + timedelta(hours=max(1, min(24, int(hours or 24))))).strftime(cc.FMT)
+    calls = [c for c in await cc.upcoming(user_id, now) if c.starts_at <= until]
+    settings = await cc.settings_for(user_id)
+    if not settings.enabled:
+        return 'Calendar call suggestions are off. The person can turn them on on the Meetings page.'
+    if not calls:
+        return 'No calls with a meeting link in that time.'
+    status = {cc.SUGGESTED: 'not decided yet', cc.APPROVED: 'an agent will join', cc.SKIPPED: 'skipped',
+              cc.JOINED: 'an agent was sent', cc.MISSED: 'missed', cc.FAILED: 'an agent could not join',
+              cc.CANCELLED: 'cancelled'}
+    lines = [f'- {c.starts_at} UTC, "{c.title}" ({PLATFORM_LABELS.get(c.platform, "call")}'
+             f'{", by " + c.organizer if c.organizer else ""}): {status.get(c.status, c.status)}' for c in calls]
+    return 'Upcoming calls (times in UTC):\n' + '\n'.join(lines)

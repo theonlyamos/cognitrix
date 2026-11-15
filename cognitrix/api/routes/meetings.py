@@ -11,6 +11,13 @@ Live calls (``cognitrix/meetings/live.py``): ``POST /meetings/live`` sends an
 agent into a Google Meet, Teams or Zoom call from the browser on its desktop
 in the agents' sandboxed computer; ``POST /meetings/{id}/leave`` brings it
 back, and ``POST /meetings/{id}/say`` has it say something in the call.
+
+Calls from Google Calendar (``cognitrix/meetings/calendar_calls.py``):
+``GET /meetings/calendar`` lists the upcoming calls found in the connected
+calendar, ``PUT /meetings/calendar`` changes how they are suggested,
+``POST /meetings/calendar/check`` reads the calendar now, and
+``POST /meetings/calendar/calls/{id}`` is the person's answer for one call
+(send an agent, skip, or always / never for the series).
 """
 from __future__ import annotations
 
@@ -24,6 +31,7 @@ from pydantic import BaseModel, Field
 
 from cognitrix.agents import access as agent_access
 from cognitrix.common.security import AuthContext, get_auth_context, jwt_only
+from cognitrix.meetings import calendar_calls
 from cognitrix.meetings import live as live_meetings
 from cognitrix.meetings import notes as meeting_notes
 from cognitrix.meetings.notes import MeetingNote
@@ -51,6 +59,18 @@ class LiveJoin(BaseModel):
     reply_mode: str = 'chat'
     announce: bool = True
     language: str | None = Field(default=None, max_length=12)
+
+
+class CalendarSettingsBody(BaseModel):
+    enabled: bool | None = None
+    agent_id: str | None = None
+    auto_join: str | None = None
+    never_words: str | None = Field(default=None, max_length=calendar_calls.MAX_WORDS)
+    remind_minutes: int | None = Field(default=None, ge=1, le=120)
+
+
+class CallAnswer(BaseModel):
+    action: str
 
 
 class SayInCall(BaseModel):
@@ -160,6 +180,57 @@ async def start_live(user_key: str, *, url: str, agent_id: str = '', title: str 
     await row.save()
     live_meetings.start(str(row.id))
     return row
+
+
+async def _calendar_view(user_key: str) -> dict[str, Any]:
+    settings = await calendar_calls.settings_for(user_key)
+    connected = await calendar_calls.calendar_connection(user_key) is not None
+    calls = await calendar_calls.upcoming(user_key) if connected else []
+    return {
+        'connected': connected,
+        'settings': calendar_calls.settings_view(settings),
+        'calls': [calendar_calls.view(c) for c in calls],
+    }
+
+
+@meetings_api.get('/calendar')
+async def calendar_list(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    return await _calendar_view(_me(ctx))
+
+
+@meetings_api.put('/calendar')
+async def calendar_settings(body: CalendarSettingsBody, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    user_key = _me(ctx)
+    agent_id = await _check_agent(user_key, body.agent_id) if body.agent_id is not None else None
+    try:
+        await calendar_calls.save_settings(user_key, enabled=body.enabled, agent_id=agent_id,
+                                           auto_join=body.auto_join, never_words=body.never_words,
+                                           remind_minutes=body.remind_minutes)
+    except calendar_calls.CalendarError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return await _calendar_view(user_key)
+
+
+@meetings_api.post('/calendar/check')
+async def calendar_check(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    user_key = _me(ctx)
+    try:
+        await calendar_calls.check(user_key)
+    except calendar_calls.CalendarError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    await calendar_calls.act(user_id=user_key)
+    return await _calendar_view(user_key)
+
+
+@meetings_api.post('/calendar/calls/{call_id}')
+async def calendar_answer(call_id: str, body: CallAnswer, ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
+    """Only the signed-in person answers: agents can list calls but never send one."""
+    user_key = _me(ctx)
+    try:
+        await calendar_calls.answer(user_key, call_id, body.action)
+    except calendar_calls.CalendarError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return await _calendar_view(user_key)
 
 
 @meetings_api.post('/live')
