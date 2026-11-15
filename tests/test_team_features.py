@@ -801,7 +801,7 @@ async def test_whatsapp_settings_webhook_handshake_and_closed_window(db, monkeyp
     await create_notification('u1', 'Build finished', 'All green')
     assert await service.deliver_once() == 1 and await service.deliver_once() == 0
     assert len(transport.sent) == 1 and len(await ChannelDelivery.find({'channel_id': row.id})) == 1
-    assert channel_service.WEBHOOK_KINDS == ('teams', 'whatsapp')
+    assert channel_service.WEBHOOK_KINDS == ('teams', 'whatsapp', 'sms')
 
 
 async def test_a_guest_cannot_answer_a_question_from_the_owners_turn(db, monkeypatch):
