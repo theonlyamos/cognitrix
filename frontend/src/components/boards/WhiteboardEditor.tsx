@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { SaveStatus, saveLabel, useDocumentSave } from '@/components/boards/useDocumentSave';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 export type ItemType = 'note' | 'rect' | 'ellipse' | 'text' | 'arrow' | 'line' | 'draw';
 export interface BoardItem {
@@ -39,13 +40,13 @@ const newId = () => Math.random().toString(16).slice(2, 12);
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 const TOOLS: { id: Tool; label: string; key: string; icon: typeof Square }[] = [
-  { id: 'select', label: 'Select and move', key: 'v', icon: MousePointer2 },
-  { id: 'note', label: 'Sticky note', key: 'n', icon: StickyNote },
-  { id: 'rect', label: 'Box', key: 'r', icon: Square },
-  { id: 'ellipse', label: 'Circle', key: 'o', icon: Circle },
-  { id: 'text', label: 'Text', key: 't', icon: Type },
-  { id: 'arrow', label: 'Arrow (drag from one item to another)', key: 'a', icon: ArrowUpRight },
-  { id: 'draw', label: 'Pen', key: 'p', icon: Pencil },
+  { id: 'select', get label() { return tr('ui.boards.whiteboardEditor.selectAndMove'); }, key: 'v', icon: MousePointer2 },
+  { id: 'note', get label() { return tr('ui.boards.whiteboardEditor.stickyNote'); }, key: 'n', icon: StickyNote },
+  { id: 'rect', get label() { return tr('ui.boards.whiteboardEditor.box'); }, key: 'r', icon: Square },
+  { id: 'ellipse', get label() { return tr('ui.boards.whiteboardEditor.circle'); }, key: 'o', icon: Circle },
+  { id: 'text', get label() { return tr('ui.boards.whiteboardEditor.text'); }, key: 't', icon: Type },
+  { id: 'arrow', get label() { return tr('ui.boards.whiteboardEditor.arrowDragFromOneItem'); }, key: 'a', icon: ArrowUpRight },
+  { id: 'draw', get label() { return tr('ui.boards.whiteboardEditor.pen'); }, key: 'p', icon: Pencil },
 ];
 
 function parse(source: string): BoardItem[] {
@@ -371,7 +372,7 @@ export function WhiteboardEditor({ pageId, version, source, onSaved, onReload, o
   return (
     <div className="flex h-full min-h-0 flex-col bg-panel text-fg">
       <SaveStatus state={saver.state} message={saver.message} onRetry={saver.retry} onReload={onReload} />
-      <div className="flex flex-none flex-wrap items-center gap-1 border-b border-line px-2 py-1" role="toolbar" aria-label="Whiteboard tools">
+      <div className="flex flex-none flex-wrap items-center gap-1 border-b border-line px-2 py-1" role="toolbar" aria-label={tr('ui.boards.whiteboardEditor.whiteboardTools')}>
         {TOOLS.map((t) => (
           <button key={t.id} type="button" aria-pressed={tool === t.id} aria-label={t.label} title={`${t.label} (${t.key.toUpperCase()})`}
             onClick={() => setTool(t.id)}
@@ -382,7 +383,7 @@ export function WhiteboardEditor({ pageId, version, source, onSaved, onReload, o
         <span className="mx-1 h-5 w-px bg-line" aria-hidden />
         {chosen && (
           <>
-            <div className="flex items-center gap-1" role="group" aria-label="Colour">
+            <div className="flex items-center gap-1" role="group" aria-label={tr('ui.boards.whiteboardEditor.colour')}>
               {Object.keys(PALETTE).map((name) => (
                 <button key={name} type="button" aria-label={name} aria-pressed={chosen.color === name} title={name}
                   onClick={() => update(chosen.id, { color: name })}
@@ -390,25 +391,25 @@ export function WhiteboardEditor({ pageId, version, source, onSaved, onReload, o
                   style={{ background: isShape(chosen) ? PALETTE[name][0] : stroke(name) }} />
               ))}
             </div>
-            <button type="button" aria-label="Delete" title="Delete (Del)" onClick={() => remove(chosen.id)}
+            <button type="button" aria-label={tr('ui.boards.whiteboardEditor.delete')} title={tr('ui.boards.whiteboardEditor.deleteDel')} onClick={() => remove(chosen.id)}
               className="grid h-8 w-8 place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-danger-ink"><Trash2 size={15} /></button>
           </>
         )}
         <span className="ml-auto flex items-center gap-1">
-          <button type="button" className="grid h-8 w-8 place-items-center rounded-md text-fg-dim hover:bg-panel-2 disabled:opacity-40" onClick={undo} disabled={!past.current.length} aria-label="Undo"><Undo2 size={15} /></button>
-          <button type="button" className="grid h-8 w-8 place-items-center rounded-md text-fg-dim hover:bg-panel-2 disabled:opacity-40" onClick={redo} disabled={!future.current.length} aria-label="Redo"><Redo2 size={15} /></button>
-          <button type="button" className="grid h-8 w-8 place-items-center rounded-md text-fg-dim hover:bg-panel-2" onClick={() => zoomBy(1 / 1.2)} aria-label="Zoom out"><Minus size={15} /></button>
+          <button type="button" className="grid h-8 w-8 place-items-center rounded-md text-fg-dim hover:bg-panel-2 disabled:opacity-40" onClick={undo} disabled={!past.current.length} aria-label={tr('ui.boards.whiteboardEditor.undo')}><Undo2 size={15} /></button>
+          <button type="button" className="grid h-8 w-8 place-items-center rounded-md text-fg-dim hover:bg-panel-2 disabled:opacity-40" onClick={redo} disabled={!future.current.length} aria-label={tr('ui.boards.whiteboardEditor.redo')}><Redo2 size={15} /></button>
+          <button type="button" className="grid h-8 w-8 place-items-center rounded-md text-fg-dim hover:bg-panel-2" onClick={() => zoomBy(1 / 1.2)} aria-label={tr('ui.boards.whiteboardEditor.zoomOut')}><Minus size={15} /></button>
           <span className="w-10 text-center font-mono text-[11px] text-fg-dim">{Math.round(zoom * 100)}%</span>
-          <button type="button" className="grid h-8 w-8 place-items-center rounded-md text-fg-dim hover:bg-panel-2" onClick={() => zoomBy(1.2)} aria-label="Zoom in"><Plus size={15} /></button>
-          <button type="button" className="grid h-8 w-8 place-items-center rounded-md text-fg-dim hover:bg-panel-2" onClick={fit} aria-label="Show everything" title="Show everything"><Maximize size={14} /></button>
+          <button type="button" className="grid h-8 w-8 place-items-center rounded-md text-fg-dim hover:bg-panel-2" onClick={() => zoomBy(1.2)} aria-label={tr('ui.boards.whiteboardEditor.zoomIn')}><Plus size={15} /></button>
+          <button type="button" className="grid h-8 w-8 place-items-center rounded-md text-fg-dim hover:bg-panel-2" onClick={fit} aria-label={tr('ui.boards.whiteboardEditor.showEverything')} title={tr('ui.boards.whiteboardEditor.showEverything')}><Maximize size={14} /></button>
           <span className="ml-1 font-mono text-[11px] text-fg-dim" role="status">{saveLabel(saver.state)}</span>
         </span>
       </div>
 
-      <div ref={boxRef} tabIndex={0} onWheel={onWheel} aria-label="Whiteboard"
+      <div ref={boxRef} tabIndex={0} onWheel={onWheel} aria-label={tr('ui.boards.whiteboardEditor.whiteboard')}
         className={cn('relative min-h-0 flex-1 overflow-hidden outline-none', tool === 'select' ? 'cursor-default' : 'cursor-crosshair')}
         style={{ backgroundImage: 'radial-gradient(rgb(var(--fg-dim-rgb, 120 120 120) / 0.25) 1px, transparent 1px)', backgroundSize: `${24 * zoom}px ${24 * zoom}px`, backgroundPosition: `${pan.x}px ${pan.y}px` }}>
-        <svg className="absolute inset-0 h-full w-full touch-none select-none" role="img" aria-label={`${items.length} items`}
+        <svg className="absolute inset-0 h-full w-full touch-none select-none" role="img" aria-label={tr('ui.boards.whiteboardEditor.lengthItems', { length: items.length })}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
           onDoubleClick={(event) => {
             const id = (event.target as Element).closest?.('[data-item-id]')?.getAttribute('data-item-id');
@@ -465,7 +466,7 @@ export function WhiteboardEditor({ pageId, version, source, onSaved, onReload, o
                       </div>
                     </foreignObject>
                   )}
-                  {isSel && <rect data-handle="resize" x={x + w - 6} y={y + h - 6} width={12} height={12} rx={2} fill="#2f6fd1" className="cursor-nwse-resize" aria-label="Resize" />}
+                  {isSel && <rect data-handle="resize" x={x + w - 6} y={y + h - 6} width={12} height={12} rx={2} fill="#2f6fd1" className="cursor-nwse-resize" aria-label={tr('ui.boards.whiteboardEditor.resize')} />}
                 </g>
               );
             })}
@@ -479,11 +480,11 @@ export function WhiteboardEditor({ pageId, version, source, onSaved, onReload, o
         </svg>
         {items.length === 0 && !editingText && (
           <p className="pointer-events-none absolute inset-x-0 top-1/3 text-center text-[13px] text-fg-dim">
-            Pick a sticky note, box or pen above, then click the board. Drag between two items with the arrow to join them.
+            {tr('ui.boards.whiteboardEditor.pickAStickyNoteBox')}
           </p>
         )}
         {editingText && editBox && (
-          <textarea autoFocus ref={(el) => { if (el && document.activeElement !== el) window.setTimeout(() => el.focus(), 0); }} aria-label="Item text" value={editingText.text}
+          <textarea autoFocus ref={(el) => { if (el && document.activeElement !== el) window.setTimeout(() => el.focus(), 0); }} aria-label={tr('ui.boards.whiteboardEditor.itemText')} value={editingText.text}
             onChange={(e) => setEditingText({ id: editingText.id, text: e.target.value })}
             onBlur={finishText}
             onKeyDown={(e) => {

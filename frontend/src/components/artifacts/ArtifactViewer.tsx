@@ -15,6 +15,7 @@ import { ConsentDialog } from '@/components/artifacts/ConsentDialog';
 import { ShareDialog } from '@/components/artifacts/ShareDialog';
 import { DataDocument } from '@/components/boards/DataDocument';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const POLL_MS = 5000;
 const iconButton = 'grid h-9 w-9 flex-none place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8 md:w-8';
@@ -22,18 +23,18 @@ const menuItem = 'flex w-full items-center px-3 py-2 text-left text-[13px] hover
 
 export function AccessBadge({ access }: { access: PageDetail['access'] }) {
   if (access === 'public') {
-    return <span className="inline-flex items-center gap-1 rounded-md bg-warn/15 px-1.5 py-0.5 font-mono text-[10.5px] text-warn-ink"><Globe size={11} />Public</span>;
+    return <span className="inline-flex items-center gap-1 rounded-md bg-warn/15 px-1.5 py-0.5 font-mono text-[10.5px] text-warn-ink"><Globe size={11} />{tr('ui.artifacts.artifactViewer.public')}</span>;
   }
   if (access === 'workspace' || access === 'people') {
-    return <span className="inline-flex items-center gap-1 rounded-md bg-info/15 px-1.5 py-0.5 font-mono text-[10.5px] text-info-ink"><Users size={11} />{access === 'workspace' ? 'Everyone' : 'Shared'}</span>;
+    return <span className="inline-flex items-center gap-1 rounded-md bg-info/15 px-1.5 py-0.5 font-mono text-[10.5px] text-info-ink"><Users size={11} />{access === 'workspace' ? tr('ui.artifacts.artifactViewer.everyone') : tr('ui.artifacts.artifactViewer.shared')}</span>;
   }
-  return <span className="inline-flex items-center gap-1 rounded-md bg-panel-2 px-1.5 py-0.5 font-mono text-[10.5px] text-fg-dim"><Lock size={11} />Private</span>;
+  return <span className="inline-flex items-center gap-1 rounded-md bg-panel-2 px-1.5 py-0.5 font-mono text-[10.5px] text-fg-dim"><Lock size={11} />{tr('ui.artifacts.artifactViewer.private')}</span>;
 }
 
 export function LiveBadge() {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-md bg-accent/15 px-1.5 py-0.5 font-mono text-[10.5px] text-accent-ink">
-      <span className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_0_3px_rgba(198,242,78,0.25)]" />Live
+      <span className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_0_3px_rgba(198,242,78,0.25)]" />{tr('ui.artifacts.artifactViewer.live')}
     </span>
   );
 }
@@ -80,7 +81,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
       setPage(data);
       setError('');
     } catch (e) {
-      setError(errorMessage(e, 'Could not open this artifact.'));
+      setError(errorMessage(e, tr('ui.artifacts.artifactViewer.couldNotOpenThisArtifact')));
     }
   }, [pageId]);
 
@@ -131,7 +132,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
     let live = true;
     api.get<{ url: string; version: number }>(`/artifact-pages/${page.id}/frame`, { params: { v: shownVersion } })
       .then(({ data }) => { if (live) setFrame({ url: data.url, version: data.version }); })
-      .catch((e) => { if (live) setNotice(errorMessage(e, 'That version is gone.')); });
+      .catch((e) => { if (live) setNotice(errorMessage(e, tr('ui.artifacts.artifactViewer.thatVersionIsGone'))); });
     return () => { live = false; };
   }, [page, shownVersion, pinnedVersion, frame?.version]);
 
@@ -140,7 +141,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
     let live = true;
     api.get<{ source: string; version: number }>(`/artifact-pages/${page.id}/source`, { params: { v: shownVersion } })
       .then(({ data }) => { if (live) setSource({ version: data.version, text: data.source }); })
-      .catch((e) => { if (live) setNotice(errorMessage(e, 'Could not load the source.')); });
+      .catch((e) => { if (live) setNotice(errorMessage(e, tr('ui.artifacts.artifactViewer.couldNotLoadTheSource'))); });
     return () => { live = false; };
   }, [view, page, shownVersion, source?.version]);
 
@@ -163,7 +164,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
       list.push({ id: thread.id, n: index + 1, x: thread.anchor.x, y: thread.anchor.y, title: thread.body.slice(0, 80), active: thread.id === activeThread });
     });
     if (draftAnchor?.x !== undefined && draftAnchor.y !== undefined) {
-      list.push({ id: 'draft', n: threads.length + 1, x: draftAnchor.x, y: draftAnchor.y, title: 'New comment', active: true });
+      list.push({ id: 'draft', n: threads.length + 1, x: draftAnchor.x, y: draftAnchor.y, title: tr('ui.artifacts.artifactViewer.newComment'), active: true });
     }
     return list;
   }, [threads, commentsOpen, activeThread, draftAnchor]);
@@ -178,7 +179,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
       if (!opts.threadId) setActiveThread(data.id);
       return data.agent;
     } catch (e) {
-      throw new Error(errorMessage(e, 'Could not post the comment.'));
+      throw new Error(errorMessage(e, tr('ui.artifacts.artifactViewer.couldNotPostTheComment')));
     }
   };
 
@@ -187,7 +188,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
       const { data } = await api.post<{ threads: CommentThread[] }>(`/artifact-pages/${pageId}/comments/${threadId}/resolve`, { resolved });
       setThreads(data.threads);
     } catch (e) {
-      setNotice(errorMessage(e, 'Could not change the thread.'));
+      setNotice(errorMessage(e, tr('ui.artifacts.artifactViewer.couldNotChangeTheThread')));
     }
   };
 
@@ -198,7 +199,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
       setNotice(done);
       void load();
     } catch (e) {
-      setNotice(errorMessage(e, 'That did not work.'));
+      setNotice(errorMessage(e, tr('ui.artifacts.artifactViewer.thatDidNotWork')));
     }
   };
 
@@ -206,15 +207,15 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
     return (
       <section className="flex h-full min-h-0 flex-col bg-panel">
         <header className="flex h-12 flex-none items-center gap-2 border-b border-line px-3">
-          <span className="text-[13.5px] font-semibold">Artifact</span>
-          {onClose && <button type="button" onClick={onClose} aria-label="Close" className={cn(iconButton, 'ml-auto')}><X size={16} /></button>}
+          <span className="text-[13.5px] font-semibold">{tr('ui.artifacts.artifactViewer.artifact_aa77')}</span>
+          {onClose && <button type="button" onClick={onClose} aria-label={tr('ui.artifacts.artifactViewer.close')} className={cn(iconButton, 'ml-auto')}><X size={16} /></button>}
         </header>
         <p role="alert" className="p-4 text-[13px] text-fg-dim">{error}</p>
       </section>
     );
   }
   if (!page) {
-    return <section className="flex h-full items-center justify-center bg-panel font-mono text-[12px] text-fg-dim" role="status">opening artifact…</section>;
+    return <section className="flex h-full items-center justify-center bg-panel font-mono text-[12px] text-fg-dim" role="status">{tr('ui.artifacts.artifactViewer.openingArtifact')}</section>;
   }
 
   const editor = page.role !== 'view';
@@ -228,39 +229,39 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
   const editing = !!dataFormat && editor && !behind && shownVersion === page.version && view === 'preview' && !picking;
   const download = {
     html: { type: 'text/html', ext: 'html', label: 'HTML' },
-    markdown: { type: 'text/markdown', ext: 'md', label: 'Markdown' },
+    markdown: { type: 'text/markdown', ext: 'md', label: tr('ui.artifacts.artifactViewer.markdown') },
     sheet: { type: 'application/json', ext: 'json', label: 'JSON' },
     whiteboard: { type: 'application/json', ext: 'json', label: 'JSON' },
   }[page.format];
   const FormatIcon = page.format === 'sheet' ? Table2 : page.format === 'whiteboard' ? Shapes : LayoutPanelTop;
 
   return (
-    <section aria-label={`Artifact: ${page.title}`} className="relative flex h-full min-h-0 flex-col bg-bg">
+    <section aria-label={tr('ui.artifacts.artifactViewer.artifactTitle', { title: page.title })} className="relative flex h-full min-h-0 flex-col bg-bg">
       <header className={cn('flex flex-none items-center gap-1.5 border-b border-line py-1.5 pr-2 md:px-3', variant === 'page' ? 'app-page-header min-h-14 pl-16 md:min-h-12' : 'min-h-12 pl-2')}>
         {variant === 'page' && (
-          <Link to={dataFormat ? '/apps?tab=boards' : '/apps?tab=pages'} aria-label={dataFormat ? 'All sheets and whiteboards' : 'All pages'} className={iconButton}><ArrowLeft size={16} /></Link>
+          <Link to={dataFormat ? '/apps?tab=boards' : '/apps?tab=pages'} aria-label={dataFormat ? tr('ui.artifacts.artifactViewer.allSheetsAndWhiteboards') : tr('ui.artifacts.artifactViewer.allPages')} className={iconButton}><ArrowLeft size={16} /></Link>
         )}
         {variant === 'panel' && onBack && !expanded && (
           <button type="button" onClick={onBack} className="inline-flex h-9 flex-none items-center gap-1 rounded-lg px-2 font-mono text-[11.5px] text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8">
-            <span aria-hidden>‹</span> This chat
+            <span aria-hidden>‹</span>{' '}{tr('ui.artifacts.artifactViewer.thisChat')}
           </button>
         )}
         <FormatIcon size={15} className="ml-1 hidden flex-none text-fg-dim sm:block" aria-hidden />
         <h2 className="min-w-0 flex-shrink truncate text-[14px] font-semibold" title={page.title}>{page.title}</h2>
         {page.live && <LiveBadge />}
         {page.versions.length > 1 ? (
-          <select aria-label="Version" value={shownVersion}
+          <select aria-label={tr('ui.artifacts.artifactViewer.version')} value={shownVersion}
             onChange={(e) => { const v = Number(e.target.value); setPinnedVersion(v === page.version ? null : v); }}
-            className="h-8 w-[5.5rem] flex-none truncate rounded-md border border-line bg-panel px-1.5 font-mono text-[12px]" title="Versions">
+            className="h-8 w-[5.5rem] flex-none truncate rounded-md border border-line bg-panel px-1.5 font-mono text-[12px]" title={tr('ui.artifacts.artifactViewer.versions')}>
             {page.versions.map((v) => (
-              <option key={v.number} value={v.number}>v{v.number}{v.number === page.version ? ' · latest' : ''}{v.note ? ` · ${v.note.slice(0, 40)}` : ''}</option>
+              <option key={v.number} value={v.number}>v{v.number}{v.number === page.version ? tr('ui.artifacts.artifactViewer.latest') : ''}{v.note ? ` · ${v.note.slice(0, 40)}` : ''}</option>
             ))}
           </select>
         ) : (
           <span className="flex-none rounded-md border border-line bg-panel px-1.5 py-1 font-mono text-[12px]">v{shownVersion}</span>
         )}
         <span className="min-w-1 flex-1" />
-        <div role="tablist" aria-label="View" className="hidden flex-none rounded-lg border border-line bg-panel p-0.5 sm:inline-flex">
+        <div role="tablist" aria-label={tr('ui.artifacts.artifactViewer.view')} className="hidden flex-none rounded-lg border border-line bg-panel p-0.5 sm:inline-flex">
           {(['preview', 'code'] as const).map((mode) => (
             <button key={mode} type="button" role="tab" aria-selected={view === mode} onClick={() => setView(mode)}
               className={cn('rounded-md px-2.5 py-1 text-[12px] font-medium capitalize', view === mode ? 'bg-fg text-bg' : 'text-fg-dim hover:text-fg')}>
@@ -269,7 +270,7 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
           ))}
         </div>
         <button type="button" onClick={() => { setCommentsOpen((v) => !v); setPicking(false); }} aria-pressed={commentsOpen}
-          aria-label={`Comments${openCount ? `, ${openCount} open` : ''}`} title="Comments"
+          aria-label={`Comments${openCount ? `, ${openCount} open` : ''}`} title={tr('ui.artifacts.artifactViewer.comments')}
           className={cn(iconButton, 'relative', commentsOpen && 'bg-panel-2 text-fg')}>
           <MessageCircle size={16} />
           {openCount > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 font-mono text-[9.5px] font-semibold text-accent-foreground">{openCount}</span>}
@@ -277,38 +278,38 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
         {owner && (
           <button type="button" onClick={() => setShareOpen(true)}
             className="inline-flex h-9 flex-none items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 text-[12.5px] font-medium hover:bg-panel-2 md:h-8">
-            <Share size={14} /> <span className="hidden sm:inline">Share</span>
+            <Share size={14} /> <span className="hidden sm:inline">{tr('ui.artifacts.artifactViewer.share')}</span>
           </button>
         )}
         <div ref={menuRef} className="relative flex-none">
-          <button type="button" onClick={() => setMenuOpen((v) => !v)} aria-haspopup="menu" aria-expanded={menuOpen} aria-label="More" className={iconButton}>
+          <button type="button" onClick={() => setMenuOpen((v) => !v)} aria-haspopup="menu" aria-expanded={menuOpen} aria-label={tr('ui.artifacts.artifactViewer.more')} className={iconButton}>
             <MoreHorizontal size={16} />
           </button>
           {menuOpen && (
             <div role="menu" className="absolute right-0 top-full z-40 mt-1 w-60 overflow-hidden rounded-[10px] border border-line bg-panel py-1 shadow-xl">
               <button type="button" role="menuitem" className={cn(menuItem, 'sm:hidden')} onClick={() => { setView(view === 'code' ? 'preview' : 'code'); setMenuOpen(false); }}>
-                {view === 'code' ? 'Show preview' : 'Show code'}
+                {view === 'code' ? tr('ui.artifacts.artifactViewer.showPreview') : tr('ui.artifacts.artifactViewer.showCode')}
               </button>
               {owner && (
                 <button type="button" role="menuitem" className={menuItem}
-                  onClick={() => void act(() => api.patch(`/artifact-pages/${page.id}`, { pinned: !page.pinned }), page.pinned ? 'Taken off the dashboard' : 'Pinned to the dashboard')}>
-                  {page.pinned ? 'Unpin from dashboard' : 'Pin to dashboard'}
+                  onClick={() => void act(() => api.patch(`/artifact-pages/${page.id}`, { pinned: !page.pinned }), page.pinned ? tr('ui.artifacts.artifactViewer.takenOffTheDashboard') : tr('ui.artifacts.artifactViewer.pinnedToTheDashboard'))}>
+                  {page.pinned ? tr('ui.artifacts.artifactViewer.unpinFromDashboard') : tr('ui.artifacts.artifactViewer.pinToDashboard')}
                 </button>
               )}
               {editor && behind && (
                 <button type="button" role="menuitem" className={menuItem}
-                  onClick={() => void act(async () => { await api.post(`/artifact-pages/${page.id}/restore`, { version: shownVersion }); setPinnedVersion(null); }, `Version ${shownVersion} is the latest again`)}>
-                  Restore version {shownVersion}
+                  onClick={() => void act(async () => { await api.post(`/artifact-pages/${page.id}/restore`, { version: shownVersion }); setPinnedVersion(null); }, tr('ui.artifacts.artifactViewer.versionShownversionIsTheLatest', { shownVersion }))}>
+                  {tr('ui.artifacts.artifactViewer.restoreVersionShownversion', { shownVersion })}
                 </button>
               )}
               {owner && page.session_id && (
                 <button type="button" role="menuitem" className={menuItem} onClick={() => navigate(`/home?chat=${encodeURIComponent(page.session_id)}`)}>
-                  Open the chat it came from
+                  {tr('ui.artifacts.artifactViewer.openTheChatItCame')}
                 </button>
               )}
               {page.powers.length > 0 && (
                 <button type="button" role="menuitem" className={menuItem} onClick={() => { setAskConsent(true); setMenuOpen(false); }}>
-                  What this page may use…
+                  {tr('ui.artifacts.artifactViewer.whatThisPageMayUse')}
                 </button>
               )}
               <button type="button" role="menuitem" className={menuItem}
@@ -322,18 +323,18 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
                     link.download = `${page.title.replace(/[\\/:*?"<>|]/g, '_')}.${download.ext}`;
                     link.click();
                     window.setTimeout(() => URL.revokeObjectURL(href), 1000);
-                  }).catch((e) => setNotice(errorMessage(e, 'Could not download it.')));
+                  }).catch((e) => setNotice(errorMessage(e, tr('ui.artifacts.artifactViewer.couldNotDownloadIt'))));
                 }}>
-                Download {download.label}
+                {tr('ui.artifacts.artifactViewer.downloadValue', { value: download.label })}
               </button>
               {owner && (
                 <button type="button" role="menuitem" className={cn(menuItem, 'text-danger-ink')}
                   onClick={() => {
                     setMenuOpen(false);
-                    if (!window.confirm(`Delete “${page.title}” and all its versions and comments? Its links stop working.`)) return;
-                    void api.delete(`/artifact-pages/${page.id}`).then(() => (onGone ? onGone() : onClose?.()), (e) => setNotice(errorMessage(e, 'Could not delete it.')));
+                    if (!window.confirm(tr('ui.artifacts.artifactViewer.deleteTitleAndAllIts', { title: page.title }))) return;
+                    void api.delete(`/artifact-pages/${page.id}`).then(() => (onGone ? onGone() : onClose?.()), (e) => setNotice(errorMessage(e, tr('ui.artifacts.artifactViewer.couldNotDeleteIt'))));
                   }}>
-                  Delete artifact
+                  {tr('ui.artifacts.artifactViewer.deleteArtifact')}
                 </button>
               )}
             </div>
@@ -341,13 +342,13 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
         </div>
         {variant === 'panel' && (
           <>
-            <Link to={`/artifacts/${page.id}`} aria-label="Open as a full page" title="Open as a full page" className={cn(iconButton, 'hidden md:grid')}><ExternalLink size={15} /></Link>
+            <Link to={`/artifacts/${page.id}`} aria-label={tr('ui.artifacts.artifactViewer.openAsAFullPage')} title={tr('ui.artifacts.artifactViewer.openAsAFullPage')} className={cn(iconButton, 'hidden md:grid')}><ExternalLink size={15} /></Link>
             {onToggleExpand && (
-              <button type="button" onClick={onToggleExpand} aria-label={expanded ? 'Shrink the panel' : 'Expand the panel'} title={expanded ? 'Shrink' : 'Expand'} className={cn(iconButton, 'hidden md:grid')}>
+              <button type="button" onClick={onToggleExpand} aria-label={expanded ? tr('ui.artifacts.artifactViewer.shrinkThePanel') : tr('ui.artifacts.artifactViewer.expandThePanel')} title={expanded ? tr('ui.artifacts.artifactViewer.shrink') : tr('ui.artifacts.artifactViewer.expand')} className={cn(iconButton, 'hidden md:grid')}>
                 {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
               </button>
             )}
-            {onClose && <button type="button" onClick={onClose} aria-label="Close the artifact" className={iconButton}><X size={16} /></button>}
+            {onClose && <button type="button" onClick={onClose} aria-label={tr('ui.artifacts.artifactViewer.closeTheArtifact')} className={iconButton}><X size={16} /></button>}
           </>
         )}
       </header>
@@ -356,28 +357,28 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
         <div className="flex flex-none flex-wrap items-center gap-x-2 gap-y-1 border-b border-line bg-accent/10 px-3 py-2 text-[12.5px]">
           <Clock size={14} className="flex-none text-accent-ink" aria-hidden />
           <span className="min-w-0 flex-1">
-            Kept fresh by the task <Link to={`/tasks/${page.task.id}`} className="font-medium underline-offset-2 hover:underline">{page.task.title}</Link>
+            {tr('ui.artifacts.artifactViewer.keptFreshByTheTask')}{' '}<Link to={`/tasks/${page.task.id}`} className="font-medium underline-offset-2 hover:underline">{page.task.title}</Link>
             {page.task.schedule ? `, ${page.task.schedule}` : ''}.
-            {page.task.next_run_at ? ` Next update ${until(page.task.next_run_at)}.` : ''}
+            {page.task.next_run_at ? tr('ui.artifacts.artifactViewer.nextUpdateUntil', { until: until(page.task.next_run_at) }) : ''}
           </span>
           {editor && (
             <button type="button" className="inline-flex h-7 flex-none items-center rounded-md border border-line bg-panel px-2 text-[12px] hover:bg-panel-2"
-              onClick={() => void act(() => api.post(`/tasks/${page.task!.id}/run`, {}), 'Update started. The page changes when the task finishes.')}>
-              Update now
+              onClick={() => void act(() => api.post(`/tasks/${page.task!.id}/run`, {}), tr('ui.artifacts.artifactViewer.updateStartedThePageChanges'))}>
+              {tr('ui.artifacts.artifactViewer.updateNow')}
             </button>
           )}
         </div>
       )}
       {behind && (
         <div className="flex flex-none items-center gap-2 border-b border-line bg-panel-2 px-3 py-1.5 text-[12.5px] text-fg-dim">
-          You're looking at version {shownVersion}. The latest is {page.version}.
-          <button type="button" className="font-medium text-fg underline-offset-2 hover:underline" onClick={() => setPinnedVersion(null)}>Show latest</button>
+          {tr('ui.artifacts.artifactViewer.youReLookingAtVersion', { shownVersion, version: page.version })}
+          <button type="button" className="font-medium text-fg underline-offset-2 hover:underline" onClick={() => setPinnedVersion(null)}>{tr('ui.artifacts.artifactViewer.showLatest')}</button>
         </div>
       )}
       {notice && (
         <div role="status" className="flex flex-none items-center gap-2 border-b border-line px-3 py-1.5 text-[12.5px] text-fg-dim">
           <span className="min-w-0 flex-1">{notice}</span>
-          <button type="button" aria-label="Dismiss" onClick={() => setNotice('')} className="hover:text-fg"><X size={13} /></button>
+          <button type="button" aria-label={tr('ui.artifacts.artifactViewer.dismiss')} onClick={() => setNotice('')} className="hover:text-fg"><X size={13} /></button>
         </div>
       )}
 
@@ -395,14 +396,14 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
                 picking={picking} onPin={(id) => { if (id !== 'draft') { setActiveThread(id); setCommentsOpen(true); } }}
                 onPicked={(anchor) => { setDraftAnchor(anchor); setPicking(false); setActiveThread(null); }} />
             ) : (
-              <div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-fg-dim">loading…</div>
+              <div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-fg-dim">{tr('ui.artifacts.artifactViewer.loading')}</div>
             )}
           </div>
         </div>
         {picking && (
           <div role="status" className="absolute left-1/2 top-3 z-30 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full border border-line bg-panel px-3 py-1.5 text-[12.5px] shadow-lg">
-            Click the spot you want to comment on
-            <button type="button" className="font-medium text-accent-ink hover:underline" onClick={() => setPicking(false)}>Cancel</button>
+            {tr('ui.artifacts.artifactViewer.clickTheSpotYouWant')}
+            <button type="button" className="font-medium text-accent-ink hover:underline" onClick={() => setPicking(false)}>{tr('ui.artifacts.artifactViewer.cancel')}</button>
           </div>
         )}
         {commentsOpen && (
@@ -426,9 +427,9 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
       <footer className="hidden h-8 flex-none items-center gap-2 border-t border-line px-3 font-mono text-[11px] text-fg-dim md:flex">
         <AccessBadge access={page.access} />
         <span className="min-w-0 truncate">
-          {page.agent?.name ? `made by ${page.agent.name}` : 'artifact'}{owner ? '' : ` · shared by ${page.owner.name}`}
+          {page.agent?.name ? tr('ui.artifacts.artifactViewer.madeByName', { name: page.agent.name }) : tr('ui.artifacts.artifactViewer.artifact')}{owner ? '' : tr('ui.artifacts.artifactViewer.sharedByName', { name: page.owner.name })}
         </span>
-        <span className="ml-auto flex-none"><Eye size={11} className="mr-1 inline" aria-hidden />v{shownVersion} of {page.version} · {ago(page.updated)}</span>
+        <span className="ml-auto flex-none"><Eye size={11} className="mr-1 inline" aria-hidden />v{shownVersion}{' '}{tr('ui.artifacts.artifactViewer.of')}{' '}{page.version} · {ago(page.updated)}</span>
         {view === 'code' && <Code2 size={12} aria-hidden />}
       </footer>
 

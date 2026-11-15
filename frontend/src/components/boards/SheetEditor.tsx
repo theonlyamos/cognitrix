@@ -6,6 +6,7 @@ import {
 } from '@/lib/sheetFormulas';
 import { SaveStatus, saveLabel, useDocumentSave } from '@/components/boards/useDocumentSave';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const DEFAULT_WIDTH = 110;
 const ROW_STEP = 200;
@@ -235,7 +236,7 @@ export function SheetEditor({ pageId, version, source, onSaved, onReload, onChan
 
   const deleteTab = (index: number) => {
     if (data.tabs.length < 2) return;
-    if (!window.confirm(`Delete the tab “${data.tabs[index].name}”?`)) return;
+    if (!window.confirm(tr('ui.boards.sheetEditor.deleteTheTabName', { name: data.tabs[index].name }))) return;
     commit({ tabs: data.tabs.filter((_, i) => i !== index) });
     setTabIndex(Math.max(0, Math.min(tabIndex, data.tabs.length - 2)));
   };
@@ -252,26 +253,26 @@ export function SheetEditor({ pageId, version, source, onSaved, onReload, onChan
     <div className="flex h-full min-h-0 flex-col bg-panel text-fg">
       <SaveStatus state={saver.state} message={saver.message} onRetry={saver.retry} onReload={onReload} />
       <div className="flex flex-none items-center gap-1 border-b border-line px-2 py-1">
-        <button type="button" className={toolButton} onClick={undo} disabled={!past.current.length} aria-label="Undo" title="Undo (Ctrl+Z)"><Undo2 size={15} /></button>
-        <button type="button" className={toolButton} onClick={redo} disabled={!future.current.length} aria-label="Redo" title="Redo (Ctrl+Y)"><Redo2 size={15} /></button>
+        <button type="button" className={toolButton} onClick={undo} disabled={!past.current.length} aria-label={tr('ui.boards.sheetEditor.undo')} title={tr('ui.boards.sheetEditor.undoCtrlZ')}><Undo2 size={15} /></button>
+        <button type="button" className={toolButton} onClick={redo} disabled={!future.current.length} aria-label={tr('ui.boards.sheetEditor.redo')} title={tr('ui.boards.sheetEditor.redoCtrlY')}><Redo2 size={15} /></button>
         <span className="mx-1 h-5 w-px bg-line" aria-hidden />
-        <button type="button" className={toolButton} aria-pressed={!!selStyle.bold} aria-label="Bold" title="Bold (Ctrl+B)"
+        <button type="button" className={toolButton} aria-pressed={!!selStyle.bold} aria-label={tr('ui.boards.sheetEditor.bold')} title={tr('ui.boards.sheetEditor.boldCtrlB')}
           onClick={() => styleRange((s) => ({ ...s, bold: !selStyle.bold }))}><Bold size={15} /></button>
-        <select aria-label="Number format" value={selStyle.fmt ?? ''} className="h-8 rounded-md border border-line bg-panel px-1.5 text-[12px]"
+        <select aria-label={tr('ui.boards.sheetEditor.numberFormat')} value={selStyle.fmt ?? ''} className="h-8 rounded-md border border-line bg-panel px-1.5 text-[12px]"
           onChange={(e) => { const fmt = e.target.value as CellFormat | ''; styleRange((s) => ({ ...s, fmt: fmt || undefined })); }}>
-          <option value="">Automatic</option>
-          <option value="number">Number 1,234.5</option>
-          <option value="currency">Money 1,234.50</option>
-          <option value="percent">Percent 12%</option>
-          <option value="text">Plain text</option>
+          <option value="">{tr('ui.boards.sheetEditor.automatic')}</option>
+          <option value="number">{tr('ui.boards.sheetEditor.number12345')}</option>
+          <option value="currency">{tr('ui.boards.sheetEditor.money123450')}</option>
+          <option value="percent">{tr('ui.boards.sheetEditor.percent12')}</option>
+          <option value="text">{tr('ui.boards.sheetEditor.plainText')}</option>
         </select>
         <span className="ml-auto font-mono text-[11px] text-fg-dim" role="status">{saveLabel(saver.state)}</span>
       </div>
       <div className="flex flex-none items-center gap-2 border-b border-line px-2 py-1">
-        <span className="w-14 flex-none text-center font-mono text-[12px] text-fg-dim" aria-label="Selected cell">
+        <span className="w-14 flex-none text-center font-mono text-[12px] text-fg-dim" aria-label={tr('ui.boards.sheetEditor.selectedCell')}>
           {selRef}{(bottom.r !== top.r || bottom.c !== top.c) ? `:${refOf(bottom.r, bottom.c)}` : ''}
         </span>
-        <input aria-label="Cell contents" value={barValue} placeholder="Type a value, or = for a formula like =SUM(B2:B9)"
+        <input aria-label={tr('ui.boards.sheetEditor.cellContents')} value={barValue} placeholder={tr('ui.boards.sheetEditor.typeAValueOrFor')}
           onFocus={() => { if (editingRef.current === null) setEditing(editText(tab.cells[selRef]), 'bar'); }}
           onChange={(e) => setEditing(e.target.value, 'bar')}
           onKeyDown={(e) => {
@@ -282,7 +283,7 @@ export function SheetEditor({ pageId, version, source, onSaved, onReload, onChan
           className="h-8 min-w-0 flex-1 rounded-md border border-line bg-bg px-2 font-mono text-[12.5px] outline-none focus:border-fg-dim" />
       </div>
 
-      <div ref={gridRef} tabIndex={0} role="grid" aria-label={`Sheet ${tab.name}`} aria-rowcount={rowCount} aria-colcount={colCount}
+      <div ref={gridRef} tabIndex={0} role="grid" aria-label={tr('ui.boards.sheetEditor.sheetName', { name: tab.name })} aria-rowcount={rowCount} aria-colcount={colCount}
         onKeyDown={onGridKey} onCopy={onCopy} onPaste={onPaste}
         className="relative min-h-0 flex-1 overflow-auto outline-none">
         <table className="border-separate border-spacing-0 text-[13px]" style={{ tableLayout: 'fixed' }}>
@@ -312,7 +313,7 @@ export function SheetEditor({ pageId, version, source, onSaved, onReload, onChan
                   if (isSel && editing !== null && editWhere === 'cell') {
                     return (
                       <td key={c} data-ref={ref} className="border-b border-r border-line p-0 outline outline-2 -outline-offset-1 outline-accent">
-                        <input autoFocus aria-label={`Edit ${ref}`} value={editing} onChange={(e) => setEditing(e.target.value)}
+                        <input autoFocus aria-label={tr('ui.boards.sheetEditor.editRef', { ref })} value={editing} onChange={(e) => setEditing(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') { e.preventDefault(); finishEdit({ r: sel.r + (e.shiftKey ? -1 : 1), c: sel.c }); }
                             else if (e.key === 'Tab') { e.preventDefault(); finishEdit({ r: sel.r, c: sel.c + (e.shiftKey ? -1 : 1) }); }
@@ -348,28 +349,28 @@ export function SheetEditor({ pageId, version, source, onSaved, onReload, onChan
         {rowCount < MAX_ROWS && (
           <button type="button" onClick={() => setExtraRows((n) => n + ROW_STEP)}
             className="sticky left-0 m-2 rounded-md border border-line px-2 py-1 text-[12px] text-fg-dim hover:text-fg">
-            More rows
+            {tr('ui.boards.sheetEditor.moreRows')}
           </button>
         )}
       </div>
 
-      <div role="tablist" aria-label="Tabs" className="flex flex-none items-center gap-1 overflow-x-auto border-t border-line bg-panel-2 px-2 py-1">
+      <div role="tablist" aria-label={tr('ui.boards.sheetEditor.tabs')} className="flex flex-none items-center gap-1 overflow-x-auto border-t border-line bg-panel-2 px-2 py-1">
         {data.tabs.map((t, i) => renaming === i ? (
-          <input key={t.name} autoFocus defaultValue={t.name} aria-label="Tab name"
+          <input key={t.name} autoFocus defaultValue={t.name} aria-label={tr('ui.boards.sheetEditor.tabName')}
             onBlur={(e) => renameTab(i, e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') renameTab(i, e.currentTarget.value); if (e.key === 'Escape') setRenaming(null); }}
             className="h-7 w-28 rounded-md border border-fg-dim bg-bg px-2 text-[12px] outline-none" />
         ) : (
           <span key={t.name} className={cn('group inline-flex h-7 flex-none items-center rounded-md text-[12px]', i === tabIndex ? 'bg-panel font-medium text-fg shadow-sm' : 'text-fg-dim hover:text-fg')}>
-            <button type="button" role="tab" aria-selected={i === tabIndex} title="Double-click to rename"
+            <button type="button" role="tab" aria-selected={i === tabIndex} title={tr('ui.boards.sheetEditor.doubleClickToRename')}
               onClick={() => { setTabIndex(i); setEditing(null); move({ r: 0, c: 0 }); }} onDoubleClick={() => setRenaming(i)}
               className="h-full px-2.5">{t.name}</button>
             {i === tabIndex && data.tabs.length > 1 && (
-              <button type="button" aria-label={`Delete tab ${t.name}`} onClick={() => deleteTab(i)} className="mr-1 grid h-5 w-5 place-items-center rounded hover:bg-panel-2"><X size={11} /></button>
+              <button type="button" aria-label={tr('ui.boards.sheetEditor.deleteTabName', { name: t.name })} onClick={() => deleteTab(i)} className="mr-1 grid h-5 w-5 place-items-center rounded hover:bg-panel-2"><X size={11} /></button>
             )}
           </span>
         ))}
-        <button type="button" onClick={addTab} disabled={data.tabs.length >= MAX_TABS} aria-label="Add a tab" title="Add a tab"
+        <button type="button" onClick={addTab} disabled={data.tabs.length >= MAX_TABS} aria-label={tr('ui.boards.sheetEditor.addATab')} title={tr('ui.boards.sheetEditor.addATab')}
           className="grid h-7 w-7 flex-none place-items-center rounded-md text-fg-dim hover:bg-panel hover:text-fg disabled:opacity-40"><Plus size={14} /></button>
       </div>
     </div>

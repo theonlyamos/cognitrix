@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { Button } from '@/lib/components/ui/button';
+import { tr } from '@/lib/i18n';
 
 export interface TaskApproval {
   id: string;
@@ -65,7 +66,7 @@ export function TaskApprovals({ taskId, runId, live }: TaskApprovalsProps) {
       await api.post(`${base}/${encodeURIComponent(approval.id)}`, { approved });
       setPending((rows) => rows.filter((row) => row.id !== approval.id));
     } catch (err) {
-      setError(errorMessage(err, 'Could not send your answer. Try again.'));
+      setError(errorMessage(err, tr('ui.taskApprovals.couldNotSendYourAnswer')));
       void load();
     } finally {
       setBusy(null);
@@ -80,16 +81,16 @@ export function TaskApprovals({ taskId, runId, live }: TaskApprovalsProps) {
         <section
           key={approval.id}
           role="group"
-          aria-label={`Approval needed: ${approval.tool_name}`}
+          aria-label={tr('ui.taskApprovals.approvalNeededToolName', { tool_name: approval.tool_name })}
           className="rounded border border-accent/60 bg-accent/5 px-3 py-2.5"
         >
           <p className="font-mono text-[12px] font-semibold text-fg">
-            Waiting for approval: {approval.tool_name}
+            {tr('ui.taskApprovals.waitingForApprovalToolName', { tool_name: approval.tool_name })}
             {approval.step_index != null && (
-              <span className="font-normal text-fg-dim"> · step {approval.step_index + 1}</span>
+              <span className="font-normal text-fg-dim">{' '}{tr('ui.taskApprovals.stepValue', { value: approval.step_index + 1 })}</span>
             )}
             {approval.risk_level && (
-              <span className="font-normal text-fg-dim"> · {approval.risk_level} risk</span>
+              <span className="font-normal text-fg-dim">{' '}{tr('ui.taskApprovals.riskLevelRisk', { risk_level: approval.risk_level })}</span>
             )}
           </p>
           {approval.details && (
@@ -105,7 +106,7 @@ export function TaskApprovals({ taskId, runId, live }: TaskApprovalsProps) {
                 disabled={busy === approval.id}
                 onClick={() => void decide(approval, true)}
               >
-                Approve
+                {tr('ui.taskApprovals.approve')}
               </Button>
               <Button
                 size="sm"
@@ -113,11 +114,11 @@ export function TaskApprovals({ taskId, runId, live }: TaskApprovalsProps) {
                 disabled={busy === approval.id}
                 onClick={() => void decide(approval, false)}
               >
-                Deny
+                {tr('ui.taskApprovals.deny')}
               </Button>
             </div>
           ) : (
-            <p className="mt-2 text-[12px] text-fg-dim">Only the person who started this run can answer.</p>
+            <p className="mt-2 text-[12px] text-fg-dim">{tr('ui.taskApprovals.onlyThePersonWhoStarted')}</p>
           )}
         </section>
       ))}

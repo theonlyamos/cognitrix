@@ -8,24 +8,25 @@ import { ago } from '@/lib/artifactPages';
 import { saveAppsView, savedAppsView, type AppList, type AppSummary, type AppsView } from '@/lib/hostedApps';
 import { cn } from '@/lib/utils';
 import Artifacts, { type ArtifactKind } from '@/pages/Artifacts';
+import { tr } from '@/lib/i18n';
 
 type Tab = 'apps' | ArtifactKind;
 type Filter = 'all' | 'online' | 'asleep' | 'pinned' | 'mine';
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'apps', label: 'Apps' },
-  { id: 'pages', label: 'Pages' },
-  { id: 'boards', label: 'Sheets & boards' },
-  { id: 'images', label: 'Images' },
-  { id: 'documents', label: 'Docs' },
-  { id: 'shared', label: 'Shared with me' },
+  { id: 'apps', get label() { return tr('ui.apps.apps'); } },
+  { id: 'pages', get label() { return tr('ui.apps.pages'); } },
+  { id: 'boards', get label() { return tr('ui.apps.sheetsBoards'); } },
+  { id: 'images', get label() { return tr('ui.apps.images'); } },
+  { id: 'documents', get label() { return tr('ui.apps.docs'); } },
+  { id: 'shared', get label() { return tr('ui.apps.sharedWithMe'); } },
 ];
 const FILTERS: { id: Filter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'online', label: 'Online' },
-  { id: 'asleep', label: 'Asleep' },
-  { id: 'pinned', label: 'Pinned' },
-  { id: 'mine', label: 'Mine' },
+  { id: 'all', get label() { return tr('ui.apps.all'); } },
+  { id: 'online', get label() { return tr('ui.apps.online'); } },
+  { id: 'asleep', get label() { return tr('ui.apps.asleep'); } },
+  { id: 'pinned', get label() { return tr('ui.apps.pinned'); } },
+  { id: 'mine', get label() { return tr('ui.apps.mine'); } },
 ];
 
 function AgentChip({ app }: { app: AppSummary }) {
@@ -39,7 +40,7 @@ function AppCard({ app }: { app: AppSummary }) {
       <div className="relative border-b border-line">
         <AppThumbnail app={app} className={cn('aspect-[16/9] w-full', app.status === 'asleep' && 'opacity-70 grayscale')} />
         <span className="absolute left-2.5 top-2.5 rounded-full border border-line bg-panel px-2 py-0.5"><AppStatusBadge app={app} /></span>
-        {app.pinned && <span className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-md bg-panel px-1.5 py-0.5 font-mono text-[10.5px] text-fg-dim"><Pin size={10} />Pinned</span>}
+        {app.pinned && <span className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-md bg-panel px-1.5 py-0.5 font-mono text-[10.5px] text-fg-dim"><Pin size={10} />{tr('ui.apps.pinned')}</span>}
       </div>
       <div className="flex min-w-0 flex-col gap-1.5 p-3">
         <div className="flex items-center gap-2">
@@ -75,8 +76,8 @@ function AppTable({ apps }: { apps: AppSummary[] }) {
                 <Link to={`/apps/${app.id}`} className="flex min-w-0 items-center gap-3" onClick={(e) => e.stopPropagation()}>
                   <AppThumbnail app={app} className="h-9 w-14 flex-none rounded-[5px] border border-line" />
                   <span className="min-w-0">
-                    <span className="block truncate font-medium">{app.title}{app.pinned && <Pin size={11} className="ml-1.5 inline text-fg-dim" aria-label="Pinned" />}</span>
-                    <span className="block truncate font-mono text-[11px] text-fg-dim">/apps/open/{app.slug}{app.branch ? ` · branch ${app.branch}` : ''}</span>
+                    <span className="block truncate font-medium">{app.title}{app.pinned && <Pin size={11} className="ml-1.5 inline text-fg-dim" aria-label={tr('ui.apps.pinned')} />}</span>
+                    <span className="block truncate font-mono text-[11px] text-fg-dim">/apps/open/{app.slug}{app.branch ? tr('ui.apps.branchBranch', { branch: app.branch }) : ''}</span>
                   </span>
                 </Link>
               </td>
@@ -121,7 +122,7 @@ function AppsTab() {
       setData(list);
       setError('');
     } catch (e) {
-      setError(errorMessage(e, 'Could not load your apps.'));
+      setError(errorMessage(e, tr('ui.apps.couldNotLoadYourApps')));
     }
   };
   useEffect(() => {
@@ -148,20 +149,20 @@ function AppsTab() {
   const pickView = (next: AppsView) => { setView(next); saveAppsView(next); };
 
   if (error && !data) return <ErrorState message={error} onRetry={() => void load()} />;
-  if (!data) return <LoadingState label="loading apps…" />;
+  if (!data) return <LoadingState label={tr('ui.apps.loadingApps')} />;
   if (data.apps.length === 0) {
     return (
-      <EmptyState icon={<AppWindow size={20} />} title="No apps yet"
+      <EmptyState icon={<AppWindow size={20} />} title={tr('ui.apps.noAppsYet')}
         desc={data.runtime === null
-          ? 'Apps run on the agents’ sandboxed computer. Turn it on in Settings > Computer, then ask an agent to build one.'
-          : 'Describe a tool, dashboard or form, and an agent builds it and gives it a link your team can open.'}
-        action={<Link to="/apps/new" className="rounded-md bg-accent px-4 py-2 text-[13px] font-semibold text-accent-foreground">Create app</Link>} />
+          ? tr('ui.apps.appsRunOnTheAgents')
+          : tr('ui.apps.describeAToolDashboardOr')}
+        action={<Link to="/apps/new" className="rounded-md bg-accent px-4 py-2 text-[13px] font-semibold text-accent-foreground">{tr('ui.apps.createApp')}</Link>} />
     );
   }
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-center">
-        <div role="tablist" aria-label="Filter apps" className="-mx-4 flex flex-none gap-1.5 overflow-x-auto px-4 md:mx-0 md:px-0">
+        <div role="tablist" aria-label={tr('ui.apps.filterApps')} className="-mx-4 flex flex-none gap-1.5 overflow-x-auto px-4 md:mx-0 md:px-0">
           {FILTERS.map((f) => (
             <button key={f.id} type="button" role="tab" aria-selected={filter === f.id} onClick={() => setFilter(f.id)}
               className={cn('h-9 flex-none whitespace-nowrap rounded-full border px-3 text-[12.5px] md:h-8',
@@ -172,12 +173,12 @@ function AppsTab() {
         </div>
         <div className="flex items-center gap-2 md:ml-auto">
           <label className="relative flex-1 md:w-60 md:flex-none">
-            <span className="sr-only">Search apps</span>
+            <span className="sr-only">{tr('ui.apps.searchApps')}</span>
             <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" aria-hidden />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search apps" type="search"
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr('ui.apps.searchApps')} type="search"
               className="h-10 w-full rounded-md border border-line bg-panel pl-8 pr-3 text-[13px] outline-none focus:border-fg-dim md:h-8" />
           </label>
-          <div role="radiogroup" aria-label="Show apps as" className="hidden flex-none overflow-hidden rounded-md border border-line md:flex">
+          <div role="radiogroup" aria-label={tr('ui.apps.showAppsAs')} className="hidden flex-none overflow-hidden rounded-md border border-line md:flex">
             {([['cards', LayoutGrid, 'Cards'], ['table', Rows3, 'Table']] as const).map(([id, Icon, label]) => (
               <button key={id} type="button" role="radio" aria-checked={view === id} title={label} aria-label={label}
                 onClick={() => pickView(id)}
@@ -189,7 +190,7 @@ function AppsTab() {
         </div>
       </div>
       {apps.length === 0 ? (
-        <p className="py-16 text-center text-[13px] text-fg-dim">Nothing matches.</p>
+        <p className="py-16 text-center text-[13px] text-fg-dim">{tr('ui.apps.nothingMatches')}</p>
       ) : (
         <>
           {/* Phones always get a compact list; the toggle is for wider screens. */}
@@ -215,17 +216,17 @@ export default function Apps() {
     <div className="flex h-full min-h-0 flex-col">
       <header className="app-page-header flex items-end gap-3 border-b border-line pb-3 pl-16 pr-4 pt-4 md:px-6 md:pt-5">
         <div className="min-w-0">
-          <h1 className="text-[20px] font-semibold md:text-[22px]">Apps</h1>
+          <h1 className="text-[20px] font-semibold md:text-[22px]">{tr('ui.apps.apps')}</h1>
           <p className="mt-1 truncate font-mono text-[11.5px] text-fg-dim">
-            <span className="hidden md:inline">live tools your agents built, plus the pages, images and documents they made</span>
-            <span className="md:hidden">tools your agents built</span>
+            <span className="hidden md:inline">{tr('ui.apps.liveToolsYourAgentsBuilt')}</span>
+            <span className="md:hidden">{tr('ui.apps.toolsYourAgentsBuilt')}</span>
           </p>
         </div>
         <Link to="/apps/new" className="ml-auto inline-flex h-9 flex-none items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-semibold text-accent-foreground">
-          <Plus size={15} aria-hidden /><span className="hidden sm:inline">Create app</span><span className="sm:hidden">New</span>
+          <Plus size={15} aria-hidden /><span className="hidden sm:inline">{tr('ui.apps.createApp')}</span><span className="sm:hidden">{tr('ui.apps.new')}</span>
         </Link>
       </header>
-      <nav role="tablist" aria-label="What to show" className="flex flex-none gap-1 overflow-x-auto border-b border-line px-2 md:px-5">
+      <nav role="tablist" aria-label={tr('ui.apps.whatToShow')} className="flex flex-none gap-1 overflow-x-auto border-b border-line px-2 md:px-5">
         {TABS.map((t) => (
           <button key={t.id} type="button" role="tab" aria-selected={tab === t.id}
             onClick={() => setParams(t.id === 'apps' ? {} : { tab: t.id }, { replace: true })}

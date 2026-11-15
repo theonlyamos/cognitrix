@@ -7,6 +7,7 @@ import { EmptyState, ErrorState, LoadingState, PageHeader } from '@/components/l
 import { api, errorMessage } from '@/lib/api';
 import { ago, parseStamp, sizeLabel, type ArtifactList, type FileItem, type ImageItem, type PageSummary } from '@/lib/artifactPages';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 type Filter = 'all' | 'pages' | 'pinned' | 'live' | 'shared' | 'public' | 'images' | 'documents' | 'boards' | 'sheets' | 'whiteboards';
 type Item =
@@ -15,17 +16,17 @@ type Item =
   | { kind: 'file'; key: string; when: number; file: FileItem };
 
 const FILTERS: { id: Filter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'pages', label: 'Pages' },
-  { id: 'boards', label: 'Sheets & boards' },
-  { id: 'sheets', label: 'Sheets' },
-  { id: 'whiteboards', label: 'Whiteboards' },
-  { id: 'images', label: 'Images' },
-  { id: 'documents', label: 'Documents' },
-  { id: 'pinned', label: 'Pinned' },
-  { id: 'live', label: 'Live' },
-  { id: 'shared', label: 'Shared with me' },
-  { id: 'public', label: 'Public' },
+  { id: 'all', get label() { return tr('ui.artifacts.all'); } },
+  { id: 'pages', get label() { return tr('ui.artifacts.pages'); } },
+  { id: 'boards', get label() { return tr('ui.artifacts.sheetsBoards'); } },
+  { id: 'sheets', get label() { return tr('ui.artifacts.sheets'); } },
+  { id: 'whiteboards', get label() { return tr('ui.artifacts.whiteboards'); } },
+  { id: 'images', get label() { return tr('ui.artifacts.images'); } },
+  { id: 'documents', get label() { return tr('ui.artifacts.documents'); } },
+  { id: 'pinned', get label() { return tr('ui.artifacts.pinned'); } },
+  { id: 'live', get label() { return tr('ui.artifacts.live'); } },
+  { id: 'shared', get label() { return tr('ui.artifacts.sharedWithMe'); } },
+  { id: 'public', get label() { return tr('ui.artifacts.public'); } },
 ];
 
 const PAGEABLE = ['text/markdown', 'text/plain', 'text/html'];
@@ -40,19 +41,19 @@ function PageCard({ page }: { page: PageSummary }) {
   return (
     <Link to={`/artifacts/${page.id}`} className={cn(card, 'group hover:border-fg-dim')}>
       <div className="relative flex h-28 items-center justify-center rounded-t-[12px] border-b border-line bg-panel-2">
-        {page.format === 'sheet' ? <Table2 size={30} className="text-fg-dim/60" aria-label="Sheet" />
-          : page.format === 'whiteboard' ? <Shapes size={30} className="text-fg-dim/60" aria-label="Whiteboard" />
+        {page.format === 'sheet' ? <Table2 size={30} className="text-fg-dim/60" aria-label={tr('ui.artifacts.sheet')} />
+          : page.format === 'whiteboard' ? <Shapes size={30} className="text-fg-dim/60" aria-label={tr('ui.artifacts.whiteboard')} />
           : <LayoutPanelTop size={30} className="text-fg-dim/60" aria-hidden />}
         <span className="absolute left-2.5 top-2.5 flex items-center gap-1.5">
           {page.live && <LiveBadge />}
-          {page.pinned && <span className="inline-flex items-center gap-1 rounded-md bg-panel px-1.5 py-0.5 font-mono text-[10.5px] text-fg-dim"><Pin size={10} />Pinned</span>}
+          {page.pinned && <span className="inline-flex items-center gap-1 rounded-md bg-panel px-1.5 py-0.5 font-mono text-[10.5px] text-fg-dim"><Pin size={10} />{tr('ui.artifacts.pinned')}</span>}
         </span>
         <span className="absolute bottom-2.5 right-2.5 rounded-md bg-panel px-1.5 py-0.5 font-mono text-[10.5px] text-fg-dim">v{page.viewer_version}</span>
       </div>
       <div className="flex min-w-0 flex-col gap-1.5 p-3">
         <h3 className="truncate text-[14px] font-semibold group-hover:text-accent-ink" title={page.title}>{page.title}</h3>
         <p className="truncate font-mono text-[11px] text-fg-dim">
-          {page.role === 'owner' ? (page.agent?.name ? `by ${page.agent.name}` : page.format === 'sheet' ? 'sheet' : page.format === 'whiteboard' ? 'whiteboard' : 'page') : `shared by ${page.owner.name}`} · {ago(page.updated)}
+          {page.role === 'owner' ? (page.agent?.name ? tr('ui.artifacts.byName', { name: page.agent.name }) : page.format === 'sheet' ? tr('ui.artifacts.sheet_542e') : page.format === 'whiteboard' ? tr('ui.artifacts.whiteboard_d70e') : tr('ui.artifacts.page')) : tr('ui.artifacts.sharedByName', { name: page.owner.name })} · {ago(page.updated)}
         </p>
         <div className="flex items-center gap-2">
           <AccessBadge access={page.access} />
@@ -74,7 +75,7 @@ function ImageCard({ image }: { image: ImageItem }) {
       <div className="flex min-w-0 flex-col gap-1 p-3">
         <h3 className="line-clamp-2 text-[13px] font-medium" title={image.title}>{image.title}</h3>
         <p className="truncate font-mono text-[11px] text-fg-dim">
-          image{image.agent?.name ? ` · by ${image.agent.name}` : ''} · {ago(image.created)}
+          {tr('ui.artifacts.image')}{image.agent?.name ? tr('ui.artifacts.byName_0543', { name: image.agent.name }) : ''} · {ago(image.created)}
         </p>
       </div>
     </div>
@@ -88,7 +89,7 @@ function FileCard({ file, onOpen, onChanged }: { file: FileItem; onOpen: (file: 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
     setError('');
-    try { await work(); } catch (e) { setError(errorMessage(e, 'That did not work.')); } finally { setBusy(false); }
+    try { await work(); } catch (e) { setError(errorMessage(e, tr('ui.artifacts.thatDidNotWork'))); } finally { setBusy(false); }
   };
   const download = () => run(async () => {
     const { data } = await api.get(`/artifact-pages/files/${file.id}`, { params: { download: true }, responseType: 'blob' });
@@ -109,23 +110,23 @@ function FileCard({ file, onOpen, onChanged }: { file: FileItem; onOpen: (file: 
       <div className="flex min-w-0 flex-col gap-1.5 p-3">
         <h3 className="truncate text-[14px] font-semibold" title={file.path}>{file.title}</h3>
         <p className="truncate font-mono text-[11px] text-fg-dim">
-          {sizeLabel(file.size_bytes)}{file.agent?.name ? ` · by ${file.agent.name}` : ''} · {ago(file.updated)}
+          {sizeLabel(file.size_bytes)}{file.agent?.name ? tr('ui.artifacts.byName_0543', { name: file.agent.name }) : ''} · {ago(file.updated)}
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
-          {READABLE.test(file.mime_type) && <button type="button" className={smallButton} disabled={busy} onClick={() => onOpen(file)}>Open</button>}
-          <button type="button" className={smallButton} disabled={busy} onClick={() => void download()} aria-label={`Download ${file.title}`}><Download size={13} /></button>
+          {READABLE.test(file.mime_type) && <button type="button" className={smallButton} disabled={busy} onClick={() => onOpen(file)}>{tr('ui.artifacts.open')}</button>}
+          <button type="button" className={smallButton} disabled={busy} onClick={() => void download()} aria-label={tr('ui.artifacts.downloadTitle', { title: file.title })}><Download size={13} /></button>
           {PAGEABLE.includes(file.mime_type) && (
-            <button type="button" className={smallButton} disabled={busy} title="Make a page you can share and comment on"
+            <button type="button" className={smallButton} disabled={busy} title={tr('ui.artifacts.makeAPageYouCan')}
               onClick={() => void run(async () => {
                 const { data } = await api.post<{ id: string }>(`/artifact-pages/files/${file.id}/publish`, {});
                 navigate(`/artifacts/${data.id}`);
               })}>
-              Make a page
+              {tr('ui.artifacts.makeAPage')}
             </button>
           )}
-          <button type="button" className={cn(smallButton, 'ml-auto border-transparent text-fg-dim')} disabled={busy} title="Take it off this list. The file itself stays where it is."
+          <button type="button" className={cn(smallButton, 'ml-auto border-transparent text-fg-dim')} disabled={busy} title={tr('ui.artifacts.takeItOffThisList')}
             onClick={() => void run(async () => { await api.delete(`/artifact-pages/files/${file.id}`); onChanged(); })}>
-            Remove
+            {tr('ui.artifacts.remove')}
           </button>
         </div>
         {error && <p role="alert" className="text-[12px] text-danger-ink">{error}</p>}
@@ -141,7 +142,7 @@ function FileReader({ file, onClose }: { file: FileItem; onClose: () => void }) 
     let live = true;
     api.get(`/artifact-pages/files/${file.id}`, { responseType: 'text', transformResponse: (v) => v })
       .then(({ data }) => { if (live) setText(String(data)); })
-      .catch((e) => { if (live) setError(errorMessage(e, 'Could not open that file.')); });
+      .catch((e) => { if (live) setError(errorMessage(e, tr('ui.artifacts.couldNotOpenThatFile'))); });
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => { live = false; window.removeEventListener('keydown', onKey); };
@@ -152,7 +153,7 @@ function FileReader({ file, onClose }: { file: FileItem; onClose: () => void }) 
         <header className="flex h-12 flex-none items-center gap-2 border-b border-line px-3">
           <FileText size={15} className="text-fg-dim" aria-hidden />
           <h2 className="min-w-0 flex-1 truncate text-[14px] font-semibold">{file.title}</h2>
-          <button type="button" onClick={onClose} aria-label="Close" autoFocus className="grid h-9 w-9 place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg"><X size={16} /></button>
+          <button type="button" onClick={onClose} aria-label={tr('ui.artifacts.close')} autoFocus className="grid h-9 w-9 place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg"><X size={16} /></button>
         </header>
         {error ? <p role="alert" className="p-4 text-[13px] text-danger-ink">{error}</p> : (
           <pre className="min-h-40 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-[12.5px] leading-relaxed">{text ?? 'loading…'}</pre>
@@ -175,7 +176,7 @@ export function NewDocumentButtons() {
       const { data } = await api.post<{ id: string }>('/artifact-pages', { format });
       navigate(`/artifacts/${data.id}`);
     } catch (e) {
-      setError(errorMessage(e, 'Could not start it.'));
+      setError(errorMessage(e, tr('ui.artifacts.couldNotStartIt')));
       setBusy(false);
     }
   };
@@ -183,11 +184,11 @@ export function NewDocumentButtons() {
     <div className="flex flex-wrap items-center gap-2">
       <button type="button" disabled={busy} onClick={() => void start('sheet')}
         className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-semibold text-accent-foreground disabled:opacity-60 md:h-8">
-        <Plus size={14} aria-hidden /><Table2 size={14} aria-hidden /> New sheet
+        <Plus size={14} aria-hidden /><Table2 size={14} aria-hidden />{' '}{tr('ui.artifacts.newSheet')}
       </button>
       <button type="button" disabled={busy} onClick={() => void start('whiteboard')}
         className="inline-flex h-9 items-center gap-1.5 rounded-md border border-line bg-panel px-3 text-[13px] font-medium hover:bg-panel-2 disabled:opacity-60 md:h-8">
-        <Plus size={14} aria-hidden /><Shapes size={14} aria-hidden /> New whiteboard
+        <Plus size={14} aria-hidden /><Shapes size={14} aria-hidden />{' '}{tr('ui.artifacts.newWhiteboard')}
       </button>
       {error && <p role="alert" className="w-full text-[12px] text-danger-ink">{error}</p>}
     </div>
@@ -229,7 +230,7 @@ export default function Artifacts({ kind }: { kind?: ArtifactKind } = {}) {
       setData(list);
       setError('');
     } catch (e) {
-      setError(errorMessage(e, 'Could not load your artifacts.'));
+      setError(errorMessage(e, tr('ui.artifacts.couldNotLoadYourArtifacts')));
     }
   };
   useEffect(() => { void load(); }, []);
@@ -268,15 +269,15 @@ export default function Artifacts({ kind }: { kind?: ArtifactKind } = {}) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {!kind && <PageHeader title="Artifacts" subtitle="pages, images and documents your agents made" />}
-      {error && !data ? <ErrorState message={error} onRetry={() => void load()} /> : !data ? <LoadingState label="loading…" /> : total === 0 ? (
-        <EmptyState icon={<LayoutPanelTop size={20} />} title="Nothing here yet"
-          desc={kind ? KIND_EMPTY[kind] : 'Ask an agent to make a report, a dashboard, an image or a document. What it makes shows up here.'}
-          action={kind === 'boards' ? <NewDocumentButtons /> : <Link to="/home" className="rounded-md bg-accent px-4 py-2 text-[13px] font-semibold text-accent-foreground">Open a chat</Link>} />
+      {!kind && <PageHeader title={tr('ui.artifacts.artifacts')} subtitle={tr('ui.artifacts.pagesImagesAndDocumentsYour')} />}
+      {error && !data ? <ErrorState message={error} onRetry={() => void load()} /> : !data ? <LoadingState label={tr('ui.artifacts.loading')} /> : total === 0 ? (
+        <EmptyState icon={<LayoutPanelTop size={20} />} title={tr('ui.artifacts.nothingHereYet')}
+          desc={kind ? KIND_EMPTY[kind] : tr('ui.artifacts.askAnAgentToMake')}
+          action={kind === 'boards' ? <NewDocumentButtons /> : <Link to="/home" className="rounded-md bg-accent px-4 py-2 text-[13px] font-semibold text-accent-foreground">{tr('ui.artifacts.openAChat')}</Link>} />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <div role="tablist" aria-label="Filter artifacts" className="-mx-4 flex flex-none gap-1.5 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:px-0">
+            <div role="tablist" aria-label={tr('ui.artifacts.filterArtifacts')} className="-mx-4 flex flex-none gap-1.5 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:px-0">
               {filters.length > 1 && filters.map((f) => (
                 <button key={f.id} type="button" role="tab" aria-selected={filter === f.id} onClick={() => setFilter(f.id)}
                   className={cn('h-9 flex-none whitespace-nowrap rounded-full border px-3 text-[12.5px] md:h-8',
@@ -287,14 +288,14 @@ export default function Artifacts({ kind }: { kind?: ArtifactKind } = {}) {
             </div>
             {kind === 'boards' && <div className="md:ml-auto"><NewDocumentButtons /></div>}
             <label className={cn('relative md:w-64', kind !== 'boards' && 'md:ml-auto')}>
-              <span className="sr-only">Search artifacts</span>
+              <span className="sr-only">{tr('ui.artifacts.searchArtifacts')}</span>
               <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" aria-hidden />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" type="search"
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr('ui.artifacts.search')} type="search"
                 className="h-10 w-full rounded-md border border-line bg-panel pl-8 pr-3 text-[13px] outline-none focus:border-fg-dim md:h-8" />
             </label>
           </div>
           {items.length === 0 ? (
-            <p className="py-16 text-center text-[13px] text-fg-dim">Nothing matches.</p>
+            <p className="py-16 text-center text-[13px] text-fg-dim">{tr('ui.artifacts.nothingMatches')}</p>
           ) : (
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
               {items.map((item) => item.kind === 'page' ? <PageCard key={item.key} page={item.page} />

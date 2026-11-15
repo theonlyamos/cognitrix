@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { SheetEditor } from '@/components/boards/SheetEditor';
 import { WhiteboardEditor } from '@/components/boards/WhiteboardEditor';
+import { tr } from '@/lib/i18n';
 
 interface DataDocumentProps {
   pageId: string;
@@ -32,7 +33,7 @@ export function DataDocument({ pageId, format, latest, onSaved }: DataDocumentPr
       setDoc((d) => ({ version: data.version, source: data.source, key: (d?.key ?? 0) + 1 }));
       setError('');
     } catch (e) {
-      setError(errorMessage(e, 'Could not open it.'));
+      setError(errorMessage(e, tr('ui.boards.dataDocument.couldNotOpenIt')));
     } finally {
       busy.current = false;
     }
@@ -52,7 +53,7 @@ export function DataDocument({ pageId, format, latest, onSaved }: DataDocumentPr
   };
 
   if (error && !doc) return <p role="alert" className="p-4 text-[13px] text-danger-ink">{error}</p>;
-  if (!doc) return <div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-fg-dim">loading…</div>;
+  if (!doc) return <div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-fg-dim">{tr('ui.boards.dataDocument.loading')}</div>;
   const props = {
     pageId, version: doc.version, source: doc.source,
     onSaved: saved, onReload: () => void load(), onChange: () => setDirty(true),

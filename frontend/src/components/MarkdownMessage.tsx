@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { tr } from '@/lib/i18n';
 
 // Fenced code block with a hover copy button. Reads the rendered text from the
 // DOM so it works regardless of the syntax-highlight token spans inside.
@@ -18,7 +19,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   };
   return (
     <div className="md-code">
-      <button type="button" className="md-copy" onClick={copy}>{copied ? 'copied' : 'copy'}</button>
+      <button type="button" className="md-copy" onClick={copy}>{copied ? tr('ui.markdownMessage.copied') : tr('ui.markdownMessage.copy')}</button>
       <pre ref={ref}>{children}</pre>
     </div>
   );

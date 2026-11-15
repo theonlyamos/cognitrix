@@ -13,6 +13,7 @@ import { SendKeyHint } from '@/components/SendKeyHint';
 import { useApprovalSeen } from '@/hooks/useApprovalSeen';
 import { setViewingChat } from '@/lib/chatPresence';
 import { CHATS_EDITED, chatsStale, type ChatsEditedDetail } from '@/lib/chatNav';
+import { tr } from '@/lib/i18n';
 
 interface Member { id: string; name: string; handle: string; lead: boolean; provider?: string | null; model?: string | null }
 interface ChatSummary { id: string; title: string; updated_at?: string | null; running: boolean }
@@ -105,7 +106,7 @@ export default function TeamChat() {
       setInfo(res.data);
       setLoadError(null);
     } catch (err) {
-      setLoadError(errorMessage(err, 'Could not load this team.'));
+      setLoadError(errorMessage(err, tr('ui.teamChat.couldNotLoadThisTeam')));
     }
   }, [teamId]);
 
@@ -145,7 +146,7 @@ export default function TeamChat() {
         setFollow(null);
       }
     } catch (err) {
-      setSendError(errorMessage(err, 'Could not open this chat.'));
+      setSendError(errorMessage(err, tr('ui.teamChat.couldNotOpenThisChat')));
     }
   }, [teamId]);
 
@@ -280,7 +281,7 @@ export default function TeamChat() {
       setRunning(false);
       setMessages(baseRef.current);
       setInput(text);
-      setSendError(errorMessage(err, 'Could not send the message.'));
+      setSendError(errorMessage(err, tr('ui.teamChat.couldNotSendTheMessage')));
     }
   }, [chatId, input, refresh, messages, running, setParams, teamId]);
 
@@ -289,7 +290,7 @@ export default function TeamChat() {
     try {
       await api.post(`/teams/${teamId}/chats/${chatId}/stop`);
     } catch (err) {
-      setSendError(errorMessage(err, 'Could not stop the team.'));
+      setSendError(errorMessage(err, tr('ui.teamChat.couldNotStopTheTeam')));
     }
   }, [chatId, teamId]);
 
@@ -306,13 +307,13 @@ export default function TeamChat() {
   }, [loadInfo, setParams]);
 
   const removeChat = useCallback(async () => {
-    if (!chatId || running || !confirm('Delete this group chat?')) return;
+    if (!chatId || running || !confirm(tr('ui.teamChat.deleteThisGroupChat'))) return;
     try {
       await api.delete(`/teams/${teamId}/chats/${chatId}`);
       setParams({});
       refresh();
     } catch (err) {
-      setSendError(errorMessage(err, 'Could not delete the chat.'));
+      setSendError(errorMessage(err, tr('ui.teamChat.couldNotDeleteTheChat')));
     }
   }, [chatId, refresh, running, setParams, teamId]);
 
@@ -367,7 +368,7 @@ export default function TeamChat() {
   if (loadError && !info) {
     return <div className="flex h-full min-w-0 flex-1 flex-col bg-bg"><ErrorState message={loadError} onRetry={loadInfo} /></div>;
   }
-  if (!info) return <div className="flex h-full min-w-0 flex-1 flex-col bg-bg"><LoadingState label="loading team chat…" /></div>;
+  if (!info) return <div className="flex h-full min-w-0 flex-1 flex-col bg-bg"><LoadingState label={tr('ui.teamChat.loadingTeamChat')} /></div>;
 
   const lead = members.find((m) => m.lead);
   const placeholder = members.length ? `Message the team… (@${members[0].handle} to ask one agent)` : 'Add agents to this team first';
@@ -376,23 +377,23 @@ export default function TeamChat() {
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
       <header className="app-page-header flex min-h-14 flex-none flex-row flex-nowrap items-center gap-2 border-b border-line py-2 pl-16 pr-4 md:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
-          <Link to={`/teams/${teamId}`} aria-label="Back to team" className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
+          <Link to={`/teams/${teamId}`} aria-label={tr('ui.teamChat.backToTeam')} className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
           <div className="min-w-0">
-            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">GROUP CHAT</p>
+            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">{tr('ui.teamChat.groupChat')}</p>
             <h1 className="truncate text-lg font-semibold tracking-tight">{info.team.name}</h1>
           </div>
         </div>
         <div className="flex flex-none items-center gap-2">
-          <label className="sr-only" htmlFor="group-chat-picker">Group chats</label>
+          <label className="sr-only" htmlFor="group-chat-picker">{tr('ui.teamChat.groupChats')}</label>
           <select
             id="group-chat-picker"
             value={chatId ?? ''}
             onChange={(e) => setParams(e.target.value ? { chat: e.target.value } : {})}
             className="h-11 w-28 truncate rounded border border-line bg-panel px-2 font-mono text-[11px] text-fg md:h-8 md:w-auto md:max-w-[16rem]"
           >
-            <option value="">New chat</option>
+            <option value="">{tr('ui.teamChat.newChat')}</option>
             {info.chats.map((c) => (
               <option key={c.id} value={c.id}>{c.running ? '● ' : ''}{c.title}{c.updated_at ? ` · ${fmtRelative(c.updated_at)}` : ''}</option>
             ))}
@@ -403,14 +404,14 @@ export default function TeamChat() {
               onClick={() => setParams({})}
               className="hidden h-8 rounded border border-line px-2.5 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:block"
             >
-              + new
+              {tr('ui.teamChat.new')}
             </button>
           )}
           {chatId && !running && (
             <button
               type="button"
               onClick={removeChat}
-              aria-label="Delete this chat"
+              aria-label={tr('ui.teamChat.deleteThisChat')}
               className="grid h-11 w-11 place-items-center rounded text-fg-dim transition-colors hover:text-danger-ink md:h-8 md:w-8"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /></svg>
@@ -419,7 +420,7 @@ export default function TeamChat() {
         </div>
       </header>
 
-      <div className="flex flex-none flex-wrap items-center gap-1.5 border-b border-line px-4 py-2 md:px-6" aria-label="Team members">
+      <div className="flex flex-none flex-wrap items-center gap-1.5 border-b border-line px-4 py-2 md:px-6" aria-label={tr('ui.teamChat.teamMembers')}>
         {members.map((m) => (
           <button
             key={m.id}
@@ -433,8 +434,8 @@ export default function TeamChat() {
           >
             <span className="grid h-4 w-4 place-items-center rounded-sm bg-panel-2 text-[9px] font-bold text-accent-ink">{m.name[0]?.toUpperCase()}</span>
             @{m.handle}
-            {m.lead && <span className="text-[9px] text-accent-ink">LEAD</span>}
-            {speaker === m.name && <span className="think-bars" aria-label="replying"><i /><i /><i /></span>}
+            {m.lead && <span className="text-[9px] text-accent-ink">{tr('ui.teamChat.lead')}</span>}
+            {speaker === m.name && <span className="think-bars" aria-label={tr('ui.teamChat.replying')}><i /><i /><i /></span>}
           </button>
         ))}
       </div>
@@ -442,12 +443,12 @@ export default function TeamChat() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <div className="mx-auto max-w-xl px-6 py-14">
-            <h2 className="text-xl font-semibold tracking-tight">Talk to the whole team</h2>
+            <h2 className="text-xl font-semibold tracking-tight">{tr('ui.teamChat.talkToTheWholeTeam')}</h2>
             <ul className="mt-3 space-y-1.5 text-sm text-fg-dim">
-              <li><span className="font-mono text-accent-ink">@name</span> asks that agent. Mention several and they answer in that order.</li>
-              <li><span className="font-mono text-accent-ink">@all</span> asks everyone.</li>
-              <li>No mention: the agent who spoke last answers{lead ? `, or @${lead.handle} (the lead) to start` : ''}.</li>
-              <li>Agents can hand work to each other by @mentioning a teammate.</li>
+              <li><span className="font-mono text-accent-ink">@name</span>{' '}{tr('ui.teamChat.asksThatAgentMentionSeveral')}</li>
+              <li><span className="font-mono text-accent-ink">@all</span>{' '}{tr('ui.teamChat.asksEveryone')}</li>
+              <li>{tr('ui.teamChat.noMentionTheAgentWho')}{lead ? tr('ui.teamChat.orHandleTheLeadTo', { handle: lead.handle }) : ''}.</li>
+              <li>{tr('ui.teamChat.agentsCanHandWorkTo')}</li>
             </ul>
           </div>
         ) : (
@@ -462,10 +463,10 @@ export default function TeamChat() {
             ))}
             {running && (
               <div role="status" className="grid grid-cols-1 gap-2 px-4 py-4 sm:grid-cols-[68px_1fr] sm:gap-4 sm:px-6">
-                <div className="truncate pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">{speaker ? speaker.toUpperCase() : 'TEAM'}</div>
+                <div className="truncate pt-0.5 font-mono text-[11px] tracking-[0.06em] text-fg-dim">{speaker ? speaker.toUpperCase() : tr('ui.teamChat.team')}</div>
                 <div className="flex items-center gap-2.5 font-mono text-[12px] text-fg-dim">
                   <span className="think-bars"><i /><i /><i /><i /></span>
-                  {status || (speaker ? `${speaker} is working…` : 'Picking who answers…')}
+                  {status || (speaker ? tr('ui.teamChat.speakerIsWorking', { speaker }) : tr('ui.teamChat.pickingWhoAnswers'))}
                 </div>
               </div>
             )}
@@ -487,29 +488,29 @@ export default function TeamChat() {
         {approvals.map((a) => (
           <div key={a.request_id} role="alert" className="animate-rise mx-6 my-4 border-l-2 border-danger bg-danger/5 px-3 py-3 font-mono text-[12px]">
             <div className="flex items-center gap-2">
-              <span className="text-danger-ink">⚠ approval required{speaker ? ` · ${speaker}` : ''}</span>
-              <span className="rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-fg-dim">{a.risk_level} risk</span>
+              <span className="text-danger-ink">{tr('ui.teamChat.approvalRequired')}{speaker ? ` · ${speaker}` : ''}</span>
+              <span className="rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-fg-dim">{tr('ui.teamChat.riskLevelRisk', { risk_level: a.risk_level })}</span>
             </div>
             <div className="mt-2 text-fg">
-              run <span className="text-accent-ink">{a.tool_name}</span>
+              {tr('ui.teamChat.run')}{' '}<span className="text-accent-ink">{a.tool_name}</span>
               {a.details && <span className="text-fg-dim"> — {a.details}</span>}
             </div>
             {a.params && Object.keys(a.params).length > 0 && (
               <pre className="mt-2 max-h-32 overflow-auto rounded border border-line bg-panel-2 p-2 text-[11px] text-fg-dim">{JSON.stringify(a.params, null, 2)}</pre>
             )}
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
-              <button onClick={() => respondApproval(a.request_id, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent-ink md:min-h-0">approve</button>
-              {!a.always_ask && <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">approve for session</button>}
+              <button onClick={() => respondApproval(a.request_id, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent-ink md:min-h-0">{tr('ui.teamChat.approve')}</button>
+              {!a.always_ask && <button onClick={() => respondApproval(a.request_id, true, true)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.teamChat.approveForSession')}</button>}
               {a.full_shell && (
-                <button onClick={() => respondApproval(a.request_id, true, true, true)} title="Run every shell command in this chat without asking, until the app restarts" className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">allow all commands in this chat</button>
+                <button onClick={() => respondApproval(a.request_id, true, true, true)} title={tr('ui.teamChat.runEveryShellCommandIn')} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.teamChat.allowAllCommandsInThis')}</button>
               )}
               {a.app && (
                 <>
-                  <button onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={`Let agents click and type in ${a.app.label} in the background for the rest of this chat`} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">allow {a.app.label} in this chat</button>
-                  <button onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={`Never ask again before agents click and type in ${a.app.label} in the background. Change it in Settings, Agent access.`} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">always allow {a.app.label}</button>
+                  <button onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={tr('ui.teamChat.letAgentsClickAndType', { label: a.app.label })} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.teamChat.allowLabelInThisChat', { label: a.app.label })}</button>
+                  <button onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={tr('ui.teamChat.neverAskAgainBeforeAgents', { label: a.app.label })} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.teamChat.alwaysAllowLabel', { label: a.app.label })}</button>
                 </>
               )}
-              <button onClick={() => respondApproval(a.request_id, false)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:min-h-0">deny</button>
+              <button onClick={() => respondApproval(a.request_id, false)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:min-h-0">{tr('ui.teamChat.deny')}</button>
             </div>
           </div>
         ))}
@@ -518,8 +519,8 @@ export default function TeamChat() {
       <div className="flex-none border-t border-line px-4 py-4 md:px-6">
         <div className="relative mx-auto max-w-3xl">
           {menuOpen && (
-            <div id="mention-menu" role="listbox" aria-label="Mention a teammate" className="animate-rise absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-md border border-line bg-panel shadow-lg">
-              <div className="border-b border-line px-3 py-1.5 font-mono text-[10px] tracking-[0.18em] text-fg-dim">MENTION</div>
+            <div id="mention-menu" role="listbox" aria-label={tr('ui.teamChat.mentionATeammate')} className="animate-rise absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-md border border-line bg-panel shadow-lg">
+              <div className="border-b border-line px-3 py-1.5 font-mono text-[10px] tracking-[0.18em] text-fg-dim">{tr('ui.teamChat.mention')}</div>
               {options.map((m, i) => (
                 <button
                   key={m.id}
@@ -531,7 +532,7 @@ export default function TeamChat() {
                   className={cn('flex w-full items-baseline gap-2 border-l-2 px-3 py-2 text-left transition-colors', i === mentionIndex ? 'border-l-accent bg-panel-2' : 'border-l-transparent hover:bg-panel-2')}
                 >
                   <span className="font-mono text-[12px] text-accent-ink">@{m.handle}</span>
-                  <span className="ml-auto truncate pl-3 text-[11px] text-fg-dim">{m.id === '*' ? 'every agent answers' : m.lead ? 'team lead' : m.model || ''}</span>
+                  <span className="ml-auto truncate pl-3 text-[11px] text-fg-dim">{m.id === '*' ? tr('ui.teamChat.everyAgentAnswers') : m.lead ? tr('ui.teamChat.teamLead') : m.model || ''}</span>
                 </button>
               ))}
             </div>
@@ -555,7 +556,7 @@ export default function TeamChat() {
                 if (isSendKey(e, getSendKey())) { e.preventDefault(); void send(); }
               }}
               role="combobox"
-              aria-label="Message the team"
+              aria-label={tr('ui.teamChat.messageTheTeam')}
               aria-expanded={menuOpen}
               aria-controls="mention-menu"
               aria-activedescendant={menuOpen ? `mention-opt-${mentionIndex}` : undefined}
@@ -565,7 +566,7 @@ export default function TeamChat() {
             <button
               onClick={() => { if (running) void stop(); else void send(); }}
               disabled={!running && !input.trim()}
-              aria-label={running ? 'Stop the team' : 'Send'}
+              aria-label={running ? tr('ui.teamChat.stopTheTeam') : tr('ui.teamChat.send')}
               className={cn(
                 'absolute bottom-1 right-1.5 grid h-11 w-11 place-items-center rounded transition disabled:cursor-not-allowed disabled:opacity-60 hover:brightness-105 md:h-8 md:w-8',
                 running ? 'bg-danger text-bg' : 'bg-accent text-accent-foreground',
@@ -580,7 +581,7 @@ export default function TeamChat() {
           </div>
           {sendError && <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">{sendError}</div>}
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim">
-            <span>@name picks who answers · @all asks everyone</span>
+            <span>{tr('ui.teamChat.namePicksWhoAnswersAll')}</span>
             <SendKeyHint />
           </div>
         </div>

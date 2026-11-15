@@ -12,6 +12,7 @@ import Signup from '@/pages/Signup';
 import OAuthComplete from '@/pages/OAuthComplete';
 import ResetPassword from '@/pages/ResetPassword';
 import '@/app.css';
+import { tr } from '@/lib/i18n';
 
 // Code-split the authenticated app; auth pages + shell stay eager for first paint.
 const Home = lazy(() => import('@/pages/Home'));
@@ -49,7 +50,7 @@ function LoadingScreen({ waitingForServer = false }: { waitingForServer?: boolea
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" />
           <path className="opacity-90" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" d="M4 12a8 8 0 0 1 8-8" />
         </svg>
-        {waitingForServer ? (isDesktop() ? 'waiting for the engine…' : 'waiting for the server…') : 'loading…'}
+        {waitingForServer ? (isDesktop() ? tr('ui.app.waitingForTheEngine') : tr('ui.app.waitingForTheServer')) : tr('ui.app.loading')}
       </div>
     </div>
   );

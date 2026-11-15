@@ -4,6 +4,7 @@ import { Button } from '@/lib/components/ui/button';
 import MarkdownMessage from '@/components/MarkdownMessage';
 import { AGENTS_CHANGED_EVENT } from '@/lib/providers';
 import type { StarterAgent } from '@/components/AssistantSetup';
+import { tr } from '@/lib/i18n';
 
 /** Fire this to open the What's new window from anywhere (the account menu). */
 export const OPEN_WHATS_NEW_EVENT = 'cognitrix:open-whats-new';
@@ -107,7 +108,7 @@ export function WhatsNewDialog({
       setStarters([]);
       window.dispatchEvent(new CustomEvent(AGENTS_CHANGED_EVENT));
     } catch (e) {
-      setError(errorMessage(e, 'Could not add the starter team.'));
+      setError(errorMessage(e, tr('ui.whatsNew.couldNotAddTheStarter')));
     } finally {
       setAdding(false);
     }
@@ -136,16 +137,16 @@ export function WhatsNewDialog({
       >
         <div className="flex items-start justify-between gap-3 border-b border-line px-6 pb-4 pt-6">
           <div className="min-w-0 space-y-1.5">
-            <div className="font-mono text-[10.5px] tracking-[0.14em] text-accent-ink">WHAT'S NEW</div>
+            <div className="font-mono text-[10.5px] tracking-[0.14em] text-accent-ink">{tr('ui.whatsNew.whatSNew')}</div>
             <h2 id={titleId} className="text-[22px] font-semibold leading-tight">
-              {afterUpdate ? 'Cognitrix was updated' : "What's new in Cognitrix"}
+              {afterUpdate ? tr('ui.whatsNew.cognitrixWasUpdated') : tr('ui.whatsNew.whatSNewInCognitrix')}
             </h2>
             <p className="text-[13.5px] leading-relaxed text-fg-dim">{subtitle}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={tr('ui.whatsNew.close')}
             className="-mr-2 -mt-1 grid h-9 w-9 flex-none place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg"
           >
             <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -159,18 +160,16 @@ export function WhatsNewDialog({
             <div className="mb-5 flex flex-col gap-2.5 rounded border border-line bg-panel-2 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
               {added > 0 ? (
                 <p role="status" className="text-[13px] leading-relaxed text-fg-dim">
-                  <span className="font-medium text-fg">Starter team added.</span> {added === 1 ? 'One specialist is' : `${added} specialists are`} on
-                  the Agents page, and your assistant can hand work to them.
+                  <span className="font-medium text-fg">{tr('ui.whatsNew.starterTeamAdded')}</span> {tr('ui.whatsNew.valueOnTheAgentsPage', { value: added === 1 ? tr('ui.whatsNew.oneSpecialistIs') : tr('ui.whatsNew.addedSpecialistsAre', { added }) })}
                 </p>
               ) : (
                 <>
                   <p className="min-w-0 text-[13px] leading-relaxed text-fg-dim">
-                    <span className="block font-medium text-fg">Add the starter team</span>
-                    {starters.map((a) => a.name).join(', ')}: specialists your assistant can hand bigger jobs to. They run on
-                    your assistant's provider, and you can change or delete them later.
+                    <span className="block font-medium text-fg">{tr('ui.whatsNew.addTheStarterTeam')}</span>
+                    {tr('ui.whatsNew.mapSpecialistsYourAssistantCan', { map: starters.map((a) => a.name).join(', ') })}
                   </p>
                   <Button type="button" size="sm" className="shrink-0" onClick={() => void addStarters()} disabled={adding}>
-                    {adding ? 'Adding…' : starters.length === 1 ? `Add ${starters[0].name}` : `Add ${starters.length} agents`}
+                    {adding ? tr('ui.whatsNew.adding') : starters.length === 1 ? tr('ui.whatsNew.addName', { name: starters[0].name }) : tr('ui.whatsNew.addLengthAgents', { length: starters.length })}
                   </Button>
                 </>
               )}
@@ -184,10 +183,10 @@ export function WhatsNewDialog({
 
           <div className="space-y-6">
             {releases.map((r) => (
-              <section key={r.version} aria-label={`Version ${r.version}`}>
+              <section key={r.version} aria-label={tr('ui.whatsNew.versionVersion', { version: r.version })}>
                 {releases.length > 1 && (
                   <div className="mb-2 flex items-center gap-3">
-                    <span className="font-mono text-[11px] tracking-[0.1em] text-fg-dim">VERSION {r.version}</span>
+                    <span className="font-mono text-[11px] tracking-[0.1em] text-fg-dim">{tr('ui.whatsNew.versionVersion_bd01', { version: r.version })}</span>
                     <span className="h-px flex-1 bg-line" />
                   </div>
                 )}
@@ -207,13 +206,13 @@ export function WhatsNewDialog({
               rel="noreferrer"
               className="text-center text-[12.5px] text-fg-dim underline-offset-2 hover:text-fg hover:underline sm:text-left"
             >
-              All release notes
+              {tr('ui.whatsNew.allReleaseNotes')}
             </a>
           ) : (
             <span />
           )}
           <Button type="button" onClick={onClose} autoFocus>
-            Got it
+            {tr('ui.whatsNew.gotIt')}
           </Button>
         </div>
       </div>

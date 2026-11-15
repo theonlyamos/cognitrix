@@ -7,6 +7,7 @@ import { Textarea } from '@/lib/components/ui/textarea';
 import { Select } from '@/lib/components/ui/select';
 import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm, CheckList } from '@/components/form';
+import { tr } from '@/lib/i18n';
 
 interface Agent { id: string; name: string; llm?: { provider?: string; model?: string } }
 interface TeamData {
@@ -55,8 +56,8 @@ export default function TeamPage() {
     });
 
   const save = async () => {
-    if (!name.trim()) return setError('Give the team a name.');
-    if (!description.trim()) return setError('Describe the team.');
+    if (!name.trim()) return setError(tr('ui.teamPage.giveTheTeamAName'));
+    if (!description.trim()) return setError(tr('ui.teamPage.describeTheTeam'));
     setError('');
     setSaving(true);
     try {
@@ -70,45 +71,45 @@ export default function TeamPage() {
       const id = teamId || response.data?.id;
       navigate(id ? `/teams/${id}` : '/teams');
     } catch (e) {
-      setError(errorMessage(e, 'Could not save the team.'));
+      setError(errorMessage(e, tr('ui.teamPage.couldNotSaveTheTeam')));
     } finally {
       setSaving(false);
     }
   };
 
   if (editing && loadingTeam) {
-    return <div className="flex-1 flex flex-col h-full min-w-0 bg-bg"><LoadingState label="loading team…" /></div>;
+    return <div className="flex-1 flex flex-col h-full min-w-0 bg-bg"><LoadingState label={tr('ui.teamPage.loadingTeam')} /></div>;
   }
 
   return (
     <PageForm
       eyebrow={editing ? 'EDIT TEAM' : 'NEW TEAM'}
-      title={editing ? name || 'Edit team' : 'New team'}
+      title={editing ? name || tr('ui.teamPage.editTeam') : tr('ui.teamPage.newTeam')}
       backTo={backTo}
       error={error}
       onSave={save}
       saving={saving}
     >
-      <Field label="NAME" required>
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Research Squad" autoFocus />
+      <Field label={tr('ui.teamPage.name')} required>
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('ui.teamPage.researchSquad')} autoFocus />
       </Field>
 
-      <Field label="DESCRIPTION" required>
-        <Textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What does this team do together?" />
+      <Field label={tr('ui.teamPage.description')} required>
+        <Textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={tr('ui.teamPage.whatDoesThisTeamDo')} />
       </Field>
 
-      <Field label={`MEMBERS · ${assigned.size}`} composite>
+      <Field label={tr('ui.teamPage.membersSize', { size: assigned.size })} composite>
         <CheckList
           options={agents.map((a) => ({ value: a.id, label: a.name, sub: `${a.llm?.provider || '—'} · ${a.llm?.model || '—'}` }))}
           selected={assigned}
           onToggle={toggleAgent}
-          empty="no agents — create one first"
+          empty={tr('ui.teamPage.noAgentsCreateOneFirst')}
         />
       </Field>
 
-      <Field label="LEADER" hint="must be a member">
+      <Field label={tr('ui.teamPage.leader')} hint={tr('ui.teamPage.mustBeAMember')}>
         <Select value={leader} onChange={(e) => setLeader(e.target.value)} disabled={assignedAgents.length === 0}>
-          <option value="">— none —</option>
+          <option value="">{tr('ui.teamPage.none')}</option>
           {assignedAgents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </Select>
       </Field>

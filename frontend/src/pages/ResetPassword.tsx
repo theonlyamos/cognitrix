@@ -5,7 +5,7 @@ import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { Field } from '@/components/form';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { useT } from '@/lib/i18n';
+import { useT, tr } from '@/lib/i18n';
 
 /** Where the emailed reset link lands: pick a new password. */
 export default function ResetPassword() {
@@ -36,7 +36,7 @@ export default function ResetPassword() {
   return (
     <div className="flex min-h-screen flex-col bg-bg text-fg">
       <header className="flex min-h-14 items-center justify-between p-6">
-        <span className="font-mono text-[11px] tracking-[0.16em] text-fg-dim">COGNITRIX</span>
+        <span className="font-mono text-[11px] tracking-[0.16em] text-fg-dim">{tr('ui.resetPassword.cognitrix')}</span>
         <ThemeToggle className="ml-auto" />
       </header>
       <main className="flex flex-1 items-center px-6 pb-16">

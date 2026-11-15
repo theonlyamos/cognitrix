@@ -5,6 +5,7 @@ import {
 } from '@/lib/speech';
 import { Toggle } from '@/pages/Notifications';
 import { Group, SettingRow, buttonClass } from './ui';
+import { tr } from '@/lib/i18n';
 
 const selectClass = 'h-9 max-w-[220px] rounded-lg border border-line bg-panel-2 px-2 text-[12.5px] outline-none focus:border-accent md:h-8';
 const SAMPLE = 'Hello. This is how your agents will sound when they read a reply aloud.';
@@ -42,35 +43,35 @@ export function SpokenRepliesSettings() {
   return (
     <>
       <Group>
-        <SettingRow label="Read replies aloud" detail="Each reply is read when it finishes. You can always press listen under a reply instead.">
-          <Toggle label="Read replies aloud" checked={prefs.autoRead} onChange={(v) => setSpeechPrefs({ autoRead: v })} />
+        <SettingRow label={tr('ui.settings.spokenReplies.readRepliesAloud')} detail={tr('ui.settings.spokenReplies.eachReplyIsReadWhen')}>
+          <Toggle label={tr('ui.settings.spokenReplies.readRepliesAloud')} checked={prefs.autoRead} onChange={(v) => setSpeechPrefs({ autoRead: v })} />
         </SettingRow>
         <SettingRow
-          label="Read by"
+          label={tr('ui.settings.spokenReplies.readBy')}
           detail={ready.length
-            ? 'OpenAI and Gemini sound more natural and use your key. The browser voice is free and works offline.'
-            : 'Using the voices built into this browser. Add an OpenAI or Gemini key above for more natural voices.'}
+            ? tr('ui.settings.spokenReplies.openaiAndGeminiSoundMore')
+            : tr('ui.settings.spokenReplies.usingTheVoicesBuiltInto')}
         >
           <select
-            aria-label="Read by"
+            aria-label={tr('ui.settings.spokenReplies.readBy')}
             className={selectClass}
             value={chosen}
             onChange={(e) => setSpeechPrefs({ provider: e.target.value, voice: '' })}
           >
             <option value="">{autoLabel}</option>
             {ready.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-            <option value="browser">This browser</option>
+            <option value="browser">{tr('ui.settings.spokenReplies.thisBrowser')}</option>
           </select>
         </SettingRow>
-        <SettingRow label="Voice">
+        <SettingRow label={tr('ui.settings.spokenReplies.voice')}>
           <select
-            aria-label="Voice"
+            aria-label={tr('ui.settings.spokenReplies.voice')}
             className={selectClass}
             value={prefs.provider === effective ? prefs.voice : ''}
             disabled={!prefs.provider}
             onChange={(e) => setSpeechPrefs({ voice: e.target.value })}
           >
-            <option value="">Default</option>
+            <option value="">{tr('ui.settings.spokenReplies.default')}</option>
             {voices.map((v) => <option key={v} value={v}>{v}</option>)}
           </select>
           <button
@@ -78,11 +79,11 @@ export function SpokenRepliesSettings() {
             className={buttonClass}
             onClick={() => (testing ? stopSpeaking() : void speakText('speech-test', SAMPLE, options))}
           >
-            {testing ? 'Stop' : 'Play sample'}
+            {testing ? tr('ui.settings.spokenReplies.stop') : tr('ui.settings.spokenReplies.playSample')}
           </button>
         </SettingRow>
       </Group>
-      {!prefs.provider && <p className="mt-2 text-[12px] text-fg-dim">Pick who reads to choose a voice.</p>}
+      {!prefs.provider && <p className="mt-2 text-[12px] text-fg-dim">{tr('ui.settings.spokenReplies.pickWhoReadsToChoose')}</p>}
       {speech.id === 'speech-test' && speech.error && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{speech.error}</p>}
     </>
   );

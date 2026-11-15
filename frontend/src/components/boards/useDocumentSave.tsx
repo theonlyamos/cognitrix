@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
+import { tr } from '@/lib/i18n';
 
 export const SAVE_DELAY_MS = 800;
 
@@ -41,12 +42,12 @@ export function useDocumentSave(pageId: string, startVersion: number, onSaved?: 
       if (status === 409) {
         pending.current = null;
         setState('stale');
-        setMessage(errorMessage(e, 'This changed since you opened it. Reload to see the change.'));
+        setMessage(errorMessage(e, tr('ui.boards.useDocumentSave.thisChangedSinceYouOpened')));
       } else {
         // Keep the edit so the next change (or Retry) sends it again.
         if (pending.current === null) pending.current = content;
         setState('error');
-        setMessage(errorMessage(e, 'Could not save. Your changes are kept here.'));
+        setMessage(errorMessage(e, tr('ui.boards.useDocumentSave.couldNotSaveYourChanges')));
       }
     } finally {
       running.current = false;
@@ -81,8 +82,8 @@ export function SaveStatus({ state, message, onRetry, onReload }: {
   if (state === 'stale') {
     return (
       <div role="alert" className="flex flex-none flex-wrap items-center gap-2 border-b border-line bg-warn/15 px-3 py-1.5 text-[12.5px] text-warn-ink">
-        <span className="min-w-0 flex-1">{message || 'This changed since you opened it.'} Your last edit was not saved.</span>
-        <button type="button" onClick={onReload} className="rounded-md border border-line bg-panel px-2 py-0.5 font-medium text-fg hover:bg-panel-2">Reload</button>
+        <span className="min-w-0 flex-1">{tr('ui.boards.useDocumentSave.messageYourLastEditWas', { message: message || tr('ui.boards.useDocumentSave.thisChangedSinceYouOpened_29a5') })}</span>
+        <button type="button" onClick={onReload} className="rounded-md border border-line bg-panel px-2 py-0.5 font-medium text-fg hover:bg-panel-2">{tr('ui.boards.useDocumentSave.reload')}</button>
       </div>
     );
   }
@@ -90,7 +91,7 @@ export function SaveStatus({ state, message, onRetry, onReload }: {
     return (
       <div role="alert" className="flex flex-none items-center gap-2 border-b border-line bg-danger/10 px-3 py-1.5 text-[12.5px] text-danger-ink">
         <span className="min-w-0 flex-1">{message}</span>
-        <button type="button" onClick={onRetry} className="rounded-md border border-line bg-panel px-2 py-0.5 font-medium text-fg hover:bg-panel-2">Try again</button>
+        <button type="button" onClick={onRetry} className="rounded-md border border-line bg-panel px-2 py-0.5 font-medium text-fg hover:bg-panel-2">{tr('ui.boards.useDocumentSave.tryAgain')}</button>
       </div>
     );
   }

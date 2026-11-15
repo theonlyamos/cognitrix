@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { REASONING_LEVELS } from '@/lib/reasoning';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const OPTIONS = [{ value: '', label: 'agent default' }, ...REASONING_LEVELS.map((l) => ({ value: l.value, label: l.label.toLowerCase() }))];
 
@@ -69,7 +70,7 @@ export default function ReasoningPicker({ value, onChange }: { value: string; on
       <button
         ref={buttonRef}
         type="button"
-        aria-label={`Reasoning level: ${OPTIONS[selectedIndex].label}`}
+        aria-label={tr('ui.reasoningPicker.reasoningLevelLabel', { label: OPTIONS[selectedIndex].label })}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
@@ -89,7 +90,7 @@ export default function ReasoningPicker({ value, onChange }: { value: string; on
           id={listId}
           role="listbox"
           tabIndex={-1}
-          aria-label="Reasoning level"
+          aria-label={tr('ui.reasoningPicker.reasoningLevel')}
           aria-activedescendant={`${listId}-${active}`}
           onKeyDown={onListKey}
           className="absolute bottom-full left-0 z-50 mb-1.5 min-w-[9.5rem] overflow-hidden rounded-md border border-line bg-panel py-1 shadow-panel outline-none"

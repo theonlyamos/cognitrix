@@ -6,6 +6,7 @@ import {
   desktopName, handBack, openViewer, resetSandbox, sandboxStatus, takeOver, updateSandbox,
   type SandboxDesktop, type SandboxStatus,
 } from '@/lib/sandbox';
+import { tr } from '@/lib/i18n';
 
 interface PanelAgent {
   id: string;
@@ -30,7 +31,7 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
     try {
       setStatus(await sandboxStatus());
     } catch (err) {
-      setError(errorMessage(err, "Couldn't reach the agents' computer."));
+      setError(errorMessage(err, tr('ui.computerPanel.couldnTReachTheAgents')));
     }
   }, []);
 
@@ -103,7 +104,7 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
   }, []);
 
   const closeButton = (
-    <button type="button" className={iconButtonClass} onClick={onClose} aria-label="Close the agents' computer" title="Close">
+    <button type="button" className={iconButtonClass} onClick={onClose} aria-label={tr('ui.computerPanel.closeTheAgentsComputer')} title={tr('ui.computerPanel.close')}>
       <CloseIcon />
     </button>
   );
@@ -115,7 +116,7 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
   return (
     <section
       ref={rootRef}
-      aria-label="Agents' computer"
+      aria-label={tr('ui.computerPanel.agentsComputer')}
       data-view={fullscreen ? 'fullscreen' : expanded ? 'expanded' : 'docked'}
       className={cn(
         'flex min-h-0 flex-col bg-panel',
@@ -126,19 +127,19 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
         <header className="flex flex-none items-center gap-1 border-b border-line px-3 py-2">
           {onBack && !expanded && (
             <button type="button" onClick={onBack} className="-ml-1 mr-1 inline-flex h-9 flex-none items-center gap-1 rounded-lg px-2 font-mono text-[11.5px] text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8">
-              <span aria-hidden>‹</span> This chat
+              <span aria-hidden>‹</span>{' '}{tr('ui.computerPanel.thisChat')}
             </button>
           )}
-          <h2 className="mr-auto text-[13px] font-semibold">Agents' computer</h2>
+          <h2 className="mr-auto text-[13px] font-semibold">{tr('ui.computerPanel.agentsComputer')}</h2>
           {status?.running && status.update_available && <UpdateButton onDone={load} />}
           {status?.running && <ResetButton onDone={load} />}
           {expanded ? (
-            <button type="button" className={buttonClass} onClick={collapse} title="Collapse (Esc)">
-              <CollapseIcon /><span className="ml-1.5">Collapse</span>
+            <button type="button" className={buttonClass} onClick={collapse} title={tr('ui.computerPanel.collapseEsc')}>
+              <CollapseIcon /><span className="ml-1.5">{tr('ui.computerPanel.collapse')}</span>
             </button>
           ) : (
-            <button type="button" className={buttonClass} onClick={expand} title="Expand">
-              <ExpandIcon /><span className="ml-1.5">Expand</span>
+            <button type="button" className={buttonClass} onClick={expand} title={tr('ui.computerPanel.expand')}>
+              <ExpandIcon /><span className="ml-1.5">{tr('ui.computerPanel.expand')}</span>
             </button>
           )}
           {closeButton}
@@ -153,13 +154,12 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
         {error && !status && <p role="alert" className="p-4 text-[12.5px] text-fg-dim">{error}</p>}
         {status && !status.enabled && (
           <p className="p-4 text-[12.5px] leading-relaxed text-fg-dim">
-            The sandboxed computer is off. It gives each agent its own desktop in a container, which you can watch and take
-            over. Turn it on with <code>COGNITRIX_COMPUTER_SANDBOX=docker</code> (needs Docker).
+            {tr('ui.computerPanel.theSandboxedComputerIsOff')}{' '}<code>COGNITRIX_COMPUTER_SANDBOX=docker</code>{' '}{tr('ui.computerPanel.needsDocker')}
           </p>
         )}
         {status?.enabled && !current && (
           <p className="p-4 text-[12.5px] leading-relaxed text-fg-dim">
-            {status.error || 'Nothing to show yet. The computer starts when an agent first uses it, and each agent gets its own desktop.'}
+            {status.error || tr('ui.computerPanel.nothingToShowYetThe')}
           </p>
         )}
         {current && (
@@ -172,10 +172,10 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
             view={fullscreen && !isPhone() ? 'fullscreen' : expanded ? 'expanded' : 'docked'}
             leading={oneBar && (
               <>
-                <button type="button" className={buttonClass} onClick={collapse} title="Collapse (Esc)" aria-label="Collapse">
-                  <CollapseIcon /><span className="ml-1.5 max-md:hidden side:hidden">Collapse</span>
+                <button type="button" className={buttonClass} onClick={collapse} title={tr('ui.computerPanel.collapseEsc')} aria-label={tr('ui.computerPanel.collapse')}>
+                  <CollapseIcon /><span className="ml-1.5 max-md:hidden side:hidden">{tr('ui.computerPanel.collapse')}</span>
                 </button>
-                <h2 className="text-[13px] font-semibold max-md:hidden side:hidden">Agents' computer</h2>
+                <h2 className="text-[13px] font-semibold max-md:hidden side:hidden">{tr('ui.computerPanel.agentsComputer')}</h2>
                 {desktops.length > 1 && (
                   <>
                     <div className="min-w-0 max-md:hidden side:hidden">{tabs}</div>
@@ -190,8 +190,8 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
                   type="button"
                   className={cn(iconButtonClass, 'border border-line max-md:hidden side:hidden')}
                   onClick={toggleFullscreen}
-                  aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
-                  title={fullscreen ? 'Exit full screen (Esc)' : 'Full screen'}
+                  aria-label={fullscreen ? tr('ui.computerPanel.exitFullScreen') : tr('ui.computerPanel.fullScreen')}
+                  title={fullscreen ? tr('ui.computerPanel.exitFullScreenEsc') : tr('ui.computerPanel.fullScreen')}
                 >
                   {fullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
                 </button>
@@ -230,7 +230,7 @@ function DesktopTabs({ desktops, selected, label, onSelect }: {
   onSelect: (name: string) => void;
 }) {
   return (
-    <div role="tablist" aria-label="Agent desktops" className="flex gap-1 overflow-x-auto">
+    <div role="tablist" aria-label={tr('ui.computerPanel.agentDesktops')} className="flex gap-1 overflow-x-auto">
       {desktops.map((d) => (
         <button
           key={d.name}
@@ -241,7 +241,7 @@ function DesktopTabs({ desktops, selected, label, onSelect }: {
           className={cn('flex-none rounded-md px-2.5 py-1 text-[12px]', d.name === selected ? 'bg-panel-2 font-medium text-fg' : 'text-fg-dim hover:bg-panel-2')}
         >
           {label(d)}
-          {d.held_by && <span className="ml-1.5 text-[10.5px] text-accent-ink">you</span>}
+          {d.held_by && <span className="ml-1.5 text-[10.5px] text-accent-ink">{tr('ui.computerPanel.you')}</span>}
         </button>
       ))}
     </div>
@@ -258,7 +258,7 @@ function DesktopSelect({ desktops, selected, label, onSelect, className }: {
 }) {
   return (
     <select
-      aria-label="Agent desktop"
+      aria-label={tr('ui.computerPanel.agentDesktop')}
       value={selected ?? ''}
       onChange={(e) => onSelect(e.target.value)}
       className={cn('h-9 max-w-[9rem] rounded-lg border border-line bg-panel px-2 text-[12.5px] text-fg', className)}
@@ -309,7 +309,7 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
       } catch (err) {
         if (!cancelled) {
           setState('closed');
-          setError(errorMessage(err, "Couldn't open the screen."));
+          setError(errorMessage(err, tr('ui.computerPanel.couldnTOpenTheScreen')));
         }
       }
     })();
@@ -337,7 +337,7 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
       setControl(await takeOver(desktop.name));
       onChange();
     } catch (err) {
-      setError(errorMessage(err, "Couldn't take over."));
+      setError(errorMessage(err, tr('ui.computerPanel.couldnTTakeOver')));
     } finally {
       setBusy(false);
     }
@@ -351,7 +351,7 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
       setControl(null);
       onChange();
     } catch (err) {
-      setError(errorMessage(err, "Couldn't hand back."));
+      setError(errorMessage(err, tr('ui.computerPanel.couldnTHandBack')));
     } finally {
       setBusy(false);
     }
@@ -366,12 +366,12 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
   const actions = (
     <>
       {state === 'closed' && (
-        <button type="button" className={quietButtonClass} onClick={() => setAttempt((n) => n + 1)}>Reconnect</button>
+        <button type="button" className={quietButtonClass} onClick={() => setAttempt((n) => n + 1)}>{tr('ui.computerPanel.reconnect')}</button>
       )}
       {heldByYou || heldElsewhere ? (
-        <button type="button" className={primaryButtonClass} disabled={busy} onClick={() => void giveBack()}>Hand back</button>
+        <button type="button" className={primaryButtonClass} disabled={busy} onClick={() => void giveBack()}>{tr('ui.computerPanel.handBack')}</button>
       ) : (
-        <button type="button" className={view === 'docked' ? buttonClass : primaryButtonClass} disabled={busy} onClick={() => void take()}>Take over</button>
+        <button type="button" className={view === 'docked' ? buttonClass : primaryButtonClass} disabled={busy} onClick={() => void take()}>{tr('ui.computerPanel.takeOver')}</button>
       )}
     </>
   );
@@ -405,13 +405,13 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
         <div
           ref={screenRef}
           data-computer-screen
-          aria-label={`${agentName}'s screen`}
+          aria-label={tr('ui.computerPanel.agentnameSScreen', { agentName })}
           className={cn('h-full w-full', heldByYou ? 'cursor-default ring-2 ring-inset ring-accent' : 'cursor-not-allowed')}
         />
       </div>
       {full && (
         <p className={cn('pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-black/70 px-3 py-1.5 text-[12px] text-white transition-opacity duration-300', !barVisible && 'opacity-0')}>
-          Controls hide after a few seconds. Move the pointer to show them; Esc leaves full screen.
+          {tr('ui.computerPanel.controlsHideAfterAFew')}
         </p>
       )}
     </div>
@@ -455,15 +455,15 @@ function UpdateButton({ onDone }: { onDone: () => void }) {
         type="button"
         className={primaryButtonClass}
         onClick={() => setConfirming(true)}
-        title="A newer version of the agents' computer is ready"
+        title={tr('ui.computerPanel.aNewerVersionOfThe')}
       >
-        Update
+        {tr('ui.computerPanel.update')}
       </button>
     );
   }
   return (
     <span className="flex items-center gap-1 text-[12px]">
-      <span className="text-fg-dim">{error || 'Restart it? Open windows close; files and logins stay.'}</span>
+      <span className="text-fg-dim">{error || tr('ui.computerPanel.restartItOpenWindowsClose')}</span>
       <button
         type="button"
         className={buttonClass}
@@ -475,16 +475,16 @@ function UpdateButton({ onDone }: { onDone: () => void }) {
             await updateSandbox();
             setConfirming(false);
           } catch (err) {
-            setError(errorMessage(err, "Couldn't restart it."));
+            setError(errorMessage(err, tr('ui.computerPanel.couldnTRestartIt')));
           } finally {
             setBusy(false);
             onDone();
           }
         }}
       >
-        {busy ? 'Restarting…' : 'Restart'}
+        {busy ? tr('ui.computerPanel.restarting') : tr('ui.computerPanel.restart')}
       </button>
-      <button type="button" className={quietButtonClass} disabled={busy} onClick={() => setConfirming(false)}>Later</button>
+      <button type="button" className={quietButtonClass} disabled={busy} onClick={() => setConfirming(false)}>{tr('ui.computerPanel.later')}</button>
     </span>
   );
 }
@@ -494,12 +494,12 @@ function ResetButton({ onDone }: { onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   if (!confirming) {
     return (
-      <button type="button" className={quietButtonClass} onClick={() => setConfirming(true)}>Reset</button>
+      <button type="button" className={quietButtonClass} onClick={() => setConfirming(true)}>{tr('ui.computerPanel.reset')}</button>
     );
   }
   return (
     <span className="flex items-center gap-1 text-[12px]">
-      <span className="text-fg-dim">Erase its files and logins?</span>
+      <span className="text-fg-dim">{tr('ui.computerPanel.eraseItsFilesAndLogins')}</span>
       <button
         type="button"
         className={buttonClass}
@@ -515,9 +515,9 @@ function ResetButton({ onDone }: { onDone: () => void }) {
           }
         }}
       >
-        Erase
+        {tr('ui.computerPanel.erase')}
       </button>
-      <button type="button" className={quietButtonClass} onClick={() => setConfirming(false)}>Keep</button>
+      <button type="button" className={quietButtonClass} onClick={() => setConfirming(false)}>{tr('ui.computerPanel.keep')}</button>
     </span>
   );
 }

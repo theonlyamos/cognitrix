@@ -24,6 +24,7 @@ import { AppSetupGuide } from '@/components/apps/AppSetupGuide';
 import { CheckList } from '@/components/apps/CheckList';
 import { ComposioSection } from '@/components/apps/ComposioSection';
 import { Group, StatusPill, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
+import { tr } from '@/lib/i18n';
 
 const TILE: Record<string, string> = {
   github: 'bg-[#24292f] text-white',
@@ -52,8 +53,8 @@ function AppTile({ id, name }: { id: string; name: string }) {
 
 function Status({ connection }: { connection: AppConnection | null }) {
   if (!connection || connection.status === 'signed_out') return null;
-  if (connection.status === 'needs_reauth') return <StatusPill tone="warn">needs reconnect</StatusPill>;
-  return <StatusPill tone="ok">connected</StatusPill>;
+  if (connection.status === 'needs_reauth') return <StatusPill tone="warn">{tr('ui.connectedAppsCard.needsReconnect')}</StatusPill>;
+  return <StatusPill tone="ok">{tr('ui.connectedAppsCard.connected')}</StatusPill>;
 }
 
 /** Settings › Connected apps: sign in to GitHub, Google apps, Slack and other
@@ -73,12 +74,12 @@ export function ConnectedAppsCard() {
   const load = () =>
     listApps()
       .then((l) => { setList(l); setLoadError(null); })
-      .catch((e) => setLoadError(errorMessage(e, 'Could not load connected apps.')));
+      .catch((e) => setLoadError(errorMessage(e, tr('ui.connectedAppsCard.couldNotLoadConnectedApps'))));
 
   useEffect(() => { void load(); }, []);
 
   if (loadError) return <p role="alert" className="text-[12.5px] text-danger-ink">{loadError}</p>;
-  if (!list) return <p className="text-[13px] text-fg-dim">Loading…</p>;
+  if (!list) return <p className="text-[13px] text-fg-dim">{tr('ui.connectedAppsCard.loading')}</p>;
 
   const setError = (key: string, message: string | null) =>
     setErrors((cur) => {
@@ -93,9 +94,9 @@ export function ConnectedAppsCard() {
     setError(key, null);
     try {
       const result = await action();
-      if (result && result.status === 'error') setError(key, result.error || 'Sign-in failed.');
+      if (result && result.status === 'error') setError(key, result.error || tr('ui.connectedAppsCard.signInFailed'));
     } catch (e) {
-      setError(key, errorMessage(e, 'Something went wrong. Please try again.'));
+      setError(key, errorMessage(e, tr('ui.connectedAppsCard.somethingWentWrongPleaseTry')));
     } finally {
       setBusy(null);
       await load();
@@ -157,8 +158,8 @@ export function ConnectedAppsCard() {
           <SubHeading>{group.toUpperCase()}</SubHeading>
           {list.is_admin && list.apps.some((a) => (a.category || 'Other') === group && a.provider === 'google' && a.available) && (
             <p className="-mt-1 mb-2 text-[12px] leading-relaxed text-fg-dim">
-              Google's app servers are in preview. Each app needs its MCP API (for example "Gmail MCP API") turned on in your Google Cloud project.{' '}
-              <button type="button" onClick={() => openGuide('google')} className="underline underline-offset-2 hover:text-fg">See the steps</button>
+              {tr('ui.connectedAppsCard.googleSAppServersAre')}{' '}
+              <button type="button" onClick={() => openGuide('google')} className="underline underline-offset-2 hover:text-fg">{tr('ui.connectedAppsCard.seeTheSteps')}</button>
             </p>
           )}
           <Group>
@@ -176,32 +177,32 @@ export function ConnectedAppsCard() {
                         {app.name} <Status connection={conn} />
                       </div>
                       <div className="mt-0.5 text-[12px] leading-snug text-fg-dim">
-                        {on && conn.account ? <>Signed in as <span className="font-mono">{conn.account}</span></> : app.description}
+                        {on && conn.account ? <>{tr('ui.connectedAppsCard.signedInAs')}{' '}<span className="font-mono">{conn.account}</span></> : app.description}
                       </div>
                     </div>
                     <div className="flex flex-none flex-wrap items-center gap-2">
                       {on && !stale ? (
                         <>
-                          <button type="button" disabled={working} aria-label={`Test ${app.name}`} onClick={() => void test(app)} className={quietButtonClass}>
-                            Test
+                          <button type="button" disabled={working} aria-label={tr('ui.connectedAppsCard.testName', { name: app.name })} onClick={() => void test(app)} className={quietButtonClass}>
+                            {tr('ui.connectedAppsCard.test')}
                           </button>
                           <button type="button" disabled={working} onClick={() => void run(app.id, () => disconnectApp(app.id))} className={quietButtonClass}>
-                            Disconnect
+                            {tr('ui.connectedAppsCard.disconnect')}
                           </button>
                         </>
                       ) : (
                         <>
                           {app.token_help && (
                             <button type="button" onClick={() => { setTokenFor(tokenFor === app.id ? null : app.id); setToken(''); }} className={quietButtonClass}>
-                              Use a token
+                              {tr('ui.connectedAppsCard.useAToken')}
                             </button>
                           )}
                           {app.available ? (
                             <button type="button" disabled={working} onClick={() => void connect(app)} className={stale ? primaryButtonClass : buttonClass}>
-                              {working ? 'Waiting for sign-in…' : stale ? 'Reconnect' : 'Connect'}
+                              {working ? tr('ui.connectedAppsCard.waitingForSignIn') : stale ? tr('ui.connectedAppsCard.reconnect') : tr('ui.connectedAppsCard.connect')}
                             </button>
                           ) : (
-                            !app.token_help && <span className="text-[12px] text-fg-dim">Not set up on this server</span>
+                            !app.token_help && <span className="text-[12px] text-fg-dim">{tr('ui.connectedAppsCard.notSetUpOnThis')}</span>
                           )}
                         </>
                       )}
@@ -211,9 +212,9 @@ export function ConnectedAppsCard() {
                     <p className="mt-2 text-[12px] leading-relaxed text-fg-dim">
                       {app.provider ? (
                         <>
-                          {PROVIDER_NAMES[app.provider]} sign-in isn't set up for this server yet.{' '}
+                          {tr('ui.connectedAppsCard.itemSignInIsnT', { item: PROVIDER_NAMES[app.provider] })}{' '}
                           <button type="button" onClick={() => openGuide(app.provider as Provider)} className="underline underline-offset-2 hover:text-fg">
-                            Set up {PROVIDER_NAMES[app.provider]}
+                            {tr('ui.connectedAppsCard.setUpItem', { item: PROVIDER_NAMES[app.provider] })}
                           </button>
                         </>
                       ) : app.setup}
@@ -239,21 +240,21 @@ export function ConnectedAppsCard() {
                         </label>
                         {pending && (
                           <button type="button" disabled={working} onClick={() => void connect(app)} className={buttonClass}>
-                            {working ? 'Waiting for sign-in…' : 'Reconnect to allow'}
+                            {working ? tr('ui.connectedAppsCard.waitingForSignIn') : tr('ui.connectedAppsCard.reconnectToAllow')}
                           </button>
                         )}
                       </div>
                     );
                   })}
-                  {results[app.id] && on && <CheckList result={results[app.id]} label={`${app.name} test`} />}
+                  {results[app.id] && on && <CheckList result={results[app.id]} label={tr('ui.connectedAppsCard.nameTest', { name: app.name })} />}
                   {tokenFor === app.id && (
-                    <form onSubmit={saveToken(app)} className="mt-3 flex flex-wrap items-end gap-2" aria-label={`${app.name} token`}>
+                    <form onSubmit={saveToken(app)} className="mt-3 flex flex-wrap items-end gap-2" aria-label={tr('ui.connectedAppsCard.nameToken', { name: app.name })}>
                       <div className="min-w-[220px] flex-1">
-                        <Field label="ACCESS TOKEN" hint={app.token_help || undefined}>
+                        <Field label={tr('ui.connectedAppsCard.accessToken')} hint={app.token_help || undefined}>
                           <Input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="ghp_…" />
                         </Field>
                       </div>
-                      <button type="submit" disabled={!token.trim() || working} className={buttonClass}>Save token</button>
+                      <button type="submit" disabled={!token.trim() || working} className={buttonClass}>{tr('ui.connectedAppsCard.saveToken')}</button>
                     </form>
                   )}
                   {errors[app.id] && <p role="alert" className="mt-2 text-[12px] text-danger-ink">{errors[app.id]}</p>}
@@ -265,7 +266,7 @@ export function ConnectedAppsCard() {
       ))}
 
       <section>
-        <SubHeading>ADDED BY ADDRESS</SubHeading>
+        <SubHeading>{tr('ui.connectedAppsCard.addedByAddress')}</SubHeading>
         {list.custom.length > 0 && (
           <Group className="mb-3">
             {list.custom.map((c) => {
@@ -284,12 +285,12 @@ export function ConnectedAppsCard() {
                     <div className="flex flex-none items-center gap-2">
                       {!signedOut && !stale && (
                         <button type="button" onClick={() => void run(c.server_id, () => signOutServer(c.server_id))} className={quietButtonClass}>
-                          Sign out
+                          {tr('ui.connectedAppsCard.signOut')}
                         </button>
                       )}
                       {(signedOut || stale) && (
                         <button type="button" disabled={busy === c.server_id} onClick={() => void reconnectCustom(c)} className={stale ? primaryButtonClass : buttonClass}>
-                          {busy === c.server_id ? 'Waiting for sign-in…' : stale ? 'Reconnect' : 'Sign in'}
+                          {busy === c.server_id ? tr('ui.connectedAppsCard.waitingForSignIn') : stale ? tr('ui.connectedAppsCard.reconnect') : tr('ui.connectedAppsCard.signIn')}
                         </button>
                       )}
                     </div>
@@ -301,25 +302,25 @@ export function ConnectedAppsCard() {
           </Group>
         )}
         {adding ? (
-          <form onSubmit={addByUrl} aria-label="Add an app by address" className="space-y-3 rounded-[12px] border border-line bg-panel p-3.5">
+          <form onSubmit={addByUrl} aria-label={tr('ui.connectedAppsCard.addAnAppByAddress')} className="space-y-3 rounded-[12px] border border-line bg-panel p-3.5">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-[180px_1fr]">
-              <Field label="NAME" hint="letters, numbers, - and _" required>
-                <Input value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value })} placeholder="tracker" />
+              <Field label={tr('ui.connectedAppsCard.name')} hint="letters, numbers, - and _" required>
+                <Input value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value })} placeholder={tr('ui.connectedAppsCard.tracker')} />
               </Field>
-              <Field label="MCP SERVER ADDRESS" required>
+              <Field label={tr('ui.connectedAppsCard.mcpServerAddress')} required>
                 <Input value={custom.url} onChange={(e) => setCustom({ ...custom, url: e.target.value })} placeholder="https://mcp.example.com/mcp" />
               </Field>
             </div>
-            <p className="text-[12px] text-fg-dim">If the server asks you to sign in, a sign-in window opens next.</p>
+            <p className="text-[12px] text-fg-dim">{tr('ui.connectedAppsCard.ifTheServerAsksYou')}</p>
             <div className="flex gap-2">
               <button type="submit" disabled={busy === 'custom' || !custom.name.trim() || !custom.url.trim()} className={primaryButtonClass}>
-                {busy === 'custom' ? 'Waiting for sign-in…' : 'Add'}
+                {busy === 'custom' ? tr('ui.connectedAppsCard.waitingForSignIn') : tr('ui.connectedAppsCard.add')}
               </button>
-              <button type="button" onClick={() => setAdding(false)} className={quietButtonClass}>Cancel</button>
+              <button type="button" onClick={() => setAdding(false)} className={quietButtonClass}>{tr('ui.connectedAppsCard.cancel')}</button>
             </div>
           </form>
         ) : (
-          <button type="button" onClick={() => setAdding(true)} className={buttonClass}>+ Add an app by address</button>
+          <button type="button" onClick={() => setAdding(true)} className={buttonClass}>{tr('ui.connectedAppsCard.addAnAppByAddress_0597')}</button>
         )}
         {errors.custom && <p role="alert" className="mt-2 text-[12px] text-danger-ink">{errors.custom}</p>}
       </section>

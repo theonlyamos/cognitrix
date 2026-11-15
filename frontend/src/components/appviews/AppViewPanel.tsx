@@ -8,6 +8,7 @@ import {
   type AppViewDetail,
 } from '@/lib/appViews';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const iconButton = 'grid h-9 w-9 flex-none place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8 md:w-8';
 const TEARDOWN_WAIT_MS = 400;
@@ -109,7 +110,7 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
     } catch (e) {
       const status = (e as { response?: { status?: number } })?.response?.status;
       if (status === 404) onGone?.();
-      setError(errorMessage(e, 'Could not open this app.'));
+      setError(errorMessage(e, tr('ui.appviews.appViewPanel.couldNotOpenThisApp')));
     }
   }, [viewId, onGone, sendResult]);
 
@@ -161,7 +162,7 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
             const response = (e as { response?: { status?: number; data?: { detail?: unknown } } })?.response;
             if (response?.status !== 409 || response.data?.detail !== 'confirm') throw e;
             if (!(await askFirst(name, args))) {
-              fail(-32001, 'The person said no.');
+              fail(-32001, tr('ui.appviews.appViewPanel.thePersonSaidNo'));
               return;
             }
             reply(await callAppTool(viewId, name, args, true));
@@ -174,7 +175,7 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
         case 'ui/open-link': {
           const url = safeLink(params.url);
           if (!url) {
-            fail(-32602, 'Only web links can be opened.');
+            fail(-32602, tr('ui.appviews.appViewPanel.onlyWebLinksCanBe'));
             return;
           }
           window.open(url, '_blank', 'noopener,noreferrer');
@@ -187,7 +188,7 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
             .map((b) => (b && typeof b === 'object' && (b as { type?: string }).type === 'text' ? String((b as { text?: unknown }).text ?? '') : ''))
             .join('\n').trim();
           if (!text || !now.onSendMessage) {
-            fail(-32602, 'Nothing to send.');
+            fail(-32602, tr('ui.appviews.appViewPanel.nothingToSend'));
             return;
           }
           now.onSendMessage(text.slice(0, 4000));
@@ -205,10 +206,10 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
           return;
         }
         default:
-          fail(-32601, `Not supported: ${method}`);
+          fail(-32601, tr('ui.appviews.appViewPanel.notSupportedMethod', { method }));
       }
     } catch (e) {
-      fail(-32000, errorMessage(e, 'That did not work.'));
+      fail(-32000, errorMessage(e, tr('ui.appviews.appViewPanel.thatDidNotWork')));
     }
   }, [viewId]);
 
@@ -253,26 +254,26 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
 
   const title = view?.title || 'Connected app';
   return (
-    <section aria-label={`App: ${title}`} className="relative flex h-full min-h-0 flex-col bg-bg">
+    <section aria-label={tr('ui.appviews.appViewPanel.appTitle', { title })} className="relative flex h-full min-h-0 flex-col bg-bg">
       <header className="flex min-h-12 flex-none items-center gap-1.5 border-b border-line py-1.5 pl-2 pr-2 md:px-3">
         {onBack && !expanded && (
           <button type="button" onClick={onBack} className="inline-flex h-9 flex-none items-center gap-1 rounded-lg px-2 font-mono text-[11.5px] text-fg-dim hover:bg-panel-2 hover:text-fg md:h-8">
-            <span aria-hidden>‹</span> This chat
+            <span aria-hidden>‹</span>{' '}{tr('ui.appviews.appViewPanel.thisChat')}
           </button>
         )}
         <AppWindow size={15} className="ml-1 hidden flex-none text-fg-dim sm:block" aria-hidden />
         <h2 className="min-w-0 flex-shrink truncate text-[14px] font-semibold" title={title}>{title}</h2>
         {view && <span className="flex-none rounded-md bg-accent/15 px-1.5 py-0.5 font-mono text-[10.5px] text-accent-ink">{view.app}</span>}
         <span className="min-w-1 flex-1" />
-        <button type="button" onClick={() => { setReloadKey((k) => k + 1); void load(true); }} aria-label="Reload the app" title="Reload" className={iconButton}>
+        <button type="button" onClick={() => { setReloadKey((k) => k + 1); void load(true); }} aria-label={tr('ui.appviews.appViewPanel.reloadTheApp')} title={tr('ui.appviews.appViewPanel.reload')} className={iconButton}>
           <RotateCw size={15} />
         </button>
         {onToggleExpand && (
-          <button type="button" onClick={onToggleExpand} aria-label={expanded ? 'Shrink the panel' : 'Expand the panel'} title={expanded ? 'Shrink' : 'Expand'} className={cn(iconButton, 'hidden md:grid')}>
+          <button type="button" onClick={onToggleExpand} aria-label={expanded ? tr('ui.appviews.appViewPanel.shrinkThePanel') : tr('ui.appviews.appViewPanel.expandThePanel')} title={expanded ? tr('ui.appviews.appViewPanel.shrink') : tr('ui.appviews.appViewPanel.expand')} className={cn(iconButton, 'hidden md:grid')}>
             {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
           </button>
         )}
-        <button type="button" onClick={() => void close()} aria-label="Close the app" className={iconButton}><X size={16} /></button>
+        <button type="button" onClick={() => void close()} aria-label={tr('ui.appviews.appViewPanel.closeTheApp')} className={iconButton}><X size={16} /></button>
       </header>
 
       <div className="relative min-h-0 flex-1">
@@ -291,27 +292,27 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
         ) : error ? (
           <div role="alert" className="p-4 text-[13px] text-fg-dim">
             <p>{error}</p>
-            <button type="button" onClick={() => void load(true)} className="mt-3 rounded-md border border-line px-2.5 py-1 text-[12.5px] hover:border-fg-dim">Try again</button>
+            <button type="button" onClick={() => void load(true)} className="mt-3 rounded-md border border-line px-2.5 py-1 text-[12.5px] hover:border-fg-dim">{tr('ui.appviews.appViewPanel.tryAgain')}</button>
           </div>
         ) : (
-          <div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-fg-dim">opening app…</div>
+          <div role="status" className="flex h-full items-center justify-center font-mono text-[12px] text-fg-dim">{tr('ui.appviews.appViewPanel.openingApp')}</div>
         )}
 
         {confirming && (
           <div className="absolute inset-0 z-10 flex items-end justify-center bg-black/30 p-3 sm:items-center">
             <div role="alertdialog" aria-labelledby="app-confirm-title" className="w-full max-w-sm rounded-xl border border-line bg-panel p-4 shadow-xl">
               <h3 id="app-confirm-title" className="text-[14px] font-semibold">
-                Let {view?.app || 'this app'} run {confirming.name.replace(/[_-]+/g, ' ')}?
+                {tr('ui.appviews.appViewPanel.letAppRunReplace', { app: view?.app || tr('ui.appviews.appViewPanel.thisApp'), replace: confirming.name.replace(/[_-]+/g, ' ') })}
               </h3>
-              <p className="mt-1 text-[12.5px] text-fg-dim">The app's screen asked for this. It can change things in {view?.app || 'the app'}.</p>
+              <p className="mt-1 text-[12.5px] text-fg-dim">{tr('ui.appviews.appViewPanel.theAppSScreenAsked', { app: view?.app || tr('ui.appviews.appViewPanel.theApp') })}</p>
               {!!confirming.args && typeof confirming.args === 'object' && Object.keys(confirming.args as object).length > 0 && (
                 <pre className="mt-2 max-h-32 overflow-auto rounded border border-line bg-panel-2 p-2 font-mono text-[11px] text-fg-dim">{JSON.stringify(confirming.args, null, 2)}</pre>
               )}
               <div className="mt-3 flex justify-end gap-2">
                 <button type="button" autoFocus onClick={() => { confirming.resolve(false); setConfirming(null); }}
-                  className="min-h-9 rounded-md border border-line px-3 text-[13px] hover:border-fg-dim">Don't run</button>
+                  className="min-h-9 rounded-md border border-line px-3 text-[13px] hover:border-fg-dim">{tr('ui.appviews.appViewPanel.donTRun')}</button>
                 <button type="button" onClick={() => { confirming.resolve(true); setConfirming(null); }}
-                  className="min-h-9 rounded-md bg-fg px-3 text-[13px] font-medium text-bg">Run it</button>
+                  className="min-h-9 rounded-md bg-fg px-3 text-[13px] font-medium text-bg">{tr('ui.appviews.appViewPanel.runIt')}</button>
               </div>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { API_BASE, api } from '@/lib/api';
 
+import { dateLocale, tr } from '@/lib/i18n';
 // Artifacts: pages agents publish. See cognitrix/artifact_pages on the server.
 
 export type PageRole = 'owner' | 'edit' | 'view';
@@ -136,13 +137,13 @@ export function ago(stamp: string | null | undefined, now = Date.now()): string 
   const date = parseStamp(stamp);
   if (!date) return '';
   const seconds = Math.max(0, Math.round((now - date.getTime()) / 1000));
-  if (seconds < 60) return 'just now';
+  if (seconds < 60) return tr('ui.time.justNow');
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 60) return tr('ui.time.minAgo', { n: minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} h ago`;
+  if (hours < 24) return tr('ui.time.hAgo', { n: hours });
   const days = Math.round(hours / 24);
-  return days < 30 ? `${days} d ago` : date.toLocaleDateString();
+  return days < 30 ? tr('ui.time.dAgo', { n: days }) : date.toLocaleDateString(dateLocale());
 }
 
 export function until(stamp: string | null | undefined, now = Date.now()): string {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { Group, SettingRow, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
+import { tr } from '@/lib/i18n';
 
 interface MySkill { id: string; name: string; description: string; body: string; author: string; created_at: string | null }
 interface ListedSkill { name: string; description: string; scope?: 'mine' | 'everyone' }
@@ -25,24 +26,24 @@ function SkillForm({
       onSubmit={(e) => { e.preventDefault(); onSave({ name, description, body }); }}
     >
       <label className="flex flex-col gap-1.5 text-[12.5px] font-medium">
-        Name
+        {tr('ui.settings.skills.name')}
         <input value={name} onChange={(e) => setName(e.target.value)} maxLength={64} required
           placeholder="weekly-client-report" className={cn(field, 'h-9 font-mono')} />
       </label>
       <label className="flex flex-col gap-1.5 text-[12.5px] font-medium">
-        When to use it
+        {tr('ui.settings.skills.whenToUseIt')}
         <input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1024} required
-          placeholder="One sentence your agents read to decide whether this skill fits." className={cn(field, 'h-9')} />
+          placeholder={tr('ui.settings.skills.oneSentenceYourAgentsRead')} className={cn(field, 'h-9')} />
       </label>
       <label className="flex flex-col gap-1.5 text-[12.5px] font-medium">
-        Instructions
+        {tr('ui.settings.skills.instructions')}
         <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={12} required
-          placeholder="The steps, the decision rules, and what the result should look like."
+          placeholder={tr('ui.settings.skills.theStepsTheDecisionRules')}
           className={cn(field, 'resize-y py-2 font-mono text-[12.5px] leading-relaxed')} />
       </label>
       <div className="flex gap-2">
-        <button type="submit" disabled={busy} className={primaryButtonClass}>{busy ? 'Saving…' : 'Save skill'}</button>
-        <button type="button" disabled={busy} onClick={onCancel} className={buttonClass}>Cancel</button>
+        <button type="submit" disabled={busy} className={primaryButtonClass}>{busy ? tr('ui.settings.skills.saving') : tr('ui.settings.skills.saveSkill')}</button>
+        <button type="button" disabled={busy} onClick={onCancel} className={buttonClass}>{tr('ui.settings.skills.cancel')}</button>
       </div>
     </form>
   );
@@ -69,7 +70,7 @@ export function SkillsSettings() {
       setCanShare(Boolean(own.data.can_share));
       setShared((all.data || []).filter((s) => s.scope !== 'mine'));
     } catch (e) {
-      setLoadError(errorMessage(e, 'Could not load skills.'));
+      setLoadError(errorMessage(e, tr('ui.settings.skills.couldNotLoadSkills')));
     }
   };
   useEffect(() => { void load(); }, []);
@@ -90,72 +91,72 @@ export function SkillsSettings() {
   };
 
   if (loadError) return <p role="alert" className="text-[12.5px] text-danger-ink">{loadError}</p>;
-  if (!mine) return <p className="text-[13px] text-fg-dim">Loading…</p>;
+  if (!mine) return <p className="text-[13px] text-fg-dim">{tr('ui.settings.skills.loading')}</p>;
 
   return (
     <>
       <div className="mb-2 flex items-center gap-2">
-        <SubHeading className="mb-0 flex-1">MY SKILLS</SubHeading>
+        <SubHeading className="mb-0 flex-1">{tr('ui.settings.skills.mySkills')}</SubHeading>
         {editing !== 'new' && (
-          <button type="button" className={buttonClass} onClick={() => { setError(null); setEditing('new'); }}>+ New skill</button>
+          <button type="button" className={buttonClass} onClick={() => { setError(null); setEditing('new'); }}>{tr('ui.settings.skills.newSkill')}</button>
         )}
       </div>
       {error && <p role="alert" className="mb-2 text-[12.5px] text-danger-ink">{error}</p>}
       <Group>
         {editing === 'new' && (
           <SkillForm skill={null} busy={busy} onCancel={() => setEditing(null)}
-            onSave={(v) => void run(() => api.post('/skills/mine', v), 'Could not save the skill.')} />
+            onSave={(v) => void run(() => api.post('/skills/mine', v), tr('ui.settings.skills.couldNotSaveTheSkill'))} />
         )}
         {mine.length === 0 && editing !== 'new' && (
           <p className="px-3.5 py-4 text-[13px] leading-relaxed text-fg-dim">
-            You have no skills of your own yet. Use “Save as skill” in a chat's menu after a job that went well, or write one here.
+            {tr('ui.settings.skills.youHaveNoSkillsOf')}
           </p>
         )}
         {mine.map((skill) => (editing === skill.id ? (
           <SkillForm key={skill.id} skill={skill} busy={busy} onCancel={() => setEditing(null)}
-            onSave={(v) => void run(() => api.patch(`/skills/mine/${skill.id}`, v), 'Could not save the skill.')} />
+            onSave={(v) => void run(() => api.patch(`/skills/mine/${skill.id}`, v), tr('ui.settings.skills.couldNotSaveTheSkill'))} />
         ) : (
           <SettingRow
             key={skill.id}
             label={<span className="font-mono text-[13px]">/{skill.name}</span>}
-            detail={<>{skill.description}{skill.author ? <span className="text-fg-dim"> · learned by {skill.author}</span> : null}</>}
+            detail={<>{skill.description}{skill.author ? <span className="text-fg-dim">{' '}{tr('ui.settings.skills.learnedByAuthor', { author: skill.author })}</span> : null}</>}
           >
             {confirm?.id === skill.id ? (
               <>
                 <span className="text-[12.5px] text-fg-dim">
-                  {confirm.action === 'delete' ? 'Delete this skill?' : 'Every agent on this server will be able to load it.'}
+                  {confirm.action === 'delete' ? tr('ui.settings.skills.deleteThisSkill') : tr('ui.settings.skills.everyAgentOnThisServer')}
                 </span>
                 <button type="button" disabled={busy} className={confirm.action === 'delete' ? cn(buttonClass, 'border-danger/40 text-danger-ink') : primaryButtonClass}
                   onClick={() => void run(
                     () => (confirm.action === 'delete' ? api.delete(`/skills/mine/${skill.id}`) : api.post(`/skills/mine/${skill.id}/share`)),
-                    confirm.action === 'delete' ? 'Could not delete the skill.' : 'Could not share the skill.',
+                    confirm.action === 'delete' ? tr('ui.settings.skills.couldNotDeleteTheSkill') : tr('ui.settings.skills.couldNotShareTheSkill'),
                   )}>
-                  {confirm.action === 'delete' ? 'Delete' : 'Share'}
+                  {confirm.action === 'delete' ? tr('ui.settings.skills.delete') : tr('ui.settings.skills.share')}
                 </button>
-                <button type="button" disabled={busy} className={quietButtonClass} onClick={() => setConfirm(null)}>Cancel</button>
+                <button type="button" disabled={busy} className={quietButtonClass} onClick={() => setConfirm(null)}>{tr('ui.settings.skills.cancel')}</button>
               </>
             ) : (
               <>
-                <button type="button" className={buttonClass} onClick={() => { setError(null); setEditing(skill.id); }}>Edit</button>
+                <button type="button" className={buttonClass} onClick={() => { setError(null); setEditing(skill.id); }}>{tr('ui.settings.skills.edit')}</button>
                 {canShare && (
-                  <button type="button" className={buttonClass} onClick={() => setConfirm({ id: skill.id, action: 'share' })}>Share with everyone</button>
+                  <button type="button" className={buttonClass} onClick={() => setConfirm({ id: skill.id, action: 'share' })}>{tr('ui.settings.skills.shareWithEveryone')}</button>
                 )}
-                <button type="button" className={quietButtonClass} onClick={() => setConfirm({ id: skill.id, action: 'delete' })}>Delete</button>
+                <button type="button" className={quietButtonClass} onClick={() => setConfirm({ id: skill.id, action: 'delete' })}>{tr('ui.settings.skills.delete')}</button>
               </>
             )}
           </SettingRow>
         )))}
       </Group>
 
-      <SubHeading className="mt-7">SHARED WITH EVERYONE</SubHeading>
+      <SubHeading className="mt-7">{tr('ui.settings.skills.sharedWithEveryone')}</SubHeading>
       <Group>
-        {shared.length === 0 && <p className="px-3.5 py-4 text-[13px] text-fg-dim">No shared skills on this server.</p>}
+        {shared.length === 0 && <p className="px-3.5 py-4 text-[13px] text-fg-dim">{tr('ui.settings.skills.noSharedSkillsOnThis')}</p>}
         {shared.map((skill) => (
           <SettingRow key={skill.name} label={<span className="font-mono text-[13px]">/{skill.name}</span>} detail={skill.description} />
         ))}
       </Group>
       <p className="mt-2 text-[12px] leading-relaxed text-fg-dim">
-        Shared skills are the same for everyone on this server{canShare ? '. As an admin you can share one of yours.' : ' and are added by an admin.'}
+        {tr('ui.settings.skills.sharedSkillsAreTheSame')}{canShare ? tr('ui.settings.skills.asAnAdminYouCan') : tr('ui.settings.skills.andAreAddedByAn')}
       </p>
     </>
   );

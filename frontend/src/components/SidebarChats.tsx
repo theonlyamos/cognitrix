@@ -18,6 +18,7 @@ import {
 } from '@/lib/chatNav';
 import type { AgentAvatar } from '@/lib/agentAvatar';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 /** One row of the chat list: a chat with an agent or a team. */
 export interface SidebarChat {
@@ -201,7 +202,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
     if (target && title && title !== target.title) void update(target, { title });
   };
   const remove = async (c: SidebarChat) => {
-    if (isRunning(c) || !confirm('Delete this conversation?')) return;
+    if (isRunning(c) || !confirm(tr('ui.sidebarChats.deleteThisConversation'))) return;
     try {
       await api.delete(c.kind === 'team' ? `/teams/${c.team_id}/chats/${c.id}` : `/sessions/${c.id}`);
       reread();
@@ -213,12 +214,12 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
   // Ask the chat's agent to write up how it did the job as a reusable skill.
   // The draft waits in the Inbox; nothing changes until it's approved.
   const saveAsSkill = async (c: SidebarChat) => {
-    notifications?.push({ event: 'agent_alert', title: 'Writing a skill from this chat…', body: c.title });
+    notifications?.push({ event: 'agent_alert', title: tr('ui.sidebarChats.writingASkillFromThis'), body: c.title });
     try {
       await api.post('/skill-drafts', { session_id: c.id });
       void notifications?.refreshInbox();
     } catch (err) {
-      notifications?.push({ event: 'agent_alert', title: "Couldn't write a skill from this chat", body: errorMessage(err, 'Try again in a moment.') });
+      notifications?.push({ event: 'agent_alert', title: tr('ui.sidebarChats.couldnTWriteASkill'), body: errorMessage(err, tr('ui.sidebarChats.tryAgainInAMoment')) });
     }
   };
 
@@ -281,7 +282,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
               autoFocus
               value={renaming.title}
               maxLength={120}
-              aria-label="Chat name"
+              aria-label={tr('ui.sidebarChats.chatName')}
               onChange={(e) => setRenaming({ id: c.id, title: e.target.value })}
               onBlur={saveRename}
               onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(null); }}
@@ -292,14 +293,14 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
       );
     }
     const actions = [
-      { label: 'Rename', disabled: busy, onSelect: () => setRenaming({ id: c.id, title: c.title }) },
+      { label: tr('ui.sidebarChats.rename'), disabled: busy, onSelect: () => setRenaming({ id: c.id, title: c.title }) },
       { label: c.pinned ? 'Unpin' : 'Pin to top', disabled: busy, onSelect: () => void update(c, { pinned: !c.pinned }) },
       { label: c.archived ? 'Move back to chats' : 'Archive', disabled: busy, onSelect: () => void update(c, { archived: !c.archived }) },
       ...(c.kind === 'team' ? [] : [
-        { label: 'Export as Markdown', onSelect: () => void exportChat(c.id, c.title, who).catch(() => {}) },
-        { label: 'Save as skill', disabled: busy, onSelect: () => void saveAsSkill(c) },
+        { label: tr('ui.sidebarChats.exportAsMarkdown'), onSelect: () => void exportChat(c.id, c.title, who).catch(() => {}) },
+        { label: tr('ui.sidebarChats.saveAsSkill'), disabled: busy, onSelect: () => void saveAsSkill(c) },
       ]),
-      { label: 'Delete', danger: true, disabled: busy, onSelect: () => void remove(c) },
+      { label: tr('ui.sidebarChats.delete'), danger: true, disabled: busy, onSelect: () => void remove(c) },
     ];
     return (
       <li key={c.id} className="group relative" data-chat-row={c.id}>
@@ -307,7 +308,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
           type="button"
           onClick={() => open(c)}
           aria-current={selected ? 'page' : undefined}
-          title={c.started_by ? `${c.title} · started by ${c.started_by.agent_name || 'an agent'}` : c.title}
+          title={c.started_by ? tr('ui.sidebarChats.titleStartedByAgentName', { title: c.title, agent_name: c.started_by.agent_name || 'an agent' }) : c.title}
           className={cn(
             'flex min-h-11 w-full items-center gap-2.5 rounded-lg pr-9 text-left text-[13.5px] transition-colors md:min-h-[34px]',
             opts.indent ? 'pl-9' : 'pl-2.5',
@@ -317,11 +318,11 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
           {opts.badge && <AgentBadge name={who} team={c.kind === 'team'} avatar={avatarOf(c)} size="sm" />}
           {opts.badge && <span className="sr-only">{who}: </span>}
           <span className="min-w-0 flex-1 truncate">{c.title}</span>
-          {c.pinned && <PinIcon aria-label="Pinned" className="h-3 w-3 flex-none text-fg-dim" strokeWidth={2} />}
-          {busy && <span aria-label="working" title="Working" data-testid={`running-${c.id}`} className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />}
+          {c.pinned && <PinIcon aria-label={tr('ui.sidebarChats.pinned')} className="h-3 w-3 flex-none text-fg-dim" strokeWidth={2} />}
+          {busy && <span aria-label={tr('ui.sidebarChats.working')} title={tr('ui.sidebarChats.working_3b4d')} data-testid={`running-${c.id}`} className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />}
         </button>
         <div className={cn('absolute inset-y-0 right-0 flex items-center transition-opacity', selected ? 'opacity-100' : 'md:opacity-0 md:focus-within:opacity-100 md:group-hover:opacity-100')}>
-          <ChatRowMenu compact label={`More actions for ${c.title}`} actions={actions} />
+          <ChatRowMenu compact label={tr('ui.sidebarChats.moreActionsForTitle', { title: c.title })} actions={actions} />
         </div>
       </li>
     );
@@ -334,8 +335,8 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
     {rail}
     <div className={cn('flex min-h-0 flex-1 flex-col', collapsed && 'md:hidden')}>
       <div className="flex flex-none items-center justify-between gap-2 px-2.5 pb-1.5 pt-4">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-dim">Chats</span>
-        <div role="group" aria-label="List chats by" className="flex rounded-lg bg-panel-2 p-0.5 text-[12px]">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-dim">{tr('ui.sidebarChats.chats')}</span>
+        <div role="group" aria-label={tr('ui.sidebarChats.listChatsBy')} className="flex rounded-lg bg-panel-2 p-0.5 text-[12px]">
           {(['recent', 'agent'] as const).map((m) => (
             <button
               key={m}
@@ -344,21 +345,21 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
               onClick={() => pickMode(m)}
               className={cn('min-h-8 rounded-md px-2.5 transition-colors md:min-h-6', mode === m ? 'bg-panel font-semibold text-fg shadow-sm' : 'text-fg-dim hover:text-fg')}
             >
-              {m === 'recent' ? 'Recent' : 'By agent'}
+              {m === 'recent' ? tr('ui.sidebarChats.recent') : tr('ui.sidebarChats.byAgent')}
             </button>
           ))}
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-0.5 pb-2 [scrollbar-width:thin]">
         {chats.length === 0 ? (
-          <p className="px-2.5 py-2 text-[12.5px] text-fg-dim">{chatsData ? 'No chats yet.' : 'Loading…'}</p>
+          <p className="px-2.5 py-2 text-[12.5px] text-fg-dim">{chatsData ? tr('ui.sidebarChats.noChatsYet') : tr('ui.sidebarChats.loading')}</p>
         ) : mode === 'recent' ? (
-          <ul aria-label="Recent chats" className="flex flex-col gap-px">
+          <ul aria-label={tr('ui.sidebarChats.recentChats')} className="flex flex-col gap-px">
             {shownRecent.map((c) => row(c, { badge: true }))}
             {live.length > shownRecent.length && (
               <li>
                 <button type="button" onClick={() => setShowAll(true)} className="min-h-9 w-full rounded-lg px-2.5 text-left text-[12.5px] text-fg-dim hover:bg-panel-2 hover:text-fg">
-                  Show {live.length - shownRecent.length} more
+                  {tr('ui.sidebarChats.showValueMore', { value: live.length - shownRecent.length })}
                 </button>
               </li>
             )}
@@ -366,7 +367,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
         ) : (
           <div className="flex flex-col gap-1">
             {grouped.pinned.length > 0 && (
-              <ul aria-label="Pinned chats" className="flex flex-col gap-px">
+              <ul aria-label={tr('ui.sidebarChats.pinnedChats')} className="flex flex-col gap-px">
                 {grouped.pinned.map((c) => row(c, { badge: true }))}
               </ul>
             )}
@@ -379,7 +380,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
               const busyHere = g.chats.some(isRunning);
               const sectionId = `sidebar-section-${g.key.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
               return (
-                <section key={g.key} aria-label={`${name} chats`} data-chat-section={g.key}>
+                <section key={g.key} aria-label={tr('ui.sidebarChats.nameChats', { name })} data-chat-section={g.key}>
                   <div className="group/sec flex items-center rounded-lg hover:bg-panel-2">
                     <button
                       type="button"
@@ -391,14 +392,14 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
                       <svg aria-hidden width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className={cn('flex-none text-fg-dim transition-transform', !isOpen && '-rotate-90')}><path d="m6 9 6 6 6-6" /></svg>
                       <AgentBadge name={name} team={g.kind === 'team'} avatar={g.kind === 'team' ? undefined : named?.avatar} size="sm" />
                       <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold">{name}</span>
-                      {busyHere && <span aria-label="working" className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />}
+                      {busyHere && <span aria-label={tr('ui.sidebarChats.working')} className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />}
                       <span className="flex-none text-[11.5px] text-fg-dim">{g.chats.length}</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => startWith({ kind: g.kind, id: g.id })}
-                      aria-label={`New chat with ${name}`}
-                      title={`New chat with ${name}`}
+                      aria-label={tr('ui.sidebarChats.newChatWithName', { name })}
+                      title={tr('ui.sidebarChats.newChatWithName', { name })}
                       className="mx-1 grid h-11 w-11 flex-none place-items-center rounded-md text-fg-dim hover:text-fg md:h-6 md:w-6 md:opacity-0 md:focus:opacity-100 md:group-hover/sec:opacity-100"
                     >
                       <svg aria-hidden width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
@@ -414,7 +415,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
                             onClick={() => setExpanded((prev) => new Set(prev).add(g.key))}
                             className="min-h-9 w-full rounded-lg pl-9 text-left text-[12.5px] text-fg-dim hover:bg-panel-2 hover:text-fg"
                           >
-                            Show {g.chats.length - shown.length} more
+                            {tr('ui.sidebarChats.showValueMore', { value: g.chats.length - shown.length })}
                           </button>
                         </li>
                       )}
@@ -434,10 +435,10 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
               className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-[12.5px] text-fg-dim hover:bg-panel-2 hover:text-fg"
             >
               <svg aria-hidden width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className={cn('flex-none transition-transform', !archivedOpen && '-rotate-90')}><path d="m6 9 6 6 6-6" /></svg>
-              Archived ({grouped.archived.length})
+              {tr('ui.sidebarChats.archivedLength', { length: grouped.archived.length })}
             </button>
             {archivedOpen && (
-              <ul aria-label="Archived chats" className="flex flex-col gap-px">
+              <ul aria-label={tr('ui.sidebarChats.archivedChats')} className="flex flex-col gap-px">
                 {grouped.archived.map((c) => row(c, { badge: true }))}
               </ul>
             )}

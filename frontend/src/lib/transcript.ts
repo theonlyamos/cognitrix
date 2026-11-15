@@ -1,6 +1,7 @@
 import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import { parseCard, type Card } from '@/lib/cards';
 
+import { dateLocale, tr } from '@/lib/i18n';
 /** Raw session.chat entry as the backend persists it. Roles are inconsistent
  *  in case ('User' vs 'user') and tool results carry no `type` — parse, don't
  *  pattern-match, anywhere else. */
@@ -165,7 +166,7 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
     } else if (role === 'system' && type === 'turn_timing') {
       const tokens =
         m.prompt_tokens || m.completion_tokens
-          ? `${(m.prompt_tokens ?? 0).toLocaleString()} → ${(m.completion_tokens ?? 0).toLocaleString()} tok`
+          ? `${(m.prompt_tokens ?? 0).toLocaleString(dateLocale())} → ${(m.completion_tokens ?? 0).toLocaleString(dateLocale())} tok`
           : undefined;
       out.push({ kind: 'timing', label: content || 'turn', tokens });
     } else if (content.trim()) {
@@ -243,9 +244,9 @@ export function fmtRelative(s: string | null | undefined): string {
   const d = parseSessionDate(s);
   if (!d) return '';
   const secs = Math.round((Date.now() - d.getTime()) / 1000);
-  if (secs < 60) return 'just now';
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-  if (secs < 7 * 86400) return `${Math.floor(secs / 86400)}d ago`;
-  return d.toLocaleDateString();
+  if (secs < 60) return tr('ui.time.justNow');
+  if (secs < 3600) return tr('ui.time.mAgoShort', { n: Math.floor(secs / 60) });
+  if (secs < 86400) return tr('ui.time.hAgoShort', { n: Math.floor(secs / 3600) });
+  if (secs < 7 * 86400) return tr('ui.time.dAgoShort', { n: Math.floor(secs / 86400) });
+  return d.toLocaleDateString(dateLocale());
 }
