@@ -133,7 +133,7 @@ function hash4(text) {
 
 function namespaceFor(file) {
   let rel = path.relative(SRC, file).replace(/\\/g, '/').replace(/\.(tsx?|jsx?)$/, '');
-  rel = rel.replace(/^(pages|components|context|hooks)\//, '').replace(/^lib\//, 'lib/');
+  rel = rel.replace(/^(pages|components|context|hooks)\//, '');
   return rel
     .split('/')
     .map((seg) => seg.replace(/[-_ ](\w)/g, (_, c) => c.toUpperCase()).replace(/^\w/, (c) => c.toLowerCase()))
@@ -171,14 +171,17 @@ function cleanJsxText(value) {
   return decodeEntities(out);
 }
 
+const ENTITIES = {
+  nbsp: '\u00a0', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", rsquo: '’', lsquo: '‘', ldquo: '“',
+  rdquo: '”', middot: '·', hellip: '…', mdash: '—', ndash: '–', times: '×', rarr: '→', larr: '←',
+};
+
+/** Decode HTML entities in one pass, so `&amp;lt;` stays `&lt;`. */
 function decodeEntities(s) {
-  return s
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&rsquo;/g, '’').replace(/&lsquo;/g, '‘')
-    .replace(/&ldquo;/g, '“').replace(/&rdquo;/g, '”').replace(/&middot;/g, '·').replace(/&hellip;/g, '…')
-    .replace(/&mdash;/g, '—').replace(/&ndash;/g, '–').replace(/&times;/g, '×').replace(/&rarr;/g, '→')
-    .replace(/&larr;/g, '←').replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name) => {
+    if (name[0] === '#') return String.fromCodePoint(name[1].toLowerCase() === 'x' ? parseInt(name.slice(2), 16) : Number(name.slice(1)));
+    return ENTITIES[name] ?? whole;
+  });
 }
 
 function placeholderName(expr) {
