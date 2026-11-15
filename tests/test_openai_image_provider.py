@@ -56,7 +56,7 @@ async def test_generate_and_edit_requests(monkeypatch):
     provider = openai_image.OpenAIImageProvider()
 
     image = await provider.generate('a red kite', source=None, aspect_ratio='16:9')
-    assert image.data == PNG and image.model == 'gpt-image-2'
+    assert image.data == PNG and image.model == 'gpt-image-2.6-flare'
     assert seen[0].url.path == '/v1/images/generations'
     assert seen[0].headers['authorization'] == 'Bearer sk-test'
     assert b'"size":"1536x1024"' in seen[0].content.replace(b' ', b'')

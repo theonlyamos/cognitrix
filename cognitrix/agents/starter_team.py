@@ -32,7 +32,7 @@ STARTER_TEAM_DESCRIPTION = (
 FAST_MODELS = {
     'anthropic': 'claude-haiku-5-5',
     'openai': 'gpt-5.4-mini',
-    'google': 'gemini-3.5-flash',
+    'google': 'gemini-3.5-flash-lite',
 }
 
 # Shared by every specialist. `{name}` is filled in on every turn and

@@ -16,7 +16,7 @@ from cognitrix.providers.gemini_image import (
     ProviderImage,
 )
 
-DEFAULT_MODEL = 'gpt-image-2'
+DEFAULT_MODEL = 'gpt-image-2.6-flare'
 BASE_URL = 'https://api.openai.com/v1'
 _EXTENSIONS = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp'}
 

@@ -115,7 +115,7 @@ HARNESSES: dict[str, Harness] = {
     'gemini-cli': Harness(
         'gemini-cli', 'Gemini CLI', 'gemini',
         'npm install -g @google/gemini-cli, then run `gemini` once and sign in',
-        ('gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-4-carbon', 'gemini-3.5-flash'), True),
+        ('gemini-3.6-flash', 'gemini-4-hydrogen', 'gemini-4-carbon', 'gemini-3.8-flash'), True),
     'copilot-cli': Harness(
         'copilot-cli', 'GitHub Copilot CLI', 'copilot',
         'npm install -g @github/copilot, then run `copilot login` (needs a Copilot plan)',

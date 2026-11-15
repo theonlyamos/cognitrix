@@ -66,7 +66,7 @@ VOICE_PROVIDERS: dict[str, VoiceProvider] = {
         ),
         VoiceProvider(
             'google', 'Google Gemini',
-            ('gemini-3.5-flash', 'gemini-3.1-flash', 'gemini-3.1-pro'),
+            ('gemini-3.6-flash', 'gemini-3.5-transcribe', 'gemini-3.5-flash-lite'),
             'GOOGLE_API_KEY', 'https://aistudio.google.com/apikey',
         ),
         VoiceProvider(

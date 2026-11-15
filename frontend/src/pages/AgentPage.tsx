@@ -61,7 +61,7 @@ export default function AgentPage() {
 
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('google');
-  const [model, setModel] = useState('gemini-3.5-flash');
+  const [model, setModel] = useState('gemini-3.6-flash');
   const [temperature, setTemperature] = useState(0.4);
   const [reasoning, setReasoning] = useState('');
   const [harnessMode, setHarnessMode] = useState('edit');
