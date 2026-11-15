@@ -24,12 +24,12 @@ const NAV: NavItem[] = [
   { path: '/agents', label: 'nav.agents', icon: BotIcon },
   { path: '/apps', label: 'nav.apps', icon: AppWindowIcon },
   { path: '/automations', label: 'nav.automations', icon: ZapIcon },
-  { path: '/knowledge', label: 'nav.knowledge', icon: BookOpenIcon },
 ];
 // Behind "More".
 const MORE: NavItem[] = [
   { path: '/tasks', label: 'nav.tasks', icon: ListChecksIcon },
   { path: '/teams', label: 'nav.teams', icon: UsersIcon },
+  { path: '/knowledge', label: 'nav.knowledge', icon: BookOpenIcon },
   { path: '/meetings', label: 'nav.meetings', icon: MicIcon },
 ];
 
