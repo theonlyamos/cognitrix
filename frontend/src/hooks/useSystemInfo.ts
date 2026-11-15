@@ -9,9 +9,9 @@ export interface SystemInfo {
   task_queue: 'filesystem' | 'redis';
   worker_running: boolean | null;
   worker_log: string | null;
-  /** Coding agent CLIs found on this computer (claude, codex, gemini, copilot). */
+  /** Coding agent CLIs found on this computer (claude, codex, gemini, copilot, antigravity). */
   coding_agents?: string[];
-  /** The same CLIs as agent providers: claude-code, codex, gemini-cli, copilot-cli, opencode. */
+  /** The same CLIs as agent providers: claude-code, codex, gemini-cli, copilot-cli, opencode, antigravity-cli. */
   harnesses?: string[];
 }
 

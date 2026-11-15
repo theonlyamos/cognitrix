@@ -2088,7 +2088,8 @@ def coding_agent(
     Args:
         task (str): What the coding agent should do, in full.
         agent (str, optional): 'claude' (Claude Code), 'codex', 'gemini',
-            'copilot' (GitHub Copilot CLI), or 'auto' (the first one
+            'copilot' (GitHub Copilot CLI), 'antigravity' (Antigravity CLI,
+            agy), or 'auto' (the first one
             installed, in that order). 'list' shows
             what's installed.
         mode (str, optional): 'read_only' (reads and answers, no changes),

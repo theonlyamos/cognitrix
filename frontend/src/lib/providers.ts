@@ -6,7 +6,7 @@ export const PROVIDERS = ['openrouter', 'openai', 'chatgpt', 'anthropic', 'googl
 
 /** Coding agent CLIs an agent can run on, signed in on this computer with the
  *  person's own plan or key (cognitrix/providers/harness.py HARNESSES). */
-export const HARNESS_PROVIDERS = ['claude-code', 'codex', 'gemini-cli', 'copilot-cli', 'opencode'];
+export const HARNESS_PROVIDERS = ['claude-code', 'codex', 'gemini-cli', 'copilot-cli', 'opencode', 'antigravity-cli'];
 
 export function isHarness(provider: string): boolean {
   return HARNESS_PROVIDERS.includes(provider);
@@ -19,6 +19,8 @@ export const HARNESS_INSTALL: Record<string, string> = {
   'gemini-cli': 'npm install -g @google/gemini-cli, then run `gemini` once and sign in',
   'copilot-cli': 'npm install -g @github/copilot, then run `copilot login` (needs a Copilot plan)',
   opencode: 'npm install -g opencode-ai, then run `opencode auth login`',
+  'antigravity-cli':
+    'curl -fsSL https://antigravity.google/cli/install.sh | bash (Windows PowerShell: irm https://antigravity.google/cli/install.ps1 | iex), then run `agy` once and sign in',
 };
 
 /** What a CLI agent may do to the files in its working folder. */
@@ -34,6 +36,9 @@ export const HARNESS_MODES = [
 
 /** CLIs that can send their permission prompts to Cognitrix (ASK_HARNESSES in harness.py). */
 export const ASK_HARNESSES = ['claude-code'];
+
+/** CLIs that can't be lent the agent's Cognitrix tools (NO_TOOL_HARNESSES in harness.py). */
+export const NO_TOOL_HARNESSES = ['antigravity-cli'];
 
 /** Providers that run on a signed-in plan instead of an API key
  *  (Settings › Models and keys › Use your ChatGPT plan). */
@@ -53,6 +58,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   'gemini-cli': 'Gemini CLI',
   'copilot-cli': 'GitHub Copilot CLI',
   opencode: 'OpenCode',
+  'antigravity-cli': 'Antigravity CLI',
 };
 
 // Recent models per provider, newest and most useful first. The first one is
@@ -89,6 +95,8 @@ export const MODELS: Record<string, string[]> = {
   'gemini-cli': ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-4-carbon', 'gemini-3.5-flash'],
   'copilot-cli': ['auto', 'claude-sonnet-5-5', 'gpt-6.1-sol'],
   opencode: ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5', 'github-copilot/gpt-5.5'],
+  // `agy models` lists what a signed-in account can use; the slug carries the effort.
+  'antigravity-cli': ['gemini-3.8-flash-low', 'gemini-3.1-pro-high', 'gemini-3.1-pro-low'],
 };
 
 // Where to create an API key for each provider.

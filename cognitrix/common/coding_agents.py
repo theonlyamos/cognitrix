@@ -1,7 +1,8 @@
 """Coding agent CLIs that Cognitrix agents can hand work to.
 
 An agent with the Coding Agent tool can give a coding job to a coding agent
-installed on this computer (Claude Code, Codex, Gemini CLI, GitHub Copilot CLI). The CLI runs
+installed on this computer (Claude Code, Codex, Gemini CLI, GitHub Copilot CLI,
+Antigravity CLI). The CLI runs
 headless in a working folder, in the background, through the same registry as
 ``Bash(run_in_background=true)``, so its output is read with Bash Output and
 it is stopped with Kill Shell.
@@ -16,11 +17,11 @@ Modes map to each CLI's own permission settings:
   questions about the code).
 - ``edit``: may edit files in the folder. Claude Code accepts edits but its
   shell commands are refused; Codex runs commands in its workspace sandbox;
-  Gemini CLI auto-approves edits.
+  Gemini CLI auto-approves edits; Antigravity CLI accepts edits.
 - ``full``: no limits. The CLI can run any command without asking.
 
 The CLIs sign in with their own login (``claude login``, ``codex login``,
-``gemini``, ``copilot login``) or the usual API key variables in the
+``gemini``, ``copilot login``, ``agy``) or the usual API key variables in the
 environment. That is also how an agent can use a Claude, ChatGPT, Gemini or
 Copilot plan: the plan's own CLI runs unmodified and signs in itself, which
 each provider allows, while handing a plan's sign-in to Cognitrix's own model
@@ -93,6 +94,20 @@ def _copilot_args(mode: str, model: str | None) -> list[str]:
     return args
 
 
+def _antigravity_args(mode: str, model: str | None) -> list[str]:
+    # The task comes in on stdin: with stdin not a terminal, agy runs headless
+    # and reads the prompt from it (https://antigravity.google/docs/cli/headless/).
+    # Approvals nobody is there to give are soft-denied.
+    args = ['--output-format', 'text']
+    if mode == 'full':
+        args += ['--dangerously-skip-permissions']
+    else:
+        args += ['--mode', 'plan' if mode == 'read_only' else 'accept-edits']
+    if model:
+        args += ['--model', model]
+    return args
+
+
 CLIS: dict[str, CodingAgentCLI] = {
     'claude': CodingAgentCLI(
         key='claude', label='Claude Code', program='claude',
@@ -134,10 +149,21 @@ CLIS: dict[str, CodingAgentCLI] = {
             'full': 'every tool, path and URL allowed',
         },
     ),
+    'antigravity': CodingAgentCLI(
+        key='antigravity', label='Antigravity CLI', program='agy',
+        install_hint=('curl -fsSL https://antigravity.google/cli/install.sh | bash (Windows PowerShell: '
+                      'irm https://antigravity.google/cli/install.ps1 | iex), then run `agy` once to sign in'),
+        build=_antigravity_args,
+        mode_notes={
+            'read_only': 'plan mode: reads and answers; tools that need approval are denied',
+            'edit': 'accepts file edits; other approvals are denied',
+            'full': 'skips every permission check',
+        },
+    ),
 }
 
 # Order tried when the agent asks for 'auto'.
-PREFERENCE = ('claude', 'codex', 'gemini', 'copilot')
+PREFERENCE = ('claude', 'codex', 'gemini', 'copilot', 'antigravity')
 
 _ALIASES = {
     'claude': 'claude', 'claude_code': 'claude', 'claude code': 'claude', 'claude-code': 'claude',
@@ -145,6 +171,8 @@ _ALIASES = {
     'gemini': 'gemini', 'gemini cli': 'gemini', 'gemini-cli': 'gemini', 'gemini_cli': 'gemini',
     'copilot': 'copilot', 'github copilot': 'copilot', 'copilot cli': 'copilot', 'copilot-cli': 'copilot',
     'github copilot cli': 'copilot', 'gh copilot': 'copilot',
+    'antigravity': 'antigravity', 'agy': 'antigravity', 'antigravity cli': 'antigravity',
+    'antigravity-cli': 'antigravity', 'antigravity_cli': 'antigravity', 'google antigravity': 'antigravity',
 }
 
 

@@ -1,8 +1,9 @@
 """Run an agent on a coding agent CLI that is already signed in on this computer.
 
-Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode each come
-with their maker's sign-in, so they run on the person's own plan (Claude
-Pro/Max, ChatGPT Plus/Pro, Google AI, Copilot) or key. Tools like T3 Code,
+Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, OpenCode and the
+Antigravity CLI (``agy``) each come with their maker's sign-in, so they run on
+the person's own plan (Claude Pro/Max, ChatGPT Plus/Pro, Google AI, Copilot)
+or key. Tools like T3 Code,
 Enjoy and Happy work this way: they start the vendor's own, unmodified CLI
 and read its machine-readable output. Anthropic's terms say so in as many
 words: a person signing in to the unmodified Claude Code binary with their
@@ -60,6 +61,12 @@ PLACEHOLDER_KEY = 'signed-in-cli'
 """Stands in for an API key in agent configs: the CLI signs itself in."""
 WHOLE_MESSAGES = frozenset({'codex', 'opencode'})
 """CLIs that send whole messages, not deltas: the last one is the answer."""
+NO_TOOL_HARNESSES = frozenset({'antigravity-cli'})
+"""CLIs that can't be handed the agent's Cognitrix tools for one run.
+
+The Antigravity CLI reads MCP servers only from ~/.gemini/config/mcp_config.json
+or <workspace>/.agents/mcp_config.json and has no flag or variable for another
+file, so lending tools would mean rewriting the person's own config each turn."""
 
 
 @dataclass
@@ -116,6 +123,13 @@ HARNESSES: dict[str, Harness] = {
         'opencode', 'OpenCode', 'opencode',
         'npm install -g opencode-ai, then run `opencode auth login`',
         ('openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5', 'github-copilot/gpt-5.5'), False),
+    # Google's Antigravity CLI. A native binary (no npm package); `agy models`
+    # lists the slugs a signed-in account can use.
+    'antigravity-cli': Harness(
+        'antigravity-cli', 'Antigravity CLI', 'agy',
+        ('curl -fsSL https://antigravity.google/cli/install.sh | bash (Windows PowerShell: '
+         'irm https://antigravity.google/cli/install.ps1 | iex), then run `agy` once and sign in'),
+        ('gemini-3.8-flash-low', 'gemini-3.1-pro-high', 'gemini-3.1-pro-low'), False),
 }
 
 
@@ -409,6 +423,25 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
         if resume:
             argv += ['--session', resume]
         return argv, env
+    if key == 'antigravity-cli':
+        # https://antigravity.google/docs/cli/headless/ - with stdin not a
+        # terminal, agy reads the prompt from it and runs headless. No -p: it
+        # takes the prompt as its value and would swallow the next flag.
+        argv = [program, '--output-format', 'stream-json']
+        if mode == 'full':
+            argv += ['--dangerously-skip-permissions']
+        else:
+            # Approvals nobody can give in headless runs are soft-denied.
+            argv += ['--mode', 'plan' if mode == 'read_only' else 'accept-edits']
+        for d in extra_dirs:
+            argv += ['--add-dir', d]
+        if model:
+            argv += ['--model', model]
+        if effort in ('low', 'medium', 'high', 'xhigh', 'max'):
+            argv += ['--effort', effort]
+        if resume:
+            argv += ['--conversation', resume]
+        return argv, env
     raise HarnessError(f'Unknown coding agent {key!r}.')
 
 
@@ -579,6 +612,38 @@ def parse_line(key: str, line: str) -> list[Event]:
             msg = (err.get('data') or {}).get('message') if isinstance(err, dict) else None
             events.append(Event(error=_short(msg or err or 'OpenCode failed', 400)))
         return events
+    if key == 'antigravity-cli':
+        if t == 'step_update':
+            step = e.get('step_type')
+            if step == 'agent_response':
+                if e.get('text_delta'):
+                    return [Event(text=str(e['text_delta']))]
+                # Keep one reply step's text apart from the next one's.
+                return [Event(text='\n\n')] if e.get('state') == 'DONE' else []
+            if step == 'tool' and e.get('state') == 'DONE':
+                tool = e.get('tool_info') or {}
+                line = _tool_line(str(tool.get('name') or e.get('tool_name') or 'tool'), tool.get('parameters'))
+                err = tool.get('error')
+                if isinstance(err, dict) and err.get('message'):
+                    line += f" (failed: {_short(err['message'], 120)})"
+                return [Event(activity=line + '\n')]
+            return []
+        if t == 'result':
+            u = e.get('usage') or {}
+            events = [Event(session=str(e.get('conversation_id') or ''),
+                            usage={'prompt_tokens': int(u.get('input_tokens') or 0),
+                                   'completion_tokens': int(u.get('output_tokens') or 0)
+                                   + int(u.get('thinking_tokens') or 0),
+                                   'cached_tokens': int(u.get('cache_read_tokens') or 0)})]
+            status = str(e.get('status') or 'SUCCESS').upper()
+            if status != 'SUCCESS' or e.get('error'):
+                err = e.get('error')
+                msg = err.get('message') if isinstance(err, dict) else err
+                events.append(Event(error=_short(msg or f'Antigravity CLI ended with status {status}', 400)))
+            else:
+                events.append(Event(final_text=str(e.get('response') or '')))
+            return events
+        return []
     return []
 
 
@@ -713,7 +778,8 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
         new_session = str(uuid.uuid4()) if harness.resumes_with_new_id and not resume else None
 
         # Lend the CLI this agent's own tools for the turn (harness_bridge.py).
-        lent = lendable(list(info.tools)) if info is not None and info.call_tool is not None else []
+        lent = (lendable(list(info.tools))
+                if info is not None and info.call_tool is not None and key not in NO_TOOL_HARNESSES else [])
         asking = mode == 'ask' and key in ASK_HARNESSES and info is not None and info.approve is not None
         if lent or asking:
             try:

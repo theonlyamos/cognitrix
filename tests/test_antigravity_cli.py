@@ -1,0 +1,205 @@
+"""Google's Antigravity CLI (agy) as an agent harness and a Coding Agent CLI.
+
+The events below follow https://antigravity.google/docs/cli/headless/
+(--output-format stream-json: init, step_update, result).
+"""
+import asyncio
+import json
+import os
+import stat
+import sys
+import textwrap
+
+import pytest
+
+from cognitrix.common import coding_agents as ca
+from cognitrix.common.folders import WRITE, Folder
+from cognitrix.common.process_security import HostProcessMode
+from cognitrix.providers import harness as h
+
+
+@pytest.fixture
+def workdir(tmp_path, monkeypatch):
+    from cognitrix.config import settings
+
+    monkeypatch.setattr(settings, 'workdir', tmp_path)
+    return tmp_path
+
+
+def _cmd(**kw):
+    args = dict(mode='edit', model='', effort='', resume=None, new_session=None, cwd='/w')
+    args.update(kw)
+    return h.build_command('antigravity-cli', 'agy', **args)
+
+
+def test_listed_as_a_harness():
+    assert h.is_harness('antigravity-cli')
+    assert h.HARNESSES['antigravity-cli'].program == 'agy'
+    assert 'antigravity-cli' in h.NO_TOOL_HARNESSES
+    assert 'antigravity-cli' not in h.ASK_HARNESSES
+
+
+def test_command_lines_per_mode():
+    argv, env = _cmd()
+    # The prompt goes on stdin: -p would take the next flag as its value.
+    assert argv[:3] == ['agy', '--output-format', 'stream-json']
+    assert '-p' not in argv and '--print' not in argv
+    assert argv[argv.index('--mode') + 1] == 'accept-edits'
+    assert env == {}
+    read_only, _ = _cmd(mode='read_only')
+    assert read_only[read_only.index('--mode') + 1] == 'plan'
+    full, _ = _cmd(mode='full')
+    assert '--dangerously-skip-permissions' in full and '--mode' not in full
+    # Nobody to ask: 'ask' falls back to edit.
+    asked, _ = _cmd(mode='ask', tools_url='http://127.0.0.1:1/mcp')
+    assert asked[asked.index('--mode') + 1] == 'accept-edits'
+
+
+def test_model_effort_resume_and_apps_folder():
+    argv, _ = _cmd(model='gemini-3.1-pro-high', effort='high', resume='conv-1', extra_dirs=['/data/apps'])
+    assert argv[argv.index('--model') + 1] == 'gemini-3.1-pro-high'
+    assert argv[argv.index('--effort') + 1] == 'high'
+    assert argv[argv.index('--conversation') + 1] == 'conv-1'
+    assert argv[argv.index('--add-dir') + 1] == '/data/apps'
+    plain, _ = _cmd(effort='minimal')
+    assert '--effort' not in plain and '--conversation' not in plain and '--add-dir' not in plain
+
+
+def _events(*lines):
+    out = []
+    for line in lines:
+        out += h.parse_line('antigravity-cli', json.dumps(line))
+    return out
+
+
+def test_parse_stream_json():
+    ev = _events(
+        {'type': 'init', 'cwd': '/w', 'tools': [], 'permission_mode': 'request-review'},
+        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 0, 'state': 'DONE', 'step_type': 'user_input'},
+        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 1, 'state': 'ACTIVE',
+         'step_type': 'tool', 'tool_name': 'run_command'},
+        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 1, 'state': 'DONE', 'step_type': 'tool',
+         'tool_name': 'run_command', 'tool_info': {'name': 'run_command', 'parameters': {'command': 'ls'}}},
+        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 2, 'state': 'ACTIVE',
+         'step_type': 'agent_response', 'text_delta': 'Fo'},
+        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 2, 'state': 'ACTIVE',
+         'step_type': 'agent_response', 'text_delta': 'ur.'},
+        {'type': 'step_update', 'conversation_id': 'c1', 'step_index': 2, 'state': 'DONE',
+         'step_type': 'agent_response'},
+        {'type': 'result', 'conversation_id': 'c1', 'status': 'SUCCESS', 'response': 'Four.',
+         'usage': {'input_tokens': 9, 'output_tokens': 2, 'thinking_tokens': 3, 'cache_read_tokens': 4}},
+    )
+    assert ev[0].activity == '› run_command: ls\n'
+    assert [e.text for e in ev[1:4]] == ['Fo', 'ur.', '\n\n']
+    assert ev[4].session == 'c1'
+    assert ev[4].usage == {'prompt_tokens': 9, 'completion_tokens': 5, 'cached_tokens': 4}
+    assert ev[5].final_text == 'Four.'
+    assert len(ev) == 6
+
+
+def test_parse_failures():
+    failed_tool = _events({'type': 'step_update', 'state': 'DONE', 'step_type': 'tool',
+                           'tool_info': {'name': 'write_file', 'parameters': {'path': 'a.py'},
+                                         'error': {'type': 'denied', 'message': 'needs approval'}}})
+    assert failed_tool[0].activity == '› write_file: a.py (failed: needs approval)\n'
+    err = _events({'type': 'result', 'conversation_id': 'c1', 'status': 'ERROR', 'error': 'authentication required'})
+    assert err[-1].error == 'authentication required'
+    canceled = _events({'type': 'result', 'status': 'CANCELED'})
+    assert 'CANCELED' in canceled[-1].error
+
+
+# --- a whole turn through a fake agy --------------------------------------------------
+
+FAKE_AGY = textwrap.dedent('''\
+    import json, os, sys
+    prompt = sys.stdin.read()
+    with open(os.environ['FAKE_LOG'], 'a') as fh:
+        fh.write(json.dumps({'argv': sys.argv[1:], 'stdin': prompt}) + '\\n')
+    def out(o):
+        print(json.dumps(o), flush=True)
+    if os.environ.get('FAKE_FAIL'):
+        out({'type': 'result', 'status': 'ERROR', 'error': 'authentication required'})
+        sys.exit(1)
+    out({'type': 'init', 'cwd': os.getcwd(), 'tools': [], 'permission_mode': 'request-review'})
+    out({'type': 'step_update', 'conversation_id': 'conv-9', 'step_index': 1, 'state': 'DONE',
+         'step_type': 'tool', 'tool_info': {'name': 'view_file', 'parameters': {'path': 'a.py'}}})
+    for word in ['Four', '.']:
+        out({'type': 'step_update', 'conversation_id': 'conv-9', 'step_index': 2, 'state': 'ACTIVE',
+             'step_type': 'agent_response', 'text_delta': word})
+    out({'type': 'result', 'conversation_id': 'conv-9', 'status': 'SUCCESS', 'response': 'Four.',
+         'usage': {'input_tokens': 10, 'output_tokens': 2}})
+''')
+
+
+@pytest.fixture
+def fake_agy(tmp_path, monkeypatch):
+    script = tmp_path / 'fake_agy.py'
+    script.write_text(FAKE_AGY)
+    if os.name == 'nt':
+        launcher = tmp_path / 'agy.cmd'
+        launcher.write_text(f'@"{sys.executable}" "{script}" %*\n')
+    else:
+        launcher = tmp_path / 'agy'
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n')
+        launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+    log = tmp_path / 'calls.jsonl'
+    monkeypatch.setenv('COGNITRIX_ANTIGRAVITY_CLI_PATH', str(launcher))
+    monkeypatch.setenv('FAKE_LOG', str(log))
+    return log
+
+
+async def _run(llm, messages, folder, chat='chat-1'):
+    token = h.turn.set(h.TurnInfo(session_id=chat, folders=(folder,), host_process_mode=HostProcessMode.TRUSTED_LOCAL))
+    try:
+        chunks, last = [], None
+        async for item in h.stream(llm, messages):
+            chunks.append(item.current_chunk)
+            last = item
+        return ''.join(chunks), last
+    finally:
+        h.turn.reset(token)
+
+
+def _llm(**kw):
+    from cognitrix.providers.base import LLM
+
+    return LLM(provider='antigravity-cli', model='', **kw)
+
+
+def test_turn_streams_then_resumes_the_conversation(workdir, fake_agy, tmp_path):
+    folder = Folder(str(tmp_path), WRITE, 'work', True)
+    first = [{'role': 'system', 'content': 'Be brief.'}, {'role': 'user', 'content': 'What is 2+2?'}]
+    shown, last = asyncio.run(_run(_llm(), first, folder))
+    assert shown == '<think>› view_file: a.py\n\n</think>\nFour.'
+    assert last.llm_response == 'Four.'
+    assert last.usage == {'prompt_tokens': 10, 'completion_tokens': 2, 'cached_tokens': 0}
+
+    second = first + [{'role': 'assistant', 'content': 'Four.'}, {'role': 'user', 'content': 'And 3+3?'}]
+    asyncio.run(_run(_llm(), second, folder))
+    calls = [json.loads(line) for line in fake_agy.read_text().splitlines()]
+    assert '<instructions>\nBe brief.\n</instructions>' in calls[0]['stdin']
+    assert '--conversation' not in calls[0]['argv']
+    assert calls[1]['stdin'] == 'And 3+3?'
+    assert calls[1]['argv'][calls[1]['argv'].index('--conversation') + 1] == 'conv-9'
+
+
+def test_sign_in_failure_says_how_to_sign_in(workdir, fake_agy, tmp_path, monkeypatch):
+    monkeypatch.setenv('FAKE_FAIL', '1')
+    _, last = asyncio.run(_run(_llm(), [{'role': 'user', 'content': 'Hi'}], Folder(str(tmp_path), WRITE, 'w', True)))
+    assert last.error.startswith('Antigravity CLI failed: authentication required')
+    assert 'run `agy` once and sign in' in last.error
+
+
+# --- Coding Agent tool -----------------------------------------------------------------
+
+def test_coding_agent_cli():
+    cli = ca.CLIS['antigravity']
+    assert cli.program == 'agy'
+    assert cli.build('read_only', None) == ['--output-format', 'text', '--mode', 'plan']
+    assert cli.build('edit', 'gemini-3.1-pro-low') == ['--output-format', 'text', '--mode', 'accept-edits',
+                                                       '--model', 'gemini-3.1-pro-low']
+    assert cli.build('full', None) == ['--output-format', 'text', '--dangerously-skip-permissions']
+    for name in ('agy', 'Antigravity', 'antigravity cli', 'antigravity-cli'):
+        assert ca.normalise_agent(name) == 'antigravity'
+    assert ca.PREFERENCE[-1] == 'antigravity'
+    assert ca.normalize_agent_limits({'clis': ['agy', 'claude']}) == {'clis': ['antigravity', 'claude']}
