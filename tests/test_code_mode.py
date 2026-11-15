@@ -16,13 +16,19 @@ from cognitrix.utils.llm_response import LLMResponse
 pytest.importorskip('py_mini_racer')
 
 CALLS: list[tuple[str, dict]] = []
+IN_FLIGHT = {'now': 0, 'max': 0}
 
 
 @tool(category='test')
 async def add_numbers(a: int, b: int) -> str:
     """Add two numbers."""
     CALLS.append(('add', {'a': a, 'b': b}))
-    await asyncio.sleep(0.05)
+    IN_FLIGHT['now'] += 1
+    IN_FLIGHT['max'] = max(IN_FLIGHT['max'], IN_FLIGHT['now'])
+    try:
+        await asyncio.sleep(0.05)
+    finally:
+        IN_FLIGHT['now'] -= 1
     return str(a + b)
 
 
@@ -59,6 +65,7 @@ def _agent(tools, **extra) -> Agent:
 @pytest.fixture(autouse=True)
 def _reset():
     CALLS.clear()
+    IN_FLIGHT.update(now=0, max=0)
     clear_tool_cache()
     yield
     clear_tool_cache()
@@ -78,22 +85,21 @@ async def _run(agent, code):
 
 async def test_one_script_calls_many_tools_in_parallel_and_returns_only_the_result():
     agent = _agent([add_numbers, list_files, _run_code()])
-    started = asyncio.get_running_loop().time()
     outcome = await _run(agent, """
         const sums = await Promise.all([1, 2, 3, 4, 5].map(n => tools.add_numbers({a: n, b: 10})));
         const files = await tools.list_files({folder: "."});
         console.log("biggest", files.sort((x, y) => y.size - x.size)[0].name);
         return {total: sums.map(Number).reduce((x, y) => x + y, 0)};
     """)
-    elapsed = asyncio.get_running_loop().time() - started
 
     assert outcome.status == 'success', outcome.text
     assert 'Ran 6 tool calls (6 succeeded)' in outcome.text
     assert 'biggest b.md' in outcome.text
     assert '"total": 65' in outcome.text
     assert len([c for c in CALLS if c[0] == 'add']) == 5
-    # Five 50 ms calls ran together, not one after another.
-    assert elapsed < 0.6
+    # The five calls ran together, not one after another. Counting overlapping
+    # calls rather than timing them keeps this steady on a busy CI machine.
+    assert IN_FLIGHT['max'] > 1
 
 
 async def test_a_failing_tool_throws_inside_the_script():
