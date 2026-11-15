@@ -107,6 +107,13 @@ class LocalRunner:
             return {'ok': False, 'error': 'The app is not running and did not start.'}
         return check_app_port(port, path, phone=phone, headers=headers, no_sandbox=_running_as_root())
 
+    def test(self, slug: str, steps: list, path: str = '', phone: bool = False, headers: dict | None = None,
+             data: str = 'fresh') -> dict:
+        from cognitrix.computer.sandbox.apptest import test_app_copy
+
+        return self._do(lambda: test_app_copy(self.host, slug, steps, path, data=data, phone=phone, headers=headers,
+                                              no_sandbox=_running_as_root()))
+
     def target(self, slug: str) -> tuple[str, dict[str, str]]:
         port = self._do(self.host.port_for, slug, True)
         if not port:
@@ -126,7 +133,8 @@ class SandboxRunner:
         except (DriverError, Unsupported) as exc:
             raise RunnerError('no_sandbox', str(exc)) from None
 
-    def _req(self, method: str, path: str, body: dict | None = None, timeout: float | None = None) -> dict:
+    def _req(self, method: str, path: str, body: dict | None = None, timeout: float | None = None,
+             raw: bool = False) -> dict:
         from cognitrix.computer import DriverError
 
         try:
@@ -137,7 +145,7 @@ class SandboxRunner:
                 msg = ("The agents' computer is running an older image without Apps. Restart it from "
                        'Settings > Computer to update it.')
             raise RunnerError('sandbox_error', msg) from None
-        if not out.get('ok') and out.get('error') and out.get('status') != 'failed':
+        if not raw and not out.get('ok') and out.get('error') and out.get('status') != 'failed':
             raise RunnerError(str(out.get('error')), str(out.get('message') or out.get('error')))
         return out
 
@@ -168,6 +176,12 @@ class SandboxRunner:
     def check(self, slug: str, path: str = '', phone: bool = False, headers: dict | None = None) -> dict:
         return self._req('POST', f'/apps/{slug}/check', {'path': path, 'phone': phone, 'headers': headers or {}},
                          timeout=START_TIMEOUT + 90)
+
+    def test(self, slug: str, steps: list, path: str = '', phone: bool = False, headers: dict | None = None,
+             data: str = 'fresh') -> dict:
+        return self._req('POST', f'/apps/{slug}/test', {'steps': steps, 'path': path, 'phone': phone,
+                                                         'headers': headers or {}, 'data': data},
+                         timeout=START_TIMEOUT + 330, raw=True)  # a test that can't run says why in 'error'
 
     def target(self, slug: str) -> tuple[str, dict[str, str]]:
         return f'{self.box.api}/apps/{slug}/http', {'X-Cognitrix-Sandbox-Token': self.box.token}
