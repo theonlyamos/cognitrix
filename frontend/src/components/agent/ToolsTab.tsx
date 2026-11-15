@@ -100,19 +100,19 @@ export default function ToolsTab({ draft, update, options, catalog, agent }: Tab
         <p className="mt-3 text-[12.5px] text-fg-dim">{tr('ui.agent.toolsTab.fullShellCommandsCodingAgent')}</p>
       </Card>
 
-      <Card title="Saving tokens" description="For long jobs and agents with many tools.">
+      <Card title={tr('ui.agent.toolsTab.savingTokens')} description={tr('ui.agent.toolsTab.forLongJobsAndAgents')}>
         <Check
           checked={draft.codeMode}
           onChange={(codeMode) => update({ codeMode })}
-          label="Code mode"
-          detail="The agent can write one short script that calls many tools (in a loop or all at once) and keeps only what it needs, instead of one step per call. Scripts run in a locked-down JavaScript engine with no file or network access of their own, and every tool call in them asks you first the same way it would on its own."
+          label={tr('ui.agent.toolsTab.codeMode')}
+          detail={tr('ui.agent.toolsTab.theAgentCanWriteOne')}
         />
         <div className="mt-3.5">
           <Check
             checked={draft.toolsOnDemand}
             onChange={(toolsOnDemand) => update({ toolsOnDemand })}
-            label="Load tools only when needed"
-            detail={`The model gets the full description of only a few tools up front and looks up the others by name when it needs them. Worth it from about 12 tools${draft.tools.length ? ` (this agent has ${draft.tools.length})` : ''}.`}
+            label={tr('ui.agent.toolsTab.loadToolsOnlyWhenNeeded')}
+            detail={draft.tools.length ? tr('ui.agent.toolsTab.toolsOnDemandDetailCount', { n: draft.tools.length }) : tr('ui.agent.toolsTab.toolsOnDemandDetail')}
           />
         </div>
       </Card>
