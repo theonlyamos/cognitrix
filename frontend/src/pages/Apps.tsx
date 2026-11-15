@@ -16,6 +16,7 @@ type Filter = 'all' | 'online' | 'asleep' | 'pinned' | 'mine';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'apps', get label() { return tr('ui.apps.apps'); } },
   { id: 'pages', get label() { return tr('ui.apps.pages'); } },
+  { id: 'boards', get label() { return tr('ui.apps.sheetsBoards'); } },
   { id: 'images', get label() { return tr('ui.apps.images'); } },
   { id: 'documents', get label() { return tr('ui.apps.docs'); } },
   { id: 'shared', get label() { return tr('ui.apps.sharedWithMe'); } },

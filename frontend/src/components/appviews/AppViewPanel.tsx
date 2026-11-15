@@ -75,6 +75,8 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
   const seq = useRef(0);
   const waiting = useRef(new Map<string | number, (message: RpcMessage) => void>());
   const frameUrlRef = useRef<string | null>(null);
+  const viewIdRef = useRef(viewId);
+  viewIdRef.current = viewId;
   const live = useRef({ view, theme, expanded, onSendMessage, onToggleExpand });
   live.current = { view, theme, expanded, onSendMessage, onToggleExpand };
 
@@ -114,6 +116,7 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
 
   useEffect(() => {
     frameUrlRef.current = null;
+    setConfirming((open) => { open?.resolve(false); return null; });
     setView(null);
     setFrameUrl(null);
     void load(true);
@@ -123,10 +126,17 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
 
   const askFirst = (name: string, args: unknown) => new Promise<boolean>((resolve) => setConfirming({ name, args, resolve }));
 
-  const answer = useCallback(async (message: RpcMessage) => {
+  const answer = useCallback(async (message: RpcMessage, source: MessageEventSource) => {
     const { id, method, params = {} } = message;
-    const reply = (result: unknown) => post({ id, result });
-    const fail = (code: number, text: string) => post({ id, error: { code, message: text } });
+    // An answer goes only to the screen that asked, and only while it is
+    // still the one showing: a slow reply must never reach another app's screen.
+    const askedFor = viewId;
+    const send = (body: RpcMessage) => {
+      if (frameRef.current?.contentWindow !== source || viewIdRef.current !== askedFor) return;
+      (source as Window).postMessage({ jsonrpc: '2.0', ...body }, '*');
+    };
+    const reply = (result: unknown) => send({ id, result });
+    const fail = (code: number, text: string) => send({ id, error: { code, message: text } });
     const now = live.current;
     try {
       switch (method) {
@@ -147,8 +157,10 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
           try {
             reply(await callAppTool(viewId, name, args));
           } catch (e) {
-            const status = (e as { response?: { status?: number } })?.response?.status;
-            if (status !== 409) throw e;
+            // Only an explicit "confirm" asks the person; any other 409 (such as
+            // the app being switched off) is an error the screen should see.
+            const response = (e as { response?: { status?: number; data?: { detail?: unknown } } })?.response;
+            if (response?.status !== 409 || response.data?.detail !== 'confirm') throw e;
             if (!(await askFirst(name, args))) {
               fail(-32001, tr('ui.appviews.appViewPanel.thePersonSaidNo'));
               return;
@@ -199,7 +211,7 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
     } catch (e) {
       fail(-32000, errorMessage(e, tr('ui.appviews.appViewPanel.thatDidNotWork')));
     }
-  }, [post, viewId]);
+  }, [viewId]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -207,7 +219,7 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
       const message = (event.data || {}) as RpcMessage;
       if (message.jsonrpc !== '2.0') return;
       if (message.method && message.id !== undefined) {
-        void answer(message);
+        void answer(message, event.source!);
       } else if (message.method === 'ui/notifications/initialized') {
         ready.current = true;
         sendResult(live.current.view);
