@@ -24,6 +24,7 @@ import { ChatSidebar, loadSidebarOpen, saveSidebarOpen, type SidebarActivity, ty
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { LiveVoiceButton, LiveVoicePanel } from '@/components/LiveVoice';
+import { useLiveVoice } from '@/hooks/useLiveVoice';
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
 import ComposerMenu from '@/components/ComposerMenu';
@@ -1742,6 +1743,23 @@ export default function Home() {
     return last?.role === 'assistant' ? { id: last.id, content: last.content } : null;
   }, [messages]);
 
+  const live = useLiveVoice({
+    enabled: liveVoice,
+    busy,
+    approvals,
+    question,
+    agentName: currentAgent?.name || '',
+    lastReply,
+    onSend: (text) => (busy ? steer(text, { keepComposer: true }) : send(text, 'chat', null, { keepComposer: true })),
+    onStop: () => void stop(),
+    onApproval: (id, approved) => void respondApproval(id, approved),
+    onAnswer: (q, answer) => {
+      const current = question;
+      if (current && current.request_id === q.request_id) void postQuestionAction(current, 'answer', answer).catch(() => undefined);
+    },
+    onExit: () => setLiveVoice(false),
+  });
+
   const composer = (
     <div className="relative mx-auto max-w-3xl">
       {skillMenuOpen && (
@@ -1862,21 +1880,7 @@ export default function Home() {
         {voice.active && <VoiceBar voice={voice} />}
         {liveVoice && (
           <div className="border-b border-line">
-            <LiveVoicePanel
-              busy={busy}
-              approvals={approvals}
-              question={question}
-              agentName={currentAgent?.name || ''}
-              lastReply={lastReply}
-              onSend={(text) => (busy ? steer(text, { keepComposer: true }) : send(text, 'chat', null, { keepComposer: true }))}
-              onStop={() => void stop()}
-              onApproval={(id, approved) => void respondApproval(id, approved)}
-              onAnswer={(q, answer) => {
-                const current = question;
-                if (current && current.request_id === q.request_id) void postQuestionAction(current, 'answer', answer).catch(() => undefined);
-              }}
-              onExit={() => setLiveVoice(false)}
-            />
+            <LiveVoicePanel live={live} approvals={approvals} question={question} onExit={() => setLiveVoice(false)} />
           </div>
         )}
         {(rework || reworkError) && (

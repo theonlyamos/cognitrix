@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Waveform } from '@/components/VoiceInput';
-import { useLiveVoice, type LiveVoiceOptions, type LivePhase } from '@/hooks/useLiveVoice';
+import type { LivePhase, LiveVoice, LiveVoiceOptions } from '@/hooks/useLiveVoice';
 import { getLiveVoicePrefs, setLiveVoicePrefs } from '@/lib/liveVoice';
 import { useSpeechState } from '@/lib/speech';
 import { cn } from '@/lib/utils';
@@ -44,11 +44,12 @@ export function LiveVoiceButton({ onClick, disabled, className }: { onClick: () 
 }
 
 /**
- * The live voice panel, shown in place of the chat box. The chat stays
- * visible above it, so approvals and questions can still be clicked.
+ * The live voice panel, shown at the top of the chat box. The chat stays
+ * visible above it, so approvals and questions can still be clicked. The
+ * conversation itself runs in useLiveVoice, held by the page, so moving the
+ * chat box (a new chat's first message) doesn't restart the microphone.
  */
-export function LiveVoicePanel(props: Omit<LiveVoiceOptions, 'enabled'>) {
-  const live = useLiveVoice({ ...props, enabled: true });
+export function LiveVoicePanel({ live, ...props }: Pick<LiveVoiceOptions, 'approvals' | 'question' | 'onExit'> & { live: LiveVoice }) {
   const speech = useSpeechState();
   const [showOptions, setShowOptions] = useState(false);
   const [prefs, setPrefs] = useState(getLiveVoicePrefs);
@@ -57,9 +58,9 @@ export function LiveVoicePanel(props: Omit<LiveVoiceOptions, 'enabled'>) {
 
   const status = live.muted && live.phase !== 'speaking' && live.phase !== 'error'
     ? 'Muted. Unmute to talk.'
-    : live.phase === 'listening' && approval
+    : (live.phase === 'listening' || live.phase === 'waiting') && approval
       ? approval.risk_level === 'high' ? 'Say “approve” or “no”' : 'Say “yes” or “no”'
-      : live.phase === 'listening' && asking
+      : (live.phase === 'listening' || live.phase === 'waiting') && asking
         ? 'Say your answer'
         : STATUS[live.phase];
   const level = live.phase === 'hearing' || live.phase === 'listening' || live.phase === 'waiting';

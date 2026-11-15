@@ -355,3 +355,5 @@ export function useLiveVoice(opts: LiveVoiceOptions) {
 
   return { phase, muted, heard, said, error, needsSetup, analyser, toggleMute, interrupt, retry, say };
 }
+
+export type LiveVoice = ReturnType<typeof useLiveVoice>;
