@@ -250,6 +250,15 @@ class Session(Model):
     """Set when an agent started this chat: {agent_id, agent_name, session_id
     (the chat it was started from), depth, report_back, exchanges}"""
 
+    public_link_id: str | None = None
+    """Set for a visitor's chat on an agent's public link (cognitrix/public_agents).
+    ``user_id`` is still the agent's owner (usage and limits count there), but
+    the chat is not the owner's: it has none of their memories, skills or
+    tools, and it never shows in their chat list."""
+
+    visitor_key: str | None = None
+    """Hash of the visitor token that may read and continue a public-link chat."""
+
     async def save(self) -> Self:
         """Save, then refresh this chat's row in the chat-list index."""
         result = await super().save()
