@@ -33,6 +33,8 @@ export interface AppSummary {
   folder: string;
   link: string;
   thumb_url?: string;
+  /** The last Check App screenshot, shown while the app sleeps. */
+  shot_url?: string;
   created: string;
   updated: string;
 }

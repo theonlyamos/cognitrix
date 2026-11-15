@@ -11,7 +11,7 @@ args:
     required: true
 tags: [apps, web, build, publish, dashboard]
 category: development
-version: "1.0.0"
+version: "1.1.0"
 author: cognitrix
 safety:
   risk-level: low
@@ -58,10 +58,13 @@ a second one: edit its folder and publish again with its `app_id`.
    Only set `use_cognitrix_api` when the app itself must run agents or read tasks.
 6. **If it fails**, read the log in the result (or `App Status`), fix the code and publish again with the
    same `app_id`. The previous live version keeps serving meanwhile.
-7. **Tell the user** in two or three sentences what the app does and that the card in the chat opens it.
+7. **Look at it** with `Check App` (its `app_id`): you get a screenshot plus script errors, console errors
+   and failed requests. Check the main pages (`path`) and once with `phone: true`. Fix anything broken
+   or ugly, publish again and check again. Don't tell the user it's done while Check App shows errors.
+8. **Tell the user** in two or three sentences what the app does and that the card in the chat opens it.
    It is private to them until they share it.
 
 ## Updating later
 
-Edit the files in the same folder and publish again with the app's `app_id` and a `note` saying what
-changed. Never start a new app for a change to an existing one.
+Edit the files in the same folder, publish again with the app's `app_id` and a `note` saying what
+changed, then run `Check App` again. Never start a new app for a change to an existing one.

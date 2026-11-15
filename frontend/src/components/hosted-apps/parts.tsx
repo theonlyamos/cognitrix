@@ -64,6 +64,10 @@ export function AppThumbnail({ app, className }: { app: AppSummary; className?: 
         <iframe src={app.thumb_url} title="" tabIndex={-1} loading="lazy" sandbox={APP_FRAME_SANDBOX}
           className="pointer-events-none absolute left-0 top-0 origin-top-left border-0 bg-white"
           style={{ width: 1280, height: 800, transform: `scale(${scale})` }} />
+      ) : app.shot_url && app.status !== 'building' ? (
+        // The last Check App screenshot (1280 wide), so a sleeping app still shows what it looks like.
+        <img src={app.shot_url} alt="" loading="lazy" draggable={false}
+          className={cn('absolute inset-0 h-full w-full object-cover object-top', app.status !== 'online' && 'opacity-80')} />
       ) : (
         <div className={cn('absolute inset-0 grid place-items-center', app.status === 'building' ? 'text-warn-ink' : 'text-fg-dim/50')}>
           {app.status === 'building'

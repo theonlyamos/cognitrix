@@ -59,6 +59,16 @@ describe('Apps page', () => {
   });
 });
 
+describe('App thumbnails', () => {
+  it('shows the last Check App screenshot while an app sleeps', async () => {
+    const { AppThumbnail } = await import('@/components/hosted-apps/parts');
+    const { container, rerender } = render(<AppThumbnail app={app({ status: 'asleep', shot_url: '/app-shots/x.png?t=1' }) as never} />);
+    expect(container.querySelector('img')).toHaveAttribute('src', '/app-shots/x.png?t=1');
+    rerender(<AppThumbnail app={app({ status: 'asleep', shot_url: '' }) as never} />);
+    expect(container.querySelector('img')).toBeNull();
+  });
+});
+
 describe('Publish App card', () => {
   const result = 'Published "Support log" (app_id a1, version 3). It is live at /apps/open/support-log-abc.';
 

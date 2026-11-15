@@ -99,6 +99,15 @@ class LocalRunner:
     def logs(self, slug: str, lines: int = 200, version: int = 0) -> str:
         return self._do(self.host.logs, slug, lines, version)
 
+    def check(self, slug: str, path: str = '', phone: bool = False, headers: dict | None = None) -> dict:
+        from cognitrix.computer.sandbox.pagecheck import check_url
+
+        port = self._do(self.host.port_for, slug, True)
+        if not port:
+            return {'ok': False, 'error': 'The app is not running and did not start.'}
+        return check_url(f"http://127.0.0.1:{port}/{str(path or '').lstrip('/')}", phone=phone, headers=headers,
+                         no_sandbox=_running_as_root())
+
     def target(self, slug: str) -> tuple[str, dict[str, str]]:
         port = self._do(self.host.port_for, slug, True)
         if not port:
@@ -157,8 +166,17 @@ class SandboxRunner:
     def logs(self, slug: str, lines: int = 200, version: int = 0) -> str:
         return str(self._req('GET', f'/apps/{slug}/logs?lines={int(lines)}&version={int(version)}').get('log') or '')
 
+    def check(self, slug: str, path: str = '', phone: bool = False, headers: dict | None = None) -> dict:
+        return self._req('POST', f'/apps/{slug}/check', {'path': path, 'phone': phone, 'headers': headers or {}},
+                         timeout=START_TIMEOUT + 90)
+
     def target(self, slug: str) -> tuple[str, dict[str, str]]:
         return f'{self.box.api}/apps/{slug}/http', {'X-Cognitrix-Sandbox-Token': self.box.token}
+
+
+def _running_as_root() -> bool:
+    """Chromium won't start as root with its own sandbox on (e.g. in a container)."""
+    return hasattr(os, 'geteuid') and os.geteuid() == 0
 
 
 def runner_for(runtime: str, owner_id: Any):

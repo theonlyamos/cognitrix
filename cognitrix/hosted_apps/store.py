@@ -480,6 +480,9 @@ async def delete_app(app: HostedApp) -> None:
     except RunnerError:
         logger.info('app %s: runner not reachable while deleting; files may stay behind', app.slug)
     await _revoke_api_key(app)
+    shot = shot_file(app.slug)
+    if shot is not None:
+        shot.unlink(missing_ok=True)
     await HostedAppVersion.delete_many({'app_id': str(app.id)})
     await HostedApp.delete_many({'id': str(app.id)})
 
@@ -602,6 +605,56 @@ def visits_last(app: HostedApp, days: int = 7) -> list[int]:
             for offset in range(days - 1, -1, -1)]
 
 
+# ------------------------------------------------------------------ checking (Check App)
+
+def shots_dir() -> Path:
+    """The last Check App screenshot of each app (``<slug>.png``), shown on its card
+    while it sleeps. Kept apart from the apps folder agents write in."""
+    from cognitrix.config import settings
+
+    path = Path(settings.workdir) / 'app-shots'
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def shot_file(slug: str) -> Path | None:
+    path = shots_dir() / f'{slug}.png'
+    return path if path.is_file() else None
+
+
+async def check(app: HostedApp, viewer: str, *, path: str = '', phone: bool = False) -> dict[str, Any]:
+    """Wake the app and look at it in a headless browser where it runs (the sandbox's
+    Chromium, or Edge/Chrome on this machine). See computer/sandbox/pagecheck.py."""
+    import base64
+
+    if not app.version:
+        raise AppError('not_live', f'"{app.title}" has no version that started yet. Publish it first.')
+    from cognitrix.api.routes.hosted_apps import _header_safe, _viewer_user
+
+    user = await _viewer_user(viewer)
+    headers = {'X-Cognitrix-User-Id': _header_safe(viewer), 'X-Cognitrix-User-Name': _header_safe(user.get('name', '')),
+               'X-Cognitrix-User-Email': _header_safe(user.get('email', '')),
+               'X-Cognitrix-User-Role': role_of(app, viewer) or ROLE_OWNER}
+    clean = str(path or '').strip().lstrip('/')
+    if '://' in clean or clean.startswith('/'):
+        raise AppError('bad_path', 'path is a page inside the app, like "" or "settings?tab=2".')
+    try:
+        runner = await asyncio.to_thread(runner_for, app.runtime, app.owner_id)
+        out = await asyncio.to_thread(runner.check, app.slug, clean, bool(phone), headers)
+    except RunnerError as exc:
+        raise AppError(exc.code, exc.message) from None
+    if out.get('ok') and app.status != 'online':
+        await _set(app, status='online')
+    touch(app.slug)
+    shot = str(out.get('screenshot') or '')
+    if shot and not phone and not clean:
+        try:
+            (shots_dir() / f'{app.slug}.png').write_bytes(base64.b64decode(shot))
+        except (OSError, ValueError):
+            logger.debug('could not keep the screenshot of %s', app.slug, exc_info=True)
+    return out
+
+
 # ------------------------------------------------------------------ links
 
 def _key() -> str:
@@ -669,6 +722,7 @@ def project(app: HostedApp, role: str | None, *, people: dict[str, str], agents:
         'install': app.install if can_edit(role) else '',
         'folder': app.folder if owner else '',
         'link': f'/apps/open/{app.slug}',
+        'has_shot': shot_file(app.slug) is not None,
         'created': app.created,
         'updated': app.updated,
     }
