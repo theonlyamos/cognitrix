@@ -9,6 +9,11 @@ const lib = vi.hoisted(() => ({
   handBack: vi.fn(),
   resetSandbox: vi.fn(),
   updateSandbox: vi.fn(),
+  startTeaching: vi.fn(),
+  stopTeaching: vi.fn(),
+  teachingStatus: vi.fn(),
+  draftTaughtSkill: vi.fn(),
+  saveTaughtSkill: vi.fn(),
 }));
 const rfb = vi.hoisted(() => ({ made: [] as { url: string; password?: string; viewOnly: boolean }[] }));
 
@@ -77,6 +82,44 @@ describe('ComputerPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Hand back' }));
     await waitFor(() => expect(lib.handBack).toHaveBeenCalledWith('b2'));
     expect(await screen.findByRole('button', { name: 'Take over' })).toBeInTheDocument();
+  });
+
+  it('teaches a task: records while you show it, then writes and saves a skill', async () => {
+    lib.sandboxStatus.mockResolvedValue({
+      enabled: true, running: true, desktops: [{ name: 'a1', display: ':1', held_by: null, running: true }],
+    });
+    const steps = [
+      { kind: 'click', app: 'chromium', target: "button 'Invoices'" },
+      { kind: 'type', app: 'chromium', target: 'entry', text: 'march' },
+    ];
+    lib.startTeaching.mockResolvedValue('full');
+    lib.teachingStatus.mockResolvedValue({ recording: true, steps: steps.slice(0, 1), text: '' });
+    lib.stopTeaching.mockResolvedValue({ steps, text: '' });
+    lib.draftTaughtSkill.mockResolvedValue({ name: 'download-invoice', description: 'Download an invoice.', body: '## Steps\n1. Open Invoices' });
+    lib.saveTaughtSkill.mockResolvedValue(undefined);
+    render(<ComputerPanel agents={agents} focusAgentId="A1" onClose={() => {}} />);
+    await waitFor(() => expect(rfb.made.length).toBe(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Teach a task' }));
+    await waitFor(() => expect(lib.startTeaching).toHaveBeenCalledWith('a1'));
+    expect(await screen.findByText(/Recording\. Do the task/)).toBeInTheDocument();
+    await waitFor(() => expect(rfb.made[rfb.made.length - 1]).toMatchObject({ password: 'full', viewOnly: false }));
+    expect(await screen.findByText(/Click button 'Invoices' in chromium/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(lib.stopTeaching).toHaveBeenCalledWith('a1'));
+    const dialog = await screen.findByRole('dialog', { name: 'Teach a task' });
+    expect(dialog).toHaveTextContent('Type "march" into entry in chromium');
+    fireEvent.change(screen.getByPlaceholderText(/Download this month/), { target: { value: 'Get the invoice' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Write the skill' }));
+    await waitFor(() => expect(lib.draftTaughtSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ steps, title: 'Get the invoice', desktop: 'a1', agentId: 'A1' })));
+    fireEvent.change(await screen.findByDisplayValue('Download an invoice.'), { target: { value: 'Get an invoice.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save skill' }));
+    await waitFor(() => expect(lib.saveTaughtSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'download-invoice', description: 'Get an invoice.' })));
+    expect(await screen.findByText(/Saved as your skill/)).toBeInTheDocument();
+    expect(lib.handBack).not.toHaveBeenCalled();
   });
 
   it('expands to fill the window, goes full screen, and collapses with Esc', async () => {

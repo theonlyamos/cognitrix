@@ -6,6 +6,10 @@
     POST /computer/sandbox/desktops/{name}/hold    take over: the agent pauses; returns the password that
                                                    lets the screen take mouse and keyboard
     POST /computer/sandbox/desktops/{name}/release hand back
+    POST /computer/sandbox/desktops/{name}/teach/start  Teach a task: take over and start recording
+    GET  /computer/sandbox/desktops/{name}/teach        the steps recorded so far
+    POST /computer/sandbox/desktops/{name}/teach/stop   stop recording (and hand back); returns the steps
+    POST /computer/sandbox/teach/draft             a model writes a skill from the steps, for review
     POST /computer/sandbox/update                  restart onto a newer image (files and logins stay)
     POST /computer/sandbox/reset                   throw the computer away (files and logins too)
     GET  /computer/sandbox/env                     the person's sandbox environment variables (names only)
@@ -234,6 +238,122 @@ async def release(name: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, 
     box = await _box(ctx)
     out = await run_in_threadpool(box.request, 'POST', f'/desktops/{_desktop(name)}/release')
     return {'ok': bool(out.get('ok'))}
+
+
+def _call_out(out: dict) -> dict:
+    if not out.get('ok'):
+        status = 409 if out.get('error') in ('human_control', 'unsupported') else 502
+        if out.get('error') == 'bad_method':
+            out['message'] = "This computer can't record yet. Update it (the Update button), then try again."
+            status = 409
+        raise HTTPException(status_code=status, detail=out.get('message') or "The computer couldn't do that.")
+    return out.get('result') or {}
+
+
+@sandbox_api.post('/desktops/{name}/teach/start')
+async def teach_start(name: str, body: HoldBody | None = None, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Teach a task: take over the desktop (the agent pauses) and record
+    what the person does until they stop."""
+    name = _desktop(name)
+    box = await _box(ctx)
+    if name not in box.passwords:
+        await run_in_threadpool(box.desktop, name)
+    by = (body.by if body and body.by else None) or _display_name(ctx)
+    held = await run_in_threadpool(box.request, 'POST', f'/desktops/{name}/hold', {'by': by})
+    if not held.get('ok'):
+        raise HTTPException(status_code=409, detail=held.get('message') or "Couldn't take over.")
+    out = await run_in_threadpool(box.call, 'POST', f'/desktops/{name}/call', {'method': 'record_start', 'args': {}})
+    try:
+        _call_out(out)
+    except HTTPException:
+        await run_in_threadpool(box.call, 'POST', f'/desktops/{name}/release')
+        raise
+    return {'ok': True, 'recording': True, 'held_by': by, 'password': held.get('vnc_password', '')}
+
+
+@sandbox_api.get('/desktops/{name}/teach')
+async def teach_status(name: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.computer.sandbox.recorder import steps_as_text
+
+    box = await _box(ctx)
+    out = await run_in_threadpool(box.call, 'POST', f'/desktops/{_desktop(name)}/call',
+                                  {'method': 'record_status', 'args': {}})
+    result = _call_out(out)
+    steps = result.get('steps') or []
+    return {'recording': bool(result.get('recording')), 'steps': steps, 'text': steps_as_text(steps),
+            'error': result.get('error') or ''}
+
+
+class TeachStopBody(BaseModel):
+    hand_back: bool = True
+
+
+@sandbox_api.post('/desktops/{name}/teach/stop')
+async def teach_stop(name: str, body: TeachStopBody | None = None,
+                     ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.computer.sandbox.recorder import steps_as_text
+
+    name = _desktop(name)
+    box = await _box(ctx)
+    out = await run_in_threadpool(box.call, 'POST', f'/desktops/{name}/call', {'method': 'record_stop', 'args': {}})
+    result = _call_out(out)
+    if body is None or body.hand_back:
+        await run_in_threadpool(box.call, 'POST', f'/desktops/{name}/release')
+    steps = result.get('steps') or []
+    return {'steps': steps, 'text': steps_as_text(steps), 'truncated': bool(result.get('truncated')),
+            'seconds': result.get('seconds')}
+
+
+class TeachDraftBody(BaseModel):
+    steps: list[dict[str, Any]] = Field(default_factory=list, max_length=400)
+    title: str = Field(default='', max_length=200)
+    note: str = Field(default='', max_length=2000)
+    agent_id: str | None = None
+    desktop: str | None = None
+
+
+async def _teaching_agent(ctx: AuthContext, agent_id: str | None, desktop: str | None):
+    """The agent whose model writes the skill: the one named, else the one
+    whose desktop was used, else the person's first agent."""
+    from cognitrix.agents import access as agent_access
+    from cognitrix.computer.sandbox import desktop_name
+
+    me = agent_access.owner_key(ctx.user)
+    if agent_id:
+        agent = await agent_access.find_visible_agent(me, agent_id=agent_id)
+        if agent is not None:
+            return agent
+    try:
+        agents = list(await agent_access.visible_agents(me) or [])
+    except Exception:
+        agents = []
+    if desktop:
+        for agent in agents:
+            if desktop_name(getattr(agent, 'id', None)) == desktop:
+                return agent
+    return agents[0] if agents else None
+
+
+@sandbox_api.post('/teach/draft')
+async def teach_draft(body: TeachDraftBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Write a skill from a recorded demonstration. Nothing is saved: the
+    person edits it, then saves it with POST /skills/mine."""
+    from cognitrix.agents import access as agent_access
+    from cognitrix.skills import personal
+    from cognitrix.skills.drafts import DraftError, slug
+    from cognitrix.skills.teach import draft_from_steps
+
+    agent = await _teaching_agent(ctx, body.agent_id, body.desktop)
+    try:
+        name, description, text = await draft_from_steps(getattr(agent, 'llm', None), body.steps, body.title,
+                                                         body.note)
+    except DraftError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    me = agent_access.owner_key(ctx.user)
+    if await personal.name_taken(me, name):
+        name = slug(f'{name}-{secrets.token_hex(2)}')
+    return {'name': name, 'description': description, 'body': text,
+            'agent': str(getattr(agent, 'name', '') or '')}
 
 
 @sandbox_api.post('/update')
