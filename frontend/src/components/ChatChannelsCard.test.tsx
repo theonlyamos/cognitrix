@@ -21,7 +21,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   api: { get: vi.fn().mockResolvedValue({ data: [{ id: 'a1', name: 'Helper' }] }) },
 }));
 
-const empty = (kind: 'telegram' | 'slack'): ChatChannel => ({
+const empty = (kind: 'telegram' | 'slack' | 'sms'): ChatChannel => ({
   kind, configured: false, enabled: false, linked: false, bot_token_hint: null, app_token_set: false,
   bot_name: '', agent_id: '', send_alerts: true, send_approvals: true, peer_name: '', linked_at: '',
   link_code: '', link_url: '', status: '', last_error: '', connected: false,
@@ -64,6 +64,22 @@ describe('ChatChannelsCard', () => {
     expect(screen.getByRole('button', { name: 'Connect Slack' })).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Slack app-level token'), { target: { value: 'xapp-1' } });
     expect(screen.getByRole('button', { name: 'Connect Slack' })).toBeEnabled();
+  });
+
+  it('connects a Twilio number for SMS', async () => {
+    channels.listChannels.mockResolvedValue({ available: true, channels: [empty('sms')], slack_manifest: {} });
+    channels.saveChannel.mockResolvedValue({ ...empty('sms'), configured: true, enabled: true, bot_name: '+15550102000',
+      link_code: 'ABCDEFGHJK', link_url: 'sms:+15550102000?body=ABCDEFGHJK', webhook_path: '/api/v1/channels/sms/c1/webhook' });
+    render(<ChatChannelsCard />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Set up SMS' }));
+    fireEvent.change(await screen.findByLabelText('Twilio Account SID'), { target: { value: 'AC123' } });
+    fireEvent.change(screen.getByLabelText('Twilio Auth Token'), { target: { value: 'tok' } });
+    expect(screen.getByRole('button', { name: 'Connect SMS' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Twilio phone number'), { target: { value: '+15550102000' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Connect SMS' }));
+    await waitFor(() => expect(channels.saveChannel).toHaveBeenCalledWith('sms', { bot_token: 'tok', app_id: 'AC123', phone_number: '+15550102000' }));
+    expect(await screen.findByLabelText('Messaging endpoint')).toHaveTextContent('/api/v1/channels/sms/c1/webhook');
+    expect(screen.getByRole('link', { name: 'Text +15550102000' })).toHaveAttribute('href', 'sms:+15550102000?body=ABCDEFGHJK');
   });
 
   it('shows a linked chat with its errors and toggles', async () => {

@@ -20,7 +20,7 @@ import { tr } from '@/lib/i18n';
 
 interface AgentLite { id: string; name: string }
 
-const LABEL: Record<ChannelKind, string> = { telegram: 'Telegram', slack: 'Slack', discord: 'Discord', teams: 'Microsoft Teams', whatsapp: 'WhatsApp' };
+const LABEL: Record<ChannelKind, string> = { telegram: 'Telegram', slack: 'Slack', discord: 'Discord', teams: 'Microsoft Teams', whatsapp: 'WhatsApp', sms: 'SMS' };
 
 function StatusDot({ channel }: { channel: ChatChannel }) {
   const state = !channel.enabled
@@ -81,6 +81,25 @@ function Setup({ kind, manifest }: { kind: ChannelKind; manifest: Record<string,
           <li>{tr('ui.chatChannelsCard.fromAppSettingsBasicCopy')}</li>
           <li>{tr('ui.chatChannelsCard.cognitrixThenShowsACallback')}{' '}<span className="font-mono">{tr('ui.chatChannelsCard.messages')}</span>{' '}{tr('ui.chatChannelsCard.field')}</li>
           <li>{tr('ui.chatChannelsCard.sendTheBotSNumber')}</li>
+        </ol>
+      </div>
+    );
+  }
+  if (kind === 'sms') {
+    return (
+      <div className="space-y-2">
+        <p className="rounded-[10px] border border-line bg-bg px-3 py-2 text-[12.5px] leading-relaxed text-fg-dim">
+          {tr('ui.chatChannelsCard.twilioSendsTextsToCognitrix')}
+          <span className="font-mono"> https://</span>{' '}{tr('ui.chatChannelsCard.addressEachTextInAnd')}
+        </p>
+        <ol className="list-decimal space-y-1 pl-5 text-[12.5px] leading-relaxed text-fg-dim">
+          <li>
+            {tr('ui.chatChannelsCard.on')}{' '}
+            <a href="https://console.twilio.com" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">console.twilio.com</a>{tr('ui.chatChannelsCard.buyAPhoneNumberThat')}
+          </li>
+          <li>{tr('ui.chatChannelsCard.copyTheAccountSidAnd')}</li>
+          <li>{tr('ui.chatChannelsCard.cognitrixThenShowsAWebhook')}</li>
+          <li>{tr('ui.chatChannelsCard.textTheNumberTheCode')}</li>
         </ol>
       </div>
     );
@@ -147,6 +166,7 @@ function ChannelPanel({
   const [tenantId, setTenantId] = useState(channel.tenant_id ?? '');
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [appSecret, setAppSecret] = useState('');
+  const [phone, setPhone] = useState(channel.bot_name && kind === 'sms' ? channel.bot_name : '');
   const [editing, setEditing] = useState(!channel.configured);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -182,6 +202,10 @@ function ChannelPanel({
       body.app_id = appId.trim();
       if (appSecret.trim()) body.app_secret = appSecret.trim();
     }
+    if (kind === 'sms') {
+      body.app_id = appId.trim();
+      body.phone_number = phone.trim();
+    }
     if (await update(body)) {
       setBotToken('');
       setAppToken('');
@@ -193,7 +217,8 @@ function ChannelPanel({
   const missing = !botToken.trim()
     || (kind === 'slack' && !appToken.trim())
     || (kind === 'teams' && (!appId.trim() || !tenantId.trim()))
-    || (kind === 'whatsapp' && (!appId.trim() || (!appSecret.trim() && !channel.configured)));
+    || (kind === 'whatsapp' && (!appId.trim() || (!appSecret.trim() && !channel.configured)))
+    || (kind === 'sms' && (!appId.trim() || !phone.trim()));
   const endpoint = channel.webhook_path ? `${window.location.origin}${channel.webhook_path}` : '';
   const copyEndpoint = async () => {
     try {
@@ -217,18 +242,30 @@ function ChannelPanel({
           </Field>
         </>
       )}
+      {kind === 'sms' && (
+        <>
+          <Field label={tr('ui.chatChannelsCard.accountSid')}>
+            <Input autoComplete="off" aria-label={tr('ui.chatChannelsCard.twilioAccountSid')} placeholder={tr('ui.chatChannelsCard.ac')}
+              value={appId} onChange={(e) => setAppId(e.target.value)} disabled={busy} />
+          </Field>
+          <Field label={tr('ui.chatChannelsCard.twilioNumber')} hint={tr('ui.chatChannelsCard.withCountryCode')}>
+            <Input autoComplete="off" inputMode="tel" aria-label={tr('ui.chatChannelsCard.twilioPhoneNumber')} placeholder="+15550102000"
+              value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
+          </Field>
+        </>
+      )}
       {kind === 'whatsapp' && (
         <Field label={tr('ui.chatChannelsCard.phoneNumberId')}>
           <Input autoComplete="off" inputMode="numeric" aria-label={tr('ui.chatChannelsCard.whatsappPhoneNumberId')} placeholder="106540352242922"
             value={appId} onChange={(e) => setAppId(e.target.value)} disabled={busy} />
         </Field>
       )}
-      <Field label={kind === 'slack' ? tr('ui.chatChannelsCard.botTokenXoxb') : kind === 'teams' ? tr('ui.chatChannelsCard.clientSecret') : kind === 'whatsapp' ? tr('ui.chatChannelsCard.accessToken') : tr('ui.chatChannelsCard.botToken')}>
+      <Field label={kind === 'slack' ? tr('ui.chatChannelsCard.botTokenXoxb') : kind === 'teams' ? tr('ui.chatChannelsCard.clientSecret') : kind === 'whatsapp' ? tr('ui.chatChannelsCard.accessToken') : kind === 'sms' ? tr('ui.chatChannelsCard.authToken') : tr('ui.chatChannelsCard.botToken')}>
         <Input
           type="password"
           autoComplete="off"
-          aria-label={kind === 'teams' ? tr('ui.chatChannelsCard.teamsClientSecret') : kind === 'whatsapp' ? tr('ui.chatChannelsCard.whatsappAccessToken') : tr('ui.chatChannelsCard.labelBotToken', { label })}
-          placeholder={channel.bot_token_hint ? tr('ui.chatChannelsCard.savedBotTokenHint', { bot_token_hint: channel.bot_token_hint }) : kind === 'slack' ? 'xoxb-…' : kind === 'teams' ? tr('ui.chatChannelsCard.clientSecretValue') : kind === 'whatsapp' ? 'EAAG…' : '123456:ABC…'}
+          aria-label={kind === 'teams' ? tr('ui.chatChannelsCard.teamsClientSecret') : kind === 'whatsapp' ? tr('ui.chatChannelsCard.whatsappAccessToken') : kind === 'sms' ? tr('ui.chatChannelsCard.twilioAuthToken') : tr('ui.chatChannelsCard.labelBotToken', { label })}
+          placeholder={channel.bot_token_hint ? tr('ui.chatChannelsCard.savedBotTokenHint', { bot_token_hint: channel.bot_token_hint }) : kind === 'slack' ? 'xoxb-…' : kind === 'teams' ? tr('ui.chatChannelsCard.clientSecretValue') : kind === 'whatsapp' ? 'EAAG…' : kind === 'sms' ? tr('ui.chatChannelsCard.fromTheTwilioConsole') : '123456:ABC…'}
           value={botToken}
           onChange={(e) => setBotToken(e.target.value)}
           disabled={busy}
@@ -303,6 +340,8 @@ function ChannelPanel({
               <p className="text-fg-dim">
                 {kind === 'whatsapp'
                   ? tr('ui.chatChannelsCard.callbackUrlForWhatsappConfiguration')
+                  : kind === 'sms'
+                  ? tr('ui.chatChannelsCard.webhookUrlForYourTwilio')
                   : tr('ui.chatChannelsCard.messagingEndpointForTheBot')}
               </p>
               <div className="mt-1 flex flex-wrap items-center gap-3">
@@ -342,13 +381,15 @@ function ChannelPanel({
                       ? tr('ui.chatChannelsCard.openADirectChatWith')
                     : kind === 'whatsapp'
                       ? tr('ui.chatChannelsCard.afterSavingTheCallbackUrl')
+                    : kind === 'sms'
+                      ? tr('ui.chatChannelsCard.afterSavingTheWebhookUrl', { bot_name: channel.bot_name })
                       : tr('ui.chatChannelsCard.openTheAppInSlack')}:
               </p>
               <div className="mt-1.5 flex flex-wrap items-center gap-3">
                 <span className="select-all font-mono text-[18px] tracking-[0.18em]" aria-label={tr('ui.chatChannelsCard.linkCode')}>{channel.link_code}</span>
                 {channel.link_url && (
                   <a href={channel.link_url} target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">
-                    {kind === 'discord' ? tr('ui.chatChannelsCard.addBotNameToA', { bot_name: channel.bot_name }) : kind === 'whatsapp' ? tr('ui.chatChannelsCard.messageBotNameOnWhatsapp', { bot_name: channel.bot_name }) : tr('ui.chatChannelsCard.openBotNameInTelegram', { bot_name: channel.bot_name })}
+                    {kind === 'discord' ? tr('ui.chatChannelsCard.addBotNameToA', { bot_name: channel.bot_name }) : kind === 'whatsapp' ? tr('ui.chatChannelsCard.messageBotNameOnWhatsapp', { bot_name: channel.bot_name }) : kind === 'sms' ? tr('ui.chatChannelsCard.textBotName', { bot_name: channel.bot_name }) : tr('ui.chatChannelsCard.openBotNameInTelegram', { bot_name: channel.bot_name })}
                   </a>
                 )}
               </div>
@@ -427,7 +468,7 @@ function ChannelPanel({
             )}
             <button type="button" disabled={busy} onClick={() => setEditing(true)}
               className="h-9 rounded-lg border border-line px-3 hover:bg-panel-2 disabled:opacity-60">
-              {kind === 'teams' || kind === 'whatsapp' ? tr('ui.chatChannelsCard.changeCredentials') : tr('ui.chatChannelsCard.changeToken')}
+              {kind === 'teams' || kind === 'whatsapp' || kind === 'sms' ? tr('ui.chatChannelsCard.changeCredentials') : tr('ui.chatChannelsCard.changeToken')}
             </button>
             <button type="button" disabled={busy}
               onClick={() => void run(async () => { await deleteChannel(kind); return null; }, tr('ui.chatChannelsCard.labelDisconnected', { label }))}
@@ -451,6 +492,7 @@ const BLURB: Record<ChannelKind, string> = {
   discord: 'Chat in Discord DMs and approve tasks with buttons',
   teams: 'Chat in Teams and @mention it in channels (needs a public server)',
   whatsapp: 'Chat with an agent from WhatsApp (needs a public server)',
+  sms: 'Text an agent from your phone with a Twilio number (needs a public server)',
 };
 
 function summary(channel: ChatChannel): string {
@@ -478,7 +520,7 @@ function ChannelRow({
     <div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-3">
         <span aria-hidden="true" className="grid h-7 w-7 flex-none place-items-center rounded-[7px] bg-panel-2 font-mono text-[11px] font-medium">
-          {channel.kind === 'telegram' ? 'TG' : channel.kind === 'discord' ? 'DC' : channel.kind === 'teams' ? 'MS' : channel.kind === 'whatsapp' ? 'WA' : 'SL'}
+          {channel.kind === 'telegram' ? 'TG' : channel.kind === 'discord' ? 'DC' : channel.kind === 'teams' ? 'MS' : channel.kind === 'whatsapp' ? 'WA' : channel.kind === 'sms' ? 'SM' : 'SL'}
         </span>
         <div className="min-w-0 flex-1 basis-[160px]">
           <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium">

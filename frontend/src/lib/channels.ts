@@ -1,6 +1,6 @@
 import { api } from '@/lib/api';
 
-export type ChannelKind = 'telegram' | 'slack' | 'discord' | 'teams' | 'whatsapp';
+export type ChannelKind = 'telegram' | 'slack' | 'discord' | 'teams' | 'whatsapp' | 'sms';
 
 export interface ChatChannel {
   kind: ChannelKind;
@@ -59,6 +59,8 @@ export interface ChannelUpdate {
   app_id?: string;
   tenant_id?: string;
   app_secret?: string;
+  /** SMS: the Twilio number with its country code (app_id is the Account SID). */
+  phone_number?: string;
 }
 
 export async function listChannels(): Promise<ChannelList> {

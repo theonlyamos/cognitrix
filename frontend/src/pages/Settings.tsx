@@ -59,7 +59,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'apps', get label() { return tr('ui.settings.connectedApps'); }, group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
   { id: 'access', get label() { return tr('ui.settings.agentAccess'); }, group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
   { id: 'swarms', get label() { return tr('ui.settings.swarms'); }, group: 'AGENTS', keywords: 'swarm workers parallel sub agents subagents fan out limit budget tokens concurrency how many at once' },
-  { id: 'chat-apps', get label() { return tr('ui.settings.chatApps'); }, group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp bot alerts approvals mention channel' },
+  { id: 'chat-apps', get label() { return tr('ui.settings.chatApps'); }, group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp sms text message twilio phone bot alerts approvals mention channel' },
   { id: 'email', get label() { return tr('ui.settings.agentEmail'); }, group: 'AGENTS', keywords: 'email mail address inbox imap smtp gmail mailbox reply send' },
   { id: 'people', get label() { return tr('ui.settings.people'); }, group: 'SERVER', keywords: 'users admin invite invitation members roles disable remove delete accounts email smtp reset spending limit cap budget', adminOnly: true },
   { id: 'audit', get label() { return tr('ui.settings.auditLog'); }, group: 'SERVER', keywords: 'audit log activity history who did what tool calls approvals sign ins security' },

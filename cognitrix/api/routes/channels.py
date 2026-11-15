@@ -1,4 +1,5 @@
-"""Chat apps: connect a Telegram, Slack, Discord, Microsoft Teams or WhatsApp bot to chat with your agents.
+"""Chat apps: connect a Telegram, Slack, Discord, Microsoft Teams or WhatsApp bot, or a Twilio
+number for SMS, to chat with your agents.
 
 ``GET /channels`` lists both apps with their state. ``PUT /channels/{kind}``
 saves tokens and options (tokens are checked with the app before saving).
@@ -55,6 +56,8 @@ class ChannelUpdate(BaseModel):
     """Teams: the Microsoft 365 organisation the bot belongs to."""
     app_secret: str | None = None
     """WhatsApp: the Meta app's secret, which signs its webhook calls."""
+    phone_number: str | None = None
+    """SMS: the Twilio number, with country code (``app_id`` is the Account SID)."""
 
 
 def _user_key(ctx: AuthContext) -> str:
@@ -116,6 +119,12 @@ def _payload(kind: str, row: ChatChannel | None) -> dict[str, Any]:
         digits = ''.join(c for c in row.bot_name if c.isdigit())
         if digits:
             link_url = f'https://wa.me/{digits}' + (f'?text={code}' if code else '')
+    if kind == 'sms':
+        from cognitrix.channels.sms import split_app as split_sms
+
+        app_id, phone = split_sms(row.app_token)
+        if phone:
+            link_url = f'sms:{phone}' + (f'?body={code}' if code else '')
     return {
         'kind': kind,
         'configured': bool(row.bot_token),
@@ -143,6 +152,7 @@ def _payload(kind: str, row: ChatChannel | None) -> dict[str, Any]:
         'webhook_path': {
             'teams': f'/api/v1/channels/teams/{row.id}/messages',
             'whatsapp': f'/api/v1/channels/whatsapp/{row.id}/webhook',
+            'sms': f'/api/v1/channels/sms/{row.id}/webhook',
         }.get(kind, ''),
         # WhatsApp: what to type as "Verify token" in Meta's webhook form.
         'verify_token': verify,
@@ -206,7 +216,18 @@ async def update_channel(kind: str, body: ChannelUpdate,
         if '|' in phone or '|' in secret:
             raise HTTPException(status_code=400, detail='That phone number ID or app secret looks wrong.')
         app_token = f'{phone}|{secret}' if phone or secret else ''
-    if body.app_token is not None and kind not in ('teams', 'whatsapp'):
+    if kind == 'sms' and (body.app_id is not None or body.phone_number is not None):
+        from cognitrix.channels import sms
+
+        old_sid, old_phone = sms.split_app(app_token)
+        sid = _clean_token(body.app_id, 'Account SID') if body.app_id is not None else old_sid
+        phone = sms.normal_phone(body.phone_number) if body.phone_number is not None else old_phone
+        if not sms.valid_sid(sid):
+            raise HTTPException(status_code=400, detail='The Account SID starts with AC and has 34 characters.')
+        if not sms.valid_phone(phone):
+            raise HTTPException(status_code=400, detail='Give the Twilio number with its country code, like +15550102000.')
+        app_token = f'{sid}|{phone}'
+    if body.app_token is not None and kind not in ('teams', 'whatsapp', 'sms'):
         app_token = _clean_token(body.app_token, 'app-level token')
     elif kind == 'teams' and (body.app_id is not None or body.tenant_id is not None):
         from cognitrix.channels.teams import split_app
@@ -231,11 +252,18 @@ async def update_channel(kind: str, body: ChannelUpdate,
             if not bot_token or not all(whatsapp.split_app(app_token)):
                 raise HTTPException(
                     status_code=400, detail='WhatsApp needs the phone number ID, an access token and the app secret.')
+        if kind == 'sms':
+            from cognitrix.channels import sms
+
+            if not bot_token or not all(sms.split_app(app_token)):
+                raise HTTPException(
+                    status_code=400, detail='SMS needs the Account SID, the Auth Token and the Twilio number.')
         if not bot_token:
             raise HTTPException(status_code=400, detail='Paste the bot token.')
         if kind == 'slack' and not app_token:
             raise HTTPException(status_code=400, detail='Slack also needs the app-level token (xapp-...).')
-        same_bot = {'kind': kind, 'app_token': app_token} if kind == 'teams' else {'kind': kind, 'bot_token': bot_token}
+        same_bot = ({'kind': kind, 'app_token': app_token} if kind in ('teams', 'sms')
+                    else {'kind': kind, 'bot_token': bot_token})
         for other in await ChatChannel.find(same_bot) or []:
             if row is None or other.id != row.id:
                 raise HTTPException(status_code=409, detail='This bot is already connected to another account.')
@@ -251,7 +279,7 @@ async def update_channel(kind: str, body: ChannelUpdate,
             await probe.close()
         code, expires = channel_service.new_link_code()
         data.update({
-            'bot_token': bot_token, 'app_token': app_token if kind in ('slack', 'teams', 'whatsapp') else '',
+            'bot_token': bot_token, 'app_token': app_token if kind in ('slack', 'teams', 'whatsapp', 'sms') else '',
             'bot_name': info.name, 'status': '', 'last_error': '', 'service_url': '',
             # A different bot means a different chat: link again.
             'chat_id': '', 'peer_id': '', 'peer_name': '', 'linked_at': '', 'session_id': '',
@@ -401,3 +429,49 @@ async def whatsapp_messages(channel_id: str, request: Request) -> Response:
     except WhatsAppAuthError:
         raise HTTPException(status_code=401, detail='Unauthorized') from None
     return Response(status_code=200)
+
+
+@channel_hooks_api.post('/sms/{channel_id}/webhook', include_in_schema=False)
+async def sms_messages(channel_id: str, request: Request) -> Response:
+    """Where Twilio posts texts sent to a connected number. Anyone can reach
+    this, so the call is only used once its signature has been checked."""
+    import os
+    from urllib.parse import parse_qsl
+
+    from cognitrix.channels.sms import SmsAuthError
+
+    service = channel_service.get_service()
+    if service is None:
+        raise HTTPException(status_code=404, detail='Not found')
+    raw = await request.body()
+    if len(raw) > MAX_ACTIVITY_BYTES:
+        raise HTTPException(status_code=413, detail='Too large')
+    try:
+        params = dict(parse_qsl(raw.decode('utf-8'), keep_blank_values=True))
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail='Bad form') from None
+    try:
+        await service.deliver_sms(channel_id, _twilio_urls(request, os.getenv('COGNITRIX_PUBLIC_URL', '')),
+                                  request.headers.get('x-twilio-signature', ''), params)
+    except LookupError:
+        raise HTTPException(status_code=404, detail='Not found') from None
+    except SmsAuthError:
+        raise HTTPException(status_code=401, detail='Unauthorized') from None
+    # Replies go out through the Messages API; an empty answer sends nothing more.
+    return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
+                    media_type='text/xml')
+
+
+def _twilio_urls(request: Request, public_url: str) -> list[str]:
+    """Addresses Twilio may have signed: the one we were reached at, the same
+    over https and through a proxy's forwarded host, and COGNITRIX_PUBLIC_URL."""
+    url = request.url
+    path = url.path + (f'?{url.query}' if url.query else '')
+    urls = [str(url), f'https://{url.netloc}{path}']
+    host = request.headers.get('x-forwarded-host', '').split(',')[0].strip()
+    proto = request.headers.get('x-forwarded-proto', '').split(',')[0].strip() or 'https'
+    if host:
+        urls.append(f'{proto}://{host}{path}')
+    if public_url.strip():
+        urls.append(public_url.strip().rstrip('/') + path)
+    return urls

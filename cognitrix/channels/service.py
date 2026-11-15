@@ -45,9 +45,11 @@ from .formatting import split_text, strip_reasoning
 
 logger = logging.getLogger('cognitrix.log')
 
-KINDS = ('telegram', 'slack', 'discord', 'teams', 'whatsapp')
+KINDS = ('telegram', 'slack', 'discord', 'teams', 'whatsapp', 'sms')
 # Apps that call the engine (it needs a public https address) instead of the engine connecting out.
-WEBHOOK_KINDS = ('teams', 'whatsapp')
+WEBHOOK_KINDS = ('teams', 'whatsapp', 'sms')
+# Apps where every message costs the bot's owner: strangers get no answer at all.
+QUIET_KINDS = ('sms',)
 # Apps where a person's id is the same in every chat, so someone who
 # @mentions the bot in a shared channel can be told apart from its owner.
 MENTION_KINDS = ('slack', 'teams')
@@ -103,6 +105,13 @@ def make_transport(channel: ChatChannel) -> Transport:
 
         phone_id, secret = split_app(channel.app_token)
         return WhatsAppTransport(channel.bot_token, phone_id, secret)
+    if channel.kind == 'sms':
+        from . import sms
+
+
+        sid, phone = sms.split_app(channel.app_token)
+        base = os.getenv('COGNITRIX_TWILIO_API_BASE', '').strip().rstrip('/') or sms.API_BASE
+        return sms.SmsTransport(channel.bot_token, sid, phone, api_base=base)
     raise ValueError(f'Unknown chat app {channel.kind!r}')
 
 
@@ -219,6 +228,14 @@ class ChannelService:
         if transport is None or getattr(transport, 'kind', '') != 'whatsapp':
             raise LookupError(channel_id)
         await transport.receive(signature, raw)  # type: ignore[attr-defined]
+
+    async def deliver_sms(self, channel_id: str, urls: list[str], signature: str, params: dict[str, str]) -> None:
+        """Hand over a webhook call from Twilio. Raises LookupError when that
+        number isn't running here and ``SmsAuthError`` when the signature is wrong."""
+        transport = self._transports.get(channel_id)
+        if transport is None or getattr(transport, 'kind', '') != 'sms':
+            raise LookupError(channel_id)
+        await transport.receive(urls, signature, params)  # type: ignore[attr-defined]
 
     async def _still_linked(self, channel: ChatChannel) -> bool:
         fresh = await ChatChannel.get(channel.id)
@@ -383,7 +400,7 @@ class ChannelService:
             await self._try_link(channel, msg)
             return
         if not self._is_owner(channel, msg.chat_id, msg.sender_id):
-            if msg.private:
+            if msg.private and channel.kind not in QUIET_KINDS:
                 await self._reply(channel, msg.chat_id, 'This bot is private.')
             return
 
@@ -486,6 +503,8 @@ class ChannelService:
             if failures >= MAX_LINK_ATTEMPTS and code:
                 # Too many guesses: void the code; Settings shows a new one on request.
                 await ChatChannel.update_one({'id': channel.id}, {'link_code': ''})
+            if channel.kind in QUIET_KINDS:
+                return  # each answer is a paid text to whoever wrote
             await self._reply(channel, msg.chat_id,
                               'This bot isn\'t linked yet. Send the code shown in '
                               'Cognitrix under Settings > Chat apps.')
