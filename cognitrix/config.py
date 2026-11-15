@@ -833,6 +833,7 @@ async def _ensure_schema():
     from cognitrix.swarms.models import MODELS as SWARM_MODELS
     from cognitrix.public_agents.models import MODELS as PUBLIC_AGENT_MODELS
     from cognitrix.sessions.sharing import MODELS as CHAT_SHARE_MODELS
+    from cognitrix.agent_email.models import MODELS as EMAIL_MODELS
     from cognitrix.sessions.side_questions import SideQuestion
 
     for model in (
@@ -842,6 +843,7 @@ async def _ensure_schema():
         *SWARM_MODELS,
         *PUBLIC_AGENT_MODELS,
         *CHAT_SHARE_MODELS,
+        *EMAIL_MODELS,
         AgentOffer,
         SideQuestion,
         MeetingNote,

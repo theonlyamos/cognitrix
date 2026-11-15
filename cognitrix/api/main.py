@@ -111,12 +111,23 @@ async def lifespan(app: FastAPI):
         except Exception:
             import logging
             logging.getLogger('cognitrix.log').exception('Chat app bots did not start')
+        try:
+            from ..agent_email.service import start_email
+            await start_email()
+        except Exception:
+            import logging
+            logging.getLogger('cognitrix.log').exception('Agent email did not start')
         yield
     finally:
         cleanup_errors = []
         try:
             from ..channels.service import stop_channels
             await stop_channels()
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+        try:
+            from ..agent_email.service import stop_email
+            await stop_email()
         except BaseException as exc:
             cleanup_errors.append(exc)
         tasks = tuple(task for task in (scheduler, recovery, app_sleeper, knowledge_refresher) if task is not None)

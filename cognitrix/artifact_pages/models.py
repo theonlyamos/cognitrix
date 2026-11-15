@@ -16,7 +16,8 @@ from typing import Any
 from odbms import Model
 from pydantic import Field, field_validator
 
-FORMATS = ('html', 'markdown')
+FORMATS = ('html', 'markdown', 'sheet', 'whiteboard')
+"""``sheet`` and ``whiteboard`` are JSON people edit too (see ``documents.py``)."""
 ROLE_VIEW = 'view'
 ROLE_EDIT = 'edit'
 SHARE_ROLES = (ROLE_VIEW, ROLE_EDIT)
