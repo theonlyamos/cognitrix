@@ -13,6 +13,11 @@ has two jobs, picked by its first argument:
         frozen app has no ``python -m celery`` to call, so it re-runs its own
         executable with ``worker`` instead.
 
+    cognitrix-engine acp [--agent NAME]
+        Runs the Agent Client Protocol server on stdin/stdout, so a code editor
+        (Zed, JetBrains, ...) can chat with the app's agents. Same agents,
+        keys and chats as the app (cognitrix/acp).
+
 It also works unfrozen: ``python -m cognitrix.desktop engine --port 8000``.
 """
 from __future__ import annotations
@@ -177,6 +182,22 @@ def run_worker(worker_args: list[str]) -> int:
     return 0
 
 
+def run_acp(args: argparse.Namespace) -> int:
+    cwd = os.getcwd()
+    _prepare_environment(None)
+    # The editor started us in its project folder; stay there.
+    try:
+        os.chdir(cwd)
+    except OSError:
+        pass
+    import asyncio
+
+    from cognitrix.acp.server import serve
+
+    asyncio.run(serve(agent_name=args.agent or '', user_email=args.user or ''))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog='cognitrix-engine', description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest='command', required=True)
@@ -191,6 +212,10 @@ def build_parser() -> argparse.ArgumentParser:
     engine.add_argument('--log-level', default='info')
 
     sub.add_parser('worker', help='Run the background task worker', add_help=False)
+
+    acp = sub.add_parser('acp', help='Run the Agent Client Protocol server for code editors')
+    acp.add_argument('--agent', default='', help='Agent to start with (default Assistant)')
+    acp.add_argument('--user', default='', help='Email of the account whose agents to use')
     return parser
 
 
@@ -212,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == 'engine':
         return run_engine(args)
+    if args.command == 'acp':
+        return run_acp(args)
     return 2
 
 

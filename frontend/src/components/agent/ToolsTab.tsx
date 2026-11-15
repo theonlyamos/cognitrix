@@ -2,7 +2,7 @@ import { useId, useMemo, useState } from 'react';
 import ModelPicker from '@/components/ModelPicker';
 import { MODELS, PROVIDERS, PROVIDER_LABELS } from '@/lib/providers';
 import type { AgentLevel, CodingMode, ReviewerMode, TabProps, ToolInfo, ToolLevel } from '@/lib/agentDraft';
-import { Card, Pill, buttonClass, inputClass } from '@/components/agent/ui';
+import { Card, Check, Pill, buttonClass, inputClass } from '@/components/agent/ui';
 import { cn } from '@/lib/utils';
 import { tr } from '@/lib/i18n';
 
@@ -98,6 +98,23 @@ export default function ToolsTab({ draft, update, options, catalog, agent }: Tab
           })}
         </div>
         <p className="mt-3 text-[12.5px] text-fg-dim">{tr('ui.agent.toolsTab.fullShellCommandsCodingAgent')}</p>
+      </Card>
+
+      <Card title={tr('ui.agent.toolsTab.savingTokens')} description={tr('ui.agent.toolsTab.forLongJobsAndAgents')}>
+        <Check
+          checked={draft.codeMode}
+          onChange={(codeMode) => update({ codeMode })}
+          label={tr('ui.agent.toolsTab.codeMode')}
+          detail={tr('ui.agent.toolsTab.theAgentCanWriteOne')}
+        />
+        <div className="mt-3.5">
+          <Check
+            checked={draft.toolsOnDemand}
+            onChange={(toolsOnDemand) => update({ toolsOnDemand })}
+            label={tr('ui.agent.toolsTab.loadToolsOnlyWhenNeeded')}
+            detail={draft.tools.length ? tr('ui.agent.toolsTab.toolsOnDemandDetailCount', { n: draft.tools.length }) : tr('ui.agent.toolsTab.toolsOnDemandDetail')}
+          />
+        </div>
       </Card>
 
       <Card title={tr('ui.agent.toolsTab.secondModelCheck')}>

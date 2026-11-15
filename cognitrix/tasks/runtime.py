@@ -416,7 +416,7 @@ class CapabilityPolicySnapshot(BaseModel):
 # Agent settings that change what tools may do, carried into task runs.
 AGENT_POLICY_FIELDS = (
     "reviewer", "coding_agents", "credentials", "can_create_sub_agents",
-    "sub_agent_model", "automation",
+    "sub_agent_model", "automation", "tool_mode",
 )
 
 

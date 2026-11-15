@@ -189,6 +189,19 @@ def is_blocked(path: Path) -> bool:
     return False
 
 
+# Folders this process was told to allow on top of allowed_roots(): the project
+# folders of editors connected over the Agent Client Protocol (cognitrix/acp).
+# The editor runs `cognitrix acp` on the person's own machine and names the
+# folder it has open, so that folder is theirs to give.
+_EXTRA_ROOTS: list[Path] = []
+
+
+def allow_root(path: str | Path) -> None:
+    resolved = Path(path).expanduser().resolve()
+    if resolved not in _EXTRA_ROOTS:
+        _EXTRA_ROOTS.append(resolved)
+
+
 def allowed_roots() -> list[Path] | None:
     """Folders people may add folders from. ``None`` means anywhere not blocked.
 
@@ -199,10 +212,10 @@ def allowed_roots() -> list[Path] | None:
     """
     raw = os.environ.get('COGNITRIX_ALLOWED_FOLDERS', '').strip()
     if raw:
-        return [Path(p).expanduser().resolve() for p in raw.split(os.pathsep) if p.strip()]
+        return [Path(p).expanduser().resolve() for p in raw.split(os.pathsep) if p.strip()] + _EXTRA_ROOTS
     if os.environ.get('COGNITRIX_DESKTOP') == '1':
         return None
-    return [Path(_settings().tools_root).expanduser().resolve()]
+    return [Path(_settings().tools_root).expanduser().resolve(), *_EXTRA_ROOTS]
 
 
 # ---------------------------------------------------------------------------

@@ -444,6 +444,7 @@ _AGENT_MIGRATION_COLUMNS = (
     ('credentials', 'TEXT'), ('can_create_sub_agents', 'BOOLEAN'),
     ('sub_agent_model', 'TEXT'), ('automation', 'TEXT'),
     ('memory', 'TEXT'), ('knowledge', 'TEXT'), ('shared_with', 'TEXT'),
+    ('tool_mode', 'TEXT'),
 )
 
 _SESSION_MIGRATION_COLUMNS = (
@@ -456,6 +457,7 @@ _SESSION_MIGRATION_COLUMNS = (
     ('title', 'TEXT'), ('pinned', 'BOOLEAN'), ('archived', 'BOOLEAN'),
     ('pending_messages', 'TEXT'),
     ('public_link_id', 'TEXT'), ('visitor_key', 'TEXT'),
+    ('loaded_tools', 'TEXT'),
 )
 
 _TASKRUN_INDEXES = (

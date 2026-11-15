@@ -391,7 +391,7 @@ def _check_folders(agent: Agent, data: dict, existing: Agent | None) -> None:
 _POLICY_DEFAULTS = {
     'description': '', 'avatar': {}, 'reviewer': {}, 'coding_agents': {}, 'credentials': None,
     'can_create_sub_agents': True, 'sub_agent_model': '', 'automation': {},
-    'memory': {},
+    'memory': {}, 'tool_mode': {},
 }
 
 
@@ -442,6 +442,12 @@ def _check_policy(agent: Agent, data: dict, existing: Agent | None) -> None:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     if agent.credentials is not None:
         agent.credentials = sorted({str(n).strip().upper() for n in agent.credentials if str(n).strip()})
+    from cognitrix.tools.code_mode import normalize_tool_mode
+
+    try:
+        agent.tool_mode = normalize_tool_mode(agent.tool_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     agent.sub_agent_model = str(agent.sub_agent_model or '').strip()
     if len(agent.sub_agent_model) > 200:
         raise HTTPException(status_code=400, detail='sub_agent_model is too long')

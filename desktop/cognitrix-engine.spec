@@ -22,7 +22,9 @@ hiddenimports = collect_submodules('cognitrix')
 
 # Packages that load plugins, drivers or data files by name at runtime.
 for package in ('celery', 'kombu', 'billiard', 'uvicorn', 'chromadb', 'onnxruntime',
-                'tokenizers', 'odbms', 'mcp', 'sse_starlette', 'tiktoken', 'fitz', 'pymupdf', 'anthropic'):
+                'tokenizers', 'odbms', 'mcp', 'sse_starlette', 'tiktoken', 'fitz', 'pymupdf', 'anthropic',
+                # Run Code's V8 engine (a native library + ICU data) and the ACP SDK.
+                'py_mini_racer', 'acp'):
     try:
         pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     except Exception:

@@ -51,6 +51,8 @@ export interface AgentRecord {
   sub_agent_model?: string;
   automation?: { self_checkins?: boolean; max_runs_per_day?: number | null; standing?: { enabled?: boolean; primary?: boolean } };
   memory?: { read_global?: boolean; save_global?: boolean };
+  /** Code mode (Run Code) and tools loaded on demand (Find Tools). */
+  tool_mode?: { code?: boolean; on_demand?: boolean };
   /** Where this agent's saves go when the page never set it (the server decides). */
   memory_saves_global?: boolean;
 }
@@ -93,6 +95,8 @@ export interface AgentDraft {
   maxRunsPerDay: string;
   memoryReadGlobal: boolean;
   memorySaveGlobal: boolean;
+  codeMode: boolean;
+  toolsOnDemand: boolean;
 }
 
 export function draftFrom(agent: AgentRecord): AgentDraft {
@@ -133,6 +137,8 @@ export function draftFrom(agent: AgentRecord): AgentDraft {
     maxRunsPerDay: auto.max_runs_per_day ? String(auto.max_runs_per_day) : '',
     memoryReadGlobal: agent.memory?.read_global ?? true,
     memorySaveGlobal: agent.memory?.save_global ?? agent.memory_saves_global ?? false,
+    codeMode: !!agent.tool_mode?.code,
+    toolsOnDemand: !!agent.tool_mode?.on_demand,
   };
 }
 
@@ -200,6 +206,10 @@ export function payloadFrom(id: string, draft: AgentDraft, catalog: ToolInfo[], 
     sub_agent_model: draft.subAgentModel.trim(),
     automation,
     memory: { read_global: draft.memoryReadGlobal, save_global: draft.memoryReadGlobal && draft.memorySaveGlobal },
+    tool_mode: {
+      ...(draft.codeMode ? { code: true } : {}),
+      ...(draft.toolsOnDemand ? { on_demand: true } : {}),
+    },
   };
 }
 

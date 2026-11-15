@@ -127,6 +127,11 @@ class Agent(Model):
     """Limits for the Coding Agent tool: clis (list of allowed CLI keys, None
     or missing = any installed) and max_mode (read_only, edit or full)."""
 
+    tool_mode: dict[str, Any] = Field(default_factory=dict)
+    """How the agent uses its tools (cognitrix/tools/code_mode.py): code
+    (Run Code: one script calls many tools) and on_demand (only a few tool
+    descriptions are sent; Find Tools loads the rest). Empty means both off."""
+
     credentials: list[str] | None = None
     """Saved sign-ins this agent may use by name. None means all of the owner's."""
 
@@ -162,7 +167,7 @@ class Agent(Model):
     def _sub_agents_default(cls, value):
         return True if value is None else value
 
-    @field_validator('reviewer', 'avatar', 'coding_agents', 'automation', 'memory', 'shared_with', mode='before')
+    @field_validator('reviewer', 'avatar', 'coding_agents', 'automation', 'memory', 'shared_with', 'tool_mode', mode='before')
     @classmethod
     def _dict_default(cls, value):
         if value in (None, ''):

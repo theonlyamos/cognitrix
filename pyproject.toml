@@ -78,6 +78,11 @@ pyyaml = "^6.0"
 mcp = "^2.3.0"
 textual = "^8.0.1"
 croniter = "^6.2.3"
+# Code mode (cognitrix/tools/code_mode.py): Run Code scripts run in a V8
+# isolate with no file system or network of their own.
+mini-racer = ">=0.14.1,<1"
+# Agent Client Protocol server for code editors (cognitrix/acp, `cognitrix acp`).
+agent-client-protocol = ">=1.0.0,<2"
 anthropic = ">=1.0"
 
 [build-system]

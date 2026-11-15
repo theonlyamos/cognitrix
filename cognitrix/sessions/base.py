@@ -178,6 +178,16 @@ def _with_folder_block(prompt, folders, sandbox: tuple | None = None) -> Any:
     return [{'role': 'system', 'content': block}, *prompt]
 
 
+def _with_note(prompt, note: str) -> Any:
+    """Append a line to the system message (or add one)."""
+    if not note:
+        return prompt
+    if prompt and isinstance(prompt[0], dict) and prompt[0].get('role') == 'system' \
+            and isinstance(prompt[0].get('content'), str):
+        return [{**prompt[0], 'content': prompt[0]['content'] + '\n\n' + note}, *prompt[1:]]
+    return [{'role': 'system', 'content': note}, *prompt]
+
+
 class Session(Model):
     chat: list[dict[str, Any]] = []
     """The chat history of the session"""
@@ -193,6 +203,10 @@ class Session(Model):
     folders: list[dict[str, Any]] | None = None
     """Working folders for this chat ({path, access, name, primary}). None until
     the first turn copies the agent's defaults."""
+
+    loaded_tools: list[str] | None = None
+    """Tools Find Tools loaded in this chat (agents with tools on demand,
+    tools/code_mode.py). Their schemas are sent on every later step."""
 
     run_in_sandbox: bool | None = None
     """Run in sandbox: this chat's shell, files and tests work in the person's
@@ -852,6 +866,17 @@ class Session(Model):
         except Exception:
             pass
 
+        # Code mode / tools on demand (Agent.tool_mode, tools/code_mode.py):
+        # Run Code and Find Tools join the turn when the agent's switches
+        # are on.
+        try:
+            from cognitrix.tools import code_mode as _code_mode
+            meta_tools = _code_mode.turn_tools(agent)
+            if meta_tools:
+                agent = agent.model_copy(update={'tools': [*agent.tools, *meta_tools]})
+        except Exception:
+            logger.debug('Code mode tools unavailable', exc_info=True)
+
         # Add the new message to the history before building the prompt
         if wsquery is None:
             wsquery = {}
@@ -952,8 +977,9 @@ class Session(Model):
         inherited_folders = tuple(getattr(tool_context, 'folders', ()) or ())
 
         # Build the context-aware prompt using the manager
+        turn_note = ''
         prompt = await agent.get_context_manager().build_prompt(agent, self)
-        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
+        prompt = _with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), turn_note)
 
         # Tools set to "never" for this agent aren't offered to the model
         # (the agent loop refuses them too, see safety/permissions.py).
@@ -965,6 +991,28 @@ class Session(Model):
         # Only advertise tools to models with native tool-use; otherwise the tool
         # list is embedded in the system prompt (AgentManager.formatted_system_prompt).
         active_tools = formatted_tools if agent.llm.supports_tool_use else None
+
+        # Tools on demand: only the core tools and the ones Find Tools loaded
+        # (in this chat so far, or this turn) are sent; the rest are named in
+        # the system prompt. Loaded tools stay loaded for the chat, so later
+        # turns keep the same tool list (and the provider's prompt cache).
+        from cognitrix.tools import code_mode as _code_mode
+        on_demand = (
+            agent.llm.supports_tool_use
+            and any(str(getattr(t, 'name', '')).lower() == 'find tools' for t in agent.tools)
+        )
+        turn_loaded: set[str] | None = set(self.loaded_tools or []) if on_demand else None
+        loaded_token = _code_mode.loaded_this_turn.set(turn_loaded)
+        if on_demand:
+            turn_note = _code_mode.find_tools_note(agent)
+            prompt = _with_note(prompt, turn_note)
+
+        def _sent_tools() -> list[dict[str, Any]] | None:
+            if active_tools is None or turn_loaded is None:
+                return active_tools
+            if set(self.loaded_tools or []) != turn_loaded:
+                self.loaded_tools = sorted(turn_loaded)
+            return _code_mode.sent_schemas(formatted_tools, turn_loaded)
 
         tool_rounds = 0
         active_tool_calls: list[dict[str, Any]] = []
@@ -1028,7 +1076,7 @@ class Session(Model):
                         ))
 
                     # The prompt is now a complete history, not a single message
-                    llm_result = await agent.llm(prompt, stream=stream, tools=active_tools)
+                    llm_result = await agent.llm(prompt, stream=stream, tools=_sent_tools())
 
                     if stream:
                         async_iter = llm_result  # type: ignore[arg-type]
@@ -1113,7 +1161,7 @@ class Session(Model):
                                     'artifacts': (outcome or {}).get('artifacts', []),
                                 })
 
-                            if interface in ('web', 'ws', 'task'):
+                            if interface in ('web', 'ws', 'task', 'acp'):
                                 for name, tcid, args in tool_meta:
                                     if name:
                                         await output({'type': 'tool', 'status': 'started', 'tool_name': name,
@@ -1179,7 +1227,7 @@ class Session(Model):
                                             terminal_messages.append(processed)
                                     if terminal_messages and record_history:
                                         self.update_history(terminal_messages)
-                                    if interface in ('web', 'ws', 'task'):
+                                    if interface in ('web', 'ws', 'task', 'acp'):
                                         for i, (name, tcid, _args) in enumerate(tool_meta):
                                             completed_entry = completed_by_index.get(i)
                                             if completed_entry is not None:
@@ -1229,7 +1277,7 @@ class Session(Model):
                                             'content': image,
                                         })
                                 active_tool_calls = []
-                            if interface in ('web', 'ws', 'task'):
+                            if interface in ('web', 'ws', 'task', 'acp'):
                                 result_list = result['result'] if is_tool_result else []
                                 for i, (name, tcid, _args) in enumerate(tool_meta):
                                     item = result_list[i] if i < len(result_list) else {}
@@ -1280,7 +1328,7 @@ class Session(Model):
 
                                 prompt = await agent.get_context_manager().build_prompt(agent, self)
                                 # Keep the folder list (including any just granted) on every request.
-                                prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
+                                prompt = _with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), turn_note)
                                 continue  # Continue the loop to re-prompt the LLM with the tool result
                             else:
                                 if interface == 'cli':
@@ -1328,7 +1376,7 @@ class Session(Model):
                                        'or give your final answer.]',
                         })
                         prompt = await agent.get_context_manager().build_prompt(agent, self)
-                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
+                        prompt = _with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), turn_note)
                         continue
 
                     # Persist the final assistant text only when this response did
@@ -1377,7 +1425,7 @@ class Session(Model):
                         # answer: keep the turn going so it gets read now
                         # instead of waiting for another turn.
                         prompt = await agent.get_context_manager().build_prompt(agent, self)
-                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
+                        prompt = _with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), turn_note)
                         continue
 
                     if not called_tools:
@@ -1476,6 +1524,8 @@ class Session(Model):
             raise
         except Exception as e:
             logger.exception(e)
+        finally:
+            _code_mode.loaded_this_turn.reset(loaded_token)
 
     def _steering_run(self):
         """The chat run whose inbox this turn reads, if any."""
@@ -1624,7 +1674,7 @@ class Session(Model):
         has its own default folders. CLI and compat turns keep the app's working
         folder (an empty list).
         """
-        if interface not in ('web', 'ws', 'task'):
+        if interface not in ('web', 'ws', 'task', 'acp'):
             return []
         from cognitrix.common.folders import (
             folders_to_dicts,
