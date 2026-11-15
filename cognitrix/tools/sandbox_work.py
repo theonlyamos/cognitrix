@@ -470,9 +470,8 @@ def _thumbnail(shot: dict) -> tuple[str, str] | None:
         return None
 
 
-# Hosts for a sign-in saved only for the sandbox: the .invalid name never
-# resolves, so Http Request can't send it anywhere.
-SANDBOX_ONLY_HOST = 'sandbox.invalid'
+# Hosts for a sign-in saved only for the sandbox (see sandbox_work).
+SANDBOX_ONLY_HOST = sw.SANDBOX_ONLY_HOST
 
 
 @tool(category='system', retryable=False, max_attempts=1, supported_interfaces=['web'],
