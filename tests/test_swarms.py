@@ -720,3 +720,34 @@ async def test_routes_list_stop_and_limits(db, world, monkeypatch):
     capped = await routes.get_limits(ctx='u1')
     assert capped['concurrency'] == 1 and capped['max_workers'] == 3 and capped['ceilings']['max_workers'] == 3
     assert (await routes.stop_everything(ctx='u1')) == {'stopped': 0}
+
+
+async def test_review_findings_circles_waiting_swarms_and_task_models(db, world, monkeypatch):
+    from cognitrix.providers import base as providers
+    from cognitrix.swarms import service
+    from cognitrix.tools.swarm import spawn_workers
+
+    await _lead()
+    circle = await _call(spawn_workers, workers=[
+        {'name': 'a', 'brief': 'x', 'depends_on': ['b']}, {'name': 'b', 'brief': 'y', 'depends_on': ['a']}])
+    assert circle.error.code == 'bad_dependency' and 'circle' in circle.error.message
+
+    # A second swarm that found the person's limit full starts when the first frees a slot.
+    await service.save_settings('u1', {'admin_concurrency': 1}, admin=True)
+    world.gate = asyncio.Event()
+    first = _swarm_id(await _call(spawn_workers, workers=[{'name': 'one', 'brief': 'first job'}]))
+    second = _swarm_id(await _call(spawn_workers, workers=[{'name': 'two', 'brief': 'second job'}]))
+    await asyncio.sleep(0.05)
+    assert (await service.find_worker(second, 'two')).status == 'queued'
+    world.gate.set()
+    await _settle()
+    assert (await service.get_swarm('u1', first)).status == 'done'
+    assert (await service.get_swarm('u1', second)).status == 'done'
+
+    # Inside a task run a worker's own model is used too.
+    used = []
+    monkeypatch.setattr(providers, 'build_turn_llm', lambda llm, provider, model: f'{provider}/{model}')
+    world.on_turn = lambda session, text: used.append((providers.turn_llm_override.get() or (None, None))[1])
+    set_execution_context(ToolExecutionContext(user_id='u1', agent_id=BOSS.id, task_id='t9', run_id='r9'))
+    out = await _call(spawn_workers, workers=[{'brief': 'cheap part', 'model': 'openai/gpt-5.4-mini'}, {'brief': 'other part'}])
+    assert out.status == 'success' and sorted(used, key=str) == [None, 'openai/gpt-5.4-mini']

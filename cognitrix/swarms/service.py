@@ -462,7 +462,7 @@ async def _add_rows(swarm: SwarmRun, lead: Any, specs: list[WorkerSpec], *, adde
             role = ''
         try:
             model = parse_model(spec.model, getattr(agent, 'llm', None))
-            if model and getattr(agent, 'llm', None) is not None and not (live and live.inline):
+            if model and getattr(agent, 'llm', None) is not None:
                 from cognitrix.providers.base import build_turn_llm
 
                 build_turn_llm(agent.llm, model['provider'], model['model'])
@@ -474,6 +474,26 @@ async def _add_rows(swarm: SwarmRun, lead: Any, specs: list[WorkerSpec], *, adde
         if unknown:
             raise SwarmError('bad_dependency',
                              f'Worker "{name}" depends on {", ".join(unknown)}, which is not a worker of this swarm')
+    # Workers that wait for each other in a circle would never start.
+    graph = {w.name: list(w.depends_on or []) for w in existing}
+    graph.update({name: list(spec.depends_on) for spec, name, _a, _m, _r in planned})
+    state: dict[str, int] = {}
+
+    def circular(node: str) -> bool:
+        if state.get(node) == 1:
+            return True
+        if state.get(node) == 2:
+            return False
+        state[node] = 1
+        found = any(circular(dep) for dep in graph.get(node, ()))
+        state[node] = 2
+        return found
+
+    for _spec, name, _a, _m, _r in planned:
+        if circular(name):
+            raise SwarmError('bad_dependency',
+                             f'Worker "{name}" is in a circle of workers that wait for each other. '
+                             'Order them so that one can start first.')
     rows: list[SwarmWorker] = []
     for spec, name, agent, model, role in planned:
         order += 1
@@ -757,11 +777,13 @@ def _run_chat_turn(live: _Live, swarm: SwarmRun, worker: SwarmWorker, agent: Any
     def setup() -> float:
         from cognitrix import usage
 
-        usage.set_sink(count)
-        if model and getattr(agent, 'llm', None) is not None:
-            from cognitrix.providers.base import build_turn_llm, turn_llm_override
+        from cognitrix.providers.base import build_turn_llm, turn_llm_override
 
-            turn_llm_override.set((agent.llm.id, build_turn_llm(agent.llm, model['provider'], model['model'])))
+        usage.set_sink(count)
+        # Set either way: this turn may have been started from another worker's context.
+        turn_llm_override.set(
+            (agent.llm.id, build_turn_llm(agent.llm, model['provider'], model['model']))
+            if model and getattr(agent, 'llm', None) is not None else None)
         return worker_timeout()
 
     async def done(status: str, reply: str) -> None:
@@ -912,6 +934,10 @@ async def _worker_turn_ended(swarm_id: str, name: str, status: str, reply: str) 
         changes['reported'] = [n for n in (swarm.reported or []) if n != name]
     await SwarmRun.update_one({'id': swarm.id}, changes)
     await _advance(swarm_id)
+    # The slot this worker held may be what the person's other swarms wait for.
+    for other_id, other in list(_LIVE.items()):
+        if other_id != swarm_id and other.user_key == live.user_key:
+            _spawn(_advance(other_id))
 
 
 def _run_error(run: Any) -> str:
@@ -1042,6 +1068,13 @@ async def _run_inline(live: _Live, swarm: SwarmRun, worker: SwarmWorker, text: s
             ctx = dataclasses.replace(ctx, host_process_mode=HostProcessMode.DENY,
                                       folders=read_only(ctx.folders) if ctx.folders else ())
         usage.set_sink(count)  # this task has its own copy of the context
+        from cognitrix.providers.base import build_turn_llm, turn_llm_override
+
+        model = dict(worker.model or {})
+        # Set either way: this task may have been started from another worker's context.
+        turn_llm_override.set(
+            (lead.llm.id, build_turn_llm(lead.llm, model['provider'], model['model']))
+            if model and getattr(lead, 'llm', None) is not None else None)
         session = Session(agent_id=str(getattr(lead, 'id', '') or ''), user_id=swarm.user_id or None)
         await asyncio.wait_for(
             session(text, agent, 'task', True, capture, {}, save_history=False, tool_context=ctx,
