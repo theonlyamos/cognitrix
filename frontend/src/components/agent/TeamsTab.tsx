@@ -4,6 +4,7 @@ import ModelPicker from '@/components/ModelPicker';
 import { PROVIDER_LABELS } from '@/lib/providers';
 import { handleFor, type TabProps } from '@/lib/agentDraft';
 import { Card, Check, Pill, buttonClass, linkButtonClass } from '@/components/agent/ui';
+import { tr } from '@/lib/i18n';
 
 export default function TeamsTab({ agent, draft, update, overview }: TabProps) {
   const modelId = useId();
@@ -15,12 +16,12 @@ export default function TeamsTab({ agent, draft, update, overview }: TabProps) {
 
   return (
     <div className="flex flex-col gap-[18px]">
-      <Card title="Teams" aside={<Link to="/teams" className={buttonClass}>+ Add to a team</Link>}>
+      <Card title={tr('ui.agent.teamsTab.teams')} aside={<Link to="/teams" className={buttonClass}>{tr('ui.agent.teamsTab.addToATeam')}</Link>}>
         {!overview ? (
-          <p className="text-[13px] text-fg-dim">Loading…</p>
+          <p className="text-[13px] text-fg-dim">{tr('ui.agent.teamsTab.loading')}</p>
         ) : teams.length === 0 ? (
           <p className="text-[13px] text-fg-dim">
-            Not in a team. In a team, agents share a group chat and hand work to each other by @mention.
+            {tr('ui.agent.teamsTab.notInATeamIn')}
           </p>
         ) : (
           <ul className="-mt-1">
@@ -32,13 +33,13 @@ export default function TeamsTab({ agent, draft, update, overview }: TabProps) {
                   <div className="min-w-[220px] flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <Link to={`/teams/${t.id}`} className="text-[15px] font-semibold hover:text-accent-ink hover:underline">{t.name}</Link>
-                      <Pill tone={lead ? 'accent' : 'dim'}>{lead ? 'leader' : 'member'}</Pill>
+                      <Pill tone={lead ? 'accent' : 'dim'}>{lead ? tr('ui.agent.teamsTab.leader') : tr('ui.agent.teamsTab.member')}</Pill>
                     </div>
                     <div className="mt-1 truncate text-[12.5px] text-fg-dim">
-                      {others.length ? `With ${others.map((m) => handleFor(m.name)).join(', ')}` : 'No other members'}
+                      {others.length ? tr('ui.agent.teamsTab.withMap', { map: others.map((m) => handleFor(m.name)).join(', ') }) : tr('ui.agent.teamsTab.noOtherMembers')}
                     </div>
                   </div>
-                  <Link to={`/teams/${t.id}/chat`} className={buttonClass}>Open group chat</Link>
+                  <Link to={`/teams/${t.id}/chat`} className={buttonClass}>{tr('ui.agent.teamsTab.openGroupChat')}</Link>
                 </li>
               );
             })}
@@ -46,45 +47,45 @@ export default function TeamsTab({ agent, draft, update, overview }: TabProps) {
         )}
       </Card>
 
-      <Card title="Delegation" description="Sub-agents are helpers this agent makes for one job.">
+      <Card title={tr('ui.agent.teamsTab.delegation')} description={tr('ui.agent.teamsTab.subAgentsAreHelpersThis')}>
         <div className="flex flex-col gap-4">
           <Check
             checked={draft.canCreateSubAgents}
             onChange={(canCreateSubAgents) => update({ canCreateSubAgents })}
-            label="Let it create sub-agents"
-            detail="Off removes the Create Agent tool, so the agent does the work itself or hands it to a teammate."
+            label={tr('ui.agent.teamsTab.letItCreateSubAgents')}
+            detail={tr('ui.agent.teamsTab.offRemovesTheCreateAgent')}
           />
           <div className={draft.canCreateSubAgents ? '' : 'pointer-events-none opacity-50'} aria-disabled={!draft.canCreateSubAgents}>
-            <div className="text-[14.5px] font-medium">Sub-agent model</div>
-            <div className="mt-2 flex flex-col gap-2" role="radiogroup" aria-label="Sub-agent model">
+            <div className="text-[14.5px] font-medium">{tr('ui.agent.teamsTab.subAgentModel')}</div>
+            <div className="mt-2 flex flex-col gap-2" role="radiogroup" aria-label={tr('ui.agent.teamsTab.subAgentModel')}>
               <label className="flex cursor-pointer items-center gap-2.5 text-[14px]">
                 <input type="radio" name="sub-model" checked={!specific && draft.subAgentModel === ''} disabled={!draft.canCreateSubAgents}
                   onChange={() => { setSpecificPicked(false); update({ subAgentModel: '' }); }} className="h-4 w-4 accent-[var(--accent)]" />
-                The agent chooses
+                {tr('ui.agent.teamsTab.theAgentChooses')}
               </label>
               <label className="flex cursor-pointer items-center gap-2.5 text-[14px]">
                 <input type="radio" name="sub-model" checked={!specific && draft.subAgentModel === 'same'} disabled={!draft.canCreateSubAgents}
                   onChange={() => { setSpecificPicked(false); update({ subAgentModel: 'same' }); }} className="h-4 w-4 accent-[var(--accent)]" />
-                Same as this agent ({draft.model || '—'})
+                {tr('ui.agent.teamsTab.sameAsThisAgentModel', { model: draft.model || '—' })}
               </label>
               <label className="flex cursor-pointer items-center gap-2.5 text-[14px]">
                 <input type="radio" name="sub-model" checked={specific} disabled={!draft.canCreateSubAgents}
                   onChange={() => { setSpecificPicked(true); update({ subAgentModel: draft.model }); }} className="h-4 w-4 accent-[var(--accent)]" />
-                A specific {providerLabel} model
+                {tr('ui.agent.teamsTab.aSpecificProviderlabelModel', { providerLabel })}
               </label>
               {specific && (
                 <div className="ml-[26px] max-w-[360px]">
-                  <label htmlFor={modelId} className="sr-only">Sub-agent model</label>
+                  <label htmlFor={modelId} className="sr-only">{tr('ui.agent.teamsTab.subAgentModel')}</label>
                   <ModelPicker id={modelId} provider={draft.provider} value={draft.subAgentModel}
                     onChange={(subAgentModel) => update({ subAgentModel })} disabled={!draft.canCreateSubAgents} />
-                  <p className="mt-1.5 text-[12px] text-fg-dim">{draft.subAgentModel === '' && 'Until you name a model, the agent chooses. '}Uses this agent's provider and key. A cheaper model keeps helper jobs cheap.</p>
+                  <p className="mt-1.5 text-[12px] text-fg-dim">{draft.subAgentModel === '' && tr('ui.agent.teamsTab.untilYouNameAModel')}{tr('ui.agent.teamsTab.usesThisAgentSProvider')}</p>
                 </div>
               )}
             </div>
           </div>
         </div>
         <p className="mt-4 text-[12.5px] text-fg-dim">
-          To hand work to agents you set up yourself, put them in a team. <Link to="/teams/new" className={linkButtonClass}>Make a team</Link>
+          {tr('ui.agent.teamsTab.toHandWorkToAgents')}{' '}<Link to="/teams/new" className={linkButtonClass}>{tr('ui.agent.teamsTab.makeATeam')}</Link>
         </p>
       </Card>
     </div>

@@ -3,7 +3,7 @@ import { Plus, Upload } from 'lucide-react';
 import { ChatRowMenu, type ChatRowAction } from '@/components/ChatRowMenu';
 import { useTheme } from '@/context/ThemeContext';
 import { errorMessage } from '@/lib/api';
-import { useT } from '@/lib/i18n';
+import { useT, tr } from '@/lib/i18n';
 import {
   PRESETS, ThemeFormatError, deriveTokens, duplicateTheme, exportTheme, importTheme, isPreset, uniqueId,
   type Appearance, type ThemeFile,
@@ -50,41 +50,41 @@ function ImportDialog({ onImported, onClose }: { onImported: (theme: ThemeFile) 
     try {
       onImported(importTheme(value, fileName.current));
     } catch (e) {
-      setError(e instanceof ThemeFormatError ? e.message : 'This is not a theme.');
+      setError(e instanceof ThemeFormatError ? e.message : tr('ui.settings.themes.thisIsNotATheme'));
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 md:items-center" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div role="dialog" aria-modal="true" aria-label="Import a theme"
+      <div role="dialog" aria-modal="true" aria-label={tr('ui.settings.themes.importATheme')}
         className="flex w-full flex-col overflow-hidden rounded-t-2xl border border-line bg-panel shadow-2xl md:w-[520px] md:rounded-2xl">
         <header className="border-b border-line px-4 py-3.5">
-          <div className="text-[15px] font-semibold">Import a theme</div>
+          <div className="text-[15px] font-semibold">{tr('ui.settings.themes.importATheme')}</div>
           <p className="mt-0.5 text-[12.5px] text-fg-dim">
-            Paste a Cognitrix theme, a Codex app theme (<code className="font-mono text-[11.5px]">codex-theme-v1:…</code>) or a VS Code colour theme, or choose a file.
+            {tr('ui.settings.themes.pasteACognitrixThemeA')}<code className="font-mono text-[11.5px]">codex-theme-v1:…</code>{tr('ui.settings.themes.orAVsCodeColour')}
           </p>
         </header>
         <div className="px-4 py-3">
           <textarea
-            aria-label="Theme to import"
+            aria-label={tr('ui.settings.themes.themeToImport')}
             value={text}
             onChange={(e) => { setText(e.target.value); setError(''); }}
             rows={8}
             spellCheck={false}
-            placeholder='{ "name": "Nightfall", "dark": { "background": "#1a1b26", "text": "#c0caf5", "accent": "#7aa2f7" } }'
+            placeholder={tr('ui.settings.themes.nameNightfallDarkBackground1a1b26')}
             className="w-full resize-y rounded-lg border border-line bg-panel-2 p-2.5 font-mono text-[11.5px] outline-none focus:border-accent"
           />
           {error && <p role="alert" className="mt-1.5 text-[12.5px] text-danger-ink">{error}</p>}
         </div>
         <footer className="flex items-center gap-2 border-t border-line px-4 py-3">
           <label className={cn(buttonClass, 'cursor-pointer')}>
-            Choose file
+            {tr('ui.settings.themes.chooseFile')}
             <input type="file" accept=".json,.jsonc,.txt,application/json,text/plain" className="sr-only"
               onChange={async (e) => {
                 const file = e.target.files?.[0];
                 e.target.value = '';
                 if (!file) return;
-                if (file.size > 512 * 1024) { setError('That file is too large to be a theme.'); return; }
+                if (file.size > 512 * 1024) { setError(tr('ui.settings.themes.thatFileIsTooLarge')); return; }
                 fileName.current = file.name.replace(/\.(cognitrix-theme\.)?(json|jsonc|txt)$/i, '').replace(/[-_]+/g, ' ') || 'Imported theme';
                 const value = await file.text();
                 setText(value);
@@ -92,8 +92,8 @@ function ImportDialog({ onImported, onClose }: { onImported: (theme: ThemeFile) 
               }} />
           </label>
           <span className="flex-1" />
-          <button type="button" className={buttonClass} onClick={onClose}>Cancel</button>
-          <button type="button" className={primaryButtonClass} disabled={!text.trim()} onClick={() => tryImport(text)}>Import</button>
+          <button type="button" className={buttonClass} onClick={onClose}>{tr('ui.settings.themes.cancel')}</button>
+          <button type="button" className={primaryButtonClass} disabled={!text.trim()} onClick={() => tryImport(text)}>{tr('ui.settings.themes.import')}</button>
         </footer>
       </div>
     </div>
@@ -136,11 +136,11 @@ export function ThemeLibrary() {
 
   const run = async (work: () => Promise<void>) => {
     setError('');
-    try { await work(); } catch (e) { setError(errorMessage(e, 'Could not change the theme.')); }
+    try { await work(); } catch (e) { setError(errorMessage(e, tr('ui.settings.themes.couldNotChangeTheTheme'))); }
   };
 
   const createNew = () => {
-    const base = duplicateTheme(PRESETS[0], takenIds, 'My theme');
+    const base = duplicateTheme(PRESETS[0], takenIds, tr('ui.settings.themes.myTheme'));
     // Start from Signal's three colours but let everything else be derived.
     for (const m of ['light', 'dark'] as const) {
       const v = base[m]!;
@@ -157,8 +157,8 @@ export function ThemeLibrary() {
     list.push({
       label: t('appearance.themes.copy'),
       onSelect: () => void navigator.clipboard?.writeText(exportTheme(theme)).then(
-        () => setNotice(`Copied “${theme.name}”. Paste it into Import on another account.`),
-        () => setError('Could not copy. Use Download instead.'),
+        () => setNotice(tr('ui.settings.themes.copiedNamePasteItInto', { name: theme.name })),
+        () => setError(tr('ui.settings.themes.couldNotCopyUseDownload')),
       ),
     });
     list.push({ label: t('appearance.themes.download'), onSelect: () => download(theme) });

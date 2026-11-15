@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { Group, SettingRow, primaryButtonClass } from '@/components/settings/ui';
 import { tokensLabel, type SwarmLimits } from '@/lib/swarms';
+import { tr } from '@/lib/i18n';
 
 const inputClass =
   'h-10 w-28 rounded-lg border border-line bg-panel-2 px-3 text-right font-mono text-[13px] outline-none focus:border-accent md:h-9';
@@ -29,7 +30,7 @@ export function SwarmSettings() {
   useEffect(() => {
     api.get<SwarmLimits>('/swarms/settings')
       .then(({ data }) => adopt(data))
-      .catch((err) => setError(errorMessage(err, 'Could not load the swarm limits.')));
+      .catch((err) => setError(errorMessage(err, tr('ui.settings.swarms.couldNotLoadTheSwarm'))));
   }, []);
 
   const save = async (patch: Record<string, unknown>) => {
@@ -41,13 +42,13 @@ export function SwarmSettings() {
       adopt(data);
       setSaved(true);
     } catch (err) {
-      setError(errorMessage(err, 'Could not save the swarm limits.'));
+      setError(errorMessage(err, tr('ui.settings.swarms.couldNotSaveTheSwarm')));
     } finally {
       setBusy(false);
     }
   };
 
-  if (!limits) return <p role={error ? 'alert' : 'status'} className="text-[13px] text-fg-dim">{error || 'Loading…'}</p>;
+  if (!limits) return <p role={error ? 'alert' : 'status'} className="text-[13px] text-fg-dim">{error || tr('ui.settings.swarms.loading')}</p>;
 
   const number = (field: Field, label: string, max?: number) => (
     <input
@@ -73,8 +74,8 @@ export function SwarmSettings() {
     >
       <Group>
         <SettingRow
-          label="Let agents start swarms"
-          detail="An agent can split a big job across workers that run at the same time and report back together. Turn it off and agents work one step at a time."
+          label={tr('ui.settings.swarms.letAgentsStartSwarms')}
+          detail={tr('ui.settings.swarms.anAgentCanSplitA')}
         >
           <label className="flex min-h-11 cursor-pointer items-center gap-2 text-[13px] md:min-h-0">
             <input
@@ -84,31 +85,31 @@ export function SwarmSettings() {
               onChange={(e) => void save({ enabled: e.target.checked })}
               className="accent-[var(--accent)]"
             />
-            {limits.enabled ? 'On' : 'Off'}
+            {limits.enabled ? tr('ui.settings.swarms.on') : tr('ui.settings.swarms.off')}
           </label>
         </SettingRow>
-        <SettingRow label="Workers at once" detail={`How many of a swarm's workers run at the same time. Up to ${limits.ceilings.concurrency} on this server.`}>
+        <SettingRow label={tr('ui.settings.swarms.workersAtOnce')} detail={tr('ui.settings.swarms.howManyOfASwarm', { concurrency: limits.ceilings.concurrency })}>
           {number('concurrency', 'Workers at once', limits.ceilings.concurrency)}
         </SettingRow>
-        <SettingRow label="Workers per swarm" detail={`The most workers one swarm may have. Up to ${limits.ceilings.max_workers}.`}>
+        <SettingRow label={tr('ui.settings.swarms.workersPerSwarm')} detail={tr('ui.settings.swarms.theMostWorkersOneSwarm', { max_workers: limits.ceilings.max_workers })}>
           {number('max_workers', 'Workers per swarm', limits.ceilings.max_workers)}
         </SettingRow>
         <SettingRow
-          label="Start without asking"
-          detail="An agent may start this many workers on its own. Above that it asks you first, unless you sent the message with Swarm switched on. 0 means it always asks."
+          label={tr('ui.settings.swarms.startWithoutAsking')}
+          detail={tr('ui.settings.swarms.anAgentMayStartThis')}
         >
-          {number('auto_start', 'Start without asking')}
+          {number('auto_start', tr('ui.settings.swarms.startWithoutAsking'))}
         </SettingRow>
         <SettingRow
-          label="Token limit per swarm"
-          detail={`A swarm stops starting workers once its workers have used this many tokens. Now ${tokensLabel(limits.token_budget)}; up to ${tokensLabel(limits.ceilings.token_budget)}.`}
+          label={tr('ui.settings.swarms.tokenLimitPerSwarm')}
+          detail={tr('ui.settings.swarms.aSwarmStopsStartingWorkers', { kensLabel: tokensLabel(limits.token_budget), kensLabel2: tokensLabel(limits.ceilings.token_budget) })}
         >
           {number('token_budget', 'Token limit per swarm', limits.ceilings.token_budget)}
         </SettingRow>
       </Group>
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <button type="submit" disabled={busy || !changed || !limits.enabled} className={primaryButtonClass}>Save limits</button>
-        {saved && <span role="status" className="text-[12.5px] text-fg-dim">Saved.</span>}
+        <button type="submit" disabled={busy || !changed || !limits.enabled} className={primaryButtonClass}>{tr('ui.settings.swarms.saveLimits')}</button>
+        {saved && <span role="status" className="text-[12.5px] text-fg-dim">{tr('ui.settings.swarms.saved')}</span>}
         {error && <span role="alert" className="text-[12.5px] text-danger-ink">{error}</span>}
       </div>
     </form>

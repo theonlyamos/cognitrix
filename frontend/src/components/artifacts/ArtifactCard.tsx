@@ -1,6 +1,7 @@
 import { LayoutPanelTop } from 'lucide-react';
 import { useInRouterContext, useNavigate } from 'react-router-dom';
 import { publishedFrom, requestOpenArtifact } from '@/lib/artifactPages';
+import { tr } from '@/lib/i18n';
 
 type Published = NonNullable<ReturnType<typeof publishedFrom>>;
 
@@ -15,9 +16,9 @@ function Card({ published, goTo }: { published: Published; goTo: (path: string) 
       <span className="grid h-9 w-9 flex-none place-items-center rounded-lg bg-accent/15 text-accent-ink"><LayoutPanelTop size={17} aria-hidden /></span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13.5px] font-semibold">{published.title}</span>
-        <span className="block truncate font-mono text-[11px] text-fg-dim">Artifact · version {published.version}</span>
+        <span className="block truncate font-mono text-[11px] text-fg-dim">{tr('ui.artifacts.artifactCard.artifactVersionVersion', { version: published.version })}</span>
       </span>
-      <span className="flex-none rounded-md border border-line px-2 py-1 text-[12px] font-medium">Open</span>
+      <span className="flex-none rounded-md border border-line px-2 py-1 text-[12px] font-medium">{tr('ui.artifacts.artifactCard.open')}</span>
     </button>
   );
 }

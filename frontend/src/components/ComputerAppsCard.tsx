@@ -2,11 +2,12 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { errorMessage } from '@/lib/api';
 import { listComputerApps, setComputerApp, type ComputerApp, type ComputerAppLevel } from '@/lib/computerApps';
 import { Segmented, buttonClass } from '@/components/settings/ui';
+import { tr } from '@/lib/i18n';
 
 const LEVELS: { value: ComputerAppLevel; label: string }[] = [
-  { value: 'allow', label: 'Always allow' },
-  { value: 'ask', label: 'Ask' },
-  { value: 'deny', label: 'Never' },
+  { value: 'allow', get label() { return tr('ui.computerAppsCard.alwaysAllow'); } },
+  { value: 'ask', get label() { return tr('ui.computerAppsCard.ask'); } },
+  { value: 'deny', get label() { return tr('ui.computerAppsCard.never'); } },
 ];
 
 /** Settings › Agent access: apps agents may click and type in without asking. */
@@ -24,7 +25,7 @@ export function ComputerAppsCard() {
       setAvailable(data.available);
     } catch (err) {
       setApps([]);
-      setError(errorMessage(err, 'Could not load apps.'));
+      setError(errorMessage(err, tr('ui.computerAppsCard.couldNotLoadApps')));
     }
   }, []);
 
@@ -37,7 +38,7 @@ export function ComputerAppsCard() {
       setApps(await setComputerApp(app, level));
       return true;
     } catch (err) {
-      setError(errorMessage(err, 'Could not save that.'));
+      setError(errorMessage(err, tr('ui.computerAppsCard.couldNotSaveThat')));
       return false;
     } finally {
       setBusy(false);
@@ -53,14 +54,12 @@ export function ComputerAppsCard() {
   return (
     <div>
       <p className="text-[12.5px] leading-relaxed text-fg-dim">
-        Agents can click and type in an app&apos;s window in the background while you keep working. They ask first,
-        unless you&apos;ve answered for that app here. Anything that needs to take over your screen always asks.
-        {!available && ' Background control isn\'t available on the computer Cognitrix is running on.'}
+        {tr('ui.computerAppsCard.agentsCanClickAndType', { value: !available && tr('ui.computerAppsCard.backgroundControlIsnTAvailable') })}
       </p>
       {apps === null ? (
-        <p className="mt-3 text-[12.5px] text-fg-dim">Loading…</p>
+        <p className="mt-3 text-[12.5px] text-fg-dim">{tr('ui.computerAppsCard.loading')}</p>
       ) : apps.length === 0 ? (
-        <p className="mt-3 text-[12.5px] text-fg-dim">No apps yet. Agents ask each time.</p>
+        <p className="mt-3 text-[12.5px] text-fg-dim">{tr('ui.computerAppsCard.noAppsYetAgentsAsk')}</p>
       ) : (
         <ul className="mt-3 divide-y divide-line">
           {apps.map((row) => (
@@ -69,7 +68,7 @@ export function ComputerAppsCard() {
                 <div className="text-[13.5px] font-medium">{row.label}</div>
                 <div className="break-all font-mono text-[11.5px] text-fg-dim">{row.app}</div>
               </div>
-              <Segmented label={`Agents in ${row.label}`} value={row.level} options={LEVELS} onChange={(level) => { if (!busy) void save(row.app, level); }} />
+              <Segmented label={tr('ui.computerAppsCard.agentsInLabel', { label: row.label })} value={row.level} options={LEVELS} onChange={(level) => { if (!busy) void save(row.app, level); }} />
             </li>
           ))}
         </ul>
@@ -79,10 +78,10 @@ export function ComputerAppsCard() {
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="notepad.exe"
-          aria-label="Program name"
+          aria-label={tr('ui.computerAppsCard.programName')}
           className="h-9 min-w-0 flex-1 basis-[180px] rounded-lg border border-line bg-transparent px-2.5 font-mono text-[12.5px] outline-none focus:border-accent md:h-8"
         />
-        <button type="submit" disabled={busy || !name.trim()} className={buttonClass}>Always allow</button>
+        <button type="submit" disabled={busy || !name.trim()} className={buttonClass}>{tr('ui.computerAppsCard.alwaysAllow')}</button>
       </form>
       {error && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{error}</p>}
     </div>

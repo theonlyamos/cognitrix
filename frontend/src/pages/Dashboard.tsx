@@ -33,6 +33,7 @@ import { api } from '@/lib/api';
 import { ArtifactFrame } from '@/components/artifacts/ArtifactFrame';
 import { LiveBadge } from '@/components/artifacts/ArtifactViewer';
 import type { PagePower, PageSummary } from '@/lib/artifactPages';
+import { tr, dateLocale, trn } from '@/lib/i18n';
 
 interface Agent {
   id: string;
@@ -91,14 +92,15 @@ const ACTIVE_RUN = new Set(['queued', 'running', 'cancelling']);
 const tokensOf = (t: Totals) => t.prompt_tokens + t.completion_tokens;
 
 function greeting(hour: number): string {
-  if (hour < 5) return 'Working late';
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
+  if (hour < 5) return tr('ui.dashboard.workingLate');
+  if (hour < 12) return tr('ui.dashboard.goodMorning');
+  if (hour < 18) return tr('ui.dashboard.goodAfternoon');
+  return tr('ui.dashboard.goodEvening');
 }
 
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
+type Counted = 'thing' | 'approval' | 'question' | 'alert' | 'chat' | 'task' | 'message';
+function plural(n: number, word: Counted): string {
+  return trn(n, `ui.count.${word}s_one`, `ui.count.${word}s_other`);
 }
 
 /** The next time an automation starts on its own (schedule or self-check). */
@@ -131,14 +133,14 @@ function howItRuns(a: AutomationRow): string {
 }
 
 function inboxTitle(item: InboxItem): string {
-  if (item.kind === 'approval') return `Run ${item.tool_name}`;
+  if (item.kind === 'approval') return tr('ui.dashboard.runToolName', { tool_name: item.tool_name });
   if (item.kind === 'notification' || item.kind === 'offer') return item.title;
-  if (item.kind === 'skill_draft') return `Review the skill "${item.name}"`;
+  if (item.kind === 'skill_draft') return tr('ui.dashboard.reviewTheSkillName', { name: item.name });
   return String(item.question.prompt || 'An agent asked a question');
 }
 
 function inboxSource(item: InboxItem): string {
-  if (item.kind === 'approval') return item.source === 'chat' ? `${item.agent_name || 'Agent'} · chat` : item.task_title || 'Task run';
+  if (item.kind === 'approval') return item.source === 'chat' ? tr('ui.dashboard.agentNameChat', { agent_name: item.agent_name || 'Agent' }) : item.task_title || tr('ui.dashboard.taskRun');
   if (item.kind === 'notification') return item.task_title || 'Agent';
   if (item.kind === 'offer' || item.kind === 'skill_draft') return item.agent_name || 'Agent';
   return 'Chat';
@@ -411,13 +413,13 @@ export default function Dashboard() {
 
   const hour = new Date().getHours();
   const firstName = (user?.name || '').trim().split(/\s+/)[0];
-  const today = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  const today = new Date().toLocaleDateString(dateLocale(), { weekday: 'long', month: 'long', day: 'numeric' });
 
   const summary: string[] = [];
-  if (inboxLoaded) summary.push(inbox.length ? `${plural(inbox.length, 'thing')} waiting on you` : 'nothing waiting on you');
+  if (inboxLoaded) summary.push(inbox.length ? tr('ui.dashboard.pluralWaitingOnYou', { plural: plural(inbox.length, 'thing') }) : tr('ui.dashboard.nothingWaitingOnYou'));
   const working = workingAgents.size + runningTasks.length;
-  if (working) summary.push(`${working} working right now`);
-  if (nextRun) summary.push(`next automation ${timeUntil(nextRun, now)}`);
+  if (working) summary.push(tr('ui.dashboard.workingWorkingRightNow', { working }));
+  if (nextRun) summary.push(tr('ui.dashboard.nextAutomationTimeuntil', { timeUntil: timeUntil(nextRun, now) }));
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
@@ -437,12 +439,12 @@ export default function Dashboard() {
             <div className="relative flex flex-none flex-wrap gap-2 [&>a]:bg-bg/85 [&>a]:backdrop-blur-sm">
               <Button asChild variant="outline" size="sm">
                 <Link to="/tasks/new">
-                  <Plus className="h-3.5 w-3.5" aria-hidden="true" /> New task
+                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />{' '}{tr('ui.dashboard.newTask')}
                 </Link>
               </Button>
               <Button asChild variant="outline" size="sm">
                 <Link to="/agents/new">
-                  <Plus className="h-3.5 w-3.5" aria-hidden="true" /> New agent
+                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />{' '}{tr('ui.dashboard.newAgent')}
                 </Link>
               </Button>
             </div>
@@ -461,14 +463,14 @@ export default function Dashboard() {
               <>
             <MessageSquare className="hidden h-[17px] w-[17px] flex-none text-fg-dim sm:block" strokeWidth={1.9} aria-hidden="true" />
             <label htmlFor="dash-ask" className="sr-only">
-              Ask an agent
+              {tr('ui.dashboard.askAnAgent')}
             </label>
             <input
               id="dash-ask"
               value={ask}
               onChange={(e) => setAsk(e.target.value)}
               ref={askRef}
-              placeholder={agentList.length ? 'Ask anything, or hand off a job…' : 'Create an agent to start chatting'}
+              placeholder={agentList.length ? tr('ui.dashboard.askAnythingOrHandOff') : tr('ui.dashboard.createAnAgentToStart')}
               className="min-w-0 flex-1 bg-transparent py-2 text-[15px] outline-none placeholder:text-fg-dim"
             />
                 <MicButton voice={voice} className="flex-none" />
@@ -477,7 +479,7 @@ export default function Dashboard() {
             {agentList.length > 0 && (
               <>
                 <label htmlFor="dash-ask-agent" className="sr-only">
-                  Agent
+                  {tr('ui.dashboard.agent')}
                 </label>
                 <select
                   id="dash-ask-agent"
@@ -495,7 +497,7 @@ export default function Dashboard() {
             )}
             <button
               type="submit"
-              aria-label={agentList.length ? 'Start chat' : 'Create an agent'}
+              aria-label={agentList.length ? tr('ui.dashboard.startChat') : tr('ui.dashboard.createAnAgent')}
               className="grid h-10 w-10 flex-none place-items-center rounded-[11px] bg-accent text-accent-foreground transition-[filter] hover:brightness-[1.06]"
             >
               <ArrowUp className="h-[18px] w-[18px]" strokeWidth={2.2} aria-hidden="true" />
@@ -504,51 +506,50 @@ export default function Dashboard() {
           <VoiceNotice voice={voice} />
 
           {/* Stats */}
-          <section aria-label="At a glance" className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <section aria-label={tr('ui.dashboard.atAGlance')} className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatTile
               to="/inbox"
-              label="WAITING ON YOU"
+              label={tr('ui.dashboard.waitingOnYou')}
               icon={InboxIcon}
               value={inboxLoaded ? inbox.length : '–'}
-              detail={inbox.length ? [approvals && plural(approvals, 'approval'), questions && plural(questions, 'question'), inbox.length - approvals - questions && plural(inbox.length - approvals - questions, 'alert')].filter(Boolean).join(' · ') : 'All clear'}
+              detail={inbox.length ? [approvals && plural(approvals, 'approval'), questions && plural(questions, 'question'), inbox.length - approvals - questions && plural(inbox.length - approvals - questions, 'alert')].filter(Boolean).join(' · ') : tr('ui.dashboard.allClear')}
               tone={inbox.length ? 'warn' : 'plain'}
             />
             <StatTile
               to="/tasks"
-              label="WORKING NOW"
+              label={tr('ui.dashboard.workingNow')}
               icon={Bot}
               value={runs.data || tasks.data ? working : '–'}
               live={working > 0}
-              detail={working ? [workingAgents.size && plural(activeChatRuns.length, 'chat'), runningTasks.length && plural(runningTasks.length, 'task')].filter(Boolean).join(' · ') : 'Agents are idle'}
+              detail={working ? [workingAgents.size && plural(activeChatRuns.length, 'chat'), runningTasks.length && plural(runningTasks.length, 'task')].filter(Boolean).join(' · ') : tr('ui.dashboard.agentsAreIdle')}
             />
             <StatTile
               to="/automations"
-              label="AUTOMATIONS"
+              label={tr('ui.dashboard.automations')}
               icon={Zap}
               value={automations.data ? automationList.length : '–'}
-              detail={nextRun ? `next ${timeUntil(nextRun, now)}` : automationList.length ? 'nothing scheduled' : 'none set up yet'}
+              detail={nextRun ? tr('ui.dashboard.nextTimeuntil', { timeUntil: timeUntil(nextRun, now) }) : automationList.length ? tr('ui.dashboard.nothingScheduled') : tr('ui.dashboard.noneSetUpYet')}
             />
             <StatTile
               to="/settings/usage"
-              label={byCost ? 'SPEND · 7 DAYS' : 'TOKENS · 7 DAYS'}
+              label={byCost ? tr('ui.dashboard.spend7Days') : tr('ui.dashboard.tokens7Days')}
               icon={Coins}
               value={usage.data ? fmt(thisWeek) : '–'}
               detail={
                 change === null ? (
-                  'last 7 days'
+                  tr('ui.dashboard.last7Days')
                 ) : (
                   <span>
                     <span className={cn('font-mono', change > 0 ? 'text-warn-ink' : 'text-ok')}>
                       {change > 0 ? '▲' : '▼'} {Math.abs(change)}%
-                    </span>{' '}
-                    vs last wk
+                    </span>{' '}{tr('ui.dashboard.vsLastWk')}
                   </span>
                 )
               }
               extra={
                 days.length > 1 ? (
                   <span className="hidden sm:block">
-                    <Sparkline values={days.map(amount)} label={`${byCost ? 'Spend' : 'Tokens'} per day, last 14 days`} />
+                    <Sparkline values={days.map(amount)} label={tr('ui.dashboard.valuePerDayLast14', { value: byCost ? 'Spend' : 'Tokens' })} />
                   </span>
                 ) : null
               }
@@ -560,19 +561,19 @@ export default function Dashboard() {
             <div className="flex min-w-0 flex-col gap-4">
               {pinned.map((page) => (
                 <Card key={page.id} title={page.title} icon={LayoutPanelTop}
-                  action={<span className="flex items-center gap-2">{page.live && <LiveBadge />}<CardLink to={`/artifacts/${page.id}`}>Open</CardLink></span>}>
+                  action={<span className="flex items-center gap-2">{page.live && <LiveBadge />}<CardLink to={`/artifacts/${page.id}`}>{tr('ui.dashboard.open')}</CardLink></span>}>
                   <div className="h-[380px] overflow-hidden rounded-b-[14px]">
                     <ArtifactFrame url={page.frame_url} title={page.title} pageId={page.id} allowed={page.allowed_powers ?? []} />
                   </div>
                 </Card>
               ))}
               {/* Needs you */}
-              <Card title="Needs you" icon={InboxIcon} action={inbox.length > 0 ? <CardLink to="/inbox">Open inbox</CardLink> : undefined}>
+              <Card title={tr('ui.dashboard.needsYou')} icon={InboxIcon} action={inbox.length > 0 ? <CardLink to="/inbox">{tr('ui.dashboard.openInbox')}</CardLink> : undefined}>
                 {!inboxLoaded ? (
                   <Skeleton rows={2} />
                 ) : inbox.length === 0 ? (
                   <Quiet icon={CheckCircle2}>
-                    <span className="font-medium text-fg">You're all caught up.</span> Approvals, questions and alerts from your agents show up here.
+                    <span className="font-medium text-fg">{tr('ui.dashboard.youReAllCaughtUp')}</span>{' '}{tr('ui.dashboard.approvalsQuestionsAndAlertsFrom')}
                   </Quiet>
                 ) : (
                   <ul className="divide-y divide-line">
@@ -593,16 +594,16 @@ export default function Dashboard() {
                   </ul>
                 )}
                 {inbox.length > 4 && (
-                  <div className="border-t border-line px-4 py-2 font-mono text-[11px] text-fg-dim">+ {inbox.length - 4} more in your inbox</div>
+                  <div className="border-t border-line px-4 py-2 font-mono text-[11px] text-fg-dim">{tr('ui.dashboard.valueMoreInYourInbox', { value: inbox.length - 4 })}</div>
                 )}
               </Card>
 
               {/* Recent chats */}
-              <Card title="Recent chats" icon={MessageSquare} action={<CardLink to="/home">All chats</CardLink>}>
+              <Card title={tr('ui.dashboard.recentChats')} icon={MessageSquare} action={<CardLink to="/home">{tr('ui.dashboard.allChats')}</CardLink>}>
                 {chats.loading && !chats.data ? (
                   <Skeleton rows={4} />
                 ) : chatList.length === 0 ? (
-                  <Quiet icon={MessageSquare}>No chats yet. Ask something above to start one.</Quiet>
+                  <Quiet icon={MessageSquare}>{tr('ui.dashboard.noChatsYetAskSomething')}</Quiet>
                 ) : (
                   <ul className="divide-y divide-line">
                     {chatList.slice(0, 6).map((c) => {
@@ -614,14 +615,14 @@ export default function Dashboard() {
                           <Link to={href} className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-panel-2/60">
                             <AgentBadge name={name} team={c.kind === 'team'} avatar={c.kind === 'team' ? undefined : (agent as { avatar?: { emoji?: string; hue?: number | null } | null } | undefined)?.avatar} />
                             <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[13.5px] font-medium group-hover:text-accent-ink">{c.title || 'New chat'}</span>
+                              <span className="block truncate text-[13.5px] font-medium group-hover:text-accent-ink">{c.title || tr('ui.dashboard.newChat')}</span>
                               <span className="block truncate text-[12px] text-fg-dim">
                                 {name} · {plural(c.message_count, 'message')}
                               </span>
                             </span>
                             {c.running ? (
                               <span className="flex flex-none items-center gap-1.5 rounded-full bg-accent/15 px-2 py-0.5 font-mono text-[10.5px] text-accent-ink">
-                                <LiveDot /> working
+                                <LiveDot />{' '}{tr('ui.dashboard.working')}
                               </span>
                             ) : (
                               <span className="flex-none font-mono text-[10.5px] text-fg-dim">{timeAgo(c.updated_at, now)}</span>
@@ -635,16 +636,15 @@ export default function Dashboard() {
               </Card>
 
               {/* Task runs */}
-              <Card title="Task runs" icon={ListChecks} action={<CardLink to="/tasks">All tasks</CardLink>}>
+              <Card title={tr('ui.dashboard.taskRuns')} icon={ListChecks} action={<CardLink to="/tasks">{tr('ui.dashboard.allTasks')}</CardLink>}>
                 {tasks.loading && !tasks.data ? (
                   <Skeleton rows={3} />
                 ) : recentTasks.length === 0 ? (
                   <Quiet icon={ListChecks}>
-                    {taskList.length ? 'None of your tasks has run yet.' : 'No tasks yet.'}{' '}
+                    {taskList.length ? tr('ui.dashboard.noneOfYourTasksHas') : tr('ui.dashboard.noTasksYet')}{' '}
                     <Link to="/tasks/new" className="text-accent-ink hover:underline">
-                      Plan a task
-                    </Link>{' '}
-                    and agents work through it step by step.
+                      {tr('ui.dashboard.planATask')}
+                    </Link>{' '}{tr('ui.dashboard.andAgentsWorkThroughIt')}
                   </Quiet>
                 ) : (
                   <ul className="divide-y divide-line">
@@ -686,14 +686,14 @@ export default function Dashboard() {
 
             <div className="flex min-w-0 flex-col gap-4">
               {/* Agents */}
-              <Card title="Your agents" icon={Bot} action={<CardLink to="/agents">All agents</CardLink>}>
+              <Card title={tr('ui.dashboard.yourAgents')} icon={Bot} action={<CardLink to="/agents">{tr('ui.dashboard.allAgents')}</CardLink>}>
                 {agents.loading && !agents.data ? (
                   <Skeleton rows={3} />
                 ) : topAgents.length === 0 ? (
                   <Quiet icon={Bot}>
-                    No agents yet.{' '}
+                    {tr('ui.dashboard.noAgentsYet')}{' '}
                     <Link to="/agents/new" className="text-accent-ink hover:underline">
-                      Create one
+                      {tr('ui.dashboard.createOne')}
                     </Link>
                     .
                   </Quiet>
@@ -723,11 +723,11 @@ export default function Dashboard() {
               </Card>
 
               {/* Coming up */}
-              <Card title="Coming up" icon={Clock3} action={<CardLink to="/automations">Automations</CardLink>}>
+              <Card title={tr('ui.dashboard.comingUp')} icon={Clock3} action={<CardLink to="/automations">{tr('ui.dashboard.automations_8254')}</CardLink>}>
                 {automations.loading && !automations.data ? (
                   <Skeleton rows={2} />
                 ) : upcoming.length === 0 ? (
-                  <Quiet icon={Zap}>Give a task a schedule or a webhook and it runs on its own.</Quiet>
+                  <Quiet icon={Zap}>{tr('ui.dashboard.giveATaskASchedule')}</Quiet>
                 ) : (
                   <ol className="relative px-4 py-3">
                     <span aria-hidden="true" className="absolute bottom-5 left-[23px] top-5 w-px bg-line" />
@@ -751,18 +751,18 @@ export default function Dashboard() {
               </Card>
 
               {/* Usage */}
-              <Card title="Usage · 14 days" icon={Coins} action={<CardLink to="/settings/usage">Details</CardLink>}>
+              <Card title={tr('ui.dashboard.usage14Days')} icon={Coins} action={<CardLink to="/settings/usage">{tr('ui.dashboard.details')}</CardLink>}>
                 {usage.loading && !usage.data ? (
                   <Skeleton rows={2} />
                 ) : usage.error || !usage.data ? (
-                  <Quiet icon={Coins}>Usage isn't available here.</Quiet>
+                  <Quiet icon={Coins}>{tr('ui.dashboard.usageIsnTAvailableHere')}</Quiet>
                 ) : (
                   <div className="p-4">
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-[22px] font-semibold tabular-nums tracking-tight">{fmt(amount(usage.data.total))}</span>
-                      <span className="font-mono text-[10.5px] text-fg-dim">{formatTokens(tokensOf(usage.data.total))} tokens</span>
+                      <span className="font-mono text-[10.5px] text-fg-dim">{tr('ui.dashboard.tokensTokens', { tokens: formatTokens(tokensOf(usage.data.total)) })}</span>
                     </div>
-                    <ul className="mt-3 flex h-16 items-end gap-[3px]" aria-label="Usage per day">
+                    <ul className="mt-3 flex h-16 items-end gap-[3px]" aria-label={tr('ui.dashboard.usagePerDay')}>
                       {(() => {
                         const peak = Math.max(...days.map(amount), 0);
                         return days.map((d, i) => (

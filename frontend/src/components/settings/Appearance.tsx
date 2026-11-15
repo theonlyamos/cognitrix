@@ -1,7 +1,7 @@
 import { useTheme, type ThemeMode } from '@/context/ThemeContext';
 import { setReduceMotion, setSendKey, useReduceMotion, useSendKey, type SendKey } from '@/lib/preferences';
 import { Toggle } from '@/pages/Notifications';
-import { LANGUAGES, getLanguageChoice, setLanguage, useLanguage, useT, type LanguageCode, type MessageKey } from '@/lib/i18n';
+import { LANGUAGES, getLanguageChoice, setLanguage, useLanguage, useT, type LanguageCode, type MessageKey, tr } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { ArtworkPicker } from './ArtworkPicker';
 import { ThemeLibrary, ThemeSwatch } from './Themes';
@@ -57,11 +57,11 @@ export function AppearanceSettings() {
         </div>
       </div>
     </Group>
-    <SubHeading className="!mt-6">THEMES</SubHeading>
+    <SubHeading className="!mt-6">{tr('ui.settings.appearance.themes')}</SubHeading>
     <ThemeLibrary />
-    <SubHeading className="!mt-6">ARTWORK</SubHeading>
+    <SubHeading className="!mt-6">{tr('ui.settings.appearance.artwork')}</SubHeading>
     <ArtworkPicker />
-    <SubHeading className="!mt-6">MORE</SubHeading>
+    <SubHeading className="!mt-6">{tr('ui.settings.appearance.more')}</SubHeading>
     <Group>
       <SettingRow label={t('appearance.language')} detail={t('appearance.language.detail')}>
         <select
@@ -79,7 +79,7 @@ export function AppearanceSettings() {
           label={t('appearance.sendWith')}
           value={sendKey}
           onChange={setSendKey}
-          options={[{ value: 'enter', label: 'Enter' }, { value: 'ctrl-enter', label: 'Ctrl+Enter' }]}
+          options={[{ value: 'enter', label: tr('ui.settings.appearance.enter') }, { value: 'ctrl-enter', label: 'Ctrl+Enter' }]}
         />
       </SettingRow>
       <SettingRow label={t('appearance.reduceMotion')} detail={t('appearance.reduceMotion.detail')}>

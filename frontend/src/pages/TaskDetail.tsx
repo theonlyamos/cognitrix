@@ -30,6 +30,7 @@ import {
   taskRunLiveReducer,
   type TaskRunEvent,
 } from '@/lib/task-run-events';
+import { tr, dateLocale } from '@/lib/i18n';
 
 interface TaskData {
   id?: string;
@@ -55,7 +56,7 @@ const TRIGGER_LABEL: Record<string, string> = {
 };
 
 // next_run_at is naive UTC — parse with an explicit Z, never as local time.
-const nextRunLocal = (s: string) => new Date(s.replace(' ', 'T') + 'Z').toLocaleString();
+const nextRunLocal = (s: string) => new Date(s.replace(' ', 'T') + 'Z').toLocaleString(dateLocale());
 
 interface PlanStep {
   index: number;
@@ -238,8 +239,8 @@ const formatUsage = (run: TaskRunRecord): string[] => {
     const used = numericValue(usage[usageKey]);
     const limit = numericValue(budget[budgetKey]);
     if (used === null && limit === null) return [];
-    const usedLabel = (used ?? 0).toLocaleString();
-    return [`${usedLabel}${limit === null ? '' : ` / ${limit.toLocaleString()}`} ${label}`];
+    const usedLabel = (used ?? 0).toLocaleString(dateLocale());
+    return [`${usedLabel}${limit === null ? '' : ` / ${limit.toLocaleString(dateLocale())}`} ${label}`];
   });
 };
 
@@ -264,8 +265,8 @@ function DurableResultView({
       <DurableToolCalls tools={tools} agentName={agentName} />
       {entries.length > 0 && <TranscriptView entries={entries} />}
       {(result.artifacts || []).length > 0 && (
-        <div className="border-b border-line px-4 py-3 sm:pl-[116px]" aria-label="Result artifacts">
-          <p className="mb-1 font-mono text-[10.5px] tracking-[0.08em] text-fg-dim">ARTIFACTS</p>
+        <div className="border-b border-line px-4 py-3 sm:pl-[116px]" aria-label={tr('ui.taskDetail.resultArtifacts')}>
+          <p className="mb-1 font-mono text-[10.5px] tracking-[0.08em] text-fg-dim">{tr('ui.taskDetail.artifacts')}</p>
           <ul className="space-y-1 font-mono text-[11px]">
             {(result.artifacts || []).map((artifact) => (
               <li key={artifact.id}>
@@ -296,8 +297,8 @@ function DurableResultView({
         </div>
       )}
       {(result.citations || []).length > 0 && (
-        <div className="border-b border-line px-4 py-3 sm:pl-[116px]" aria-label="Result sources">
-          <p className="mb-1 font-mono text-[10.5px] tracking-[0.08em] text-fg-dim">SOURCES</p>
+        <div className="border-b border-line px-4 py-3 sm:pl-[116px]" aria-label={tr('ui.taskDetail.resultSources')}>
+          <p className="mb-1 font-mono text-[10.5px] tracking-[0.08em] text-fg-dim">{tr('ui.taskDetail.sources')}</p>
           <ul className="space-y-1 font-mono text-[11px]">
             {(result.citations || []).map((citation) => (
               <li key={citation.url}>
@@ -314,8 +315,8 @@ function DurableResultView({
         </div>
       )}
       {(result.warnings || []).length > 0 && (
-        <div className="border-b border-line px-4 py-3 sm:pl-[116px]" role="note" aria-label="Result warnings">
-          <p className="mb-1 font-mono text-[10.5px] tracking-[0.08em] text-fg-dim">WARNINGS</p>
+        <div className="border-b border-line px-4 py-3 sm:pl-[116px]" role="note" aria-label={tr('ui.taskDetail.resultWarnings')}>
+          <p className="mb-1 font-mono text-[10.5px] tracking-[0.08em] text-fg-dim">{tr('ui.taskDetail.warnings')}</p>
           <ul className="list-disc space-y-1 pl-4 font-mono text-[11px] text-fg-dim">
             {(result.warnings || []).map((warning) => <li key={warning}>{warning}</li>)}
           </ul>
@@ -323,7 +324,7 @@ function DurableResultView({
       )}
       {result.structured_data && (
         <details className="border-b border-line px-4 py-3 font-mono text-[11px] sm:pl-[116px]">
-          <summary className="min-h-11 cursor-pointer text-fg-dim sm:min-h-0">Structured result</summary>
+          <summary className="min-h-11 cursor-pointer text-fg-dim sm:min-h-0">{tr('ui.taskDetail.structuredResult')}</summary>
           <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded border border-line bg-panel-2 p-2 text-fg-dim">
             {JSON.stringify(result.structured_data, null, 2)}
           </pre>
@@ -540,7 +541,7 @@ export default function TaskDetail() {
       });
       if (page.length < RUN_PAGE_SIZE) setOlderRunsExhausted(true);
     } catch (e) {
-      setOlderRunsError(errorMessage(e, 'Could not load older runs.'));
+      setOlderRunsError(errorMessage(e, tr('ui.taskDetail.couldNotLoadOlderRuns')));
     } finally {
       setOlderRunsLoading(false);
     }
@@ -776,7 +777,7 @@ export default function TaskDetail() {
       await refetch();
       await refetchRuns({ silent: true });
     } catch (e) {
-      setError(errorMessage(e, 'Could not start the task.'));
+      setError(errorMessage(e, tr('ui.taskDetail.couldNotStartTheTask')));
     } finally {
       setStarting(false);
     }
@@ -791,7 +792,7 @@ export default function TaskDetail() {
       await refetch();
       await refetchRuns({ silent: true });
     } catch (e) {
-      setError(errorMessage(e, 'Could not cancel the task.'));
+      setError(errorMessage(e, tr('ui.taskDetail.couldNotCancelTheTask')));
     } finally {
       setCancelling(false);
     }
@@ -808,7 +809,7 @@ export default function TaskDetail() {
       // Idle-state polling is gated on isLive — refetch or the button goes stale.
       await refetch();
     } catch (e) {
-      setError(errorMessage(e, 'Could not update the schedule.'));
+      setError(errorMessage(e, tr('ui.taskDetail.couldNotUpdateTheSchedule')));
     } finally {
       setTogglingSchedule(false);
     }
@@ -863,7 +864,7 @@ export default function TaskDetail() {
     : null;
 
   const mobileActions: MobileHeaderAction[] = [
-    { key: 'edit', label: 'Edit task', to: `/tasks/${taskId}/edit` },
+    { key: 'edit', label: tr('ui.taskDetail.editTask'), to: `/tasks/${taskId}/edit` },
     {
       key: 'automation',
       label: showAutomation ? 'Hide notes and triggers' : 'Notes and triggers',
@@ -877,7 +878,7 @@ export default function TaskDetail() {
           onSelect: toggleSchedule,
         }]
       : []),
-    ...(canResume ? [{ key: 'run-from-start', label: 'Run from beginning', disabled: starting, onSelect: () => start(false) }] : []),
+    ...(canResume ? [{ key: 'run-from-start', label: tr('ui.taskDetail.runFromBeginning'), disabled: starting, onSelect: () => start(false) }] : []),
   ];
 
   const runStepSelectors = (mobile = false) => (
@@ -913,7 +914,7 @@ export default function TaskDetail() {
           {(s.attempts ?? 0) > 1 && <span className="text-fg-dim">×{s.attempts}</span>}
           {s.gate === 'unverified' && (
             <span className="rounded border border-line bg-panel px-1.5 py-0.5 text-[10px] text-fg">
-              unverified
+              {tr('ui.taskDetail.unverified')}
             </span>
           )}
         </button>
@@ -932,7 +933,7 @@ export default function TaskDetail() {
             selected === 'synthesis' ? 'border-accent bg-panel-2 text-fg' : 'border-line text-fg-dim hover:border-fg-dim',
           )}
         >
-          Σ synthesis
+          {tr('ui.taskDetail.synthesis')}
         </button>
       )}
     </div>
@@ -942,14 +943,14 @@ export default function TaskDetail() {
     <>
       <div className="flex min-h-14 flex-none items-center justify-between gap-2 border-b border-line px-4">
         <span className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">
-          RUNS · {visibleRuns.length}{canLoadOlderRuns ? '+' : ''}
+          {tr('ui.taskDetail.runsLengthValue', { length: visibleRuns.length, value: canLoadOlderRuns ? '+' : '' })}
         </span>
         <div className="flex items-center gap-1">
           {runsError && (
             <div role="alert">
               <span className="sr-only">{runsError}</span>
               <Button variant="ghost" size="sm" onClick={() => void refetchRuns()} className="text-danger-ink">
-                ↻ retry
+                {tr('ui.taskDetail.retry')}
               </Button>
             </div>
           )}
@@ -957,7 +958,7 @@ export default function TaskDetail() {
             variant="ghost"
             size="icon"
             onClick={() => setMobileRunsOpen(false)}
-            aria-label="Close run details"
+            aria-label={tr('ui.taskDetail.closeRunDetails')}
             className="md:hidden"
           >
             <span aria-hidden>×</span>
@@ -968,20 +969,20 @@ export default function TaskDetail() {
         {mobile && selectedRun && (
           <div className="border-b border-line md:hidden">
             <div className="px-4 pb-1 pt-3 font-mono text-[10px] tracking-[0.14em] text-fg-dim">
-              SELECTED RUN · {selectedRun.status}
+              {tr('ui.taskDetail.selectedRunStatus', { status: selectedRun.status })}
             </div>
             {runStepSelectors(true)}
             {selectedRunUsage.length > 0 && (
-              <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 py-3 font-mono text-[10.5px] text-fg-dim" aria-label="Run usage">
+              <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 py-3 font-mono text-[10.5px] text-fg-dim" aria-label={tr('ui.taskDetail.runUsage')}>
                 {selectedRunUsage.map((item) => <span key={item}>{item}</span>)}
               </div>
             )}
           </div>
         )}
         {runsLoading && !runs ? (
-          <div role="status" className="flex items-center gap-2 px-4 py-6 font-mono text-[11px] text-fg-dim"><Spinner className="h-3.5 w-3.5" /> loading…</div>
+          <div role="status" className="flex items-center gap-2 px-4 py-6 font-mono text-[11px] text-fg-dim"><Spinner className="h-3.5 w-3.5" />{' '}{tr('ui.taskDetail.loading')}</div>
         ) : visibleRuns.length === 0 && legacy.length === 0 ? (
-          <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">no runs yet — hit ▶ Run</p>
+          <p className="px-4 py-6 font-mono text-[11px] text-fg-dim">{tr('ui.taskDetail.noRunsYetHitRun')}</p>
         ) : (
           <>
             {visibleRuns.map((r, idx) => (
@@ -1018,7 +1019,7 @@ export default function TaskDetail() {
                 <div className="mt-0.5 font-mono text-[10.5px] text-fg-dim">
                   {r.started_at ? fmtRelative(r.started_at) : '—'}
                   {!ACTIVE_RUN.has(r.status) && fmtDuration(r.started_at, r.completed_at) ? ` · ${fmtDuration(r.started_at, r.completed_at)}` : ''}
-                  {` · ${r.plan.filter((s) => s.status === 'done').length}/${r.plan.length || '?'} steps`}
+                  {tr('ui.taskDetail.lengthLength2Steps', { length: r.plan.filter((s) => s.status === 'done').length, length2: r.plan.length || '?' })}
                 </div>
               </SelectionRow>
             ))}
@@ -1037,14 +1038,14 @@ export default function TaskDetail() {
                     onClick={() => void loadOlderRuns()}
                     disabled={olderRunsLoading}
                   >
-                    {olderRunsLoading ? 'Loading older runs...' : 'Load older runs'}
+                    {olderRunsLoading ? tr('ui.taskDetail.loadingOlderRuns') : tr('ui.taskDetail.loadOlderRuns')}
                   </Button>
                 )}
               </div>
             )}
             {legacy.length > 0 && (
               <div className="border-t border-line">
-                <div className="px-4 pb-1 pt-3 font-mono text-[10px] tracking-[0.14em] text-fg-dim">LEGACY RUNS</div>
+                <div className="px-4 pb-1 pt-3 font-mono text-[10px] tracking-[0.14em] text-fg-dim">{tr('ui.taskDetail.legacyRuns')}</div>
                 {legacy.map((s) => (
                   <SelectionRow
                     key={s.id}
@@ -1061,7 +1062,7 @@ export default function TaskDetail() {
                     )}
                     buttonClassName="self-stretch px-4 py-2"
                   >
-                    {parseSessionDate(s.started_at)?.toLocaleString() || 'legacy run'} · {s.message_count ?? 0} msg
+                    {tr('ui.taskDetail.parsesessiondateMessageCountMsg', { parseSessionDate: parseSessionDate(s.started_at)?.toLocaleString(dateLocale()) || tr('ui.taskDetail.legacyRun'), message_count: s.message_count ?? 0 })}
                   </SelectionRow>
                 ))}
               </div>
@@ -1073,14 +1074,14 @@ export default function TaskDetail() {
   );
 
   if (taskLoading && !task) {
-    return <div className="flex-1 flex flex-col h-full min-w-0 bg-bg"><LoadingState label="loading task…" /></div>;
+    return <div className="flex-1 flex flex-col h-full min-w-0 bg-bg"><LoadingState label={tr('ui.taskDetail.loadingTask')} /></div>;
   }
 
   return (
     <div className="flex-1 flex h-full min-w-0 bg-bg text-fg">
       <MobileSheet
         id="mobile-run-details"
-        label="Run details"
+        label={tr('ui.taskDetail.runDetails')}
         open={mobileRunsOpen}
         onClose={() => setMobileRunsOpen(false)}
         triggerRef={mobileRunsTriggerRef}
@@ -1099,28 +1100,28 @@ export default function TaskDetail() {
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <Link
             to="/tasks"
-            aria-label="Back to tasks"
+            aria-label={tr('ui.taskDetail.backToTasks')}
             className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
           <div className="min-w-0 overflow-hidden">
-            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">TASK</p>
-            <h1 className="truncate text-[15px] font-semibold tracking-tight">{task?.title || 'Task'}</h1>
+            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">{tr('ui.taskDetail.task_5cc9')}</p>
+            <h1 className="truncate text-[15px] font-semibold tracking-tight">{task?.title || tr('ui.taskDetail.task')}</h1>
           </div>
           </div>
           <span className={cn('sr-only rounded border px-2 py-0.5 font-mono text-[10.5px] md:not-sr-only', STATUS[status] || STATUS.pending)}>{status}</span>
           {plan.length > 0 && (
-            <span className="sr-only font-mono text-[10.5px] text-fg-dim tnum md:not-sr-only">steps {stepsDone}/{plan.length}</span>
+            <span className="sr-only font-mono text-[10.5px] text-fg-dim tnum md:not-sr-only">{tr('ui.taskDetail.stepsStepsdoneLength', { stepsDone, length: plan.length })}</span>
           )}
           {task?.wake_pending && task.wake_at && (
-            <span className="sr-only font-mono text-[10.5px] text-fg-dim md:not-sr-only" title={task.wake_reason || 'next check'}>
-              ↺ check {nextRunLocal(task.wake_at)}
+            <span className="sr-only font-mono text-[10.5px] text-fg-dim md:not-sr-only" title={task.wake_reason || tr('ui.taskDetail.nextCheck')}>
+              {tr('ui.taskDetail.checkNextrunlocal', { nextRunLocal: nextRunLocal(task.wake_at) })}
             </span>
           )}
           {hasSchedule && (
-            <span className="sr-only font-mono text-[10.5px] text-fg-dim md:not-sr-only" title="schedule">
-              {task?.schedule_enabled && task?.next_run_at ? `⏱ next ${nextRunLocal(task.next_run_at)}` : '⏸ schedule paused'}
+            <span className="sr-only font-mono text-[10.5px] text-fg-dim md:not-sr-only" title={tr('ui.taskDetail.schedule')}>
+              {task?.schedule_enabled && task?.next_run_at ? tr('ui.taskDetail.nextNextrunlocal', { nextRunLocal: nextRunLocal(task.next_run_at) }) : tr('ui.taskDetail.schedulePaused')}
             </span>
           )}
           <div className="flex flex-none items-center gap-1 md:ml-auto md:gap-2">
@@ -1130,7 +1131,7 @@ export default function TaskDetail() {
                 variant="outline"
                 size="icon"
                 className="md:hidden"
-                aria-label="Open runs"
+                aria-label={tr('ui.taskDetail.openRuns')}
                 aria-controls="mobile-run-details"
                 aria-expanded={mobileRunsOpen}
                 onClick={() => setMobileRunsOpen(true)}
@@ -1140,7 +1141,7 @@ export default function TaskDetail() {
             )}
             {hasSchedule && (
               <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={toggleSchedule} disabled={togglingSchedule}>
-                {task?.schedule_enabled ? 'Pause schedule' : 'Resume schedule'}
+                {task?.schedule_enabled ? tr('ui.taskDetail.pauseSchedule') : tr('ui.taskDetail.resumeSchedule')}
               </Button>
             )}
             <Button
@@ -1150,25 +1151,25 @@ export default function TaskDetail() {
               aria-pressed={showAutomation}
               onClick={() => setShowAutomation((v) => !v)}
             >
-              Notes &amp; triggers
+              {tr('ui.taskDetail.notesTriggers')}
             </Button>
             <Button asChild variant="outline" size="sm" className="hidden md:inline-flex">
-              <Link to={`/tasks/${taskId}/edit`}>Edit</Link>
+              <Link to={`/tasks/${taskId}/edit`}>{tr('ui.taskDetail.edit')}</Link>
             </Button>
             {isLive ? (
               <Button variant="ghost" size="sm" onClick={cancel} disabled={cancelActionDisabled} className="hidden hover:text-danger-ink md:inline-flex">
-                {activeRun?.status === 'cancelling' || cancelling ? cancelActionLabel : 'Cancel'}
+                {activeRun?.status === 'cancelling' || cancelling ? cancelActionLabel : tr('ui.taskDetail.cancel')}
               </Button>
             ) : canResume ? (
               <div className="hidden md:contents">
                 <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={() => start(true)} disabled={starting}>
-                  {starting ? 'Starting…' : '↻ Resume'}
+                  {starting ? tr('ui.taskDetail.starting') : tr('ui.taskDetail.resume')}
                 </Button>
-                <Button size="sm" onClick={() => start(false)} disabled={starting}>▶ Run</Button>
+                <Button size="sm" onClick={() => start(false)} disabled={starting}>{tr('ui.taskDetail.run')}</Button>
               </div>
             ) : (
               <Button size="sm" className="hidden md:inline-flex" onClick={() => start(false)} disabled={starting}>
-                {starting ? 'Starting…' : '▶ Run'}
+                {starting ? tr('ui.taskDetail.starting') : tr('ui.taskDetail.run')}
               </Button>
             )}
             {isLive ? (
@@ -1176,18 +1177,18 @@ export default function TaskDetail() {
                 variant="ghost"
                 size="icon"
                 className="md:hidden hover:text-danger-ink"
-                aria-label={activeRun?.status === 'cancelling' || cancelling ? cancelActionLabel : 'Cancel task'}
+                aria-label={activeRun?.status === 'cancelling' || cancelling ? cancelActionLabel : tr('ui.taskDetail.cancelTask')}
                 onClick={cancel}
                 disabled={cancelActionDisabled}
               >
                 <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
               </Button>
             ) : canResume ? (
-              <Button variant="outline" size="icon" className="md:hidden" aria-label="Resume task" onClick={() => start(true)} disabled={starting}>
+              <Button variant="outline" size="icon" className="md:hidden" aria-label={tr('ui.taskDetail.resumeTask')} onClick={() => start(true)} disabled={starting}>
                 <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12a8 8 0 1 0 2-5.5" /><path d="M4 5v6h6" /></svg>
               </Button>
             ) : (
-              <Button size="icon" className="md:hidden" aria-label={starting ? 'Starting task' : 'Run task'} onClick={() => start(false)} disabled={starting}>
+              <Button size="icon" className="md:hidden" aria-label={starting ? tr('ui.taskDetail.startingTask') : tr('ui.taskDetail.runTask')} onClick={() => start(false)} disabled={starting}>
                 <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 5l11 7-11 7V5z" /></svg>
               </Button>
             )}
@@ -1211,7 +1212,7 @@ export default function TaskDetail() {
             ref={mobileRunsTriggerRef}
             type="button"
             className="flex min-h-11 w-full flex-none items-center gap-2 border-b border-line px-4 text-left font-mono text-[10.5px] text-fg-dim transition-colors hover:bg-panel-2 md:hidden"
-            aria-label={`Open run details: ${selectedRun.status}, ${stepsDone} of ${plan.length} steps`}
+            aria-label={tr('ui.taskDetail.openRunDetailsStatusStepsdone', { status: selectedRun.status, stepsDone, length: plan.length })}
             aria-controls="mobile-run-details"
             aria-expanded={mobileRunsOpen}
             onClick={() => setMobileRunsOpen(true)}
@@ -1219,7 +1220,7 @@ export default function TaskDetail() {
             <span className={cn('flex-none', RUN_BADGE[selectedRun.status] || 'text-fg-dim')}>
               {selectedRun.status}
             </span>
-            <span className="flex-none tnum">· {stepsDone}/{plan.length} steps</span>
+            <span className="flex-none tnum">{tr('ui.taskDetail.stepsdoneLengthSteps', { stepsDone, length: plan.length })}</span>
             <span aria-hidden className="ml-auto flex-none text-fg">›</span>
           </button>
         )}
@@ -1239,7 +1240,7 @@ export default function TaskDetail() {
         )}
 
         {selectedRunUsage.length > 0 && (
-          <div className="mx-6 mt-2 hidden flex-wrap gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim md:flex" aria-label="Run usage">
+          <div className="mx-6 mt-2 hidden flex-wrap gap-x-4 gap-y-1 font-mono text-[10.5px] text-fg-dim md:flex" aria-label={tr('ui.taskDetail.runUsage')}>
             {selectedRunUsage.map((item) => <span key={item}>{item}</span>)}
           </div>
         )}
@@ -1252,14 +1253,14 @@ export default function TaskDetail() {
                 runStreamConnected ? 'bg-accent' : 'bg-danger',
               )}
             />
-            <span>{runStreamConnected ? 'live progress' : 'live progress disconnected'}</span>
+            <span>{runStreamConnected ? tr('ui.taskDetail.liveProgress') : tr('ui.taskDetail.liveProgressDisconnected')}</span>
             {runStreamError && (
               <button
                 type="button"
                 onClick={reconnectRunStream}
                 className="ml-auto min-h-11 underline underline-offset-2 md:min-h-0"
               >
-                reconnect
+                {tr('ui.taskDetail.reconnect')}
               </button>
             )}
           </div>
@@ -1269,12 +1270,12 @@ export default function TaskDetail() {
           {selectedRun?.status === 'queued' && (
             <div role="status" className="mx-6 my-4 flex items-center gap-2.5 rounded border border-line bg-panel-2 px-3 py-2.5 font-mono text-[12px] text-fg-dim">
               <span className="think-bars"><i /><i /><i /><i /></span>
-              waiting for a worker to pick up the run…
+              {tr('ui.taskDetail.waitingForAWorkerTo')}
             </div>
           )}
           {preferDurableResult && selectedDurableLoading ? (
             <div role="status" className="flex items-center gap-2 px-6 py-4 font-mono text-[11px] text-fg-dim">
-              <Spinner className="h-3.5 w-3.5" /> loading durable result...
+              <Spinner className="h-3.5 w-3.5" />{' '}{tr('ui.taskDetail.loadingDurableResult')}
             </div>
           ) : preferDurableResult && selectedDurableResult ? (
             <DurableResultView
@@ -1286,19 +1287,19 @@ export default function TaskDetail() {
             />
           ) : preferDurableResult && selectedDurableError && selectedDurableTarget !== null && selectedRunId ? (
             <div role="alert" className="px-6 py-4 font-mono text-[11px] text-danger-ink">
-              <p>Could not load the durable result.</p>
+              <p>{tr('ui.taskDetail.couldNotLoadTheDurable')}</p>
               <button
                 type="button"
                 className="mt-2 min-h-11 underline underline-offset-2 md:min-h-0"
                 onClick={() => void loadDurableResult(selectedRunId, selectedDurableTarget)}
               >
-                retry result
+                {tr('ui.taskDetail.retryResult')}
               </button>
             </div>
           ) : preferDurableResult && selectedDurableLoaded ? (
             <div>
               <DurableToolCalls tools={selectedDurableToolCalls} agentName={selectedPlanStep?.agent_name} />
-              <div className="px-6 py-4 font-mono text-[11px] text-fg-dim">this step has no persisted result</div>
+              <div className="px-6 py-4 font-mono text-[11px] text-fg-dim">{tr('ui.taskDetail.thisStepHasNoPersisted')}</div>
             </div>
           ) : selectedSessionId ? (
             chats[selectedSessionId] || liveEntries.length > 0 ? (
@@ -1308,12 +1309,12 @@ export default function TaskDetail() {
               />
             ) : (
               <div role="status" className="flex items-center gap-2 px-6 py-4 font-mono text-[11px] text-fg-dim">
-                <Spinner className="h-3.5 w-3.5" /> loading transcript…
+                <Spinner className="h-3.5 w-3.5" />{' '}{tr('ui.taskDetail.loadingTranscript')}
               </div>
             )
           ) : selectedDurableLoading ? (
             <div role="status" className="flex items-center gap-2 px-6 py-4 font-mono text-[11px] text-fg-dim">
-              <Spinner className="h-3.5 w-3.5" /> loading durable result...
+              <Spinner className="h-3.5 w-3.5" />{' '}{tr('ui.taskDetail.loadingDurableResult')}
             </div>
           ) : selectedDurableResult ? (
             <DurableResultView
@@ -1325,31 +1326,31 @@ export default function TaskDetail() {
             />
           ) : selectedDurableError && selectedDurableTarget !== null && selectedRunId ? (
             <div role="alert" className="px-6 py-4 font-mono text-[11px] text-danger-ink">
-              <p>Could not load the durable result.</p>
+              <p>{tr('ui.taskDetail.couldNotLoadTheDurable')}</p>
               <button
                 type="button"
                 className="mt-2 min-h-11 underline underline-offset-2 md:min-h-0"
                 onClick={() => void loadDurableResult(selectedRunId, selectedDurableTarget)}
               >
-                retry result
+                {tr('ui.taskDetail.retryResult')}
               </button>
             </div>
           ) : selectedDurableLoaded ? (
             <div>
               <DurableToolCalls tools={selectedDurableToolCalls} agentName={selectedPlanStep?.agent_name} />
-              <div className="px-6 py-4 font-mono text-[11px] text-fg-dim">this step has no persisted result</div>
+              <div className="px-6 py-4 font-mono text-[11px] text-fg-dim">{tr('ui.taskDetail.thisStepHasNoPersisted')}</div>
             </div>
           ) : selectedRun ? (
             <div className="px-6 py-4 font-mono text-[11px] text-fg-dim">
-              {plan.length === 0 ? 'this run failed before a plan was made' : 'select a step to view its transcript'}
+              {plan.length === 0 ? tr('ui.taskDetail.thisRunFailedBeforeA') : tr('ui.taskDetail.selectAStepToView')}
             </div>
           ) : (
             !isTaskRunning && visibleRuns.length === 0 && (
               <div className="mx-auto flex h-full max-w-2xl flex-col justify-center px-6">
-                <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ no runs yet</p>
-                <h2 className="mt-3 text-2xl font-bold tracking-tight">Run this task</h2>
+                <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">{tr('ui.taskDetail.noRunsYet')}</p>
+                <h2 className="mt-3 text-2xl font-bold tracking-tight">{tr('ui.taskDetail.runThisTask')}</h2>
                 <p className="mt-2 max-w-md text-fg-dim">
-                  Hit ▶ Run — the plan's steps land in the panel above, each with its own transcript, live while it executes.
+                  {tr('ui.taskDetail.hitRunThePlanS')}
                 </p>
               </div>
             )

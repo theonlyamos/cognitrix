@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import { errorMessage } from '@/lib/api';
 import { browseFolders, createFolder, type BrowseListing } from '@/lib/folders';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 interface Props {
   /** Called with the folder the person chose. */
@@ -44,7 +45,7 @@ export default function ServerFolderBrowser({ onPick, onCancel, busy, start = nu
         setListing(next);
       }
     } catch (e) {
-      setError(errorMessage(e, "Couldn't open that folder."));
+      setError(errorMessage(e, tr('ui.serverFolderBrowser.couldnTOpenThatFolder')));
     } finally {
       setLoading(false);
     }
@@ -62,28 +63,28 @@ export default function ServerFolderBrowser({ onPick, onCancel, busy, start = nu
       setNewName(null);
       await open(made.path);
     } catch (e) {
-      setError(errorMessage(e, "Couldn't create the folder."));
+      setError(errorMessage(e, tr('ui.serverFolderBrowser.couldnTCreateTheFolder')));
     }
   };
 
   return (
-    <div role="group" aria-label="Browse folders on the server" className={cn('flex min-w-0 flex-col gap-2', className)}>
+    <div role="group" aria-label={tr('ui.serverFolderBrowser.browseFoldersOnTheServer')} className={cn('flex min-w-0 flex-col gap-2', className)}>
       <div className="flex items-center gap-1.5">
         <button type="button" onClick={() => void open(listing?.parent ?? null)}
           disabled={loading || current === null}
-          aria-label="Up one folder" title="Up one folder"
+          aria-label={tr('ui.serverFolderBrowser.upOneFolder')} title={tr('ui.serverFolderBrowser.upOneFolder')}
           className="grid h-8 w-8 shrink-0 place-items-center rounded border border-line text-fg-dim hover:bg-panel-2 hover:text-fg disabled:opacity-40">
           <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m18 15-6-6-6 6" /></svg>
         </button>
         <div className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-fg" title={current || ''} dir="rtl">
-          <bdi>{current || 'Folders on the server'}</bdi>
+          <bdi>{current || tr('ui.serverFolderBrowser.foldersOnTheServer')}</bdi>
         </div>
       </div>
 
-      <ul aria-label="Folders" aria-busy={loading} className="max-h-56 min-h-[6rem] overflow-y-auto rounded border border-line bg-bg py-1">
-        {loading && !listing && <li className="px-2.5 py-1.5 text-[12px] text-fg-dim">Loading…</li>}
+      <ul aria-label={tr('ui.serverFolderBrowser.folders')} aria-busy={loading} className="max-h-56 min-h-[6rem] overflow-y-auto rounded border border-line bg-bg py-1">
+        {loading && !listing && <li className="px-2.5 py-1.5 text-[12px] text-fg-dim">{tr('ui.serverFolderBrowser.loading')}</li>}
         {listing && listing.entries.length === 0 && !loading && (
-          <li className="px-2.5 py-1.5 text-[12px] text-fg-dim">No folders inside.</li>
+          <li className="px-2.5 py-1.5 text-[12px] text-fg-dim">{tr('ui.serverFolderBrowser.noFoldersInside')}</li>
         )}
         {listing?.entries.map((e) => (
           <li key={e.path}>
@@ -92,30 +93,30 @@ export default function ServerFolderBrowser({ onPick, onCancel, busy, start = nu
               className="flex min-h-9 w-full items-center gap-2 px-2.5 text-left text-[12.5px] text-fg hover:bg-panel-2 md:min-h-7">
               <span className="text-fg-dim"><FolderGlyph /></span>
               <span className="min-w-0 flex-1 truncate">{e.name}</span>
-              {!e.writable && <span className="font-mono text-[10px] text-fg-dim">read only</span>}
+              {!e.writable && <span className="font-mono text-[10px] text-fg-dim">{tr('ui.serverFolderBrowser.readOnly')}</span>}
             </button>
           </li>
         ))}
-        {listing?.truncated && <li className="px-2.5 py-1.5 text-[11.5px] text-fg-dim">Only the first 1,000 folders are shown.</li>}
+        {listing?.truncated && <li className="px-2.5 py-1.5 text-[11.5px] text-fg-dim">{tr('ui.serverFolderBrowser.onlyTheFirst1000')}</li>}
       </ul>
 
       {newName !== null ? (
         <form className="flex gap-1.5" onSubmit={(e) => { e.preventDefault(); void make(); }}>
-          <label htmlFor={newId} className="sr-only">New folder name</label>
-          <input id={newId} value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus placeholder="New folder name"
+          <label htmlFor={newId} className="sr-only">{tr('ui.serverFolderBrowser.newFolderName')}</label>
+          <input id={newId} value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus placeholder={tr('ui.serverFolderBrowser.newFolderName')}
             className="min-w-0 flex-1 rounded border border-line bg-bg px-2 py-1.5 text-[12px] text-fg placeholder:text-fg-dim" />
-          <button type="submit" disabled={!newName.trim()} className="rounded border border-line px-2.5 text-[12px] hover:bg-panel-2 disabled:opacity-60">Create</button>
-          <button type="button" onClick={() => setNewName(null)} className="rounded px-2 text-[12px] text-fg-dim hover:text-fg">Cancel</button>
+          <button type="submit" disabled={!newName.trim()} className="rounded border border-line px-2.5 text-[12px] hover:bg-panel-2 disabled:opacity-60">{tr('ui.serverFolderBrowser.create')}</button>
+          <button type="button" onClick={() => setNewName(null)} className="rounded px-2 text-[12px] text-fg-dim hover:text-fg">{tr('ui.serverFolderBrowser.cancel')}</button>
         </form>
       ) : (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-fg-dim">
           {current && listing?.writable !== false && (
-            <button type="button" onClick={() => setNewName('')} className="hover:text-fg hover:underline">New folder</button>
+            <button type="button" onClick={() => setNewName('')} className="hover:text-fg hover:underline">{tr('ui.serverFolderBrowser.newFolder')}</button>
           )}
           <label className="flex items-center gap-1.5">
             <input type="checkbox" checked={hidden} className="accent-[var(--accent)]"
               onChange={(e) => { setHidden(e.target.checked); void open(current, e.target.checked); }} />
-            Show hidden
+            {tr('ui.serverFolderBrowser.showHidden')}
           </label>
         </div>
       )}
@@ -125,9 +126,9 @@ export default function ServerFolderBrowser({ onPick, onCancel, busy, start = nu
       <div className="flex gap-1.5">
         <button type="button" disabled={busy || loading || !current} onClick={() => current && void onPick(current)}
           className="flex-1 rounded bg-accent px-3 py-2 text-[12.5px] font-medium text-accent-foreground hover:brightness-105 disabled:opacity-60">
-          Use this folder
+          {tr('ui.serverFolderBrowser.useThisFolder')}
         </button>
-        <button type="button" onClick={onCancel} className="rounded border border-line px-3 text-[12.5px] hover:bg-panel-2">Back</button>
+        <button type="button" onClick={onCancel} className="rounded border border-line px-3 text-[12.5px] hover:bg-panel-2">{tr('ui.serverFolderBrowser.back')}</button>
       </div>
     </div>
   );

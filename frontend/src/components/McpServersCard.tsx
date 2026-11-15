@@ -17,6 +17,7 @@ import {
   type McpTestResult,
   type McpTransport,
 } from '@/lib/mcp';
+import { tr, trn } from '@/lib/i18n';
 
 interface Pair { key: string; value: string }
 
@@ -73,12 +74,12 @@ export function McpServersCard() {
   const load = () =>
     listMcpServers()
       .then((l) => setList({ ...l, servers: l.servers.filter((s) => !isConnectedApp(s)) }))
-      .catch((e) => setLoadError(errorMessage(e, 'Could not load MCP servers.')));
+      .catch((e) => setLoadError(errorMessage(e, tr('ui.mcpServersCard.couldNotLoadMcpServers'))));
 
   useEffect(() => { void load(); }, []);
 
   if (loadError) return <p role="alert" className="text-[12.5px] text-danger-ink">{loadError}</p>;
-  if (!list) return <p className="text-[13px] text-fg-dim">Loading…</p>;
+  if (!list) return <p className="text-[13px] text-fg-dim">{tr('ui.mcpServersCard.loading')}</p>;
 
   const save = async () => {
     if (!draft) return;
@@ -101,7 +102,7 @@ export function McpServersCard() {
       setDraft(null);
       await load();
     } catch (e) {
-      setError(errorMessage(e, 'Could not save the server.'));
+      setError(errorMessage(e, tr('ui.mcpServersCard.couldNotSaveTheServer')));
     } finally {
       setBusy(false);
     }
@@ -115,7 +116,7 @@ export function McpServersCard() {
       await deleteMcpServer(server.id);
       await load();
     } catch (e) {
-      setError(errorMessage(e, 'Could not remove the server.'));
+      setError(errorMessage(e, tr('ui.mcpServersCard.couldNotRemoveTheServer')));
     } finally {
       setBusy(false);
     }
@@ -127,7 +128,7 @@ export function McpServersCard() {
       await updateMcpServer(server.id, { enabled: !server.enabled });
       await load();
     } catch (e) {
-      setError(errorMessage(e, 'Could not change the server.'));
+      setError(errorMessage(e, tr('ui.mcpServersCard.couldNotChangeTheServer')));
     }
   };
 
@@ -145,12 +146,11 @@ export function McpServersCard() {
   return (
     <div className="space-y-3">
       <p className="text-[13px] leading-relaxed text-fg-dim">
-        MCP servers give agents extra tools, such as a notes app or an issue tracker. Apps you sign in to, like GitHub or Gmail, are under <a href="/settings/apps" className="text-accent-ink hover:underline">Connected apps</a>. Pick which ones an agent can use on its edit page.
-        Tools that delete data, send something outside the app, or do something Cognitrix can't recognise wait for your approval before they run.
+        {tr('ui.mcpServersCard.mcpServersGiveAgentsExtra')}{' '}<a href="/settings/apps" className="text-accent-ink hover:underline">{tr('ui.mcpServersCard.connectedApps')}</a>{tr('ui.mcpServersCard.pickWhichOnesAnAgent')}
       </p>
 
       {list.servers.length === 0 ? (
-        <p className="rounded-[10px] border border-line bg-bg px-3 py-3 text-[12.5px] text-fg-dim">No servers yet.</p>
+        <p className="rounded-[10px] border border-line bg-bg px-3 py-3 text-[12.5px] text-fg-dim">{tr('ui.mcpServersCard.noServersYet')}</p>
       ) : (
         <ul className="divide-y divide-line rounded-[10px] border border-line bg-bg">
           {list.servers.map((server) => {
@@ -166,27 +166,27 @@ export function McpServersCard() {
                   <span className="rounded border border-line px-1.5 font-mono text-[10.5px] text-fg-dim">{server.transport}</span>
                   {server.shared && (
                     <span className="rounded border border-line px-1.5 text-[11px] text-fg-dim">
-                      {server.source === 'config_file' ? 'shared · mcp.json' : 'shared'}
+                      {server.source === 'config_file' ? tr('ui.mcpServersCard.sharedMcpJson') : tr('ui.mcpServersCard.shared')}
                     </span>
                   )}
-                  {!server.enabled && <span className="text-[11.5px] text-fg-dim">off</span>}
+                  {!server.enabled && <span className="text-[11.5px] text-fg-dim">{tr('ui.mcpServersCard.off')}</span>}
                   <span className="flex-1" />
                   <button type="button" onClick={() => void test(server)} disabled={result === 'running'}
                     className="text-[12.5px] text-accent-ink hover:underline disabled:opacity-60">
-                    {result === 'running' ? 'Connecting…' : 'Test'}
+                    {result === 'running' ? tr('ui.mcpServersCard.connecting') : tr('ui.mcpServersCard.test')}
                   </button>
                   {server.can_edit && (
                     <>
                       <button type="button" onClick={() => void toggle(server)} className="text-[12.5px] text-fg-dim hover:text-fg">
-                        {server.enabled ? 'Turn off' : 'Turn on'}
+                        {server.enabled ? tr('ui.mcpServersCard.turnOff') : tr('ui.mcpServersCard.turnOn')}
                       </button>
                       <button type="button" onClick={() => { setError(null); setDraft(draftFrom(server)); }}
                         className="text-[12.5px] text-fg-dim hover:text-fg">
-                        Edit
+                        {tr('ui.mcpServersCard.edit')}
                       </button>
                       <button type="button" onClick={() => void remove(server)} disabled={busy}
                         className="text-[12.5px] text-danger-ink hover:underline disabled:opacity-60">
-                        Remove
+                        {tr('ui.mcpServersCard.remove')}
                       </button>
                     </>
                   )}
@@ -195,12 +195,12 @@ export function McpServersCard() {
                 {result && result !== 'running' && (
                   result.connected ? (
                     <div className="mt-2 text-[12px]">
-                      <p className="text-fg-dim">{result.tools.length} tool{result.tools.length === 1 ? '' : 's'}</p>
+                      <p className="text-fg-dim">{trn(result.tools.length, 'ui.count.tools_one', 'ui.count.tools_other')}</p>
                       <ul className="mt-1 space-y-0.5">
                         {result.tools.map((t) => (
                           <li key={t.name} className="flex gap-2">
                             <span className="font-mono">{t.name}</span>
-                            <span className="text-fg-dim">{(t.asks_first ?? !t.read_only) ? 'asks first' : t.read_only ? 'reads only' : 'runs without asking'}</span>
+                            <span className="text-fg-dim">{(t.asks_first ?? !t.read_only) ? tr('ui.mcpServersCard.asksFirst') : t.read_only ? tr('ui.mcpServersCard.readsOnly') : tr('ui.mcpServersCard.runsWithoutAsking')}</span>
                           </li>
                         ))}
                       </ul>
@@ -230,7 +230,7 @@ export function McpServersCard() {
       ) : (
         <button type="button" onClick={() => { setError(null); setDraft({ ...EMPTY }); }}
           className="h-9 rounded-lg border border-line px-3 text-[13px] hover:bg-panel-2">
-          Add server
+          {tr('ui.mcpServersCard.addServer')}
         </button>
       )}
     </div>
@@ -242,20 +242,20 @@ function PairRows({ label, pairs, onChange, valuePlaceholder }: {
 }) {
   const set = (i: number, patch: Partial<Pair>) => onChange(pairs.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   return (
-    <Field label={label} hint="values are never shown again" composite>
+    <Field label={label} hint={tr('ui.mcpServersCard.valuesAreNeverShownAgain')} composite>
       <div role="group" className="space-y-2">
         {pairs.map((p, i) => (
           <div key={i} className="flex gap-2">
-            <Input aria-label={`${label} name ${i + 1}`} value={p.key} placeholder="Name" onChange={(e) => set(i, { key: e.target.value })} />
+            <Input aria-label={tr('ui.mcpServersCard.labelNameValue', { label, value: i + 1 })} value={p.key} placeholder={tr('ui.mcpServersCard.name')} onChange={(e) => set(i, { key: e.target.value })} />
             <Input
-              aria-label={`${label} value ${i + 1}`}
+              aria-label={tr('ui.mcpServersCard.labelValueValue', { label, value: i + 1 })}
               type="password"
               autoComplete="off"
               value={p.value === KEEP_SECRET ? '' : p.value}
-              placeholder={p.value === KEEP_SECRET ? 'saved (leave blank to keep)' : valuePlaceholder}
+              placeholder={p.value === KEEP_SECRET ? tr('ui.mcpServersCard.savedLeaveBlankToKeep') : valuePlaceholder}
               onChange={(e) => set(i, { value: e.target.value === '' && p.value === KEEP_SECRET ? KEEP_SECRET : e.target.value })}
             />
-            <button type="button" aria-label={`Remove ${label.toLowerCase()} ${i + 1}`}
+            <button type="button" aria-label={tr('ui.mcpServersCard.removeLabelValue', { label: label.toLowerCase(), value: i + 1 })}
               onClick={() => onChange(pairs.length > 1 ? pairs.filter((_, j) => j !== i) : [{ key: '', value: '' }])}
               className="px-2 text-[13px] text-fg-dim hover:text-fg">
               ×
@@ -263,7 +263,7 @@ function PairRows({ label, pairs, onChange, valuePlaceholder }: {
           </div>
         ))}
         <button type="button" onClick={() => onChange([...pairs, { key: '', value: '' }])} className="text-[12.5px] text-accent-ink hover:underline">
-          Add another
+          {tr('ui.mcpServersCard.addAnother')}
         </button>
       </div>
     </Field>
@@ -283,58 +283,58 @@ function ServerForm({ draft, setDraft, canAddLocal, canAddShared, busy, onSave, 
   const stdio = draft.transport === 'stdio';
   return (
     <form
-      aria-label={draft.id ? `Edit ${draft.name}` : 'Add MCP server'}
+      aria-label={draft.id ? tr('ui.mcpServersCard.editName', { name: draft.name }) : tr('ui.mcpServersCard.addMcpServer')}
       className="space-y-3 rounded-[10px] border border-line bg-bg p-3"
       onSubmit={(e) => { e.preventDefault(); onSave(); }}
     >
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="NAME" hint="letters, numbers, - and _" required>
+        <Field label={tr('ui.mcpServersCard.name_a9d3')} hint="letters, numbers, - and _" required>
           <Input value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="notion" />
         </Field>
-        <Field label="TYPE">
+        <Field label={tr('ui.mcpServersCard.type')}>
           <Select value={draft.transport} onChange={(e) => set({ transport: e.target.value as McpTransport })}>
-            <option value="http">Remote (HTTP)</option>
-            <option value="sse">Remote (SSE, older servers)</option>
-            {(canAddLocal || stdio) && <option value="stdio">Local command (stdio)</option>}
+            <option value="http">{tr('ui.mcpServersCard.remoteHttp')}</option>
+            <option value="sse">{tr('ui.mcpServersCard.remoteSseOlderServers')}</option>
+            {(canAddLocal || stdio) && <option value="stdio">{tr('ui.mcpServersCard.localCommandStdio')}</option>}
           </Select>
         </Field>
       </div>
-      <Field label="DESCRIPTION">
-        <Input value={draft.description} onChange={(e) => set({ description: e.target.value })} placeholder="What it's for" />
+      <Field label={tr('ui.mcpServersCard.description')}>
+        <Input value={draft.description} onChange={(e) => set({ description: e.target.value })} placeholder={tr('ui.mcpServersCard.whatItSFor')} />
       </Field>
       {stdio ? (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="COMMAND" required>
+            <Field label={tr('ui.mcpServersCard.command')} required>
               <Input value={draft.command} onChange={(e) => set({ command: e.target.value })} placeholder="npx" />
             </Field>
-            <Field label="ARGUMENTS" hint="separated by spaces">
-              <Input value={draft.args} onChange={(e) => set({ args: e.target.value })} placeholder="-y @modelcontextprotocol/server-memory" />
+            <Field label={tr('ui.mcpServersCard.arguments')} hint={tr('ui.mcpServersCard.separatedBySpaces')}>
+              <Input value={draft.args} onChange={(e) => set({ args: e.target.value })} placeholder={tr('ui.mcpServersCard.yModelcontextprotocolServerMemory')} />
             </Field>
           </div>
-          <PairRows label="ENVIRONMENT" pairs={draft.env} onChange={(env) => set({ env })} valuePlaceholder="value" />
+          <PairRows label={tr('ui.mcpServersCard.environment')} pairs={draft.env} onChange={(env) => set({ env })} valuePlaceholder={tr('ui.mcpServersCard.value')} />
         </>
       ) : (
         <>
-          <Field label="ADDRESS" required>
+          <Field label={tr('ui.mcpServersCard.address')} required>
             <Input value={draft.url} onChange={(e) => set({ url: e.target.value })} placeholder="https://mcp.example.com/mcp" />
           </Field>
-          <PairRows label="HEADERS" pairs={draft.headers} onChange={(headers) => set({ headers })} valuePlaceholder="Bearer …" />
+          <PairRows label={tr('ui.mcpServersCard.headers')} pairs={draft.headers} onChange={(headers) => set({ headers })} valuePlaceholder={tr('ui.mcpServersCard.bearer')} />
         </>
       )}
       {canAddShared && !draft.id && (
         <label className="flex items-center gap-2 text-[13px]">
           <input type="checkbox" checked={draft.shared} onChange={(e) => set({ shared: e.target.checked })} className="accent-[var(--accent)]" />
-          Share with everyone on this server
+          {tr('ui.mcpServersCard.shareWithEveryoneOnThis')}
         </label>
       )}
       <div className="flex gap-2">
         <button type="submit" disabled={busy}
           className="h-9 rounded-lg bg-accent px-3 text-[13px] font-medium text-accent-foreground hover:opacity-90 disabled:opacity-60">
-          {busy ? 'Saving…' : draft.id ? 'Save' : 'Add'}
+          {busy ? tr('ui.mcpServersCard.saving') : draft.id ? tr('ui.mcpServersCard.save') : tr('ui.mcpServersCard.add')}
         </button>
         <button type="button" onClick={onCancel} className="h-9 rounded-lg border border-line px-3 text-[13px] hover:bg-panel-2">
-          Cancel
+          {tr('ui.mcpServersCard.cancel')}
         </button>
       </div>
     </form>

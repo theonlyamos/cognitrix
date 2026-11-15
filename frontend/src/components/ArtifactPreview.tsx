@@ -4,6 +4,7 @@ import { Download, Maximize2, Pencil, X } from 'lucide-react';
 import type { ToolArtifact } from '@/context/SessionContext';
 import { useArtifactBlob } from '@/hooks/useArtifactBlob';
 import { api } from '@/lib/api';
+import { tr } from '@/lib/i18n';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -174,7 +175,7 @@ export function ArtifactPreview({ artifact, sourcePath, onEditSource, selected =
   };
 
   if (!isImage) {
-    return <button type="button" className="min-h-11 text-accent-ink underline underline-offset-2 sm:min-h-0" onClick={() => { void downloadOriginal(); }}>Download {filename}</button>;
+    return <button type="button" className="min-h-11 text-accent-ink underline underline-offset-2 sm:min-h-0" onClick={() => { void downloadOriginal(); }}>{tr('ui.artifactPreview.downloadFilename', { filename })}</button>;
   }
 
   const hasDimensions = (
@@ -198,19 +199,19 @@ export function ArtifactPreview({ artifact, sourcePath, onEditSource, selected =
         style={thumbnailState === 'idle' || thumbnailState === 'loading' ? reserveStyle : undefined}
       >
         {thumbnailState === 'error' ? (
-          <div className="flex items-center gap-2 text-sm text-danger-ink"><span>{imageLabel} unavailable.</span><button type="button" className="underline" onClick={retry}>Retry image</button></div>
+          <div className="flex items-center gap-2 text-sm text-danger-ink"><span>{tr('ui.artifactPreview.imagelabelUnavailable', { imageLabel })}</span><button type="button" className="underline" onClick={retry}>{tr('ui.artifactPreview.retryImage')}</button></div>
         ) : thumbnailState !== 'ready' || !thumbnailUrl ? (
-          <div className="text-sm text-fg-dim">Loading {imageLabel.toLowerCase()}...</div>
+          <div className="text-sm text-fg-dim">{tr('ui.artifactPreview.loadingImagelabel', { imageLabel: imageLabel.toLowerCase() })}</div>
         ) : (
           <>
             <img src={thumbnailUrl} alt={imageLabel} className="block max-h-80 max-w-full rounded border border-line bg-panel object-contain" />
             <div className="absolute bottom-2 right-2 flex gap-1 rounded border border-line bg-bg/80 p-1 shadow-lg backdrop-blur-sm">
-              {onEditSource && <button type="button" aria-label={`Use ${filename} as edit source`} aria-pressed={selected} title={selected ? 'Selected as edit source' : 'Use as edit source'} className={`flex h-11 w-11 items-center justify-center rounded border bg-panel-2/95 transition-colors sm:h-9 sm:w-9 ${selected ? 'border-accent text-accent-ink' : 'border-line text-fg hover:border-fg-dim hover:text-accent-ink'}`} onClick={() => onEditSource(artifact)}><Pencil aria-hidden="true" className="h-4 w-4" /></button>}
-              <button ref={expandTriggerRef} type="button" aria-label={`Expand ${imageLabel.toLowerCase()}`} title="Expand image" className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9" onClick={openExpanded}><Maximize2 aria-hidden="true" className="h-4 w-4" /></button>
+              {onEditSource && <button type="button" aria-label={tr('ui.artifactPreview.useFilenameAsEditSource', { filename })} aria-pressed={selected} title={selected ? tr('ui.artifactPreview.selectedAsEditSource') : tr('ui.artifactPreview.useAsEditSource')} className={`flex h-11 w-11 items-center justify-center rounded border bg-panel-2/95 transition-colors sm:h-9 sm:w-9 ${selected ? 'border-accent text-accent-ink' : 'border-line text-fg hover:border-fg-dim hover:text-accent-ink'}`} onClick={() => onEditSource(artifact)}><Pencil aria-hidden="true" className="h-4 w-4" /></button>}
+              <button ref={expandTriggerRef} type="button" aria-label={tr('ui.artifactPreview.expandImagelabel', { imageLabel: imageLabel.toLowerCase() })} title={tr('ui.artifactPreview.expandImage')} className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9" onClick={openExpanded}><Maximize2 aria-hidden="true" className="h-4 w-4" /></button>
               {taskArtifactPath ? (
-                <a href={thumbnailUrl} download={filename} aria-label={`Download ${filename}`} title={`Download ${filename}`} className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9"><Download aria-hidden="true" className="h-4 w-4" /></a>
+                <a href={thumbnailUrl} download={filename} aria-label={tr('ui.artifactPreview.downloadFilename', { filename })} title={tr('ui.artifactPreview.downloadFilename', { filename })} className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9"><Download aria-hidden="true" className="h-4 w-4" /></a>
               ) : (
-                <button type="button" aria-label={`Download ${filename}`} title={`Download ${filename}`} className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9" onClick={() => { void downloadOriginal(); }}><Download aria-hidden="true" className="h-4 w-4" /></button>
+                <button type="button" aria-label={tr('ui.artifactPreview.downloadFilename', { filename })} title={tr('ui.artifactPreview.downloadFilename', { filename })} className="flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg transition-colors hover:border-fg-dim hover:text-accent-ink sm:h-9 sm:w-9" onClick={() => { void downloadOriginal(); }}><Download aria-hidden="true" className="h-4 w-4" /></button>
               )}
             </div>
           </>
@@ -218,18 +219,18 @@ export function ArtifactPreview({ artifact, sourcePath, onEditSource, selected =
       </div>
       {downloadError && (
         <div role="alert" className="mt-2 flex items-center gap-2 text-sm text-danger-ink">
-          <span>Download {filename} failed.</span>
-          <button type="button" className="underline" onClick={() => { void downloadOriginal(); }}>Retry download {filename}</button>
+          <span>{tr('ui.artifactPreview.downloadFilenameFailed', { filename })}</span>
+          <button type="button" className="underline" onClick={() => { void downloadOriginal(); }}>{tr('ui.artifactPreview.retryDownloadFilename', { filename })}</button>
         </div>
       )}
       {expanded && createPortal(
         <>
           <div aria-hidden="true" className="fixed inset-0 z-[70] bg-bg/90 backdrop-blur-sm" onClick={() => setExpanded(false)} />
-          <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={`${imageLabel} preview`} tabIndex={-1} className="fixed inset-0 z-[71] flex items-center justify-center p-4 sm:p-8" onKeyDown={handleDialogKeyDown} onClick={(event) => { if (event.target === event.currentTarget) setExpanded(false); }}>
-            {originalUrl ? <img src={originalUrl} alt={`${imageLabel}, full size`} className="max-h-full max-w-full object-contain" /> : dialogError ? (
-              <div role="alert" className="text-danger-ink">Full image unavailable. <button type="button" className="underline" onClick={() => { void requestOriginal('dialog').catch(() => undefined); }}>Retry full image</button></div>
-            ) : <span className="text-fg-dim">Loading full image...</span>}
-            <button type="button" aria-label="Close image preview" title="Close image preview" className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg shadow-lg transition-colors hover:border-fg-dim hover:text-accent-ink sm:right-6 sm:top-6 sm:h-9 sm:w-9" onClick={() => setExpanded(false)}><X aria-hidden="true" className="h-4 w-4" /></button>
+          <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={tr('ui.artifactPreview.imagelabelPreview', { imageLabel })} tabIndex={-1} className="fixed inset-0 z-[71] flex items-center justify-center p-4 sm:p-8" onKeyDown={handleDialogKeyDown} onClick={(event) => { if (event.target === event.currentTarget) setExpanded(false); }}>
+            {originalUrl ? <img src={originalUrl} alt={tr('ui.artifactPreview.imagelabelFullSize', { imageLabel })} className="max-h-full max-w-full object-contain" /> : dialogError ? (
+              <div role="alert" className="text-danger-ink">{tr('ui.artifactPreview.fullImageUnavailable')}{' '}<button type="button" className="underline" onClick={() => { void requestOriginal('dialog').catch(() => undefined); }}>{tr('ui.artifactPreview.retryFullImage')}</button></div>
+            ) : <span className="text-fg-dim">{tr('ui.artifactPreview.loadingFullImage')}</span>}
+            <button type="button" aria-label={tr('ui.artifactPreview.closeImagePreview')} title={tr('ui.artifactPreview.closeImagePreview')} className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded border border-line bg-panel-2/95 text-fg shadow-lg transition-colors hover:border-fg-dim hover:text-accent-ink sm:right-6 sm:top-6 sm:h-9 sm:w-9" onClick={() => setExpanded(false)}><X aria-hidden="true" className="h-4 w-4" /></button>
           </div>
         </>, document.body,
       )}

@@ -3,6 +3,7 @@ import { api, errorMessage } from '@/lib/api';
 import type { TabProps } from '@/lib/agentDraft';
 import { Card, buttonClass, inputClass, primaryButtonClass } from '@/components/agent/ui';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 type Role = 'use' | 'edit';
 interface Person { id: string; name: string; email: string }
@@ -26,7 +27,7 @@ function RoleSelect({ value, onChange, label, allowNone }: {
   return (
     <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value as Role | '')}
       className={cn(inputClass, 'w-[150px] flex-none')}>
-      {allowNone && <option value="">Not shared</option>}
+      {allowNone && <option value="">{tr('ui.agent.sharingTab.notShared')}</option>}
       <option value="use">{ROLE_LABEL.use}</option>
       <option value="edit">{ROLE_LABEL.edit}</option>
     </select>
@@ -51,7 +52,7 @@ export default function SharingTab({ agent }: TabProps) {
 
   useEffect(() => {
     api.get<Sharing>(`/agents/${agent.id}/sharing`).then((r) => apply(r.data))
-      .catch((e) => setError(errorMessage(e, 'Could not load sharing.')));
+      .catch((e) => setError(errorMessage(e, tr('ui.agent.sharingTab.couldNotLoadSharing'))));
   }, [agent.id]);
 
   const candidates = useMemo(
@@ -68,13 +69,13 @@ export default function SharingTab({ agent }: TabProps) {
   if (!data) {
     return error
       ? <p role="alert" className="text-[13px] text-danger-ink">{error}</p>
-      : <p className="text-[13px] text-fg-dim">Loading…</p>;
+      : <p className="text-[13px] text-fg-dim">{tr('ui.agent.sharingTab.loading')}</p>;
   }
   if (!data.can_manage) {
     return (
-      <Card title="Sharing">
+      <Card title={tr('ui.agent.sharingTab.sharing')}>
         <p className="text-[13.5px] leading-relaxed text-fg-dim">
-          {data.owner ? `${data.owner.name} owns this agent and decides who it is shared with.` : 'This agent belongs to everyone on this server. An admin manages it.'}
+          {data.owner ? tr('ui.agent.sharingTab.nameOwnsThisAgentAnd', { name: data.owner.name }) : tr('ui.agent.sharingTab.thisAgentBelongsToEveryone')}
         </p>
       </Card>
     );
@@ -97,9 +98,9 @@ export default function SharingTab({ agent }: TabProps) {
         everyone: everyone || null,
       });
       apply(res.data);
-      setNotice('Sharing saved.');
+      setNotice(tr('ui.agent.sharingTab.sharingSaved'));
     } catch (e) {
-      setError(errorMessage(e, 'Could not save sharing.'));
+      setError(errorMessage(e, tr('ui.agent.sharingTab.couldNotSaveSharing')));
     } finally {
       setBusy(false);
     }
@@ -107,22 +108,21 @@ export default function SharingTab({ agent }: TabProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      <Card title="Share this agent" description="Let other people on this server use it.">
+      <Card title={tr('ui.agent.sharingTab.shareThisAgent')} description={tr('ui.agent.sharingTab.letOtherPeopleOnThis')}>
         <p className="text-[13.5px] leading-relaxed text-fg-dim">
-          <strong className="font-medium text-fg">Can chat</strong> lets someone see the agent, chat with it and give it tasks.{' '}
-          <strong className="font-medium text-fg">Can edit</strong> also lets them change its instructions, model, tools and approval rules.
-          Only you can change its connections, folders, check-ins and sharing, or delete it.
+          <strong className="font-medium text-fg">{tr('ui.agent.sharingTab.canChat')}</strong>{' '}{tr('ui.agent.sharingTab.letsSomeoneSeeTheAgent')}{' '}
+          <strong className="font-medium text-fg">{tr('ui.agent.sharingTab.canEdit')}</strong>{' '}{tr('ui.agent.sharingTab.alsoLetsThemChangeIts')}
         </p>
         <p className="mt-3 rounded-md border border-warn-ink/50 px-3 py-2.5 text-[13px] leading-relaxed">
-          People you share with use this agent's model key and the apps you connected to it, as you. Their chats, memories and saved sign-ins stay their own.
+          {tr('ui.agent.sharingTab.peopleYouShareWithUse')}
         </p>
 
         <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line pt-4">
           <div className="min-w-[200px] flex-1">
-            <div className="text-[14.5px] font-medium">Everyone on this server</div>
-            <div className="mt-0.5 text-[13px] text-fg-dim">Includes people who join later.</div>
+            <div className="text-[14.5px] font-medium">{tr('ui.agent.sharingTab.everyoneOnThisServer')}</div>
+            <div className="mt-0.5 text-[13px] text-fg-dim">{tr('ui.agent.sharingTab.includesPeopleWhoJoinLater')}</div>
           </div>
-          <RoleSelect label="Everyone on this server" value={everyone} allowNone onChange={(v) => { setEveryone(v); setNotice(''); }} />
+          <RoleSelect label={tr('ui.agent.sharingTab.everyoneOnThisServer')} value={everyone} allowNone onChange={(v) => { setEveryone(v); setNotice(''); }} />
         </div>
 
         <ul className="mt-2 divide-y divide-line border-t border-line">
@@ -132,30 +132,30 @@ export default function SharingTab({ agent }: TabProps) {
                 <div className="text-[14.5px] font-medium">{p.name}</div>
                 {p.email && p.email !== p.name && <div className="mt-0.5 font-mono text-[12px] text-fg-dim">{p.email}</div>}
               </div>
-              <RoleSelect label={`Role for ${p.name}`} value={p.role}
+              <RoleSelect label={tr('ui.agent.sharingTab.roleForName', { name: p.name })} value={p.role}
                 onChange={(v) => { if (v) setPeople((cur) => cur.map((x) => (x.id === p.id ? { ...x, role: v } : x))); setNotice(''); }} />
-              <button type="button" className={buttonClass} aria-label={`Stop sharing with ${p.name}`}
-                onClick={() => { setPeople((cur) => cur.filter((x) => x.id !== p.id)); setNotice(''); }}>Remove</button>
+              <button type="button" className={buttonClass} aria-label={tr('ui.agent.sharingTab.stopSharingWithName', { name: p.name })}
+                onClick={() => { setPeople((cur) => cur.filter((x) => x.id !== p.id)); setNotice(''); }}>{tr('ui.agent.sharingTab.remove')}</button>
             </li>
           ))}
         </ul>
 
         {(data.directory || []).length === 0 ? (
-          <p className="mt-3 text-[13px] text-fg-dim">Nobody else has an account on this server yet. An admin can invite people in Settings › People.</p>
+          <p className="mt-3 text-[13px] text-fg-dim">{tr('ui.agent.sharingTab.nobodyElseHasAnAccount')}</p>
         ) : (
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <select aria-label="Person to share with" value={pick} onChange={(e) => setPick(e.target.value)}
+            <select aria-label={tr('ui.agent.sharingTab.personToShareWith')} value={pick} onChange={(e) => setPick(e.target.value)}
               className={cn(inputClass, 'min-w-[220px] flex-1')} disabled={candidates.length === 0}>
-              <option value="">{candidates.length ? 'Pick a person…' : 'Everyone is already listed'}</option>
+              <option value="">{candidates.length ? tr('ui.agent.sharingTab.pickAPerson') : tr('ui.agent.sharingTab.everyoneIsAlreadyListed')}</option>
               {candidates.map((p) => <option key={p.id} value={p.id}>{p.name}{p.email && p.email !== p.name ? ` (${p.email})` : ''}</option>)}
             </select>
-            <button type="button" className={buttonClass} disabled={!pick} onClick={add}>Add</button>
+            <button type="button" className={buttonClass} disabled={!pick} onClick={add}>{tr('ui.agent.sharingTab.add')}</button>
           </div>
         )}
 
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <button type="button" className={primaryButtonClass} disabled={busy || !dirty} onClick={() => void save()}>
-            {busy ? 'Saving…' : 'Save sharing'}
+            {busy ? tr('ui.agent.sharingTab.saving') : tr('ui.agent.sharingTab.saveSharing')}
           </button>
           {error && <p role="alert" className="text-[13px] text-danger-ink">{error}</p>}
           {notice && !dirty && <p role="status" className="text-[13px] text-fg-dim">{notice}</p>}

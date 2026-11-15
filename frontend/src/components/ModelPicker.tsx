@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { MODELS } from '@/lib/providers';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const CUSTOM = '__custom__';
 
@@ -88,27 +89,27 @@ export default function ModelPicker({ provider, value, onChange, id, ariaLabel, 
         className="h-11 w-full rounded border border-line bg-bg px-3 font-mono text-[13px] text-fg transition-colors focus:border-accent disabled:opacity-50 md:h-10"
       >
         {leading.map((o) => <option key={`lead-${o.value}`} value={o.value}>{o.label}</option>)}
-        {!known && !custom && value === '' && leading.length === 0 && <option value="">Choose a model</option>}
+        {!known && !custom && value === '' && leading.length === 0 && <option value="">{tr('ui.modelPicker.chooseAModel')}</option>}
         {recent.length > 0 && (
-          <optgroup label="Recent">
+          <optgroup label={tr('ui.modelPicker.recent')}>
             {recent.map((m) => <option key={m} value={m}>{m}</option>)}
           </optgroup>
         )}
         {more.length > 0 && (
-          <optgroup label="From your account">
+          <optgroup label={tr('ui.modelPicker.fromYourAccount')}>
             {more.map((m) => <option key={m} value={m}>{m}</option>)}
           </optgroup>
         )}
-        <option value={CUSTOM}>Custom…</option>
+        <option value={CUSTOM}>{tr('ui.modelPicker.custom')}</option>
       </select>
       {custom && (
         <input
-          aria-label="Custom model name"
+          aria-label={tr('ui.modelPicker.customModelName')}
           value={value}
           autoFocus={customOpen}
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
-          placeholder="Type a model name"
+          placeholder={tr('ui.modelPicker.typeAModelName')}
           className="h-11 w-full rounded border border-line bg-bg px-3 font-mono text-[13px] text-fg placeholder:text-fg-dim focus:border-accent md:h-10"
         />
       )}

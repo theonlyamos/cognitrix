@@ -2,6 +2,7 @@ import { useId, isValidElement, cloneElement, Fragment, type ReactNode, type Rea
 import { Link } from 'react-router-dom';
 import { MobileHeaderActions, type MobileHeaderAction } from '@/components/mobile-header-actions';
 import { Button } from '@/lib/components/ui/button';
+import { tr } from '@/lib/i18n';
 
 export function Field({
   label,
@@ -62,7 +63,7 @@ export function CheckList({
   return (
     <div id={id} role="group" aria-labelledby={ariaLabelledBy} className="max-h-64 overflow-y-auto rounded border border-line">
       {options.length === 0 ? (
-        <div className="px-3 py-4 font-mono text-[11px] text-fg-dim">{empty || 'nothing available'}</div>
+        <div className="px-3 py-4 font-mono text-[11px] text-fg-dim">{empty || tr('ui.form.nothingAvailable')}</div>
       ) : (
         options.map((o) => (
           <label key={o.value} className={`flex min-h-11 items-center gap-2.5 border-b border-line px-3 py-2 last:border-b-0 md:min-h-0 ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-panel-2'}`}>
@@ -100,8 +101,23 @@ export function PageForm({
   children: ReactNode;
 }) {
   const entityLabel = eyebrow.toLowerCase().replace(/^(edit|new)\s+/, '');
+  // Known headings shown in the app's language; anything else as given.
+  const EYEBROWS: Record<string, string> = {
+    'NEW AGENT': tr('ui.form.eyebrow.newAgent'),
+    'EDIT AGENT': tr('ui.form.eyebrow.editAgent'),
+    'NEW TEAM': tr('ui.form.eyebrow.newTeam'),
+    'EDIT TEAM': tr('ui.form.eyebrow.editTeam'),
+    'NEW TASK': tr('ui.form.eyebrow.newTask'),
+    'EDIT TASK': tr('ui.form.eyebrow.editTask'),
+  };
+  const ENTITIES: Record<string, string> = {
+    agent: tr('ui.form.entity.agent'),
+    team: tr('ui.form.entity.team'),
+    task: tr('ui.form.entity.task'),
+  };
+  const entityName = ENTITIES[entityLabel] ?? entityLabel;
   const mobileActions: MobileHeaderAction[] = [
-    ...(onDelete ? [{ key: 'delete', label: `Delete ${entityLabel}`, destructive: true, onSelect: onDelete }] : []),
+    ...(onDelete ? [{ key: 'delete', label: tr('ui.form.deleteEntitylabel', { entityLabel: entityName }), destructive: true, onSelect: onDelete }] : []),
   ];
 
   return (
@@ -110,13 +126,13 @@ export function PageForm({
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <Link
             to={backTo}
-            aria-label={`Back to ${entityLabel}s`}
+            aria-label={tr('ui.form.backToList')}
             className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:h-8 md:w-8"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
           </Link>
           <div className="min-w-0 overflow-hidden">
-            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">{eyebrow}</p>
+            <p className="sr-only font-mono text-[10px] tracking-[0.18em] text-accent-ink md:not-sr-only">{EYEBROWS[eyebrow] ?? eyebrow}</p>
             <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
           </div>
         </div>
@@ -125,25 +141,25 @@ export function PageForm({
             {extraActions}
             {onDelete && (
               <Button variant="ghost" size="sm" onClick={onDelete} className="hover:text-danger-ink">
-                Delete
+                {tr('ui.form.delete')}
               </Button>
             )}
             <Button asChild variant="outline" size="sm">
-              <Link to={backTo}>Cancel</Link>
+              <Link to={backTo}>{tr('ui.form.cancel')}</Link>
             </Button>
           </div>
           {mobileActions.length > 0 && <MobileHeaderActions id="page-form-actions" actions={mobileActions} />}
           <Button
             size="sm"
             className="w-11 px-0 md:w-auto md:px-3"
-            aria-label={saving ? 'Saving…' : 'Save changes'}
+            aria-label={saving ? tr('ui.form.saving') : tr('ui.form.saveChanges')}
             onClick={onSave}
             disabled={saving}
           >
             <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l4 4L19 6" /></svg>
-            <span className="sr-only md:not-sr-only">{saving ? 'Saving…' : 'Save'}</span>
+            <span className="sr-only md:not-sr-only">{saving ? tr('ui.form.saving') : tr('ui.form.save')}</span>
           </Button>
-          {saving && <span role="status" className="sr-only">Saving…</span>}
+          {saving && <span role="status" className="sr-only">{tr('ui.form.saving')}</span>}
         </div>
       </header>
 

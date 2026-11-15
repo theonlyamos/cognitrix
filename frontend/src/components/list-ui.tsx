@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { tr } from '@/lib/i18n';
 
 export function Spinner({ className = 'h-5 w-5' }: { className?: string }) {
   return (
@@ -37,7 +38,7 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry: () 
         onClick={onRetry}
         className="mt-4 min-h-11 rounded border border-line px-4 py-2 font-mono text-[12px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0"
       >
-        ↻ retry
+        {tr('ui.listUi.retry')}
       </button>
     </div>
   );
