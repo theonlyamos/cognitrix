@@ -9,6 +9,13 @@ vi.mock('@/lib/folders', async (importOriginal) => {
   return {
     ...real,
     checkFolder: vi.fn(async (path: string, access: 'read' | 'write') => ({ path, access, name: 'docs', primary: false })),
+    browseFolders: vi.fn(async (path?: string | null) => {
+      if (!path) return { path: null, parent: null, entries: [{ name: '/srv/work', path: '/srv/work', writable: true }], truncated: false };
+      if (path === '/srv/work') {
+        return { path, parent: null, writable: true, truncated: false, entries: [{ name: 'site', path: '/srv/work/site', writable: true }] };
+      }
+      return { path, parent: '/srv/work', writable: true, truncated: false, entries: [] };
+    }),
   };
 });
 
@@ -49,6 +56,20 @@ describe('FolderChips', () => {
     await user.click(screen.getByRole('button', { name: 'Add' }));
     const next = onChange.mock.calls[0][0] as WorkFolder[];
     expect(next[2]).toMatchObject({ path: '/docs', access: 'read', primary: false });
+  });
+
+  it('browses server folders in the web app and adds the chosen one', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<FolderChips folders={FOLDERS} onChange={onChange} />);
+    await user.click(screen.getByRole('button', { name: '+ folder' }));
+    await user.click(screen.getByRole('button', { name: 'Browse server folders…' }));
+    // One starting folder opens straight away.
+    await user.click(await screen.findByRole('button', { name: /site/ }));
+    expect(await screen.findByText('No folders inside.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Use this folder' }));
+    const next = onChange.mock.calls[0][0] as WorkFolder[];
+    expect(next[2]).toMatchObject({ path: '/srv/work/site', access: 'read' });
   });
 
   it('shows the empty label when there are no folders', () => {

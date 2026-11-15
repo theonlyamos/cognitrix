@@ -158,8 +158,7 @@ def sb_coding_agent(ws: sw.SandboxWork, which: str, run_mode: str, model: str | 
         return f'Error: {e}'
     cli = ca.CLIS[key]
     argv = ca.build_argv(cli.program, key, run_mode, model)
-    import shlex
-    command = shlex.join(argv)
+    command = sw.sandbox_cli_command(key, argv)
     label = f'{cli.label} ({run_mode}): {task.splitlines()[0][:80]}'
     try:
         out = ws.run(command, working_dir, background=True, env=sw.cli_env(key), stdin=task, label=label)

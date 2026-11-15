@@ -12,6 +12,7 @@ import {
 } from '@/lib/folders';
 import { cn } from '@/lib/utils';
 import { composerBtn, composerPopover } from '@/components/composerStyles';
+import ServerFolderBrowser from '@/components/ServerFolderBrowser';
 
 const FolderIcon = ({ size = 12 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -48,6 +49,7 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
   const [allowWrite, setAllowWrite] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -55,6 +57,7 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
     const onDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setAdding(false);
+        setBrowsing(false);
         setMenu(null);
         setOpen(false);
       }
@@ -62,6 +65,7 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setAdding(false);
+        setBrowsing(false);
         setMenu(null);
         setOpen(false);
       }
@@ -98,6 +102,7 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
       await onChange(withPrimary([...rest, { ...checked, primary: rest.length === 0 }]));
       setPath('');
       setAdding(false);
+      setBrowsing(false);
     } catch (e) {
       setError(errorMessage(e, 'Could not add that folder.'));
     } finally {
@@ -106,6 +111,8 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
   };
 
   const browse = async () => {
+    // The web app can't see your computer's folders: browse the server's.
+    if (!isDesktop()) { setBrowsing(true); return; }
     const picked = await pickFolder();
     if (picked) await add(picked);
   };
@@ -114,6 +121,9 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
 
   const addForm = (floating: boolean) => (
         <div role="dialog" aria-label="Add a folder" className={cn('flex flex-col gap-2', floating && 'absolute bottom-full left-0 z-30 mb-1.5 w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-line bg-panel p-2.5 shadow-lg')}>
+          {browsing ? (
+            <ServerFolderBrowser busy={busy} onPick={(p) => add(p)} onCancel={() => setBrowsing(false)} />
+          ) : (<>
           {recents.length > 0 && (
             <div className="flex flex-col">
               <div className="px-1 pb-1 font-mono text-[10px] tracking-[0.12em] text-fg-dim">RECENT</div>
@@ -125,20 +135,19 @@ export default function FolderChips({ folders, onChange, emptyLabel, disabled, c
               ))}
             </div>
           )}
-          {isDesktop() && (
-            <button type="button" onClick={() => void browse()} disabled={busy}
-              className="rounded bg-accent px-3 py-2 text-[12.5px] font-medium text-accent-foreground hover:brightness-105 disabled:opacity-60">
-              Browse…
-            </button>
-          )}
+          <button type="button" onClick={() => void browse()} disabled={busy}
+            className="rounded bg-accent px-3 py-2 text-[12.5px] font-medium text-accent-foreground hover:brightness-105 disabled:opacity-60">
+            {isDesktop() ? 'Browse…' : 'Browse server folders…'}
+          </button>
           <form className="flex gap-1.5" onSubmit={(e) => { e.preventDefault(); void add(path); }}>
             <label className="sr-only" htmlFor="folder-path">Folder path</label>
             <input id="folder-path" value={path} onChange={(e) => setPath(e.target.value)}
-              placeholder={isDesktop() ? 'or paste a folder path' : 'Folder path on the server'}
+              placeholder={isDesktop() ? 'or paste a folder path' : 'or paste a folder path on the server'}
               className="min-w-0 flex-1 rounded border border-line bg-bg px-2 py-1.5 font-mono text-[11.5px] text-fg placeholder:text-fg-dim" />
             <button type="submit" disabled={busy || !path.trim()}
               className="rounded border border-line px-2.5 text-[12px] hover:bg-panel-2 disabled:opacity-60">Add</button>
           </form>
+          </>)}
           <label className="flex items-center gap-2 px-1 text-[12px] text-fg-dim">
             <input type="checkbox" checked={allowWrite} onChange={(e) => setAllowWrite(e.target.checked)} className="accent-[var(--accent)]" />
             Allow writing (otherwise read only)
