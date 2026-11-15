@@ -337,6 +337,19 @@ async def test_realtime_audio_is_collected_until_done():
     assert await collect_realtime_audio(ws) == b'\x01\x02\x03\x04'
 
 
+async def test_incomplete_realtime_response_is_an_error_even_with_audio():
+    import base64
+
+    from cognitrix.providers.speech import _RealtimeHTTPError, collect_realtime_audio
+
+    ws = _FakeWS([
+        {'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x01\x02').decode()},
+        {'type': 'response.done', 'response': {'status': 'incomplete', 'status_details': {'reason': 'max_output_tokens'}}},
+    ])
+    with pytest.raises(_RealtimeHTTPError):
+        await collect_realtime_audio(ws)
+
+
 async def test_realtime_errors_become_friendly_messages(monkeypatch):
     import sys
     import types

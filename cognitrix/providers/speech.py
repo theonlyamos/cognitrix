@@ -206,9 +206,9 @@ async def collect_realtime_audio(ws) -> bytes:
         elif kind == 'response.done':
             response = event.get('response') or {}
             if response.get('status') not in (None, 'completed'):
+                # A cut-off piece would silently skip the rest of the text.
                 logger.warning('Realtime speech ended %s: %s', response.get('status'), response.get('status_details'))
-                if not pcm:
-                    raise _RealtimeHTTPError(None)
+                raise _RealtimeHTTPError(None)
             break
     return bytes(pcm)
 
