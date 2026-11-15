@@ -19,6 +19,7 @@ from ...api.routes.auth import auth_api
 from ...api.routes.agent_email import email_api
 from ...api.routes.channels import channel_hooks_api, channels_api
 from ...api.routes.meetings import meetings_api
+from ...api.routes.payments import payments_api
 from ...api.routes.computer import computer_api
 from ...api.routes.computer_overlay import overlay_api
 from ...api.routes.computer_sandbox import sandbox_api
@@ -94,6 +95,7 @@ api_router.include_router(channel_hooks_api)
 api_router.include_router(channels_api)
 api_router.include_router(email_api)
 api_router.include_router(meetings_api)
+api_router.include_router(payments_api)
 api_router.include_router(computer_api)
 api_router.include_router(overlay_api)
 api_router.include_router(sandbox_api)

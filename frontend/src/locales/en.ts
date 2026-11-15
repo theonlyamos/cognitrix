@@ -15,6 +15,7 @@ const en = {
   'nav.apps': 'Apps',
   'nav.knowledge': 'Knowledge',
   'nav.meetings': 'Meetings',
+  'nav.payments': 'Payments',
   'nav.settings': 'Settings',
   'nav.apiKeys': 'API Keys',
   'nav.whatsNew': "What's new",

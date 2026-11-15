@@ -116,6 +116,10 @@ _KNOWN_LOW = frozenset({
     # live calls: following and leaving one the person already let it join
     # (Join Meeting asks, see below), and speaking in it like it answers anyway
     'meeting_transcript', 'leave_meeting', 'say_in_meeting',
+    # payments have their own approval, which only the person can give in the
+    # app for each payment (cognitrix/payments/service.py); Pay works only for
+    # an approved one, so the usual prompt would only ask twice
+    'request_payment', 'pay', 'cancel_payment',
 })
 
 # Desktop control acts on the person's live screen, where a click can do

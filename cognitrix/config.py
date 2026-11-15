@@ -846,6 +846,7 @@ async def _ensure_schema():
     from cognitrix.sessions.sharing import MODELS as CHAT_SHARE_MODELS
     from cognitrix.agent_email.models import MODELS as EMAIL_MODELS
     from cognitrix.sessions.side_questions import SideQuestion
+    from cognitrix.payments.models import MODELS as PAYMENT_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
@@ -855,6 +856,7 @@ async def _ensure_schema():
         *PUBLIC_AGENT_MODELS,
         *CHAT_SHARE_MODELS,
         *EMAIL_MODELS,
+        *PAYMENT_MODELS,
         AgentOffer,
         SideQuestion,
         MeetingNote,

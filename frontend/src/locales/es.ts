@@ -14,6 +14,7 @@ const es: Messages = {
   'nav.apps': 'Apps',
   'nav.knowledge': 'Conocimiento',
   'nav.meetings': 'Reuniones',
+  'nav.payments': 'Pagos',
   'nav.settings': 'Ajustes',
   'nav.apiKeys': 'Claves de API',
   'nav.whatsNew': 'Novedades',
