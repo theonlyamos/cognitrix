@@ -82,6 +82,10 @@ def _agent(name: str, tools=()) -> Agent:
 
 @pytest.fixture
 def agents(monkeypatch):
+    from cognitrix.common import folders
+
+    # Editor folders are allowed for the whole process; keep them to this test.
+    monkeypatch.setattr(folders, '_EXTRA_ROOTS', [])
     RAN.clear()
     saved = {}
     team = [_agent('Assistant', [look_around]), _agent('Coder', [look_around])]
