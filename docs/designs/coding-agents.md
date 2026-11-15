@@ -8,7 +8,8 @@ Bash tool's background jobs (see [shell-tool.md](shell-tool.md)).
 
 `Coding Agent(task, agent='auto', mode='edit', working_dir=None, model=None, wait_seconds=0)`
 
-- `agent`: `claude` (Claude Code), `codex`, `gemini` (Gemini CLI), or `auto`
+- `agent`: `claude` (Claude Code), `codex`, `gemini` (Gemini CLI), `copilot`
+  (GitHub Copilot CLI), `antigravity` (Antigravity CLI, `agy`), or `auto`
   (the first installed, in that order). `list` shows what's installed and
   never asks.
 - `mode`: `read_only`, `edit` (default) or `full`; see below.
@@ -35,7 +36,14 @@ these CLIs as `.cmd` files on Windows, and cmd.exe would otherwise parse `&`,
 | edit | `--permission-mode acceptEdits` (its shell commands are refused) | `--sandbox workspace-write` (runs commands in the folder sandbox) | `--approval-mode auto_edit` |
 | full | `--permission-mode bypassPermissions` | `--sandbox danger-full-access` | `--approval-mode yolo` |
 
-The CLIs use their own sign-in (`claude` once, `codex login`, `gemini` once) or
+The Antigravity CLI (`agy --output-format text`, a native binary from
+https://antigravity.google/docs/getting-started) reads the task from stdin
+when stdin isn't a terminal; `-p` is left out because it takes the prompt as
+its value. read_only is `--mode plan`, edit is `--mode accept-edits`, full is
+`--dangerously-skip-permissions`; approvals nobody can give are soft-denied.
+
+The CLIs use their own sign-in (`claude` once, `codex login`, `gemini` once,
+`agy` once) or
 the API key variables already in the environment. Cognitrix doesn't pass its
 own provider keys to them.
 
