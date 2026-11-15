@@ -815,11 +815,13 @@ async def _ensure_schema():
     from cognitrix.tasks.standing import AgentOffer
     from cognitrix.artifact_pages.models import MODELS as ARTIFACT_PAGE_MODELS
     from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
+    from cognitrix.mcp.app_views import MODELS as APP_VIEW_MODELS
     from cognitrix.swarms.models import MODELS as SWARM_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
         *HOSTED_APP_MODELS,
+        *APP_VIEW_MODELS,
         *SWARM_MODELS,
         AgentOffer,
         MeetingNote,

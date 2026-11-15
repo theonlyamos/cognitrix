@@ -120,10 +120,12 @@ def _stopped_tool_messages(tool_calls: list[dict[str, Any]]) -> list[dict[str, A
     return stopped
 
 
-def _with_folder_prompt(prompt, folders, sandbox: tuple | None = None) -> Any:
-    """The turn's additions to the system message: working folders, and the
-    Swarm switch when the person sent this message with it on."""
+def _with_folder_prompt(prompt, folders, sandbox: tuple | None = None, session_id: Any = None) -> Any:
+    """The turn's additions to the system message: working folders, what
+    open connected-app screens told the agent, and the Swarm switch when the
+    person sent this message with it on."""
     prompt = _with_folder_block(prompt, folders, sandbox)
+    prompt = _with_app_screens(prompt, session_id)
     try:
         from cognitrix.tools.swarm import SWARM_MODE_NOTE, swarm_requested
 
@@ -135,6 +137,25 @@ def _with_folder_prompt(prompt, folders, sandbox: tuple | None = None) -> Any:
             and isinstance(prompt[0].get('content'), str):
         return [{**prompt[0], 'content': prompt[0]['content'] + '\n\n' + SWARM_MODE_NOTE}, *prompt[1:]]
     return [{'role': 'system', 'content': SWARM_MODE_NOTE}, *prompt]
+
+
+def _with_app_screens(prompt, session_id: Any) -> Any:
+    """Add what connected-app screens beside the chat reported (MCP Apps
+    ``ui/update-model-context``) to the system message."""
+    if not isinstance(prompt, list) or not session_id:
+        return prompt
+    try:
+        from cognitrix.mcp.app_views import context_note
+
+        block = context_note(str(session_id))
+    except Exception:
+        return prompt
+    if not block:
+        return prompt
+    if prompt and isinstance(prompt[0], dict) and prompt[0].get('role') == 'system' \
+            and isinstance(prompt[0].get('content'), str):
+        return [{**prompt[0], 'content': prompt[0]['content'] + '\n\n' + block}, *prompt[1:]]
+    return [{'role': 'system', 'content': block}, *prompt]
 
 
 def _with_folder_block(prompt, folders, sandbox: tuple | None = None) -> Any:
@@ -867,7 +888,7 @@ class Session(Model):
 
         # Build the context-aware prompt using the manager
         prompt = await agent.get_context_manager().build_prompt(agent, self)
-        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
+        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
 
         # Tools set to "never" for this agent aren't offered to the model
         # (the agent loop refuses them too, see safety/permissions.py).
@@ -1194,7 +1215,7 @@ class Session(Model):
 
                                 prompt = await agent.get_context_manager().build_prompt(agent, self)
                                 # Keep the folder list (including any just granted) on every request.
-                                prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
+                                prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
                                 continue  # Continue the loop to re-prompt the LLM with the tool result
                             else:
                                 if interface == 'cli':
@@ -1242,7 +1263,7 @@ class Session(Model):
                                        'or give your final answer.]',
                         })
                         prompt = await agent.get_context_manager().build_prompt(agent, self)
-                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
+                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
                         continue
 
                     # Persist the final assistant text only when this response did
@@ -1291,7 +1312,7 @@ class Session(Model):
                         # answer: keep the turn going so it gets read now
                         # instead of waiting for another turn.
                         prompt = await agent.get_context_manager().build_prompt(agent, self)
-                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt)
+                        prompt = _with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id)
                         continue
 
                     if not called_tools:

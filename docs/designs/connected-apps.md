@@ -60,3 +60,29 @@ A task's Automation panel can add a **new Gmail** trigger next to webhooks (`Tas
 - Pending sign-ins are kept in memory for ten minutes, like "Sign in with Google". Run one API process, or keep a sign-in on the process that started it.
 - Google Calendar's MCP server is read-only today; changing events goes through the built-in tools above.
 - New mail is found by asking on a timer, not pushed, so a run starts up to a couple of minutes after the mail arrives.
+
+## App screens beside the chat (MCP Apps)
+
+A connected app can give a tool its own screen (the MCP Apps extension,
+`io.modelcontextprotocol/ui`, which Cognitrix advertises when it connects).
+The tool's `_meta.ui.resourceUri` names a `ui://` HTML resource.
+
+- When an agent runs such a tool in someone's chat, `cognitrix/mcp/app_views.py`
+  keeps an `AppView` (app, screen, tool arguments and result) and the result
+  text starts with `... is showing this beside the chat (app_view <id>, version <n>)`.
+  The chat opens it in the right-hand panel (`frontend/src/components/appviews/AppViewPanel.tsx`).
+- Running a tool with the same screen again in the same chat updates that view;
+  the open screen gets the new `tool-input` / `tool-result` without reloading.
+- The screen is served from `/api/v1/app-view-frame/<token>` with a CSP built
+  only from the domains the app declared (`_meta.ui.csp`), plus `sandbox`
+  without `allow-same-origin`, so it has an opaque origin. Iframe permissions
+  (camera, microphone...) are not granted.
+- The screen may call tools of its own app only (`/api/v1/app-views/<id>/call`).
+  The agent's Allow / Ask / Off levels apply. With no level set, tools made only
+  for the screen (`visibility: ["app"]`) and read-only tools run on a click;
+  others that change things, and anything destructive, ask the person first.
+- Tools with `visibility: ["app"]` are never offered to agents.
+- `ui/message` sends a chat message as the person; `ui/update-model-context`
+  is added to the agent's next turn in that chat (kept in memory, not saved).
+
+Try it with `tests/fixtures/mcp_apps_demo.py` (a task board), added as a stdio server.
