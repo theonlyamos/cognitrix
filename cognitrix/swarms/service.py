@@ -776,7 +776,6 @@ def _run_chat_turn(live: _Live, swarm: SwarmRun, worker: SwarmWorker, agent: Any
 
     def setup() -> float:
         from cognitrix import usage
-
         from cognitrix.providers.base import build_turn_llm, turn_llm_override
 
         usage.set_sink(count)
