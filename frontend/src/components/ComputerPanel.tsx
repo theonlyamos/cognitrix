@@ -159,7 +159,7 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
             over. Turn it on with <code>COGNITRIX_COMPUTER_SANDBOX=docker</code> (needs Docker).
           </p>
         )}
-        {status?.enabled && !current && status.asleep && !status.error && <AsleepNote onWoken={load} />}
+        {status?.enabled && !current && status.asleep && !status.error && <AsleepNote desktop={focusName} onWoken={load} />}
         {status?.enabled && !current && !(status.asleep && !status.error) && (
           <p className="p-4 text-[12.5px] leading-relaxed text-fg-dim">
             {status.error || 'Nothing to show yet. The computer starts when an agent first uses it, and each agent gets its own desktop.'}
@@ -558,7 +558,7 @@ function UpdateButton({ onDone }: { onDone: () => void }) {
 }
 
 /** A hosted computer sleeps when nobody uses it, so it costs nothing. */
-function AsleepNote({ onWoken }: { onWoken: () => void }) {
+function AsleepNote({ desktop, onWoken }: { desktop: string | null; onWoken: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   return (
@@ -572,7 +572,7 @@ function AsleepNote({ onWoken }: { onWoken: () => void }) {
           setBusy(true);
           setError('');
           try {
-            await wakeSandbox();
+            await wakeSandbox(desktop);
           } catch (err) {
             setError(errorMessage(err, "Couldn't wake it."));
           } finally {

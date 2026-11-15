@@ -106,7 +106,7 @@ def fly(monkeypatch):
 def test_first_use_makes_a_private_machine_with_a_home_volume(fly):
     mgr, api = fly
     box = mgr.sandbox('u1')
-    (create,) = [c for c in api.calls if c[0] == 'create']
+    (create,) = (c for c in api.calls if c[0] == 'create')
     config = create[1]['config']
     assert create[1]['region'] == 'lhr' and create[1]['name'] == mgr.machine_name('u1')
     assert config['image'] == 'ghcr.io/x/desktop:v1'
@@ -145,6 +145,20 @@ def test_a_new_pinned_image_is_used_when_it_wakes(fly):
     mgr.sandbox('u1')
     assert ('update', box.machine_id, 'ghcr.io/x/desktop:v2') in api.calls
     assert not mgr.update_available(mgr.existing('u1'))
+
+
+def test_digest_pinned_images_are_compared_whole(fly):
+    mgr, api = fly
+    mgr.image = 'ghcr.io/x/desktop@sha256:aaa'
+    box = mgr.sandbox('u1')
+    mgr.stop('u1')
+    mgr.image = 'ghcr.io/x/desktop@sha256:bbb'
+    assert mgr.update_available(box)
+    mgr.sandbox('u1')
+    assert ('update', box.machine_id, 'ghcr.io/x/desktop@sha256:bbb') in api.calls
+    # A tag Fly stored with its resolved digest still counts as the same.
+    mgr.image = 'ghcr.io/x/desktop:v1'
+    assert not mgr._differs('ghcr.io/x/desktop:v1@sha256:ccc')
 
 
 def test_idle_computers_are_stopped_but_not_busy_or_watched_ones(fly, monkeypatch):
@@ -300,7 +314,8 @@ def fly_api(monkeypatch, tmp_path):
     monkeypatch.setenv('COGNITRIX_SANDBOX_FLY_APP', 'cog-sandboxes')
     monkeypatch.setenv('FLY_API_TOKEN', 'secret-token')
     monkeypatch.setenv('COGNITRIX_SANDBOX_FLY_REGION', 'lhr')
-    box = SimpleNamespace(desktops=lambda: [{'name': 'main'}])
+    made = []
+    box = SimpleNamespace(desktops=lambda: [{'name': n} for n in made], desktop=lambda n: made.append(n))
     state = {'asleep': True}
     mgr = SimpleNamespace(existing=lambda owner: None if state['asleep'] else box,
                           asleep=lambda owner: state['asleep'],
@@ -316,7 +331,10 @@ def fly_api(monkeypatch, tmp_path):
 def test_status_says_asleep_and_wake_starts_it(fly_api):
     data = fly_api.get('/computer/sandbox').json()
     assert data == {'enabled': True, 'running': False, 'desktops': [], 'host': 'fly', 'asleep': True}
-    assert fly_api.post('/computer/sandbox/wake').json() == {'ok': True, 'desktops': [{'name': 'main'}]}
+    # A freshly started computer has no desktops: waking opens the one asked for.
+    assert fly_api.post('/computer/sandbox/wake', json={'desktop': 'agent-a'}).json() == {
+        'ok': True, 'desktops': [{'name': 'agent-a'}]}
+    assert fly_api.post('/computer/sandbox/wake').json()['desktops'] == [{'name': 'agent-a'}]
     assert fly_api.get('/computer/sandbox').json()['running'] is True
 
 

@@ -50,8 +50,8 @@ export async function updateSandbox(): Promise<void> {
 }
 
 /** Start a hosted computer that is asleep. */
-export async function wakeSandbox(): Promise<void> {
-  await api.post('/computer/sandbox/wake');
+export async function wakeSandbox(desktop?: string | null): Promise<void> {
+  await api.post('/computer/sandbox/wake', { desktop: desktop ?? null });
 }
 
 /** Throw the computer away, files and logins included. */

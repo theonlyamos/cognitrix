@@ -60,11 +60,11 @@ describe('ComputerPanel', () => {
   it('says a hosted computer is asleep and wakes it', async () => {
     lib.sandboxStatus.mockResolvedValue({ enabled: true, running: false, desktops: [], host: 'fly', asleep: true });
     lib.wakeSandbox.mockResolvedValue(undefined);
-    render(<ComputerPanel agents={agents} onClose={() => {}} />);
+    render(<ComputerPanel agents={agents} focusAgentId="A1" onClose={() => {}} />);
     expect(await screen.findByText(/asleep because nobody used it/)).toBeInTheDocument();
     lib.sandboxStatus.mockResolvedValue({ enabled: true, running: true, desktops: [{ name: 'a1', display: ':1', held_by: null, running: true }], host: 'fly' });
     fireEvent.click(screen.getByRole('button', { name: 'Wake it now' }));
-    await waitFor(() => expect(lib.wakeSandbox).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(lib.wakeSandbox).toHaveBeenCalledWith('a1'));
     await waitFor(() => expect(rfb.made.length).toBe(1));
   });
 

@@ -110,11 +110,21 @@ async def status(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     return {'enabled': True, 'running': True, 'desktops': desktops, 'update_available': update, 'host': mode}
 
 
+class WakeBody(BaseModel):
+    desktop: str | None = None
+
+
 @sandbox_api.post('/wake')
-async def wake(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
-    """Start the person's computer now (a hosted one sleeps when idle)."""
+async def wake(body: WakeBody | None = None, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Start the person's computer now (a hosted one sleeps when idle), with
+    a desktop to show: the one asked for, else 'main' when it has none."""
     box = await _box(ctx, start=True)
-    return {'ok': True, 'desktops': await run_in_threadpool(box.desktops)}
+    desktops = await run_in_threadpool(box.desktops)
+    wanted = _desktop(body.desktop) if body and body.desktop else None
+    if (wanted and not any(d.get('name') == wanted for d in desktops)) or not desktops:
+        await run_in_threadpool(box.desktop, wanted or 'main')
+        desktops = await run_in_threadpool(box.desktops)
+    return {'ok': True, 'desktops': desktops}
 
 
 @sandbox_api.get('/settings')

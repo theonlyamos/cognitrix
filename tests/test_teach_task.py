@@ -100,6 +100,16 @@ def test_passwords_are_never_recorded():
     assert 'hunter' not in repr(steps) and 'hunter' not in steps_as_text(steps)
 
 
+def test_typing_into_an_unidentified_field_is_not_kept():
+    b, _ = _builder(focused_role='')
+    _type(b, 'hunter2')
+    assert b.finish()[0]['text'] == '{typed text}'
+    b2, _ = _builder()
+    b2._focused = lambda: {}  # accessibility found nothing at all
+    _type(b2, 'hunter2')
+    assert 'hunter' not in repr(b2.finish())
+
+
 def test_new_windows_are_noted():
     shown = [[(1, 'chromium', 'Shop')], [(1, 'chromium', 'Shop'), (2, 'gedit', 'notes.txt')]]
     b, clock = _builder(windows=lambda: shown[0] if len(shown) > 1 else shown[-1])
@@ -311,4 +321,5 @@ def test_recorder_hears_real_input_on_a_display():
     finally:
         xvfb.terminate()
     assert [s['kind'] for s in steps] == ['click', 'type', 'key']
-    assert steps[1]['text'] == 'hi' and steps[2]['keys'] == 'ctrl+s'
+    # No accessibility here, so the field is unknown and its text isn't kept.
+    assert steps[1]['text'] == '{typed text}' and steps[2]['keys'] == 'ctrl+s'

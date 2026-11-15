@@ -331,8 +331,16 @@ class FlyManager(SandboxManager):
 
     def _outdated_machine(self, machine: dict) -> bool:
         """The server now names another image (e.g. a new pinned version)."""
-        current = str((machine.get('config') or {}).get('image') or '')
-        return bool(current) and current.split('@')[0] != self.image.split('@')[0]
+        return self._differs(str((machine.get('config') or {}).get('image') or ''))
+
+    def _differs(self, current: str) -> bool:
+        # A digest-pinned setting is compared whole; a tag is compared without
+        # any digest Fly may have added when it resolved it.
+        if not current:
+            return False
+        if '@' in self.image:
+            return current != self.image
+        return current.split('@')[0] != self.image
 
     def existing(self, user_id: Any) -> Sandbox | None:
         """The user's computer when it is running; never starts one."""
@@ -399,7 +407,7 @@ class FlyManager(SandboxManager):
     # there's no background pull here. Pin a version in COGNITRIX_SANDBOX_IMAGE
     # and stopped machines move to it when they next wake.
     def update_available(self, box: Sandbox) -> bool:
-        return bool(box.image_id) and box.image_id.split('@')[0] != self.image.split('@')[0]
+        return self._differs(box.image_id)
 
     def check_for_update(self, force: bool = False) -> bool:
         return False

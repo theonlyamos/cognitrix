@@ -16,7 +16,8 @@ Two parts:
   else on that display.
 
 Passwords are never kept: text typed into a password field is recorded as
-``{password}``.
+``{password}``, and text typed where accessibility can't tell what the field
+is as ``{typed text}``.
 """
 from __future__ import annotations
 
@@ -32,6 +33,9 @@ logger = logging.getLogger('cognitrix.sandbox.recorder')
 MAX_STEPS = 400
 DOUBLE_CLICK_S = 0.45
 SECRET = '{password}'
+# Typing into a field accessibility couldn't identify: it could be a
+# password, so its text isn't kept either.
+UNKNOWN_FIELD = '{typed text}'
 
 # X keysyms for keys that end typing and become their own step.
 _NAMED_KEYS = {
@@ -119,7 +123,7 @@ class StepBuilder:
         typing, self._typing = self._typing, None
         if typing and (typing['text'] or typing.get('secret')):
             if typing.get('secret'):
-                typing['text'] = SECRET
+                typing['text'] = UNKNOWN_FIELD if typing.get('unknown_field') else SECRET
             self._add(typing)
 
     def _note_new_windows(self) -> None:
@@ -199,8 +203,12 @@ class StepBuilder:
                 target = _target_text(element)
                 if target:
                     self._typing['target'] = target
-                if 'password' in (element.get('role') or ''):
+                role = element.get('role') or ''
+                if 'password' in role:
                     self._typing['secret'] = True
+                elif not role:  # fail closed: it might be a password field
+                    self._typing['secret'] = True
+                    self._typing['unknown_field'] = True
             if not self._typing.get('secret'):
                 self._typing['text'] += char
             return
@@ -410,7 +418,8 @@ class Recorder:
         out = [dict(s) for s in builder.steps]
         typing = builder._typing
         if typing and (typing.get('text') or typing.get('secret')):
-            out.append({**typing, 'text': SECRET if typing.get('secret') else typing['text'], 'typing': True})
+            hidden = UNKNOWN_FIELD if typing.get('unknown_field') else SECRET
+            out.append({**typing, 'text': hidden if typing.get('secret') else typing['text'], 'typing': True})
         return out
 
     def stop(self) -> dict:
