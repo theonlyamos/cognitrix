@@ -2,7 +2,7 @@ import { useId, useMemo, useState } from 'react';
 import ModelPicker from '@/components/ModelPicker';
 import { MODELS, PROVIDERS, PROVIDER_LABELS } from '@/lib/providers';
 import type { AgentLevel, CodingMode, ReviewerMode, TabProps, ToolInfo, ToolLevel } from '@/lib/agentDraft';
-import { Card, Pill, buttonClass, inputClass } from '@/components/agent/ui';
+import { Card, Check, Pill, buttonClass, inputClass } from '@/components/agent/ui';
 import { cn } from '@/lib/utils';
 import { tr } from '@/lib/i18n';
 
@@ -98,6 +98,23 @@ export default function ToolsTab({ draft, update, options, catalog, agent }: Tab
           })}
         </div>
         <p className="mt-3 text-[12.5px] text-fg-dim">{tr('ui.agent.toolsTab.fullShellCommandsCodingAgent')}</p>
+      </Card>
+
+      <Card title="Saving tokens" description="For long jobs and agents with many tools.">
+        <Check
+          checked={draft.codeMode}
+          onChange={(codeMode) => update({ codeMode })}
+          label="Code mode"
+          detail="The agent can write one short script that calls many tools (in a loop or all at once) and keeps only what it needs, instead of one step per call. Scripts run in a locked-down JavaScript engine with no file or network access of their own, and every tool call in them asks you first the same way it would on its own."
+        />
+        <div className="mt-3.5">
+          <Check
+            checked={draft.toolsOnDemand}
+            onChange={(toolsOnDemand) => update({ toolsOnDemand })}
+            label="Load tools only when needed"
+            detail={`The model gets the full description of only a few tools up front and looks up the others by name when it needs them. Worth it from about 12 tools${draft.tools.length ? ` (this agent has ${draft.tools.length})` : ''}.`}
+          />
+        </div>
       </Card>
 
       <Card title={tr('ui.agent.toolsTab.secondModelCheck')}>

@@ -176,6 +176,34 @@ COGNITRIX_REVIEWER_MAX_ALLOW=medium    # high lets it allow deletes on its own t
 
 The reviewer never answers for tools you set to "Ask first" or for commands that need the full shell. Task runs record each verdict as an `action_reviewed` run event.
 
+### Code mode and tools on demand
+
+Two switches on an agent's **Tools** tab (under "Saving tokens") cut what long jobs spend on tools:
+
+- **Code mode** gives the agent a Run Code tool. It writes one short JavaScript snippet that calls many tools (`await tools.grep({pattern: "TODO"})`, loops, `Promise.all`) and returns only what it needs, instead of one model step per call with every result pasted into the chat. Scripts run in a V8 isolate with no file system or network of their own; each tool call inside goes through the same permission levels and approvals as a direct call.
+- **Load tools only when needed** sends the model full descriptions of just a few core tools and the names of the rest. It loads the others with Find Tools when it needs them, and they stay loaded for that chat. Worth it from about 12 tools.
+
+`COGNITRIX_CODE_MODE_TIMEOUT` (seconds, default 600) and `COGNITRIX_CODE_MODE_MAX_CALLS` (default 200) limit one script.
+
+### Use your agents from a code editor (Agent Client Protocol)
+
+`cognitrix acp` runs Cognitrix as an [Agent Client Protocol](https://agentclientprotocol.com) server, so editors that support ACP (Zed, JetBrains IDEs, Neovim plugins and others) can chat with your agents. The chat works in the editor's project folder, tool calls show up in the editor, and anything that would ask you for approval asks in the editor. Your agents appear in the editor's mode menu, so you can switch between them, and chats are saved like any other.
+
+In Zed, add this to `settings.json`:
+
+```json
+{
+  "agent_servers": {
+    "Cognitrix": {
+      "command": "cognitrix",
+      "args": ["acp", "--agent", "Assistant"]
+    }
+  }
+}
+```
+
+With only the desktop app installed, point `command` at its engine instead: `cognitrix-engine` with `"args": ["acp"]` (on Windows it is in the app's install folder under `engine\`). Add `--user you@example.com` to use one account's agents and saved sign-ins when several people share the machine.
+
 ## Web UI
 
 Cognitrix includes a web UI built with React, TypeScript, and Vite. This UI allows users to interact with the AI agents and manage their configurations easily.

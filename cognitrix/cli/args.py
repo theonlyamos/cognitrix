@@ -56,6 +56,18 @@ def get_arguments():
                               help='The new password. Leave out to be asked for it.')
     reset_parser.set_defaults(func=reset_password)
 
+    # Editors that speak the Agent Client Protocol (Zed, JetBrains, ...) start
+    # this and talk to it over stdin/stdout (cognitrix/acp/server.py).
+    from cognitrix.acp import command as acp_command
+
+    acp_parser = subparsers.add_parser(
+        'acp', help="Run as an Agent Client Protocol server for code editors (Zed, JetBrains, ...)")
+    acp_parser.add_argument('--agent', dest='acp_agent', type=str, default='',
+                            help='Agent to start with (default Assistant); the editor can switch agents')
+    acp_parser.add_argument('--user', type=str, default='',
+                            help="Email of the account whose agents and sign-ins to use (default: all local agents)")
+    acp_parser.set_defaults(func=acp_command)
+
     # Swarm evals: a set of jobs run with and without workers, scored by a judge model.
     from cognitrix.swarms.evals import command as swarm_evals
 

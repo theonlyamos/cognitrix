@@ -4,6 +4,7 @@ from cognitrix.tools.base import Tool
 from cognitrix.tools.cards import show_card
 from cognitrix.tools.chat_history import read_chat, search_chats
 from cognitrix.tools.chats import check_chat, message_chat, start_chat
+from cognitrix.tools.code_mode import find_tools, run_code
 from cognitrix.tools.computer import (
     ask_to_take_over,
     click_element,
@@ -86,6 +87,7 @@ __all__ = [
     'WebFetch',
     'http_request', 'list_credentials',
     'show_card',
+    'find_tools', 'run_code',
     'copy_into_sandbox',
     'sandbox_changes',
     'copy_back_from_sandbox',

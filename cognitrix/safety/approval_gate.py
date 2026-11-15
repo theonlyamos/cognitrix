@@ -43,6 +43,11 @@ web_turn_ctx: ContextVar[dict | None] = ContextVar('web_turn_ctx', default=None)
 # ponytail: in-process, single-worker assumption — a multi-instance deploy needs
 # shared state (redis) for the pending map.
 _WEB_PENDING: dict[str, dict] = {}
+
+# Per-turn approver for an editor connected over the Agent Client Protocol
+# (cognitrix/acp): asks the editor, which shows its own permission prompt.
+# Called with (tool_call, risk, person_only); returns an ApprovalResult.
+acp_approver: ContextVar = ContextVar('acp_approver', default=None)
 _web_request_counter = 0
 
 
@@ -293,6 +298,17 @@ class ApprovalGate:
             result = await self._cli_approval(tool_call, risk, timeout)
         elif interface in ('web', 'ws', 'websocket'):
             result = await self._web_approval(tool_call, risk, timeout, person_only=person_only, must_ask=always_ask)
+        elif interface == 'acp':
+            approver = acp_approver.get(None)
+            if approver is None:
+                return ApprovalResult(approved=False, error='approval_required')
+            try:
+                result = await approver(tool_call, risk, person_only)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning('Editor approval failed: %s', exc)
+                return ApprovalResult(approved=False, error='approval_required')
         else:
             return ApprovalResult(approved=False, error=f"Unknown interface: {interface}")
 
