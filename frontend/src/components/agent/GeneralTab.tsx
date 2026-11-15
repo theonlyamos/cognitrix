@@ -11,6 +11,7 @@ import { REASONING_LEVELS } from '@/lib/reasoning';
 import { handleFor, payloadFrom, promptSummary, type TabProps } from '@/lib/agentDraft';
 import { Card, Check, Eyebrow, buttonClass, inputClass, linkButtonClass } from '@/components/agent/ui';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const labelClass = 'flex flex-col gap-1.5 text-[13px] font-medium';
 
@@ -30,7 +31,7 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
   const teamLine = teams.length
     ? teams.map((t) => {
       const others = t.members.filter((m) => m.id !== agent.id).map((m) => handleFor(m.name));
-      return `Team: ${t.leader_id === agent.id ? 'you lead' : 'you are in'} “${t.name}”${others.length ? ` with ${others.join(', ')}` : ''}. Mention a teammate to hand work over.`;
+      return tr('ui.agent.generalTab.teamValueNameValue2Mention', { value: t.leader_id === agent.id ? 'you lead' : 'you are in', name: t.name, value2: others.length ? ` with ${others.join(', ')}` : '' });
     }).join('\n')
     : '';
 
@@ -44,7 +45,7 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
       const res = await api.post<{ id: string }>('/agents', payload);
       if (res.data?.id) navigate(`/agents/${res.data.id}/general`);
     } catch (e) {
-      setError(errorMessage(e, 'Could not copy the agent.'));
+      setError(errorMessage(e, tr('ui.agent.generalTab.couldNotCopyTheAgent')));
     } finally {
       setBusy(false);
     }
@@ -64,30 +65,30 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
 
   return (
     <div className="flex flex-col gap-[18px]">
-      <Card title="Identity" description="How the agent shows up in chats, teams and the agent list.">
+      <Card title={tr('ui.agent.generalTab.identity')} description={tr('ui.agent.generalTab.howTheAgentShowsUp')}>
         <div className="grid grid-cols-1 gap-x-[18px] gap-y-3.5 md:grid-cols-2">
           <label htmlFor={ids.name} className={labelClass}>
-            Name
+            {tr('ui.agent.generalTab.name')}
             <input id={ids.name} value={draft.name} onChange={(e) => update({ name: e.target.value })} className={inputClass} />
           </label>
           <div className={labelClass}>
-            Mention name
+            {tr('ui.agent.generalTab.mentionName')}
             <div className="flex h-11 items-center rounded border border-dashed border-line px-3 font-mono text-[13px] font-normal text-fg-dim md:h-10">
               {handleFor(draft.name || agent.name)}
             </div>
-            <span className="text-[12px] font-normal text-fg-dim">Made from the name. Teammates use it to @mention the agent.</span>
+            <span className="text-[12px] font-normal text-fg-dim">{tr('ui.agent.generalTab.madeFromTheNameTeammates')}</span>
           </div>
           <label htmlFor={ids.desc} className={cn(labelClass, 'md:col-span-2')}>
-            Short description
+            {tr('ui.agent.generalTab.shortDescription')}
             <input id={ids.desc} value={draft.description} maxLength={300} onChange={(e) => update({ description: e.target.value })}
-              placeholder="What this agent is for, in one line" className={inputClass} />
-            <span className="text-[12px] font-normal text-fg-dim">Shown on the agent list, and to teammates deciding who to hand work to.</span>
+              placeholder={tr('ui.agent.generalTab.whatThisAgentIsFor')} className={inputClass} />
+            <span className="text-[12px] font-normal text-fg-dim">{tr('ui.agent.generalTab.shownOnTheAgentList')}</span>
           </label>
           <div className={cn(labelClass, 'md:col-span-2')}>
-            Thumbnail
+            {tr('ui.agent.generalTab.thumbnail')}
             <div className="flex flex-wrap items-center gap-3 font-normal">
               <AgentBadge name={draft.name || agent.name} avatar={{ emoji: draft.avatarEmoji, hue: draft.avatarHue }} size="lg" />
-              <div role="radiogroup" aria-label="Thumbnail colour" className="flex flex-wrap items-center gap-1.5">
+              <div role="radiogroup" aria-label={tr('ui.agent.generalTab.thumbnailColour')} className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
                   role="radio"
@@ -95,7 +96,7 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
                   onClick={() => update({ avatarHue: null })}
                   className={cn('h-11 rounded-md border px-2.5 text-[12px] md:h-7', draft.avatarHue === null ? 'border-fg text-fg' : 'border-line text-fg-dim hover:border-fg-dim')}
                 >
-                  Auto
+                  {tr('ui.agent.generalTab.auto')}
                 </button>
                 {AVATAR_HUES.map((hue) => (
                   <button
@@ -103,7 +104,7 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
                     type="button"
                     role="radio"
                     aria-checked={draft.avatarHue === hue}
-                    aria-label={`Colour ${AVATAR_HUES.indexOf(hue) + 1}`}
+                    aria-label={tr('ui.agent.generalTab.colourValue', { value: AVATAR_HUES.indexOf(hue) + 1 })}
                     onClick={() => update({ avatarHue: hue })}
                     style={{ background: `hsl(${hue} 65% 52%)` }}
                     className={cn('h-11 w-11 rounded-md border-2 md:h-7 md:w-7', draft.avatarHue === hue ? 'border-fg' : 'border-transparent')}
@@ -113,31 +114,31 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
               <input
                 value={draft.avatarEmoji}
                 onChange={(e) => update({ avatarEmoji: e.target.value.replace(/\p{ASCII}/gu, "").slice(0, 8) })}
-                aria-label="Thumbnail emoji"
-                placeholder="Emoji"
+                aria-label={tr('ui.agent.generalTab.thumbnailEmoji')}
+                placeholder={tr('ui.agent.generalTab.emoji')}
                 className={cn(inputClass, 'w-24 text-center')}
               />
             </div>
-            <span className="text-[12px] font-normal text-fg-dim">Shown in the chat list and its minimized rail. Leave the emoji empty to show the first letter.</span>
+            <span className="text-[12px] font-normal text-fg-dim">{tr('ui.agent.generalTab.shownInTheChatList')}</span>
           </div>
         </div>
       </Card>
 
-      <Card title="Model" description="Provider keys are set in Settings › Models and keys.">
+      <Card title={tr('ui.agent.generalTab.model')} description={tr('ui.agent.generalTab.providerKeysAreSetIn')}>
         <div className="grid grid-cols-1 gap-x-[18px] gap-y-3.5 md:grid-cols-2">
           <label htmlFor={ids.provider} className={labelClass}>
-            Provider
+            {tr('ui.agent.generalTab.provider')}
             <select id={ids.provider} value={draft.provider} onChange={(e) => changeProvider(e.target.value)} className={inputClass}>
-              <optgroup label="Model providers">
+              <optgroup label={tr('ui.agent.generalTab.modelProviders')}>
                 {[...new Set([...PROVIDERS, ...(isHarness(draft.provider) ? [] : [draft.provider])])].map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
               </optgroup>
-              <optgroup label="Coding agents on this computer">
+              <optgroup label={tr('ui.agent.generalTab.codingAgentsOnThisComputer')}>
                 {HARNESS_PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
               </optgroup>
             </select>
           </label>
           <div className={labelClass}>
-            <label htmlFor={ids.model}>Model</label>
+            <label htmlFor={ids.model}>{tr('ui.agent.generalTab.model')}</label>
             <ModelPicker id={ids.model} provider={draft.provider} value={draft.model} onChange={(model) => update({ model })} className="font-normal" />
           </div>
           {draft.provider === 'chatgpt' && <div className="md:col-span-2"><PlanNote provider={draft.provider} /></div>}
@@ -147,30 +148,30 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
             </div>
           )}
           <label htmlFor={ids.reasoning} className={labelClass}>
-            Reasoning
+            {tr('ui.agent.generalTab.reasoning')}
             <select id={ids.reasoning} value={draft.reasoning} onChange={(e) => update({ reasoning: e.target.value })} className={inputClass}>
-              <option value="">Provider default</option>
+              <option value="">{tr('ui.agent.generalTab.providerDefault')}</option>
               {REASONING_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
             </select>
-            <span className="text-[12px] font-normal text-fg-dim">How hard it thinks before answering. You can change it per chat too.</span>
+            <span className="text-[12px] font-normal text-fg-dim">{tr('ui.agent.generalTab.howHardItThinksBefore')}</span>
           </label>
         </div>
         <details className="mt-4">
-          <summary className="cursor-pointer text-[13px] text-fg-dim hover:text-fg">Advanced: temperature, max tokens, custom base URL</summary>
+          <summary className="cursor-pointer text-[13px] text-fg-dim hover:text-fg">{tr('ui.agent.generalTab.advancedTemperatureMaxTokensCustom')}</summary>
           <div className="mt-3 grid grid-cols-1 gap-x-[18px] gap-y-3.5 md:grid-cols-3">
             <label htmlFor={ids.temp} className={labelClass}>
-              Temperature {noTemperature ? '(not used)' : `· ${draft.temperature.toFixed(2)}`}
+              {tr('ui.agent.generalTab.temperatureValue', { value: noTemperature ? tr('ui.agent.generalTab.notUsed') : `· ${draft.temperature.toFixed(2)}` })}
               <input id={ids.temp} type="range" min={0} max={1} step={0.05} value={draft.temperature} disabled={noTemperature}
                 onChange={(e) => update({ temperature: Number(e.target.value) })}
                 className="mt-3 h-2 w-full cursor-pointer appearance-none rounded-full bg-panel-2 accent-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40" />
             </label>
             <label htmlFor={ids.max} className={labelClass}>
-              Max tokens
+              {tr('ui.agent.generalTab.maxTokens')}
               <input id={ids.max} inputMode="numeric" value={draft.maxTokens} onChange={(e) => update({ maxTokens: e.target.value.replace(/[^\d]/g, '') })}
-                placeholder="Provider default" className={cn(inputClass, 'font-normal')} />
+                placeholder={tr('ui.agent.generalTab.providerDefault')} className={cn(inputClass, 'font-normal')} />
             </label>
             <label htmlFor={ids.base} className={labelClass}>
-              Base URL
+              {tr('ui.agent.generalTab.baseUrl')}
               <input id={ids.base} value={draft.baseUrl} onChange={(e) => update({ baseUrl: e.target.value })}
                 placeholder={BASE_URLS[draft.provider] || 'https://…'} className={cn(inputClass, 'font-mono text-[12px] font-normal')} />
             </label>
@@ -178,52 +179,52 @@ export default function GeneralTab({ agent, draft, update, overview, catalog, re
         </details>
       </Card>
 
-      <Card title="Instructions" description="Your part of the system prompt.">
-        <label htmlFor={ids.prompt} className="sr-only">System prompt</label>
+      <Card title={tr('ui.agent.generalTab.instructions')} description={tr('ui.agent.generalTab.yourPartOfTheSystem')}>
+        <label htmlFor={ids.prompt} className="sr-only">{tr('ui.agent.generalTab.systemPrompt')}</label>
         <textarea id={ids.prompt} rows={10} value={draft.systemPrompt} onChange={(e) => update({ systemPrompt: e.target.value })}
-          placeholder="You are a helpful assistant that…"
+          placeholder={tr('ui.agent.generalTab.youAreAHelpfulAssistant')}
           className="w-full resize-y rounded border border-line bg-bg p-3 font-mono text-[12.5px] leading-relaxed text-fg placeholder:text-fg-dim focus:border-accent" />
-        <div className="mt-1.5 text-[12px] text-fg-dim">{words} {words === 1 ? 'word' : 'words'}</div>
+        <div className="mt-1.5 text-[12px] text-fg-dim">{words} {words === 1 ? tr('ui.agent.generalTab.word') : tr('ui.agent.generalTab.words')}</div>
       </Card>
 
       <Card
-        title="Memory"
-        description="Notes this agent keeps about you between chats."
-        aside={<Link to="/settings/memory" className={linkButtonClass}>See memories</Link>}
+        title={tr('ui.agent.generalTab.memory')}
+        description={tr('ui.agent.generalTab.notesThisAgentKeepsAbout')}
+        aside={<Link to="/settings/memory" className={linkButtonClass}>{tr('ui.agent.generalTab.seeMemories')}</Link>}
       >
         <div className="flex flex-col gap-4">
           <Check
             checked={draft.memoryReadGlobal}
             onChange={(memoryReadGlobal) => update({ memoryReadGlobal })}
-            label="Use your shared memories"
-            detail="Off for agents that shouldn't know personal details about you. It still keeps its own notes."
+            label={tr('ui.agent.generalTab.useYourSharedMemories')}
+            detail={tr('ui.agent.generalTab.offForAgentsThatShouldn')}
           />
           <Check
             checked={draft.memoryReadGlobal && draft.memorySaveGlobal}
             disabled={!draft.memoryReadGlobal}
             onChange={(memorySaveGlobal) => update({ memorySaveGlobal })}
-            label="Save new memories for all agents"
-            detail="Off keeps what it learns to itself. You can move any memory between agents in Settings › Memory."
+            label={tr('ui.agent.generalTab.saveNewMemoriesForAll')}
+            detail={tr('ui.agent.generalTab.offKeepsWhatItLearns')}
           />
         </div>
       </Card>
 
       <Card>
-        <Eyebrow>WHAT THE AGENT IS TOLD</Eyebrow>
+        <Eyebrow>{tr('ui.agent.generalTab.whatTheAgentIsTold')}</Eyebrow>
         <pre className="mt-3 whitespace-pre-wrap font-mono text-[12.5px] leading-relaxed text-fg">{promptSummary(draft, teamLine)}</pre>
-        <p className="mt-2.5 text-[12px] text-fg-dim">A summary of what every tab adds around your instructions. It updates as you edit.</p>
+        <p className="mt-2.5 text-[12px] text-fg-dim">{tr('ui.agent.generalTab.aSummaryOfWhatEvery')}</p>
       </Card>
 
       <Card tone="danger">
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="min-w-[240px] flex-1">
-            <h2 className="text-[15px] font-semibold">Copy or remove</h2>
-            <p className="mt-0.5 text-[13px] text-fg-dim">Deleting removes the agent from its teams. Past chats are kept.</p>
+            <h2 className="text-[15px] font-semibold">{tr('ui.agent.generalTab.copyOrRemove')}</h2>
+            <p className="mt-0.5 text-[13px] text-fg-dim">{tr('ui.agent.generalTab.deletingRemovesTheAgentFrom')}</p>
           </div>
-          <button type="button" onClick={() => void duplicate()} disabled={busy} className={buttonClass}>Duplicate</button>
-          <button type="button" onClick={exportFile} className={buttonClass}>Export as file</button>
+          <button type="button" onClick={() => void duplicate()} disabled={busy} className={buttonClass}>{tr('ui.agent.generalTab.duplicate')}</button>
+          <button type="button" onClick={exportFile} className={buttonClass}>{tr('ui.agent.generalTab.exportAsFile')}</button>
           {(agent.my_role || 'owner') === 'owner' && (
-            <button type="button" onClick={remove} className={cn(buttonClass, 'border-danger/60 text-danger-ink hover:bg-danger/10')}>Delete agent</button>
+            <button type="button" onClick={remove} className={cn(buttonClass, 'border-danger/60 text-danger-ink hover:bg-danger/10')}>{tr('ui.agent.generalTab.deleteAgent')}</button>
           )}
         </div>
         {error && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{error}</p>}

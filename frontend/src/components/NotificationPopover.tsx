@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useNotifications, type AppNotification } from '@/context/NotificationsContext';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 export function timeAgo(ms: number): string {
   const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -74,16 +75,16 @@ export default function NotificationPopover({ onClose, placement = 'below' }: {
     <div
       ref={ref}
       role="dialog"
-      aria-label="Notifications"
+      aria-label={tr('ui.notificationPopover.notifications')}
       className={cn(
         'w-[380px] max-w-[calc(100vw-24px)] overflow-hidden rounded-xl border border-line bg-panel shadow-panel',
         placement === 'below' ? 'absolute right-0 top-[46px]' : 'fixed bottom-14 left-3 z-[60]',
       )}
     >
       <div className="flex items-center justify-between border-b border-line px-3.5 py-3">
-        <span className="text-[14px] font-semibold">Notifications</span>
+        <span className="text-[14px] font-semibold">{tr('ui.notificationPopover.notifications')}</span>
         <button type="button" onClick={markAllRead} className="text-[12.5px] text-fg-dim hover:text-fg">
-          Mark all read
+          {tr('ui.notificationPopover.markAllRead')}
         </button>
       </div>
       {inbox.length > 0 && (
@@ -92,12 +93,12 @@ export default function NotificationPopover({ onClose, placement = 'below' }: {
           onClick={onClose}
           className="mx-2 mt-2 flex items-center gap-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2.5 text-[13px]"
         >
-          <span className="font-mono text-[10px] tracking-[0.1em] text-warn-ink">NEEDS YOU · {inbox.length}</span>
-          <span className="flex-1 truncate text-fg">Open your inbox to answer</span>
+          <span className="font-mono text-[10px] tracking-[0.1em] text-warn-ink">{tr('ui.notificationPopover.needsYouLength', { length: inbox.length })}</span>
+          <span className="flex-1 truncate text-fg">{tr('ui.notificationPopover.openYourInboxToAnswer')}</span>
         </Link>
       )}
       {recent.length === 0 ? (
-        <p className="px-4 py-8 text-center text-[13px] text-fg-dim">Nothing yet. Task results and approvals show up here.</p>
+        <p className="px-4 py-8 text-center text-[13px] text-fg-dim">{tr('ui.notificationPopover.nothingYetTaskResultsAnd')}</p>
       ) : (
         <ul className="max-h-[360px] overflow-y-auto p-1.5">
           {recent.map((n) => (
@@ -108,8 +109,8 @@ export default function NotificationPopover({ onClose, placement = 'below' }: {
         </ul>
       )}
       <div className="flex justify-between border-t border-line px-3.5 py-2.5 text-[12.5px]">
-        <Link to="/inbox" onClick={onClose} className="text-accent-ink hover:underline">Open inbox</Link>
-        <Link to="/notifications" onClick={onClose} className="text-fg-dim hover:text-fg">All notifications and settings</Link>
+        <Link to="/inbox" onClick={onClose} className="text-accent-ink hover:underline">{tr('ui.notificationPopover.openInbox')}</Link>
+        <Link to="/notifications" onClick={onClose} className="text-fg-dim hover:text-fg">{tr('ui.notificationPopover.allNotificationsAndSettings')}</Link>
       </div>
     </div>
   );

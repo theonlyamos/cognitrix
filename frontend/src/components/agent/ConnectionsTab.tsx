@@ -9,6 +9,7 @@ import type { TabProps, ToolLevel } from '@/lib/agentDraft';
 import { Card, Check, buttonClass, inputClass, linkButtonClass } from '@/components/agent/ui';
 import type { KnowledgeCollection } from '@/pages/Knowledge';
 import { cn } from '@/lib/utils';
+import { tr, trn } from '@/lib/i18n';
 
 const APP_LABEL: Record<string, string> = { telegram: 'Telegram', slack: 'Slack' };
 
@@ -23,7 +24,7 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
 
   useEffect(() => {
     listMcpServers().then((l) => setServers(Array.isArray(l?.servers) ? l.servers : [])).catch(() => setServers([]));
-    listCredentials().then(setCreds).catch((e) => { setCreds([]); setCredsError(errorMessage(e, "Couldn't load saved sign-ins.")); });
+    listCredentials().then(setCreds).catch((e) => { setCreds([]); setCredsError(errorMessage(e, tr('ui.agent.connectionsTab.couldnTLoadSavedSign'))); });
     listChannels().then((l) => setChannels(l.channels || [])).catch(() => setChannels([]));
     import('@/lib/api').then(({ api }) => api.get<{ id: string }[]>('/agents'))
       .then((r) => setFirstAgentId(r.data?.[0]?.id || '')).catch(() => {});
@@ -54,7 +55,7 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
       const saved = await saveChannel(c.kind, { agent_id: agent.id });
       setChannels((cur) => (cur || []).map((x) => (x.kind === c.kind ? saved : x)));
     } catch (e) {
-      setChannelError(errorMessage(e, 'Could not change the chat app.'));
+      setChannelError(errorMessage(e, tr('ui.agent.connectionsTab.couldNotChangeTheChat')));
     } finally {
       setChannelBusy('');
     }
@@ -62,13 +63,13 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
 
   return (
     <div className="flex flex-col gap-[18px]">
-      <Card title="Knowledge" description="Document collections this agent may search and quote from.">
+      <Card title={tr('ui.agent.connectionsTab.knowledge')} description={tr('ui.agent.connectionsTab.documentCollectionsThisAgentMay')}>
         <div className="overflow-hidden rounded-lg border border-line">
           {collections === null ? (
-            <p className="px-3.5 py-3 text-[13px] text-fg-dim">Loading…</p>
+            <p className="px-3.5 py-3 text-[13px] text-fg-dim">{tr('ui.agent.connectionsTab.loading')}</p>
           ) : collections.length === 0 ? (
             <p className="px-3.5 py-3 text-[13px] text-fg-dim">
-              No collections yet. <Link to="/knowledge" className="text-accent-ink hover:underline">Create one on the Knowledge page</Link>.
+              {tr('ui.agent.connectionsTab.noCollectionsYet')}{' '}<Link to="/knowledge" className="text-accent-ink hover:underline">{tr('ui.agent.connectionsTab.createOneOnTheKnowledge')}</Link>.
             </p>
           ) : collections.map((c) => (
             <div key={c.id} className="border-t border-line px-3.5 py-2.5 first:border-t-0">
@@ -76,19 +77,19 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
                 checked={draft.knowledge.includes(c.id)}
                 onChange={(on) => update({ knowledge: on ? [...draft.knowledge, c.id] : draft.knowledge.filter((id) => id !== c.id) })}
                 label={c.name}
-                detail={`${c.documents.length} document${c.documents.length === 1 ? '' : 's'}`}
+                detail={trn(c.documents.length, 'ui.count.documents_one', 'ui.count.documents_other')}
               />
             </div>
           ))}
         </div>
       </Card>
 
-      <Card title="Apps and MCP servers" description="Apps you connected and servers you added in Settings. Turn on the ones this agent may use.">
+      <Card title={tr('ui.agent.connectionsTab.appsAndMcpServers')} description={tr('ui.agent.connectionsTab.appsYouConnectedAndServers')}>
         <div className="overflow-hidden rounded-lg border border-line">
           {servers === null ? (
-            <p className="px-3.5 py-3 text-[13px] text-fg-dim">Loading…</p>
+            <p className="px-3.5 py-3 text-[13px] text-fg-dim">{tr('ui.agent.connectionsTab.loading')}</p>
           ) : servers.length === 0 && missing.length === 0 ? (
-            <p className="px-3.5 py-3 text-[13px] text-fg-dim">No apps or MCP servers yet.</p>
+            <p className="px-3.5 py-3 text-[13px] text-fg-dim">{tr('ui.agent.connectionsTab.noAppsOrMcpServers')}</p>
           ) : (
             <>
               {servers.map((s) => {
@@ -106,7 +107,7 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
                         <span className={cn('block text-[13.5px]', !s.catalog_id && 'font-mono')}>
                           {appLabel(s.catalog_id, s.name)}{' '}
                           <span className="font-sans text-[12px] text-fg-dim">
-                            {s.catalog_id ? (s.account || 'app') : `${s.shared ? 'shared' : 'yours'} · ${s.transport}`}
+                            {s.catalog_id ? (s.account || tr('ui.agent.connectionsTab.app')) : `${s.shared ? 'shared' : 'yours'} · ${s.transport}`}
                           </span>
                         </span>
                         {s.description && <span className="block truncate text-[12.5px] text-fg-dim">{s.description}</span>}
@@ -129,57 +130,57 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
               })}
               {missing.map((r) => (
                 <div key={r} className="flex items-center justify-between gap-2 border-t border-line px-3.5 py-3 text-[13px] first:border-t-0">
-                  <span className="text-fg-dim"><span className="font-mono">{r}</span> isn't available any more</span>
-                  <button type="button" onClick={() => update({ mcpServers: selected.filter((x) => x !== r) })} className="text-danger-ink hover:underline">Remove</button>
+                  <span className="text-fg-dim"><span className="font-mono">{r}</span>{' '}{tr('ui.agent.connectionsTab.isnTAvailableAnyMore')}</span>
+                  <button type="button" onClick={() => update({ mcpServers: selected.filter((x) => x !== r) })} className="text-danger-ink hover:underline">{tr('ui.agent.connectionsTab.remove')}</button>
                 </div>
               ))}
             </>
           )}
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <Link to="/settings/apps" className={buttonClass}>+ Connect an app</Link>
-          <Link to="/settings/access#mcp-servers" className={linkButtonClass}>Add an MCP server</Link>
-          <span className="text-[12.5px] text-fg-dim">Tools that only read run on their own. Anything that changes or sends something asks first, unless you change it.</span>
+          <Link to="/settings/apps" className={buttonClass}>{tr('ui.agent.connectionsTab.connectAnApp')}</Link>
+          <Link to="/settings/access#mcp-servers" className={linkButtonClass}>{tr('ui.agent.connectionsTab.addAnMcpServer')}</Link>
+          <span className="text-[12.5px] text-fg-dim">{tr('ui.agent.connectionsTab.toolsThatOnlyReadRun')}</span>
         </div>
       </Card>
 
-      <Card title="Saved sign-ins">
+      <Card title={tr('ui.agent.connectionsTab.savedSignIns')}>
         <p className="-mt-2 text-[13px] text-fg-dim">
-          The agent uses these by name with the Http Request tool. It never sees the secret, and each one only works on its own sites.
+          {tr('ui.agent.connectionsTab.theAgentUsesTheseBy')}
         </p>
-        <div className="mt-3.5 flex flex-col gap-2" role="radiogroup" aria-label="Which saved sign-ins">
+        <div className="mt-3.5 flex flex-col gap-2" role="radiogroup" aria-label={tr('ui.agent.connectionsTab.whichSavedSignIns')}>
           <label className="flex cursor-pointer items-center gap-2.5 text-[14px]">
             <input type="radio" name="cred-scope" checked={allowed === null} onChange={() => update({ credentials: null })} className="h-4 w-4 accent-[var(--accent)]" />
-            All of your saved sign-ins
+            {tr('ui.agent.connectionsTab.allOfYourSavedSign')}
           </label>
           <label className="flex cursor-pointer items-center gap-2.5 text-[14px]">
             <input type="radio" name="cred-scope" checked={allowed !== null} onChange={() => update({ credentials: allowed ?? [] })} className="h-4 w-4 accent-[var(--accent)]" />
-            Only the ones I pick
+            {tr('ui.agent.connectionsTab.onlyTheOnesIPick')}
           </label>
         </div>
         {allowed !== null && (
           <div className="mt-3 overflow-hidden rounded-lg border border-line">
             {creds === null ? (
-              <p className="px-3.5 py-3 text-[13px] text-fg-dim">Loading…</p>
+              <p className="px-3.5 py-3 text-[13px] text-fg-dim">{tr('ui.agent.connectionsTab.loading')}</p>
             ) : creds.length === 0 ? (
-              <p className="px-3.5 py-3 text-[13px] text-fg-dim">{credsError || 'No saved sign-ins yet.'}</p>
+              <p className="px-3.5 py-3 text-[13px] text-fg-dim">{credsError || tr('ui.agent.connectionsTab.noSavedSignInsYet')}</p>
             ) : creds.map((c) => (
               <label key={c.id} className="grid cursor-pointer grid-cols-[22px_minmax(0,1fr)] items-center gap-x-3 border-t border-line px-3.5 py-2.5 first:border-t-0 sm:grid-cols-[22px_200px_minmax(0,1fr)_80px]">
                 <input type="checkbox" checked={allowed.includes(c.name)} onChange={(e) => toggleCred(c.name, e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
                 <span className="truncate font-mono text-[13px]">{c.name}</span>
-                <span className="col-start-2 truncate font-mono text-[12px] text-fg-dim sm:col-start-auto">{c.allowed_hosts.join(', ') || 'no sites'}</span>
-                <span className="hidden text-[12.5px] text-fg-dim sm:block">{c.kind === 'basic' ? 'password' : c.kind}</span>
+                <span className="col-start-2 truncate font-mono text-[12px] text-fg-dim sm:col-start-auto">{c.allowed_hosts.join(', ') || tr('ui.agent.connectionsTab.noSites')}</span>
+                <span className="hidden text-[12.5px] text-fg-dim sm:block">{c.kind === 'basic' ? tr('ui.agent.connectionsTab.password') : c.kind}</span>
               </label>
             ))}
           </div>
         )}
-        <Link to="/settings/access" className={cn(linkButtonClass, 'mt-3 inline-block')}>Manage saved sign-ins</Link>
+        <Link to="/settings/access" className={cn(linkButtonClass, 'mt-3 inline-block')}>{tr('ui.agent.connectionsTab.manageSavedSignIns')}</Link>
       </Card>
 
-      <Card title="Chat apps" description="Talk to an agent from your phone.">
+      <Card title={tr('ui.agent.connectionsTab.chatApps')} description={tr('ui.agent.connectionsTab.talkToAnAgentFrom')}>
         <div className="overflow-hidden rounded-lg border border-line">
           {channels === null ? (
-            <p className="px-3.5 py-3 text-[13px] text-fg-dim">Loading…</p>
+            <p className="px-3.5 py-3 text-[13px] text-fg-dim">{tr('ui.agent.connectionsTab.loading')}</p>
           ) : channels.map((c) => {
             const target = c.agent_id || firstAgentId;
             const here = target === agent.id;
@@ -192,10 +193,10 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
                 <span className="min-w-[200px] flex-1 text-[13px] text-fg-dim">{state}</span>
                 {c.configured && !here ? (
                   <button type="button" disabled={channelBusy === c.kind} onClick={() => void pointHere(c)} className={buttonClass}>
-                    Use this agent
+                    {tr('ui.agent.connectionsTab.useThisAgent')}
                   </button>
                 ) : (
-                  <Link to="/settings/chat-apps" className={buttonClass}>{c.configured ? 'Settings' : 'Set up'}</Link>
+                  <Link to="/settings/chat-apps" className={buttonClass}>{c.configured ? tr('ui.agent.connectionsTab.settings') : tr('ui.agent.connectionsTab.setUp')}</Link>
                 )}
               </div>
             );
@@ -203,7 +204,7 @@ export default function ConnectionsTab({ agent, draft, update }: TabProps) {
         </div>
         {channelError && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{channelError}</p>}
         {channels?.some((c) => c.configured) && (
-          <p className="mt-2.5 text-[12.5px] text-fg-dim">“Use this agent” switches the app right away; it isn't part of Save.</p>
+          <p className="mt-2.5 text-[12.5px] text-fg-dim">{tr('ui.agent.connectionsTab.useThisAgentSwitchesThe')}</p>
         )}
       </Card>
     </div>
@@ -215,11 +216,11 @@ type AppToolLevel = 'allow' | 'told' | 'ask' | 'handoff' | 'deny';
 // "When I ask": runs in a chat you are in, asks when the agent works on its
 // own. "Hand off": never runs; what was prepared goes to your Inbox.
 const LEVELS: { value: AppToolLevel; label: string }[] = [
-  { value: 'allow', label: 'Allow' },
-  { value: 'told', label: 'When I ask' },
-  { value: 'ask', label: 'Ask' },
-  { value: 'handoff', label: 'Hand off' },
-  { value: 'deny', label: 'Off' },
+  { value: 'allow', get label() { return tr('ui.agent.connectionsTab.allow'); } },
+  { value: 'told', get label() { return tr('ui.agent.connectionsTab.whenIAsk'); } },
+  { value: 'ask', get label() { return tr('ui.agent.connectionsTab.ask'); } },
+  { value: 'handoff', get label() { return tr('ui.agent.connectionsTab.handOff'); } },
+  { value: 'deny', get label() { return tr('ui.agent.connectionsTab.off'); } },
 ];
 const isAppLevel = (v: unknown): v is AppToolLevel => LEVELS.some((l) => l.value === v);
 
@@ -238,7 +239,7 @@ function ToolPermissions({ server, label, levels, onChange }: {
     if (!open || result) return;
     listMcpServerTools(server.ref)
       .then(setResult)
-      .catch((e) => setResult({ connected: false, tools: [], error: errorMessage(e, "Couldn't load the tools.") }));
+      .catch((e) => setResult({ connected: false, tools: [], error: errorMessage(e, tr('ui.agent.connectionsTab.couldnTLoadTheTools')) }));
   }, [open, result, server.ref]);
 
   const set = (tool: string, fallback: 'allow' | 'ask', value: AppToolLevel) => {
@@ -253,18 +254,18 @@ function ToolPermissions({ server, label, levels, onChange }: {
   return (
     <div className="border-t border-line bg-bg px-3.5 py-2.5">
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="text-[12.5px] text-accent-ink hover:underline">
-        {open ? 'Hide' : 'Choose'} what {label} tools may do{custom ? ` · ${custom} changed` : ''}
+        {open ? tr('ui.agent.connectionsTab.hide') : tr('ui.agent.connectionsTab.choose')}{' '}{tr('ui.agent.connectionsTab.what')}{' '}{label}{' '}{tr('ui.agent.connectionsTab.toolsMayDo')}{custom ? tr('ui.agent.connectionsTab.customChanged', { custom }) : ''}
       </button>
       {open && (
         !result ? (
-          <p className="mt-2 text-[12.5px] text-fg-dim">Connecting…</p>
+          <p className="mt-2 text-[12.5px] text-fg-dim">{tr('ui.agent.connectionsTab.connecting')}</p>
         ) : !result.connected ? (
           <p role="alert" className="mt-2 text-[12.5px] text-warn-ink">
             {result.error}{' '}
-            {(server.catalog_id || server.auth_type === 'oauth') && <Link to="/settings/apps" className="text-accent-ink hover:underline">Connected apps</Link>}
+            {(server.catalog_id || server.auth_type === 'oauth') && <Link to="/settings/apps" className="text-accent-ink hover:underline">{tr('ui.agent.connectionsTab.connectedApps')}</Link>}
           </p>
         ) : result.tools.length === 0 ? (
-          <p className="mt-2 text-[12.5px] text-fg-dim">This server has no tools.</p>
+          <p className="mt-2 text-[12.5px] text-fg-dim">{tr('ui.agent.connectionsTab.thisServerHasNoTools')}</p>
         ) : (
           <ul className="mt-2 divide-y divide-line">
             {result.tools.map((t) => {
@@ -277,11 +278,11 @@ function ToolPermissions({ server, label, levels, onChange }: {
                   <div className="min-w-0 flex-1 basis-[200px]">
                     <div className="font-mono text-[12.5px]">{t.name}</div>
                     <div className="truncate text-[11.5px] text-fg-dim" title={t.description}>
-                      {t.read_only ? 'Reads only' : fallback === 'ask' ? 'Changes or sends something' : 'Makes changes'}
+                      {t.read_only ? tr('ui.agent.connectionsTab.readsOnly') : fallback === 'ask' ? tr('ui.agent.connectionsTab.changesOrSendsSomething') : tr('ui.agent.connectionsTab.makesChanges')}
                       {t.description ? ` · ${t.description}` : ''}
                     </div>
                   </div>
-                  <select aria-label={`${t.name} permission`} value={value}
+                  <select aria-label={tr('ui.agent.connectionsTab.namePermission', { name: t.name })} value={value}
                     onChange={(e) => set(tool, fallback, e.target.value as AppToolLevel)}
                     className={cn(inputClass, 'h-10 w-[150px] px-2 text-[13px] md:h-9', value === 'deny' && 'text-danger-ink')}>
                     {LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}

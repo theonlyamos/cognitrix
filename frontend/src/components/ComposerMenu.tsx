@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { REASONING_LEVELS, reasoningLabel } from '@/lib/reasoning';
 import { cn } from '@/lib/utils';
 import { composerBtn, composerDanger, composerIconBtn, composerPopover, composerWarn } from '@/components/composerStyles';
+import { tr } from '@/lib/i18n';
 
 const LEVELS = [{ value: '', label: 'default' }, ...REASONING_LEVELS.map((l) => ({ value: l.value, label: l.label.toLowerCase() }))];
 
@@ -92,10 +93,10 @@ export default function ComposerMenu(p: Props) {
           ref={buttonRef}
           type="button"
           onClick={() => setOpen((v) => !v)}
-          aria-label="More options"
+          aria-label={tr('ui.composerMenu.moreOptions')}
           aria-haspopup="menu"
           aria-expanded={open}
-          title="Attach, run as task, swarm, auto-approve, incognito, reasoning"
+          title={tr('ui.composerMenu.attachRunAsTaskSwarm')}
           className={cn(composerIconBtn, open && 'bg-panel-2 text-fg')}
         >
           <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={cn('transition-transform', open && 'rotate-45')}><path d="M12 5v14M5 12h14" /></svg>
@@ -105,13 +106,13 @@ export default function ComposerMenu(p: Props) {
             <div aria-hidden className="fixed inset-0 z-40 bg-black/40 md:hidden" onClick={() => setOpen(false)} />
             <div
               role="menu"
-              aria-label="Message options"
+              aria-label={tr('ui.composerMenu.messageOptions')}
               className={cn(composerPopover, 'md:w-80')}
             >
               <div aria-hidden className="mx-auto mb-2 h-1 w-9 rounded-full bg-line md:hidden" />
               <button type="button" role="menuitem" className={item} onClick={() => { setOpen(false); p.onAttach(); }}>
                 <ClipIcon />
-                <span className="min-w-0 flex-1">Attach files<span className={sub}>Images, PDFs, text, code</span></span>
+                <span className="min-w-0 flex-1">{tr('ui.composerMenu.attachFiles')}<span className={sub}>{tr('ui.composerMenu.imagesPdfsTextCode')}</span></span>
               </button>
               <button
                 type="button"
@@ -119,38 +120,38 @@ export default function ComposerMenu(p: Props) {
                 className={item}
                 disabled={p.runTaskDisabled}
                 title={p.runTaskTitle}
-                aria-label="Run as task"
+                aria-label={tr('ui.composerMenu.runAsTask')}
                 onClick={() => { setOpen(false); p.onRunTask(); }}
               >
                 <TaskIcon />
-                <span className="min-w-0 flex-1">Run as task<span className={sub}>Saved task with step tracking</span></span>
+                <span className="min-w-0 flex-1">{tr('ui.composerMenu.runAsTask')}<span className={sub}>{tr('ui.composerMenu.savedTaskWithStepTracking')}</span></span>
               </button>
               <div className="mx-1 my-1 h-px bg-line" />
               <button
                 type="button"
                 role="menuitemcheckbox"
                 aria-checked={p.bypass}
-                aria-label="Auto-approve"
-                title="Auto-approve tool calls for this browser (skips the approval prompt). Use with care."
+                aria-label={tr('ui.composerMenu.autoApprove')}
+                title={tr('ui.composerMenu.autoApproveToolCallsFor')}
                 className={item}
                 onClick={p.onToggleBypass}
               >
                 <BoltIcon />
-                <span className="min-w-0 flex-1">Auto-approve<span className={sub}>Skip approval prompts in this browser</span></span>
+                <span className="min-w-0 flex-1">{tr('ui.composerMenu.autoApprove')}<span className={sub}>{tr('ui.composerMenu.skipApprovalPromptsInThis')}</span></span>
                 <Switch on={p.bypass} tone="danger" />
               </button>
               <button
                 type="button"
                 role="menuitemcheckbox"
                 aria-checked={p.incognito}
-                aria-label="Incognito"
+                aria-label={tr('ui.composerMenu.incognito')}
                 title={p.incognitoTitle}
                 disabled={p.incognitoDisabled}
                 className={item}
                 onClick={p.onToggleIncognito}
               >
                 <EyeOffIcon />
-                <span className="min-w-0 flex-1">Incognito<span className={sub}>New chats only, nothing remembered</span></span>
+                <span className="min-w-0 flex-1">{tr('ui.composerMenu.incognito')}<span className={sub}>{tr('ui.composerMenu.newChatsOnlyNothingRemembered')}</span></span>
                 <Switch on={p.incognito} tone="warn" />
               </button>
               {p.swarm && (
@@ -158,13 +159,13 @@ export default function ComposerMenu(p: Props) {
                   type="button"
                   role="menuitemcheckbox"
                   aria-checked={p.swarm.on}
-                  aria-label="Swarm"
-                  title="The agent splits the job across several workers that run at the same time, then gives you one result. Uses more tokens."
+                  aria-label={tr('ui.composerMenu.swarm')}
+                  title={tr('ui.composerMenu.theAgentSplitsTheJob')}
                   className={item}
                   onClick={p.swarm.onToggle}
                 >
                   <SwarmIcon />
-                  <span className="min-w-0 flex-1">Swarm<span className={sub}>Split the job across parallel workers</span></span>
+                  <span className="min-w-0 flex-1">{tr('ui.composerMenu.swarm')}<span className={sub}>{tr('ui.composerMenu.splitTheJobAcrossParallel')}</span></span>
                   <Switch on={p.swarm.on} tone="accent" />
                 </button>
               )}
@@ -173,27 +174,27 @@ export default function ComposerMenu(p: Props) {
                   type="button"
                   role="menuitemcheckbox"
                   aria-checked={p.sandbox.on}
-                  aria-label="Run in sandbox"
+                  aria-label={tr('ui.composerMenu.runInSandbox')}
                   title={p.sandbox.available
-                    ? "Run code, tests and file changes in the agent's sandboxed computer instead of this computer."
-                    : "The sandboxed computer is off. Turn it on in Settings, Computer."}
+                    ? tr('ui.composerMenu.runCodeTestsAndFile')
+                    : tr('ui.composerMenu.theSandboxedComputerIsOff')}
                   disabled={!p.sandbox.available && !p.sandbox.on}
                   className={item}
                   onClick={p.sandbox.onToggle}
                 >
                   <BoxIcon />
-                  <span className="min-w-0 flex-1">Run in sandbox<span className={sub}>Code and tests run on the agent's computer</span></span>
+                  <span className="min-w-0 flex-1">{tr('ui.composerMenu.runInSandbox')}<span className={sub}>{tr('ui.composerMenu.codeAndTestsRunOn')}</span></span>
                   <Switch on={p.sandbox.on} tone="accent" />
                 </button>
               )}
               <div className="mx-1 my-1 h-px bg-line" />
-              <div title="How hard the model thinks before answering. Default uses the level set on the agent.">
+              <div title={tr('ui.composerMenu.howHardTheModelThinks')}>
                 <div className="flex items-center gap-2.5 px-2.5 pb-1.5 pt-2 text-[14px] text-fg md:text-[13px]">
                   <ClockIcon />
-                  <span className="flex-1">Reasoning</span>
-                  <span className="font-mono text-[11px] text-accent-ink">{p.reasoning ? reasoningLabel(p.reasoning).toLowerCase() : 'default'}</span>
+                  <span className="flex-1">{tr('ui.composerMenu.reasoning')}</span>
+                  <span className="font-mono text-[11px] text-accent-ink">{p.reasoning ? reasoningLabel(p.reasoning).toLowerCase() : tr('ui.composerMenu.default')}</span>
                 </div>
-                <div role="radiogroup" aria-label="Reasoning level" className="flex flex-wrap gap-1 px-2.5 pb-2 md:pl-[2.1rem]">
+                <div role="radiogroup" aria-label={tr('ui.composerMenu.reasoningLevel')} className="flex flex-wrap gap-1 px-2.5 pb-2 md:pl-[2.1rem]">
                   {LEVELS.map((l) => {
                     const on = l.value === p.reasoning;
                     return (
@@ -220,7 +221,7 @@ export default function ComposerMenu(p: Props) {
       </div>
       {p.children}
       {p.reasoning && (
-        <button type="button" onClick={() => setOpen(true)} title={`Reasoning: ${reasoningLabel(p.reasoning).toLowerCase()}. Click to change it.`} aria-label={`Reasoning ${reasoningLabel(p.reasoning).toLowerCase()}. Change`} className={cn(composerBtn)}>
+        <button type="button" onClick={() => setOpen(true)} title={tr('ui.composerMenu.reasoningReasoninglabelClickToChange', { reasoningLabel: reasoningLabel(p.reasoning).toLowerCase() })} aria-label={tr('ui.composerMenu.reasoningReasoninglabelChange', { reasoningLabel: reasoningLabel(p.reasoning).toLowerCase() })} className={cn(composerBtn)}>
           <ClockIcon size={15} />
           <span className="hidden sm:inline">{reasoningLabel(p.reasoning)}</span>
         </button>
@@ -229,12 +230,12 @@ export default function ComposerMenu(p: Props) {
         <button
           type="button"
           onClick={p.swarm.onToggle}
-          title="Swarm is on: the agent splits the job across parallel workers. Click to turn it off."
-          aria-label="Turn off swarm"
+          title={tr('ui.composerMenu.swarmIsOnTheAgent')}
+          aria-label={tr('ui.composerMenu.turnOffSwarm')}
           className={cn(composerBtn, 'text-accent-ink')}
         >
           <SwarmIcon size={15} />
-          <span className="hidden sm:inline">Swarm</span>
+          <span className="hidden sm:inline">{tr('ui.composerMenu.swarm')}</span>
         </button>
       )}
       {p.sandbox?.on && (
@@ -242,27 +243,27 @@ export default function ComposerMenu(p: Props) {
           type="button"
           onClick={p.sandbox.onToggle}
           title={p.sandbox.available
-            ? 'Run in sandbox is on: code, tests and file changes happen in the agent\'s sandboxed computer. Click to turn it off.'
-            : 'Run in sandbox is on, but the sandboxed computer is off (Settings, Computer). Click to turn it off.'}
-          aria-label="Turn off run in sandbox"
+            ? tr('ui.composerMenu.runInSandboxIsOn')
+            : tr('ui.composerMenu.runInSandboxIsOn_1513')}
+          aria-label={tr('ui.composerMenu.turnOffRunInSandbox')}
           className={cn(composerBtn, 'text-accent-ink', !p.sandbox.available && composerWarn)}
         >
           <BoxIcon size={15} />
-          <span className="hidden sm:inline">Sandbox</span>
+          <span className="hidden sm:inline">{tr('ui.composerMenu.sandbox')}</span>
         </button>
       )}
       {p.bypass && (
-        <button type="button" onClick={p.onToggleBypass} title="Auto-approve is on: tool calls run without asking. Click to turn it off." aria-label="Turn off auto-approve" className={cn(composerIconBtn, composerDanger)}>
+        <button type="button" onClick={p.onToggleBypass} title={tr('ui.composerMenu.autoApproveIsOnTool')} aria-label={tr('ui.composerMenu.turnOffAutoApprove')} className={cn(composerIconBtn, composerDanger)}>
           <BoltIcon size={15} />
         </button>
       )}
       {p.incognito && (
         p.incognitoDisabled ? (
-          <span title={p.incognitoTitle} aria-label="Incognito chat" role="img" className={cn(composerIconBtn, composerWarn, 'hover:bg-warn-ink/10')}>
+          <span title={p.incognitoTitle} aria-label={tr('ui.composerMenu.incognitoChat')} role="img" className={cn(composerIconBtn, composerWarn, 'hover:bg-warn-ink/10')}>
             <EyeOffIcon size={15} />
           </span>
         ) : (
-          <button type="button" onClick={p.onToggleIncognito} title="Incognito is on. Click to turn it off." aria-label="Turn off incognito" className={cn(composerIconBtn, composerWarn)}>
+          <button type="button" onClick={p.onToggleIncognito} title={tr('ui.composerMenu.incognitoIsOnClickTo')} aria-label={tr('ui.composerMenu.turnOffIncognito')} className={cn(composerIconBtn, composerWarn)}>
             <EyeOffIcon size={15} />
           </button>
         )

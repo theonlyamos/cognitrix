@@ -1,2 +1,3 @@
+import { dateLocale } from '@/lib/i18n';
 /** Server times are naive UTC ('YYYY-MM-DD HH:MM:SS'); parse with an explicit Z. */
-export const utcToLocal = (s: string) => new Date(s.replace(' ', 'T') + 'Z').toLocaleString();
+export const utcToLocal = (s: string) => new Date(s.replace(' ', 'T') + 'Z').toLocaleString(dateLocale());

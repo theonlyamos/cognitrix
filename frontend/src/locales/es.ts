@@ -1,4 +1,5 @@
 import type { Messages } from './en';
+import ui from './ui.es';
 
 const es: Messages = {
   'nav.workspace': 'ESPACIO DE TRABAJO',
@@ -40,12 +41,13 @@ const es: Messages = {
   'settings.section.appearance': 'Apariencia',
   'settings.section.models': 'Modelos y claves',
   'settings.section.usage': 'Uso',
+  'settings.section.swarms': 'Enjambres',
   'settings.section.memory': 'Memoria',
   'settings.section.voice': 'Voz',
   'settings.section.apps': 'Aplicaciones conectadas',
   'settings.section.access': 'Acceso de los agentes',
   'settings.section.chat-apps': 'Aplicaciones de chat',
-  'settings.section.swarms': 'Enjambres',
+  'settings.section.email': 'Correo de los agentes',
   'settings.section.people': 'Personas',
   'settings.section.audit': 'Registro de actividad',
   'settings.section.skills': 'Habilidades',
@@ -133,6 +135,8 @@ const es: Messages = {
   'reset.save': 'Guardar la contraseña nueva',
   'reset.saving': 'Guardando…',
   'reset.failed': 'No se pudo cambiar la contraseña.',
+
+  ...ui,
 };
 
 export default es;

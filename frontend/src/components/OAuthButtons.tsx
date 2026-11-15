@@ -4,6 +4,7 @@ import { api, API_BASE } from '@/lib/api';
 import { useUser } from '@/context/AppContext';
 import { desktop, isDesktop } from '@/lib/desktop';
 import { setToken } from '@/lib/session';
+import { tr } from '@/lib/i18n';
 
 type Provider = 'google' | 'github';
 
@@ -90,9 +91,9 @@ export default function OAuthButtons({ mode }: { mode: 'signin' | 'signup' }) {
           return;
         }
       }
-      if (!cancelled.current) setError('Sign-in timed out. Please try again.');
+      if (!cancelled.current) setError(tr('ui.oAuthButtons.signInTimedOutPlease'));
     } catch {
-      setError(`Couldn't sign in with ${LABELS[provider]}. Please try again.`);
+      setError(tr('ui.oAuthButtons.couldnTSignInWith', { item: LABELS[provider] }));
     } finally {
       setWaiting(null);
     }
@@ -114,16 +115,16 @@ export default function OAuthButtons({ mode }: { mode: 'signin' | 'signup' }) {
               className="flex h-11 w-full items-center justify-center gap-2.5 rounded-md border border-line bg-panel text-[14px] font-medium transition-colors hover:bg-panel-2 disabled:opacity-60"
             >
               <ProviderIcon provider={p} />
-              {waiting === p ? `Waiting for ${LABELS[p]}…` : `${verb} with ${LABELS[p]}`}
+              {waiting === p ? tr('ui.oAuthButtons.waitingForItem', { item: LABELS[p] }) : tr('ui.oAuthButtons.verbWithItem', { verb, item: LABELS[p] })}
             </button>
           ))}
         </div>
       )}
       {waiting && (
         <p role="status" className="mt-2 text-[12.5px] text-fg-dim">
-          Finish signing in in your browser, then come back here.{' '}
+          {tr('ui.oAuthButtons.finishSigningInInYour')}{' '}
           <button type="button" className="text-accent-ink hover:underline" onClick={() => { cancelled.current = true; setWaiting(null); }}>
-            Cancel
+            {tr('ui.oAuthButtons.cancel')}
           </button>
         </p>
       )}
@@ -132,7 +133,7 @@ export default function OAuthButtons({ mode }: { mode: 'signin' | 'signup' }) {
       )}
       {providers.length > 0 && (
         <div className="mt-6 flex items-center gap-3 font-mono text-[10.5px] tracking-[0.14em] text-fg-dim">
-          <span className="h-px flex-1 bg-line" /> OR WITH EMAIL <span className="h-px flex-1 bg-line" />
+          <span className="h-px flex-1 bg-line" />{' '}{tr('ui.oAuthButtons.orWithEmail')}{' '}<span className="h-px flex-1 bg-line" />
         </div>
       )}
     </div>

@@ -6,6 +6,7 @@ import { ThemeNotice } from '@/components/ThemeNotice';
 import { SignInNeededNotice, signInNeeded } from '@/components/SafetyNotices';
 import type { TranscriptEntry } from '@/lib/transcript';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const MarkdownMessage = lazy(() => import('@/components/MarkdownMessage'));
 
@@ -36,7 +37,7 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
                   className={cn(GUTTER, isUser ? 'text-accent-ink' : 'text-fg-dim')}
                   title={isUser ? undefined : speaker(e.kind === 'assistant' ? e.name : undefined)}
                 >
-                  {isUser ? 'YOU' : speaker(e.name)}
+                  {isUser ? tr('ui.transcriptView.you') : speaker(e.name)}
                 </div>
                 <div className="min-w-0">
                   {isUser ? (
@@ -87,10 +88,10 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
                             <span className="text-fg-dim" aria-hidden>·</span>
                           )}
                           {(tool.status === 'done' || tool.status === 'error') && (
-                            <span className="sr-only">{tool.status === 'error' ? 'error' : 'done'}</span>
+                            <span className="sr-only">{tool.status === 'error' ? tr('ui.transcriptView.error') : tr('ui.transcriptView.done')}</span>
                           )}
                           <span>{tool.name.replace(/_/g, ' ')}</span>
-                          {tool.status === 'running' && <span className="text-fg-dim">running…</span>}
+                          {tool.status === 'running' && <span className="text-fg-dim">{tr('ui.transcriptView.running')}</span>}
                         </summary>
                         <div className="mt-1 space-y-2 rounded border border-line bg-panel-2 p-2">
                           {tool.args && tool.args !== '{}' && (
@@ -120,7 +121,7 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
           case 'tool_result':
             return (
               <div key={i} className={ROW}>
-                <div className={cn(GUTTER, 'text-fg-dim')}>TOOL</div>
+                <div className={cn(GUTTER, 'text-fg-dim')}>{tr('ui.transcriptView.tool')}</div>
                 <details className="min-w-0 font-mono text-[11px]">
                   <summary className="cursor-pointer truncate text-fg-dim">{(e.content.split('\n')[0] || 'result').slice(0, 120)}</summary>
                   <pre className="mt-1 max-h-64 overflow-y-auto overflow-x-auto whitespace-pre-wrap break-words rounded border border-line bg-panel-2 p-2 text-fg-dim">{e.content}</pre>
@@ -159,7 +160,7 @@ export function TranscriptView({ entries, live }: { entries: TranscriptEntry[]; 
       {live && (
         <div className="flex items-center gap-2.5 px-4 py-3 font-mono text-[12px] text-fg-dim">
           <span className="think-bars"><i /><i /><i /><i /></span>
-          working…
+          {tr('ui.transcriptView.working')}
         </div>
       )}
     </div>

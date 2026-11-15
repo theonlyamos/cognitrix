@@ -4,6 +4,7 @@ import { ArtworkScene } from '@/components/ThemeArtwork';
 import { cn } from '@/lib/utils';
 import { avatarEmoji, avatarHue, type AgentAvatar } from '@/lib/agentAvatar';
 import { agentModel, teamLine, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
+import { tr } from '@/lib/i18n';
 
 /** Square thumbnail for agents and teams (teams get a dashed edge): the first
  *  letter, or the agent's emoji, on its own colour. */
@@ -86,24 +87,24 @@ export function StartChat({
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col px-4 py-10 sm:px-6">
       <ArtworkScene className="-mx-2 mb-5 h-[120px] sm:h-[150px]" />
-      <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">&gt;_ new chat</p>
-      <h2 className="mt-3 text-2xl font-bold tracking-tight">Who do you want to talk to?</h2>
-      <p className="mt-2 text-fg-dim">Each chat is with one agent or team. You can start another chat with someone else at any time.</p>
+      <p className="font-mono text-[12px] tracking-[0.04em] text-accent-ink">{tr('ui.startChat.newChat')}</p>
+      <h2 className="mt-3 text-2xl font-bold tracking-tight">{tr('ui.startChat.whoDoYouWantTo')}</h2>
+      <p className="mt-2 text-fg-dim">{tr('ui.startChat.eachChatIsWithOne')}</p>
       {recentCards.length > 0 && (
         <>
-          <h3 className={cn(heading, 'mb-2 mt-7')}>Recent</h3>
+          <h3 className={cn(heading, 'mb-2 mt-7')}>{tr('ui.startChat.recent')}</h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">{recentCards}</div>
         </>
       )}
-      <h3 className={cn(heading, 'mb-2', recentCards.length > 0 ? 'mt-6' : 'mt-7')}>Agents</h3>
+      <h3 className={cn(heading, 'mb-2', recentCards.length > 0 ? 'mt-6' : 'mt-7')}>{tr('ui.startChat.agents')}</h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {agents.map((a) => card({ kind: 'agent', id: a.id }, a.name, agentModel(a), a.description, a.avatar))}
-        <Link to="/agents/new" className={addCard}>+ New agent</Link>
+        <Link to="/agents/new" className={addCard}>{tr('ui.startChat.newAgent')}</Link>
       </div>
-      <h3 className={cn(heading, 'mb-2 mt-6')}>Teams</h3>
+      <h3 className={cn(heading, 'mb-2 mt-6')}>{tr('ui.startChat.teams')}</h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {teams.map((t) => card({ kind: 'team', id: t.id }, t.name, teamLine(t), t.description))}
-        <Link to="/teams/new" className={addCard}>+ New team</Link>
+        <Link to="/teams/new" className={addCard}>{tr('ui.startChat.newTeam')}</Link>
       </div>
     </div>
   );

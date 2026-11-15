@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useOptionalNotifications, type AppNotification } from '@/context/NotificationsContext';
 import { desktop } from '@/lib/desktop';
+import { tr } from '@/lib/i18n';
 
 function Toast({ n, onDismiss }: { n: AppNotification; onDismiss: () => void }) {
   const navigate = useNavigate();
@@ -24,7 +25,7 @@ function Toast({ n, onDismiss }: { n: AppNotification; onDismiss: () => void }) 
           <div className="text-[13.5px] font-semibold">{n.title}</div>
           <div className="mt-1 text-[12.5px] leading-relaxed text-fg-dim break-words line-clamp-3">{n.body}</div>
         </div>
-        <button type="button" aria-label="Dismiss" onClick={onDismiss} className="grid h-6 w-6 flex-none place-items-center rounded text-fg-dim hover:text-fg">
+        <button type="button" aria-label={tr('ui.appAlerts.dismiss')} onClick={onDismiss} className="grid h-6 w-6 flex-none place-items-center rounded text-fg-dim hover:text-fg">
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0 0 10" stroke="currentColor" /></svg>
         </button>
       </div>
@@ -37,7 +38,7 @@ function Toast({ n, onDismiss }: { n: AppNotification; onDismiss: () => void }) 
           }}
           className="mt-3 h-8 w-full rounded-md bg-accent text-[12.5px] font-semibold text-accent-foreground"
         >
-          {urgent ? 'Review' : 'Open'}
+          {urgent ? tr('ui.appAlerts.review') : tr('ui.appAlerts.open')}
         </button>
       )}
     </div>
@@ -57,14 +58,14 @@ export default function AppAlerts() {
         <div role="alert" className="flex flex-none items-center gap-3 border-b border-danger/40 bg-danger/10 px-4 py-2 text-[13px]">
           <span className="h-2 w-2 flex-none rounded-full bg-danger" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">
-            <strong className="font-semibold">The local engine stopped.</strong>{' '}
-            <span className="text-fg-dim">{engine.error ?? 'Chats and tasks are paused until it restarts.'}</span>
+            <strong className="font-semibold">{tr('ui.appAlerts.theLocalEngineStopped')}</strong>{' '}
+            <span className="text-fg-dim">{engine.error ?? tr('ui.appAlerts.chatsAndTasksArePaused')}</span>
           </span>
           <button type="button" onClick={() => desktop.openFolder('logs')} className="h-7 rounded-md border border-line px-2.5 text-[12.5px] text-fg-dim hover:text-fg">
-            Open log
+            {tr('ui.appAlerts.openLog')}
           </button>
           <button type="button" onClick={() => desktop.restartEngine()} className="h-7 rounded-md bg-accent px-3 text-[12.5px] font-semibold text-accent-foreground">
-            Restart engine
+            {tr('ui.appAlerts.restartEngine')}
           </button>
         </div>
       )}

@@ -17,22 +17,23 @@ import { listMcpServers, type McpServer } from '@/lib/mcp';
 import FolderChips from '@/components/FolderChips';
 import ModelPicker from '@/components/ModelPicker';
 import { folderInfo, type WorkFolder } from '@/lib/folders';
+import { tr } from '@/lib/i18n';
 
 interface Tool { name: string; description?: string; category?: string; default_permission?: 'asks' | 'runs' | 'depends' }
 type AgentLevel = 'auto' | 'ask' | 'allow';
 type ToolLevel = 'auto' | 'allow' | 'ask' | 'deny';
 
 const AGENT_LEVELS: { value: AgentLevel; label: string; help: string }[] = [
-  { value: 'auto', label: 'Ask before risky actions', help: 'Deleting, overwriting files, sending things outside the app and most shell commands wait for your approval. Everything else runs.' },
-  { value: 'ask', label: 'Ask before every action', help: 'Every tool call waits for your approval, except asking you a question.' },
-  { value: 'allow', label: "Don't ask", help: 'Tools run without asking, including deletes and sends. Commands that need the full shell still ask each time.' },
+  { value: 'auto', get label() { return tr('ui.agentPage.askBeforeRiskyActions'); }, get help() { return tr('ui.agentPage.deletingOverwritingFilesSendingThings'); } },
+  { value: 'ask', get label() { return tr('ui.agentPage.askBeforeEveryAction'); }, get help() { return tr('ui.agentPage.everyToolCallWaitsFor'); } },
+  { value: 'allow', get label() { return tr('ui.agentPage.donTAsk'); }, get help() { return tr('ui.agentPage.toolsRunWithoutAskingIncluding'); } },
 ];
 
 const TOOL_LEVELS: { value: ToolLevel; label: string }[] = [
-  { value: 'auto', label: 'Default' },
-  { value: 'allow', label: 'Always allow' },
-  { value: 'ask', label: 'Ask first' },
-  { value: 'deny', label: 'Never' },
+  { value: 'auto', get label() { return tr('ui.agentPage.default'); } },
+  { value: 'allow', get label() { return tr('ui.agentPage.alwaysAllow'); } },
+  { value: 'ask', get label() { return tr('ui.agentPage.askFirst'); } },
+  { value: 'deny', get label() { return tr('ui.agentPage.never'); } },
 ];
 
 const DEFAULT_NOTE: Record<string, string> = { asks: 'asks', runs: 'runs', depends: 'depends' };
@@ -148,8 +149,8 @@ export default function AgentPage() {
   };
 
   const save = async () => {
-    if (!name.trim()) return setError('Give the agent a name.');
-    if (!model.trim()) return setError('Choose a model.');
+    if (!name.trim()) return setError(tr('ui.agentPage.giveTheAgentAName'));
+    if (!model.trim()) return setError(tr('ui.agentPage.chooseAModel'));
     setError('');
     setSaving(true);
     try {
@@ -188,7 +189,7 @@ export default function AgentPage() {
       const id = agentId || response.data?.id;
       navigate(id ? `/agents/${id}` : '/agents');
     } catch (e) {
-      setError(errorMessage(e, 'Could not save the agent.'));
+      setError(errorMessage(e, tr('ui.agentPage.couldNotSaveTheAgent')));
     } finally {
       setSaving(false);
     }
@@ -197,7 +198,7 @@ export default function AgentPage() {
   if (editing && loadingAgent) {
     return (
       <div className="flex-1 flex flex-col h-full min-w-0 bg-bg">
-        <LoadingState label="loading agent…" />
+        <LoadingState label={tr('ui.agentPage.loadingAgent')} />
       </div>
     );
   }
@@ -205,86 +206,85 @@ export default function AgentPage() {
   return (
     <PageForm
       eyebrow={editing ? 'EDIT AGENT' : 'NEW AGENT'}
-      title={editing ? name || 'Edit agent' : 'New agent'}
+      title={editing ? name || tr('ui.agentPage.editAgent') : tr('ui.agentPage.newAgent')}
       backTo={backTo}
       error={error}
       onSave={save}
       saving={saving}
     >
-      <Field label="NAME" required>
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Research Assistant" autoFocus />
+      <Field label={tr('ui.agentPage.name')} required>
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('ui.agentPage.researchAssistant')} autoFocus />
       </Field>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Field label="PROVIDER">
+        <Field label={tr('ui.agentPage.provider')}>
           <Select value={provider} onChange={(e) => changeProvider(e.target.value)}>
-            <optgroup label="Model providers">
+            <optgroup label={tr('ui.agentPage.modelProviders')}>
               {PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p] || p}</option>)}
             </optgroup>
-            <optgroup label="Coding agents on this computer">
+            <optgroup label={tr('ui.agentPage.codingAgentsOnThisComputer')}>
               {HARNESS_PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
             </optgroup>
           </Select>
         </Field>
-        <Field label="MODEL" required>
+        <Field label={tr('ui.agentPage.model')} required>
           <ModelPicker provider={provider} value={model} onChange={setModel} />
         </Field>
       </div>
       <PlanNote provider={provider} />
       <HarnessNote provider={provider} mode={harnessMode} onModeChange={setHarnessMode} selectClass="h-11 w-full rounded border border-line bg-bg px-3 text-sm font-normal text-fg md:h-10" />
 
-      <Field label="TEMPERATURE" hint={noTemperature ? 'not used' : temperature.toFixed(2)}>
+      <Field label={tr('ui.agentPage.temperature')} hint={noTemperature ? tr('ui.agentPage.notUsed') : temperature.toFixed(2)}>
         <input
           type="range" min={0} max={1} step={0.05} value={temperature}
           onChange={(e) => setTemperature(Number(e.target.value))}
           disabled={noTemperature}
-          aria-label="Temperature"
+          aria-label={tr('ui.agentPage.temperature_0a90')}
           className="h-2 w-full cursor-pointer appearance-none rounded-full bg-panel-2 accent-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
         />
         {noTemperature && (
           <p className="mt-1.5 text-[12px] text-fg-dim">
             {isHarness(provider)
-              ? `${PROVIDER_LABELS[provider]} picks its own settings, so this isn't sent. Codex, Copilot CLI and Antigravity CLI take the reasoning level.`
+              ? tr('ui.agentPage.itemPicksItsOwnSettings', { item: PROVIDER_LABELS[provider] })
               : provider === 'chatgpt'
-              ? "The ChatGPT plan doesn't take a temperature, so this setting isn't sent. Use the reasoning level to tune it."
-              : "This Claude model sets its own temperature, so this setting isn't sent. Use the reasoning level to tune it."}
+              ? tr('ui.agentPage.theChatgptPlanDoesnT')
+              : tr('ui.agentPage.thisClaudeModelSetsIts')}
           </p>
         )}
       </Field>
 
-      <Field label="REASONING" hint="sent as reasoning_effort">
-        <Select aria-label="Reasoning level" value={reasoning} onChange={(e) => setReasoning(e.target.value)}>
-          <option value="">Provider default</option>
+      <Field label={tr('ui.agentPage.reasoning')} hint={tr('ui.agentPage.sentAsReasoningEffort')}>
+        <Select aria-label={tr('ui.agentPage.reasoningLevel')} value={reasoning} onChange={(e) => setReasoning(e.target.value)}>
+          <option value="">{tr('ui.agentPage.providerDefault')}</option>
           {REASONING_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
         </Select>
         <p className="mt-1.5 text-[12px] text-fg-dim">
-          How hard the model thinks before answering. Works with models that support reasoning levels (OpenAI, Anthropic, Gemini, Grok and others through their OpenAI-compatible APIs). You can change it per chat under the message box.
+          {tr('ui.agentPage.howHardTheModelThinks')}
         </p>
       </Field>
 
-      <Field label="SYSTEM PROMPT">
-        <Textarea rows={6} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder="You are a helpful assistant that…" />
+      <Field label={tr('ui.agentPage.systemPrompt')}>
+        <Textarea rows={6} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder={tr('ui.agentPage.youAreAHelpfulAssistant')} />
       </Field>
 
       {selected.has('Bash') && (
         <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
-          Shell commands start in the agent's primary working folder (set below) and only run inside its working folders. Read-only commands run right away; anything else waits for your approval.{' '}
-          {systemInfo && !systemInfo.desktop && 'On a shared server, the shell is off in chats and tasks; it works in the desktop app and the CLI. '}
-          <Link to="/settings/access" className="text-accent-ink hover:underline">Change</Link>
+          {tr('ui.agentPage.shellCommandsStartInThe', { value: systemInfo && !systemInfo.desktop && tr('ui.agentPage.onASharedServerThe') })}
+          <Link to="/settings/access" className="text-accent-ink hover:underline">{tr('ui.agentPage.change')}</Link>
         </p>
       )}
       {selected.has('Coding Agent') && (
         <p className="-mt-1 rounded border border-line bg-panel-2 px-3 py-2 text-[12.5px] text-fg-dim">
-          Hands coding jobs to a coding agent on this computer, which works in the background in the working folder. Every run waits for your approval.{' '}
+          {tr('ui.agentPage.handsCodingJobsToA')}{' '}
           {systemInfo && (systemInfo.coding_agents?.length
-            ? <>Installed: <span className="font-mono text-[12px] text-fg">{systemInfo.coding_agents.join(', ')}</span>.</>
-            : 'None installed yet: install Claude Code, Codex, Gemini CLI, GitHub Copilot CLI or Antigravity CLI and sign in once.')}
+            ? <>{tr('ui.agentPage.installed')}{' '}<span className="font-mono text-[12px] text-fg">{systemInfo.coding_agents.join(', ')}</span>.</>
+            : tr('ui.agentPage.noneInstalledYetInstallClaude'))}
         </p>
       )}
-      <Field label={`TOOLS · ${selected.size} selected`} composite>
+      <Field label={tr('ui.agentPage.toolsSizeSelected', { size: selected.size })} composite>
         <div role="group" className="max-h-72 overflow-y-auto rounded border border-line">
           {toolsByCategory.length === 0 ? (
-            <div className="px-3 py-4 font-mono text-[11px] text-fg-dim">no tools available</div>
+            <div className="px-3 py-4 font-mono text-[11px] text-fg-dim">{tr('ui.agentPage.noToolsAvailable')}</div>
           ) : (
             toolsByCategory.map(([cat, tools]) => (
               <div key={cat} className="border-b border-line last:border-b-0">
@@ -304,7 +304,7 @@ export default function AgentPage() {
                       </label>
                       {selected.has(t.name) && (
                         <Select
-                          aria-label={`Permission for ${t.name}`}
+                          aria-label={tr('ui.agentPage.permissionForName', { name: t.name })}
                           value={level}
                           onChange={(e) => setToolLevel(t.name, e.target.value as ToolLevel)}
                           className={cn(
@@ -315,7 +315,7 @@ export default function AgentPage() {
                         >
                           {TOOL_LEVELS.map((l) => (
                             <option key={l.value} value={l.value}>
-                              {l.value === 'auto' && note ? `Default (${note})` : l.label}
+                              {l.value === 'auto' && note ? tr('ui.agentPage.defaultNote', { note }) : l.label}
                             </option>
                           ))}
                         </Select>
@@ -329,22 +329,22 @@ export default function AgentPage() {
         </div>
       </Field>
 
-      <Field label="PERMISSIONS">
-        <Select aria-label="Permission level" value={permissionLevel} onChange={(e) => setPermissionLevel(e.target.value as AgentLevel)}>
+      <Field label={tr('ui.agentPage.permissions')}>
+        <Select aria-label={tr('ui.agentPage.permissionLevel')} value={permissionLevel} onChange={(e) => setPermissionLevel(e.target.value as AgentLevel)}>
           {AGENT_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
         </Select>
         <p className={cn('mt-1.5 text-[12px]', permissionLevel === 'allow' ? 'text-danger-ink' : 'text-fg-dim')}>
-          {AGENT_LEVELS.find((l) => l.value === permissionLevel)?.help} Set a single tool to always allow, ask first or never in the tool list above; that wins over this.
+          {tr('ui.agentPage.helpSetASingleTool', { help: AGENT_LEVELS.find((l) => l.value === permissionLevel)?.help })}
         </p>
       </Field>
 
-      <Field label={`MCP SERVERS · ${selectedServers.length} selected`} composite>
+      <Field label={tr('ui.agentPage.mcpServersLengthSelected', { length: selectedServers.length })} composite>
         <div role="group" className="rounded border border-line">
           {mcpServers === null ? (
-            <div className="px-3 py-3 font-mono text-[11px] text-fg-dim">loading…</div>
+            <div className="px-3 py-3 font-mono text-[11px] text-fg-dim">{tr('ui.agentPage.loading')}</div>
           ) : mcpServers.length === 0 && selectedServers.length === 0 ? (
             <div className="px-3 py-3 text-[12.5px] text-fg-dim">
-              No MCP servers yet. <Link to="/settings/access#mcp-servers" className="text-accent-ink hover:underline">Add one in Settings</Link>
+              {tr('ui.agentPage.noMcpServersYet')}{' '}<Link to="/settings/access#mcp-servers" className="text-accent-ink hover:underline">{tr('ui.agentPage.addOneInSettings')}</Link>
             </div>
           ) : (
             <>
@@ -362,8 +362,8 @@ export default function AgentPage() {
                     <div className="min-w-0">
                       <div className="font-mono text-[12px]">
                         {s.name}
-                        {s.shared && <span className="ml-2 font-sans text-[11px] text-fg-dim">shared</span>}
-                        {!s.enabled && <span className="ml-2 font-sans text-[11px] text-fg-dim">off</span>}
+                        {s.shared && <span className="ml-2 font-sans text-[11px] text-fg-dim">{tr('ui.agentPage.shared')}</span>}
+                        {!s.enabled && <span className="ml-2 font-sans text-[11px] text-fg-dim">{tr('ui.agentPage.off')}</span>}
                       </div>
                       {s.description && <div className="truncate text-[12px] text-fg-dim">{s.description}</div>}
                     </div>
@@ -375,11 +375,11 @@ export default function AgentPage() {
                 .map((r) => (
                   <div key={r} className="flex items-center justify-between gap-2 border-b border-line px-3 py-2 text-[12px] last:border-b-0">
                     <span className="text-fg-dim">
-                      <span className="font-mono">{r}</span> isn't available any more
+                      <span className="font-mono">{r}</span>{' '}{tr('ui.agentPage.isnTAvailableAnyMore')}
                     </span>
                     <button type="button" onClick={() => setSelectedServers((cur) => cur.filter((x) => x !== r))}
                       className="text-danger-ink hover:underline">
-                      Remove
+                      {tr('ui.agentPage.remove')}
                     </button>
                   </div>
                 ))}
@@ -387,20 +387,20 @@ export default function AgentPage() {
           )}
         </div>
         <p className="mt-1.5 text-[12px] text-fg-dim">
-          The agent can list and run these servers' tools. Tools that aren't marked read-only ask for your approval first.
+          {tr('ui.agentPage.theAgentCanListAnd')}
         </p>
       </Field>
 
-      <Field label="WORKING FOLDERS" hint="copied into each new chat" composite>
+      <Field label={tr('ui.agentPage.workingFolders')} hint={tr('ui.agentPage.copiedIntoEachNewChat')} composite>
         <div className="rounded border border-line px-3 py-2.5">
           {folders === null ? (
             <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-fg-dim">
               <span>
-                No default folders: each new chat starts with a private scratch folder.
+                {tr('ui.agentPage.noDefaultFoldersEachNew')}
               </span>
               <button type="button" className="text-accent-ink hover:underline"
                 onClick={() => setFolders(workingFolder ? [{ path: workingFolder, access: 'write', primary: true }] : [])}>
-                Choose folders
+                {tr('ui.agentPage.chooseFolders')}
               </button>
             </div>
           ) : (
@@ -408,7 +408,7 @@ export default function AgentPage() {
               <FolderChips folders={folders} onChange={setFolders} emptyLabel="none: each chat gets a private scratch folder" />
               <button type="button" className="self-start text-[12px] text-fg-dim hover:text-fg hover:underline"
                 onClick={() => setFolders(null)}>
-                Clear default folders
+                {tr('ui.agentPage.clearDefaultFolders')}
               </button>
             </div>
           )}
@@ -417,12 +417,12 @@ export default function AgentPage() {
           <input type="checkbox" checked={canRequestFolders} onChange={(e) => setCanRequestFolders(e.target.checked)}
             className="mt-0.5 accent-[var(--accent)]" />
           <span>
-            Let the agent ask for other folders
-            <span className="block text-fg-dim">It can ask for a folder or for write access, and you approve or deny it in the chat. Task runs wait for an answer.</span>
+            {tr('ui.agentPage.letTheAgentAskFor')}
+            <span className="block text-fg-dim">{tr('ui.agentPage.itCanAskForA')}</span>
           </span>
         </label>
         <p className="mt-1.5 text-[12px] text-fg-dim">
-          Read only folders can be read and searched but not changed. The primary folder is where relative paths and shell commands start. Chats keep their own copy, so changing these doesn't change chats you already started.
+          {tr('ui.agentPage.readOnlyFoldersCanBe')}
         </p>
       </Field>
 
@@ -431,19 +431,18 @@ export default function AgentPage() {
         onClick={() => setShowAdvanced((v) => !v)}
         className="flex min-h-11 items-center gap-2 font-mono text-[11px] tracking-[0.06em] text-fg-dim transition-colors hover:text-fg md:min-h-0"
       >
-        <span className={cn('transition-transform', showAdvanced && 'rotate-90')}>▸</span> ADVANCED
+        <span className={cn('transition-transform', showAdvanced && 'rotate-90')}>▸</span>{' '}{tr('ui.agentPage.advanced')}
       </button>
       {showAdvanced && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="MAX TOKENS" hint="blank = provider default">
+          <Field label={tr('ui.agentPage.maxTokens')} hint={tr('ui.agentPage.blankProviderDefault')}>
             <Input type="number" value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} placeholder="8192" />
           </Field>
-          <Field label="BASE URL" hint="override endpoint (e.g. local Ollama)">
+          <Field label={tr('ui.agentPage.baseUrl')} hint={tr('ui.agentPage.overrideEndpointEGLocal')}>
             <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://…" />
             {baseUrl.trim() && (
               <p className="mt-1.5 text-[12px] leading-relaxed text-fg-dim">
-                Your stored provider key is only sent to the provider's own address or to addresses listed in
-                COGNITRIX_TRUSTED_BASE_URLS. Any other address is blocked from receiving it.
+                {tr('ui.agentPage.yourStoredProviderKeyIs')}
               </p>
             )}
           </Field>
