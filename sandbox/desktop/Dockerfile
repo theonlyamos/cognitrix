@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         dbus dbus-x11 at-spi2-core libatspi2.0-0 libgtk-3-bin \
         libxtst6 libxss1 libxcomposite1 \
         chromium firefox-esr \
+        pulseaudio pulseaudio-utils ffmpeg \
         python3 python3-pil python3-xlib \
         python3-venv python3-pip python3-dev sqlite3 git curl \
         fonts-dejavu-core fonts-liberation xdg-utils ca-certificates tini procps \

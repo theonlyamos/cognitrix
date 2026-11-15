@@ -176,6 +176,15 @@ def _add_automation_tools(roster: Sequence[Agent], offers: bool = False) -> None
     from cognitrix.tools.hosted_apps import APP_TOOL_CATEGORY
 
     extra.extend(ToolManager.get_tools_by_category(APP_TOOL_CATEGORY))
+    # Live calls: a task can send its agent into a meeting (the sandboxed computer's browser).
+    try:
+        from cognitrix.computer.sandbox.client import sandbox_mode
+        from cognitrix.tools.meetings import MEETING_TOOL_CATEGORY
+
+        if sandbox_mode():
+            extra.extend(ToolManager.get_tools_by_category(MEETING_TOOL_CATEGORY))
+    except Exception:
+        pass
     for agent in roster:
         if not getattr(agent.llm, 'supports_tool_use', False):
             continue

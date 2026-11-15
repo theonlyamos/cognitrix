@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { api, errorMessage } from '@/lib/api';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useResource } from '@/hooks/useResource';
 import { Button } from '@/lib/components/ui/button';
+import { Input } from '@/lib/components/ui/input';
 import { Select } from '@/lib/components/ui/select';
+import { ComputerPanel } from '@/components/ComputerPanel';
 import MarkdownMessage from '@/components/MarkdownMessage';
 import { PageHeader, LoadingState, ErrorState, EmptyState } from '@/components/list-ui';
 import { cn } from '@/lib/utils';
 import { tr, dateLocale } from '@/lib/i18n';
 
-type Status = 'queued' | 'transcribing' | 'writing' | 'done' | 'error';
+type Status = 'queued' | 'transcribing' | 'writing' | 'done' | 'error' | 'joining' | 'waiting' | 'live';
+type ReplyMode = 'chat' | 'voice' | 'off';
 
 export interface MeetingSummary {
   id: string;
@@ -22,8 +25,23 @@ export interface MeetingSummary {
   error: string;
   created_at: string;
   has_transcript: boolean;
+  /** 'live': an agent sat in a call; 'recording': an upload. */
+  kind?: 'recording' | 'live';
+  url?: string;
+  platform?: string;
+  bot_name?: string;
+  reply_mode?: ReplyMode;
+  answers?: number;
+  /** The agent is in the call right now. */
+  in_call?: boolean;
 }
 interface Meeting extends MeetingSummary { transcript: string; notes: string }
+interface LiveReadiness {
+  /** The agents' sandboxed computer is on: calls run in its browser. */
+  computer: boolean;
+  /** A read-aloud provider has a key, so answers can be spoken. */
+  speech: boolean;
+}
 interface MeetingList {
   meetings: MeetingSummary[];
   /** A speech-to-text provider with a key is set under Settings, Voice input. */
@@ -32,11 +50,15 @@ interface MeetingList {
   ffmpeg: boolean;
   max_bytes: number;
   max_seconds: number;
+  live?: LiveReadiness;
 }
 interface AgentLite { id: string; name: string }
 
 const ACCEPT = 'audio/*,video/*,.mp3,.m4a,.wav,.mp4,.webm,.ogg,.opus,.flac,.aac,.mov,.mkv';
-const working = (status: Status) => status === 'queued' || status === 'transcribing' || status === 'writing';
+const IN_CALL: Status[] = ['joining', 'waiting', 'live'];
+const working = (status: Status) => status === 'queued' || status === 'transcribing' || status === 'writing'
+  || IN_CALL.includes(status);
+const PLATFORM: Record<string, string> = { meet: 'Google Meet', teams: 'Teams', zoom: 'Zoom' };
 
 function length(seconds: number): string {
   if (!seconds) return '';
@@ -52,8 +74,102 @@ function day(stamp: string): string {
 
 function statusText(meeting: MeetingSummary): string {
   if (meeting.status === 'error') return 'failed';
+  if (meeting.status === 'live') return ['in the call', length(meeting.seconds)].filter(Boolean).join(' · ');
+  if (meeting.status === 'waiting') return 'waiting to be let in';
+  if (meeting.status === 'joining') return meeting.progress || 'joining';
   if (meeting.status === 'done') return [day(meeting.created_at), length(meeting.seconds)].filter(Boolean).join(' · ');
   return meeting.progress || (meeting.status === 'queued' ? 'waiting to start' : meeting.status);
+}
+
+/** What an agent in a call shows: where it is, what it hears as it comes in,
+ *  its screen on demand, and Leave. */
+function LiveCall({ meeting, agents, onChanged, onReload }: {
+  meeting: Meeting; agents: AgentLite[]; onChanged: () => void; onReload: () => Promise<unknown>;
+}) {
+  const [watching, setWatching] = useState(false);
+  const [say, setSay] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const end = useRef<HTMLDivElement>(null);
+  const lines = meeting.transcript.split('\n').filter((l) => l.trim());
+
+  useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [lines.length]);
+
+  const leave = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await api.post(`/meetings/${meeting.id}/leave`);
+      await onReload();
+      onChanged();
+    } catch (e) {
+      setError(errorMessage(e, tr('ui.meetings.couldNotReachTheAgent')));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const send = async (event: FormEvent) => {
+    event.preventDefault();
+    const text = say.trim();
+    if (!text) return;
+    setError('');
+    try {
+      await api.post(`/meetings/${meeting.id}/say`, { text });
+      setSay('');
+    } catch (e) {
+      setError(errorMessage(e, tr('ui.meetings.couldNotSendThatTo')));
+    }
+  };
+  const where = PLATFORM[meeting.platform ?? ''] ?? 'the call';
+  const state = meeting.status === 'live' ? `In ${where} as ${meeting.bot_name}`
+    : meeting.status === 'waiting' ? `Waiting for someone in ${where} to let ${meeting.bot_name} in`
+      : `Joining ${where}`;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="flex min-w-0 flex-1 items-center gap-2 text-[13px]" aria-live="polite">
+          <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-accent" aria-hidden />
+          <span className="truncate">{state}{meeting.progress && meeting.status !== 'live' ? ` · ${meeting.progress}` : ''}</span>
+        </p>
+        <Button type="button" size="sm" variant="ghost" aria-pressed={watching} onClick={() => setWatching((v) => !v)}>
+          {watching ? tr('ui.meetings.hideScreen') : tr('ui.meetings.watch')}
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled={busy || meeting.progress === 'leaving the call'} onClick={() => void leave()}>
+          {meeting.progress === 'leaving the call' ? tr('ui.meetings.leaving') : tr('ui.meetings.leaveCall')}
+        </Button>
+      </div>
+      {watching && (
+        <div className="h-[420px] overflow-hidden rounded-[10px] border border-line">
+          <ComputerPanel agents={agents} focusAgentId={meeting.agent_id} onClose={() => setWatching(false)} />
+        </div>
+      )}
+      <div className="max-h-[360px] overflow-y-auto rounded-[10px] border border-line bg-bg px-3 py-2 text-[13px] leading-relaxed" aria-label={tr('ui.meetings.liveTranscript')}>
+        {lines.length === 0 ? (
+          <p className="text-fg-dim">{meeting.status === 'live' ? tr('ui.meetings.listeningWhatPeopleSayShows') : tr('ui.meetings.nothingHeardYet')}</p>
+        ) : lines.map((line, i) => {
+          const match = /^\[([\d:]+)\]\s*(.*)$/.exec(line);
+          const mine = match && meeting.bot_name && match[2].startsWith(`${meeting.bot_name} (`);
+          return (
+            <p key={i} className={cn('flex gap-2 py-0.5', mine && 'text-accent-ink')}>
+              {match && <span className="flex-none font-mono text-[11px] leading-[1.9] text-fg-dim">{match[1]}</span>}
+              <span className="min-w-0 break-words">{match ? match[2] : line}</span>
+            </p>
+          );
+        })}
+        <div ref={end} />
+      </div>
+      {meeting.status === 'live' && (
+        <form onSubmit={(e) => void send(e)} className="flex gap-2">
+          <Input value={say} onChange={(e) => setSay(e.target.value)} maxLength={600}
+            placeholder={meeting.reply_mode === 'voice' ? tr('ui.meetings.haveBotNameSaySomething', { bot_name: meeting.bot_name }) : tr('ui.meetings.haveBotNameWriteIn', { bot_name: meeting.bot_name })}
+            aria-label={tr('ui.meetings.sayInTheCall')} className="h-9 flex-1" />
+          <Button type="submit" size="sm" disabled={!say.trim()}>{tr('ui.meetings.send')}</Button>
+        </form>
+      )}
+      {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
+    </div>
+  );
 }
 
 function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLite[]; onChanged: () => void }) {
@@ -124,6 +240,14 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
     }
   };
 
+  if (meeting.in_call || IN_CALL.includes(meeting.status)) {
+    return (
+      <div className="border-t border-line px-4 py-3">
+        <LiveCall meeting={meeting} agents={agents} onChanged={onChanged} onReload={load} />
+      </div>
+    );
+  }
+
   return (
     <div className="border-t border-line px-4 py-3">
       {busyOnServer ? (
@@ -179,15 +303,114 @@ function MeetingDetail({ id, agents, onChanged }: { id: string; agents: AgentLit
   );
 }
 
+function JoinCall({ agents, live, onJoined, onCancel }: {
+  agents: AgentLite[]; live?: LiveReadiness; onJoined: (id: string) => void; onCancel: () => void;
+}) {
+  const [url, setUrl] = useState('');
+  const [agentId, setAgentId] = useState('');
+  const [name, setName] = useState('');
+  const [reply, setReply] = useState<ReplyMode>('chat');
+  const [announce, setAnnounce] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const res = await api.post<Meeting>('/meetings/live', {
+        url: url.trim(), agent_id: agentId || null, name: name.trim() || null, reply_mode: reply, announce,
+      });
+      onJoined(res.data.id);
+    } catch (e) {
+      setError(errorMessage(e, tr('ui.meetings.couldNotSendTheAgent')));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (live && !live.computer) {
+    return (
+      <div className="rounded-[10px] border border-line bg-panel px-3 py-2.5 text-[13px] leading-relaxed">
+        {tr('ui.meetings.agentsJoinCallsFromThe')}{' '}
+        <Link to="/settings/access" className="text-accent-ink hover:underline">{tr('ui.meetings.turnItOnUnderSettings')}</Link>{tr('ui.meetings.thenComeBack')}
+        <button type="button" onClick={onCancel} className="ml-2 text-fg-dim hover:underline">{tr('ui.meetings.close')}</button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-3 rounded-[10px] border border-line bg-panel px-4 py-3.5">
+      <div>
+        <p className="text-[14px] font-medium">{tr('ui.meetings.sendAnAgentIntoA_d72a')}</p>
+        <p className="text-[12.5px] leading-relaxed text-fg-dim">
+          {tr('ui.meetings.itJoinsFromTheBrowser')}
+        </p>
+      </div>
+      <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
+        {tr('ui.meetings.meetingLink')}
+        <Input value={url} onChange={(e) => setUrl(e.target.value)} required type="url" inputMode="url"
+          placeholder="https://meet.google.com/abc-defg-hij" className="h-9" autoFocus />
+      </label>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
+          {tr('ui.meetings.agent')}
+          <Select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="h-9">
+            <option value="">{tr('ui.meetings.yourMainAgent')}</option>
+            {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </Select>
+        </label>
+        <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
+          {tr('ui.meetings.nameInTheCall')}
+          <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} placeholder={tr('ui.meetings.theAgentSName')} className="h-9" />
+        </label>
+        <label className="flex flex-col gap-1 text-[12.5px] text-fg-dim">
+          {tr('ui.meetings.whenSomeoneSaysItsName')}
+          <Select value={reply} onChange={(e) => setReply(e.target.value as ReplyMode)} className="h-9">
+            <option value="chat">{tr('ui.meetings.answerInTheCallS')}</option>
+            <option value="voice" disabled={live ? !live.speech : false}>{tr('ui.meetings.answerOutLoud')}{live && !live.speech ? tr('ui.meetings.needsAVoiceKey') : ''}</option>
+            <option value="off">{tr('ui.meetings.donTAnswerOnlyTake')}</option>
+          </Select>
+        </label>
+        <label className="flex items-center gap-2 self-end pb-2 text-[12.5px]">
+          <input type="checkbox" checked={announce} onChange={(e) => setAnnounce(e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
+          {tr('ui.meetings.sayInTheChatThat')}
+        </label>
+      </div>
+      <p className="text-[12px] leading-relaxed text-fg-dim">
+        {tr('ui.meetings.letPeopleKnowAnAi')}
+      </p>
+      {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" disabled={busy || !url.trim()}>{busy ? tr('ui.meetings.sending') : tr('ui.meetings.joinTheCall')}</Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel}>{tr('ui.meetings.cancel')}</Button>
+      </div>
+    </form>
+  );
+}
+
 export default function Meetings() {
   const { data, loading, error, refetch } = useResource<MeetingList>('/meetings');
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [agentId, setAgentId] = useState('');
-  const [open, setOpen] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const [open, setOpen] = useState<string | null>(params.get('open'));
+  const [joining, setJoining] = useState(false);
   const [uploading, setUploading] = useState('');
   const [uploadError, setUploadError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const meetings = data?.meetings ?? [];
+
+  // An Inbox alert links here with ?open=<id>; keep the address clean after.
+  useEffect(() => {
+    if (params.get('open')) {
+      const next = new URLSearchParams(params);
+      next.delete('open');
+      setParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     api.get<AgentLite[]>('/agents').then((r) => setAgents((r.data ?? []).filter((a) => a.id))).catch(() => {});
@@ -231,7 +454,10 @@ export default function Meetings() {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <PageHeader title={tr('ui.meetings.meetings')} subtitle={tr('ui.meetings.uploadARecordingGetThe')}>
+      <PageHeader title={tr('ui.meetings.meetings')} subtitle={tr('ui.meetings.sendAnAgentIntoA')}>
+        <Button type="button" size="sm" variant="outline" disabled={joining || (data ? !data.voice_ready : true)} onClick={() => setJoining(true)}>
+          {tr('ui.meetings.joinACall')}
+        </Button>
         <input ref={fileInput} type="file" accept={ACCEPT} className="hidden" aria-label={tr('ui.meetings.meetingRecording')} onChange={upload} />
         <Button type="button" size="sm" disabled={!!uploading || (data ? !data.voice_ready : true)} onClick={() => fileInput.current?.click()}>
           {uploading ? tr('ui.meetings.uploading') : tr('ui.meetings.uploadRecording')}
@@ -255,6 +481,10 @@ export default function Meetings() {
                 {tr('ui.meetings.ffmpegIsnTInstalledWhere')}
               </p>
             )}
+            {joining && (
+              <JoinCall agents={agents} live={data?.live} onCancel={() => setJoining(false)}
+                onJoined={(id) => { setJoining(false); setOpen(id); refetch({ silent: true }); }} />
+            )}
             {agents.length > 1 && (
               <label className="flex flex-wrap items-center gap-2 text-[12.5px] text-fg-dim">
                 {tr('ui.meetings.notesWrittenBy')}
@@ -272,7 +502,7 @@ export default function Meetings() {
               <EmptyState
                 icon={<span aria-hidden className="font-mono text-lg">◉</span>}
                 title={tr('ui.meetings.noMeetingsYet')}
-                desc={tr('ui.meetings.uploadTheAudioOrVideo')}
+                desc={tr('ui.meetings.sendAnAgentIntoA_c840')}
               />
             ) : (
               <ul className="divide-y divide-line rounded-[10px] border border-line bg-panel">
@@ -280,7 +510,10 @@ export default function Meetings() {
                   <li key={m.id}>
                     <button type="button" aria-expanded={open === m.id} onClick={() => setOpen(open === m.id ? null : m.id)}
                       className="flex min-h-12 w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-4 py-2.5 text-left hover:bg-panel-2">
-                      <span className="min-w-0 flex-1 basis-[180px] truncate text-[14px] font-medium">{m.title}</span>
+                      <span className="min-w-0 flex-1 basis-[180px] truncate text-[14px] font-medium">
+                        {m.title}
+                        {m.kind === 'live' && <span className="ml-2 rounded bg-panel-2 px-1.5 py-0.5 align-middle font-mono text-[10.5px] font-normal text-fg-dim">{tr('ui.meetings.call')}</span>}
+                      </span>
                       <span className={cn('flex items-center gap-1.5 font-mono text-[11px]', m.status === 'error' ? 'text-danger-ink' : 'text-fg-dim')}>
                         {working(m.status) && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden />}
                         {statusText(m)}

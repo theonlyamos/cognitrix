@@ -675,6 +675,24 @@ class Session(Model):
             except Exception:
                 logger.debug('Artifact tools unavailable', exc_info=True)
 
+        # Live calls (cognitrix/meetings/live.py): Join Meeting and friends,
+        # while the agents' sandboxed computer is on (the call runs in its browser).
+        if interface in ('web', 'ws', 'task') and owner and getattr(agent.llm, 'supports_tool_use', True):
+            try:
+                from cognitrix.computer.sandbox.client import sandbox_mode
+
+                if sandbox_mode():
+                    from cognitrix.tools.base import ToolManager
+                    from cognitrix.tools.meetings import MEETING_TOOL_CATEGORY
+
+                    names = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
+                    extra = [t for t in ToolManager.get_tools_by_category(MEETING_TOOL_CATEGORY)
+                             if t.name.lower() not in names]
+                    if extra:
+                        agent = agent.model_copy(update={'tools': [*agent.tools, *extra]})
+            except Exception:
+                logger.debug('Meeting tools unavailable', exc_info=True)
+
         # Show Card: numbers, a table, a chart and buttons drawn in the chat
         # (cognitrix/cards). Any chat or task run with a tool-capable model.
         if interface in ('web', 'ws', 'task') and getattr(agent.llm, 'supports_tool_use', True):
