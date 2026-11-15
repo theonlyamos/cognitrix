@@ -33,7 +33,12 @@ export function ComputerSandboxCard() {
   }
 
   const docker = settings?.docker;
-  const dockerNote = !docker
+  const fly = settings?.host === 'fly' ? settings.fly : undefined;
+  const dockerNote = fly
+    ? fly.configured
+      ? <StatusPill tone="ok">on Fly</StatusPill>
+      : <StatusPill tone="warn">Fly settings missing</StatusPill>
+    : !docker
     ? null
     : !docker.installed
       ? <StatusPill tone="warn">Docker not installed</StatusPill>
@@ -50,9 +55,19 @@ export function ComputerSandboxCard() {
         label="Give agents their own computer"
         detail={
           <>
-            Agents work on a Linux desktop in a container instead of this computer's screen, each agent on its own desktop.
-            Watch and take over from <span className="font-medium">Computer</span> in chat. Needs{' '}
-            <a className="text-accent-ink hover:underline" href="https://www.docker.com/products/docker-desktop/" target="_blank" rel="noreferrer">Docker Desktop</a>.
+            {fly ? (
+              <>
+                Each person gets their own Linux computer on Fly{fly.app ? ` (app ${fly.app}${fly.region ? `, ${fly.region}` : ''})` : ''}, with a desktop per agent. Watch and take over from <span className="font-medium">Computer</span> in chat.
+                {fly.idle_minutes > 0 && ` It ${fly.idle_action === 'suspend' ? 'is suspended' : 'stops'} after ${fly.idle_minutes} idle minutes and wakes on the next request; files and logins are kept.`}
+                {!fly.configured && ` The server still needs: ${fly.missing.join(', ')}.`}
+              </>
+            ) : (
+              <>
+                Agents work on a Linux desktop in a container instead of this computer's screen, each agent on its own desktop.
+                Watch and take over from <span className="font-medium">Computer</span> in chat. Needs{' '}
+                <a className="text-accent-ink hover:underline" href="https://www.docker.com/products/docker-desktop/" target="_blank" rel="noreferrer">Docker Desktop</a>.
+              </>
+            )}
             {settings?.from_env && ' Set by the server (COGNITRIX_COMPUTER_SANDBOX).'}
           </>
         }

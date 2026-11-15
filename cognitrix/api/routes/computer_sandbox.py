@@ -12,6 +12,7 @@
     POST /computer/sandbox/teach/draft             a model writes a skill from the steps, for review
     POST /computer/sandbox/update                  restart onto a newer image (files and logins stay)
     POST /computer/sandbox/reset                   throw the computer away (files and logins too)
+    POST /computer/sandbox/wake                    start a computer that is asleep (hosted on Fly)
     GET  /computer/sandbox/env                     the person's sandbox environment variables (names only)
     PUT  /computer/sandbox/env                     replace them (a value left out keeps the saved one)
     GET  /computer/sandbox/chats/{session_id}      is Run in sandbox on for a chat
@@ -84,30 +85,48 @@ async def _box(ctx: AuthContext, start: bool = False):
 async def status(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     from cognitrix.computer.sandbox.client import get_manager, mode_from_env, sandbox_mode
 
-    if not sandbox_mode():
+    mode = sandbox_mode()
+    if not mode:
         return {'enabled': False, 'running': False, 'desktops': [], 'from_env': mode_from_env()}
     try:
         box = await run_in_threadpool(get_manager().existing, _owner(ctx))
-    except Exception:  # Docker missing or stopped
+    except Exception:  # Docker missing or stopped, or Fly unreachable
         logger.warning("Couldn't reach the agents' computer", exc_info=True)
-        return {'enabled': True, 'running': False, 'desktops': [],
-                'error': "Couldn't reach Docker. Check that Docker is installed and running."}
+        return {'enabled': True, 'running': False, 'desktops': [], 'host': mode,
+                'error': "Couldn't reach Fly. Check the server's Fly settings." if mode == 'fly'
+                else "Couldn't reach Docker. Check that Docker is installed and running."}
     if box is None:
-        return {'enabled': True, 'running': False, 'desktops': []}
+        try:
+            asleep = bool(await run_in_threadpool(get_manager().asleep, _owner(ctx)))
+        except Exception:
+            asleep = False
+        return {'enabled': True, 'running': False, 'desktops': [], 'host': mode, 'asleep': asleep}
     desktops = await run_in_threadpool(box.desktops)
     mgr = get_manager()
     try:
         update = bool(await run_in_threadpool(mgr.update_available, box))
     except Exception:
         update = False
-    return {'enabled': True, 'running': True, 'desktops': desktops, 'update_available': update}
+    return {'enabled': True, 'running': True, 'desktops': desktops, 'update_available': update, 'host': mode}
+
+
+@sandbox_api.post('/wake')
+async def wake(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Start the person's computer now (a hosted one sleeps when idle)."""
+    box = await _box(ctx, start=True)
+    return {'ok': True, 'desktops': await run_in_threadpool(box.desktops)}
 
 
 @sandbox_api.get('/settings')
 async def get_settings(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     from cognitrix.computer.sandbox.client import IMAGE, docker_status, mode_from_env, sandbox_mode
 
-    return {'enabled': bool(sandbox_mode()), 'from_env': mode_from_env(), 'image': IMAGE,
+    if sandbox_mode() == 'fly':
+        from cognitrix.computer.sandbox.fly import fly_settings
+
+        return {'enabled': True, 'from_env': True, 'image': IMAGE, 'host': 'fly', 'fly': fly_settings(),
+                'docker': {'installed': True, 'running': True, 'image': True}}
+    return {'enabled': bool(sandbox_mode()), 'from_env': mode_from_env(), 'image': IMAGE, 'host': 'docker',
             'docker': await run_in_threadpool(docker_status)}
 
 
@@ -391,11 +410,14 @@ async def screen(websocket: WebSocket, ticket: str = '') -> None:
         await websocket.close(code=4404)
         return
     await websocket.accept(subprotocol='binary' if 'binary' in websocket.scope.get('subprotocols', []) else None)
-    url = f'ws://127.0.0.1:{box.viewer_port}/websockify?token={name}'
+    url = box.viewer_url(name)
+    mgr = get_manager()
+    mgr.viewer_opened(owner)
     async with aiohttp.ClientSession() as session:
         try:
             upstream = await session.ws_connect(url, protocols=('binary',), max_msg_size=0)
         except aiohttp.ClientError:
+            mgr.viewer_closed(owner)
             await websocket.close(code=4502)
             return
 
@@ -426,6 +448,7 @@ async def screen(websocket: WebSocket, ticket: str = '') -> None:
         finally:
             for t in tasks:
                 t.cancel()
+            mgr.viewer_closed(owner)
             await upstream.close()
             try:
                 await websocket.close()

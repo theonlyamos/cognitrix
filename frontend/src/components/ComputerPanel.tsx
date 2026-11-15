@@ -3,7 +3,7 @@ import { errorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import {
-  desktopName, handBack, openViewer, resetSandbox, sandboxStatus, startTeaching, stopTeaching, takeOver, updateSandbox,
+  desktopName, handBack, openViewer, resetSandbox, sandboxStatus, startTeaching, stopTeaching, takeOver, updateSandbox, wakeSandbox,
   type SandboxDesktop, type SandboxStatus, type TaughtStep,
 } from '@/lib/sandbox';
 import { TeachLive, TeachReview } from '@/components/TeachTask';
@@ -159,7 +159,8 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
             over. Turn it on with <code>COGNITRIX_COMPUTER_SANDBOX=docker</code> (needs Docker).
           </p>
         )}
-        {status?.enabled && !current && (
+        {status?.enabled && !current && status.asleep && !status.error && <AsleepNote onWoken={load} />}
+        {status?.enabled && !current && !(status.asleep && !status.error) && (
           <p className="p-4 text-[12.5px] leading-relaxed text-fg-dim">
             {status.error || 'Nothing to show yet. The computer starts when an agent first uses it, and each agent gets its own desktop.'}
           </p>
@@ -553,6 +554,37 @@ function UpdateButton({ onDone }: { onDone: () => void }) {
       </button>
       <button type="button" className={quietButtonClass} disabled={busy} onClick={() => setConfirming(false)}>Later</button>
     </span>
+  );
+}
+
+/** A hosted computer sleeps when nobody uses it, so it costs nothing. */
+function AsleepNote({ onWoken }: { onWoken: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <div className="flex flex-col items-start gap-2 p-4 text-[12.5px] leading-relaxed text-fg-dim">
+      <p>The agents' computer is asleep because nobody used it for a while. Files and logins are kept. It wakes by itself when an agent needs it.</p>
+      <button
+        type="button"
+        className={buttonClass}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError('');
+          try {
+            await wakeSandbox();
+          } catch (err) {
+            setError(errorMessage(err, "Couldn't wake it."));
+          } finally {
+            setBusy(false);
+            onWoken();
+          }
+        }}
+      >
+        {busy ? 'Waking… (up to a minute)' : 'Wake it now'}
+      </button>
+      {error && <p role="alert" className="text-danger-ink">{error}</p>}
+    </div>
   );
 }
 

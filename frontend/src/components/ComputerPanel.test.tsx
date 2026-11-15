@@ -14,6 +14,7 @@ const lib = vi.hoisted(() => ({
   teachingStatus: vi.fn(),
   draftTaughtSkill: vi.fn(),
   saveTaughtSkill: vi.fn(),
+  wakeSandbox: vi.fn(),
 }));
 const rfb = vi.hoisted(() => ({ made: [] as { url: string; password?: string; viewOnly: boolean }[] }));
 
@@ -54,6 +55,17 @@ describe('ComputerPanel', () => {
     await waitFor(() => expect(lib.updateSandbox).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Update' })).not.toBeInTheDocument());
     expect(lib.resetSandbox).not.toHaveBeenCalled();
+  });
+
+  it('says a hosted computer is asleep and wakes it', async () => {
+    lib.sandboxStatus.mockResolvedValue({ enabled: true, running: false, desktops: [], host: 'fly', asleep: true });
+    lib.wakeSandbox.mockResolvedValue(undefined);
+    render(<ComputerPanel agents={agents} onClose={() => {}} />);
+    expect(await screen.findByText(/asleep because nobody used it/)).toBeInTheDocument();
+    lib.sandboxStatus.mockResolvedValue({ enabled: true, running: true, desktops: [{ name: 'a1', display: ':1', held_by: null, running: true }], host: 'fly' });
+    fireEvent.click(screen.getByRole('button', { name: 'Wake it now' }));
+    await waitFor(() => expect(lib.wakeSandbox).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(rfb.made.length).toBe(1));
   });
 
   it('explains how to turn it on when it is off', async () => {

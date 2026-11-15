@@ -3,7 +3,9 @@
 When ``COGNITRIX_COMPUTER_SANDBOX=docker``, the computer tools drive a
 desktop in a Docker container instead of the machine the engine runs on:
 one container per user, and one desktop per agent inside it (like virtual
-desktops: separate screens, mice and keyboards, shared files).
+desktops: separate screens, mice and keyboards, shared files). With
+``COGNITRIX_COMPUTER_SANDBOX=fly`` each user's computer is a Fly Machine
+instead (see ``fly.py``), stopped when idle and started on the next request.
 
 ``SandboxManager`` starts or finds each user's container with the Docker CLI;
 ``RemoteDriver`` has the same methods the tools use on the local ``Driver``
@@ -67,10 +69,13 @@ _ERRORS = {'human_control': HumanControl, 'stale': Stale, 'busy': Busy, 'blocked
 
 
 def sandbox_mode() -> str | None:
-    """'docker' when agents use the sandboxed computer, else None. The
-    environment variable wins; otherwise the setting saved from Settings."""
+    """'docker' or 'fly' when agents use the sandboxed computer, else None.
+    The environment variable wins; otherwise the setting saved from Settings
+    (which only switches the local Docker one on)."""
     value = os.environ.get(MODE_ENV, '').strip().lower()
     if value:
+        if value == 'fly':
+            return 'fly'
         return 'docker' if value in ('docker', '1', 'true', 'yes', 'on') else None
     return 'docker' if _saved().get('enabled') else None
 
@@ -127,11 +132,14 @@ def user_key(user_id: Any) -> str:
 class Sandbox:
     """One user's running container."""
 
-    def __init__(self, name: str, token: str, api_port: int, viewer_port: int):
+    def __init__(self, name: str, token: str, api_port: int, viewer_port: int, host: str = '127.0.0.1'):
         self.name = name
         self.token = token
-        self.api = f'http://127.0.0.1:{api_port}'
+        address = f'[{host}]' if ':' in host else host  # an IPv6 address on Fly's private network
+        self.api = f'http://{address}:{api_port}'
         self.viewer_port = viewer_port
+        self.viewer_base = f'ws://{address}:{viewer_port}'
+        self.machine_id = ''  # Fly only
         self.image_id = ''  # the image the container was made from (sha256:...)
         self.passwords: dict[str, str] = {}  # desktop -> VNC password
         # One driver per desktop, kept so its snapshots last between tool calls
@@ -184,6 +192,10 @@ class Sandbox:
     def desktops(self) -> list[dict]:
         return self.request('GET', '/desktops').get('desktops', [])
 
+    def viewer_url(self, desktop: str) -> str:
+        """The live screen of one desktop (websockify inside the computer)."""
+        return f'{self.viewer_base}/websockify?token={desktop}'
+
 
 class SandboxManager:
     """Starts, finds and stops users' sandbox containers through Docker."""
@@ -198,6 +210,33 @@ class SandboxManager:
         self._pulling = False
         self._last_pull = 0.0  # time.monotonic(); 0 = not yet
         self._image_id_cache: tuple[float, str] = (0.0, '')
+        # Open live screens per user: a hosted computer isn't stopped while
+        # someone watches it.
+        self._viewers: dict[str, int] = {}
+
+    kind = 'docker'
+
+    def viewer_opened(self, user_id: Any) -> None:
+        key = user_key(user_id)
+        with self._guard:
+            self._viewers[key] = self._viewers.get(key, 0) + 1
+
+    def viewer_closed(self, user_id: Any) -> None:
+        key = user_key(user_id)
+        with self._guard:
+            left = self._viewers.get(key, 0) - 1
+            if left > 0:
+                self._viewers[key] = left
+            else:
+                self._viewers.pop(key, None)
+
+    def watched(self, user_id: Any) -> bool:
+        return self._viewers.get(user_key(user_id), 0) > 0
+
+    def asleep(self, user_id: Any) -> bool:
+        """True when the user's computer exists but is stopped to save money
+        (hosted only; a local one is just started when needed)."""
+        return False
 
     # -- docker -------------------------------------------------------------
     def _docker(self, *args: str, check: bool = True, timeout: float = 120) -> subprocess.CompletedProcess:
@@ -501,8 +540,13 @@ _manager_guard = threading.Lock()
 def get_manager() -> SandboxManager:
     global _manager
     with _manager_guard:
-        if _manager is None:
-            _manager = SandboxManager()
+        kind = 'fly' if sandbox_mode() == 'fly' else 'docker'
+        if _manager is None or _manager.kind != kind:
+            if kind == 'fly':
+                from cognitrix.computer.sandbox.fly import FlyManager
+                _manager = FlyManager()
+            else:
+                _manager = SandboxManager()
         return _manager
 
 

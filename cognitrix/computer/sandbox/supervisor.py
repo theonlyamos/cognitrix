@@ -7,6 +7,8 @@ accessibility bus. Every request except /health needs the container's token
 (``Authorization: Bearer <COGNITRIX_SANDBOX_TOKEN>``):
 
     GET    /health
+    GET    /activity                      seconds since the last request, and whether work is running
+                                          (the engine stops an idle computer; this call doesn't count)
     GET    /desktops                      list desktops
     POST   /desktops/<name>               start one (or return the running one)
     DELETE /desktops/<name>               stop one
@@ -46,6 +48,7 @@ import os
 import secrets
 import shutil
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -278,11 +281,57 @@ def proxy_to_app(handler: BaseHTTPRequestHandler, port: int, path: str, method: 
     handler.close_connection = True
 
 
-def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str = '0.0.0.0',  # noqa: S104
+class _Activity:
+    """When the computer was last used, for idle shutdown on hosted servers."""
+
+    def __init__(self) -> None:
+        self.last = time.time()
+        self.in_flight = 0
+        self._guard = threading.Lock()
+
+    def begin(self) -> None:
+        with self._guard:
+            self.in_flight += 1
+            self.last = time.time()
+
+    def end(self) -> None:
+        with self._guard:
+            self.in_flight = max(0, self.in_flight - 1)
+            self.last = time.time()
+
+
+def busy_reasons(sup: Supervisor, work: Workspace | None, activity: _Activity) -> list[str]:
+    """Why this computer shouldn't be stopped now, even when nobody called lately."""
+    reasons = []
+    if activity.in_flight:
+        reasons.append('a request is running')
+    if any(d.held_by for d in sup.desktops.values()):
+        reasons.append('a person has control')
+    if work is not None and any(job.running for job in list(work.jobs.values())):
+        reasons.append('a command is running')
+    return reasons
+
+
+class _DualStackServer(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+    def server_bind(self) -> None:
+        # Take IPv4 too (Fly's private network is IPv6; local Docker maps IPv4).
+        try:
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        except (OSError, AttributeError):
+            pass
+        super().server_bind()
+
+
+def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = None,
                 apps: AppHost | None = None, work: Workspace | None = None) -> ThreadingHTTPServer:
     secret = token()
     if not secret:
         raise SystemExit('COGNITRIX_SANDBOX_TOKEN is not set')
+    # '::' on Fly, where the engine reaches the computer over the private IPv6 network.
+    host = host or os.environ.get('COGNITRIX_SANDBOX_LISTEN') or '0.0.0.0'  # noqa: S104
+    activity = _Activity()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -316,6 +365,17 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str = '0.0.0.0'
                 return
             if not self._authed():
                 return
+            if method == 'GET' and self.path == '/activity':
+                self._reply(200, {'ok': True, 'idle_s': round(time.time() - activity.last, 1),
+                                  'busy': busy_reasons(sup, work, activity)})
+                return
+            activity.begin()
+            try:
+                self._dispatch(method)
+            finally:
+                activity.end()
+
+        def _dispatch(self, method: str) -> None:
             parts = [p for p in self.path.split('?')[0].split('/') if p]
             if parts[:1] == ['apps']:
                 self._apps(method, parts)
@@ -533,8 +593,9 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str = '0.0.0.0'
         def do_DELETE(self):  # noqa: N802
             self._route('DELETE')
 
-    server = ThreadingHTTPServer((host, port), Handler)
+    server = (_DualStackServer if ':' in host else ThreadingHTTPServer)((host, port), Handler)
     server.daemon_threads = True
+    server.activity = activity  # type: ignore[attr-defined]
     return server
 
 

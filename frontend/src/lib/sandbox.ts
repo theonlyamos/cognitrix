@@ -17,6 +17,10 @@ export interface SandboxStatus {
   desktops: SandboxDesktop[];
   /** A newer version of the computer has been downloaded; restart to use it. */
   update_available?: boolean;
+  /** Where computers run: this server's Docker, or Fly Machines. */
+  host?: 'docker' | 'fly';
+  /** Hosted: the computer exists but is stopped while nobody uses it. */
+  asleep?: boolean;
   error?: string;
 }
 
@@ -45,6 +49,11 @@ export async function updateSandbox(): Promise<void> {
   await api.post('/computer/sandbox/update');
 }
 
+/** Start a hosted computer that is asleep. */
+export async function wakeSandbox(): Promise<void> {
+  await api.post('/computer/sandbox/wake');
+}
+
 /** Throw the computer away, files and logins included. */
 export async function resetSandbox(): Promise<void> {
   await api.post('/computer/sandbox/reset');
@@ -68,6 +77,9 @@ export interface SandboxSettings {
   from_env: boolean;
   image: string;
   docker: { installed: boolean; running: boolean; image: boolean };
+  host?: 'docker' | 'fly';
+  /** Hosted on Fly: the settings the server has (never the token). */
+  fly?: { app: string; region: string; configured: boolean; missing: string[]; idle_minutes: number; idle_action: string; size: string };
 }
 
 export async function getSandboxSettings(): Promise<SandboxSettings> {
