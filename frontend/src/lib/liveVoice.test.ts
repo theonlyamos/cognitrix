@@ -32,6 +32,16 @@ describe('parseApprovalAnswer', () => {
     expect(parseApprovalAnswer('yesterday')).toBeNull();
   });
 
+  it('treats negated or doubtful answers as no or ask again, never yes', () => {
+    expect(parseApprovalAnswer('not approved', 'high')).toBe('no');
+    expect(parseApprovalAnswer('not approved')).toBe('no');
+    expect(parseApprovalAnswer("I'm not saying yes")).toBe('no');
+    expect(parseApprovalAnswer('never allow it')).toBe('no');
+    expect(parseApprovalAnswer('not sure')).toBeNull();
+    expect(parseApprovalAnswer('maybe yes')).toBeNull();
+    expect(parseApprovalAnswer('wait')).toBeNull();
+  });
+
   it('needs approve or allow for high-risk actions', () => {
     expect(parseApprovalAnswer('yes', 'high')).toBeNull();
     expect(parseApprovalAnswer('okay', 'high')).toBeNull();

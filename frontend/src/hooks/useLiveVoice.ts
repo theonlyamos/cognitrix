@@ -152,7 +152,13 @@ export function useLiveVoice(opts: LiveVoiceOptions) {
       return;
     }
     const q = o.question;
-    if (q && !q.secret) {
+    if (q?.secret) {
+      // A sign-in request is typed into its own masked form; what was said is
+      // never sent to the chat, where the agent would read it.
+      void say('That one needs typing. I’ve left it on screen.');
+      return;
+    }
+    if (q) {
       const answer = questionAnswer(text, q);
       if (!answer) {
         void say(`Sorry, I didn’t catch which one. ${questionSpeech(q)}`);

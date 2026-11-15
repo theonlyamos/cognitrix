@@ -79,6 +79,11 @@ const NO = [
   'block', 'dont do it', 'not now', 'skip', 'never',
   'non', 'refuser', 'annuler', 'negar', 'cancelar', 'rechazar',
 ];
+const UNSURE = [
+  'not sure', 'unsure', 'maybe', 'perhaps', 'i dont know', 'dont know', 'wait', 'hold on', 'hang on', 'hmm',
+  'let me think', 'what', 'why', 'peut etre', 'quizás', 'quizas', 'tal vez', 'no sé', 'no se',
+];
+const NEGATORS = new Set(['no', 'not', 'nope', 'nah', 'dont', 'never', 'cant', 'wont', 'shouldnt', 'isnt', 'non', 'pas', 'ne', 'nunca']);
 /** Words that count as a yes when the action is high risk: a plain "ok" is not enough. */
 const STRONG_YES = ['approve', 'approved', 'allow', 'allow it', 'yes approve', 'yes allow', 'aprobar', 'apruebo', 'permitir'];
 
@@ -97,8 +102,10 @@ export function parseApprovalAnswer(spoken: string, risk = ''): 'yes' | 'no' | n
   const words = text.split(' ');
   // Long sentences are probably not an answer ("yes but first check the folder").
   if (words.length > 6) return null;
-  const no = NO.some((p) => hasPhrase(text, normalize(p)));
-  if (no) return 'no';
+  // Doubt is never a yes: ask again.
+  if (UNSURE.some((p) => hasPhrase(text, normalize(p)))) return null;
+  // Any negation turns the answer into a no ("not approved", "I'm not saying yes").
+  if (words.some((w) => NEGATORS.has(w)) || NO.some((p) => hasPhrase(text, normalize(p)))) return 'no';
   const yesWords = risk === 'high' ? STRONG_YES : YES;
   return yesWords.some((p) => hasPhrase(text, normalize(p))) ? 'yes' : null;
 }
