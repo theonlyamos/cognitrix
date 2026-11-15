@@ -19,7 +19,7 @@ import {
 
 interface AgentLite { id: string; name: string }
 
-const LABEL: Record<ChannelKind, string> = { telegram: 'Telegram', slack: 'Slack', discord: 'Discord', teams: 'Microsoft Teams', whatsapp: 'WhatsApp' };
+const LABEL: Record<ChannelKind, string> = { telegram: 'Telegram', slack: 'Slack', discord: 'Discord', teams: 'Microsoft Teams', whatsapp: 'WhatsApp', sms: 'SMS' };
 
 function StatusDot({ channel }: { channel: ChatChannel }) {
   const state = !channel.enabled
@@ -83,6 +83,26 @@ function Setup({ kind, manifest }: { kind: ChannelKind; manifest: Record<string,
           <li>From App settings › Basic copy the App secret. Paste all three below.</li>
           <li>Cognitrix then shows a callback URL and verify token. Paste them under WhatsApp › Configuration and subscribe to the <span className="font-mono">messages</span> field.</li>
           <li>Send the bot's number the code Cognitrix shows you.</li>
+        </ol>
+      </div>
+    );
+  }
+  if (kind === 'sms') {
+    return (
+      <div className="space-y-2">
+        <p className="rounded-[10px] border border-line bg-bg px-3 py-2 text-[12.5px] leading-relaxed text-fg-dim">
+          Twilio sends texts to Cognitrix, so this needs Cognitrix running on a server with a public
+          <span className="font-mono"> https://</span> address. Each text in and out costs a little on your Twilio account.
+        </p>
+        <ol className="list-decimal space-y-1 pl-5 text-[12.5px] leading-relaxed text-fg-dim">
+          <li>
+            On{' '}
+            <a href="https://console.twilio.com" target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">console.twilio.com</a>,
+            buy a phone number that can send and receive SMS. US numbers also need an A2P 10DLC registration before carriers deliver their texts.
+          </li>
+          <li>Copy the Account SID and Auth Token from the console's home page, and paste them below with the number.</li>
+          <li>Cognitrix then shows a webhook URL. In the number's settings, under Messaging › A message comes in, choose Webhook, paste it and keep HTTP POST.</li>
+          <li>Text the number the code Cognitrix shows you, from your own phone.</li>
         </ol>
       </div>
     );
@@ -152,6 +172,7 @@ function ChannelPanel({
   const [tenantId, setTenantId] = useState(channel.tenant_id ?? '');
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [appSecret, setAppSecret] = useState('');
+  const [phone, setPhone] = useState(channel.bot_name && kind === 'sms' ? channel.bot_name : '');
   const [editing, setEditing] = useState(!channel.configured);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -187,6 +208,10 @@ function ChannelPanel({
       body.app_id = appId.trim();
       if (appSecret.trim()) body.app_secret = appSecret.trim();
     }
+    if (kind === 'sms') {
+      body.app_id = appId.trim();
+      body.phone_number = phone.trim();
+    }
     if (await update(body)) {
       setBotToken('');
       setAppToken('');
@@ -198,7 +223,8 @@ function ChannelPanel({
   const missing = !botToken.trim()
     || (kind === 'slack' && !appToken.trim())
     || (kind === 'teams' && (!appId.trim() || !tenantId.trim()))
-    || (kind === 'whatsapp' && (!appId.trim() || (!appSecret.trim() && !channel.configured)));
+    || (kind === 'whatsapp' && (!appId.trim() || (!appSecret.trim() && !channel.configured)))
+    || (kind === 'sms' && (!appId.trim() || !phone.trim()));
   const endpoint = channel.webhook_path ? `${window.location.origin}${channel.webhook_path}` : '';
   const copyEndpoint = async () => {
     try {
@@ -222,18 +248,30 @@ function ChannelPanel({
           </Field>
         </>
       )}
+      {kind === 'sms' && (
+        <>
+          <Field label="ACCOUNT SID">
+            <Input autoComplete="off" aria-label="Twilio Account SID" placeholder="AC…"
+              value={appId} onChange={(e) => setAppId(e.target.value)} disabled={busy} />
+          </Field>
+          <Field label="TWILIO NUMBER" hint="with country code">
+            <Input autoComplete="off" inputMode="tel" aria-label="Twilio phone number" placeholder="+15550102000"
+              value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
+          </Field>
+        </>
+      )}
       {kind === 'whatsapp' && (
         <Field label="PHONE NUMBER ID">
           <Input autoComplete="off" inputMode="numeric" aria-label="WhatsApp phone number ID" placeholder="106540352242922"
             value={appId} onChange={(e) => setAppId(e.target.value)} disabled={busy} />
         </Field>
       )}
-      <Field label={kind === 'slack' ? 'BOT TOKEN (xoxb-…)' : kind === 'teams' ? 'CLIENT SECRET' : kind === 'whatsapp' ? 'ACCESS TOKEN' : 'BOT TOKEN'}>
+      <Field label={kind === 'slack' ? 'BOT TOKEN (xoxb-…)' : kind === 'teams' ? 'CLIENT SECRET' : kind === 'whatsapp' ? 'ACCESS TOKEN' : kind === 'sms' ? 'AUTH TOKEN' : 'BOT TOKEN'}>
         <Input
           type="password"
           autoComplete="off"
-          aria-label={kind === 'teams' ? 'Teams client secret' : kind === 'whatsapp' ? 'WhatsApp access token' : `${label} bot token`}
-          placeholder={channel.bot_token_hint ? `saved ${channel.bot_token_hint}` : kind === 'slack' ? 'xoxb-…' : kind === 'teams' ? 'client secret value' : kind === 'whatsapp' ? 'EAAG…' : '123456:ABC…'}
+          aria-label={kind === 'teams' ? 'Teams client secret' : kind === 'whatsapp' ? 'WhatsApp access token' : kind === 'sms' ? 'Twilio Auth Token' : `${label} bot token`}
+          placeholder={channel.bot_token_hint ? `saved ${channel.bot_token_hint}` : kind === 'slack' ? 'xoxb-…' : kind === 'teams' ? 'client secret value' : kind === 'whatsapp' ? 'EAAG…' : kind === 'sms' ? 'from the Twilio console' : '123456:ABC…'}
           value={botToken}
           onChange={(e) => setBotToken(e.target.value)}
           disabled={busy}
@@ -308,6 +346,8 @@ function ChannelPanel({
               <p className="text-fg-dim">
                 {kind === 'whatsapp'
                   ? 'Callback URL for WhatsApp › Configuration in your Meta app:'
+                  : kind === 'sms'
+                  ? "Webhook URL for your Twilio number (Messaging › A message comes in, HTTP POST):"
                   : "Messaging endpoint for the bot's Configuration page in Azure:"}
               </p>
               <div className="mt-1 flex flex-wrap items-center gap-3">
@@ -347,13 +387,15 @@ function ChannelPanel({
                       ? 'Open a direct chat with the bot in Teams and send this code'
                     : kind === 'whatsapp'
                       ? "After saving the callback URL in Meta, message the bot's number on WhatsApp with this code"
+                    : kind === 'sms'
+                      ? `After saving the webhook URL in Twilio, text ${channel.bot_name} this code from your phone`
                       : 'Open the app in Slack (Apps › Cognitrix › Messages) and send this code'}:
               </p>
               <div className="mt-1.5 flex flex-wrap items-center gap-3">
                 <span className="select-all font-mono text-[18px] tracking-[0.18em]" aria-label="Link code">{channel.link_code}</span>
                 {channel.link_url && (
                   <a href={channel.link_url} target="_blank" rel="noreferrer" className="text-accent-ink hover:underline">
-                    {kind === 'discord' ? `Add ${channel.bot_name} to a server` : kind === 'whatsapp' ? `Message ${channel.bot_name} on WhatsApp` : `Open ${channel.bot_name} in Telegram`}
+                    {kind === 'discord' ? `Add ${channel.bot_name} to a server` : kind === 'whatsapp' ? `Message ${channel.bot_name} on WhatsApp` : kind === 'sms' ? `Text ${channel.bot_name}` : `Open ${channel.bot_name} in Telegram`}
                   </a>
                 )}
               </div>
@@ -436,7 +478,7 @@ function ChannelPanel({
             )}
             <button type="button" disabled={busy} onClick={() => setEditing(true)}
               className="h-9 rounded-lg border border-line px-3 hover:bg-panel-2 disabled:opacity-60">
-              {kind === 'teams' || kind === 'whatsapp' ? 'Change credentials' : 'Change token'}
+              {kind === 'teams' || kind === 'whatsapp' || kind === 'sms' ? 'Change credentials' : 'Change token'}
             </button>
             <button type="button" disabled={busy}
               onClick={() => void run(async () => { await deleteChannel(kind); return null; }, `${label} disconnected.`)}
@@ -460,6 +502,7 @@ const BLURB: Record<ChannelKind, string> = {
   discord: 'Chat in Discord DMs and approve tasks with buttons',
   teams: 'Chat in Teams and @mention it in channels (needs a public server)',
   whatsapp: 'Chat with an agent from WhatsApp (needs a public server)',
+  sms: 'Text an agent from your phone with a Twilio number (needs a public server)',
 };
 
 function summary(channel: ChatChannel): string {
@@ -487,7 +530,7 @@ function ChannelRow({
     <div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-3">
         <span aria-hidden="true" className="grid h-7 w-7 flex-none place-items-center rounded-[7px] bg-panel-2 font-mono text-[11px] font-medium">
-          {channel.kind === 'telegram' ? 'TG' : channel.kind === 'discord' ? 'DC' : channel.kind === 'teams' ? 'MS' : channel.kind === 'whatsapp' ? 'WA' : 'SL'}
+          {channel.kind === 'telegram' ? 'TG' : channel.kind === 'discord' ? 'DC' : channel.kind === 'teams' ? 'MS' : channel.kind === 'whatsapp' ? 'WA' : channel.kind === 'sms' ? 'SM' : 'SL'}
         </span>
         <div className="min-w-0 flex-1 basis-[160px]">
           <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium">

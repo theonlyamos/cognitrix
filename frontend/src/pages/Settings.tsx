@@ -58,7 +58,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'apps', label: 'Connected apps', group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
   { id: 'access', label: 'Agent access', group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
   { id: 'swarms', label: 'Swarms', group: 'AGENTS', keywords: 'swarm workers parallel sub agents subagents fan out limit budget tokens concurrency how many at once' },
-  { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp bot alerts approvals mention channel' },
+  { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp sms text message twilio phone bot alerts approvals mention channel' },
   { id: 'people', label: 'People', group: 'SERVER', keywords: 'users admin invite invitation members roles disable remove delete accounts email smtp reset spending limit cap budget', adminOnly: true },
   { id: 'audit', label: 'Audit log', group: 'SERVER', keywords: 'audit log activity history who did what tool calls approvals sign ins security' },
   { id: 'desktop', label: 'Desktop app', group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
@@ -469,7 +469,7 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
         <>
           <SectionHeader
             title="Chat apps"
-            description="Chat with your agents from Telegram, Slack, Discord, Microsoft Teams or WhatsApp, and get alerts and task approvals there. You create the bot, so messages go only between your bot and this engine."
+            description="Chat with your agents from Telegram, Slack, Discord, Microsoft Teams, WhatsApp or text messages (SMS), and get alerts and task approvals there. You create the bot, so messages go only between your bot and this engine."
           />
           <ChatChannelsCard />
         </>
