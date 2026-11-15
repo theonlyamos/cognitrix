@@ -147,11 +147,15 @@ async def _llm(user_id: str):
 
 def _chunks(text: str, size: int = CHUNK_CHARS) -> list[str]:
     parts, current = [], ''
-    for block in text.split('\n'):
+    blocks: list[str] = []
+    for line in text.split('\n'):
+        # A line longer than a chunk is cut into chunk-sized pieces, not dropped.
+        blocks.extend(line[start:start + size] for start in range(0, max(len(line), 1), size))
+    for block in blocks:
         if current and len(current) + len(block) + 1 > size:
             parts.append(current)
             current = ''
-        current = f'{current}\n{block}' if current else block[:size]
+        current = f'{current}\n{block}' if current else block
     if current:
         parts.append(current)
     return parts

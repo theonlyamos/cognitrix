@@ -30,6 +30,8 @@ REFRESH_CHOICES = (0, 1, 7, 30)
 """Days between automatic re-reads of a web source (0 = only when asked)."""
 
 _jobs: set[asyncio.Task] = set()
+_reading: set[str] = set()
+"""Web sources this process is reading right now."""
 
 
 class KnowledgeError(ValueError):
@@ -181,6 +183,16 @@ def _refresh_days(value: Any) -> int:
 async def _ingest_web(document_id: str) -> None:
     """Read a web source and swap its passages for the new ones. The old
     passages stay searchable until the new read has worked."""
+    if document_id in _reading:
+        return
+    _reading.add(document_id)
+    try:
+        await _read_web(document_id)
+    finally:
+        _reading.discard(document_id)
+
+
+async def _read_web(document_id: str) -> None:
     row = await KnowledgeDocument.get(document_id)
     if row is None or not row.source_url:
         return
@@ -208,8 +220,7 @@ async def _ingest_web(document_id: str) -> None:
         name = row.name
         if site.pages[0].title and site.pages[0].title != site.pages[0].url:
             name = site.pages[0].title[:160]
-        await store.remove_document(collection_id, document_id)
-        await store.add(collection_id, document_id, name, pieces, urls)
+        await store.replace(collection_id, document_id, name, pieces, urls)
         if await KnowledgeDocument.get(document_id) is None:
             if await KnowledgeCollection.get(collection_id) is None:
                 await store.remove_collection(collection_id)
@@ -350,7 +361,7 @@ async def resume_interrupted(min_age_seconds: float = 600.0) -> None:
     are left alone."""
     now = datetime.now(UTC)
     for row in await KnowledgeDocument.find({'status': 'queued'}):
-        if _age_seconds(row.refreshed or row.created, now) < min_age_seconds:
+        if str(row.id) in _reading or _age_seconds(row.refreshed or row.created, now) < min_age_seconds:
             continue
         if row.source_url:
             _start(_ingest_web(str(row.id)))
@@ -368,6 +379,9 @@ async def refresher_loop(interval_seconds: float = 3600.0) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
         try:
+            # Reads skipped at startup because they were too recent to call
+            # stuck are picked up once they are old enough.
+            await resume_interrupted()
             await refresh_due()
         except Exception:
             logger.exception('Knowledge refresh failed')

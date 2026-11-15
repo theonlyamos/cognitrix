@@ -193,3 +193,12 @@ async def test_task_runs_read_memory_only_when_asked(db):  # noqa: F811
     assert await task_memory_note(SimpleNamespace(owner_id=None, read_memory=True)) == ''
     await saved.save_settings(str(amos.id), enabled=False)
     assert await task_memory_note(on) == ''
+
+
+def test_long_import_lines_are_split_not_cut():
+    from cognitrix.memory import importer
+
+    text = 'a' * 30_000 + '\nshort line'
+    parts = importer._chunks(text, 12_000)
+    assert sum(len(p) for p in parts) >= 30_000 + len('short line')
+    assert all(len(p) <= 12_000 for p in parts) and parts[-1].endswith('short line')

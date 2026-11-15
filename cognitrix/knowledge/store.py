@@ -61,6 +61,32 @@ def _add(collection_id: str, document_id: str, name: str, pieces: list[str],
         )
 
 
+def _replace(collection_id: str, document_id: str, name: str, pieces: list[str],
+             urls: list[str] | None = None) -> None:
+    """Swap a document's passages for new ones. The new ones are written
+    first under fresh ids; the old ones go only once that has worked, so a
+    failure leaves the last good passages searchable."""
+    import uuid
+
+    collection = _collection(collection_id)
+    old_ids = collection.get(where={'document_id': str(document_id)}, include=[])['ids']
+    generation = f'{document_id}:{uuid.uuid4().hex[:8]}'
+    try:
+        _add(collection_id, generation, name, pieces, urls)
+    except Exception:
+        try:
+            collection.delete(where={'document_id': generation})
+        except Exception:
+            logger.debug('Could not clean up a failed refresh of %s', document_id, exc_info=True)
+        raise
+    # The new passages carry the generation id; label them as the document.
+    new = collection.get(where={'document_id': generation}, include=['metadatas'])
+    if new['ids']:
+        collection.update(ids=new['ids'], metadatas=[{**meta, 'document_id': str(document_id)} for meta in new['metadatas']])
+    if old_ids:
+        collection.delete(ids=old_ids)
+
+
 def _remove_document(collection_id: str, document_id: str) -> None:
     _collection(collection_id).delete(where={'document_id': str(document_id)})
 
@@ -110,6 +136,11 @@ async def _threaded(func, *args):
 async def add(collection_id: str, document_id: str, name: str, pieces: list[str],
               urls: list[str] | None = None) -> None:
     await _threaded(_add, collection_id, document_id, name, pieces, urls)
+
+
+async def replace(collection_id: str, document_id: str, name: str, pieces: list[str],
+                  urls: list[str] | None = None) -> None:
+    await _threaded(_replace, collection_id, document_id, name, pieces, urls)
 
 
 async def remove_document(collection_id: str, document_id: str) -> None:

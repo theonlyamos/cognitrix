@@ -324,3 +324,38 @@ async def test_web_source_api(kb, site):
     assert err.value.status_code == 404
     with pytest.raises(HTTPException):
         await routes.add_url(created['id'], routes.UrlBody(url='ftp://x'), ctx)
+
+
+async def test_a_refresh_that_fails_while_indexing_keeps_the_old_passages(kb, site, monkeypatch):
+    collection = await knowledge.create_collection('user-1', 'Widget')
+    doc = await knowledge.add_url(collection, site.base + '/docs/install.html', wait=True)
+    assert await knowledge.search('user-1', [str(collection.id)], 'pip install widget')
+
+    site.pages['/docs/install.html'] = ('text/html', '<html><body><p>Brand new text.</p></body></html>')
+
+    def broken_embed(texts):
+        raise RuntimeError('embedding model unavailable')
+
+    monkeypatch.setattr(store, '_embed', broken_embed)
+    refreshed = await knowledge.refresh_document(doc, wait=True)
+    assert refreshed.status == 'ready' and refreshed.error.startswith('Last refresh failed')
+    monkeypatch.setattr(store, '_embed', _fake_embed)
+    hits = await knowledge.search('user-1', [str(collection.id)], 'pip install widget')
+    assert hits and 'pip install' in hits[0]['text']
+
+
+async def test_interrupted_reads_are_picked_up_once_old_enough(kb, site, monkeypatch):
+    from cognitrix.knowledge.models import KnowledgeDocument
+
+    collection = await knowledge.create_collection('user-1', 'Widget')
+    row = KnowledgeDocument(collection_id=str(collection.id), user_id='user-1', name='x',
+                            created=knowledge._now(), source_url=site.base + '/notes.txt')
+    await row.save()
+    stuck = await KnowledgeDocument.find_one({'source_url': site.base + '/notes.txt'})
+    started = []
+    monkeypatch.setattr(knowledge, '_start', lambda job: (started.append(1), job.close()))
+    await knowledge.resume_interrupted()
+    assert started == []  # too recent: maybe another process is reading it
+    await knowledge.resume_interrupted(min_age_seconds=0)
+    assert started == [1]
+    assert stuck.status == 'queued'
