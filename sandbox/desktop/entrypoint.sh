@@ -15,7 +15,9 @@ dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus \
     >/dev/null 2>&1 || true
 
 # Live screens: one websocket endpoint, each desktop picked by ?token=<name>.
-websockify --web /usr/share/novnc --token-plugin TokenFile --token-source "$STATE/tokens" 6080 \
+# On Fly the engine connects over the private IPv6 network ('[::]:6080').
+websockify --web /usr/share/novnc --token-plugin TokenFile --token-source "$STATE/tokens" \
+    "${COGNITRIX_SANDBOX_VIEWER_LISTEN:-6080}" \
     >/dev/null 2>&1 &
 
 exec python3 -m cognitrix.computer.sandbox.supervisor

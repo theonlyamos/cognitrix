@@ -17,6 +17,10 @@ export interface SandboxStatus {
   desktops: SandboxDesktop[];
   /** A newer version of the computer has been downloaded; restart to use it. */
   update_available?: boolean;
+  /** Where computers run: this server's Docker, or Fly Machines. */
+  host?: 'docker' | 'fly';
+  /** Hosted: the computer exists but is stopped while nobody uses it. */
+  asleep?: boolean;
   error?: string;
 }
 
@@ -45,6 +49,11 @@ export async function updateSandbox(): Promise<void> {
   await api.post('/computer/sandbox/update');
 }
 
+/** Start a hosted computer that is asleep. */
+export async function wakeSandbox(desktop?: string | null): Promise<void> {
+  await api.post('/computer/sandbox/wake', { desktop: desktop ?? null });
+}
+
 /** Throw the computer away, files and logins included. */
 export async function resetSandbox(): Promise<void> {
   await api.post('/computer/sandbox/reset');
@@ -68,6 +77,9 @@ export interface SandboxSettings {
   from_env: boolean;
   image: string;
   docker: { installed: boolean; running: boolean; image: boolean };
+  host?: 'docker' | 'fly';
+  /** Hosted on Fly: the settings the server has (never the token). */
+  fly?: { app: string; region: string; configured: boolean; missing: string[]; idle_minutes: number; idle_action: string; size: string };
 }
 
 export async function getSandboxSettings(): Promise<SandboxSettings> {
@@ -163,4 +175,65 @@ export async function copyAgentSetup(from: string, to: string): Promise<void> {
 /** Answer an agent's Ask For Sign-in card: the value goes straight to Saved sign-ins. */
 export async function answerSignInRequest(requestId: string, values: { value?: string; username?: string; password?: string }): Promise<void> {
   await api.post(`/credentials/requests/${encodeURIComponent(requestId)}`, values);
+}
+
+/** Teach a task: one recorded step of what the person did on the desktop. */
+export interface TaughtStep {
+  kind: 'click' | 'double_click' | 'right_click' | 'middle_click' | 'type' | 'key' | 'scroll' | 'window_opened';
+  app?: string;
+  window?: string;
+  target?: string;
+  text?: string;
+  keys?: string;
+  direction?: string;
+  amount?: number;
+  /** Where in the window, 0-1000 across and down. */
+  at?: [number, number];
+  /** Still being typed. */
+  typing?: boolean;
+}
+
+export interface TeachRecording {
+  steps: TaughtStep[];
+  /** The steps as numbered lines. */
+  text: string;
+  recording?: boolean;
+  truncated?: boolean;
+  error?: string;
+}
+
+/** Take over and start recording; returns the password that lets the screen take input. */
+export async function startTeaching(desktop: string): Promise<string> {
+  const { data } = await api.post<{ password: string }>(`/computer/sandbox/desktops/${encodeURIComponent(desktop)}/teach/start`, {});
+  return data.password;
+}
+
+export async function teachingStatus(desktop: string): Promise<TeachRecording> {
+  return (await api.get<TeachRecording>(`/computer/sandbox/desktops/${encodeURIComponent(desktop)}/teach`)).data;
+}
+
+/** Stop recording and hand the desktop back to the agent. */
+export async function stopTeaching(desktop: string): Promise<TeachRecording> {
+  return (await api.post<TeachRecording>(`/computer/sandbox/desktops/${encodeURIComponent(desktop)}/teach/stop`, { hand_back: true })).data;
+}
+
+export interface TaughtSkill {
+  name: string;
+  description: string;
+  body: string;
+  /** The agent whose model wrote it. */
+  agent?: string;
+}
+
+/** A model writes a skill from the steps. Nothing is saved yet. */
+export async function draftTaughtSkill(input: { steps: TaughtStep[]; title: string; note: string; desktop: string; agentId?: string | null }): Promise<TaughtSkill> {
+  const { data } = await api.post<TaughtSkill>('/computer/sandbox/teach/draft', {
+    steps: input.steps, title: input.title, note: input.note, desktop: input.desktop, agent_id: input.agentId ?? null,
+  });
+  return data;
+}
+
+/** Save it as one of the person's own skills. */
+export async function saveTaughtSkill(skill: TaughtSkill): Promise<void> {
+  await api.post('/skills/mine', { name: skill.name, description: skill.description, body: skill.body });
 }

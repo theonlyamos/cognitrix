@@ -3,6 +3,7 @@ import MarkdownMessage from '@/components/MarkdownMessage';
 import { errorMessage } from '@/lib/api';
 import { askSideQuestion, clearSideQuestions, listSideQuestions, type SideQuestion } from '@/lib/sideQuestions';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const BubbleIcon = () => (
   <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -18,8 +19,8 @@ export function SideQuestionButton({ onClick, active, className }: { onClick: ()
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      aria-label="Side question"
-      title="Side question: ask about this chat without interrupting it (Ctrl+/)"
+      aria-label={tr('ui.sideQuestions.sideQuestion')}
+      title={tr('ui.sideQuestions.sideQuestionAskAboutThis')}
       className={cn(
         'grid h-11 w-11 place-items-center rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-8 md:w-8',
         active && 'bg-panel-2 text-fg',
@@ -63,7 +64,7 @@ export function SideQuestionsPanel({ sessionId, busy, agentName, onClose, onUseI
     setError(null);
     listSideQuestions(sessionId)
       .then((rows) => { if (live) setItems(rows); })
-      .catch((err) => { if (live) setError(errorMessage(err, 'Could not load side questions.')); })
+      .catch((err) => { if (live) setError(errorMessage(err, tr('ui.sideQuestions.couldNotLoadSideQuestions'))); })
       .finally(() => { if (live) setLoading(false); });
     inputRef.current?.focus();
     return () => { live = false; };
@@ -84,7 +85,7 @@ export function SideQuestionsPanel({ sessionId, busy, agentName, onClose, onUseI
       const row = await askSideQuestion(sessionId, question);
       setItems((prev) => [...prev, row]);
     } catch (err) {
-      setError(errorMessage(err, 'Could not ask that.'));
+      setError(errorMessage(err, tr('ui.sideQuestions.couldNotAskThat')));
       setDraft(question);
     } finally {
       setPending(null);
@@ -97,44 +98,43 @@ export function SideQuestionsPanel({ sessionId, busy, agentName, onClose, onUseI
       await clearSideQuestions(sessionId);
       setItems([]);
     } catch (err) {
-      setError(errorMessage(err, 'Could not clear them.'));
+      setError(errorMessage(err, tr('ui.sideQuestions.couldNotClearThem')));
     }
   }, [sessionId]);
 
   return (
     <section
-      aria-label="Side questions"
+      aria-label={tr('ui.sideQuestions.sideQuestions')}
       className="flex max-h-[min(70vh,560px)] w-full flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-lg"
       onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
     >
       <header className="flex items-center gap-2 border-b border-line px-3 py-2">
         <span className="text-fg-dim"><BubbleIcon /></span>
         <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-medium text-fg">Side questions</div>
+          <div className="text-[13px] font-medium text-fg">{tr('ui.sideQuestions.sideQuestions')}</div>
           <div className="truncate text-[11.5px] text-fg-dim">
-            {busy ? `${agentName || 'The agent'} keeps working; this doesn’t interrupt it.` : 'Answered on the side; not added to the chat.'}
+            {busy ? tr('ui.sideQuestions.agentnameKeepsWorkingThisDoesn', { agentName: agentName || 'The agent' }) : tr('ui.sideQuestions.answeredOnTheSideNot')}
           </div>
         </div>
         {items.length > 0 && (
           <button type="button" onClick={() => void clear()} className="min-h-11 rounded px-2 text-[11.5px] text-fg-dim hover:text-fg md:min-h-0">
-            Clear
+            {tr('ui.sideQuestions.clear')}
           </button>
         )}
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close side questions"
+          aria-label={tr('ui.sideQuestions.closeSideQuestions')}
           className="grid h-11 w-11 place-items-center rounded text-fg-dim hover:bg-panel-2 hover:text-fg md:h-7 md:w-7"
         >
           <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </header>
       <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3" aria-live="polite">
-        {loading && <div className="text-[12px] text-fg-dim">Loading…</div>}
+        {loading && <div className="text-[12px] text-fg-dim">{tr('ui.sideQuestions.loading')}</div>}
         {!loading && items.length === 0 && !pending && (
           <div className="text-[12px] leading-relaxed text-fg-dim">
-            Ask about what’s happening, like “what is it doing right now?” or “which file did it change?”. The answer
-            comes from the conversation and the agent’s progress so far; nothing is run.
+            {tr('ui.sideQuestions.askAboutWhatSHappening')}
           </div>
         )}
         {items.map((q) => (
@@ -147,8 +147,8 @@ export function SideQuestionsPanel({ sessionId, busy, agentName, onClose, onUseI
                 <MarkdownMessage content={q.answer} />
                 <div className="mt-1 flex items-center gap-3 font-mono text-[10.5px] text-fg-dim">
                   {q.model && <span>{q.model}</span>}
-                  <button type="button" onClick={() => void navigator.clipboard?.writeText(q.answer)} className="hover:text-fg">copy</button>
-                  <button type="button" onClick={() => onUseInChat(q.question)} className="hover:text-fg" title="Put this question in the chat box, to ask the agent itself">ask in chat</button>
+                  <button type="button" onClick={() => void navigator.clipboard?.writeText(q.answer)} className="hover:text-fg">{tr('ui.sideQuestions.copy')}</button>
+                  <button type="button" onClick={() => onUseInChat(q.question)} className="hover:text-fg" title={tr('ui.sideQuestions.putThisQuestionInThe')}>{tr('ui.sideQuestions.askInChat')}</button>
                 </div>
               </div>
             )}
@@ -159,7 +159,7 @@ export function SideQuestionsPanel({ sessionId, busy, agentName, onClose, onUseI
             <div className="ml-8 rounded-lg bg-panel-2 px-3 py-2 text-[13px] text-fg">{pending.question}</div>
             <div className="flex items-center gap-2 text-[12px] text-fg-dim">
               <svg className="h-3.5 w-3.5 animate-spin text-accent-ink" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" className="opacity-25" /><path d="M4 12a8 8 0 0 1 8-8" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" /></svg>
-              Thinking…
+              {tr('ui.sideQuestions.thinking')}
             </div>
           </div>
         )}
@@ -175,15 +175,15 @@ export function SideQuestionsPanel({ sessionId, busy, agentName, onClose, onUseI
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ask(); }
           }}
           maxLength={2000}
-          aria-label="Side question"
-          placeholder="Ask on the side…"
+          aria-label={tr('ui.sideQuestions.sideQuestion')}
+          placeholder={tr('ui.sideQuestions.askOnTheSide')}
           className="block max-h-32 min-h-11 flex-1 resize-none bg-transparent px-2 py-2.5 text-[14px] text-fg outline-none placeholder:text-fg-dim md:min-h-9 md:py-2"
         />
         <button
           type="button"
           onClick={() => void ask()}
           disabled={!draft.trim() || !!pending}
-          aria-label="Ask"
+          aria-label={tr('ui.sideQuestions.ask')}
           className="grid h-11 w-11 flex-none place-items-center rounded-full bg-accent text-accent-foreground transition disabled:opacity-50 md:h-8 md:w-8"
         >
           <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>

@@ -3,7 +3,9 @@
 When ``COGNITRIX_COMPUTER_SANDBOX=docker``, the computer tools drive a
 desktop in a Docker container instead of the machine the engine runs on:
 one container per user, and one desktop per agent inside it (like virtual
-desktops: separate screens, mice and keyboards, shared files).
+desktops: separate screens, mice and keyboards, shared files). With
+``COGNITRIX_COMPUTER_SANDBOX=fly`` each user's computer is a Fly Machine
+instead (see ``fly.py``), stopped when idle and started on the next request.
 
 ``SandboxManager`` starts or finds each user's container with the Docker CLI;
 ``RemoteDriver`` has the same methods the tools use on the local ``Driver``
@@ -67,10 +69,13 @@ _ERRORS = {'human_control': HumanControl, 'stale': Stale, 'busy': Busy, 'blocked
 
 
 def sandbox_mode() -> str | None:
-    """'docker' when agents use the sandboxed computer, else None. The
-    environment variable wins; otherwise the setting saved from Settings."""
+    """'docker' or 'fly' when agents use the sandboxed computer, else None.
+    The environment variable wins; otherwise the setting saved from Settings
+    (which only switches the local Docker one on)."""
     value = os.environ.get(MODE_ENV, '').strip().lower()
     if value:
+        if value == 'fly':
+            return 'fly'
         return 'docker' if value in ('docker', '1', 'true', 'yes', 'on') else None
     return 'docker' if _saved().get('enabled') else None
 
@@ -127,11 +132,14 @@ def user_key(user_id: Any) -> str:
 class Sandbox:
     """One user's running container."""
 
-    def __init__(self, name: str, token: str, api_port: int, viewer_port: int):
+    def __init__(self, name: str, token: str, api_port: int, viewer_port: int, host: str = '127.0.0.1'):
         self.name = name
         self.token = token
-        self.api = f'http://127.0.0.1:{api_port}'
+        address = f'[{host}]' if ':' in host else host  # an IPv6 address on Fly's private network
+        self.api = f'http://{address}:{api_port}'
         self.viewer_port = viewer_port
+        self.viewer_base = f'ws://{address}:{viewer_port}'
+        self.machine_id = ''  # Fly only
         self.image_id = ''  # the image the container was made from (sha256:...)
         self.container_id = ''
         self.passwords: dict[str, str] = {}  # desktop -> VNC password
@@ -185,6 +193,10 @@ class Sandbox:
     def desktops(self) -> list[dict]:
         return self.request('GET', '/desktops').get('desktops', [])
 
+    def viewer_url(self, desktop: str) -> str:
+        """The live screen of one desktop (websockify inside the computer)."""
+        return f'{self.viewer_base}/websockify?token={desktop}'
+
 
 class SandboxManager:
     """Starts, finds and stops users' sandbox containers through Docker."""
@@ -203,6 +215,33 @@ class SandboxManager:
         # containers that already trust its CA.
         self._proxy_where: tuple[str, str] | None = None
         self._ca_installed: dict[str, str] = {}
+        # Open live screens per user: a hosted computer isn't stopped while
+        # someone watches it.
+        self._viewers: dict[str, int] = {}
+
+    kind = 'docker'
+
+    def viewer_opened(self, user_id: Any) -> None:
+        key = user_key(user_id)
+        with self._guard:
+            self._viewers[key] = self._viewers.get(key, 0) + 1
+
+    def viewer_closed(self, user_id: Any) -> None:
+        key = user_key(user_id)
+        with self._guard:
+            left = self._viewers.get(key, 0) - 1
+            if left > 0:
+                self._viewers[key] = left
+            else:
+                self._viewers.pop(key, None)
+
+    def watched(self, user_id: Any) -> bool:
+        return self._viewers.get(user_key(user_id), 0) > 0
+
+    def asleep(self, user_id: Any) -> bool:
+        """True when the user's computer exists but is stopped to save money
+        (hosted only; a local one is just started when needed)."""
+        return False
 
     # -- docker -------------------------------------------------------------
     def _docker(self, *args: str, check: bool = True, timeout: float = 120,
@@ -402,6 +441,65 @@ class SandboxManager:
         self._docker('volume', 'rm', '-f', f'cognitrix-sandbox-home-{user_key(user_id)}', check=False)
         self._boxes.pop(name, None)
 
+    # -- running scripts in the computer (snapshots, the key proxy) --------------
+    # As the computer's own unprivileged user. Docker: `docker exec`; Fly
+    # (fly.py) goes through the supervisor's /exec routes instead.
+    def exec_script(self, box: Sandbox, script: str, input: bytes | None = None,
+                    timeout: float = 120) -> tuple[int, str, str]:
+        """Run a short script; returns (exit code, output, errors)."""
+        try:
+            got = subprocess.run([self.docker, 'exec', *(['-i'] if input is not None else []), '-u', 'agent',  # noqa: S603
+                                  box.name, 'sh', '-c', script], input=input, capture_output=True, timeout=timeout)
+        except FileNotFoundError:
+            raise Unsupported("The agents' computer needs Docker, and Docker isn't installed here.") from None
+        except subprocess.TimeoutExpired:
+            raise TimeoutError('It took too long.') from None
+        return got.returncode, got.stdout.decode('utf-8', 'replace'), got.stderr.decode('utf-8', 'replace')
+
+    def exec_out(self, box: Sandbox, script: str, out: Any, timeout: float = 3600) -> tuple[int, str]:
+        """Run a script whose output (maybe large) goes into the file ``out``.
+        Returns (exit code, the end of its errors)."""
+        try:
+            got = subprocess.run([self.docker, 'exec', '-u', 'agent', box.name, 'sh', '-c', script],  # noqa: S603
+                                 stdout=out, stderr=subprocess.PIPE, timeout=timeout)
+        except FileNotFoundError:
+            raise Unsupported("The agents' computer needs Docker, and Docker isn't installed here.") from None
+        except subprocess.TimeoutExpired:
+            raise TimeoutError('It took too long.') from None
+        return got.returncode, (got.stderr or b'')[-4000:].decode('utf-8', 'replace')
+
+    def exec_in(self, box: Sandbox, script: str, source: Any, timeout: float = 3600) -> tuple[int, str]:
+        """Run a script that reads the file ``source`` (maybe large) as input."""
+        return self._run_with_input([self.docker, 'exec', '-i', '-u', 'agent', box.name, 'sh', '-c', script],
+                                    source, timeout)
+
+    @staticmethod
+    def _run_with_input(args: list[str], source: Any, timeout: float) -> tuple[int, str]:
+        try:
+            got = subprocess.run(args, stdin=source, capture_output=True, timeout=timeout)  # noqa: S603
+        except FileNotFoundError:
+            raise Unsupported("The agents' computer needs Docker, and Docker isn't installed here.") from None
+        except subprocess.TimeoutExpired:
+            raise TimeoutError('It took too long.') from None
+        return got.returncode, (got.stderr or b'')[-4000:].decode('utf-8', 'replace')
+
+    def replace_home(self, user_id: Any, source: Any) -> None:
+        """Empty the computer's home folder and unpack the archive file
+        ``source`` into it, with the computer stopped. The caller starts it again."""
+        name = self.container_name(user_id)
+        with self._guard:
+            self._docker('rm', '-f', name, check=False)
+            self._boxes.pop(name, None)
+        # A throwaway container on the same home volume, without network,
+        # empties it and unpacks the snapshot as the agent user.
+        code, err = self._run_with_input(
+            [self.docker, 'run', '--rm', '-i', '--network', 'none', '--cap-drop', 'ALL',
+             '--security-opt', 'no-new-privileges', '-u', 'agent',
+             '-v', f'cognitrix-sandbox-home-{user_key(user_id)}:/home/agent', '--entrypoint', 'sh', self.image,
+             '-c', 'cd /home/agent && find . -mindepth 1 -delete && tar -xzf - --no-same-owner'], source, 3600)
+        if code != 0:
+            raise DriverError(f"Couldn't restore the snapshot: {err.strip()[-300:]}")
+
     # -- keys the agent never sees ---------------------------------------------
     def _proxy_addresses(self) -> tuple[str, str]:
         """(address the key proxy listens on, host containers reach it at).
@@ -435,7 +533,9 @@ class SandboxManager:
         script = ('umask 022; d="$HOME/.cognitrix-sandbox/proxy"; mkdir -p "$d" && cat > "$d/ca.pem.tmp" '
                   '&& mv -f "$d/ca.pem.tmp" "$d/ca.pem" && cat /etc/ssl/certs/ca-certificates.crt "$d/ca.pem" '
                   '> "$d/bundle.pem.tmp" && mv -f "$d/bundle.pem.tmp" "$d/bundle.pem"')
-        self._docker('exec', '-i', '-u', 'agent', box.name, 'sh', '-c', script, input=pem.decode(), timeout=60)
+        code, _, err = self.exec_script(box, script, input=pem, timeout=60)
+        if code != 0:
+            raise DriverError(f"Couldn't give the agents' computer the key proxy's certificate: {err.strip()[-300:]}")
         self._ca_installed[box.name] = f'{box.container_id}:{fingerprint}'
 
     def key_proxy_env(self, user_id: Any) -> dict[str, str]:
@@ -449,7 +549,7 @@ class SandboxManager:
         try:
             _, port = proxy.ensure_started(bind)
         except OSError:
-            if bind in ('0.0.0.0', '127.0.0.1') or os.environ.get('COGNITRIX_SANDBOX_PROXY_BIND'):  # noqa: S104
+            if bind in ('0.0.0.0', '127.0.0.1', '::') or os.environ.get('COGNITRIX_SANDBOX_PROXY_BIND'):  # noqa: S104
                 raise
             # The gateway isn't an address here (the engine runs in a
             # container itself): listen everywhere; the password still guards it.
@@ -570,8 +670,13 @@ _manager_guard = threading.Lock()
 def get_manager() -> SandboxManager:
     global _manager
     with _manager_guard:
-        if _manager is None:
-            _manager = SandboxManager()
+        kind = 'fly' if sandbox_mode() == 'fly' else 'docker'
+        if _manager is None or _manager.kind != kind:
+            if kind == 'fly':
+                from cognitrix.computer.sandbox.fly import FlyManager
+                _manager = FlyManager()
+            else:
+                _manager = SandboxManager()
         return _manager
 
 

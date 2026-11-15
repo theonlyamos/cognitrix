@@ -14,7 +14,7 @@ Two kinds of snapshot, both saved as .tar.gz files in the engine's data folder
 
 Copying an agent's setup straight to another agent needs no snapshot.
 
-Everything that reads or writes the home folder runs inside the container (or
+Everything that reads or writes the home folder runs inside the computer (or
 a throwaway container on the same volume) as the unprivileged ``agent`` user,
 so nothing in a snapshot ever lands on this machine except as one archive file.
 """
@@ -25,7 +25,6 @@ import logging
 import os
 import re
 import secrets
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -114,25 +113,25 @@ def _clean_name(name: Any, fallback: str) -> str:
 
 # -- running tar in the container ---------------------------------------------
 
-def _exec_to_file(mgr: Any, container: str, script: str, target: Path) -> int:
-    """Run ``script`` as the agent user in the container; its output is the
+def _last_line(text: str) -> str:
+    return ((text or '').strip().splitlines()[-1:] or [''])[0][:300]
+
+
+def _exec_to_file(mgr: Any, box: Any, script: str, target: Path) -> int:
+    """Run ``script`` as the agent user in the computer; its output is the
     archive. GNU tar exits 1 when files changed while it read them, which is
     fine for a computer that's in use."""
     tmp = target.with_suffix('.part')
     try:
         with open(tmp, 'wb') as fh:
-            got = subprocess.run([mgr.docker, 'exec', '-u', 'agent', container, 'sh', '-c', script],  # noqa: S603
-                                 stdout=fh, stderr=subprocess.PIPE, timeout=_TIMEOUT)
-        if got.returncode not in (0, 1) or tmp.stat().st_size == 0:
-            detail = (got.stderr or b'').decode(errors='replace').strip().splitlines()[-1:] or ['']
-            if got.returncode == 3:
+            code, err = mgr.exec_out(box, script, fh, timeout=_TIMEOUT)
+        if code not in (0, 1) or tmp.stat().st_size == 0:
+            if code == 3:
                 raise SnapshotError('That agent has nothing on the computer yet.')
-            raise SnapshotError(f"Couldn't save the snapshot: {detail[0][:300]}")
+            raise SnapshotError(f"Couldn't save the snapshot: {_last_line(err)}")
         os.replace(tmp, target)
         return target.stat().st_size
-    except FileNotFoundError:
-        raise Unsupported("The agents' computer needs Docker, and Docker isn't installed here.") from None
-    except subprocess.TimeoutExpired:
+    except TimeoutError:
         raise SnapshotError('Saving the snapshot took too long.') from None
     finally:
         try:
@@ -141,18 +140,14 @@ def _exec_to_file(mgr: Any, container: str, script: str, target: Path) -> int:
             pass
 
 
-def _exec_from_file(args: list[str], source: Path) -> None:
+def _exec_from_file(mgr: Any, box: Any, script: str, source: Path) -> None:
     try:
         with open(source, 'rb') as fh:
-            got = subprocess.run(args, stdin=fh, capture_output=True,  # noqa: S603
-                                 timeout=_TIMEOUT)
-    except FileNotFoundError:
-        raise Unsupported("The agents' computer needs Docker, and Docker isn't installed here.") from None
-    except subprocess.TimeoutExpired:
+            code, err = mgr.exec_in(box, script, fh, timeout=_TIMEOUT)
+    except TimeoutError:
         raise SnapshotError('Restoring the snapshot took too long.') from None
-    if got.returncode != 0:
-        detail = (got.stderr or b'').decode(errors='replace').strip().splitlines()[-1:] or ['']
-        raise SnapshotError(f"Couldn't restore the snapshot: {detail[0][:300]}")
+    if code != 0:
+        raise SnapshotError(f"Couldn't restore the snapshot: {_last_line(err)}")
 
 
 def _agent_paths(agent: str) -> list[tuple[str, str]]:
@@ -229,7 +224,7 @@ def create_snapshot(mgr: Any, user_id: Any, name: str | None = None, agent: str 
             script = agent_save_script(agent)
         else:
             script = f'cd "$HOME" || exit 2; exec tar --warning=no-file-changed {" ".join(_quote(e) for e in _EXCLUDES)} -czf - .'
-        size = _exec_to_file(mgr, box.name, script, target)
+        size = _exec_to_file(mgr, box, script, target)
         item = {'id': snapshot_id, 'name': _clean_name(name, 'Agent setup' if agent else 'Whole computer'),
                 'kind': 'agent' if agent else 'computer', 'agent': agent, 'size': size,
                 'created_at': time.time(), 'image_id': box.image_id}
@@ -274,30 +269,26 @@ def restore_snapshot(mgr: Any, user_id: Any, snapshot_id: str, agent: str | None
             target = check_name(agent or item.get('agent') or '')
             box = mgr.sandbox(user_id)
             _stop_desktop(box, target)
-            _exec_from_file([mgr.docker, 'exec', '-i', '-u', 'agent', box.name, 'sh', '-c',
-                             agent_restore_script(target)], source)
+            _exec_from_file(mgr, box, agent_restore_script(target), source)
             return {'ok': True, 'kind': 'agent', 'agent': target}
         return _restore_computer(mgr, user_id, source)
 
 
 def _restore_computer(mgr: Any, user_id: Any, source: Path) -> dict:
-    from cognitrix.computer.sandbox.client import user_key
-    name = mgr.container_name(user_id)
     try:
         old = mgr.existing(user_id)
         desktops = [d['name'] for d in (old.desktops() if old else []) if d.get('name')]
     except Exception:
         desktops = []
-    with mgr._guard:
-        mgr._docker('rm', '-f', name, check=False)
-        mgr._boxes.pop(name, None)
-    volume = f'cognitrix-sandbox-home-{user_key(user_id)}'
-    # A throwaway container on the same home volume, without network, empties
-    # it and unpacks the snapshot as the agent user.
-    _exec_from_file([mgr.docker, 'run', '--rm', '-i', '--network', 'none', '--cap-drop', 'ALL',
-                     '--security-opt', 'no-new-privileges', '-u', 'agent', '-v', f'{volume}:/home/agent',
-                     '--entrypoint', 'sh', mgr.image, '-c',
-                     'cd /home/agent && find . -mindepth 1 -delete && tar -xzf - --no-same-owner'], source)
+    try:
+        with open(source, 'rb') as fh:
+            mgr.replace_home(user_id, fh)
+    except TimeoutError:
+        raise SnapshotError('Restoring the snapshot took too long.') from None
+    except DriverError as exc:
+        if isinstance(exc, Unsupported):
+            raise
+        raise SnapshotError(str(exc)) from None
     box = mgr.sandbox(user_id)
     for desktop in desktops:
         try:
@@ -315,10 +306,12 @@ def copy_agent(mgr: Any, user_id: Any, source: str, target: str) -> dict:
     with _lock(user_key(user_id)):
         box = mgr.sandbox(user_id)
         _stop_desktop(box, target)
-        got = mgr._docker('exec', '-u', 'agent', box.name, 'sh', '-c', script, check=False, timeout=_TIMEOUT)
-        if got.returncode == 3:
+        try:
+            code, out, err = mgr.exec_script(box, script, timeout=_TIMEOUT)
+        except TimeoutError:
+            raise SnapshotError('Copying the setup took too long.') from None
+        if code == 3:
             raise SnapshotError('That agent has nothing on the computer yet.')
-        if got.returncode != 0:
-            detail = (got.stderr or got.stdout or '').strip().splitlines()[-1:] or ['']
-            raise SnapshotError(f"Couldn't copy the setup: {detail[0][:300]}")
+        if code != 0:
+            raise SnapshotError(f"Couldn't copy the setup: {_last_line(err or out)}")
     return {'ok': True, 'from': source, 'to': target}
