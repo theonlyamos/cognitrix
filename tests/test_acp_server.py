@@ -248,6 +248,40 @@ async def test_switch_agent_cancel_and_reopen(agents, monkeypatch, tmp_path):
         serving.cancel()
 
 
+async def test_allow_for_session_covers_only_that_editor_session(agents, monkeypatch, tmp_path):
+    from cognitrix.agents.base import AgentManager
+
+    AgentManager.approval_gate.session_cache.clear()
+    agents[0][0].tool_permissions = {'Look Around': 'ask'}
+    look, done = {'tool': 'look_around', 'args': {'path': 'x'}}, {'text': 'ok'}
+    _fake_model(monkeypatch, [look, done, look, done, look, done])
+    contexts = []
+    original = look_around.run
+
+    async def spy(*a, **k):
+        from cognitrix.tools.utils import current_execution_context
+        contexts.append(current_execution_context().host_process_mode)
+        return await original(*a, **k)
+
+    monkeypatch.setattr(type(look_around), 'run', lambda self, *a, **k: spy(*a, **k))
+    client = EditorClient(answer='allow_always')
+    conn, _cog, serving = await _connect(client)
+    try:
+        await conn.initialize(protocol_version=PROTOCOL_VERSION)
+        first = await conn.new_session(cwd=str(tmp_path), mcp_servers=[])
+        await conn.prompt(session_id=first.session_id, prompt=[TextContentBlock(text='look')])
+        await conn.prompt(session_id=first.session_id, prompt=[TextContentBlock(text='again')])
+        assert len(client.asked) == 1  # remembered in this session
+        second = await conn.new_session(cwd=str(tmp_path), mcp_servers=[])
+        await conn.prompt(session_id=second.session_id, prompt=[TextContentBlock(text='look')])
+        assert len(client.asked) == 2  # but not in another one
+    finally:
+        serving.cancel()
+        agents[0][0].tool_permissions = {}
+    from cognitrix.tools.utils import HostProcessMode
+    assert contexts and all(m is HostProcessMode.TRUSTED_LOCAL for m in contexts)
+
+
 def test_prompt_text_and_titles():
     blocks = [
         TextContentBlock(text='Fix this'),

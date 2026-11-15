@@ -147,6 +147,9 @@ class _Chat:
         self.cwd = cwd
         self.task: asyncio.Task | None = None
         self.started: set[str] = set()
+        # "Allow for this session" answers, for this editor session only
+        # (the approval gate's own cache is per agent, shared by sessions).
+        self.allowed: set[str] = set()
 
 
 class CognitrixAgent:
@@ -318,7 +321,13 @@ class CognitrixAgent:
 
         token = acp_approver.set(approve)
         try:
-            context = ToolExecutionContext(user_id=self.user_id) if self.user_id else None
+            from cognitrix.tools.utils import HostProcessMode
+
+            # The editor started this process on the person's own machine,
+            # like the `cognitrix` CLI: the shell and coding tools may run
+            # (risky commands still ask in the editor).
+            context = ToolExecutionContext(
+                user_id=self.user_id, host_process_mode=HostProcessMode.TRUSTED_LOCAL)
             await chat.session(
                 text, chat.agent, 'acp', True, output, {}, True,
                 tool_context=context,
@@ -368,8 +377,14 @@ class CognitrixAgent:
 
     async def _ask(self, chat: _Chat, session_id: str, tool_call: Any, risk: Any, person_only: bool) -> Any:
         """Ask the editor's person about a risky tool call."""
+        import hashlib
+
         from cognitrix.safety.approval_gate import ApprovalResult
 
+        key = hashlib.sha256(json.dumps(
+            [tool_call.tool_name, tool_call.params], sort_keys=True, default=str).encode()).hexdigest()
+        if key in chat.allowed:
+            return ApprovalResult(approved=True)
         options = [
             PermissionOption(option_id='allow_once', name='Allow', kind='allow_once'),
             PermissionOption(option_id='allow_always', name='Allow for this session', kind='allow_always'),
@@ -392,7 +407,8 @@ class CognitrixAgent:
         if not isinstance(outcome, AllowedOutcome):
             return ApprovalResult(approved=False)
         if outcome.option_id == 'allow_always':
-            return ApprovalResult(approved=True, remember=True)
+            chat.allowed.add(key)
+            return ApprovalResult(approved=True)
         if outcome.option_id == 'allow_once':
             return ApprovalResult(approved=True)
         return ApprovalResult(approved=False)

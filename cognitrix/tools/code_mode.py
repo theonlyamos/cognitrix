@@ -180,9 +180,10 @@ def _words(text: str) -> set[str]:
 
 def _search(schemas: list[dict[str, Any]], query: str, names: list[str], limit: int) -> list[dict[str, Any]]:
     by_key = {_key(_schema_name(s)): s for s in schemas}
+    by_key.update({_key(js_name(_schema_name(s))): s for s in schemas})
     picked: list[dict[str, Any]] = []
     for name in names:
-        hit = by_key.get(_key(name))
+        hit = by_key.get(_key(name)) or by_key.get(_key(js_name(name)))
         if hit is not None and hit not in picked:
             picked.append(hit)
     words = _words(query)
@@ -353,8 +354,13 @@ async def run_code(code: str, *, parent=None, interface=None) -> ToolOutcome:
     seen_artifacts: set[str] = set()
     turn_interface = interface or 'cli'
 
+    # Script names are snake_case aliases (js_name); MCP tool names can keep
+    # hyphens, so map each alias back to the assigned tool's real name.
+    aliases = {js_name(t.name): t.name for t in (getattr(parent, 'tools', None) or [])
+               if getattr(t, 'name', None)}
+
     async def call(name: Any, args_json: Any) -> str:
-        name = str(name)
+        name = aliases.get(js_name(str(name)), str(name))
         if len(calls) >= MAX_CALLS_PER_SCRIPT:
             return json.dumps({'ok': False, 'error': f'Too many tool calls in one script (limit {MAX_CALLS_PER_SCRIPT}).'})
         try:

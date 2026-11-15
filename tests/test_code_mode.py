@@ -233,3 +233,21 @@ async def test_on_demand_turn_sends_core_tools_then_the_loaded_ones(monkeypatch)
     sent.clear()
     await session('again', agent, 'cli', False, lambda *a, **k: None, None, True)
     assert sent[0] == ['Add_Numbers', 'Find_Tools', 'Load_Skill']
+
+
+async def test_hyphenated_tool_names_are_reachable_by_their_script_alias():
+    from cognitrix.models.tool import Tool
+    from cognitrix.tools.utils import ToolCallResult
+
+    class Hyphen(Tool):
+        async def run(self, **kwargs):
+            CALLS.append(('hyphen', kwargs))
+            return ToolCallResult(content='read ok', tool_name=self.name)
+
+    mcp_like = Hyphen(name='my-server_read_file', description='Read a file', parameters={'path': 'str'})
+    agent = _agent([mcp_like, _run_code()])
+    outcome = await _run(agent, 'return await tools.my_server_read_file({path: "a.txt"});')
+    assert outcome.status == 'success', outcome.text
+    assert 'read ok' in outcome.text
+    hits = code_mode._search([mcp_like.to_dict_format()], '', ['my_server_read_file'], limit=8)
+    assert len(hits) == 1
