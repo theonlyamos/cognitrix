@@ -23,6 +23,18 @@ class SearchBody(BaseModel):
     query: str
 
 
+class UrlBody(BaseModel):
+    url: str
+    max_pages: int = 1
+    """1 = just this page; more also reads the pages it links to on the same site."""
+    refresh_days: int = 0
+
+
+class WebSourceUpdate(BaseModel):
+    refresh_days: int | None = None
+    max_pages: int | None = None
+
+
 def _owner(ctx: AuthContext) -> str:
     return agent_access.owner_key(ctx.user)
 
@@ -78,12 +90,50 @@ async def add_document(collection_id: str, file: UploadFile = File(...), ctx: Au
     return knowledge.project_document(document)
 
 
-@knowledge_api.delete('/{collection_id}/documents/{document_id}')
-async def delete_document(collection_id: str, document_id: str, ctx: AuthContext = Depends(jwt_only)):
+@knowledge_api.post('/{collection_id}/urls')
+async def add_url(collection_id: str, body: UrlBody, ctx: AuthContext = Depends(jwt_only)):
+    """Add a web page (or a page and the pages it links to) to a collection."""
+    row = await _collection(collection_id, ctx)
+    try:
+        document = await knowledge.add_url(row, body.url, max_pages=body.max_pages, refresh_days=body.refresh_days)
+    except knowledge.KnowledgeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return knowledge.project_document(document)
+
+
+async def _document(collection_id: str, document_id: str, ctx: AuthContext) -> KnowledgeDocument:
     row = await _collection(collection_id, ctx)
     document = await KnowledgeDocument.get(document_id)
     if document is None or str(document.collection_id) != str(row.id):
         raise HTTPException(status_code=404, detail='Document not found')
+    return document
+
+
+@knowledge_api.post('/{collection_id}/documents/{document_id}/refresh')
+async def refresh_document(collection_id: str, document_id: str, ctx: AuthContext = Depends(jwt_only)):
+    document = await _document(collection_id, document_id, ctx)
+    try:
+        document = await knowledge.refresh_document(document)
+    except knowledge.KnowledgeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return knowledge.project_document(document)
+
+
+@knowledge_api.patch('/{collection_id}/documents/{document_id}')
+async def update_document(collection_id: str, document_id: str, body: WebSourceUpdate,
+                          ctx: AuthContext = Depends(jwt_only)):
+    document = await _document(collection_id, document_id, ctx)
+    try:
+        document = await knowledge.update_web_source(document, refresh_days=body.refresh_days,
+                                                     max_pages=body.max_pages)
+    except knowledge.KnowledgeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return knowledge.project_document(document)
+
+
+@knowledge_api.delete('/{collection_id}/documents/{document_id}')
+async def delete_document(collection_id: str, document_id: str, ctx: AuthContext = Depends(jwt_only)):
+    document = await _document(collection_id, document_id, ctx)
     await knowledge.delete_document(document)
     return {'message': 'Document deleted'}
 

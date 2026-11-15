@@ -240,7 +240,7 @@ async def test_speech_options_follow_the_keys(db, monkeypatch):
     monkeypatch.setenv('OPENAI_API_KEY', 'sk-test')
     options = await audio.speech_options(_ctx(user))
     assert {p['id']: p['ready'] for p in options['providers']} == {'openai': True, 'google': False}
-    assert 'alloy' in options['providers'][0]['voices']
+    assert options['providers'][0]['voices'][0] == 'marin'
 
 
 async def test_speech_needs_a_key_and_returns_audio(db, monkeypatch):
@@ -272,3 +272,147 @@ def test_gemini_pcm_is_wrapped_as_wav():
     wav = pcm_to_wav(b'\x00\x00' * 24000, _rate_from_mime('audio/L16;codec=pcm;rate=24000'))
     info = parse_wav(wav)
     assert info.sample_rate == 24000 and round(info.seconds) == 1
+
+
+# ------------------------------------------------- OpenAI speech via Realtime
+
+def test_openai_speech_defaults_to_the_realtime_model(monkeypatch):
+    from cognitrix.providers import speech
+
+    monkeypatch.delenv('COGNITRIX_OPENAI_SPEECH_MODEL', raising=False)
+    model = speech.SPEECH_PROVIDERS['openai'].model
+    assert model == 'gpt-realtime-2.1-mini'
+    assert not speech.uses_speech_endpoint(model)
+    assert speech.uses_speech_endpoint('gpt-4o-mini-tts-2025-12-15')
+    assert speech.uses_speech_endpoint('tts-1-hd')
+    assert speech.realtime_url('https://api.openai.com/v1/', model) == \
+        'wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1-mini'
+
+
+def test_realtime_events_read_the_text_out_of_band():
+    from cognitrix.providers.speech import READ_ALOUD_INSTRUCTIONS, realtime_events
+
+    session, response = realtime_events('Say hi', 'cedar')
+    assert session['type'] == 'session.update'
+    assert session['session']['output_modalities'] == ['audio']
+    assert session['session']['audio']['output'] == {'format': {'type': 'audio/pcm', 'rate': 24000}, 'voice': 'cedar'}
+    body = response['response']
+    assert response['type'] == 'response.create'
+    assert body['conversation'] == 'none'
+    assert body['instructions'] == READ_ALOUD_INSTRUCTIONS
+    assert body['input'][0]['content'] == [{'type': 'input_text', 'text': 'Say hi'}]
+
+
+class _FakeWS:
+    def __init__(self, events):
+        import json
+        self._events = [json.dumps(e) for e in events]
+        self.sent = []
+
+    async def send(self, data):
+        self.sent.append(data)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._events:
+            raise StopAsyncIteration
+        return self._events.pop(0)
+
+
+async def test_realtime_audio_is_collected_until_done():
+    import base64
+
+    from cognitrix.providers.speech import collect_realtime_audio
+
+    ws = _FakeWS([
+        {'type': 'session.updated'},
+        {'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x01\x02').decode()},
+        {'type': 'response.output_audio_transcript.delta', 'delta': 'hi'},
+        {'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x03\x04').decode()},
+        {'type': 'response.done', 'response': {'status': 'completed'}},
+        {'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'late').decode()},
+    ])
+    assert await collect_realtime_audio(ws) == b'\x01\x02\x03\x04'
+
+
+async def test_incomplete_realtime_response_is_an_error_even_with_audio():
+    import base64
+
+    from cognitrix.providers.speech import _RealtimeHTTPError, collect_realtime_audio
+
+    ws = _FakeWS([
+        {'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x01\x02').decode()},
+        {'type': 'response.done', 'response': {'status': 'incomplete', 'status_details': {'reason': 'max_output_tokens'}}},
+    ])
+    with pytest.raises(_RealtimeHTTPError):
+        await collect_realtime_audio(ws)
+
+
+async def test_realtime_errors_become_friendly_messages(monkeypatch):
+    import sys
+    import types
+
+    from cognitrix.providers import speech
+
+    events = [{'type': 'error', 'error': {'type': 'invalid_request_error', 'code': 'invalid_api_key'}}]
+
+    class _Conn:
+        def __init__(self, url, **kwargs):
+            self.url = url
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return _FakeWS(events)
+
+        async def __aexit__(self, *exc):
+            return False
+
+    fake = types.SimpleNamespace(connect=_Conn, exceptions=types.SimpleNamespace(InvalidStatus=type('InvalidStatus', (Exception,), {})))
+    monkeypatch.setitem(sys.modules, 'websockets', fake)
+    monkeypatch.delenv('COGNITRIX_OPENAI_SPEECH_MODEL', raising=False)
+    monkeypatch.delenv('OPENAI_BASE_URL', raising=False)
+    with pytest.raises(speech.SpeechError, match='rejected the API key'):
+        await speech.speak('Hello', provider='openai', voice='marin', api_key='sk-test')
+
+
+async def test_realtime_speech_returns_wav(monkeypatch):
+    import base64
+    import sys
+    import types
+
+    from cognitrix.providers import speech
+    from cognitrix.providers.transcription import parse_wav
+
+    seen = {}
+    pcm = b'\x00\x00' * 2400
+    events = [
+        {'type': 'response.output_audio.delta', 'delta': base64.b64encode(pcm).decode()},
+        {'type': 'response.done', 'response': {'status': 'completed'}},
+    ]
+
+    class _Conn:
+        def __init__(self, url, **kwargs):
+            seen['url'] = url
+            seen['headers'] = kwargs.get('additional_headers')
+            self.ws = _FakeWS(events)
+
+        async def __aenter__(self):
+            return self.ws
+
+        async def __aexit__(self, *exc):
+            seen['sent'] = self.ws.sent
+            return False
+
+    fake = types.SimpleNamespace(connect=_Conn, exceptions=types.SimpleNamespace(InvalidStatus=type('InvalidStatus', (Exception,), {})))
+    monkeypatch.setitem(sys.modules, 'websockets', fake)
+    monkeypatch.delenv('COGNITRIX_OPENAI_SPEECH_MODEL', raising=False)
+    monkeypatch.delenv('OPENAI_BASE_URL', raising=False)
+    # A voice only the old endpoint had falls back to the first Realtime voice.
+    audio, mime = await speech.speak('Hello', provider='openai', voice='nova', api_key='sk-test')
+    assert mime == 'audio/wav'
+    assert parse_wav(audio).sample_rate == 24000
+    assert seen['url'].endswith('/realtime?model=gpt-realtime-2.1-mini')
+    assert seen['headers'] == {'Authorization': 'Bearer sk-test'}
+    assert '"voice": "marin"' in seen['sent'][0]

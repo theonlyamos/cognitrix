@@ -14,7 +14,13 @@
     POST /computer/sandbox/reset                   throw the computer away (files and logins too)
     POST /computer/sandbox/wake                    start a computer that is asleep (hosted on Fly)
     GET  /computer/sandbox/env                     the person's sandbox environment variables (names only)
-    PUT  /computer/sandbox/env                     replace them (a value left out keeps the saved one)
+    PUT  /computer/sandbox/env                     replace them (a value left out keeps the saved one;
+                                                   hosts: the only sites a hidden value is sent to)
+    GET  /computer/sandbox/snapshots               saved snapshots (whole computer or one agent's setup)
+    POST /computer/sandbox/snapshots               save one {name, agent?}
+    POST /computer/sandbox/snapshots/{id}/restore  put it back {agent?: the agent an agent setup goes to}
+    DELETE /computer/sandbox/snapshots/{id}
+    POST /computer/sandbox/copy-agent              copy one agent's setup to another {from, to}
     GET  /computer/sandbox/chats/{session_id}      is Run in sandbox on for a chat
     PUT  /computer/sandbox/chats/{session_id}      turn it on or off (null: follow the agent)
 
@@ -162,6 +168,9 @@ async def put_settings(body: SettingsBody, ctx: AuthContext = Depends(jwt_only))
 class EnvVar(BaseModel):
     name: str
     value: str | None = None  # None keeps the saved value
+    # Only sent to these sites (hidden from the agent); None keeps the saved
+    # sites, [] makes it a plain variable.
+    hosts: list[str] | None = None
 
 
 class EnvBody(BaseModel):
@@ -169,9 +178,13 @@ class EnvBody(BaseModel):
 
 
 def _env_view(values: dict[str, str]) -> dict[str, Any]:
+    from cognitrix.common.key_proxy import HiddenValue, hiding_enabled
     from cognitrix.common.sandbox_work import env_preview
 
-    return {'variables': [{'name': k, 'preview': env_preview(v)} for k, v in sorted(values.items())]}
+    return {'variables': [{'name': k, 'preview': env_preview(v),
+                           'hosts': list(v.hosts) if isinstance(v, HiddenValue) else []}
+                          for k, v in sorted(values.items())],
+            'hiding': hiding_enabled()}
 
 
 @sandbox_api.get('/env')
@@ -188,7 +201,8 @@ async def put_env(body: EnvBody, ctx: AuthContext = Depends(jwt_only)) -> dict[s
     from cognitrix.common.sandbox_work import save_sandbox_env
 
     try:
-        saved = await run_in_threadpool(save_sandbox_env, _owner(ctx), [v.model_dump() for v in body.variables])
+        saved = await run_in_threadpool(save_sandbox_env, _owner(ctx),
+                                        [v.model_dump(exclude_none=True) for v in body.variables])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return _env_view(saved)
@@ -399,6 +413,93 @@ async def reset(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     mgr = _manager()
     await run_in_threadpool(mgr.reset, _owner(ctx))
     return {'ok': True}
+
+
+class SnapshotBody(BaseModel):
+    name: str | None = Field(default=None, max_length=80)
+    agent: str | None = None  # a desktop name: save only that agent's setup
+
+
+class RestoreBody(BaseModel):
+    agent: str | None = None  # where an agent setup goes (default: the agent it came from)
+
+
+class CopyBody(BaseModel):
+    source: str = Field(alias='from')
+    target: str = Field(alias='to')
+
+
+def _snapshot_errors(exc: Exception) -> HTTPException:
+    from cognitrix.computer import DriverError, Unsupported
+    from cognitrix.computer.sandbox.snapshots import SnapshotError
+
+    if isinstance(exc, SnapshotError):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, DriverError | Unsupported):
+        return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail='Bad agent name')
+    raise exc
+
+
+@sandbox_api.get('/snapshots')
+async def get_snapshots(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.computer.sandbox.snapshots import MAX_SNAPSHOTS, list_snapshots
+
+    _manager()
+    return {'snapshots': await run_in_threadpool(list_snapshots, _owner(ctx)), 'max': MAX_SNAPSHOTS}
+
+
+@sandbox_api.post('/snapshots')
+async def post_snapshot(body: SnapshotBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Save the whole computer, or one agent's setup (``agent``). Takes a
+    while for a big computer; the computer keeps running meanwhile."""
+    from cognitrix.computer.sandbox.snapshots import create_snapshot
+
+    mgr = _manager()
+    agent = _desktop(body.agent) if body.agent else None
+    try:
+        return await run_in_threadpool(create_snapshot, mgr, _owner(ctx), body.name, agent)
+    except Exception as exc:
+        raise _snapshot_errors(exc) from None
+
+
+@sandbox_api.post('/snapshots/{snapshot_id}/restore')
+async def restore_snapshot(snapshot_id: str, body: RestoreBody | None = None,
+                           ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.computer.sandbox.snapshots import restore_snapshot as restore
+
+    mgr = _manager()
+    agent = _desktop(body.agent) if body and body.agent else None
+    try:
+        return await run_in_threadpool(restore, mgr, _owner(ctx), snapshot_id, agent)
+    except Exception as exc:
+        raise _snapshot_errors(exc) from None
+
+
+@sandbox_api.delete('/snapshots/{snapshot_id}')
+async def delete_snapshot(snapshot_id: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    from cognitrix.computer.sandbox.snapshots import delete_snapshot as delete
+
+    _manager()
+    try:
+        await run_in_threadpool(delete, _owner(ctx), snapshot_id)
+    except Exception as exc:
+        raise _snapshot_errors(exc) from None
+    return {'ok': True}
+
+
+@sandbox_api.post('/copy-agent')
+async def copy_agent(body: CopyBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Give one agent a copy of another's folder, browser sign-ins and
+    projects on the computer (its own are replaced)."""
+    from cognitrix.computer.sandbox.snapshots import copy_agent as copy
+
+    mgr = _manager()
+    try:
+        return await run_in_threadpool(copy, mgr, _owner(ctx), _desktop(body.source), _desktop(body.target))
+    except Exception as exc:
+        raise _snapshot_errors(exc) from None
 
 
 @sandbox_api.websocket('/screen')

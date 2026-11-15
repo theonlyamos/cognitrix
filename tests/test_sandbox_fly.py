@@ -342,3 +342,11 @@ def test_settings_show_fly_without_the_token(fly_api):
     data = fly_api.get('/computer/sandbox/settings').json()
     assert data['host'] == 'fly' and data['from_env'] and data['fly']['configured']
     assert data['fly']['app'] == 'cog-sandboxes' and 'secret-token' not in json.dumps(data)
+
+
+def test_docker_only_features_say_so_on_fly(fly):
+    mgr, _ = fly
+    with pytest.raises(Unsupported, match='HIDE_KEYS'):
+        mgr.key_proxy_env('u1')
+    with pytest.raises(Unsupported, match='Fly'):
+        mgr._docker('exec', 'x')

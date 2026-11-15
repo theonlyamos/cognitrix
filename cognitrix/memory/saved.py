@@ -175,6 +175,8 @@ def _similar(a: str, b: str) -> float:
 # ---------------------------------------------------------------- reading
 
 def _visible(row: Memory, agent_id: str | None, read_global: bool) -> bool:
+    if row.pending:
+        return False
     if row.scope == 'agent':
         return bool(agent_id) and row.agent_id == str(agent_id)
     return read_global
@@ -199,6 +201,12 @@ async def list_memories(user_id: str, *, scope: str | None = None, agent_id: str
         words = _words(query)
         rows = [r for r in rows if words & _words(r.content) or query.lower() in r.content.lower()]
     return _order(rows)
+
+
+async def pending_memories(user_id: str) -> list[Memory]:
+    """Memories waiting for the person's OK, oldest first."""
+    rows = [r for r in await Memory.find({'user_id': str(user_id)}) if r.pending]
+    return sorted(rows, key=lambda r: (r.created, str(r.id)))
 
 
 async def visible_memories(user_id: str, agent: Any) -> list[Memory]:
@@ -319,9 +327,13 @@ def _build_block(rows: list[Memory], query: str, budget: int) -> str:
 # ---------------------------------------------------------------- writing
 
 async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: str = '',
-              source: str = 'agent', session_id: str = '', pinned: bool = False) -> tuple[Memory, bool]:
+              source: str = 'agent', session_id: str = '', pinned: bool = False,
+              pending: bool = False, replaces: str = '') -> tuple[Memory, bool]:
     """Save a memory. Returns (row, created). A near-duplicate of an existing
-    memory in the same scope returns that memory with created False."""
+    memory in the same scope returns that memory with created False.
+
+    ``pending`` saves it as a proposal the person approves (``confirm``) or
+    discards; ``replaces`` names the memory an approved proposal takes over from."""
     if scope not in SCOPES:
         raise MemoryError_('invalid_scope', 'scope must be "global" or "agent"')
     if scope == 'agent' and not agent_id:
@@ -330,7 +342,7 @@ async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: st
     existing = list(await Memory.find({'user_id': str(user_id)}))
     for row in existing:
         same_scope = row.scope == scope and (scope == 'global' or row.agent_id == str(agent_id))
-        if same_scope and _similar(row.content, text) >= DUPLICATE_RATIO:
+        if same_scope and str(row.id) != str(replaces) and _similar(row.content, text) >= DUPLICATE_RATIO:
             return row, False
     if len(existing) >= MAX_PER_USER:
         raise MemoryError_(
@@ -340,7 +352,8 @@ async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: st
     row = Memory(
         user_id=str(user_id), scope=scope, agent_id=str(agent_id) if scope == 'agent' else '',
         content=text, source=source, source_session_id=str(session_id or ''),
-        pinned=bool(pinned), created=stamp, updated=stamp,
+        pinned=bool(pinned), pending=bool(pending), replaces=str(replaces or '') if pending else '',
+        created=stamp, updated=stamp,
     )
     await row.save()
     if row.id:
@@ -371,6 +384,19 @@ async def update(row: Memory, *, content: Any = None, pinned: bool | None = None
     return await Memory.get(row.id) or row
 
 
+async def confirm(row: Memory) -> Memory:
+    """Approve a pending memory: agents see it from now on. A proposed change
+    to another memory replaces that memory."""
+    if not row.pending:
+        return row
+    if row.replaces:
+        old = await get_memory(row.user_id, row.replaces)
+        if old is not None and not old.pending:
+            await Memory.delete_many({'id': old.id})
+    await Memory.update_one({'id': row.id}, {'pending': False, 'replaces': '', 'updated': now_str()})
+    return await Memory.get(row.id) or row
+
+
 async def delete(row: Memory) -> None:
     # delete_many: odbms' sqlite delete_one emits DELETE ... LIMIT, which SQLite rejects.
     await Memory.delete_many({'id': row.id})
@@ -395,6 +421,8 @@ def project(row: Memory, agent_names: dict[str, str] | None = None) -> dict[str,
         'source': row.source,
         'source_session_id': row.source_session_id or None,
         'pinned': bool(row.pinned),
+        'pending': bool(row.pending),
+        'replaces': row.replaces or None,
         'created': row.created,
         'updated': row.updated or row.created,
     }

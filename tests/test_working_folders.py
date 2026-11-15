@@ -439,3 +439,60 @@ def test_changing_app_files_never_asks(two_folders):
     assert detector.analyze('Write', {'file_path': str(existing), 'content': 'x'}).risk_level == RiskLevel.LOW
     project_file = two_folders[0] / 'README.md'
     assert detector.analyze('Write', {'file_path': str(project_file), 'content': 'x'}).risk_level != RiskLevel.LOW
+
+
+# --- web folder browser ----------------------------------------------------
+
+@pytest.fixture
+def server_root(tmp_path, monkeypatch):
+    from cognitrix.config import settings
+
+    root = (tmp_path / 'root').resolve()
+    (root / 'alpha' / 'deep').mkdir(parents=True)
+    (root / 'Beta').mkdir()
+    (root / '.hidden').mkdir()
+    (root / 'file.txt').write_text('x')
+    (tmp_path / 'elsewhere').mkdir()
+    try:
+        (root / 'escape').symlink_to(tmp_path / 'elsewhere', target_is_directory=True)
+    except OSError:
+        pass
+    monkeypatch.setattr(settings, 'tools_root', root)
+    monkeypatch.setattr(settings, 'workdir', (tmp_path / 'data').resolve())
+    monkeypatch.delenv('COGNITRIX_DESKTOP', raising=False)
+    monkeypatch.delenv('COGNITRIX_ALLOWED_FOLDERS', raising=False)
+    return root
+
+
+def test_browse_starts_at_the_allowed_roots(server_root):
+    listing = F.browse_folder()
+    assert [e['path'] for e in listing['entries']] == [str(server_root)]
+    assert listing['path'] is None
+
+
+def test_browse_lists_only_subfolders_inside_the_roots(server_root):
+    listing = F.browse_folder(str(server_root))
+    assert [e['name'] for e in listing['entries']] == ['alpha', 'Beta']
+    assert listing['parent'] is None  # can't climb above an allowed root
+    assert F.browse_folder(str(server_root), hidden=True)['entries'][0]['name'] == '.hidden'
+    deep = F.browse_folder(str(server_root / 'alpha'))
+    assert deep['parent'] == str(server_root)
+    assert [e['name'] for e in deep['entries']] == ['deep']
+
+
+def test_browse_refuses_folders_outside_the_roots(server_root, tmp_path):
+    with pytest.raises(F.FolderError):
+        F.browse_folder(str(tmp_path / 'elsewhere'))
+    with pytest.raises(F.FolderError):
+        F.browse_folder(str(server_root / 'escape'))
+    with pytest.raises(F.FolderError):
+        F.browse_folder('relative/path')
+
+
+def test_create_folder(server_root):
+    made = F.create_folder(str(server_root / 'alpha'), 'new one')
+    assert Path(made['path']) == server_root / 'alpha' / 'new one'
+    assert (server_root / 'alpha' / 'new one').is_dir()
+    for bad in ('', '..', 'a/b', 'a\\b', 'new one'):
+        with pytest.raises(F.FolderError):
+            F.create_folder(str(server_root / 'alpha'), bad)

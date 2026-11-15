@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, errorMessage } from '@/lib/api';
-import { formatCost, formatTokens } from '@/components/settings/Usage';
+import { CapMeter, capLines, formatCost, formatTokens, type CapStatus } from '@/components/settings/Usage';
 import {
   Group, SettingRow, StatusPill, SubHeading, buttonClass, primaryButtonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -17,7 +17,11 @@ interface Person {
   /** Swarm caps set by an admin; 0 is the server's own limit. */
   swarm_concurrency?: number;
   swarm_max_workers?: number;
+  /** This month's spending limit and use. */
+  spending?: (CapStatus & { mode: 'default' | 'custom' | 'none'; own_cost: number; own_tokens: number }) | null;
 }
+
+interface RemovalPreview { agents: number; tasks: number; teams: number; apps: number; chats: number }
 
 interface Invite {
   id: string;
@@ -38,6 +42,7 @@ export function PeopleSettings() {
   const [emailReady, setEmailReady] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  const [notice, setNotice] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -66,19 +71,43 @@ export function PeopleSettings() {
     }
   };
 
+  const setCap = async (person: Person, body: CapBody) => {
+    setBusy(person.id);
+    setError('');
+    try {
+      const { data } = await api.put(`/admin/users/${person.id}/spending-cap`, body);
+      setPeople((list) => (list ?? []).map((p) => (p.id === person.id ? data : p)));
+    } catch (err) {
+      setError(errorMessage(err, 'Could not save the spending limit.'));
+    } finally {
+      setBusy('');
+    }
+  };
+
   return (
     <>
       {error && <p role="alert" className="mb-3 text-[12.5px] text-danger-ink">{error}</p>}
+      {notice && <p role="status" className="mb-3 text-[12.5px] text-fg-dim">{notice}</p>}
       <SubHeading>PEOPLE</SubHeading>
       {!people ? (
         !error && <p className="text-[13px] text-fg-dim">Loading…</p>
       ) : (
         <Group>
           {people.map((person) => (
-            <PersonRow key={person.id} person={person} busy={busy === person.id} onChange={(patch) => change(person, patch)} />
+            <PersonRow
+              key={person.id}
+              person={person}
+              busy={busy === person.id}
+              onChange={(patch) => change(person, patch)}
+              onCap={(body) => setCap(person, body)}
+              onRemoved={(message) => { setNotice(message); void load(); }}
+            />
           ))}
         </Group>
       )}
+
+      <SubHeading className="mt-7">DEFAULT SPENDING LIMIT</SubHeading>
+      <DefaultCap onSaved={load} />
 
       <SubHeading className="mt-7">INVITATIONS</SubHeading>
       <InviteMaker onMade={load} />
@@ -120,11 +149,26 @@ export function PeopleSettings() {
   );
 }
 
-function PersonRow({ person, busy, onChange }: {
+interface CapBody { mode: 'default' | 'custom' | 'none'; monthly_cost: number; monthly_tokens: number }
+
+function spendingLine(person: Person): string | null {
+  const s = person.spending;
+  if (!s) return null;
+  if (s.cap.source === 'none') return s.mode === 'none' ? 'No spending limit' : null;
+  const where = s.cap.source === 'default' ? ' (default)' : '';
+  return `This month: ${capLines(s).join(' · ')}${where}${s.reached ? ' · limit reached' : ''}`;
+}
+
+function PersonRow({ person, busy, onChange, onCap, onRemoved }: {
   person: Person;
   busy: boolean;
   onChange: (patch: Record<string, unknown>) => Promise<void>;
+  onCap: (body: CapBody) => Promise<void>;
+  onRemoved: (message: string) => void;
 }) {
+  const [settingSpend, setSettingSpend] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const spending = spendingLine(person);
   const [settingPassword, setSettingPassword] = useState(false);
   const [password, setPassword] = useState('');
   const [saved, setSaved] = useState(false);
@@ -166,6 +210,10 @@ function PersonRow({ person, busy, onChange }: {
               Last 30 days: {formatTokens(usage.tokens)} tokens, {formatCost(usage.cost)}
               {saved && ' · New password saved'}
             </span>
+            {spending && (
+              <span className={`block ${person.spending?.reached ? 'text-danger-ink' : ''}`}>{spending}</span>
+            )}
+            {person.spending && person.spending.cap.source !== 'none' && <CapMeter state={person.spending} />}
             {capped && (
               <span className="block">
                 Swarm limits: {person.swarm_concurrency ? `${person.swarm_concurrency} workers at once` : 'server limit at once'}, {person.swarm_max_workers ? `${person.swarm_max_workers} per swarm` : 'server limit per swarm'}
@@ -176,6 +224,9 @@ function PersonRow({ person, busy, onChange }: {
       >
         <button type="button" className={quietButtonClass} disabled={busy} onClick={() => { setSaved(false); setSettingPassword((v) => !v); }}>
           Set password
+        </button>
+        <button type="button" className={quietButtonClass} disabled={busy} onClick={() => setSettingSpend((v) => !v)}>
+          Spending limit
         </button>
         <button type="button" className={quietButtonClass} disabled={busy} onClick={() => setSettingCaps((v) => !v)}>
           Swarm limits
@@ -198,9 +249,28 @@ function PersonRow({ person, busy, onChange }: {
             >
               {person.disabled ? 'Enable' : 'Disable'}
             </button>
+            <button
+              type="button"
+              className={`${quietButtonClass} text-danger-ink hover:text-danger-ink`}
+              disabled={busy}
+              onClick={() => setRemoving(true)}
+            >
+              Remove
+            </button>
           </>
         )}
       </SettingRow>
+      {settingSpend && (
+        <CapForm
+          person={person}
+          busy={busy}
+          onCancel={() => setSettingSpend(false)}
+          onSave={async (body) => { await onCap(body); setSettingSpend(false); }}
+        />
+      )}
+      {removing && (
+        <RemoveDialog person={person} onClose={() => setRemoving(false)} onRemoved={(message) => { setRemoving(false); onRemoved(message); }} />
+      )}
       {settingCaps && (
         <form onSubmit={saveCaps} className="flex flex-wrap items-end gap-2 px-3.5 pb-3" aria-label={`Swarm limits for ${person.name}`}>
           <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
@@ -357,6 +427,203 @@ function EmailCheck({ ready }: { ready: boolean }) {
         <button type="submit" disabled={sending} className={buttonClass}>{sending ? 'Sending…' : 'Send test'}</button>
       </form>
       {result && <p role={result.ok ? 'status' : 'alert'} className={`mt-2 text-[12px] ${result.ok ? 'text-fg-dim' : 'text-danger-ink'}`}>{result.text}</p>}
+    </div>
+  );
+}
+
+function CapForm({ person, busy, onSave, onCancel }: {
+  person: Person;
+  busy: boolean;
+  onSave: (body: CapBody) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const s = person.spending;
+  const [mode, setMode] = useState<CapBody['mode']>(s?.mode ?? 'default');
+  const [cost, setCost] = useState(s?.own_cost ? String(s.own_cost) : '');
+  const [tokens, setTokens] = useState(s?.own_tokens ? String(s.own_tokens) : '');
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    await onSave({ mode, monthly_cost: Number(cost) || 0, monthly_tokens: Math.round(Number(tokens) || 0) });
+  };
+
+  return (
+    <form onSubmit={save} className="flex flex-wrap items-end gap-2 px-3.5 pb-3" aria-label={`Spending limit for ${person.name}`}>
+      <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
+        Limit
+        <select value={mode} onChange={(e) => setMode(e.target.value as CapBody['mode'])} className={inputClass}>
+          <option value="default">{person.role === 'admin' ? 'Default (admins have none)' : 'Default for members'}</option>
+          <option value="custom">Their own limit</option>
+          <option value="none">No limit</option>
+        </select>
+      </label>
+      {mode === 'custom' && (
+        <>
+          <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
+            Dollars a month
+            <input type="number" min={0} step="0.01" inputMode="decimal" placeholder="none" value={cost} onChange={(e) => setCost(e.target.value)} className={`${inputClass} w-32`} />
+          </label>
+          <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
+            Tokens a month
+            <input type="number" min={0} step="1000" inputMode="numeric" placeholder="none" value={tokens} onChange={(e) => setTokens(e.target.value)} className={`${inputClass} w-36`} />
+          </label>
+        </>
+      )}
+      <button type="submit" disabled={busy} className={primaryButtonClass}>Save</button>
+      <button type="button" className={quietButtonClass} onClick={onCancel}>Cancel</button>
+      <p className="basis-full text-[12px] text-fg-dim">
+        Counts everything their agents do, swarm workers included, for the calendar month. When it runs out, their agents stop
+        using models until the 1st. Leave a box empty for no limit of that kind. Models with no known price only count toward tokens.
+      </p>
+    </form>
+  );
+}
+
+function DefaultCap({ onSaved }: { onSaved: () => Promise<void> }) {
+  const [cost, setCost] = useState('');
+  const [tokens, setTokens] = useState('');
+  const [state, setState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.get('/admin/spending-cap')
+      .then(({ data }) => {
+        setCost(data.monthly_cost ? String(data.monthly_cost) : '');
+        setTokens(data.monthly_tokens ? String(data.monthly_tokens) : '');
+      })
+      .catch(() => {});
+  }, []);
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    setState('saving');
+    setError('');
+    try {
+      await api.put('/admin/spending-cap', { monthly_cost: Number(cost) || 0, monthly_tokens: Math.round(Number(tokens) || 0) });
+      setState('saved');
+      await onSaved();
+    } catch (err) {
+      setError(errorMessage(err, 'Could not save the default limit.'));
+      setState('idle');
+    }
+  };
+
+  return (
+    <div className="rounded-[12px] border border-line bg-panel p-3.5">
+      <p className="mb-2.5 text-[12.5px] leading-relaxed text-fg-dim">
+        Applies to every member who has no limit of their own. Admins are only limited by a limit set on them. Leave both empty for no default.
+      </p>
+      <form onSubmit={save} className="flex flex-wrap items-end gap-2" aria-label="Default spending limit">
+        <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
+          Dollars a month
+          <input type="number" min={0} step="0.01" inputMode="decimal" placeholder="none" value={cost} onChange={(e) => { setCost(e.target.value); setState('idle'); }} className={`${inputClass} w-32`} />
+        </label>
+        <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
+          Tokens a month
+          <input type="number" min={0} step="1000" inputMode="numeric" placeholder="none" value={tokens} onChange={(e) => { setTokens(e.target.value); setState('idle'); }} className={`${inputClass} w-36`} />
+        </label>
+        <button type="submit" disabled={state === 'saving'} className={primaryButtonClass}>{state === 'saving' ? 'Saving…' : 'Save'}</button>
+        {state === 'saved' && <span role="status" className="text-[12px] text-fg-dim">Saved</span>}
+      </form>
+      {error && <p role="alert" className="mt-2 text-[12px] text-danger-ink">{error}</p>}
+    </div>
+  );
+}
+
+function RemoveDialog({ person, onClose, onRemoved }: {
+  person: Person;
+  onClose: () => void;
+  onRemoved: (message: string) => void;
+}) {
+  const [preview, setPreview] = useState<RemovalPreview | null>(null);
+  const [keepWork, setKeepWork] = useState(true);
+  const [typed, setTyped] = useState('');
+  const [error, setError] = useState('');
+  const [working, setWorking] = useState(false);
+  const matches = typed.trim().toLowerCase() === person.email.toLowerCase();
+
+  useEffect(() => {
+    api.get(`/admin/users/${person.id}/removal`).then(({ data }) => setPreview(data)).catch(() => {});
+  }, [person.id]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const remove = async (event: FormEvent) => {
+    event.preventDefault();
+    setWorking(true);
+    setError('');
+    try {
+      const { data } = await api.post(`/admin/users/${person.id}/remove`, { keep_work: keepWork, confirm_email: typed.trim() });
+      onRemoved(data.message);
+    } catch (err) {
+      setError(errorMessage(err, 'Could not remove this person.'));
+      setWorking(false);
+    }
+  };
+
+  const work = preview
+    ? [
+        [preview.agents, 'agent'], [preview.tasks, 'task'], [preview.teams, 'team'], [preview.apps, 'app'],
+      ].filter(([n]) => Number(n) > 0).map(([n, word]) => `${n} ${word}${Number(n) === 1 ? '' : 's'}`).join(', ')
+    : '';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 md:items-center md:p-4" onClick={onClose}>
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="remove-person-title"
+        onSubmit={remove}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-[460px] rounded-t-[16px] border border-line bg-panel p-4 shadow-xl md:rounded-[14px]"
+      >
+        <h2 id="remove-person-title" className="text-[15px] font-semibold">Remove {person.name}?</h2>
+        <p className="mt-1.5 text-[12.5px] leading-relaxed text-fg-dim">
+          Their account is deleted and they are signed out everywhere. Their chats, memories, keys, saved sign-ins, linked
+          chat apps and connected apps are deleted. Usage totals and the audit log are kept. This can&apos;t be undone.
+          To stop them for now instead, use Disable.
+        </p>
+        <fieldset className="mt-3 rounded-lg border border-line p-2.5">
+          <legend className="px-1 text-[12px] text-fg-dim">
+            Their work{work ? ` (${work})` : preview ? ' (none)' : ''}
+          </legend>
+          <label className="flex items-start gap-2 py-1 text-[13px]">
+            <input type="radio" name="keep-work" checked={keepWork} onChange={() => setKeepWork(true)} className="mt-[3px]" />
+            <span>Move their agents, tasks, teams, apps and pages to me</span>
+          </label>
+          <label className="flex items-start gap-2 py-1 text-[13px]">
+            <input type="radio" name="keep-work" checked={!keepWork} onChange={() => setKeepWork(false)} className="mt-[3px]" />
+            <span>Delete them too</span>
+          </label>
+        </fieldset>
+        <label className="mt-3 flex flex-col gap-1 text-[12px] text-fg-dim">
+          <span>Type <span className="font-mono text-fg">{person.email}</span> to confirm</span>
+          <input
+            autoFocus
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            aria-label="Their email address"
+            className={inputClass}
+          />
+        </label>
+        {error && <p role="alert" className="mt-2 text-[12px] text-danger-ink">{error}</p>}
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" className={quietButtonClass} onClick={onClose}>Cancel</button>
+          <button
+            type="submit"
+            disabled={!matches || working}
+            className="inline-flex h-9 items-center rounded-lg bg-danger px-3 text-[12.5px] font-medium text-white disabled:opacity-50 md:h-8"
+          >
+            {working ? 'Removing…' : 'Remove'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

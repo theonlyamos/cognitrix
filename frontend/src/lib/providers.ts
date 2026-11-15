@@ -38,7 +38,7 @@ export const HARNESS_MODES = [
 export const ASK_HARNESSES = ['claude-code'];
 
 /** CLIs that can't be lent the agent's Cognitrix tools (NO_TOOL_HARNESSES in harness.py). */
-export const NO_TOOL_HARNESSES = ['antigravity-cli'];
+export const NO_TOOL_HARNESSES: string[] = [];
 
 /** Providers that run on a signed-in plan instead of an API key
  *  (Settings › Models and keys › Use your ChatGPT plan). */

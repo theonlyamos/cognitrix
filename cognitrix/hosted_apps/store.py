@@ -646,15 +646,8 @@ async def check(app: HostedApp, viewer: str, *, path: str = '', phone: bool = Fa
 
     if not app.version:
         raise AppError('not_live', f'"{app.title}" has no version that started yet. Publish it first.')
-    from cognitrix.api.routes.hosted_apps import _header_safe, _viewer_user
-
-    user = await _viewer_user(viewer)
-    headers = {'X-Cognitrix-User-Id': _header_safe(viewer), 'X-Cognitrix-User-Name': _header_safe(user.get('name', '')),
-               'X-Cognitrix-User-Email': _header_safe(user.get('email', '')),
-               'X-Cognitrix-User-Role': role_of(app, viewer) or ROLE_OWNER}
-    clean = str(path or '').strip().lstrip('/')
-    if '://' in clean or clean.startswith('/'):
-        raise AppError('bad_path', 'path is a page inside the app, like "" or "settings?tab=2".')
+    headers = await _viewer_headers(app, viewer)
+    clean = _clean_path(path)
     try:
         runner = await asyncio.to_thread(runner_for, app.runtime, app.owner_id)
         out = await asyncio.to_thread(runner.check, app.slug, clean, bool(phone), headers)
@@ -672,6 +665,108 @@ async def check(app: HostedApp, viewer: str, *, path: str = '', phone: bool = Fa
         except (OSError, ValueError):
             logger.debug('could not keep the screenshot of %s', app.slug, exc_info=True)
     return out
+
+
+# ------------------------------------------------------------------ click-through tests (Test App)
+
+TESTS_FILE = 'app-tests.json'
+MAX_SAVED_TESTS = 20
+
+
+async def _viewer_headers(app: HostedApp, viewer: str) -> dict[str, str]:
+    from cognitrix.api.routes.hosted_apps import _header_safe, _viewer_user
+
+    user = await _viewer_user(viewer)
+    return {'X-Cognitrix-User-Id': _header_safe(viewer), 'X-Cognitrix-User-Name': _header_safe(user.get('name', '')),
+            'X-Cognitrix-User-Email': _header_safe(user.get('email', '')),
+            'X-Cognitrix-User-Role': role_of(app, viewer) or ROLE_OWNER}
+
+
+def _clean_path(path: str) -> str:
+    clean = str(path or '').strip().lstrip('/')
+    if '://' in clean:
+        raise AppError('bad_path', 'path is a page inside the app, like "" or "settings?tab=2".')
+    return clean
+
+
+def tests_file(app: HostedApp) -> Path | None:
+    """``app-tests.json`` in the app's folder, where its saved click-through tests live."""
+    if not app.folder:
+        return None
+    folder = Path(app.folder)
+    return folder / TESTS_FILE if folder.is_dir() else None
+
+
+def saved_tests(app: HostedApp) -> list[dict[str, Any]]:
+    """The app's saved tests: ``[{name, steps, path?, phone?}]``. Raises AppError on a broken file."""
+    import json
+
+    from cognitrix.computer.sandbox.apptest import check_steps
+
+    path = tests_file(app)
+    if path is None or not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as exc:
+        raise AppError('bad_tests', f'{path} is not valid JSON: {exc}') from None
+    rows = data.get('tests') if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        raise AppError('bad_tests', f'{path} must hold {{"tests": [{{"name": ..., "steps": [...]}}]}}.')
+    out = []
+    for i, row in enumerate(rows[:MAX_SAVED_TESTS], 1):
+        if not isinstance(row, dict):
+            raise AppError('bad_tests', f'Test {i} in {path} must be an object with "name" and "steps".')
+        try:
+            steps = check_steps(row.get('steps'))
+        except ValueError as exc:
+            raise AppError('bad_tests', f'Test {i} ({row.get("name") or "no name"}) in {path}: {exc}') from None
+        out.append({'name': str(row.get('name') or f'test {i}')[:80], 'steps': steps,
+                    'path': str(row.get('path') or ''), 'phone': bool(row.get('phone'))})
+    return out
+
+
+def save_test(app: HostedApp, name: str, steps: list[dict], *, path: str = '', phone: bool = False) -> Path:
+    """Add or replace (by name) a test in the app's ``app-tests.json``."""
+    import json
+
+    target = tests_file(app)
+    if target is None:
+        raise AppError('no_folder', "The app's folder is not on this machine, so the test can't be saved.")
+    tests = saved_tests(app)
+    row: dict[str, Any] = {'name': name, 'steps': steps}
+    if path:
+        row['path'] = path
+    if phone:
+        row['phone'] = True
+    tests = [t for t in tests if t['name'] != name]
+    if len(tests) >= MAX_SAVED_TESTS:
+        raise AppError('too_many_tests', f'An app keeps at most {MAX_SAVED_TESTS} saved tests; '
+                       f'remove some from {target} first.')
+    tests.append(row)
+    for t in tests:  # keep the file small: drop the defaults
+        if not t.get('path'):
+            t.pop('path', None)
+        if not t.get('phone'):
+            t.pop('phone', None)
+    target.write_text(json.dumps({'tests': tests}, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    return target
+
+
+async def test(app: HostedApp, viewer: str, steps: list[dict], *, path: str = '', phone: bool = False,
+               data: str = 'fresh') -> dict[str, Any]:
+    """Click through a throwaway copy of the live version (empty data, or a copy
+    of the app's with ``data='copy'``). See computer/sandbox/apptest.py."""
+    if not app.version:
+        raise AppError('not_live', f'"{app.title}" has no version that started yet. Publish it first.')
+    headers = await _viewer_headers(app, viewer)
+    clean = _clean_path(path)
+    try:
+        runner = await asyncio.to_thread(runner_for, app.runtime, app.owner_id)
+        return await asyncio.to_thread(runner.test, app.slug, steps, clean, bool(phone), headers,
+                                       'copy' if data == 'copy' else 'fresh')
+    except RunnerError as exc:
+        raise AppError(exc.code, exc.message) from None
 
 
 # ------------------------------------------------------------------ links

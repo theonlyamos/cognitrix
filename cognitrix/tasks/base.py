@@ -134,6 +134,10 @@ class Task(Model):
     workers with Spawn Workers (cognitrix/swarms). The run stays one durable
     task run, so it survives restarts and can be scheduled like any task."""
 
+    read_memory: bool = False
+    """Runs see the owner's global saved memories (read-only; runs never save
+    memories). Off by default: task runs are memory-free unless asked."""
+
     async def team(self):
         agents: list[Agent] = []
         for agent_id in self.assigned_agents:

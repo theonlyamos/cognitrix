@@ -141,6 +141,7 @@ class Sandbox:
         self.viewer_base = f'ws://{address}:{viewer_port}'
         self.machine_id = ''  # Fly only
         self.image_id = ''  # the image the container was made from (sha256:...)
+        self.container_id = ''
         self.passwords: dict[str, str] = {}  # desktop -> VNC password
         # One driver per desktop, kept so its snapshots last between tool calls
         # (normalized-coordinate clicks read the last look's size).
@@ -210,6 +211,10 @@ class SandboxManager:
         self._pulling = False
         self._last_pull = 0.0  # time.monotonic(); 0 = not yet
         self._image_id_cache: tuple[float, str] = (0.0, '')
+        # Key proxy: where it listens and where containers reach it, and the
+        # containers that already trust its CA.
+        self._proxy_where: tuple[str, str] | None = None
+        self._ca_installed: dict[str, str] = {}
         # Open live screens per user: a hosted computer isn't stopped while
         # someone watches it.
         self._viewers: dict[str, int] = {}
@@ -239,10 +244,11 @@ class SandboxManager:
         return False
 
     # -- docker -------------------------------------------------------------
-    def _docker(self, *args: str, check: bool = True, timeout: float = 120) -> subprocess.CompletedProcess:
+    def _docker(self, *args: str, check: bool = True, timeout: float = 120,
+                input: str | None = None) -> subprocess.CompletedProcess:
         try:
             return subprocess.run([self.docker, *args], capture_output=True, text=True, check=check,  # noqa: S603
-                                  timeout=timeout)
+                                  timeout=timeout, input=input)
         except FileNotFoundError:
             raise Unsupported("The agents' computer needs Docker, and Docker isn't installed here. Install Docker "
                               'Desktop, or turn the sandboxed computer off.') from None
@@ -280,7 +286,10 @@ class SandboxManager:
             '-e', f'{TOKEN_ENV}={token}',
             '-p', f'127.0.0.1::{SERVICE_PORT}', '-p', f'127.0.0.1::{VIEWER_PORT}',
             '-v', f'cognitrix-sandbox-home-{key}:/home/agent',
-            '--hostname', 'cognitrix-sandbox', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+            '--hostname', 'cognitrix-sandbox',
+            # The key proxy runs on this machine (see key_proxy_env).
+            '--add-host', 'host.docker.internal:host-gateway',
+            '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
             '--pids-limit', '2048', '--memory', os.environ.get('COGNITRIX_SANDBOX_MEMORY', '4g'),
             '--shm-size', '1g',
             self.image, timeout=1200)  # the first start downloads the image
@@ -315,6 +324,7 @@ class SandboxManager:
                 box = Sandbox(name, token, api_port, viewer_port)
                 self._boxes[name] = box
             box.image_id = str(info.get('Image') or '')
+            box.container_id = str(info.get('Id') or '')
         self._wait_healthy(box)
         self.check_for_update()
         return box
@@ -430,6 +440,65 @@ class SandboxManager:
         self._docker('rm', '-f', name, check=False)
         self._docker('volume', 'rm', '-f', f'cognitrix-sandbox-home-{user_key(user_id)}', check=False)
         self._boxes.pop(name, None)
+
+    # -- keys the agent never sees ---------------------------------------------
+    def _proxy_addresses(self) -> tuple[str, str]:
+        """(address the key proxy listens on, host containers reach it at).
+
+        Docker Desktop (Windows, macOS) forwards host.docker.internal to this
+        machine's loopback, so the proxy stays on 127.0.0.1. Docker on Linux
+        reaches the host through the bridge network's gateway, so the proxy
+        listens there (not on every interface). Both can be set with
+        COGNITRIX_SANDBOX_PROXY_BIND / COGNITRIX_SANDBOX_PROXY_HOST."""
+        if self._proxy_where is None:
+            import sys
+            bind = os.environ.get('COGNITRIX_SANDBOX_PROXY_BIND', '').strip()
+            host = os.environ.get('COGNITRIX_SANDBOX_PROXY_HOST', '').strip()
+            if not (bind and host):
+                os_name = self._docker('info', '--format', '{{.OperatingSystem}}', check=False, timeout=20).stdout
+                if sys.platform != 'linux' or 'Docker Desktop' in (os_name or ''):
+                    bind, host = bind or '127.0.0.1', host or 'host.docker.internal'
+                else:
+                    got = self._docker('network', 'inspect', 'bridge', '--format',
+                                       '{{range .IPAM.Config}}{{.Gateway}} {{end}}', check=False, timeout=20)
+                    gateway = next((g for g in (got.stdout or '').split() if g.count('.') == 3), '')
+                    bind, host = bind or gateway or '0.0.0.0', host or gateway or 'host.docker.internal'  # noqa: S104
+            self._proxy_where = (bind, host)
+        return self._proxy_where
+
+    def _install_ca(self, box: Sandbox, pem: bytes, fingerprint: str) -> None:
+        """Put the key proxy's CA certificate (only the certificate) in the
+        container, alone and appended to the system bundle."""
+        if self._ca_installed.get(box.name) == f'{box.container_id}:{fingerprint}':
+            return
+        script = ('umask 022; d="$HOME/.cognitrix-sandbox/proxy"; mkdir -p "$d" && cat > "$d/ca.pem.tmp" '
+                  '&& mv -f "$d/ca.pem.tmp" "$d/ca.pem" && cat /etc/ssl/certs/ca-certificates.crt "$d/ca.pem" '
+                  '> "$d/bundle.pem.tmp" && mv -f "$d/bundle.pem.tmp" "$d/bundle.pem"')
+        self._docker('exec', '-i', '-u', 'agent', box.name, 'sh', '-c', script, input=pem.decode(), timeout=60)
+        self._ca_installed[box.name] = f'{box.container_id}:{fingerprint}'
+
+    def key_proxy_env(self, user_id: Any) -> dict[str, str]:
+        """Variables that send a command's HTTPS through the key proxy, which
+        fills in this person's hidden keys for their approved sites only."""
+        from cognitrix.common.key_proxy import get_proxy, proxy_env
+
+        box = self.sandbox(user_id)
+        proxy = get_proxy()
+        bind, host = self._proxy_addresses()
+        try:
+            _, port = proxy.ensure_started(bind)
+        except OSError:
+            if bind in ('0.0.0.0', '127.0.0.1') or os.environ.get('COGNITRIX_SANDBOX_PROXY_BIND'):  # noqa: S104
+                raise
+            # The gateway isn't an address here (the engine runs in a
+            # container itself): listen everywhere; the password still guards it.
+            logger.info("Couldn't listen on %s for the key proxy; listening on all addresses", bind)
+            self._proxy_where = ('0.0.0.0', host)  # noqa: S104
+            _, port = proxy.ensure_started('0.0.0.0')  # noqa: S104
+        self._install_ca(box, proxy.ca.pem, proxy.ca.fingerprint)
+        token = proxy.token_for(user_key(user_id))
+        folder = '/home/agent/.cognitrix-sandbox/proxy'
+        return proxy_env(f'http://cognitrix:{token}@{host}:{port}', f'{folder}/bundle.pem', f'{folder}/ca.pem')
 
     def driver(self, user_id: Any, agent_id: Any = None) -> RemoteDriver:
         box = self.sandbox(user_id)

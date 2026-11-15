@@ -390,3 +390,23 @@ def test_turn_sandbox_rules():
     session.run_in_sandbox = False
     assert session._turn_sandbox(A(), 'web') is False
     assert session._turn_sandbox(object(), 'task', ToolExecutionContext(sandbox=True)) is True
+
+
+def test_antigravity_runs_in_the_sandbox_with_the_gemini_key(monkeypatch):
+    import subprocess
+
+    from cognitrix.common import coding_agents as ca
+    from cognitrix.providers import saved_keys
+
+    assert 'antigravity' in sw.SANDBOX_CLIS
+    monkeypatch.setattr(saved_keys, 'env_key', lambda p: 'g-key' if p == 'google' else '')
+    monkeypatch.setattr(saved_keys, 'get_saved_key', lambda p: '')
+    assert sw.cli_env('antigravity') == {'GEMINI_API_KEY': 'g-key'}
+    assert sw.pick_cli('antigravity') == 'antigravity'
+
+    argv = ca.build_argv('agy', 'antigravity', 'edit', None)
+    command = sw.sandbox_cli_command('antigravity', argv)
+    assert command.endswith(' && ' + ' '.join(argv))
+    assert sw.sandbox_cli_command('claude', ['claude', '-p']) == 'claude -p'
+    # The setup half is valid shell.
+    assert subprocess.run(['bash', '-n', '-c', command]).returncode == 0

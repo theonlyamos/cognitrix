@@ -78,26 +78,16 @@ def create_mcp_tool_wrapper(
             filtered_args = {k: v for k, v in kwargs.items() if v is not None}
 
             result = await _call(client, connection_key, tool_name, filtered_args)
-            if not result:
-                return "Tool call completed with no result"
-            if isinstance(result, str):
-                return result
-            # Text blocks go in as text; image blocks (e.g. a browser
-            # screenshot) are shown to the model as images, not base64 text.
-            from cognitrix.tools import misc as _misc
-            parts = []
-            for block in result:
-                if getattr(block, 'type', None) == 'image' and getattr(block, 'data', None):
-                    shown = _misc.queue_image(
-                        f"data:{getattr(block, 'mime_type', None) or 'image/png'};base64,{block.data}"
-                    )
-                    parts.append('[Image attached as the next message]' if shown
-                                 else '[Image returned; this chat cannot show images]')
-                elif getattr(block, 'text', None) is not None:
-                    parts.append(block.text)
-                else:
-                    parts.append(str(block)[:2000])
-            return '\n'.join(parts)
+            from cognitrix.mcp import app_views
+            view = await app_views.after_tool_call(connection_key, server_name, tool_name, filtered_args, result)
+            text = _result_text(result)
+            if view is None:
+                return text
+            from cognitrix.tools.utils import EntityRef, ToolOutcome
+            return ToolOutcome.success(
+                f'{app_views.shown_note(view)}\n\n{text}',
+                entities=[EntityRef(type='app_view', id=str(view.id), name=view.title or server_name)],
+            )
 
         except Exception as e:
             return f"Error calling MCP tool '{tool_name}': {e}"
@@ -131,6 +121,30 @@ def create_mcp_tool_wrapper(
     object.__setattr__(wrapped_tool, '_mcp_server', connection_key)
 
     return wrapped_tool
+
+def _result_text(result: Any) -> str:
+    """MCP content blocks as the text an agent reads."""
+    if not result:
+        return "Tool call completed with no result"
+    if isinstance(result, str):
+        return result
+    # Text blocks go in as text; image blocks (e.g. a browser
+    # screenshot) are shown to the model as images, not base64 text.
+    from cognitrix.tools import misc as _misc
+    parts = []
+    for block in result:
+        if getattr(block, 'type', None) == 'image' and getattr(block, 'data', None):
+            shown = _misc.queue_image(
+                f"data:{getattr(block, 'mime_type', None) or 'image/png'};base64,{block.data}"
+            )
+            parts.append('[Image attached as the next message]' if shown
+                         else '[Image returned; this chat cannot show images]')
+        elif getattr(block, 'text', None) is not None:
+            parts.append(block.text)
+        else:
+            parts.append(str(block)[:2000])
+    return '\n'.join(parts)
+
 
 async def _call(client: Any, connection_key: str, tool_name: str, arguments: dict[str, Any]) -> Any:
     """Call a tool by connection key; built-in and Composio tools aren't MCP calls."""
@@ -195,7 +209,10 @@ async def sync_mcp_tools_for_agent(agent) -> list[Tool]:
                 if not tools_list:
                     continue
 
+                from cognitrix.mcp.app_views import model_visible
                 for tool_info in tools_list:
+                    if not model_visible(tool_info):
+                        continue
                     tool_wrapper = create_mcp_tool_wrapper(config.name, tool_info, config.key)
                     _dynamic_mcp_tools[tool_wrapper.name] = tool_wrapper
                     new_tools.append(tool_wrapper)

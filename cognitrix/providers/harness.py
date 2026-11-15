@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -62,12 +63,14 @@ PLACEHOLDER_KEY = 'signed-in-cli'
 """Stands in for an API key in agent configs: the CLI signs itself in."""
 WHOLE_MESSAGES = frozenset({'codex', 'opencode'})
 """CLIs that send whole messages, not deltas: the last one is the answer."""
-NO_TOOL_HARNESSES = frozenset({'antigravity-cli'})
-"""CLIs that can't be handed the agent's Cognitrix tools for one run.
-
-The Antigravity CLI reads MCP servers only from ~/.gemini/config/mcp_config.json
-or <workspace>/.agents/mcp_config.json and has no flag or variable for another
-file, so lending tools would mean rewriting the person's own config each turn."""
+NO_TOOL_HARNESSES: frozenset[str] = frozenset()
+"""CLIs that can't be handed the agent's Cognitrix tools for one run."""
+AGY_TOOLS_DIR_PREFIX = '.agy-tools-'
+"""Antigravity CLI reads MCP servers only from ~/.gemini/config/mcp_config.json
+or <workspace>/.agents/mcp_config.json, with no flag or variable for another
+file. Rather than touch the person's own config or project, each turn gets a
+private folder in the data folder holding just .agents/mcp_config.json, added
+to agy's workspace with --add-dir and deleted after the turn."""
 
 
 @dataclass
@@ -439,6 +442,12 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
             argv += ['--mode', 'plan' if mode == 'read_only' else 'accept-edits']
         for d in extra_dirs:
             argv += ['--add-dir', d]
+        if tools_url and settings_file:
+            # settings_file is this turn's private tools folder (AGY_TOOLS_DIR_PREFIX).
+            config = Path(settings_file) / '.agents' / 'mcp_config.json'
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.write_text(json.dumps({'mcpServers': {SERVER_NAME: {'serverUrl': tools_url}}}), encoding='utf-8')
+            argv += ['--add-dir', settings_file]
         if model:
             argv += ['--model', model]
         # Slugs like gemini-3.8-flash-medium carry their own effort.
@@ -816,6 +825,10 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
             folder = _store_file().parent
             folder.mkdir(parents=True, exist_ok=True)
             settings_file = str(folder / f'.cli-tools-{uuid.uuid4().hex}.json')
+        elif bridge is not None and key == 'antigravity-cli':
+            folder = _store_file().parent
+            folder.mkdir(parents=True, exist_ok=True)
+            settings_file = str(folder / f'{AGY_TOOLS_DIR_PREFIX}{uuid.uuid4().hex}')
         if bridge is not None and lent and not resume:
             text = tools_note(harness.label, bridge.tool_names()) + text
 
@@ -913,9 +926,15 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
             _stop(proc)
         if bridge is not None:
             await bridge.stop()
+        if bridge is not None and lent and key == 'antigravity-cli' and not bridge.listed:
+            # The tools reach agy through a workspace folder; say so if it never looked.
+            logger.warning('%s did not load the lent Cognitrix tools this turn.', harness.label)
         if settings_file:
             try:
-                os.unlink(settings_file)
+                if os.path.isdir(settings_file):
+                    shutil.rmtree(settings_file, ignore_errors=True)
+                else:
+                    os.unlink(settings_file)
             except OSError:
                 pass
 

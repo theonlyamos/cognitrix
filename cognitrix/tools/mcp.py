@@ -41,19 +41,26 @@ SEARCH_RESULTS = 8
 
 def _visible(parent: "Agent", server: str, tool: dict[str, Any]) -> bool:
     """Tools the person switched off for this agent aren't offered at all."""
+    from cognitrix.mcp.app_views import model_visible
     from cognitrix.mcp.tools import wrapper_name
     from cognitrix.safety.permissions import is_denied
 
+    if not model_visible(tool):
+        return False
     return not is_denied(parent, wrapper_name(server, str(tool.get('name') or '')))
 
 
 def _full(tool: dict[str, Any]) -> dict[str, Any]:
-    return {
+    out = {
         'name': tool.get('name'),
         'description': tool.get('description'),
         'input_schema': tool.get('input_schema') or {},
         'read_only': bool((tool.get('annotations') or {}).get('readOnlyHint')),
     }
+    if (tool.get('ui') or {}).get('resource_uri'):
+        # Running it opens the app's own screen beside the chat.
+        out['shows_screen'] = True
+    return out
 
 
 def _brief(tool: dict[str, Any]) -> dict[str, Any]:
@@ -172,10 +179,19 @@ async def run_mcp_tool(server: str, tool_name: str, arguments: dict[str, Any], *
     problem = await prepare(client, config)
     if problem:
         return problem
-    result = await apps.call_tool(client, config, tool_name, arguments if isinstance(arguments, dict) else {})
+    arguments = arguments if isinstance(arguments, dict) else {}
+    result = await apps.call_tool(client, config, tool_name, arguments)
     if result is None:
         return f"Error: MCP tool '{tool_name}' on '{server}' failed."
-    return _content_to_text(result)
+    from cognitrix.mcp import app_views
+    view = await app_views.after_tool_call(config.key, config.name, tool_name, arguments, result)
+    if view is None:
+        return _content_to_text(result)
+    from cognitrix.tools.utils import EntityRef, ToolOutcome
+    return ToolOutcome.success(
+        f'{app_views.shown_note(view)}\n\n{_content_to_text(result)}',
+        entities=[EntityRef(type='app_view', id=str(view.id), name=view.title or config.name)],
+    )
 
 __all__ = [
     'list_mcp_tools',

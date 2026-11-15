@@ -412,6 +412,16 @@ class FlyManager(SandboxManager):
     def check_for_update(self, force: bool = False) -> bool:
         return False
 
+    # -- Docker-only features ------------------------------------------------------
+    # Hidden keys (the key proxy) and snapshots work through `docker exec` and
+    # an engine-local proxy, which a Fly Machine can't use yet.
+    def _docker(self, *args: str, check: bool = True, timeout: float = 120, input: str | None = None):
+        raise Unsupported("That isn't available yet for agent computers hosted on Fly (it needs local Docker).")
+
+    def key_proxy_env(self, user_id: Any) -> dict[str, str]:
+        raise Unsupported("Hidden keys aren't available yet for agent computers hosted on Fly. Set "
+                          'COGNITRIX_SANDBOX_HIDE_KEYS=0 on the server to pass keys in directly.')
+
     # -- idle shutdown ------------------------------------------------------------
     def _reap_loop(self) -> None:
         while not self._stop_reaper.wait(60):

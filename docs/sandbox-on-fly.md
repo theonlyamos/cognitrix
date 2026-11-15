@@ -82,6 +82,12 @@ Two ways to roll out a new image:
 - With `:latest`, Reset (or deleting a machine in the Fly dashboard) makes a
   fresh machine on the newest image; the volume is kept unless you Reset.
 
+## Not on Fly yet
+
+Hidden keys (the key proxy) and computer snapshots need local Docker, so a
+computer hosted on Fly says they aren't available. To pass keys into Fly
+computers directly, set `COGNITRIX_SANDBOX_HIDE_KEYS=0` on the engine.
+
 ## Cost
 
 Fly bills machines per second while they run, and volumes per GB-month. With

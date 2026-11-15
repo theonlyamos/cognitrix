@@ -114,6 +114,11 @@ export interface SandboxEnvVar {
   preview?: string;
   /** New value to save; left out keeps the saved one. */
   value?: string;
+  /**
+   * The only sites the value is sent to. With sites, commands get a placeholder and
+   * Cognitrix fills the real value in only on requests to them. Left out keeps the saved sites.
+   */
+  hosts?: string[];
 }
 
 export async function getSandboxEnv(): Promise<SandboxEnvVar[]> {
@@ -121,8 +126,50 @@ export async function getSandboxEnv(): Promise<SandboxEnvVar[]> {
 }
 
 export async function saveSandboxEnv(variables: SandboxEnvVar[]): Promise<SandboxEnvVar[]> {
-  const body = { variables: variables.map((v) => (v.value !== undefined ? { name: v.name, value: v.value } : { name: v.name })) };
+  const body = {
+    variables: variables.map((v) => {
+      const out: { name: string; value?: string; hosts?: string[] } = { name: v.name };
+      if (v.value !== undefined) out.value = v.value;
+      if (v.hosts !== undefined) out.hosts = v.hosts;
+      return out;
+    }),
+  };
   return (await api.put<{ variables: SandboxEnvVar[] }>('/computer/sandbox/env', body)).data.variables;
+}
+
+/** A saved copy of the whole computer, or of one agent's setup on it. */
+export interface SandboxSnapshot {
+  id: string;
+  name: string;
+  kind: 'computer' | 'agent';
+  /** Desktop name of the agent an agent setup was saved from. */
+  agent: string | null;
+  size: number;
+  /** Seconds since the epoch. */
+  created_at: number;
+}
+
+export async function listSnapshots(): Promise<{ snapshots: SandboxSnapshot[]; max: number }> {
+  return (await api.get<{ snapshots: SandboxSnapshot[]; max: number }>('/computer/sandbox/snapshots')).data;
+}
+
+/** Save the whole computer, or only one agent's setup (its desktop name). */
+export async function createSnapshot(name: string, agent?: string | null): Promise<SandboxSnapshot> {
+  return (await api.post<SandboxSnapshot>('/computer/sandbox/snapshots', { name, agent: agent || null }, { timeout: 0 })).data;
+}
+
+/** Put a snapshot back. An agent setup goes to `agent` (default: the agent it came from). */
+export async function restoreSnapshot(id: string, agent?: string | null): Promise<void> {
+  await api.post(`/computer/sandbox/snapshots/${encodeURIComponent(id)}/restore`, { agent: agent || null }, { timeout: 0 });
+}
+
+export async function deleteSnapshot(id: string): Promise<void> {
+  await api.delete(`/computer/sandbox/snapshots/${encodeURIComponent(id)}`);
+}
+
+/** Give one agent a copy of another's folder, browser sign-ins and projects on the computer. */
+export async function copyAgentSetup(from: string, to: string): Promise<void> {
+  await api.post('/computer/sandbox/copy-agent', { from, to }, { timeout: 0 });
 }
 
 /** Answer an agent's Ask For Sign-in card: the value goes straight to Saved sign-ins. */

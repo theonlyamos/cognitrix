@@ -30,7 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Coding work (cognitrix/computer/sandbox/workspace.py): Node 22 with pnpm and
 # yarn, uv for Python, and the coding agent CLIs the Coding Agent tool runs
-# here (each signs in with the person's API key, passed per run). Other
+# here (each signs in with the person's API key, passed per run; Antigravity
+# CLI uses the Gemini key, see AGY_SANDBOX_SETUP in cognitrix/common/sandbox_work.py). Other
 # toolchains (Go, Rust, Java) install into the home folder without root and
 # stay in the home volume.
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -39,7 +40,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && corepack enable \
     && npm install -g --no-fund --no-audit @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
     && npm cache clean --force \
-    && curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
+    && curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh \
+    && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
+    && rm -rf /root/.cache/antigravity \
+    && test -x /usr/local/bin/agy
 ENV DISABLE_AUTOUPDATER=1 \
     NPM_CONFIG_PREFIX=/home/agent/.npm-global \
     PIP_BREAK_SYSTEM_PACKAGES=1 \

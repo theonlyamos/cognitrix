@@ -8,11 +8,12 @@ import asyncio
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from cognitrix.agents import access as agent_access
 from cognitrix.common.security import AuthContext, jwt_only
-from cognitrix.memory import saved
+from cognitrix.memory import importer, saved
 
 memories_api = APIRouter(prefix='/memories')
 
@@ -34,11 +35,20 @@ class MemoryUpdate(BaseModel):
 class SettingsBody(BaseModel):
     enabled: bool | None = None
     history_enabled: bool | None = None
-    auto_save: Literal['auto', 'explicit'] | None = None
+    auto_save: Literal['auto', 'ask', 'explicit'] | None = None
 
 
 class DeleteAll(BaseModel):
     confirm: bool = False
+
+
+class ImportBody(BaseModel):
+    text: str
+
+
+class PendingBody(BaseModel):
+    approve: bool = True
+    """True approves every waiting memory; False discards them all."""
 
 
 def _owner(ctx: AuthContext) -> str:
@@ -120,6 +130,60 @@ async def legacy_status(ctx: AuthContext = Depends(jwt_only)):
 async def delete_legacy(ctx: AuthContext = Depends(jwt_only)):
     removed = await asyncio.to_thread(saved.delete_legacy, _owner(ctx))
     return {'deleted': removed}
+
+
+@memories_api.post('/legacy/convert')
+async def convert_legacy(ctx: AuthContext = Depends(jwt_only)):
+    """Read the old automatic memory into memories you approve one by one."""
+    try:
+        return await importer.convert_legacy(_owner(ctx))
+    except importer.ImportFailed as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@memories_api.get('/export')
+async def export_memories(format: Literal['json', 'markdown'] = 'json', ctx: AuthContext = Depends(jwt_only)):
+    owner = _owner(ctx)
+    stamp = saved.now_str()[:10]
+    if format == 'markdown':
+        text = await importer.export_markdown(owner, await _agent_names(owner))
+        return PlainTextResponse(text, media_type='text/markdown; charset=utf-8', headers={
+            'Content-Disposition': f'attachment; filename="cognitrix-memories-{stamp}.md"'})
+    return JSONResponse(await importer.export_json(owner), headers={
+        'Content-Disposition': f'attachment; filename="cognitrix-memories-{stamp}.json"'})
+
+
+@memories_api.post('/import')
+async def import_memories(body: ImportBody, ctx: AuthContext = Depends(jwt_only)):
+    """Propose memories from a paste (another assistant's memory list, notes,
+    or this app's export). They wait for your OK before any agent sees them."""
+    owner = _owner(ctx)
+    try:
+        return await importer.import_text(owner, body.text, valid_agents=set(await _agent_names(owner)))
+    except importer.ImportFailed as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@memories_api.post('/pending')
+async def settle_pending(body: PendingBody, ctx: AuthContext = Depends(jwt_only)):
+    """Approve or discard every memory waiting for your OK."""
+    owner = _owner(ctx)
+    rows = await saved.pending_memories(owner)
+    for row in rows:
+        if body.approve:
+            await saved.confirm(row)
+        else:
+            await saved.delete(row)
+    return {'approved' if body.approve else 'discarded': len(rows)}
+
+
+@memories_api.post('/{memory_id}/approve')
+async def approve_memory(memory_id: str, ctx: AuthContext = Depends(jwt_only)):
+    owner = _owner(ctx)
+    row = await saved.get_memory(owner, memory_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail='Memory not found')
+    return saved.project(await saved.confirm(row), await _agent_names(owner))
 
 
 @memories_api.patch('/{memory_id}')
