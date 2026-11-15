@@ -75,8 +75,12 @@ export function setLanguage(code: LanguageCode | '') {
   cached = code || browserLanguage();
   applyLanguage();
   const language = cached;
-  if (loaded[language]) window.dispatchEvent(new Event(CHANGED));
-  else void loadLanguage(language).then(() => window.dispatchEvent(new Event(CHANGED)));
+  const announce = () => {
+    picks++;
+    window.dispatchEvent(new Event(CHANGED));
+  };
+  if (loaded[language]) announce();
+  else void loadLanguage(language).then(announce);
 }
 
 /** Tell the browser (and screen readers) which language the page is in. */
@@ -124,7 +128,7 @@ export function useT() {
 /**
  * `tr('ui.agents.import')` in the current language. Unlike useT() it works
  * anywhere (event handlers, helpers, getters); screens pick up a language
- * change because <LanguageRoot> renders the app afresh when it changes.
+ * change because <LanguageRoot> renders the app afresh when one is picked.
  */
 export const tr = (key: MessageKey, vars?: Vars): string => translate(getLanguage(), key, vars);
 
@@ -144,10 +148,21 @@ export function trn(n: number, one: MessageKey, other: MessageKey, vars?: Vars):
   return translate(language, form === 'one' ? one : other, { n, ...vars });
 }
 
-/** Wraps the app so every screen redraws in the new language when it changes. */
+// Counts language picks made in this tab (Settings › Appearance). Only these
+// redraw the whole app: a pick made in another tab must not unmount this one,
+// which would throw away drafts and end open incognito chats. That tab's
+// choice still shows up as each screen next renders.
+let picks = 0;
+const subscribePicks = (notify: () => void) => {
+  window.addEventListener(CHANGED, notify);
+  return () => window.removeEventListener(CHANGED, notify);
+};
+const getPicks = () => picks;
+
+/** Wraps the app so every screen redraws in the new language when it is picked here. */
 export function LanguageRoot({ children }: { children: ReactNode }) {
-  const language = useLanguage();
-  return createElement(Fragment, { key: language }, children);
+  const epoch = useSyncExternalStore(subscribePicks, getPicks, getPicks);
+  return createElement(Fragment, { key: epoch }, children);
 }
 
 export type { MessageKey };

@@ -45,3 +45,27 @@ describe('tr and trn', () => {
     expect(tr('ui.count.tools_other', { n: 2 })).not.toBe('2 tools');
   });
 });
+
+describe('LanguageRoot', () => {
+  it('redraws for a pick in this tab, not for one made in another tab', async () => {
+    const { render, act } = await import('@testing-library/react');
+    const { createElement, useRef } = await import('react');
+    const { LanguageRoot } = await import('./i18n');
+    let mounts = 0;
+    function Probe() {
+      const seen = useRef(false);
+      if (!seen.current) { seen.current = true; mounts++; }
+      return null;
+    }
+    render(createElement(LanguageRoot, null, createElement(Probe)));
+    expect(mounts).toBe(1);
+    act(() => {
+      localStorage.setItem('language', 'es');
+      window.dispatchEvent(new StorageEvent('storage', { key: 'language' }));
+    });
+    expect(mounts).toBe(1);
+    await loadLanguage('fr');
+    act(() => setLanguage('fr'));
+    expect(mounts).toBe(2);
+  });
+});
