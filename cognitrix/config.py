@@ -816,12 +816,14 @@ async def _ensure_schema():
     from cognitrix.artifact_pages.models import MODELS as ARTIFACT_PAGE_MODELS
     from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
     from cognitrix.swarms.models import MODELS as SWARM_MODELS
+    from cognitrix.sessions.side_questions import SideQuestion
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
         *HOSTED_APP_MODELS,
         *SWARM_MODELS,
         AgentOffer,
+        SideQuestion,
         MeetingNote,
         PersonalSkill,
         SkillDraft,

@@ -25,6 +25,7 @@ import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { LiveVoiceButton, LiveVoicePanel } from '@/components/LiveVoice';
 import { useLiveVoice } from '@/hooks/useLiveVoice';
+import { SideQuestionButton, SideQuestionsPanel } from '@/components/SideQuestions';
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
 import ComposerMenu from '@/components/ComposerMenu';
@@ -1743,6 +1744,23 @@ export default function Home() {
     return last?.role === 'assistant' ? { id: last.id, content: last.content } : null;
   }, [messages]);
 
+  // Side questions: asked beside the chat without interrupting it (Ctrl+/).
+  const [sideOpen, setSideOpen] = useState(false);
+  useEffect(() => {
+    if (!activeSessionId) setSideOpen(false);
+  }, [activeSessionId]);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault();
+        setSideOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeSessionId]);
+
   const live = useLiveVoice({
     enabled: liveVoice,
     busy,
@@ -1762,6 +1780,17 @@ export default function Home() {
 
   const composer = (
     <div className="relative mx-auto max-w-3xl">
+      {sideOpen && activeSessionId && (
+        <div className="animate-rise absolute bottom-full left-0 right-0 z-20 mb-2 md:left-auto md:w-[26rem]">
+          <SideQuestionsPanel
+            sessionId={activeSessionId}
+            busy={busy}
+            agentName={currentAgent?.name || ''}
+            onClose={() => { setSideOpen(false); inputRef.current?.focus(); }}
+            onUseInChat={(text) => { setInput(text); setSideOpen(false); inputRef.current?.focus(); }}
+          />
+        </div>
+      )}
       {skillMenuOpen && (
         <div
           id="skill-menu"
@@ -1982,6 +2011,9 @@ export default function Home() {
           <span className="flex-1" />
           {!voice.active && !liveVoice && !(busy && input.trim()) && (
             <>
+              {activeSessionId && (
+                <SideQuestionButton onClick={() => setSideOpen((v) => !v)} active={sideOpen} className="rounded-lg" />
+              )}
               <LiveVoiceButton onClick={() => setLiveVoice(true)} disabled={!isConnected} className="rounded-lg" />
               <MicButton voice={voice} className="rounded-lg" />
             </>
