@@ -216,11 +216,10 @@ def test_author_prefix_round_trip():
 
 
 async def test_guest_turn_leaves_out_saved_memories(db):
+    import cognitrix.memory.saved as saved
     from cognitrix.memory.hybrid_context import HybridContextManager
     from cognitrix.safety.permissions import guest_run
     from cognitrix.sessions.base import Session
-
-    import cognitrix.memory.saved as saved
 
     async def block(*args, **kwargs):
         return 'MEMORY'

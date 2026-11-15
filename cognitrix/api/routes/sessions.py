@@ -131,7 +131,10 @@ def _session_title(chat) -> str:
             and message.get('type') == 'text'
             and message.get('content')
         ):
-            first_line = str(message['content']).strip().splitlines()[0]
+            from cognitrix.sessions.sharing import split_author
+
+            # A message someone the chat is shared with wrote: their own words.
+            first_line = split_author(str(message['content']))[1].strip().splitlines()[0]
             return first_line[:60] + ('…' if len(first_line) > 60 else '')
     return 'New conversation'
 

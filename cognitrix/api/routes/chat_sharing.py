@@ -50,7 +50,8 @@ def _not_found() -> HTTPException:
 
 
 async def _people() -> dict[str, Any]:
-    from cognitrix.api.routes.agents import _people as people, _person
+    from cognitrix.api.routes.agents import _people as people
+    from cognitrix.api.routes.agents import _person
 
     return {p['id']: p for p in (_person(u) for u in await people())}
 
@@ -80,7 +81,7 @@ def _shareable(session: Any) -> None:
 
 async def _access(session_id: str, me: str):
     """(binding of the owner, session, my role): 'owner', 'chat' or 'view'."""
-    from cognitrix.session_ownership import SessionOwnership, OwnershipState
+    from cognitrix.session_ownership import OwnershipState, SessionOwnership
     from cognitrix.sessions.base import Session
 
     share = await sharing.share_for(session_id, me)
@@ -105,9 +106,7 @@ def _title(session: Any) -> str:
     custom = (getattr(session, 'title', None) or '').strip()
     if custom:
         return custom
-    title = _session_title(session.chat)
-    _, text = sharing.split_author(title)
-    return text or 'Chat'
+    return _session_title(session.chat) or 'Chat'
 
 
 async def _agent_view(agent_id: str) -> dict[str, Any]:

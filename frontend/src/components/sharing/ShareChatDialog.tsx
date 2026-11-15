@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, Link as LinkIcon, X } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import { ROLE_LABEL, sharedChatHref, type ChatPeople, type ShareRole } from '@/lib/sharedChats';
@@ -61,7 +62,8 @@ export function ShareChatDialog({ chatId, title, onClose }: { chatId: string; ti
     }
   };
 
-  return (
+  // On document.body: the sidebar it opens from would otherwise trap a fixed overlay.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 md:items-center" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div ref={dialog} role="dialog" aria-modal="true" aria-label={`Share ${title}`}
         className="flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-2xl border border-line bg-panel shadow-2xl md:w-[520px] md:rounded-2xl">
@@ -134,6 +136,7 @@ export function ShareChatDialog({ chatId, title, onClose }: { chatId: string; ti
           </button>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

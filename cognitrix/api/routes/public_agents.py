@@ -460,7 +460,7 @@ parts.forEach(function(chunk){var data=chunk.split(/\\r?\\n/).filter(function(l)
 if(ev.type==='text'){acc+=ev.content;if(!reply){thinking.remove();reply=add('assistant','')}reply.innerHTML=fmt(acc.replace(/<think>[\\s\\S]*?(<\\/think>|$)/g,''));down()}
 else if(ev.type==='tool'&&ev.status==='started'){thinking.textContent='Looking that up…'}
 else if(ev.type==='done'){thinking.remove();if(!reply){reply=add('assistant','')}reply.innerHTML=fmt(ev.content||acc||'(No answer.)');down()}
-else if(ev.type==='error'){thinking.remove();add('error',ev.content||'Something went wrong.')}})}
+else if(ev.type==='error'){thinking.remove();if(reply){reply.remove();reply=null}add('error',ev.content||'Something went wrong.')}})}
 if(thinking.parentNode){thinking.remove()}}
 catch(e){if(thinking.parentNode)thinking.remove();add('error','Could not reach the assistant. Check your connection and try again.')}
 finally{setBusy(false);box.focus()}}

@@ -255,6 +255,14 @@ def is_running(session_id: str) -> bool:
 
 # --------------------------------------------------------------------- the chat
 
+FAILED_REPLY = 'Sorry, I couldn’t answer just now. Please try again in a little while.'
+
+
+def _is_failure(text: str) -> bool:
+    text = (text or '').lstrip()
+    return text.startswith(('Streaming error:', '[No answer:'))
+
+
 def visitor_messages(session: Any) -> list[dict[str, Any]]:
     """What a visitor (or the owner reviewing visitors) sees: the visitor's
     words and the agent's replies. Tool calls and their results stay out."""
@@ -274,6 +282,8 @@ def visitor_messages(session: Any) -> list[dict[str, Any]]:
             if entry.get('tool_calls') and not content.strip():
                 continue
             text = strip_reasoning(content)
+            if _is_failure(text):
+                text = FAILED_REPLY
         else:
             continue
         if text:
@@ -375,6 +385,8 @@ async def _turn(link: PublicAgentLink, agent: Any, owner: str, session: Any, tex
             return
         kind = payload.get('type')
         if kind == 'generate' and isinstance(payload.get('content'), str) and payload['content']:
+            if _is_failure(payload['content']):
+                return  # provider errors (billing, keys) are the owner's business
             _put(queue, {'type': 'text', 'content': payload['content']})
         elif kind == 'tool' and payload.get('status') in ('started', 'completed', 'error'):
             _put(queue, {'type': 'tool', 'name': str(payload.get('name') or payload.get('tool_name') or ''),
@@ -398,7 +410,10 @@ async def _turn(link: PublicAgentLink, agent: Any, owner: str, session: Any, tex
         )
         reply = strip_reasoning(last_reply(session))
         error = getattr(session, 'last_turn_error', None)
-        if error and not reply:
+        if error or _is_failure(reply):
+            logger.warning('Public link %s: turn failed: %s', link.id, str(error or reply)[:300])
+            _put(queue, {'type': 'error', 'content': FAILED_REPLY, 'replace': True})
+        elif not reply:
             _put(queue, {'type': 'error', 'content': 'Sorry, something went wrong. Please try again.'})
         else:
             _put(queue, {'type': 'done', 'content': reply})
