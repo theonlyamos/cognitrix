@@ -104,8 +104,8 @@ _KNOWN_LOW = frozenset({
     'publish_artifact', 'read_artifact', 'artifact_comments',
     # cards only show in the chat; a button press is a message to the agent
     'show_card',
-    # apps: reading an app's status and logs
-    'app_status',
+    # apps: reading an app's status and logs, looking at it in a headless browser
+    'app_status', 'check_app',
     # asking the person a question, images, screenshots
     'ask_user', 'ask_question', 'generate_image', 'take_screenshot',
     # background computer use: looking and scrolling

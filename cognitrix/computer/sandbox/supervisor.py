@@ -478,6 +478,20 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str = '0.0.0.0'
                     self._reply(200, apps.deploy(slug, int(b.get('version') or 1), unb64(b.get('archive', '')),
                                                  b.get('command', ''), b.get('install', ''), b.get('env') or {},
                                                  int(b.get('port') or 0)))
+                elif method == 'POST' and action == 'check':
+                    # Check App: wake it and look at it in a headless Chromium
+                    # (no window on the desktops people watch).
+                    from cognitrix.computer.sandbox.pagecheck import check_app_port
+
+                    b = self._body()
+                    port_ = apps.port_for(slug, wake=True)
+                    if not port_:
+                        self._reply(200, {'ok': False, 'error': 'The app is not running and did not start.'})
+                        return
+                    path = str(b.get('path') or '').lstrip('/')
+                    headers = {str(k): str(v) for k, v in (b.get('headers') or {}).items()}
+                    self._reply(200, check_app_port(port_, path, phone=bool(b.get('phone')), headers=headers,
+                                                    no_sandbox=True))
                 elif method == 'POST' and action == 'start':
                     self._reply(200, apps.start(slug))
                 elif method == 'POST' and action == 'stop':

@@ -105,7 +105,7 @@ async def publish_app(title: str, start_command: str, folder: str = '', install_
     return ToolOutcome.success(
         f'{what} "{app.title}" (app_id {app.id}, version {row.number}), running on {where}. '
         f'It is private to the person until they share it; the link is /apps/open/{app.slug}. '
-        'The person sees a card in the chat that opens it.',
+        'The person sees a card in the chat that opens it. Now look at it with Check App before you say it is done.',
         entities=entity,
     )
 
@@ -148,3 +148,53 @@ async def app_status(app_id: str = '', log_lines: int = 80, *, parent=None) -> T
     log = await store.logs(app, max(1, min(int(log_lines or 80), 400)))
     lines.append('Log:\n' + (log or '(empty)'))
     return ToolOutcome.success('\n'.join(lines))
+
+
+@tool(category=APP_TOOL_CATEGORY, retryable=False, max_attempts=1, supported_interfaces=['web', 'ws', 'task'])
+async def check_app(app_id: str, path: str = '', phone: bool = False, *, parent=None) -> ToolOutcome:
+    """Look at a published app the way a person would: it is woken up and opened in a headless
+    browser where it runs, and you get a screenshot plus any script errors, console errors and
+    failed requests. Use it after every Publish App, fix what it shows, publish again, and only
+    then tell the user the app is ready. Never asks for approval.
+
+    Args:
+        app_id (str): Id or name of the app.
+        path (str): A page inside the app, e.g. "settings" or "items?id=3"; empty for its home page.
+        phone (bool): Look at it on a phone-sized screen (390 wide) instead of a desktop (1280 wide).
+    """
+    user_key = _owner()
+    if not user_key:
+        return ToolOutcome.failure('no_owner', 'Apps need a signed-in person.')
+    try:
+        app, role = await store.app_for(app_id, user_key)
+        out = await store.check(app, user_key, path=path, phone=bool(phone))
+    except store.AppError as exc:
+        return ToolOutcome.failure(exc.code, exc.message)
+    if not out.get('ok'):
+        # Logs are for the people who can change the app (as in App Status).
+        log = await store.logs(app, 40) if store.can_edit(role) else ''
+        return ToolOutcome.failure('did_not_load', f'"{app.title}" did not load: {out.get("error") or "no answer"}'
+                                   + (f'\nLog:\n{log[-2000:]}' if log else ''))
+    page = f'/{str(path or "").lstrip("/")}'
+    size = 'phone (390x844)' if phone else 'desktop (1280x800)'
+    lines = [f'Checked "{app.title}" {page} on a {size} screen: HTTP {out.get("status") or "?"}'
+             + (f', title "{out["title"]}"' if out.get('title') else '') + '.']
+    if out.get('note'):
+        lines.append(out['note'])
+    if not out.get('text_length'):
+        lines.append('The page shows no text: it may be blank or still loading (check the screenshot).')
+    for label, key in (('Script errors', 'errors'), ('Console errors', 'console'),
+                       ('Failed requests (paths are relative to the app)', 'failed')):
+        items = out.get(key) or []
+        if items:
+            lines.append(f'{label}:\n' + '\n'.join(f'- {item}' for item in items))
+    if not any(out.get(k) for k in ('errors', 'console', 'failed')):
+        lines.append('No script errors, console errors or failed requests.')
+    shot = out.get('screenshot') or ''
+    if shot:
+        from cognitrix.tools.misc import queue_image
+
+        lines.append('Screenshot attached: look at it for layout problems before you call the app done.'
+                     if queue_image('data:image/png;base64,' + shot)
+                     else '(This chat cannot show you the screenshot.)')
+    return ToolOutcome.success('\n'.join(lines), entities=[EntityRef(type='hosted_app', id=str(app.id), name=app.title)])

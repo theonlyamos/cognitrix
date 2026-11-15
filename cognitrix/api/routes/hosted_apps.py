@@ -29,7 +29,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from cognitrix.common.security import AuthContext, jwt_only
@@ -69,6 +69,27 @@ def _editor_only(role: str) -> None:
         raise HTTPException(status_code=403, detail='You can open this app but not change it')
 
 
+def _shot_url(slug: str, viewer: str) -> str:
+    """The viewer's own last Check App screenshot, for an <img> (a thumbnail token:
+    no sign-in header), or '' when they have none."""
+    shot = store.shot_file(slug, viewer)
+    if shot is None:
+        return ''
+    return f'/app-shots/{slug}.png?t={store.open_token(slug, viewer, thumb=True)}&v={int(shot.stat().st_mtime)}'
+
+
+@app_proxy.get('/app-shots/{slug}.png', include_in_schema=False)
+async def app_shot(slug: str, t: str = ''):
+    read = store.read_open_token(t, slug)
+    app = await store.by_slug(slug)
+    if read is None or app is None or store.role_of(app, read[0]) is None:
+        raise HTTPException(status_code=404, detail='Not found')
+    shot = store.shot_file(app.slug, read[0])  # only the picture taken for this person
+    if shot is None:
+        raise HTTPException(status_code=404, detail='Not found')
+    return FileResponse(shot, media_type='image/png', headers={'Cache-Control': 'private, max-age=3600'})
+
+
 @hosted_apps_api.get('')
 async def list_apps(request: Request, ctx: AuthContext = Depends(jwt_only)):
     store.remember_engine_url(str(request.base_url))
@@ -81,6 +102,7 @@ async def list_apps(request: Request, ctx: AuthContext = Depends(jwt_only)):
         # The live picture on each card: a token that never wakes the app.
         row['thumb_url'] = store.app_path(app.slug, store.open_token(app.slug, me, thumb=True)) \
             if app.status == 'online' else ''
+        row['shot_url'] = _shot_url(app.slug, me)
         apps.append(row)
     return {'apps': apps, 'runtime': runtime}
 
@@ -90,6 +112,7 @@ async def get_app(ref: str, ctx: AuthContext = Depends(jwt_only)):
     app, role = await _app(ref, ctx)
     people, agents = await store.names()
     out = store.project(app, role, people=people, agents=agents)
+    out['shot_url'] = _shot_url(app.slug, _me(ctx))
     if store.can_edit(role):
         out['versions'] = [store.project_version(v, agents) for v in await store.versions(app)]
         out['task'] = await store.task_info(app.task_id)

@@ -480,6 +480,10 @@ async def delete_app(app: HostedApp) -> None:
     except RunnerError:
         logger.info('app %s: runner not reachable while deleting; files may stay behind', app.slug)
     await _revoke_api_key(app)
+    if _SLUG.fullmatch(app.slug):
+        import shutil
+
+        shutil.rmtree(shots_dir() / app.slug, ignore_errors=True)
     await HostedAppVersion.delete_many({'app_id': str(app.id)})
     await HostedApp.delete_many({'id': str(app.id)})
 
@@ -600,6 +604,74 @@ def visits_last(app: HostedApp, days: int = 7) -> list[int]:
     counts = app.visits or {}
     return [int(counts.get((start - timedelta(days=offset)).strftime('%Y-%m-%d'), 0))
             for offset in range(days - 1, -1, -1)]
+
+
+# ------------------------------------------------------------------ checking (Check App)
+
+def shots_dir() -> Path:
+    """The last Check App screenshot of each app, per person (``<slug>/<person>.png``):
+    apps show each viewer their own data, so one person's picture is never shown to
+    another. Shown on the app's card while it sleeps. Kept apart from the apps folder."""
+    from cognitrix.config import settings
+
+    path = Path(settings.workdir) / 'app-shots'
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+_SLUG = re.compile(r'[a-z0-9][a-z0-9-]{0,80}')
+
+
+def _shot_path(slug: str, viewer: str) -> Path | None:
+    # App names are lowercase letters, digits and dashes; anything else (a path) never reaches the disk.
+    if not _SLUG.fullmatch(str(slug or '')) or not viewer:
+        return None
+    import hashlib
+
+    root = shots_dir().resolve()
+    path = (root / slug / f"{hashlib.sha256(str(viewer).encode('utf-8')).hexdigest()[:32]}.png").resolve()
+    return path if path.parent.parent == root else None
+
+
+def shot_file(slug: str, viewer: str) -> Path | None:
+    """``viewer``'s last screenshot of the app, if there is one."""
+    path = _shot_path(slug, viewer)
+    return path if path is not None and path.is_file() else None
+
+
+async def check(app: HostedApp, viewer: str, *, path: str = '', phone: bool = False) -> dict[str, Any]:
+    """Wake the app and look at it in a headless browser where it runs (the sandbox's
+    Chromium, or Edge/Chrome on this machine). See computer/sandbox/pagecheck.py."""
+    import base64
+
+    if not app.version:
+        raise AppError('not_live', f'"{app.title}" has no version that started yet. Publish it first.')
+    from cognitrix.api.routes.hosted_apps import _header_safe, _viewer_user
+
+    user = await _viewer_user(viewer)
+    headers = {'X-Cognitrix-User-Id': _header_safe(viewer), 'X-Cognitrix-User-Name': _header_safe(user.get('name', '')),
+               'X-Cognitrix-User-Email': _header_safe(user.get('email', '')),
+               'X-Cognitrix-User-Role': role_of(app, viewer) or ROLE_OWNER}
+    clean = str(path or '').strip().lstrip('/')
+    if '://' in clean or clean.startswith('/'):
+        raise AppError('bad_path', 'path is a page inside the app, like "" or "settings?tab=2".')
+    try:
+        runner = await asyncio.to_thread(runner_for, app.runtime, app.owner_id)
+        out = await asyncio.to_thread(runner.check, app.slug, clean, bool(phone), headers)
+    except RunnerError as exc:
+        raise AppError(exc.code, exc.message) from None
+    if out.get('ok') and app.status != 'online':
+        await _set(app, status='online')
+    touch(app.slug)
+    shot = str(out.get('screenshot') or '')
+    target = _shot_path(app.slug, viewer)
+    if shot and not phone and not clean and target is not None:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(base64.b64decode(shot))
+        except (OSError, ValueError):
+            logger.debug('could not keep the screenshot of %s', app.slug, exc_info=True)
+    return out
 
 
 # ------------------------------------------------------------------ links
