@@ -31,11 +31,17 @@ class MailAuthError(MailError):
 # --- addresses -------------------------------------------------------------
 
 _NAME_RE = re.compile(r'^[a-z0-9](?:[a-z0-9._-]{0,38}[a-z0-9])?$')
-_ADDRESS_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 
 def valid_address(value: str) -> bool:
-    return bool(_ADDRESS_RE.match(value or ''))
+    """``local@domain.tld``, checked without a regular expression (no slow
+    backtracking on long hostile input)."""
+    value = value or ''
+    if len(value) > 254 or any(c.isspace() for c in value) or value.count('@') != 1:
+        return False
+    local, domain = value.split('@')
+    labels = domain.split('.')
+    return bool(local) and len(labels) >= 2 and all(labels)
 
 
 def slug(text: str) -> str:

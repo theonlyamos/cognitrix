@@ -101,6 +101,8 @@ class EmailService:
         self._turn_runs: dict[str, Any] = {}
         self._questions: dict[str, str] = {}
         """session id -> Ask User request waiting for a reply by mail."""
+        self._question_options: dict[str, list[dict]] = {}
+        """session id -> the options of that question, so a reply can pick one."""
         self._approvals: dict[str, str] = {}
         """session id -> approval request waiting for APPROVE / DENY by mail."""
 
@@ -228,7 +230,15 @@ class EmailService:
         return agents[0] if agents else None
 
     async def _is_own(self, account: EmailAccount, address: str) -> bool:
-        return mail.name_for(account.address, account.addressing, address) is not None
+        """Mail sent by the mailbox itself or one of its agents (never answered).
+        With a catch-all every address on the domain routes here, so only the
+        mailbox's own address and registered agent addresses count."""
+        name = mail.name_for(account.address, account.addressing, address)
+        if name is None:
+            return False
+        if name == '' or account.addressing == 'plus':
+            return True  # every plus variant is this same mailbox
+        return await AgentAddress.find_one({'account_id': account.id, 'name': name}) is not None
 
     async def handle(self, account: EmailAccount, raw: bytes) -> str:
         """Act on one message. Returns what happened (for logs and tests)."""
@@ -282,11 +292,29 @@ class EmailService:
             from cognitrix.questions.broker import resolve_question
             from cognitrix.questions.models import QuestionAction
 
-            if await resolve_question(self._questions[sid], account.user_id, QuestionAction.ANSWER, text=text):
+            options = self._question_options.get(sid) or []
+            picked = _pick_option(text, options)
+            answer = {'option_id': picked} if picked else {'text': text}
+            if await resolve_question(self._questions[sid], account.user_id, QuestionAction.ANSWER, **answer):
                 self._questions.pop(sid, None)
+                self._question_options.pop(sid, None)
                 return 'answered'
         prompt = self._prompt(inbound, text, guest, account)
         turn = self._turns.get(sid)
+        if turn is None or turn.done():
+            # The same chat may be running in the web app right now.
+            from cognitrix.sessions import runs as chat_runs
+
+            existing = chat_runs.get_run(account.user_id, sid)
+            if existing is not None and existing.running:
+                if not guest and existing.steerable:
+                    try:
+                        if existing.steer(prompt, source='email') is not None:
+                            return 'steered'
+                    except Exception:
+                        pass
+                await self.reply(thread, BUSY_TEXT)
+                return 'busy'
         if turn is not None and not turn.done():
             run = self._turn_runs.get(sid)
             if not guest and run is not None and run.running and run.steerable:
@@ -444,13 +472,14 @@ class EmailService:
             elif kind == 'question_request':
                 rid = str(event.get('request_id'))
                 self._questions[sid] = rid
-                options = event.get('options') or []
+                options = [o for o in event.get('options') or [] if isinstance(o, dict)]
+                self._question_options[sid] = options
                 body = str(event.get('prompt') or 'Question')
                 if event.get('details'):
                     body += f'\n\n{event["details"]}'
                 if options:
-                    body += '\n\n' + '\n'.join(f'- {o.get("label")}' for o in options)
-                body += '\n\nReply with your answer.'
+                    body += '\n\n' + '\n'.join(f'{i}. {o.get("label")}' for i, o in enumerate(options, 1))
+                body += '\n\nReply with the number or your answer.' if options else '\n\nReply with your answer.'
                 await self.reply(thread, body)
 
         approval_token = web_turn_ctx.set({
@@ -493,6 +522,7 @@ class EmailService:
             question_turn_ctx.reset(question_token)
             chat_runs.current_run.reset(run_token)
             self._questions.pop(sid, None)
+            self._question_options.pop(sid, None)
             self._approvals.pop(sid, None)
             run.finish(terminal)
             if self._turn_runs.get(sid) is run:
@@ -503,6 +533,19 @@ class EmailService:
             if run.unsent and terminal.get('type') != 'turn_stopped':
                 follow_up = '\n\n'.join(str(m.get('content') or '') for m in run.unsent)
                 self._turns[sid] = asyncio.create_task(self._turn(thread, session, follow_up))
+
+
+def _pick_option(text: str, options: list[dict]) -> str:
+    """The id of the option a reply names, by number or by label; '' if none."""
+    first = (text or '').strip().split('\n', 1)[0].strip().rstrip('.!').lower()
+    if not first or not options:
+        return ''
+    if first.isdigit() and 1 <= int(first) <= len(options):
+        return str(options[int(first) - 1].get('id') or '')
+    for option in options:
+        if str(option.get('label') or '').strip().lower() == first:
+            return str(option.get('id') or '')
+    return ''
 
 
 class _Thread:

@@ -304,3 +304,61 @@ async def test_settings_check_servers_hide_the_password_and_give_each_agent_an_a
 
     await route.delete_email(_ctx('u1'))
     assert (await route.get_email(_ctx('u1')))['account'] is None
+
+
+async def test_catch_all_still_reads_mail_from_people_on_the_same_domain(db, monkeypatch):
+    service, account, _sent, started = await _setup(monkeypatch, addressing='domain')
+    # me@example.com is on the mailbox's domain but isn't the mailbox or an agent.
+    assert await service.handle(account, _raw(to='researcher@example.com')) == 'started'
+    assert await service.handle(account, _raw(sender='researcher@example.com', message_id='<o@x>')) == 'own'
+    assert await service.handle(account, _raw(sender='agents@example.com', message_id='<o2@x>')) == 'own'
+
+
+async def test_a_reply_picks_a_question_option_by_number_or_label(db, monkeypatch):
+    from cognitrix.questions import broker
+
+    service, account, _sent, started = await _setup(monkeypatch)
+    await service.handle(account, _raw())
+    await _run(service)
+    sid = started[0][1]
+    calls = []
+
+    async def resolve(rid, user_key, action, **kw):
+        calls.append(kw)
+        return True
+
+    monkeypatch.setattr(broker, 'resolve_question', resolve)
+    for body, expected in (('2', {'option_id': 'o2'}), ('Window seat', {'option_id': 'o1'}),
+                           ('something else', {'text': 'something else'})):
+        service._questions[sid] = 'q1'
+        service._question_options[sid] = [{'id': 'o1', 'label': 'Window seat'}, {'id': 'o2', 'label': 'Aisle'}]
+        assert await service.handle(account, _raw(body=body, message_id=f'<q{len(calls)}@x>',
+                                                  in_reply_to='<m1@example.com>')) == 'answered'
+        assert calls[-1] == expected
+
+
+async def test_mail_waits_for_a_turn_running_in_the_web_app(db, monkeypatch):
+    from cognitrix.sessions import runs as chat_runs
+
+    service, account, sent, started = await _setup(monkeypatch)
+    await service.handle(account, _raw())
+    await _run(service)
+    busy = SimpleNamespace(running=True, steerable=False)
+    monkeypatch.setattr(chat_runs, 'get_run', lambda user, sid: busy)
+    assert await service.handle(account, _raw(message_id='<w@x>', in_reply_to='<m1@example.com>')) == 'busy'
+    assert len(started) == 1 and 'Still working' in sent[-1].get_content()
+    steered = []
+    busy.steerable = True
+    busy.steer = lambda text, source: steered.append(source) or object()
+    assert await service.handle(account, _raw(message_id='<w2@x>', in_reply_to='<m1@example.com>')) == 'steered'
+    assert steered == ['email']
+
+
+def test_address_check_is_quick_on_hostile_input():
+    import time
+
+    assert mail.valid_address('a@b.co') and not mail.valid_address('a@b') and not mail.valid_address('a b@c.d')
+    assert not mail.valid_address('a@@b.co') and not mail.valid_address('a@b..co')
+    start = time.monotonic()
+    mail.valid_address('!@!.' + '!.' * 50_000)
+    assert time.monotonic() - start < 0.5
