@@ -566,6 +566,9 @@ class _SnapshotBoundTool(MCPTool):
             # them Find Tools, Run Code and every other tool that takes the
             # calling agent got parent=None in task runs.
             internal_params=list(getattr(delegate, "internal_params", None) or []),
+            # Run Code waits on nested tool calls; holding a slot meanwhile
+            # deadlocks them when the slots run out.
+            occupies_execution_slot=bool(getattr(delegate, "occupies_execution_slot", True)),
         )
         # odbms models intercept unknown/private attributes, so runtime-only
         # state lives directly in ``__dict__`` (the same pattern Agent uses for

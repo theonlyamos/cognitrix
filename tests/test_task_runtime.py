@@ -505,6 +505,11 @@ async def test_task_run_tools_get_the_calling_agent_like_chat_tools(monkeypatch)
     # The model never sees the runtime-filled parameters.
     schema = runtime.tools[0].to_dict_format()["function"]["parameters"]["properties"]
     assert "parent" not in schema and "interface" not in schema
+    # Orchestration tools keep their execution-slot exemption.
+    run_code = ToolManager.get_by_name("run_code")
+    bound = instantiate_runtime(build_runtime_snapshot(_agent([run_code]), None),
+                                tool_resolver={run_code.name: run_code}.get)
+    assert bound.tools[0].occupies_execution_slot is False
 
     SEEN_PARENTS.clear()
     result = await runtime.call_tools([
