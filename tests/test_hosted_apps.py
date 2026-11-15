@@ -523,7 +523,7 @@ async def test_check_app_tool_screenshots_and_reports_errors(db, tmp_path):
     assert '404 /missing.css' in out.text and 'Screenshot attached' in out.text
     assert images and base64.b64decode(images[0].split(',', 1)[1])[:8] == b'\x89PNG\r\n\x1a\n'
     app = await store.by_slug('todo-board')
-    assert store.shot_file(app.slug) is not None
+    assert store.shot_file(app.slug, str(amos.id)) is not None
 
     phone = await _tool('check_app', app_id='todo-board', phone=True)
     assert 'phone (390x844)' in phone.text
@@ -541,9 +541,34 @@ async def test_check_app_tool_screenshots_and_reports_errors(db, tmp_path):
         assert ok.status_code == 200 and ok.content[:4] == b'\x89PNG'
         assert (await client.get(f'/app-shots/{app.slug}.png?t=nope')).status_code == 404
         bea = await _user('Bea', 'bea@example.com')
-        assert (await client.get(_shot_url(app.slug, str(bea.id)))).status_code == 404  # not shared with her
+        forged = f'/app-shots/{app.slug}.png?t={store.open_token(app.slug, str(bea.id), thumb=True)}'
+        assert (await client.get(forged)).status_code == 404  # not shared with her
+        # Shared with her, she still never sees the owner's picture (apps show each person their own data).
+        await store.set_sharing(app, people={str(bea.id): 'view'})
+        assert _shot_url(app.slug, str(bea.id)) == ''
+        assert (await client.get(forged)).status_code == 404
     await store.delete_app(app)
-    assert store.shot_file(app.slug) is None
+    assert store.shot_file(app.slug, str(amos.id)) is None
+
+
+def test_check_sees_the_app_the_way_people_get_it(tmp_path):
+    """Under a path prefix with the proxy's sandbox header: links starting with "/" fail."""
+    from cognitrix.api.routes.hosted_apps import APP_CSP
+    from cognitrix.computer.sandbox import pagecheck
+    from cognitrix.computer.sandbox.apps import AppHost, pack_folder
+
+    assert pagecheck.APP_CSP == APP_CSP
+    src = tmp_path / 'src'
+    make_page_app(src)
+    (src / 'app.py').write_text(PAGE_SRC.replace('missing.css', '/abs.css'), encoding='utf-8')
+    host = AppHost(str(tmp_path / 'host'))
+    try:
+        assert host.deploy('todo', 1, pack_folder(str(src)), f'{sys.executable} app.py', '', {}, 0)['ok']
+        out = pagecheck.check_app_port(host.port_for('todo'), '', headers={'X-Cognitrix-User-Name': 'Bea'})
+        assert out['ok'] and out['status'] == 200
+        assert any(f.startswith('404 /abs.css') and 'make it relative' in f for f in out['failed']), out['failed']
+    finally:
+        host.shutdown()
 
 
 async def test_check_app_without_a_browser_does_a_text_check(db, tmp_path, monkeypatch):
@@ -556,7 +581,7 @@ async def test_check_app_without_a_browser_does_a_text_check(db, tmp_path, monke
     assert (await _tool('publish_app', title='Todo board', start_command=cmd)).status == 'success'
     out = await _tool('check_app', app_id='todo-board')
     assert out.status == 'success' and 'text check' in out.text and '404 missing.css' in out.text
-    assert store.shot_file('todo-board') is None
+    assert store.shot_file('todo-board', str(amos.id)) is None
     unknown = await _tool('check_app', app_id='nope')
     assert unknown.status != 'success'
 

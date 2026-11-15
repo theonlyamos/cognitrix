@@ -100,13 +100,12 @@ class LocalRunner:
         return self._do(self.host.logs, slug, lines, version)
 
     def check(self, slug: str, path: str = '', phone: bool = False, headers: dict | None = None) -> dict:
-        from cognitrix.computer.sandbox.pagecheck import check_url
+        from cognitrix.computer.sandbox.pagecheck import check_app_port
 
         port = self._do(self.host.port_for, slug, True)
         if not port:
             return {'ok': False, 'error': 'The app is not running and did not start.'}
-        return check_url(f"http://127.0.0.1:{port}/{str(path or '').lstrip('/')}", phone=phone, headers=headers,
-                         no_sandbox=_running_as_root())
+        return check_app_port(port, path, phone=phone, headers=headers, no_sandbox=_running_as_root())
 
     def target(self, slug: str) -> tuple[str, dict[str, str]]:
         port = self._do(self.host.port_for, slug, True)

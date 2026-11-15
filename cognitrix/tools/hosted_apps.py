@@ -166,12 +166,13 @@ async def check_app(app_id: str, path: str = '', phone: bool = False, *, parent=
     if not user_key:
         return ToolOutcome.failure('no_owner', 'Apps need a signed-in person.')
     try:
-        app, _role = await store.app_for(app_id, user_key)
+        app, role = await store.app_for(app_id, user_key)
         out = await store.check(app, user_key, path=path, phone=bool(phone))
     except store.AppError as exc:
         return ToolOutcome.failure(exc.code, exc.message)
     if not out.get('ok'):
-        log = await store.logs(app, 40)
+        # Logs are for the people who can change the app (as in App Status).
+        log = await store.logs(app, 40) if store.can_edit(role) else ''
         return ToolOutcome.failure('did_not_load', f'"{app.title}" did not load: {out.get("error") or "no answer"}'
                                    + (f'\nLog:\n{log[-2000:]}' if log else ''))
     page = f'/{str(path or "").lstrip("/")}'

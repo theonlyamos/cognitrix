@@ -260,11 +260,14 @@ def _summarise(events: list[dict], page_url: str) -> dict:
         elif method == 'Network.loadingFailed' and not p.get('canceled'):
             failed.append(f"{p.get('errorText', 'failed')} {urls.get(p.get('requestId', ''), '')}")
 
+    split = urllib.parse.urlsplit(page_url)
+    origin = f'{split.scheme}://{split.netloc}'
+
     def dedupe(items: list[str]) -> list[str]:
         out: list[str] = []
         for item in items:
             if item and item not in out:
-                out.append(item.replace(page_url.rstrip('/'), '') or item)
+                out.append(item.replace(origin, '') or item)
         return out[:MAX_ITEMS]
 
     return {'status': status, 'errors': dedupe(errors), 'console': dedupe(console), 'failed': dedupe(failed)}
@@ -404,6 +407,108 @@ def check_text(url: str, *, headers: dict[str, str] | None = None, timeout: floa
             failed.append(f'{code} {link}')
     return {'ok': True, 'status': status, 'title': _short(parser.title, 120), 'text_length': parser.text,
             'screenshot': '', 'errors': [], 'console': [], 'failed': failed[:MAX_ITEMS], 'text_only': True}
+
+
+# ------------------------------------------------------------------ the way people see apps
+
+# Same as cognitrix/api/routes/hosted_apps.py APP_CSP (a test keeps them equal):
+# an opaque origin, so no cookies or localStorage.
+APP_CSP = ("sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals "
+           "allow-downloads; frame-ancestors 'self'")
+PREFIX = '/a/check/~token'
+_DROP_OUT = {'connection', 'keep-alive', 'transfer-encoding', 'content-length', 'set-cookie',
+             'content-security-policy', 'x-frame-options', 'access-control-allow-origin',
+             'access-control-allow-credentials', 'content-encoding', 'strict-transport-security',
+             'server', 'date'}
+_CORS = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*',
+         'Access-Control-Allow-Headers': '*', 'Access-Control-Max-Age': '600'}
+_HOP = {'connection', 'keep-alive', 'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade',
+        'host', 'content-length', 'cookie', 'accept-encoding'}
+
+
+class _Hosting:
+    """A stand-in for Cognitrix's app proxy on a free local port: the app answers
+    under ``/a/check/~token/`` with the same sandboxing header, so links that
+    start with "/" and storage use fail here just as they do for people."""
+
+    def __init__(self, app_port: int) -> None:
+        import http.client
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def _forward(self):
+                if not (self.path == PREFIX or self.path.startswith(PREFIX + '/')):
+                    self.send_response(404)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return
+                rest = self.path[len(PREFIX):] or '/'
+                length = int(self.headers.get('Content-Length') or 0)
+                body = self.rfile.read(length) if length else None
+                headers = {k: v for k, v in self.headers.items() if k.lower() not in _HOP}
+                headers.update({'X-Forwarded-Prefix': PREFIX, 'Accept-Encoding': 'identity'})
+                conn = http.client.HTTPConnection('127.0.0.1', app_port, timeout=60)
+                try:
+                    conn.request(self.command, rest, body=body, headers=headers)
+                    resp = conn.getresponse()
+                    data = resp.read()
+                    self.send_response(resp.status)
+                    for key, value in resp.getheaders():
+                        if key.lower() in _DROP_OUT:
+                            continue
+                        if key.lower() == 'location' and value.startswith('/') and not value.startswith('//'):
+                            value = PREFIX + value
+                        self.send_header(key, value)
+                    self.send_header('Content-Security-Policy', APP_CSP)
+                    for key, value in _CORS.items():
+                        self.send_header(key, value)
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except OSError:
+                    try:
+                        self.send_response(502)
+                        self.send_header('Content-Length', '0')
+                        self.end_headers()
+                    except OSError:
+                        pass
+                finally:
+                    conn.close()
+
+            do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _forward
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f'http://127.0.0.1:{self.server.server_address[1]}{PREFIX}/'
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def check_app_port(port: int, path: str = '', *, phone: bool = False, headers: dict[str, str] | None = None,
+                   no_sandbox: bool = False) -> dict:
+    """Check the app listening on ``port`` the way people get it: under a path
+    prefix, in an opaque origin."""
+    hosting = _Hosting(int(port))
+    try:
+        out = check_url(hosting.url + str(path or '').lstrip('/'), phone=phone, headers=headers,
+                        no_sandbox=no_sandbox)
+    finally:
+        hosting.close()
+    failed = []
+    for item in out.get('failed') or []:
+        where = item.split(' ')[-1]
+        if where.startswith('/') and not where.startswith(PREFIX):
+            item += ' (the link starts with "/": make it relative, e.g. "app.js" or "./app.js")'
+        failed.append(item.replace(PREFIX + '/', '/').replace(PREFIX, '/'))
+    out['failed'] = failed
+    return out
 
 
 def check_url(url: str, *, phone: bool = False, headers: dict[str, str] | None = None,
