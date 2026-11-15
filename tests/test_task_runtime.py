@@ -494,6 +494,10 @@ async def test_task_run_tools_get_the_calling_agent_like_chat_tools(monkeypatch)
         SEEN_PARENTS.append((getattr(parent, "id", None), interface))
         return "ok"
 
+    monkeypatch.setattr(
+        "cognitrix.tasks.runtime.LLM.load_llm",
+        staticmethod(lambda _provider: _llm()),
+    )
     find = ToolManager.get_by_name("find_tools")
     source = _agent([who_calls, find])
     source.id = "agent-1"
