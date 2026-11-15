@@ -313,4 +313,8 @@ async def remove_user(user_id: str, body: RemoveBody, ctx: AuthContext = Depends
     moved = sum(result['moved'].values())
     _audit(ctx, 'removed', user.email,
            f'moved {moved} items to {ctx.user.email}' if body.keep_work else 'deleted their work')
-    return {'message': f'{user.email} was removed', **result}
+    message = f'{user.email} was removed.'
+    if result.get('paused'):
+        message += (f" {result['paused']} of their schedules or triggers moved to you paused;"
+                    ' turn them back on from the task page.')
+    return {'message': message, **result}

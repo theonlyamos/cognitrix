@@ -899,7 +899,12 @@ class LLMManager:
 
                 capped = await caps.blocked_message(owner.get('user_id'))
                 if capped:
-                    return LLMResponse(llm_response=capped, error=capped)
+                    blocked = LLMResponse(llm_response=capped, error=capped)
+                    if stream:
+                        async def _one(response=blocked):
+                            yield response
+                        return _one()
+                    return blocked
 
             from cognitrix.providers import harness
 

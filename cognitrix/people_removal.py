@@ -103,6 +103,16 @@ async def _stop_everything(key: str) -> None:
     except Exception:
         logger.exception('Removing a person: could not stop their swarms')
     try:
+        from cognitrix.api.routes.tasks import _active_run, cancel_active_run
+        from cognitrix.tasks.base import Task
+
+        for task in await Task.find({'owner_id': key}) or []:
+            run = await _active_run(task.id)
+            if run is not None:
+                await cancel_active_run(task, run)
+    except Exception:
+        logger.exception('Removing a person: could not cancel their task runs')
+    try:
         from cognitrix.channels.service import get_service
 
         service = get_service()
@@ -119,6 +129,32 @@ async def _stop_everything(key: str) -> None:
         logger.debug('Removing a person: could not stop their chat runs', exc_info=True)
 
 
+async def _pause_automations(key: str) -> int:
+    """Schedules, armed wake-ups and webhook/mail triggers carry the removed
+    person's authority, which stops working once their account is gone. Pause
+    them so the new owner turns them back on (which saves their own authority)."""
+    from cognitrix.tasks.automation import WAKE_FIELDS, TaskTrigger
+    from cognitrix.tasks.base import Task
+
+    paused = 0
+    for task in await Task.find({'owner_id': key}) or []:
+        changes: dict[str, Any] = {}
+        if task.schedule_enabled or task.schedule_requested_by:
+            changes.update(schedule_enabled=False, schedule_requested_by=None,
+                           schedule_authority_kind=None, schedule_authority_id=None)
+        if task.wake_pending or task.wake_requested_by:
+            changes.update({field: None for field in WAKE_FIELDS})
+            changes['wake_pending'] = False
+        if changes:
+            await Task.update_one({'id': task.id}, changes)
+            paused += 1
+    for trigger in await TaskTrigger.find({'owner_id': key}) or []:
+        await TaskTrigger.update_one({'id': trigger.id}, {
+            'enabled': False, 'requested_by': None, 'authority_kind': None, 'authority_id': None})
+        paused += 1
+    return paused
+
+
 async def remove(user: Any, *, new_owner: str | None) -> dict[str, Any]:
     """Delete ``user`` and their private data; move their work to
     ``new_owner`` (a principal key) or delete it when None."""
@@ -129,6 +165,13 @@ async def remove(user: Any, *, new_owner: str | None) -> dict[str, Any]:
     await _stop_everything(key)
     moved: dict[str, int] = {}
     deleted: dict[str, int] = {}
+
+    paused = 0
+    if new_owner:
+        try:
+            paused = await _pause_automations(key)
+        except Exception:
+            logger.exception('Removing a person: could not pause their schedules and triggers')
 
     for module, name, field in WORK:
         try:
@@ -173,4 +216,4 @@ async def remove(user: Any, *, new_owner: str | None) -> dict[str, Any]:
         caps.forget(key)
     except Exception:
         pass
-    return {'moved': moved, 'deleted': deleted}
+    return {'moved': moved, 'deleted': deleted, 'paused': paused}

@@ -165,7 +165,9 @@ export function AuditLog() {
       {!page && !error && <p className="text-[13px] text-fg-dim">Loading…</p>}
       {page && events.length === 0 && !loading && (
         <p className="rounded-[12px] border border-line bg-panel p-3.5 text-[13px] text-fg-dim">
-          Nothing matches yet. Agent actions, approvals, sign-ins and changes to people show up here as they happen.
+          {page.next_before
+            ? 'Nothing matches in this stretch. Show older to look further back.'
+            : 'Nothing matches yet. Agent actions, approvals, sign-ins and changes to people show up here as they happen.'}
         </p>
       )}
 
@@ -199,7 +201,7 @@ export function AuditLog() {
         </section>
       ))}
 
-      {page?.next_before && events.length > 0 && (
+      {page?.next_before && (
         <button type="button" className={buttonClass} disabled={loading} onClick={() => void load(page.next_before ?? '')}>
           {loading ? 'Loading…' : 'Show older'}
         </button>

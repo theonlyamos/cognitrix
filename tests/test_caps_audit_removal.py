@@ -94,6 +94,15 @@ async def test_a_capped_person_gets_a_message_instead_of_a_model_call(setup, mon
     assert response.error and 'spending limit' in response.error
     assert not called
 
+    # A streaming caller (the web chat) gets a stream with the same message.
+    token = usage.set_owner(bob, 'agent-1')
+    try:
+        stream = await LLMManager.generate_response(llm, [{'role': 'user', 'content': 'hi'}], stream=True)
+    finally:
+        usage.reset_owner(token)
+    chunks = [chunk async for chunk in stream]
+    assert len(chunks) == 1 and 'spending limit' in chunks[0].error
+
 
 async def test_swarms_do_not_start_over_the_cap(setup):
     from cognitrix.swarms import service
@@ -226,3 +235,40 @@ async def test_the_last_admin_cannot_be_removed(setup):
     # Bob is now the only admin; Ada (a member) can be removed, Bob can't remove himself.
     with pytest.raises(HTTPException):
         await admin.remove_user(str(setup.bob.id), admin.RemoveBody(confirm_email='bob@example.com'), bob_ctx)
+
+
+async def test_moved_automations_are_paused_and_running_tasks_cancelled(setup, monkeypatch):
+    from cognitrix import people_removal
+    from cognitrix.api.routes import admin
+    from cognitrix.api.routes import tasks as task_routes
+    from cognitrix.tasks.automation import TaskTrigger
+    from cognitrix.tasks.base import Task
+
+    await Task._create_table_async()
+    await TaskTrigger._create_table_async()
+    bob = str(setup.bob.id)
+    await Task(title='Nightly report', description='x', owner_id=bob, schedule_enabled=True,
+               schedule_requested_by=bob, schedule_authority_kind='jwt', schedule_authority_id=bob,
+               wake_pending=True, wake_requested_by=bob).save()
+    await TaskTrigger(task_id='t', owner_id=bob, token_hash='h', requested_by=bob, authority_id=bob).save()
+
+    cancelled = []
+
+    async def active_run(task_id):
+        return 'run-1'
+
+    async def cancel(task, run):
+        cancelled.append((task.title, run))
+    monkeypatch.setattr(task_routes, '_active_run', active_run)
+    monkeypatch.setattr(task_routes, 'cancel_active_run', cancel)
+
+    ctx = await admin.admin_only(_ctx(setup.ada))
+    result = await admin.remove_user(bob, admin.RemoveBody(confirm_email='bob@example.com'), ctx)
+    assert cancelled == [('Nightly report', 'run-1')]
+    assert result['paused'] == 2 and 'paused' in result['message']
+    task = await Task.find_one({'title': 'Nightly report'})
+    assert task.owner_id == str(setup.ada.id)
+    assert not task.schedule_enabled and task.schedule_requested_by is None and not task.wake_pending
+    trigger = await TaskTrigger.find_one({'token_hash': 'h'})
+    assert trigger.owner_id == str(setup.ada.id) and not trigger.enabled and trigger.authority_id is None
+    assert people_removal  # module imported for the patch targets
