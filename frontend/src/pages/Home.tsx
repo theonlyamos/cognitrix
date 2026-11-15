@@ -23,6 +23,7 @@ import { desktopName, getChatSandbox, sandboxStatus, setChatSandbox, type ChatSa
 import { ChatSidebar, loadSidebarOpen, saveSidebarOpen, type SidebarActivity, type SidebarWaiting } from '@/components/ChatSidebar';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
+import { LiveVoiceButton, LiveVoicePanel } from '@/components/LiveVoice';
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
 import ComposerMenu from '@/components/ComposerMenu';
@@ -628,10 +629,15 @@ export default function Home() {
   }, [sidebarOpen, artifactOpen, computerOpen, closeArtifact, setSidebar]);
   // Spoken replies: when a turn ends and "read replies aloud" is on, read the
   // answer. Sending a new message stops whatever was being read.
+  // Live voice mode reads replies itself and keeps speaking across turns.
+  const [liveVoice, setLiveVoice] = useState(false);
+  const liveVoiceRef = useRef(liveVoice);
+  liveVoiceRef.current = liveVoice;
   const wasBusyRef = useRef(false);
   useEffect(() => {
     const wasBusy = wasBusyRef.current;
     wasBusyRef.current = busy;
+    if (liveVoiceRef.current) return;
     if (busy && !wasBusy) stopSpeaking();
     if (!busy && wasBusy && question === null && getSpeechPrefs().autoRead) {
       const last = messagesRef.current[messagesRef.current.length - 1];
@@ -1731,6 +1737,11 @@ export default function Home() {
 
 
   // The message box: in the middle of a new chat's greeting, else at the bottom.
+  const lastReply = useMemo(() => {
+    const last = messages[messages.length - 1];
+    return last?.role === 'assistant' ? { id: last.id, content: last.content } : null;
+  }, [messages]);
+
   const composer = (
     <div className="relative mx-auto max-w-3xl">
       {skillMenuOpen && (
@@ -1849,6 +1860,25 @@ export default function Home() {
           </div>
         )}
         {voice.active && <VoiceBar voice={voice} />}
+        {liveVoice && (
+          <div className="border-b border-line">
+            <LiveVoicePanel
+              busy={busy}
+              approvals={approvals}
+              question={question}
+              agentName={currentAgent?.name || ''}
+              lastReply={lastReply}
+              onSend={(text) => (busy ? steer(text, { keepComposer: true }) : send(text, 'chat', null, { keepComposer: true }))}
+              onStop={() => void stop()}
+              onApproval={(id, approved) => void respondApproval(id, approved)}
+              onAnswer={(q, answer) => {
+                const current = question;
+                if (current && current.request_id === q.request_id) void postQuestionAction(current, 'answer', answer).catch(() => undefined);
+              }}
+              onExit={() => setLiveVoice(false)}
+            />
+          </div>
+        )}
         {(rework || reworkError) && (
           <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-1.5 text-[12px] text-fg-dim" role="status">
             <span className={reworkError ? 'text-danger-ink' : undefined}>
@@ -1946,8 +1976,11 @@ export default function Home() {
           </ComposerMenu>
           </div>
           <span className="flex-1" />
-          {!voice.active && !(busy && input.trim()) && (
-            <MicButton voice={voice} className="rounded-lg" />
+          {!voice.active && !liveVoice && !(busy && input.trim()) && (
+            <>
+              <LiveVoiceButton onClick={() => setLiveVoice(true)} disabled={!isConnected} className="rounded-lg" />
+              <MicButton voice={voice} className="rounded-lg" />
+            </>
           )}
           {busy && !!input.trim() && !voice.active && (
             // While it works, typed text is sent into the running task;
