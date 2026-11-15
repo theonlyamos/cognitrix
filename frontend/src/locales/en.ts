@@ -46,6 +46,7 @@ const en = {
   'settings.section.access': 'Agent access',
   'settings.section.chat-apps': 'Chat apps',
   'settings.section.swarms': 'Swarms',
+  'settings.section.email': 'Agent email',
   'settings.section.people': 'People',
   'settings.section.audit': 'Audit log',
   'settings.section.skills': 'Skills',

@@ -12,6 +12,7 @@ import { VoiceSettingsCard } from '@/components/VoiceSettingsCard';
 import { McpServersCard } from '@/components/McpServersCard';
 import { ConnectedAppsCard } from '@/components/ConnectedAppsCard';
 import { ChatChannelsCard } from '@/components/ChatChannelsCard';
+import { AgentEmailCard } from '@/components/AgentEmailCard';
 import { CredentialsCard } from '@/components/CredentialsCard';
 import { ComputerAppsCard } from '@/components/ComputerAppsCard';
 import { ComputerSandboxCard } from '@/components/ComputerSandboxCard';
@@ -34,7 +35,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'people' | 'audit' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'email' | 'people' | 'audit' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -59,6 +60,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'access', label: 'Agent access', group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
   { id: 'swarms', label: 'Swarms', group: 'AGENTS', keywords: 'swarm workers parallel sub agents subagents fan out limit budget tokens concurrency how many at once' },
   { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp bot alerts approvals mention channel' },
+  { id: 'email', label: 'Agent email', group: 'AGENTS', keywords: 'email mail address inbox imap smtp gmail mailbox reply send' },
   { id: 'people', label: 'People', group: 'SERVER', keywords: 'users admin invite invitation members roles disable remove delete accounts email smtp reset spending limit cap budget', adminOnly: true },
   { id: 'audit', label: 'Audit log', group: 'SERVER', keywords: 'audit log activity history who did what tool calls approvals sign ins security' },
   { id: 'desktop', label: 'Desktop app', group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
@@ -472,6 +474,16 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
             description="Chat with your agents from Telegram, Slack, Discord, Microsoft Teams or WhatsApp, and get alerts and task approvals there. You create the bot, so messages go only between your bot and this engine."
           />
           <ChatChannelsCard />
+        </>
+      );
+    case 'email':
+      return (
+        <>
+          <SectionHeader
+            title="Agent email"
+            description="Give each agent its own email address. Email an agent to give it work, and it answers from that address."
+          />
+          <AgentEmailCard />
         </>
       );
     case 'people':

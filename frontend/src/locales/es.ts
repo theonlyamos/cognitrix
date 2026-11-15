@@ -46,6 +46,7 @@ const es: Messages = {
   'settings.section.access': 'Acceso de los agentes',
   'settings.section.chat-apps': 'Aplicaciones de chat',
   'settings.section.swarms': 'Enjambres',
+  'settings.section.email': 'Correo de los agentes',
   'settings.section.people': 'Personas',
   'settings.section.audit': 'Registro de actividad',
   'settings.section.skills': 'Habilidades',
