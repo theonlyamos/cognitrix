@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { errorMessage } from '@/lib/api';
 import { isDesktop } from '@/lib/desktop';
+import ServerFolderBrowser from '@/components/ServerFolderBrowser';
 import {
   checkFolder,
   folderInfo,
@@ -36,6 +37,7 @@ export default function FoldersTab({ draft, update }: TabProps) {
   const [path, setPath] = useState('');
   const [allowWrite, setAllowWrite] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -57,6 +59,7 @@ export default function FoldersTab({ draft, update }: TabProps) {
       set([...rest, { ...checked, primary: rest.length === 0 }]);
       setPath('');
       setAdding(false);
+      setBrowsing(false);
     } catch (e) {
       setError(errorMessage(e, tr('ui.agent.foldersTab.couldNotAddThatFolder')));
     } finally {
@@ -65,6 +68,7 @@ export default function FoldersTab({ draft, update }: TabProps) {
   };
 
   const browse = async () => {
+    if (!isDesktop()) { setBrowsing(true); return; }
     const picked = await pickFolder();
     if (picked) await add(picked);
   };
@@ -125,6 +129,9 @@ export default function FoldersTab({ draft, update }: TabProps) {
 
             {adding ? (
               <div className="mt-3.5 flex flex-col gap-2.5 rounded-lg border border-dashed border-line p-3.5">
+                {browsing ? (
+                  <ServerFolderBrowser busy={busy} onPick={(p) => add(p)} onCancel={() => setBrowsing(false)} className="max-w-xl" />
+                ) : (<>
                 {recents.length > 0 && (
                   <div className="flex flex-col">
                     <Eyebrow className="pb-1 text-[10px]">{tr('ui.agent.foldersTab.recent')}</Eyebrow>
@@ -139,10 +146,11 @@ export default function FoldersTab({ draft, update }: TabProps) {
                   <input id={pathId} value={path} onChange={(e) => setPath(e.target.value)} autoFocus
                     placeholder={isDesktop() ? tr('ui.agent.foldersTab.pasteAFolderPath') : tr('ui.agent.foldersTab.folderPathOnTheServer')}
                     className={cn(inputClass, 'min-w-[220px] flex-1 font-mono text-[12.5px]')} />
-                  {isDesktop() && <button type="button" onClick={() => void browse()} disabled={busy} className={buttonClass}>{tr('ui.agent.foldersTab.browse')}</button>}
+                  <button type="button" onClick={() => void browse()} disabled={busy} className={buttonClass}>{tr('ui.agent.foldersTab.browse')}</button>
                   <button type="submit" disabled={busy || !path.trim()} className={buttonClass}>{tr('ui.agent.foldersTab.add')}</button>
                   <button type="button" onClick={() => setAdding(false)} className={buttonClass}>{tr('ui.agent.foldersTab.cancel')}</button>
                 </form>
+                </>)}
                 <label className="flex items-center gap-2 text-[13px] text-fg-dim">
                   <input type="checkbox" checked={allowWrite} onChange={(e) => setAllowWrite(e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
                   {tr('ui.agent.foldersTab.allowWritingOtherwiseReadOnly')}

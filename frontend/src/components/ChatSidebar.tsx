@@ -12,15 +12,17 @@ import FolderChips from '@/components/FolderChips';
 import { AgentBadge } from '@/components/StartChat';
 import { SwarmCard } from '@/components/SwarmCard';
 import type { Swarm } from '@/lib/swarms';
+import type { AppViewSummary } from '@/lib/appViews';
 import { tr } from '@/lib/i18n';
 
-export type SidebarSection = 'swarm' | 'computer' | 'waiting' | 'artifacts' | 'files' | 'activity' | 'folders' | 'about';
+export type SidebarSection = 'swarm' | 'computer' | 'waiting' | 'artifacts' | 'apps' | 'files' | 'activity' | 'folders' | 'about';
 
 export const SIDEBAR_SECTIONS: { id: SidebarSection; label: string }[] = [
   { id: 'swarm', get label() { return tr('ui.chatSidebar.swarm'); } },
   { id: 'computer', get label() { return tr('ui.chatSidebar.computer'); } },
   { id: 'waiting', get label() { return tr('ui.chatSidebar.waitingOnYou'); } },
   { id: 'artifacts', get label() { return tr('ui.chatSidebar.artifacts'); } },
+  { id: 'apps', get label() { return tr('ui.chatSidebar.connectedApps'); } },
   { id: 'files', get label() { return tr('ui.chatSidebar.files'); } },
   { id: 'activity', get label() { return tr('ui.chatSidebar.activity'); } },
   { id: 'folders', get label() { return tr('ui.chatSidebar.folders'); } },
@@ -97,6 +99,9 @@ export interface ChatSidebarProps {
   /** Pages published since the sidebar was last looked at. */
   newPageIds?: Set<string>;
   onOpenArtifact: (id: string) => void;
+  /** Connected-app screens this chat opened (MCP Apps), newest first. */
+  appViews?: AppViewSummary[];
+  onOpenAppView?: (id: string) => void;
   images: ToolArtifact[];
   files: FileItem[];
   activity: SidebarActivity[];
@@ -291,6 +296,28 @@ export function ChatSidebar(props: ChatSidebarProps) {
                       {page.live && tr('ui.chatSidebar.live')}
                       {props.newPageIds?.has(page.id) && <span className="ml-1.5 rounded-[3px] bg-accent px-1 text-[9.5px] text-accent-foreground">{tr('ui.chatSidebar.new')}</span>}
                     </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ))}
+
+        {(props.appViews?.length ?? 0) > 0 && section('apps', props.appViews!.length, (
+          <ul className="-mx-1.5 flex flex-col">
+            {props.appViews!.map((view) => (
+              <li key={view.id}>
+                <button
+                  type="button"
+                  onClick={() => props.onOpenAppView?.(view.id)}
+                  className="flex min-h-11 w-full items-center gap-2.5 rounded-md px-1.5 py-1.5 text-left hover:bg-panel-2"
+                >
+                  <span aria-hidden className="grid h-8 w-10 flex-none place-items-center rounded border border-line bg-bg text-info-ink">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="M2 8h20" /><path d="M6 6h.01M9 6h.01" /></svg>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium">{view.title || view.app}</span>
+                    <span className="block truncate font-mono text-[10.5px] text-fg-dim">{view.app} · {ago(view.updated)}</span>
                   </span>
                 </button>
               </li>

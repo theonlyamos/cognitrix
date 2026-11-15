@@ -16,6 +16,8 @@ import { parseChatEntries, toChatMessages } from '@/lib/transcript';
 import { Button } from '@/lib/components/ui/button';
 import { ComputerPanel } from '@/components/ComputerPanel';
 import { ArtifactViewer } from '@/components/artifacts/ArtifactViewer';
+import { AppViewPanel } from '@/components/appviews/AppViewPanel';
+import { announceAppViewUpdate, appViewFrom, listAppViews, onOpenAppView, type AppViewSummary } from '@/lib/appViews';
 import { onCardAction, parseCard } from '@/lib/cards';
 import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { announceArtifactUpdate, onArtifactUpdate, onOpenArtifact, parseStamp, publishedFrom, type ArtifactList } from '@/lib/artifactPages';
@@ -348,8 +350,16 @@ export default function Home() {
   // whether it is expanded to fill the window.
   const [artifactOpen, setArtifactOpen] = useState<string | null>(null);
   const [artifactExpanded, setArtifactExpanded] = useState(false);
+  // A connected app's own screen open beside the chat (same place again).
+  const [appViewOpen, setAppViewOpen] = useState<string | null>(null);
+  const [appViewExpanded, setAppViewExpanded] = useState(false);
+  const closeAppView = useCallback(() => {
+    setAppViewOpen(null);
+    setAppViewExpanded(false);
+  }, []);
   const showArtifact = useCallback((id: string) => {
     setComputerOpen(false);
+    setAppViewOpen(null);
     setArtifactOpen(id);
     setNewPageIds((prev) => {
       if (!prev.has(id)) return prev;
@@ -363,6 +373,19 @@ export default function Home() {
     setArtifactExpanded(false);
   }, []);
   useEffect(() => onOpenArtifact(showArtifact), [showArtifact]);
+  const showAppView = useCallback((id: string) => {
+    setComputerOpen(false);
+    setArtifactOpen(null);
+    setArtifactExpanded(false);
+    setAppViewOpen(id);
+  }, []);
+  useEffect(() => onOpenAppView(showAppView), [showAppView]);
+  useEffect(() => {
+    if (!appViewExpanded) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setAppViewExpanded(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [appViewExpanded]);
   useEffect(() => {
     if (!artifactExpanded) return;
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setArtifactExpanded(false); };
@@ -577,6 +600,22 @@ export default function Home() {
   useEffect(() => {
     if (!busy) void loadChatItems(activeRef.current);
   }, [busy, loadChatItems]);
+  // Connected-app screens this chat opened, for its side panel.
+  const [chatAppViews, setChatAppViews] = useState<AppViewSummary[]>([]);
+  const [chatAppViewsStale, setChatAppViewsStale] = useState(0);
+  useEffect(() => {
+    // A screen belongs to its chat.
+    setAppViewOpen(null);
+    setAppViewExpanded(false);
+    setChatAppViews([]);
+  }, [activeSessionId]);
+  useEffect(() => {
+    const sid = activeSessionId;
+    if (!sid) return;
+    let alive = true;
+    listAppViews(sid).then((rows) => { if (alive && activeRef.current === sid) setChatAppViews(Array.isArray(rows) ? rows : []); }).catch(() => {});
+    return () => { alive = false; };
+  }, [activeSessionId, busy, chatAppViewsStale]);
   useEffect(() => onArtifactUpdate((id) => {
     setNewPageIds((prev) => new Set(prev).add(id));
     void loadChatItems(activeRef.current);
@@ -616,8 +655,9 @@ export default function Home() {
       event.preventDefault();
       // Same as the header button: with an artifact or the computer showing,
       // the shortcut closes the whole right column.
-      if (sidebarOpen || artifactOpen || computerOpen) {
+      if (sidebarOpen || artifactOpen || appViewOpen || computerOpen) {
         closeArtifact();
+        closeAppView();
         setComputerOpen(false);
         setSidebar(false);
       } else {
@@ -626,7 +666,7 @@ export default function Home() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sidebarOpen, artifactOpen, computerOpen, closeArtifact, setSidebar]);
+  }, [sidebarOpen, artifactOpen, appViewOpen, computerOpen, closeArtifact, closeAppView, setSidebar]);
   // Spoken replies: when a turn ends and "read replies aloud" is on, read the
   // answer. Sending a new message stops whatever was being read.
   const wasBusyRef = useRef(false);
@@ -1079,6 +1119,14 @@ export default function Home() {
                 announceArtifactUpdate(published.id);
                 if (window.matchMedia?.('(min-width: 768px)').matches) showArtifact(published.id);
               }
+              // A connected app opened (or changed) its own screen: show it
+              // beside the chat, or update the one already showing.
+              const appView = event.status === 'error' ? null : appViewFrom(event.result);
+              if (appView) {
+                announceAppViewUpdate(appView.id);
+                setChatAppViewsStale((n) => n + 1);
+                if (window.matchMedia?.('(min-width: 768px)').matches) showAppView(appView.id);
+              }
             }
           }
           break;
@@ -1126,7 +1174,7 @@ export default function Home() {
           break;
       }
     },
-    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos, showArtifact, takeUnsent],
+    [appendToLastMessage, attachArtifactsToLatestUser, addMessage, addToolCall, resolveToolCall, agentId, finishTurn, refetchConvos, showArtifact, showAppView, takeUnsent],
   );
 
   // Open the stream once we know which agent to use (or that there are none),
@@ -1687,9 +1735,10 @@ export default function Home() {
   }
 
   // ── The chat's side panel ──
-  const sidebarShown = sidebarOpen || !!artifactOpen || computerOpen;
+  const sidebarShown = sidebarOpen || !!artifactOpen || !!appViewOpen || computerOpen;
   const closeRightSide = () => {
     closeArtifact();
+    closeAppView();
     setComputerOpen(false);
     setSidebar(false);
   };
@@ -2223,7 +2272,21 @@ export default function Home() {
           />
         </aside>
       )}
-      {computerOpen && !artifactOpen && (
+      {appViewOpen && !artifactOpen && (
+        <aside className={cn('fixed inset-0 z-40 flex flex-col border-line',
+          !appViewExpanded && 'md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l')}>
+          <AppViewPanel
+            viewId={appViewOpen}
+            onClose={closeRightSide}
+            onBack={sidebarOpen ? closeAppView : undefined}
+            onGone={closeAppView}
+            expanded={appViewExpanded}
+            onToggleExpand={() => setAppViewExpanded((v) => !v)}
+            onSendMessage={(text) => { void send(text); }}
+          />
+        </aside>
+      )}
+      {computerOpen && !artifactOpen && !appViewOpen && (
         <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l">
           <ComputerPanel
             agents={agents.map((a) => ({ id: String(a.id), name: a.name }))}
@@ -2233,14 +2296,14 @@ export default function Home() {
           />
         </aside>
       )}
-      {sidebarOpen && !artifactOpen && !computerOpen && agentId && !picking && (
+      {sidebarOpen && !artifactOpen && !appViewOpen && !computerOpen && agentId && !picking && (
         <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[320px] md:flex-none md:border-l">
           <ChatSidebar
             onClose={() => setSidebar(false)}
             desktop={agentDesktop?.name ?? null}
             sandboxOn={sandboxOn}
             desktopHeldBy={agentDesktop?.held_by}
-            onOpenComputer={() => { closeArtifact(); setComputerOpen(true); }}
+            onOpenComputer={() => { closeArtifact(); closeAppView(); setComputerOpen(true); }}
             waiting={sidebarWaiting}
             onApprove={(id) => void respondApproval(id, true)}
             onDeny={(id) => void respondApproval(id, false)}
@@ -2251,6 +2314,8 @@ export default function Home() {
             pages={chatItems?.pages ?? []}
             newPageIds={newPageIds}
             onOpenArtifact={showArtifact}
+            appViews={chatAppViews}
+            onOpenAppView={showAppView}
             images={chatImages}
             files={chatItems?.files ?? []}
             activity={chatActivity}

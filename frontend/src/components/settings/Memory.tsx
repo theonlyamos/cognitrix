@@ -5,8 +5,9 @@ import { Toggle } from '@/pages/Notifications';
 import { timeAgo } from '@/lib/agentDraft';
 import { cn } from '@/lib/utils';
 import {
-  addMemory, deleteAllMemories, deleteLegacyMemory, deleteMemory, legacyMemoryCount, listMemories,
-  saveMemorySettings, updateMemory, type MemoryList, type MemoryScope, type SavedMemory,
+  addMemory, approveMemory, convertLegacyMemory, deleteAllMemories, deleteLegacyMemory, deleteMemory, exportMemories,
+  importMemories, legacyMemoryCount, listMemories, saveMemorySettings, settlePendingMemories, updateMemory,
+  type ImportResult, type MemoryList, type MemoryScope, type SavedMemory,
 } from '@/lib/memories';
 import { Group, Segmented, SettingRow, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { tr } from '@/lib/i18n';
@@ -27,6 +28,8 @@ export function MemorySettings() {
   const [adding, setAdding] = useState(false);
   const [legacy, setLegacy] = useState(0);
   const [confirmAll, setConfirmAll] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = () => listMemories().then(setData).catch((e) => setLoadError(errorMessage(e, tr('ui.settings.memory.couldNotLoadMemories'))));
 
@@ -36,14 +39,15 @@ export function MemorySettings() {
     legacyMemoryCount().then(setLegacy).catch(() => {});
   }, []);
 
+  const pending = useMemo(() => (data ? data.memories.filter((m) => m.pending) : []), [data]);
+  const saved = useMemo(() => (data ? data.memories.filter((m) => !m.pending) : []), [data]);
   const shown = useMemo(() => {
-    if (!data) return [];
     const q = query.trim().toLowerCase();
-    return data.memories.filter((m) => (
+    return saved.filter((m) => (
       (filter === 'all' || (filter === 'global' ? m.scope === 'global' : m.agent_id === filter))
       && (!q || m.content.toLowerCase().includes(q))
     ));
-  }, [data, filter, query]);
+  }, [saved, filter, query]);
 
   if (loadError) return <p role="alert" className="text-[12.5px] text-danger-ink">{loadError}</p>;
   if (!data) return <p className="text-[13px] text-fg-dim">{tr('ui.settings.memory.loading')}</p>;
@@ -65,7 +69,15 @@ export function MemorySettings() {
   };
 
   const settings = data.settings;
-  const agentIds = new Set(data.memories.filter((m) => m.agent_id).map((m) => m.agent_id as string));
+  const agentIds = new Set(saved.filter((m) => m.agent_id).map((m) => m.agent_id as string));
+
+  const proposedNotice = (r: ImportResult, what: string) => {
+    const parts = [`${r.proposed} ${r.proposed === 1 ? 'memory' : 'memories'} from ${what} waiting for your OK below.`];
+    if (r.duplicates) parts.push(tr('ui.settings.memory.duplicatesAlreadySaved', { duplicates: r.duplicates }));
+    if (r.skipped.length) parts.push(tr('ui.settings.memory.lengthLeftOutSecretsToo', { length: r.skipped.length }));
+    if (!r.proposed && !r.duplicates) parts.splice(0, 1, tr('ui.settings.memory.nothingWorthKeepingWasFound', { what }));
+    setNotice(parts.join(' '));
+  };
   const chips = [
     { id: 'all', label: tr('ui.settings.memory.all') },
     { id: 'global', label: tr('ui.settings.memory.global') },
@@ -86,19 +98,48 @@ export function MemorySettings() {
         <SettingRow
           label={tr('ui.settings.memory.saveNewMemories')}
           detail={settings.auto_save === 'auto'
-            ? tr('ui.settings.memory.agentsSaveWhatSeemsWorth')
-            : tr('ui.settings.memory.agentsOnlySaveSomethingWhen')}
+            ? tr('ui.settings.memory.agentsSaveWhatSeemsWorth_e50c')
+            : settings.auto_save === 'ask'
+              ? tr('ui.settings.memory.agentsProposeMemoriesAndYou')
+              : tr('ui.settings.memory.agentsOnlySaveSomethingWhen')}
         >
           <Segmented
             label={tr('ui.settings.memory.saveNewMemories')}
             value={settings.auto_save}
-            options={[{ value: 'auto', label: tr('ui.settings.memory.automatically') }, { value: 'explicit', label: tr('ui.settings.memory.whenIAsk') }]}
+            options={[{ value: 'auto', label: tr('ui.settings.memory.automatically') }, { value: 'ask', label: tr('ui.settings.memory.askMeFirst') }, { value: 'explicit', label: tr('ui.settings.memory.whenIAsk') }]}
             onChange={(auto_save) => void run(() => saveMemorySettings({ auto_save }), tr('ui.settings.memory.couldNotChangeTheSetting'))}
           />
         </SettingRow>
       </Group>
 
-      <SubHeading className="!mt-6">{tr('ui.settings.memory.savedMemoriesLength', { length: data.memories.length })}</SubHeading>
+      {notice && (
+        <p role="status" className="!mt-4 rounded-lg border border-line bg-panel px-3 py-2 text-[12.5px] text-fg-dim">
+          {notice} <button type="button" className="ml-1 text-accent-ink hover:underline" onClick={() => setNotice(null)}>{tr('ui.settings.memory.dismiss')}</button>
+        </p>
+      )}
+
+      {pending.length > 0 && (
+        <section aria-label={tr('ui.settings.memory.memoriesWaitingForYourOk')}>
+          <div className="!mt-6 flex flex-wrap items-center gap-2">
+            <SubHeading className="!mt-0 flex-1">{tr('ui.settings.memory.waitingForYourOkLength', { length: pending.length })}</SubHeading>
+            <button type="button" disabled={busy} className={quietButtonClass}
+              onClick={() => void run(() => settlePendingMemories(false), tr('ui.settings.memory.couldNotDiscardThem'))}>{tr('ui.settings.memory.discardAll')}</button>
+            <button type="button" disabled={busy} className={buttonClass}
+              onClick={() => void run(() => settlePendingMemories(true), tr('ui.settings.memory.couldNotSaveThem'))}>{tr('ui.settings.memory.saveAll')}</button>
+          </div>
+          <p className="mb-2 mt-1 text-[12px] text-fg-dim">{tr('ui.settings.memory.agentsDonTSeeThese')}</p>
+          <ul className="divide-y divide-line rounded-[12px] border border-accent/40 bg-panel">
+            {pending.map((m) => (
+              <PendingRow key={m.id} memory={m} busy={busy} highlighted={m.id === highlight}
+                replaced={m.replaces ? saved.find((x) => x.id === m.replaces)?.content : undefined}
+                onApprove={() => void run(() => approveMemory(m.id), tr('ui.settings.memory.couldNotSaveTheMemory'))}
+                onDiscard={() => void run(() => deleteMemory(m.id), tr('ui.settings.memory.couldNotDiscardTheMemory'))} />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <SubHeading className="!mt-6">{tr('ui.settings.memory.savedMemoriesLength', { length: saved.length })}</SubHeading>
 
       <div className={cn('space-y-3', !settings.enabled && 'opacity-60')}>
         <div className="flex flex-wrap items-center gap-2">
@@ -134,9 +175,18 @@ export function MemorySettings() {
 
         {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
 
-        {data.memories.length === 0 ? (
+        {importing && (
+          <ImportForm busy={busy} onCancel={() => setImporting(false)}
+            onImport={(text) => void run(async () => {
+              const result = await importMemories(text);
+              setImporting(false);
+              proposedNotice(result, 'your import');
+            }, tr('ui.settings.memory.couldNotImportThoseMemories'))} />
+        )}
+
+        {saved.length === 0 ? (
           <p className="rounded-[10px] border border-line bg-panel px-3.5 py-4 text-[13px] leading-relaxed text-fg-dim">
-            {tr('ui.settings.memory.nothingSavedYetTellAn')}
+            {tr('ui.settings.memory.nothingSavedYetTellAn_b1ac')}
           </p>
         ) : shown.length === 0 ? (
           <p className="px-1 text-[13px] text-fg-dim">{tr('ui.settings.memory.noMemoriesMatch')}</p>
@@ -153,6 +203,24 @@ export function MemorySettings() {
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-3 text-[12.5px]">
+        <button type="button" className="text-fg-dim hover:text-fg hover:underline" onClick={() => { setError(null); setImporting(true); }}>
+          {tr('ui.settings.memory.import_4834')}
+        </button>
+        {saved.length > 0 && (
+          <>
+            <button type="button" className="text-fg-dim hover:text-fg hover:underline"
+              onClick={() => void exportMemories('markdown').catch((e) => setError(errorMessage(e, tr('ui.settings.memory.couldNotExport'))))}>{tr('ui.settings.memory.exportMarkdown')}</button>
+            <button type="button" className="text-fg-dim hover:text-fg hover:underline"
+              onClick={() => void exportMemories('json').catch((e) => setError(errorMessage(e, tr('ui.settings.memory.couldNotExport'))))}>{tr('ui.settings.memory.exportJson')}</button>
+          </>
+        )}
+        {legacy > 0 && (
+          <button type="button" disabled={busy} className="text-fg-dim hover:text-fg hover:underline disabled:opacity-60"
+            title={tr('ui.settings.memory.aModelReadsTheOld')}
+            onClick={() => void run(async () => proposedNotice(await convertLegacyMemory(), 'your old automatic memory'), tr('ui.settings.memory.couldNotConvertTheOld'))}>
+            {busy ? tr('ui.settings.memory.working') : tr('ui.settings.memory.turnOldMemoryIntoSaved')}
+          </button>
+        )}
         {legacy > 0 && (
           <button type="button" disabled={busy} className="text-fg-dim hover:text-fg hover:underline disabled:opacity-60"
             onClick={() => void run(async () => { await deleteLegacyMemory(); setLegacy(0); }, tr('ui.settings.memory.couldNotDeleteTheOld'))}
@@ -175,6 +243,55 @@ export function MemorySettings() {
         ))}
       </div>
     </div>
+  );
+}
+
+function PendingRow({ memory, busy, highlighted, replaced, onApprove, onDiscard }: {
+  memory: SavedMemory;
+  busy: boolean;
+  highlighted: boolean;
+  replaced?: string;
+  onApprove: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <li className={cn('flex flex-wrap items-start gap-x-3 gap-y-1.5 px-3.5 py-3', highlighted && 'bg-accent/10')}>
+      <div className="min-w-0 flex-1 basis-[240px]">
+        <div className="text-[13.5px] leading-snug">{memory.content}</div>
+        <div className="mt-1 text-[11.5px] text-fg-dim">
+          {replaced && <>{tr('ui.settings.memory.replacesReplaced', { replaced })}{' '}</>}
+          {memory.source === 'import' ? <>{tr('ui.settings.memory.importedTimeago', { timeAgo: timeAgo(memory.created) })}</> : origin(memory)}
+        </div>
+      </div>
+      <span className={cn('mt-0.5 rounded px-1.5 py-0.5 font-mono text-[10px] tracking-[0.06em]',
+        memory.scope === 'global' ? 'bg-accent/15 text-accent-ink' : 'bg-panel-2 text-fg-dim')}>
+        {scopeLabel(memory)}
+      </span>
+      <div className="flex items-center gap-0.5">
+        <button type="button" onClick={onDiscard} disabled={busy} className={cn(quietButtonClass, 'hover:text-danger-ink')}>{tr('ui.settings.memory.discard')}</button>
+        <button type="button" onClick={onApprove} disabled={busy} className={buttonClass}>{tr('ui.settings.memory.save')}</button>
+      </div>
+    </li>
+  );
+}
+
+function ImportForm({ busy, onImport, onCancel }: { busy: boolean; onImport: (text: string) => void; onCancel: () => void }) {
+  const [text, setText] = useState('');
+  return (
+    <form className="space-y-2.5 rounded-[10px] border border-line bg-bg p-3" aria-label={tr('ui.settings.memory.importMemories')}
+      onSubmit={(e) => { e.preventDefault(); if (text.trim()) onImport(text.trim()); }}>
+      <p className="text-[12.5px] leading-relaxed text-fg-dim">
+        {tr('ui.settings.memory.pasteWhatAnotherAssistantRemembers')}
+      </p>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={6} autoFocus aria-label={tr('ui.settings.memory.memoriesToImport')}
+        placeholder={tr('ui.settings.memory.prefersShortAnswersWorksOn')}
+        className="w-full resize-y rounded-lg border border-line bg-panel p-2.5 text-[13px] text-fg placeholder:text-fg-dim focus:border-accent focus:outline-none" />
+      <div className="flex items-center gap-2">
+        <span className="flex-1 text-[11.5px] text-fg-dim">{tr('ui.settings.memory.yourMainAgentSModel')}</span>
+        <button type="button" onClick={onCancel} className={quietButtonClass}>{tr('ui.settings.memory.cancel')}</button>
+        <button type="submit" disabled={busy || !text.trim()} className={buttonClass}>{busy ? tr('ui.settings.memory.reading') : tr('ui.settings.memory.import')}</button>
+      </div>
+    </form>
   );
 }
 

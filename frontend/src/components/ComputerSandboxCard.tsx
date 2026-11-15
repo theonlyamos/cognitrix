@@ -4,6 +4,7 @@ import { getSandboxSettings, setSandboxEnabled, type SandboxSettings } from '@/l
 import { SettingRow, StatusPill } from '@/components/settings/ui';
 import { Toggle } from '@/pages/Notifications';
 import { SandboxEnvCard } from '@/components/SandboxEnvCard';
+import { SandboxSnapshotsCard } from '@/components/SandboxSnapshotsCard';
 import { tr } from '@/lib/i18n';
 
 /** Settings › Agent access: give agents their own sandboxed computer. */
@@ -69,6 +70,11 @@ export function ComputerSandboxCard() {
       {settings?.enabled && (
         <div className="mt-3 border-t border-line pt-3">
           <SandboxEnvCard />
+        </div>
+      )}
+      {settings?.enabled && (
+        <div className="mt-3 border-t border-line pt-3">
+          <SandboxSnapshotsCard />
         </div>
       )}
     </div>

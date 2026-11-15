@@ -25,6 +25,7 @@ import { SwarmSettings } from '@/components/settings/Swarms';
 import { PasswordChange } from '@/components/settings/PasswordChange';
 import { SpokenRepliesSettings } from '@/components/settings/SpokenReplies';
 import { PeopleSettings } from '@/components/settings/People';
+import { AuditLog } from '@/components/settings/AuditLog';
 import {
   Group, SectionHeader, SettingRow, SubHeading, buttonClass, quietButtonClass,
 } from '@/components/settings/ui';
@@ -33,7 +34,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'people' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'people' | 'audit' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -58,7 +59,8 @@ const SECTIONS: SectionMeta[] = [
   { id: 'access', get label() { return tr('ui.settings.agentAccess'); }, group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
   { id: 'swarms', get label() { return tr('ui.settings.swarms'); }, group: 'AGENTS', keywords: 'swarm workers parallel sub agents subagents fan out limit budget tokens concurrency how many at once' },
   { id: 'chat-apps', get label() { return tr('ui.settings.chatApps'); }, group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp bot alerts approvals mention channel' },
-  { id: 'people', get label() { return tr('ui.settings.people'); }, group: 'SERVER', keywords: 'users admin invite invitation members roles disable accounts email smtp reset', adminOnly: true },
+  { id: 'people', get label() { return tr('ui.settings.people'); }, group: 'SERVER', keywords: 'users admin invite invitation members roles disable remove delete accounts email smtp reset spending limit cap budget', adminOnly: true },
+  { id: 'audit', get label() { return tr('ui.settings.auditLog'); }, group: 'SERVER', keywords: 'audit log activity history who did what tool calls approvals sign ins security' },
   { id: 'desktop', get label() { return tr('ui.settings.desktopApp'); }, group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
   { id: 'engine', get label() { return tr('ui.settings.engine'); }, group: 'THIS COMPUTER', keywords: 'server status restart log version database queue worker data folder' },
 ];
@@ -477,6 +479,13 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
         <>
           <SectionHeader title={tr('ui.settings.people')} description={tr('ui.settings.whoHasAnAccountOn')} />
           <PeopleSettings />
+        </>
+      );
+    case 'audit':
+      return (
+        <>
+          <SectionHeader title={tr('ui.settings.auditLog')} description={tr('ui.settings.whoDidWhatOnThis')} />
+          <AuditLog />
         </>
       );
     case 'desktop': return <DesktopSection />;

@@ -49,6 +49,7 @@ const en = {
   'settings.section.access': 'Agent access',
   'settings.section.chat-apps': 'Chat apps',
   'settings.section.people': 'People',
+  'settings.section.audit': 'Audit log',
   'settings.section.skills': 'Skills',
   'settings.section.desktop': 'Desktop app',
   'settings.section.engine': 'Engine',

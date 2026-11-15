@@ -36,6 +36,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 logger = logging.getLogger('cognitrix.apps')
@@ -150,6 +152,16 @@ class Running:
     restarts: int = 0
 
 
+@dataclass
+class Scratch:
+    version: int
+    port: int
+    log_path: str
+
+    def log(self, lines: int = 60) -> str:
+        return _tail(self.log_path, lines)
+
+
 class AppHost:
     def __init__(self, root: str, base_env: dict[str, str] | None = None):
         self.root = os.path.abspath(root)
@@ -160,6 +172,7 @@ class AppHost:
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
         os.makedirs(self.root, exist_ok=True)
+        shutil.rmtree(os.path.join(self.root, 'scratch'), ignore_errors=True)  # test copies left by a crash
         self._state = self._load()
         self._watch = threading.Thread(target=self._watchdog, name='app-watchdog', daemon=True)
         self._watch.start()
@@ -222,16 +235,20 @@ class AppHost:
             return None
 
     # -- processes ------------------------------------------------------------
-    def _spawn(self, slug: str, version: int, spec: dict, port: int) -> subprocess.Popen:
+    def _spawn(self, slug: str, version: int, spec: dict, port: int, data_dir: str = '',
+               log_path: str = '') -> subprocess.Popen:
         cwd = self.release_dir(slug, version)
-        os.makedirs(self.data_dir(slug), exist_ok=True)
-        log_path = self.log_file(slug, version)
+        data_dir = data_dir or self.data_dir(slug)
+        os.makedirs(data_dir, exist_ok=True)
+        log_path = log_path or self.log_file(slug, version)
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         self._trim(log_path)
         env = dict(self.base_env)
         env.update({str(k): str(v) for k, v in (spec.get('env') or {}).items()})
-        env.update({'PORT': str(port), 'HOST': '127.0.0.1', 'APP_DATA_DIR': self.data_dir(slug),
+        env.update({'PORT': str(port), 'HOST': '127.0.0.1', 'APP_DATA_DIR': data_dir,
                     'APP_NAME': slug, 'APP_VERSION': str(version), 'PYTHONUNBUFFERED': '1'})
+        if data_dir != self.data_dir(slug):
+            env['APP_TEST'] = '1'
         log = open(log_path, 'ab')  # noqa: SIM115 (the child keeps it)
         log.write(f'\n--- starting v{version} on port {port}: {spec["command"]}\n'.encode())
         log.flush()
@@ -262,9 +279,9 @@ class AppHost:
             except OSError:
                 pass
 
-    def _start_and_wait(self, slug: str, version: int, spec: dict, timeout: float) -> Running:
+    def _start_and_wait(self, slug: str, version: int, spec: dict, timeout: float, **where: str) -> Running:
         port = int(spec.get('port') or 0) or free_port()
-        proc = self._spawn(slug, version, spec, port)
+        proc = self._spawn(slug, version, spec, port, **where)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if proc.poll() is not None:
@@ -448,6 +465,39 @@ class AppHost:
             return None
         out = self.start(slug)
         return out.get('port') if out.get('ok') else None
+
+    @contextmanager
+    def scratch(self, slug: str, data: str = 'fresh') -> Iterator[Scratch]:
+        """A throwaway copy of the live version for Test App: its own port and its own
+        data folder, empty (``fresh``) or a copy of the app's (``copy``), so clicking
+        through it never touches what people see. Removed when the block ends."""
+        check_slug(slug)
+        spec = self._state.get(slug)
+        if spec is None:
+            raise AppHostError('no_app', 'This app has no running version yet.')
+        version = int(spec['version'])
+        spec = {k: v for k, v in spec.items() if k not in ('version', 'updated')}
+        spec['port'] = 0  # never the live one's fixed port; the app reads $PORT
+        # The live Cognitrix API key would let a test start real chats and tasks on the owner's account.
+        spec['env'] = {k: v for k, v in (spec.get('env') or {}).items() if not str(k).startswith('COGNITRIX_API')}
+        base = self._under('scratch', f'{slug}-{os.urandom(4).hex()}')
+        data_dir = os.path.join(base, 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        if data == 'copy' and os.path.isdir(self.data_dir(slug)):
+            shutil.copytree(self.data_dir(slug), data_dir, dirs_exist_ok=True)
+        log_path = os.path.join(base, 'app.log')
+        try:
+            run = self._start_and_wait(slug, version, spec, START_TIMEOUT, data_dir=data_dir, log_path=log_path)
+        except AppHostError as exc:
+            log = _tail(log_path, 60)
+            shutil.rmtree(base, ignore_errors=True)
+            raise AppHostError(exc.code, f'A test copy of the app did not start: {exc.message}'
+                               + (f'\nLog:\n{log}' if log else '')) from None
+        try:
+            yield Scratch(version, run.port, log_path)
+        finally:
+            self._kill(run.proc)
+            shutil.rmtree(base, ignore_errors=True)
 
     def shutdown(self) -> None:
         for slug in list(self.running):

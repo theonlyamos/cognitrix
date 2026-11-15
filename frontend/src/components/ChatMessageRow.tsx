@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useState } from 'react';
 import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { ArtifactCard } from '@/components/artifacts/ArtifactCard';
+import { AppViewCard } from '@/components/appviews/AppViewCard';
 import { InfoCard, InfoCardPending } from '@/components/cards/InfoCard';
 import { AppCard } from '@/components/hosted-apps/AppCard';
 import { MemoryNotice } from '@/components/MemoryNotice';
@@ -145,6 +146,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
               {tool.status === 'done' && <MemoryNotice toolName={tool.name} result={tool.result} />}
               {tool.status === 'done' && <ThemeNotice toolName={tool.name} result={tool.result} />}
               {tool.status === 'done' && <ArtifactCard toolName={tool.name} result={tool.result} />}
+              {tool.status === 'done' && <AppViewCard result={tool.result} />}
               {tool.status === 'done' && tool.card && <InfoCard card={tool.card} />}
               {tool.status === 'running' && isShowCard(tool.name) && <InfoCardPending />}
               {tool.status === 'done' && <AppCard toolName={tool.name} result={tool.result} />}

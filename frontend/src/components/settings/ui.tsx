@@ -43,7 +43,7 @@ export function SettingRow({
         <div className="text-[13.5px] font-medium">{label}</div>
         {detail && <div className="mt-0.5 text-[12px] leading-snug text-fg-dim">{detail}</div>}
       </div>
-      {children && <div className="flex flex-none flex-wrap items-center gap-2">{children}</div>}
+      {children && <div className="flex max-w-full flex-none flex-wrap items-center gap-2">{children}</div>}
     </div>
   );
 }

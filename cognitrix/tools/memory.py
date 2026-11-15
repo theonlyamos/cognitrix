@@ -35,6 +35,26 @@ _SCOPES = {
 }
 
 
+def _proposal_reason(settings: Any) -> str:
+    """Why a save or update has to wait for the person, or '' when it doesn't."""
+    from cognitrix.memory import guard
+
+    if settings.auto_save == 'ask':
+        return 'This person approves each new memory themselves.'
+    reads = guard.untrusted_reads()
+    if reads:
+        return (f'You read outside content this turn ({", ".join(reads[:3])}), so memory changes '
+                'need the person\'s OK.')
+    return ''
+
+
+def _proposed(row: Any, reason: str) -> ToolOutcome:
+    where = 'agent' if row.scope == 'agent' else 'global'
+    return ToolOutcome.success(
+        f'Memory proposed (id {row.id}, {where}): {row.content}\n'
+        f'{reason} It is waiting for their OK in the chat; it is not saved until they approve it.')
+
+
 def _line(row: Any) -> str:
     where = 'this agent only' if row.scope == 'agent' else 'global'
     return f'- {row.content} (id {row.id}, {where})'
@@ -55,7 +75,10 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
     - "update": replace a memory that changed (memory_id and the new content).
     - "forget": delete a memory (memory_id). Do it when the person asks or a memory turns out wrong.
     - "search": find saved memories that aren't in your instructions (query).
-    The person sees a note in the chat each time you save, update or forget something."""
+    The person sees a note in the chat each time you save, update or forget something. Sometimes a
+    save or update is only proposed: the person approves it in the chat (when they asked for that, or
+    after you read web pages, files or app content in this turn). Don't save it again; tell them it
+    is waiting for their OK."""
     user_id = _owner()
     if not user_id:
         return ToolOutcome.failure('no_owner', 'Memory works in chats with a signed-in person only.')
@@ -91,13 +114,19 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
                 chosen = 'agent'
             if chosen == 'agent' and not agent_id:
                 chosen = 'global'
+            reason = _proposal_reason(settings)
             row, created = await saved.add(
                 user_id, content, scope=chosen, agent_id=agent_id,
-                source='agent', session_id=str(ctx.session_id or ''))
+                source='agent', session_id=str(ctx.session_id or ''), pending=bool(reason))
             if not created:
+                if row.pending:
+                    return ToolOutcome.success(
+                        f'Already proposed (id {row.id}): {row.content}. It is waiting for the person\'s OK.')
                 return ToolOutcome.success(
                     f'Already remembered (id {row.id}): {row.content}. '
                     'Use action "update" if it needs to change.')
+            if reason:
+                return _proposed(row, reason)
             return ToolOutcome.success(f'Memory saved (id {row.id}, {row.scope}): {row.content}')
 
         if action in ('update', 'forget'):
@@ -108,6 +137,14 @@ async def memory(action: str, content: str = '', memory_id: str = '', scope: str
             if action == 'forget':
                 await saved.delete(row)
                 return ToolOutcome.success(f'Memory forgotten (id {row.id}): {row.content}')
+            reason = _proposal_reason(settings)
+            if reason:
+                proposal, _created = await saved.add(
+                    user_id, content, scope=row.scope, agent_id=row.agent_id, source='agent',
+                    session_id=str(ctx.session_id or ''), pending=True, replaces=str(row.id))
+                if not proposal.pending:
+                    return ToolOutcome.success(f'Already remembered (id {proposal.id}): {proposal.content}.')
+                return _proposed(proposal, reason)
             row = await saved.update(row, content=content)
             return ToolOutcome.success(f'Memory updated (id {row.id}, {row.scope}): {row.content}')
 

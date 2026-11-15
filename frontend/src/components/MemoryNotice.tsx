@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { errorMessage } from '@/lib/api';
-import { deleteMemory, memoryChange } from '@/lib/memories';
+import { approveMemory, deleteMemory, memoryChange, type MemoryChange } from '@/lib/memories';
 import { tr } from '@/lib/i18n';
 
 /** "Memory saved: … Undo · Manage", shown under a Memory tool call in a chat. */
@@ -10,6 +10,7 @@ export function MemoryNotice({ toolName, result }: { toolName: string; result?: 
   const [state, setState] = useState<'idle' | 'busy' | 'undone'>('idle');
   const [error, setError] = useState<string | null>(null);
   if (!change) return null;
+  if (change.kind === 'proposed') return <MemoryProposal change={change} />;
 
   const undo = async () => {
     setState('busy');
@@ -40,6 +41,53 @@ export function MemoryNotice({ toolName, result }: { toolName: string; result?: 
       )}
       <span className="text-fg-dim" aria-hidden>·</span>
       <Link to={`/settings/memory${change.kind !== 'forgotten' && state !== 'undone' ? `?memory=${encodeURIComponent(change.id)}` : ''}`}
+        className="text-accent-ink hover:underline">
+        {tr('ui.memoryNotice.manage')}
+      </Link>
+      {error && <span role="alert" className="text-danger-ink">{error}</span>}
+    </div>
+  );
+}
+
+/** "Save to memory? … Save · No", for a memory the agent may only propose. */
+function MemoryProposal({ change }: { change: MemoryChange }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'saved' | 'dismissed'>('idle');
+  const [error, setError] = useState<string | null>(null);
+
+  const settle = async (approve: boolean) => {
+    setState('busy');
+    setError(null);
+    try {
+      if (approve) await approveMemory(change.id);
+      else await deleteMemory(change.id);
+      setState(approve ? 'saved' : 'dismissed');
+    } catch (e) {
+      setState('idle');
+      // Already settled in Settings or another tab: say so instead of failing.
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      setError(status === 404 ? tr('ui.memoryNotice.thisWasAlreadySettled') : errorMessage(e, tr('ui.memoryNotice.couldNotDoThat')));
+    }
+  };
+
+  const done = state === 'saved' || state === 'dismissed';
+  return (
+    <div role="note" className="inline-flex max-w-2xl flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-line bg-panel px-3 py-2 text-[12.5px]">
+      <span className="text-accent-ink" aria-hidden>◇</span>
+      <span className="text-fg-dim">
+        {state === 'saved' ? tr('ui.memoryNotice.memorySaved') : state === 'dismissed' ? tr('ui.memoryNotice.notSaved') : tr('ui.memoryNotice.saveToMemory')}
+      </span>
+      <span className={state === 'dismissed' ? 'text-fg-dim line-through' : 'font-medium'}>{change.content}</span>
+      {change.scope === 'agent' && !done && <span className="text-[11.5px] text-fg-dim">{tr('ui.memoryNotice.thisAgentOnly')}</span>}
+      {!done && (
+        <>
+          <button type="button" onClick={() => void settle(true)} disabled={state === 'busy'}
+            className="font-medium text-accent-ink hover:underline disabled:opacity-60">{tr('ui.memoryNotice.save')}</button>
+          <button type="button" onClick={() => void settle(false)} disabled={state === 'busy'}
+            className="text-fg-dim hover:text-fg hover:underline disabled:opacity-60">{tr('ui.memoryNotice.no')}</button>
+        </>
+      )}
+      <span className="text-fg-dim" aria-hidden>·</span>
+      <Link to={`/settings/memory${state !== 'dismissed' ? `?memory=${encodeURIComponent(change.id)}` : ''}`}
         className="text-accent-ink hover:underline">
         {tr('ui.memoryNotice.manage')}
       </Link>

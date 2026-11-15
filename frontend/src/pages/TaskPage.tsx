@@ -26,6 +26,7 @@ interface TaskData {
   schedule_cron?: string | null;
   schedule_enabled?: boolean;
   swarm?: boolean;
+  read_memory?: boolean;
 }
 
 type ScheduleMode = 'none' | 'once' | 'interval' | 'cron';
@@ -66,6 +67,7 @@ export default function TaskPage() {
   const [teamId, setTeamId] = useState('');
   const [autostart, setAutostart] = useState(false);
   const [swarm, setSwarm] = useState(false);
+  const [readMemory, setReadMemory] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('none');
   const [scheduleAt, setScheduleAt] = useState('');
   const [intervalN, setIntervalN] = useState('30');
@@ -90,6 +92,7 @@ export default function TaskPage() {
     setTeamId(existing.team_id || '');
     setAutostart(!!existing.autostart);
     setSwarm(!!existing.swarm);
+    setReadMemory(!!existing.read_memory);
     if (existing.schedule_at) {
       setScheduleMode('once');
       setScheduleAt(utcToLocalInput(existing.schedule_at));
@@ -180,6 +183,7 @@ export default function TaskPage() {
         team_id: teamId || null,
         autostart,
         swarm,
+        read_memory: readMemory,
         // Always sent: the form is authoritative for schedule state (the
         // server treats their presence as a full respecification).
         schedule_at: scheduleMode === 'once' && scheduleAt ? new Date(scheduleAt).toISOString() : null,
@@ -307,6 +311,14 @@ export default function TaskPage() {
         <span className="text-sm">
           {tr('ui.taskPage.runAsASwarm')}
           <span className="block text-[12px] text-fg-dim">{tr('ui.taskPage.eachStepMaySplitIts')}</span>
+        </span>
+      </label>
+
+      <label className="flex min-h-11 cursor-pointer items-start gap-2.5 md:min-h-0">
+        <input type="checkbox" checked={readMemory} onChange={(e) => setReadMemory(e.target.checked)} className="mt-1 accent-[var(--accent)]" />
+        <span className="text-sm">
+          {tr('ui.taskPage.readMySavedMemories')}
+          <span className="block text-[12px] text-fg-dim">{tr('ui.taskPage.runsSeeWhatYourAgents')}</span>
         </span>
       </label>
 

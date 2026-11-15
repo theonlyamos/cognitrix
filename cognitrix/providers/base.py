@@ -891,6 +891,21 @@ class LLMManager:
 
             usage_log.note_model(llm.provider, llm.model)
 
+            # A person over their monthly spending cap gets a plain message
+            # instead of a model call (cognitrix/usage/caps.py).
+            owner = usage_log.current_owner()
+            if owner:
+                from cognitrix.usage import caps
+
+                capped = await caps.blocked_message(owner.get('user_id'))
+                if capped:
+                    blocked = LLMResponse(llm_response=capped, error=capped)
+                    if stream:
+                        async def _one(response=blocked):
+                            yield response
+                        return _one()
+                    return blocked
+
             from cognitrix.providers import harness
 
             if harness.is_harness(llm.provider):

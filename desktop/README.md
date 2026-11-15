@@ -35,9 +35,9 @@ For the AppImage, put the engine's library folders on `LD_LIBRARY_PATH` first
 (see the workflow's "AppImage bundler" step). Linux also needs the WebKitGTK build libraries:
 `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev`.
 
-The `desktop` GitHub Actions workflow builds all three (Windows, Ubuntu 22.04,
-Apple-silicon macOS). Each run uploads `cognitrix-windows`, `cognitrix-linux`
-and `cognitrix-macos` artifacts, and a published release gets the installers
+The `desktop` GitHub Actions workflow builds all of them (Windows, Ubuntu 22.04,
+Apple-silicon macOS and Intel macOS). Each run uploads `cognitrix-windows`,
+`cognitrix-linux`, `cognitrix-macos` and `cognitrix-macos-intel` artifacts, and a published release gets the installers
 attached. It runs on PRs that touch the desktop code, on releases, and from
 the Actions tab.
 
@@ -62,9 +62,49 @@ app. Apps installed from a release made before this was set up, `.deb` and
 `.rpm` installs, and local builds don't update themselves: they show a link
 to the releases page instead.
 
-The builds aren't code-signed yet. Windows SmartScreen asks for "Run anyway".
-macOS says the app "is damaged" when it's downloaded unsigned: run
-`xattr -cr /Applications/Cognitrix.app` once after installing.
+### Code signing
+
+The workflow signs the Windows and macOS builds when the secrets below are
+set in the repository settings (Secrets and variables, Actions). Each OS is
+independent, and without its secrets it builds unsigned as before. Unsigned,
+Windows SmartScreen asks for "Run anyway", and macOS says the app "is damaged"
+until you run `xattr -cr /Applications/Cognitrix.app` once after installing.
+
+**Windows**, one of these two:
+
+- *Azure Artifact Signing* (formerly Trusted Signing; recommended, about
+  $10 a month, no hardware token). Create an Artifact Signing account and a
+  "Public Trust" certificate profile in Azure, finish identity validation, and
+  give an app registration the "Artifact Signing Certificate Profile Signer"
+  role on the account. Then add:
+  - secrets `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` (the app registration)
+  - variables `AZURE_SIGNING_ENDPOINT` (for example `https://eus.codesigning.azure.net`),
+    `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE`
+- *A code-signing certificate you can export as a `.pfx`* (only older
+  certificates; ones issued since mid-2023 live on a hardware token and can't
+  be used from CI):
+  - secret `WINDOWS_CERTIFICATE`: the `.pfx` in base64 (`certutil -encode cert.pfx cert.txt`,
+    then paste the text between the BEGIN/END lines)
+  - secret `WINDOWS_CERTIFICATE_PASSWORD`
+
+The app, its engine, and the `.exe`/`.msi` installers are all signed.
+
+**macOS** (needs an Apple Developer Program membership, $99 a year):
+
+- secret `APPLE_CERTIFICATE`: a "Developer ID Application" certificate with its
+  private key, exported from Keychain Access as `.p12`, in base64
+  (`base64 -i cert.p12 | pbcopy`)
+- secret `APPLE_CERTIFICATE_PASSWORD`: the password you gave the `.p12`
+- for notarization (without it macOS still blocks the download), either
+  - an App Store Connect API key (Users and Access, Integrations, Team Keys,
+    "Developer" access): secret `APPLE_API_PRIVATE_KEY` (the `.p8` file's
+    text), variables `APPLE_API_KEY_ID` and `APPLE_API_ISSUER`; or
+  - an Apple ID: secrets `APPLE_ID` and `APPLE_PASSWORD` (an app-specific
+    password from account.apple.com), variable `APPLE_TEAM_ID`
+
+Every binary in the bundled engine is signed with the hardened runtime
+(`src-tauri/engine.entitlements`), then Tauri signs and notarizes the app.
+`src-tauri/Entitlements.plist` keeps the microphone working for voice input.
 
 ## Develop
 
