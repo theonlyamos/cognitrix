@@ -244,7 +244,7 @@ export default function AgentPage() {
         {noTemperature && (
           <p className="mt-1.5 text-[12px] text-fg-dim">
             {isHarness(provider)
-              ? `${PROVIDER_LABELS[provider]} picks its own settings, so this isn't sent. Codex and Copilot CLI take the reasoning level.`
+              ? `${PROVIDER_LABELS[provider]} picks its own settings, so this isn't sent. Codex, Copilot CLI and Antigravity CLI take the reasoning level.`
               : provider === 'chatgpt'
               ? "The ChatGPT plan doesn't take a temperature, so this setting isn't sent. Use the reasoning level to tune it."
               : "This Claude model sets its own temperature, so this setting isn't sent. Use the reasoning level to tune it."}
@@ -278,7 +278,7 @@ export default function AgentPage() {
           Hands coding jobs to a coding agent on this computer, which works in the background in the working folder. Every run waits for your approval.{' '}
           {systemInfo && (systemInfo.coding_agents?.length
             ? <>Installed: <span className="font-mono text-[12px] text-fg">{systemInfo.coding_agents.join(', ')}</span>.</>
-            : 'None installed yet: install Claude Code, Codex, Gemini CLI or GitHub Copilot CLI and sign in once.')}
+            : 'None installed yet: install Claude Code, Codex, Gemini CLI, GitHub Copilot CLI or Antigravity CLI and sign in once.')}
         </p>
       )}
       <Field label={`TOOLS · ${selected.size} selected`} composite>

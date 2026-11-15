@@ -1,8 +1,9 @@
 """Run an agent on a coding agent CLI that is already signed in on this computer.
 
-Claude Code, Codex, Gemini CLI, GitHub Copilot CLI and OpenCode each come
-with their maker's sign-in, so they run on the person's own plan (Claude
-Pro/Max, ChatGPT Plus/Pro, Google AI, Copilot) or key. Tools like T3 Code,
+Claude Code, Codex, Gemini CLI, GitHub Copilot CLI, OpenCode and the
+Antigravity CLI (``agy``) each come with their maker's sign-in, so they run on
+the person's own plan (Claude Pro/Max, ChatGPT Plus/Pro, Google AI, Copilot)
+or key. Tools like T3 Code,
 Enjoy and Happy work this way: they start the vendor's own, unmodified CLI
 and read its machine-readable output. Anthropic's terms say so in as many
 words: a person signing in to the unmodified Claude Code binary with their
@@ -34,6 +35,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -60,6 +62,12 @@ PLACEHOLDER_KEY = 'signed-in-cli'
 """Stands in for an API key in agent configs: the CLI signs itself in."""
 WHOLE_MESSAGES = frozenset({'codex', 'opencode'})
 """CLIs that send whole messages, not deltas: the last one is the answer."""
+NO_TOOL_HARNESSES = frozenset({'antigravity-cli'})
+"""CLIs that can't be handed the agent's Cognitrix tools for one run.
+
+The Antigravity CLI reads MCP servers only from ~/.gemini/config/mcp_config.json
+or <workspace>/.agents/mcp_config.json and has no flag or variable for another
+file, so lending tools would mean rewriting the person's own config each turn."""
 
 
 @dataclass
@@ -116,6 +124,13 @@ HARNESSES: dict[str, Harness] = {
         'opencode', 'OpenCode', 'opencode',
         'npm install -g opencode-ai, then run `opencode auth login`',
         ('openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5', 'github-copilot/gpt-5.5'), False),
+    # Google's Antigravity CLI. A native binary (no npm package); `agy models`
+    # lists the slugs a signed-in account can use.
+    'antigravity-cli': Harness(
+        'antigravity-cli', 'Antigravity CLI', 'agy',
+        ('curl -fsSL https://antigravity.google/cli/install.sh | bash (Windows PowerShell: '
+         'irm https://antigravity.google/cli/install.ps1 | iex), then run `agy` once and sign in'),
+        ('gemini-3.8-flash-medium', 'gemini-4-carbon-high', 'gemini-4-hydrogen-high', 'gemini-3.1-pro-high'), False),
 }
 
 
@@ -288,6 +303,8 @@ def remember(chat_id: str | None, key: str, model: str, cwd: str, session: str, 
 
 # --- command lines ---------------------------------------------------------------
 
+_EFFORT_SUFFIX = re.compile(r'-(?:minimal|low|medium|high|xhigh|max)$')
+
 def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
                   resume: str | None, new_session: str | None, cwd: str,
                   tools_url: str | None = None, settings_file: str | None = None,
@@ -409,7 +426,35 @@ def build_command(key: str, program: str, *, mode: str, model: str, effort: str,
         if resume:
             argv += ['--session', resume]
         return argv, env
+    if key == 'antigravity-cli':
+        # https://antigravity.google/docs/cli/headless/ - the message goes in
+        # as one stream-json "user" event on stdin (stdin_message); closing
+        # stdin ends the session after that turn. No -p: streaming input drops
+        # a prompt given on the command line.
+        argv = [program, '--input-format', 'stream-json', '--output-format', 'stream-json']
+        if mode == 'full':
+            argv += ['--dangerously-skip-permissions']
+        else:
+            # Approvals nobody can give in headless runs are soft-denied.
+            argv += ['--mode', 'plan' if mode == 'read_only' else 'accept-edits']
+        for d in extra_dirs:
+            argv += ['--add-dir', d]
+        if model:
+            argv += ['--model', model]
+        # Slugs like gemini-3.8-flash-medium carry their own effort.
+        if effort in ('low', 'medium', 'high', 'xhigh', 'max') and not _EFFORT_SUFFIX.search(model):
+            argv += ['--effort', effort]
+        if resume:
+            argv += ['--conversation', resume]
+        return argv, env
     raise HarnessError(f'Unknown coding agent {key!r}.')
+
+
+def stdin_message(key: str, text: str) -> str:
+    """What goes on the CLI's stdin for this message."""
+    if key == 'antigravity-cli':
+        return json.dumps({'event': 'user', 'message': {'content': text}}, ensure_ascii=False) + '\n'
+    return text
 
 
 # --- reading the output ------------------------------------------------------------
@@ -579,6 +624,43 @@ def parse_line(key: str, line: str) -> list[Event]:
             msg = (err.get('data') or {}).get('message') if isinstance(err, dict) else None
             events.append(Event(error=_short(msg or err or 'OpenCode failed', 400)))
         return events
+    if key == 'antigravity-cli':
+        # Each line is {"event": <type>, <type>: {...payload}}.
+        kind = e.get('event')
+        body = e.get(kind) if isinstance(kind, str) else None
+        if not isinstance(body, dict):
+            return []
+        if kind == 'step_update':
+            step = body.get('step_type')
+            if step == 'agent_response':
+                if body.get('text_delta'):
+                    return [Event(text=str(body['text_delta']))]
+                # Keep one reply step's text apart from the next one's.
+                return [Event(text='\n\n')] if body.get('state') == 'DONE' else []
+            if step == 'tool' and body.get('state') == 'DONE':
+                tool = body.get('tool_info') or {}
+                line = _tool_line(str(tool.get('name') or body.get('tool_name') or 'tool'), tool.get('parameters'))
+                err = tool.get('error')
+                if isinstance(err, dict) and err.get('message'):
+                    line += f" (failed: {_short(err['message'], 120)})"
+                return [Event(activity=line + '\n')]
+            return []
+        if kind == 'result':
+            u = body.get('usage') or {}
+            # input_tokens includes cached reads, output_tokens includes thinking.
+            events = [Event(session=str(body.get('conversation_id') or ''),
+                            usage={'prompt_tokens': int(u.get('input_tokens') or 0),
+                                   'completion_tokens': int(u.get('output_tokens') or 0),
+                                   'cached_tokens': int(u.get('cache_read_tokens') or 0)})]
+            status = str(body.get('status') or 'SUCCESS').upper()
+            if status != 'SUCCESS' or body.get('error'):
+                err = body.get('error')
+                msg = err.get('message') if isinstance(err, dict) else err
+                events.append(Event(error=_short(msg or f'Antigravity CLI ended with status {status}', 400)))
+            else:
+                events.append(Event(final_text=str(body.get('response') or '')))
+            return events
+        return []
     return []
 
 
@@ -713,7 +795,8 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
         new_session = str(uuid.uuid4()) if harness.resumes_with_new_id and not resume else None
 
         # Lend the CLI this agent's own tools for the turn (harness_bridge.py).
-        lent = lendable(list(info.tools)) if info is not None and info.call_tool is not None else []
+        lent = (lendable(list(info.tools))
+                if info is not None and info.call_tool is not None and key not in NO_TOOL_HARNESSES else [])
         asking = mode == 'ask' and key in ASK_HARNESSES and info is not None and info.approve is not None
         if lent or asking:
             try:
@@ -742,7 +825,7 @@ async def stream(llm: Any, messages: list[dict[str, Any]], effort: str = '') -> 
                                         settings_file=settings_file, extra_dirs=extra_dirs)
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
-        proc = _spawn(argv, text, cwd, env_extra, loop, queue)
+        proc = _spawn(argv, stdin_message(key, text), cwd, env_extra, loop, queue)
         session = resume or new_session or ''
         usage: dict[str, int] | None = None
         errors: list[str] = []

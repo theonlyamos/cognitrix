@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { ASK_HARNESSES, HARNESS_INSTALL, HARNESS_MODES, PROVIDER_LABELS, isHarness } from '@/lib/providers';
+import { ASK_HARNESSES, HARNESS_INSTALL, HARNESS_MODES, NO_TOOL_HARNESSES, PROVIDER_LABELS, isHarness } from '@/lib/providers';
 import { useSystemInfo } from '@/hooks/useSystemInfo';
 
 /** Under a provider picker set to a coding agent CLI: whether it's installed,
@@ -19,9 +19,11 @@ export default function HarnessNote({
     <div className="space-y-2 text-[12px] font-normal leading-relaxed text-fg-dim">
       <p>
         Runs {label} on this computer, signed in with your own plan or key, so usage comes out of that account.
-        It works on files with {label}'s own tools in the agent's working folder, and can also use this agent's
-        Cognitrix tools (memory, tasks, connected apps), which ask for approval the usual way. It works in the desktop
-        app and the command line.
+        It works on files with {label}'s own tools in the agent's working folder
+        {NO_TOOL_HARNESSES.includes(provider)
+          ? ", but can't use this agent's Cognitrix tools (memory, tasks, connected apps)"
+          : ", and can also use this agent's Cognitrix tools (memory, tasks, connected apps), which ask for approval the usual way"}
+        . It works in the desktop app and the command line.
       </p>
       {info && !installed && (
         <p role="status" className="text-danger-ink">
