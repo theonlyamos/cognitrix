@@ -38,6 +38,7 @@ const ArtifactPage = lazy(() => import('@/pages/ArtifactPage'));
 const PublicArtifact = lazy(() => import('@/pages/PublicArtifact'));
 const Knowledge = lazy(() => import('@/pages/Knowledge'));
 const Meetings = lazy(() => import('@/pages/Meetings'));
+const Payments = lazy(() => import('@/pages/Payments'));
 const Notifications = lazy(() => import('@/pages/Notifications'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const QuickAsk = lazy(() => import('@/pages/QuickAsk'));
@@ -122,6 +123,7 @@ function AppRoutes() {
           <Route path="/artifacts/:artifactId" element={<ArtifactPage />} />
           <Route path="/knowledge" element={<Knowledge />} />
           <Route path="/meetings" element={<Meetings />} />
+          <Route path="/payments" element={<Payments />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/settings/:section" element={<Settings />} />

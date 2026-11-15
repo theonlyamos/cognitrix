@@ -424,6 +424,17 @@ _THEME_MIGRATION_COLUMNS = (
     ('drawings', "TEXT DEFAULT '[]'"),
 )
 
+# Live calls (cognitrix/meetings/live.py) on the meeting notes table.
+_MEETING_MIGRATION_COLUMNS = (
+    ('kind', "TEXT DEFAULT 'recording'"),
+    ('url', "TEXT DEFAULT ''"),
+    ('platform', "TEXT DEFAULT ''"),
+    ('bot_name', "TEXT DEFAULT ''"),
+    ('reply_mode', "TEXT DEFAULT 'chat'"),
+    ('announce', 'BOOLEAN DEFAULT 1'),
+    ('answers', 'INTEGER DEFAULT 0'),
+)
+
 _AGENT_MIGRATION_COLUMNS = (
     ('owner_id', 'TEXT'),
     ('folders', 'TEXT'), ('can_request_folders', 'BOOLEAN'),
@@ -835,6 +846,8 @@ async def _ensure_schema():
     from cognitrix.sessions.sharing import MODELS as CHAT_SHARE_MODELS
     from cognitrix.agent_email.models import MODELS as EMAIL_MODELS
     from cognitrix.sessions.side_questions import SideQuestion
+    from cognitrix.payments.models import MODELS as PAYMENT_MODELS
+    from cognitrix.meetings.calendar_calls import MODELS as CALENDAR_CALL_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
@@ -844,6 +857,8 @@ async def _ensure_schema():
         *PUBLIC_AGENT_MODELS,
         *CHAT_SHARE_MODELS,
         *EMAIL_MODELS,
+        *PAYMENT_MODELS,
+        *CALENDAR_CALL_MODELS,
         AgentOffer,
         SideQuestion,
         MeetingNote,
@@ -936,6 +951,7 @@ async def _ensure_schema():
         ('themesetting', _THEME_MIGRATION_COLUMNS),
         ('knowledgedocuments', _KNOWLEDGE_DOCUMENT_MIGRATION_COLUMNS),
         ('memories', _MEMORY_MIGRATION_COLUMNS),
+        ('meetingnotes', _MEETING_MIGRATION_COLUMNS),
     ):
         try:
             cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')

@@ -1,5 +1,13 @@
 {
   "CommandLineFlagSecurityWarningsEnabled": false,
   "DefaultBrowserSettingEnabled": false,
-  "PromotionalTabsEnabled": false
+  "PromotionalTabsEnabled": false,
+  "AudioCaptureAllowedUrls": [
+    "https://meet.google.com",
+    "https://teams.microsoft.com",
+    "https://teams.live.com",
+    "https://app.zoom.us",
+    "https://[*.]zoom.us"
+  ],
+  "AutoplayAllowed": true
 }

@@ -81,6 +81,8 @@ async def lifespan(app: FastAPI):
         try:
             from ..meetings.notes import fail_interrupted
             await fail_interrupted()
+            from ..meetings.live import fail_interrupted as live_interrupted
+            await live_interrupted()
         except Exception:
             import logging
             logging.getLogger('cognitrix.log').exception('Could not tidy up meeting notes')

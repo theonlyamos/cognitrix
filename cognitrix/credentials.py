@@ -299,6 +299,12 @@ async def redaction_map_for(owner: str | None) -> dict[str, str]:
         return cached[1]
     resolver = await Resolver.for_owner(owner)
     found = resolver.redaction_map()
+    try:  # saved payment cards too (cognitrix/payments)
+        from cognitrix.payments.service import redaction_entries
+
+        found = {**found, **await redaction_entries(owner)}
+    except Exception:
+        pass
     _redaction_cache[owner] = (now, found)
     return found
 

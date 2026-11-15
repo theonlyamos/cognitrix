@@ -120,14 +120,45 @@ class MeetingNote(Model):
     transcript: str = ''
     notes: str = ''
     error: str = ''
+    # A live call an agent sat in (cognitrix/meetings/live.py) rather than an
+    # uploaded recording.
+    kind: str = 'recording'
+    """'recording' or 'live'."""
+    url: str = ''
+    platform: str = ''
+    """'meet', 'teams', 'zoom' or 'other'."""
+    bot_name: str = ''
+    """The name the agent joins the call as."""
+    reply_mode: str = 'chat'
+    """How it answers when someone says its name: 'chat', 'voice' or 'off'."""
+    announce: bool = True
+    """Say in the call's chat that it is taking notes, when it gets in."""
+    answers: int = 0
 
-    @validator('title', 'filename', 'agent_id', 'language', 'progress', 'transcript', 'notes', 'error', pre=True)
+    @validator('title', 'filename', 'agent_id', 'language', 'progress', 'transcript', 'notes', 'error', 'url',
+               'platform', 'bot_name', pre=True)
     def _text(cls, value):
         return value or ''
+
+    @validator('kind', pre=True)
+    def _kind(cls, value):
+        return value or 'recording'
+
+    @validator('reply_mode', pre=True)
+    def _reply_mode(cls, value):
+        return value or 'chat'
+
+    @validator('announce', pre=True)
+    def _announce(cls, value):
+        return True if value is None else bool(value)
 
     @validator('seconds', pre=True)
     def _number(cls, value):
         return value or 0.0
+
+    @validator('answers', pre=True)
+    def _count(cls, value):
+        return int(value or 0)
 
 
 # ------------------------------------------------------------- the recording

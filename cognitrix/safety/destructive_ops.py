@@ -113,6 +113,13 @@ _KNOWN_LOW = frozenset({
     'list_windows', 'look_at_window', 'scroll_window',
     # background shells: reading output or stopping a shell the agent started
     'bash_output', 'kill_shell',
+    # live calls: following and leaving one the person already let it join
+    # (Join Meeting asks, see below), and speaking in it like it answers anyway
+    'meeting_transcript', 'leave_meeting', 'say_in_meeting', 'upcoming_calls',
+    # payments have their own approval, which only the person can give in the
+    # app for each payment (cognitrix/payments/service.py); Pay works only for
+    # an approved one, so the usual prompt would only ask twice
+    'request_payment', 'pay', 'cancel_payment',
 })
 
 # Desktop control acts on the person's live screen, where a click can do
@@ -389,6 +396,14 @@ class DestructiveOpDetector:
                 RiskLevel.MEDIUM, ['folder_access'],
                 f"Wants {access} access to the folder '{params.get('path', '')}'",
             )
+        if name == 'join_meeting':
+            # Joining a call and recording what people say is the person's call.
+            url = str(params.get('url') or '')[:300]
+            mode = {'voice': ', answering out loud', 'off': ''}.get(str(params.get('reply_mode') or ''),
+                                                                    ', answering in its chat')
+            return RiskAssessment(
+                RiskLevel.MEDIUM, ['meeting_join', 'external_send'],
+                f'Joins the call {url} from its computer, records and transcribes what people say{mode}')
         if name == 'ask_to_take_over':
             # Always a person's answer: they take over, then hand back.
             reason = str(params.get('reason') or '').strip()[:200] or 'a step only you should do'

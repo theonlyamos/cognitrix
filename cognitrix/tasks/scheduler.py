@@ -168,7 +168,7 @@ async def scheduler_loop() -> None:
 
 
 async def automation_tick(now: datetime | None = None) -> int:
-    """Agent wake-ups, new-mail checks and queued trigger events (see tasks/automation.py)."""
+    """Agent wake-ups, new-mail and calendar-call checks, and queued trigger events (see tasks/automation.py)."""
     from cognitrix.tasks.automation import dispatch_trigger_events, fire_due_wakes
 
     now = now or _utcnow()
@@ -178,4 +178,10 @@ async def automation_tick(now: datetime | None = None) -> int:
         await poll_mail_triggers(now)
     except Exception:
         logger.exception('Could not check for new mail')
+    try:
+        from cognitrix.meetings.calendar_calls import poll as poll_calendar_calls
+
+        await poll_calendar_calls(now)
+    except Exception:
+        logger.exception('Could not check calendars for calls')
     return await fire_due_wakes(now) + await dispatch_trigger_events(now)

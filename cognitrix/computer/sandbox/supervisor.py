@@ -20,6 +20,10 @@ accessibility bus. Every request except /health needs the container's token
     POST   /desktops/<name>/call          a driver call (see worker.py)
     POST   /desktops/<name>/hold          a person takes over: agent paused, screen accepts input
     POST   /desktops/<name>/release       hand back: screen view-only again
+    POST   /desktops/<name>/audio/start   listen to what the desktop plays (a call), see audio.py
+    POST   /desktops/<name>/audio/stop
+    GET    /desktops/<name>/audio?after=N pieces of speech heard since piece N
+    POST   /desktops/<name>/audio/say     play audio into the desktop's microphone
     GET    /apps                          apps and whether each is running (see apps.py)
     GET    /apps/<slug>                   one app's status
     POST   /apps/<slug>/deploy            unpack, install and start a version
@@ -63,6 +67,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cognitrix.computer.sandbox import SERVICE_PORT, check_name, token
 from cognitrix.computer.sandbox.apps import AppHost, AppHostError, unb64
+from cognitrix.computer.sandbox.audio import DesktopAudio
 from cognitrix.computer.sandbox.workspace import Workspace, WorkspaceError
 
 logger = logging.getLogger('cognitrix.sandbox')
@@ -82,6 +87,7 @@ class Desktop:
     procs: dict[str, subprocess.Popen] = field(default_factory=dict)
     held_by: str | None = None
     terminal: subprocess.Popen | None = None  # xterm following the agent's commands
+    audio: DesktopAudio | None = None  # its own speaker and microphone (calls)
     started: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
 
@@ -133,6 +139,10 @@ class Supervisor:
     def _start(self, desk: Desktop) -> None:
         env = dict(os.environ, DISPLAY=desk.display, DESKTOP_NAME=desk.name)
         env.pop('COGNITRIX_SANDBOX_TOKEN', None)  # apps on the desktop never see the container token
+        # Its own speaker and microphone, so a call on this desktop is heard
+        # (and the agent heard) without mixing with another desktop's.
+        desk.audio = DesktopAudio(desk.name)
+        env.update(desk.audio.setup())
         quiet = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL, 'start_new_session': True}
         width, height = SCREEN.split('x')[:2]
         desk.procs['xvfb'] = subprocess.Popen(  # noqa: S603
@@ -184,6 +194,8 @@ class Supervisor:
             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
     def _stop(self, desk: Desktop) -> None:
+        if desk.audio is not None:
+            desk.audio.teardown()
         if desk.terminal is not None and desk.terminal.poll() is None:
             try:
                 os.killpg(desk.terminal.pid, signal.SIGTERM)
@@ -238,6 +250,13 @@ class Supervisor:
             return {'ok': False, 'error': 'no_desktop', 'message': f'no desktop called {name!r}'}
         desk.held_by = None
         return self._call_worker(desk, {'method': 'release'})
+
+    def audio(self, name: str) -> DesktopAudio | None:
+        desk = self.desktops.get(check_name(name))
+        if desk is None:
+            return None
+        desk.last_used = time.time()
+        return desk.audio
 
     def shutdown(self) -> None:
         for name in list(self.desktops):
@@ -399,6 +418,8 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
                     self._reply(200, {'ok': True, 'desktop': desk.info(), 'vnc_password': desk.password})
                 elif len(parts) == 2 and parts[0] == 'desktops' and method == 'DELETE':
                     self._reply(200, {'ok': sup.stop(parts[1])})
+                elif len(parts) >= 3 and parts[0] == 'desktops' and parts[2] == 'audio':
+                    self._audio(method, parts)
                 elif len(parts) == 3 and parts[0] == 'desktops' and method == 'POST':
                     name, action = parts[1], parts[2]
                     if action == 'call':
@@ -486,6 +507,32 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
                                   'stderr': (err[0] if err else b'')[-4000:].decode('utf-8', 'replace')})
                 return
             self._reply(404, {'ok': False, 'error': 'not_found'})
+
+        def _audio(self, method: str, parts: list[str]) -> None:
+            from urllib.parse import parse_qs, urlsplit
+
+            audio = sup.audio(parts[1])
+            if audio is None:
+                self._reply(200, {'ok': False, 'error': 'no_desktop', 'message': f'no desktop called {parts[1]!r}'})
+                return
+            action = parts[3] if len(parts) > 3 else ''
+            if method == 'GET' and not action:
+                q = parse_qs(urlsplit(self.path).query)
+                self._reply(200, audio.read(int((q.get('after') or ['0'])[0] or 0)))
+            elif method == 'POST' and action == 'start':
+                self._reply(200, audio.start())
+            elif method == 'POST' and action == 'stop':
+                self._reply(200, audio.stop())
+            elif method == 'POST' and action == 'say':
+                body = self._body()
+                try:
+                    data = unb64(body.get('audio', ''))
+                except AppHostError:
+                    self._reply(400, {'ok': False, 'error': 'bad_request', 'message': 'The audio was not base64.'})
+                    return
+                self._reply(200, audio.say(data, str(body.get('suffix') or '.wav')))
+            else:
+                self._reply(404, {'ok': False, 'error': 'not_found'})
 
         def _work(self, method: str, parts: list[str]) -> None:
             from urllib.parse import parse_qs, unquote, urlsplit

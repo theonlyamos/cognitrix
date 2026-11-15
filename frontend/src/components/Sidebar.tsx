@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   LayoutDashboard as DashboardIcon, Inbox as InboxIcon, Bot as BotIcon, ListChecks as ListChecksIcon, Zap as ZapIcon,
-  Users as UsersIcon, BookOpen as BookOpenIcon, AppWindow as AppWindowIcon, Mic as MicIcon,
+  Users as UsersIcon, BookOpen as BookOpenIcon, AppWindow as AppWindowIcon, Mic as MicIcon, CreditCard as CardIcon,
   Plus as PlusIcon, Search as SearchIcon, Ellipsis as MoreIcon, PanelLeft as PanelLeftIcon, type LucideIcon,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -31,6 +31,7 @@ const MORE: NavItem[] = [
   { path: '/teams', label: 'nav.teams', icon: UsersIcon },
   { path: '/knowledge', label: 'nav.knowledge', icon: BookOpenIcon },
   { path: '/meetings', label: 'nav.meetings', icon: MicIcon },
+  { path: '/payments', label: 'nav.payments', icon: CardIcon },
 ];
 
 const COLLAPSED_KEY = 'sidebar.collapsed';
