@@ -156,8 +156,10 @@ export function AppViewPanel({ viewId, onClose, onBack, expanded = false, onTogg
           try {
             reply(await callAppTool(viewId, name, args));
           } catch (e) {
-            const status = (e as { response?: { status?: number } })?.response?.status;
-            if (status !== 409) throw e;
+            // Only an explicit "confirm" asks the person; any other 409 (such as
+            // the app being switched off) is an error the screen should see.
+            const response = (e as { response?: { status?: number; data?: { detail?: unknown } } })?.response;
+            if (response?.status !== 409 || response.data?.detail !== 'confirm') throw e;
             if (!(await askFirst(name, args))) {
               fail(-32001, 'The person said no.');
               return;

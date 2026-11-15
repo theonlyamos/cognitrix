@@ -80,6 +80,16 @@ describe('AppViewPanel', () => {
     await waitFor(() => expect((sent.find((m) => m.id === 8) as { error?: { message: string } })?.error?.message).toBe('The person said no.'));
   });
 
+  it('reports a switched-off app instead of asking to run it', async () => {
+    render(<AppViewPanel viewId="v1" onClose={() => {}} />);
+    await waitFor(() => expect(document.querySelector('iframe')).not.toBeNull());
+    const { sent, fromFrame } = frameMessages();
+    apiPost.mockRejectedValueOnce({ response: { status: 409, data: { detail: 'Tasks is switched off.' } } });
+    await fromFrame({ id: 9, method: 'tools/call', params: { name: 'show_board', arguments: {} } });
+    await waitFor(() => expect((sent.find((m) => m.id === 9) as { error?: unknown })?.error).toBeTruthy());
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
   it('passes messages into the chat, opens only web links, and refuses unknown methods', async () => {
     const onSend = vi.fn();
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
