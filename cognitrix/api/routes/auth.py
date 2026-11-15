@@ -71,12 +71,18 @@ class LoginForm(BaseModel):
 @auth_api.post("/login", response_model=Token)
 async def login(form_data: LoginForm):
     user = await authenticate(form_data.username, form_data.password)
+    from cognitrix import audit
+
     if not user:
+        known = await User.find_one({'email': form_data.username}) if form_data.username else None
+        audit.record('sign_in', 'Failed sign-in', user_id=str(known.id) if known else '',
+                     actor=str(form_data.username or '')[:200], outcome='failed')
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    audit.record('sign_in', 'Signed in', user_id=str(user.id), actor=str(user.email), outcome='ok')
     access_token_expires = timedelta(minutes=float(JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
@@ -274,6 +280,9 @@ async def change_password(body: PasswordChange, ctx: Annotated[AuthContext, Depe
         'password': Utils.hash_password(body.new_password),
         'tokens_valid_after': int(time.time()),
     })
+    from cognitrix import audit
+
+    audit.record('settings', 'Changed their password', user_id=str(user.id), actor=str(user.email), outcome='ok')
     access_token = create_access_token(
         data={"sub": user.email},
         expires_delta=timedelta(minutes=float(JWT_ACCESS_TOKEN_EXPIRE_MINUTES)),

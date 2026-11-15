@@ -7,6 +7,7 @@ from collections.abc import Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, TypeAlias
 
+from cognitrix import audit
 from cognitrix.agents.templates import ASSISTANT_SYSTEM_PROMPT
 from cognitrix.common.encoding import status_print
 from cognitrix.computer import apps as computer_apps
@@ -555,6 +556,9 @@ class AgentManager:
         results_by_index: dict[int, dict[str, Any]] = {}
         jobs: list[tuple[int, Tool, dict[str, Any], int, bool, bool]] = []
         worker_tasks: list[asyncio.Task] = []
+        # Per call: (tool name, arguments as the model gave them, risk, approved
+        # by a person) for the audit log.
+        audit_info: dict[int, tuple[str, dict[str, Any], str, bool]] = {}
 
         def completed_result() -> dict[str, Any]:
             return {
@@ -662,6 +666,8 @@ class AgentManager:
                 decision = read_only_block(
                     decision, assigned_tool, args, runtime_tool=tool, mcp_reads=mcp_reads)
                 if decision.action == 'block':
+                    audit.record_tool(self.agent, assigned_tool.name, args, 'blocked',
+                                      risk=risk.risk_level.value, note=str(decision.reason or ''))
                     if decision.handoff:
                         await self._hand_off(assigned_tool, args, interface)
                     results_by_index[i] = _tool_result_entry(
@@ -681,6 +687,9 @@ class AgentManager:
                 if app:
                     app_level = await computer_apps.level(_approval_owner(interface), app)
                     if app_level == 'deny':
+                        audit.record_tool(self.agent, assigned_tool.name, args, 'blocked',
+                                          risk=risk.risk_level.value,
+                                          note=f'{computer_apps.app_label(app)} is set to never')
                         results_by_index[i] = _tool_result_entry(
                             tc_id,
                             ToolOutcome.failure(
@@ -740,6 +749,11 @@ class AgentManager:
                             if getattr(approval, 'reviewed', False) and approval.error
                             else f"user denied approval for {tool.name}"
                         )
+                        audit.record_tool(
+                            self.agent, assigned_tool.name, args, 'denied', risk=risk.risk_level.value,
+                            note=('refused by the action reviewer' if getattr(approval, 'reviewed', False)
+                                  else 'needed approval; nobody was asked' if denial_code == 'approval_required'
+                                  else 'refused by a person'))
                         results_by_index[i] = _tool_result_entry(
                             tc_id,
                             ToolOutcome.failure(
@@ -762,6 +776,8 @@ class AgentManager:
                     )
 
                 status_print(f"\nRunning tool '{tool.name.title()}' with parameters: {args}")
+
+                audit_info[i] = (assigned_tool.name, dict(args), risk.risk_level.value, person_approved)
 
                 # Runtime-filled parameters. Delegation inherits the caller's
                 # interface so a sub-agent's risky tools are gated by the same
@@ -858,6 +874,11 @@ class AgentManager:
                     if server_held:
                         server_lock.release()
                 results_by_index[i] = _tool_result_entry(tc_id, await _hide_saved_secrets(outcome))
+                if i in audit_info:
+                    name_, args_, risk_, approved_ = audit_info[i]
+                    audit.record_tool(
+                        self.agent, name_, args_, 'failed' if outcome.error is not None else 'ok', risk=risk_,
+                        note='approved by a person' if approved_ else '')
 
             async def worker() -> None:
                 nonlocal next_job

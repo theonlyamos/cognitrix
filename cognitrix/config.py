@@ -789,6 +789,8 @@ async def _ensure_schema():
     from cognitrix.models.push_subscription import PushSubscription
     from cognitrix.models.computer_app import ComputerAppPermission
     from cognitrix.models.usage import UsageDay
+    from cognitrix.usage.caps import SpendingCap
+    from cognitrix.audit import AuditEvent
     from cognitrix.sessions.index import ChatIndex
     from cognitrix.models.voice_settings import VoiceSettings
     from cognitrix.themes import ThemeSettings
@@ -857,6 +859,8 @@ async def _ensure_schema():
         MemorySettings,
         ThemeSettings,
         UsageDay,
+        SpendingCap,
+        AuditEvent,
         ChatIndex,
         KnowledgeCollection,
         KnowledgeDocument,

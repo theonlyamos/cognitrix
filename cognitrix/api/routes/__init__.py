@@ -37,6 +37,7 @@ from ...api.routes.teams import teams_api, teams_run_api
 from ...api.routes.tools import tools_api
 from ...api.routes.push import push_api
 from ...api.routes.usage import usage_api
+from ...api.routes.audit import audit_api
 
 api_router.include_router(public_api)
 api_router.include_router(artifact_frame_api)
@@ -74,6 +75,7 @@ api_router.include_router(memories_api)
 api_router.include_router(themes_api)
 api_router.include_router(swarms_api)
 api_router.include_router(usage_api)
+api_router.include_router(audit_api)
 api_router.include_router(push_api)
 api_router.include_router(account_api)
 api_router.include_router(knowledge_api)
