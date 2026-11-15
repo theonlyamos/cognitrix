@@ -14,9 +14,6 @@ from cognitrix.tools.base import Tool
 
 logger = logging.getLogger('cognitrix.log')
 
-# Filled in by Agent.call_tools, never by the model (see agents/base.py).
-_RUNTIME_PARAMS = frozenset({'parent', 'interface', 'approved'})
-
 
 @dataclass
 class ToolResult:
@@ -137,8 +134,11 @@ class ResilientToolManager:
         # Runtime-filled values (the calling agent, the interface, approval)
         # are not the model's to fix and are not JSON: keep them out of the
         # prompt and put them back on whatever comes back.
-        runtime = {k: v for k, v in original_params.items() if k in _RUNTIME_PARAMS}
-        model_params = {k: v for k, v in original_params.items() if k not in _RUNTIME_PARAMS}
+        # Only the tool's own internal params count: an MCP tool may have a
+        # public argument that happens to be called `parent`.
+        internal = set(getattr(tool, 'internal_params', None) or [])
+        runtime = {k: v for k, v in original_params.items() if k in internal}
+        model_params = {k: v for k, v in original_params.items() if k not in internal}
 
         prompt = f"""The following tool call failed. Fix the parameters.
 
@@ -165,7 +165,7 @@ Provide corrected parameters as valid JSON only. If unrecoverable, return {{"_un
                 if not isinstance(recovered, dict) or recovered.get('_unrecoverable'):
                     return None
 
-                return {**{k: v for k, v in recovered.items() if k not in _RUNTIME_PARAMS}, **runtime}
+                return {**{k: v for k, v in recovered.items() if k not in internal}, **runtime}
 
         except ExecutionControlError:
             raise

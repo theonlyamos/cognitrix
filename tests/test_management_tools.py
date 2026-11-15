@@ -421,9 +421,17 @@ async def test_parameter_recovery_leaves_runtime_values_out_of_the_prompt():
 
     class FakeTool:
         name, description = 'Create Task', 'd'
+        internal_params = ['parent']
+
+    class McpTool:
+        # A public argument that happens to share the name stays the model's.
+        name, description = 'Make Page', 'd'
+        internal_params: list[str] = []
 
     manager = ResilientToolManager.__new__(ResilientToolManager)
     manager.llm = llm
     out = await manager._attempt_param_recovery(FakeTool(), {'title': 'T', 'parent': me}, 'boom')
     assert out == {'title': 'Fixed', 'parent': me}
     assert 'parent' not in prompts[0]
+    public = await manager._attempt_param_recovery(McpTool(), {'title': 'T', 'parent': 'p1'}, 'boom')
+    assert public == {'title': 'Fixed', 'parent': 'nope'}
