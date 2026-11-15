@@ -9,11 +9,14 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from cognitrix.common.folders import (
     FolderError,
     allowed_roots,
+    browse_folder,
+    create_folder,
     folders_to_dicts,
     normalize_folders,
     validate_folder,
@@ -50,6 +53,30 @@ async def check_folder(body: FolderCheck):
     """Validate one folder before adding it; returns it in its stored shape."""
     try:
         return validate_folder(body.path, body.access).to_dict()
+    except FolderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+class NewFolder(BaseModel):
+    parent: str
+    name: str
+
+
+@folders_api.get('/browse')
+async def browse(path: str = '', hidden: bool = False):
+    """Subfolders of ``path`` on the machine running Cognitrix (the web folder
+    browser). No path lists the starting folders. Only allowed folders show."""
+    try:
+        return await run_in_threadpool(browse_folder, path or None, hidden=hidden)
+    except FolderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@folders_api.post('/create')
+async def make_folder(body: NewFolder):
+    """Create an empty folder inside an allowed folder, for the browser's New folder."""
+    try:
+        return await run_in_threadpool(create_folder, body.parent, body.name)
     except FolderError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
