@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { Group, StatusPill, buttonClass } from '@/components/settings/ui';
+import { tr, dateLocale } from '@/lib/i18n';
 
 export interface AuditEvent {
   id: string;
@@ -26,19 +27,19 @@ interface AuditPage {
 }
 
 const KINDS: { value: string; label: string }[] = [
-  { value: '', label: 'Everything' },
-  { value: 'tool', label: 'Agent actions' },
-  { value: 'people', label: 'People changes' },
+  { value: '', get label() { return tr('ui.settings.auditLog.everything'); } },
+  { value: 'tool', get label() { return tr('ui.settings.auditLog.agentActions'); } },
+  { value: 'people', get label() { return tr('ui.settings.auditLog.peopleChanges'); } },
   { value: 'sign_in', label: 'Sign-ins' },
-  { value: 'settings', label: 'Account changes' },
+  { value: 'settings', get label() { return tr('ui.settings.auditLog.accountChanges'); } },
 ];
 
 const OUTCOMES: { value: string; label: string }[] = [
-  { value: '', label: 'Any result' },
-  { value: 'ok', label: 'Done' },
-  { value: 'failed', label: 'Failed' },
-  { value: 'denied', label: 'Refused' },
-  { value: 'blocked', label: 'Blocked' },
+  { value: '', get label() { return tr('ui.settings.auditLog.anyResult'); } },
+  { value: 'ok', get label() { return tr('ui.settings.auditLog.done'); } },
+  { value: 'failed', get label() { return tr('ui.settings.auditLog.failed'); } },
+  { value: 'denied', get label() { return tr('ui.settings.auditLog.refused'); } },
+  { value: 'blocked', get label() { return tr('ui.settings.auditLog.blocked'); } },
 ];
 
 const selectClass =
@@ -58,11 +59,11 @@ function dayLabel(at: number) {
   yesterday.setDate(today.getDate() - 1);
   if (date.toDateString() === today.toDateString()) return 'Today';
   if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
-  return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  return date.toLocaleDateString(dateLocale(), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function timeLabel(at: number) {
-  return new Date(at * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return new Date(at * 1000).toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit' });
 }
 
 /** What happened, in words. */
@@ -71,10 +72,10 @@ function sentence(event: AuditEvent) {
   if (event.kind === 'tool') {
     return (
       <>
-        <span className="font-medium">{event.agent_name || 'An agent'}</span>
-        <span className="text-fg-dim"> used </span>
+        <span className="font-medium">{event.agent_name || tr('ui.settings.auditLog.anAgent')}</span>
+        <span className="text-fg-dim">{' '}{tr('ui.settings.auditLog.used')}{' '}</span>
         <span className="font-medium">{event.action}</span>
-        <span className="text-fg-dim"> for {who}</span>
+        <span className="text-fg-dim">{' '}{tr('ui.settings.auditLog.forWho', { who })}</span>
       </>
     );
   }
@@ -110,7 +111,7 @@ export function AuditLog() {
       setPage(data);
       setEvents((list) => (before ? [...list, ...data.events] : data.events));
     } catch (err) {
-      setError(errorMessage(err, 'Could not load the audit log.'));
+      setError(errorMessage(err, tr('ui.settings.auditLog.couldNotLoadTheAudit')));
     } finally {
       setLoading(false);
     }
@@ -136,38 +137,38 @@ export function AuditLog() {
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Filter the audit log">
+      <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label={tr('ui.settings.auditLog.filterTheAuditLog')}>
         <input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search actions, agents, details"
-          aria-label="Search the audit log"
+          placeholder={tr('ui.settings.auditLog.searchActionsAgentsDetails')}
+          aria-label={tr('ui.settings.auditLog.searchTheAuditLog')}
           className={`${selectClass} flex-1 basis-[200px] px-3`}
         />
         {page?.admin && (
-          <select aria-label="Person" value={person} onChange={(e) => setPerson(e.target.value)} className={selectClass}>
-            <option value="">Everyone</option>
+          <select aria-label={tr('ui.settings.auditLog.person')} value={person} onChange={(e) => setPerson(e.target.value)} className={selectClass}>
+            <option value="">{tr('ui.settings.auditLog.everyone')}</option>
             {(page.people ?? []).map((p) => (
               <option key={p.id} value={p.id}>{p.name || p.email}</option>
             ))}
           </select>
         )}
-        <select aria-label="Kind" value={kind} onChange={(e) => setKind(e.target.value)} className={selectClass}>
+        <select aria-label={tr('ui.settings.auditLog.kind')} value={kind} onChange={(e) => setKind(e.target.value)} className={selectClass}>
           {KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
         </select>
-        <select aria-label="Result" value={outcome} onChange={(e) => setOutcome(e.target.value)} className={selectClass}>
+        <select aria-label={tr('ui.settings.auditLog.result')} value={outcome} onChange={(e) => setOutcome(e.target.value)} className={selectClass}>
           {OUTCOMES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </div>
 
       {error && <p role="alert" className="mb-3 text-[12.5px] text-danger-ink">{error}</p>}
-      {!page && !error && <p className="text-[13px] text-fg-dim">Loading…</p>}
+      {!page && !error && <p className="text-[13px] text-fg-dim">{tr('ui.settings.auditLog.loading')}</p>}
       {page && events.length === 0 && !loading && (
         <p className="rounded-[12px] border border-line bg-panel p-3.5 text-[13px] text-fg-dim">
           {page.next_before
-            ? 'Nothing matches in this stretch. Show older to look further back.'
-            : 'Nothing matches yet. Agent actions, approvals, sign-ins and changes to people show up here as they happen.'}
+            ? tr('ui.settings.auditLog.nothingMatchesInThisStretch')
+            : tr('ui.settings.auditLog.nothingMatchesYetAgentActions')}
         </p>
       )}
 
@@ -187,7 +188,7 @@ export function AuditLog() {
                       <span className="min-w-0">{sentence(event)}</span>
                       {pill && event.outcome !== 'ok' && <StatusPill tone={pill.tone}>{pill.label}</StatusPill>}
                       {event.risk && event.risk !== 'low' && event.risk !== 'safe' && (
-                        <span className="font-mono text-[10.5px] text-fg-dim">{event.risk} risk</span>
+                        <span className="font-mono text-[10.5px] text-fg-dim">{tr('ui.settings.auditLog.riskRisk', { risk: event.risk })}</span>
                       )}
                     </div>
                     {event.detail && (
@@ -203,15 +204,14 @@ export function AuditLog() {
 
       {page?.next_before && (
         <button type="button" className={buttonClass} disabled={loading} onClick={() => void load(page.next_before ?? '')}>
-          {loading ? 'Loading…' : 'Show older'}
+          {loading ? tr('ui.settings.auditLog.loading') : tr('ui.settings.auditLog.showOlder')}
         </button>
       )}
       {page && (
         <p className="mt-4 max-w-[62ch] text-[12px] leading-relaxed text-fg-dim">
-          {page.admin
-            ? `You see everyone on this server. Entries are kept for ${page.retention_days} days.`
-            : `These are your own entries. Admins of this server can see them too. Entries are kept for ${page.retention_days} days.`}
-          {' '}Fields that hold keys or passwords are blanked out.
+          {tr('ui.settings.auditLog.valueFieldsThatHoldKeys', { value: page.admin
+            ? tr('ui.settings.auditLog.youSeeEveryoneOnThis', { retention_days: page.retention_days })
+            : tr('ui.settings.auditLog.theseAreYourOwnEntries', { retention_days: page.retention_days }) })}
         </p>
       )}
     </div>

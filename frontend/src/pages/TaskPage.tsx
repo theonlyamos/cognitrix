@@ -7,6 +7,7 @@ import { Textarea } from '@/lib/components/ui/textarea';
 import { Select } from '@/lib/components/ui/select';
 import { LoadingState } from '@/components/list-ui';
 import { Field, PageForm, CheckList } from '@/components/form';
+import { tr } from '@/lib/i18n';
 
 interface Step { step: string; done: boolean }
 interface Agent { id: string; name: string; llm?: { provider?: string; model?: string } }
@@ -163,11 +164,11 @@ export default function TaskPage() {
   };
 
   const save = async () => {
-    if (!title.trim()) return setError('Give the task a title.');
-    if (!description.trim()) return setError('Describe the task.');
-    if (scheduleMode === 'once' && !scheduleAt) return setError('Pick a time for the one-shot schedule.');
-    if (scheduleMode === 'interval' && (!intervalN || Number(intervalN) < 1)) return setError('Interval must be at least 1.');
-    if (scheduleMode === 'cron' && !cronExpr.trim()) return setError('Enter a cron expression.');
+    if (!title.trim()) return setError(tr('ui.taskPage.giveTheTaskATitle'));
+    if (!description.trim()) return setError(tr('ui.taskPage.describeTheTask'));
+    if (scheduleMode === 'once' && !scheduleAt) return setError(tr('ui.taskPage.pickATimeForThe'));
+    if (scheduleMode === 'interval' && (!intervalN || Number(intervalN) < 1)) return setError(tr('ui.taskPage.intervalMustBeAtLeast'));
+    if (scheduleMode === 'cron' && !cronExpr.trim()) return setError(tr('ui.taskPage.enterACronExpression'));
     setError('');
     setSaving(true);
     try {
@@ -195,45 +196,45 @@ export default function TaskPage() {
       const id = taskId || res.data?.id;
       navigate(id ? `/tasks/${id}` : '/tasks');
     } catch (e) {
-      setError(errorMessage(e, 'Could not save the task.'));
+      setError(errorMessage(e, tr('ui.taskPage.couldNotSaveTheTask')));
     } finally {
       setSaving(false);
     }
   };
 
   const remove = async () => {
-    if (!taskId || !confirm('Delete this task?')) return;
+    if (!taskId || !confirm(tr('ui.taskPage.deleteThisTask'))) return;
     try {
       await api.delete(`/tasks/${taskId}`);
       navigate('/tasks');
     } catch (e) {
-      setError(errorMessage(e, 'Could not delete the task.'));
+      setError(errorMessage(e, tr('ui.taskPage.couldNotDeleteTheTask')));
     }
   };
 
   if (editing && loadingTask) {
-    return <div className="flex-1 flex flex-col h-full min-w-0 bg-bg"><LoadingState label="loading task…" /></div>;
+    return <div className="flex-1 flex flex-col h-full min-w-0 bg-bg"><LoadingState label={tr('ui.taskPage.loadingTask')} /></div>;
   }
 
   return (
     <PageForm
       eyebrow={editing ? 'EDIT TASK' : 'NEW TASK'}
-      title={editing ? title || 'Edit task' : 'New task'}
+      title={editing ? title || tr('ui.taskPage.editTask') : tr('ui.taskPage.newTask')}
       backTo={backTo}
       error={error || agentLoadError || teamLoadError || ''}
       onSave={save}
       saving={saving}
       onDelete={editing ? remove : undefined}
     >
-      <Field label="TITLE" required>
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Research competitor pricing" autoFocus />
+      <Field label={tr('ui.taskPage.title')} required>
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={tr('ui.taskPage.researchCompetitorPricing')} autoFocus />
       </Field>
 
-      <Field label="DESCRIPTION" required>
-        <Textarea rows={4} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What should be done, and what does 'done' look like?" />
+      <Field label={tr('ui.taskPage.description')} required>
+        <Textarea rows={4} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={tr('ui.taskPage.whatShouldBeDoneAnd')} />
       </Field>
 
-      <Field label={`STEPS · ${steps.length}`} hint="optional — plan the task explicitly" composite>
+      <Field label={tr('ui.taskPage.stepsLength', { length: steps.length })} hint={tr('ui.taskPage.optionalPlanTheTaskExplicitly')} composite>
         <div role="group" className="space-y-2">
           {steps.map((s, i) => (
             <div key={i} className="flex items-center gap-2">
@@ -242,64 +243,64 @@ export default function TaskPage() {
               ) : (
                 <span className="w-6 flex-none text-right font-mono text-[11px] text-fg-dim tnum">{i + 1}</span>
               )}
-              <Input aria-label={`Step ${i + 1}`} value={s.step} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, step: e.target.value } : x)))} placeholder={`step ${i + 1}`} />
-              <button type="button" onClick={() => setSteps((arr) => arr.filter((_, j) => j !== i))} className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8" aria-label={`Remove step ${i + 1}`}>✕</button>
+              <Input aria-label={tr('ui.taskPage.stepValue', { value: i + 1 })} value={s.step} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, step: e.target.value } : x)))} placeholder={tr('ui.taskPage.stepValue_543f', { value: i + 1 })} />
+              <button type="button" onClick={() => setSteps((arr) => arr.filter((_, j) => j !== i))} className="grid h-11 w-11 flex-none place-items-center rounded border border-line text-fg-dim hover:border-danger hover:text-danger-ink md:h-8 md:w-8" aria-label={tr('ui.taskPage.removeStepValue', { value: i + 1 })}>✕</button>
             </div>
           ))}
-          <button type="button" onClick={() => setSteps((arr) => [...arr, { step: '', done: false }])} className="min-h-11 rounded border border-line px-3 py-1.5 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">+ add step</button>
+          <button type="button" onClick={() => setSteps((arr) => [...arr, { step: '', done: false }])} className="min-h-11 rounded border border-line px-3 py-1.5 font-mono text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.taskPage.addStep')}</button>
         </div>
       </Field>
 
-      <Field label="TEAM" hint="optional — assign the task to a team">
+      <Field label={tr('ui.taskPage.team')} hint={tr('ui.taskPage.optionalAssignTheTaskTo')}>
         <Select value={teamId} onChange={(e) => changeTeam(e.target.value)} disabled={(teamList || []).length === 0}>
-          <option value="">— no team —</option>
+          <option value="">{tr('ui.taskPage.noTeam')}</option>
           {(teamList || []).filter((t) => t.id).map((t) => (
             <option key={t.id} value={t.id}>{t.name}</option>
           ))}
         </Select>
       </Field>
 
-      <Field label={`ASSIGNED AGENTS · ${assigned.size}`} hint={teamId ? 'from the selected team — editable' : undefined} composite>
+      <Field label={tr('ui.taskPage.assignedAgentsSize', { size: assigned.size })} hint={teamId ? tr('ui.taskPage.fromTheSelectedTeamEditable') : undefined} composite>
         <CheckList
           options={(agentList || []).filter((a) => a.id).map((a) => ({ value: a.id, label: a.name, sub: `${a.llm?.provider || '—'} · ${a.llm?.model || '—'}` }))}
           selected={assigned}
           onToggle={toggleAgent}
-          empty="no agents — create one first"
+          empty={tr('ui.taskPage.noAgentsCreateOneFirst')}
         />
       </Field>
 
-      <Field label="SCHEDULE" hint="run this task automatically" composite>
+      <Field label={tr('ui.taskPage.schedule')} hint={tr('ui.taskPage.runThisTaskAutomatically')} composite>
         <div role="group" className="space-y-3">
-          <Select aria-label="Schedule type" value={scheduleMode} onChange={(e) => changeScheduleMode(e.target.value as ScheduleMode)}>
-            <option value="none">— not scheduled —</option>
-            <option value="once">once, at a time</option>
-            <option value="interval">repeat every…</option>
-            <option value="cron">cron expression</option>
+          <Select aria-label={tr('ui.taskPage.scheduleType')} value={scheduleMode} onChange={(e) => changeScheduleMode(e.target.value as ScheduleMode)}>
+            <option value="none">{tr('ui.taskPage.notScheduled')}</option>
+            <option value="once">{tr('ui.taskPage.onceAtATime')}</option>
+            <option value="interval">{tr('ui.taskPage.repeatEvery')}</option>
+            <option value="cron">{tr('ui.taskPage.cronExpression_2348')}</option>
           </Select>
           {scheduleMode === 'once' && (
-            <Input aria-label="Schedule time" type="datetime-local" min={localNowMin()} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
+            <Input aria-label={tr('ui.taskPage.scheduleTime')} type="datetime-local" min={localNowMin()} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
           )}
           {scheduleMode === 'interval' && (
             <div className="flex gap-2">
-              <Input aria-label="Interval value" type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(e.target.value)} className="w-28" />
-              <Select aria-label="Interval unit" value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
-                <option value="seconds">seconds</option>
-                <option value="minutes">minutes</option>
-                <option value="hours">hours</option>
-                <option value="days">days</option>
+              <Input aria-label={tr('ui.taskPage.intervalValue')} type="number" min={1} value={intervalN} onChange={(e) => setIntervalN(e.target.value)} className="w-28" />
+              <Select aria-label={tr('ui.taskPage.intervalUnit')} value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
+                <option value="seconds">{tr('ui.taskPage.seconds')}</option>
+                <option value="minutes">{tr('ui.taskPage.minutes')}</option>
+                <option value="hours">{tr('ui.taskPage.hours')}</option>
+                <option value="days">{tr('ui.taskPage.days')}</option>
               </Select>
             </div>
           )}
           {scheduleMode === 'cron' && (
             <div>
-              <Input aria-label="Cron expression" value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 9 * * 1-5" className="font-mono" />
+              <Input aria-label={tr('ui.taskPage.cronExpression')} value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} placeholder="0 9 * * 1-5" className="font-mono" />
               <p className="mt-1 font-mono text-[11px] text-fg-dim">5-field cron, evaluated in the server's local time</p>
             </div>
           )}
           {scheduleMode !== 'none' && (
             <label className="flex min-h-11 cursor-pointer items-center gap-2.5 md:min-h-0">
               <input type="checkbox" checked={scheduleEnabled} onChange={(e) => setScheduleEnabled(e.target.checked)} className="accent-[var(--accent)]" />
-              <span className="text-sm">Schedule enabled</span>
+              <span className="text-sm">{tr('ui.taskPage.scheduleEnabled')}</span>
             </label>
           )}
         </div>
@@ -308,22 +309,22 @@ export default function TaskPage() {
       <label className="flex min-h-11 cursor-pointer items-start gap-2.5 md:min-h-0">
         <input type="checkbox" checked={swarm} onChange={(e) => setSwarm(e.target.checked)} className="mt-1 accent-[var(--accent)]" />
         <span className="text-sm">
-          Run as a swarm
-          <span className="block text-[12px] text-fg-dim">Each step may split its work across workers that run at the same time. Good for big jobs with many similar parts; uses more tokens.</span>
+          {tr('ui.taskPage.runAsASwarm')}
+          <span className="block text-[12px] text-fg-dim">{tr('ui.taskPage.eachStepMaySplitIts')}</span>
         </span>
       </label>
 
       <label className="flex min-h-11 cursor-pointer items-start gap-2.5 md:min-h-0">
         <input type="checkbox" checked={readMemory} onChange={(e) => setReadMemory(e.target.checked)} className="mt-1 accent-[var(--accent)]" />
         <span className="text-sm">
-          Read my saved memories
-          <span className="block text-[12px] text-fg-dim">Runs see what your agents remember about you (Settings › Memory) but can’t change it.</span>
+          {tr('ui.taskPage.readMySavedMemories')}
+          <span className="block text-[12px] text-fg-dim">{tr('ui.taskPage.runsSeeWhatYourAgents')}</span>
         </span>
       </label>
 
       <label className="flex min-h-11 cursor-pointer items-center gap-2.5 md:min-h-0">
         <input type="checkbox" checked={autostart} onChange={(e) => setAutostart(e.target.checked)} className="accent-[var(--accent)]" />
-        <span className="text-sm">Auto-start when created</span>
+        <span className="text-sm">{tr('ui.taskPage.autoStartWhenCreated')}</span>
       </label>
     </PageForm>
   );

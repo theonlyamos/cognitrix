@@ -6,7 +6,7 @@ import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import OAuthButtons from '@/components/OAuthButtons';
-import { useT } from '@/lib/i18n';
+import { useT, tr } from '@/lib/i18n';
 import { takeAfterSignIn } from '@/lib/afterSignIn';
 
 const GRID = {
@@ -67,7 +67,7 @@ export default function Login() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
           </span>
           <span className="font-mono text-[13px] font-bold tracking-[0.14em]">
-            COGNITRIX<span className="text-fg-dim font-medium"> /v{__APP_VERSION__}</span>
+            {tr('ui.login.cognitrix')}<span className="text-fg-dim font-medium"> /v{__APP_VERSION__}</span>
           </span>
         </div>
 
@@ -81,15 +81,15 @@ export default function Login() {
         </div>
 
         <div className="relative font-mono text-[11px] text-fg-dim space-y-1.5">
-          <div className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-accent" /> providers · openrouter · openai · google · groq · ollama</div>
-          <div className="text-fg-dim/70">status &nbsp;ready · api/v1 · ws + sse</div>
+          <div className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-accent" />{' '}{tr('ui.login.providersOpenrouterOpenaiGoogleGroq')}</div>
+          <div className="text-fg-dim/70">{tr('ui.login.statusReadyApiV1Ws')}</div>
         </div>
       </aside>
 
       {/* Form column */}
       <main className="flex flex-1 flex-col">
         <header className="flex min-h-14 flex-nowrap items-center justify-between p-6">
-          <span className="font-mono text-[11px] tracking-[0.16em] text-fg-dim lg:hidden">COGNITRIX</span>
+          <span className="font-mono text-[11px] tracking-[0.16em] text-fg-dim lg:hidden">{tr('ui.login.cognitrix')}</span>
           <span className="lg:hidden" />
           <ThemeToggle className="ml-auto" />
         </header>
@@ -135,8 +135,8 @@ export default function Login() {
                     {t('login.forgot.sent')}
                   </p>
                 ) : (
-                  <form onSubmit={sendReset} className="mt-2 space-y-2" aria-label="Reset password by email">
-                    <Input type="email" required aria-label="Your account email" placeholder="you@example.com"
+                  <form onSubmit={sendReset} className="mt-2 space-y-2" aria-label={tr('ui.login.resetPasswordByEmail')}>
+                    <Input type="email" required aria-label={tr('ui.login.yourAccountEmail')} placeholder="you@example.com"
                       value={forgotEmail || email} onChange={(e) => setForgotEmail(e.target.value)} autoComplete="email" />
                     <Button type="submit" variant="outline" disabled={forgotState === 'sending'} className="w-full">
                       {forgotState === 'sending' ? t('login.forgot.sending') : t('login.forgot.send')}

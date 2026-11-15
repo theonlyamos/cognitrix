@@ -12,7 +12,7 @@ import NotificationPopover from '@/components/NotificationPopover';
 import SidebarChats from '@/components/SidebarChats';
 import { BellIcon } from '@/components/TitleBar';
 import { newChatHref } from '@/lib/chatNav';
-import { useT, type MessageKey } from '@/lib/i18n';
+import { useT, type MessageKey, tr } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
 type NavItem = { path: string; label: MessageKey; icon: LucideIcon };
@@ -119,7 +119,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
   return (
     <aside
       id="primary-navigation"
-      aria-label="Primary navigation"
+      aria-label={tr('ui.sidebar.primaryNavigation')}
       data-mobile-open={mobileOpen}
       data-collapsed={collapsed}
       className={cn(
@@ -133,11 +133,11 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
 
       {/* Brand and collapse */}
       <div className={cn('relative flex flex-none items-center gap-2.5 px-3.5 pb-2 pt-3.5', slim('md:flex-col md:gap-2 md:px-0'))}>
-        <Link to="/dashboard" onClick={onNavigate} aria-label="Cognitrix home" className="flex min-h-11 min-w-0 flex-1 items-center gap-2.5 md:min-h-0">
+        <Link to="/dashboard" onClick={onNavigate} aria-label={tr('ui.sidebar.cognitrixHome')} className="flex min-h-11 min-w-0 flex-1 items-center gap-2.5 md:min-h-0">
           <span className="grid h-7 w-7 flex-none place-items-center rounded-lg bg-accent text-accent-foreground">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
           </span>
-          <span className={cn('truncate text-[16px] font-semibold tracking-[-0.01em]', slim('md:hidden'))}>Cognitrix</span>
+          <span className={cn('truncate text-[16px] font-semibold tracking-[-0.01em]', slim('md:hidden'))}>{tr('ui.sidebar.cognitrix')}</span>
         </Link>
         <button
           type="button"
@@ -168,7 +168,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
         <button
           type="button"
           onClick={() => { onNavigate?.(); onOpenSearch?.(); }}
-          title={collapsed ? `${t('nav.search')} (Ctrl K)` : undefined}
+          title={collapsed ? tr('ui.sidebar.tCtrlK', { t: t('nav.search') }) : undefined}
           className={cn(
             'flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-[14px] text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:min-h-9',
             slim('md:h-10 md:w-10 md:justify-center md:px-0'),
@@ -181,7 +181,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
       </div>
 
       {/* The main places */}
-      <nav aria-label="Main" className={cn('relative flex flex-none flex-col gap-px px-2.5 pt-2', slim('md:px-3'))}>
+      <nav aria-label={tr('ui.sidebar.main')} className={cn('relative flex flex-none flex-col gap-px px-2.5 pt-2', slim('md:px-3'))}>
         {NAV.map(link)}
         <button
           type="button"
@@ -220,7 +220,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate, onOpenSearch }
           <div className="relative flex-none">
             <button
               type="button"
-              aria-label={notifications.unread ? `${t('nav.notifications')}, ${notifications.unread} new` : t('nav.notifications')}
+              aria-label={notifications.unread ? tr('ui.sidebar.tUnreadNew', { t: t('nav.notifications'), unread: notifications.unread }) : t('nav.notifications')}
               aria-expanded={bellOpen}
               aria-haspopup="dialog"
               onClick={() => setBellOpen((open) => !open)}

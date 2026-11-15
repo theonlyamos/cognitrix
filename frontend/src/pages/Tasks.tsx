@@ -3,6 +3,7 @@ import { useResource } from '@/hooks/useResource';
 import { Button } from '@/lib/components/ui/button';
 import { PageHeader, LoadingState, ErrorState, EmptyState, Chevron } from '@/components/list-ui';
 import { cn } from '@/lib/utils';
+import { tr, dateLocale, trn } from '@/lib/i18n';
 
 interface Task {
   id: string;
@@ -15,7 +16,7 @@ interface Task {
 }
 
 // next_run_at is naive UTC — parse with an explicit Z, never as local time.
-const nextRunLocal = (s: string) => new Date(s.replace(' ', 'T') + 'Z').toLocaleString();
+const nextRunLocal = (s: string) => new Date(s.replace(' ', 'T') + 'Z').toLocaleString(dateLocale());
 
 const STATUS: Record<string, string> = {
   completed: 'text-ok border-ok/40',
@@ -31,25 +32,25 @@ export default function Tasks() {
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden bg-bg text-fg">
-      <PageHeader title="Tasks" subtitle={`owner: you · private · ${tasks.length} task${tasks.length === 1 ? "" : "s"} only you can see and run`}>
+      <PageHeader title={tr('ui.tasks.tasks')} subtitle={trn(tasks.length, 'ui.tasks.countPrivate_one', 'ui.tasks.countPrivate_other')}>
         <Button asChild size="sm">
-          <Link to="/tasks/new">+ New task</Link>
+          <Link to="/tasks/new">{tr('ui.tasks.newTask')}</Link>
         </Button>
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <LoadingState label="loading tasks…" />
+          <LoadingState label={tr('ui.tasks.loadingTasks')} />
         ) : error ? (
           <ErrorState message={error} onRetry={refetch} />
         ) : tasks.length === 0 ? (
           <EmptyState
             icon={<TaskIcon />}
-            title="No tasks yet"
-            desc="Create a task to delegate work — it runs autonomously and reports back when complete."
+            title={tr('ui.tasks.noTasksYet')}
+            desc={tr('ui.tasks.createATaskToDelegate')}
             action={
               <Button asChild>
-                <Link to="/tasks/new">Create your first task</Link>
+                <Link to="/tasks/new">{tr('ui.tasks.createYourFirstTask')}</Link>
               </Button>
             }
           />
@@ -77,12 +78,12 @@ export default function Tasks() {
                   </div>
                   <div className="flex items-center gap-4">
                     {t.schedule_enabled && t.next_run_at && (
-                      <span className="hidden font-mono text-[10.5px] text-fg-dim sm:inline" title="next scheduled run">
+                      <span className="hidden font-mono text-[10.5px] text-fg-dim sm:inline" title={tr('ui.tasks.nextScheduledRun')}>
                         ⏱ {nextRunLocal(t.next_run_at)}
                       </span>
                     )}
                     <span className={cn('rounded border px-2 py-0.5 font-mono text-[10.5px]', STATUS[t.status || 'pending'] || STATUS.pending)}>
-                      {t.status || 'pending'}
+                      {t.status || tr('ui.tasks.pending')}
                     </span>
                     <Chevron />
                   </div>

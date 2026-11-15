@@ -8,6 +8,7 @@ import { Field } from '@/components/form';
 import ModelPicker from '@/components/ModelPicker';
 import { AGENTS_CHANGED_EVENT, MODELS, PROVIDER_LABELS } from '@/lib/providers';
 import { SignInWaiting, useChatGPTSignIn } from '@/components/settings/ChatGPTPlan';
+import { tr } from '@/lib/i18n';
 
 interface ProviderOption {
   id: string;
@@ -109,10 +110,10 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
   };
 
   const create = async () => {
-    if (!name.trim()) return setError('Give your assistant a name.');
-    if (!model.trim()) return setError('Choose a model.');
-    if (needsPlanSignIn) return setError('Continue with ChatGPT first, or pick another provider.');
-    if (askForKey && !apiKey.trim()) return setError(`Paste your ${PROVIDER_LABELS[provider] || provider} API key, or pick a provider with a key.`);
+    if (!name.trim()) return setError(tr('ui.assistantSetup.giveYourAssistantAName'));
+    if (!model.trim()) return setError(tr('ui.assistantSetup.chooseAModel'));
+    if (needsPlanSignIn) return setError(tr('ui.assistantSetup.continueWithChatgptFirstOr'));
+    if (askForKey && !apiKey.trim()) return setError(tr('ui.assistantSetup.pasteYourItemApiKey', { item: PROVIDER_LABELS[provider] || provider }));
     setError('');
     setBusy('create');
     try {
@@ -125,7 +126,7 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
       });
       finish(res.data?.agent?.id);
     } catch (e) {
-      setError(errorMessage(e, 'Could not create the assistant.'));
+      setError(errorMessage(e, tr('ui.assistantSetup.couldNotCreateTheAssistant')));
     } finally {
       setBusy(null);
     }
@@ -138,7 +139,7 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
       const res = await api.post('/onboarding/skip');
       finish(res.data?.agent?.id);
     } catch (e) {
-      setError(errorMessage(e, 'Could not skip setup.'));
+      setError(errorMessage(e, tr('ui.assistantSetup.couldNotSkipSetup')));
     } finally {
       setBusy(null);
     }
@@ -158,27 +159,26 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
         className="my-8 w-[520px] max-w-full overflow-hidden rounded-2xl border border-line bg-panel shadow-panel"
       >
         <div className="space-y-2 border-b border-line px-6 pb-5 pt-6">
-          <div className="font-mono text-[10.5px] tracking-[0.14em] text-accent-ink">WELCOME TO COGNITRIX</div>
-          <h2 id={titleId} className="text-[22px] font-semibold leading-tight">Set up your assistant</h2>
+          <div className="font-mono text-[10.5px] tracking-[0.14em] text-accent-ink">{tr('ui.assistantSetup.welcomeToCognitrix')}</div>
+          <h2 id={titleId} className="text-[22px] font-semibold leading-tight">{tr('ui.assistantSetup.setUpYourAssistant')}</h2>
           <p id={descId} className="text-[13.5px] leading-relaxed text-fg-dim">
-            Cognitrix comes with a personal assistant that can chat, use tools and work with your files. Name it and
-            pick the model it runs on. You can change any of this later on the Agents page.
+            {tr('ui.assistantSetup.cognitrixComesWithAPersonal')}
           </p>
         </div>
 
         <div className="space-y-4 px-6 py-5">
-          <Field label="NAME" required>
+          <Field label={tr('ui.assistantSetup.name')} required>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
               maxLength={60}
-              placeholder="Assistant"
+              placeholder={tr('ui.assistantSetup.assistant')}
               autoFocus
             />
           </Field>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="PROVIDER" hint={keyNote(option)}>
+            <Field label={tr('ui.assistantSetup.provider')} hint={keyNote(option)}>
               <Select value={provider} onChange={(e) => changeProvider(e.target.value)}>
                 {status.providers.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -188,13 +188,13 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
                 ))}
               </Select>
             </Field>
-            <Field label="MODEL" required>
+            <Field label={tr('ui.assistantSetup.model')} required>
               <ModelPicker provider={provider} value={model} onChange={setModel} />
             </Field>
           </div>
 
           {askForKey && (
-            <Field label="API KEY" required hint="kept with this assistant">
+            <Field label={tr('ui.assistantSetup.apiKey')} required hint={tr('ui.assistantSetup.keptWithThisAssistant')}>
               <Input
                 type="password"
                 autoComplete="off"
@@ -206,18 +206,16 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
           )}
           {askForKey && (
             <p className="-mt-2 text-[12px] leading-relaxed text-fg-dim">
-              No {PROVIDER_LABELS[provider] || provider} key is set up on this engine yet. A key pasted here is saved
-              only with this assistant. To share one key with every agent, add{' '}
-              <span className="font-mono text-[11.5px]">{provider.toUpperCase()}_API_KEY</span> to the engine's .env
-              file (Settings shows where it is).
+              {tr('ui.assistantSetup.noItemKeyIsSet', { item: PROVIDER_LABELS[provider] || provider })}{' '}
+              <span className="font-mono text-[11.5px]">{provider.toUpperCase()}_API_KEY</span>{' '}{tr('ui.assistantSetup.toTheEngineSEnv')}
             </p>
           )}
           {option?.sign_in && (
             <div className="-mt-1 space-y-2 rounded border border-line bg-panel-2 py-3 text-[12.5px] leading-relaxed text-fg-dim">
               <p className="px-3.5">
                 {needsPlanSignIn
-                  ? 'Runs on your ChatGPT Plus or Pro plan instead of an API key. Sign in to connect it.'
-                  : 'Using ChatGPT plan. You can cap what Cognitrix uses in ChatGPT settings.'}
+                  ? tr('ui.assistantSetup.runsOnYourChatgptPlus')
+                  : tr('ui.assistantSetup.usingChatgptPlanYouCan')}
               </p>
               {needsPlanSignIn && !planSignIn.flowId && (
                 <div className="px-3.5">
@@ -226,7 +224,7 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
                     onClick={() => void planSignIn.start(false)}
                     className="inline-flex h-9 items-center rounded-lg bg-[#0d0d0d] px-3.5 text-[12.5px] font-medium text-white hover:bg-[#2a2a2a] dark:bg-white dark:text-[#0d0d0d]"
                   >
-                    Continue with ChatGPT
+                    {tr('ui.assistantSetup.continueWithChatgpt')}
                   </button>
                 </div>
               )}
@@ -236,8 +234,8 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
           )}
           {provider === 'ollama' && (
             <p className="-mt-2 text-[12px] leading-relaxed text-fg-dim">
-              Ollama runs models on this computer. Start it and pull the model first, for example{' '}
-              <span className="font-mono text-[11.5px]">ollama pull {model || 'llama3.2'}</span>.
+              {tr('ui.assistantSetup.ollamaRunsModelsOnThis')}{' '}
+              <span className="font-mono text-[11.5px]">{tr('ui.assistantSetup.ollamaPullModel', { model: model || 'llama3.2' })}</span>.
             </p>
           )}
 
@@ -250,10 +248,9 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
                 className="mt-[3px] accent-[var(--accent)]"
               />
               <span className="min-w-0">
-                <span className="block text-[13.5px] font-medium">Add a starter team</span>
+                <span className="block text-[13.5px] font-medium">{tr('ui.assistantSetup.addAStarterTeam')}</span>
                 <span className="mt-0.5 block text-[12.5px] leading-relaxed text-fg-dim">
-                  {starterAgents.map((a) => a.name).join(', ')}. Your assistant hands bigger jobs to them and checks
-                  what comes back. They run on the same provider, and you can change or delete them later.
+                  {tr('ui.assistantSetup.mapYourAssistantHandsBigger', { map: starterAgents.map((a) => a.name).join(', ') })}
                 </span>
               </span>
             </label>
@@ -268,10 +265,10 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
 
         <div className="flex flex-col-reverse gap-2 border-t border-line bg-panel-2/60 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
           <Button type="button" variant="ghost" onClick={() => void skip()} disabled={busy !== null}>
-            {busy === 'skip' ? 'Skipping…' : status.has_agents ? 'Skip for now' : 'Skip and use defaults'}
+            {busy === 'skip' ? tr('ui.assistantSetup.skipping') : status.has_agents ? tr('ui.assistantSetup.skipForNow') : tr('ui.assistantSetup.skipAndUseDefaults')}
           </Button>
           <Button type="submit" disabled={busy !== null}>
-            {busy === 'create' ? 'Creating…' : 'Create assistant'}
+            {busy === 'create' ? tr('ui.assistantSetup.creating') : tr('ui.assistantSetup.createAssistant')}
           </Button>
         </div>
       </form>

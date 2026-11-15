@@ -8,6 +8,7 @@ import {
 import { NotificationRow } from '@/components/NotificationPopover';
 import { isDesktop } from '@/lib/desktop';
 import { PushCard } from '@/components/PushCard';
+import { tr } from '@/lib/i18n';
 
 const EVENTS = Object.keys(EVENT_LABELS) as NotificationEvent[];
 
@@ -44,15 +45,15 @@ export default function Notifications() {
     <div className="flex h-full min-w-0 flex-1 overflow-y-auto bg-bg text-fg">
       <div className="mx-auto grid w-full max-w-[1180px] gap-6 px-7 py-6 max-md:px-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         <section aria-labelledby="prefs-title">
-          <h1 id="prefs-title" className="text-[22px] font-semibold">Notifications</h1>
-          <p className="mt-1 text-[13.5px] text-fg-dim">Choose where each event reaches you. Anything that pauses work always shows in the app.</p>
+          <h1 id="prefs-title" className="text-[22px] font-semibold">{tr('ui.notifications.notifications')}</h1>
+          <p className="mt-1 text-[13.5px] text-fg-dim">{tr('ui.notifications.chooseWhereEachEventReaches')}</p>
           <div className="mt-5 overflow-hidden rounded-[14px] border border-line bg-panel">
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-line font-mono text-[10.5px] tracking-[0.12em] text-fg-dim">
-                  <th scope="col" className="px-4 py-3 text-left font-normal">EVENT</th>
-                  <th scope="col" className="w-20 px-2 py-3 font-normal">IN APP</th>
-                  <th scope="col" className="w-20 px-2 py-3 font-normal">{desktopApp ? 'DESKTOP' : 'BROWSER'}</th>
+                  <th scope="col" className="px-4 py-3 text-left font-normal">{tr('ui.notifications.event')}</th>
+                  <th scope="col" className="w-20 px-2 py-3 font-normal">{tr('ui.notifications.inApp')}</th>
+                  <th scope="col" className="w-20 px-2 py-3 font-normal">{desktopApp ? tr('ui.notifications.desktop') : tr('ui.notifications.browser')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -66,13 +67,13 @@ export default function Notifications() {
                       </th>
                       <td className="px-2 py-3 text-center">
                         {meta.alwaysInApp ? (
-                          <span className="font-mono text-[11px] text-fg-dim">always</span>
+                          <span className="font-mono text-[11px] text-fg-dim">{tr('ui.notifications.always')}</span>
                         ) : (
-                          <Toggle label={`${meta.title} in app`} checked={prefs[event].inApp} onChange={(v) => setPref(event, 'inApp', v)} />
+                          <Toggle label={tr('ui.notifications.titleInApp', { title: meta.title })} checked={prefs[event].inApp} onChange={(v) => setPref(event, 'inApp', v)} />
                         )}
                       </td>
                       <td className="px-2 py-3 text-center">
-                        <Toggle label={`${meta.title} on ${desktopApp ? 'desktop' : 'browser'}`} checked={prefs[event].desktop} onChange={(v) => setPref(event, 'desktop', v)} />
+                        <Toggle label={tr('ui.notifications.titleOnValue', { title: meta.title, value: desktopApp ? 'desktop' : 'browser' })} checked={prefs[event].desktop} onChange={(v) => setPref(event, 'desktop', v)} />
                       </td>
                     </tr>
                   );
@@ -86,7 +87,7 @@ export default function Notifications() {
               onClick={() => void Notification.requestPermission()}
               className="mt-3 h-9 rounded-lg border border-line px-3 text-[13px] hover:bg-panel-2"
             >
-              Allow browser notifications
+              {tr('ui.notifications.allowBrowserNotifications')}
             </button>
           )}
           {!desktopApp && <PushCard />}
@@ -94,11 +95,11 @@ export default function Notifications() {
 
         <section aria-labelledby="center-title" className="flex min-h-0 flex-col rounded-[14px] border border-line bg-panel">
           <div className="flex items-center justify-between border-b border-line px-4 py-3">
-            <h2 id="center-title" className="text-[15px] font-semibold">Recent</h2>
-            <button type="button" onClick={markAllRead} className="text-[12.5px] text-fg-dim hover:text-fg">Mark all read</button>
+            <h2 id="center-title" className="text-[15px] font-semibold">{tr('ui.notifications.recent')}</h2>
+            <button type="button" onClick={markAllRead} className="text-[12.5px] text-fg-dim hover:text-fg">{tr('ui.notifications.markAllRead')}</button>
           </div>
           {notifications.length === 0 ? (
-            <p className="px-4 py-10 text-center text-[13px] text-fg-dim">No notifications yet.</p>
+            <p className="px-4 py-10 text-center text-[13px] text-fg-dim">{tr('ui.notifications.noNotificationsYet')}</p>
           ) : (
             <ul className="p-1.5">
               {notifications.map((n) => (
@@ -106,7 +107,7 @@ export default function Notifications() {
                   <NotificationRow n={n} onOpen={open} />
                   <button
                     type="button"
-                    aria-label={`Dismiss ${n.title}`}
+                    aria-label={tr('ui.notifications.dismissTitle', { title: n.title })}
                     onClick={() => dismiss(n.id)}
                     className="absolute right-2 top-2 hidden h-6 w-6 place-items-center rounded bg-panel text-fg-dim hover:text-fg group-hover:grid"
                   >

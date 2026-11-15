@@ -10,6 +10,7 @@ import { ago } from '@/lib/artifactPages';
 import { CHAT_DRAFT_KEY } from '@/lib/chatDraft';
 import { APP_FRAME_SANDBOX, appLink, openAppWindow, openUrl, type AppDetail as Detail } from '@/lib/hostedApps';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 type SideTab = 'overview' | 'versions' | 'logs';
 type PhoneTab = 'app' | SideTab;
@@ -27,7 +28,7 @@ function useApp(appId: string) {
       setApp(data);
       setError('');
     } catch (e) {
-      setError(errorMessage(e, 'Could not load this app.'));
+      setError(errorMessage(e, tr('ui.appDetail.couldNotLoadThisApp')));
     }
   }, [appId]);
   useEffect(() => { void load(); }, [load]);
@@ -46,12 +47,12 @@ function Versions({ app, onChanged }: { app: Detail; onChanged: (d: Detail) => v
       const { data } = await api.post<Detail>(`/hosted-apps/${app.id}/promote`, { version: number });
       onChanged(data);
     } catch (e) {
-      setError(errorMessage(e, 'That version did not start.'));
+      setError(errorMessage(e, tr('ui.appDetail.thatVersionDidNotStart')));
     } finally {
       setBusy(0);
     }
   };
-  if (!app.versions?.length) return <p className="text-[13px] text-fg-dim">No versions yet.</p>;
+  if (!app.versions?.length) return <p className="text-[13px] text-fg-dim">{tr('ui.appDetail.noVersionsYet')}</p>;
   return (
     <div className="flex flex-col">
       {error && <p role="alert" className="mb-2 text-[12.5px] text-danger-ink">{error}</p>}
@@ -62,7 +63,7 @@ function Versions({ app, onChanged }: { app: Detail; onChanged: (d: Detail) => v
             <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setOpen(open === v.number ? null : v.number)}
               aria-expanded={open === v.number}>
               <span className={cn('block text-[13px] font-medium', v.status === 'failed' && 'text-danger-ink')}>
-                {v.status === 'failed' ? `Failed to start${v.error ? `: ${v.error}` : ''}` : v.note || (v.status === 'building' ? 'Building…' : 'New version')}
+                {v.status === 'failed' ? `Failed to start${v.error ? `: ${v.error}` : ''}` : v.note || (v.status === 'building' ? tr('ui.appDetail.building') : tr('ui.appDetail.newVersion'))}
               </span>
               <span className="block font-mono text-[10.5px] text-fg-dim">
                 {ago(v.created)}{v.agent?.name ? ` · ${v.agent.name}` : ''}{v.branch ? ` · ${v.branch}` : ''}
@@ -70,10 +71,10 @@ function Versions({ app, onChanged }: { app: Detail; onChanged: (d: Detail) => v
               </span>
             </button>
             {v.status === 'live' ? (
-              <span className="flex-none rounded bg-accent px-1.5 py-0.5 font-mono text-[9.5px] tracking-wider text-accent-foreground">LIVE</span>
+              <span className="flex-none rounded bg-accent px-1.5 py-0.5 font-mono text-[9.5px] tracking-wider text-accent-foreground">{tr('ui.appDetail.live')}</span>
             ) : v.status === 'ok' && canEdit ? (
               <button type="button" className="flex-none rounded-md border border-line px-2 py-1 text-[11.5px] hover:bg-panel-2 disabled:opacity-50"
-                disabled={busy > 0} onClick={() => void promote(v.number)}>{busy === v.number ? 'Starting…' : 'Make live'}</button>
+                disabled={busy > 0} onClick={() => void promote(v.number)}>{busy === v.number ? tr('ui.appDetail.starting') : tr('ui.appDetail.makeLive')}</button>
             ) : null}
           </div>
           {open === v.number && v.log && (
@@ -90,16 +91,16 @@ function Logs({ app }: { app: Detail }) {
   const load = useCallback(async () => {
     try {
       const { data } = await api.get<{ log: string }>(`/hosted-apps/${app.id}/logs`, { params: { lines: 300 } });
-      setLog(data.log || '(nothing printed yet)');
+      setLog(data.log || tr('ui.appDetail.nothingPrintedYet'));
     } catch (e) {
-      setLog(errorMessage(e, 'Could not read the log.'));
+      setLog(errorMessage(e, tr('ui.appDetail.couldNotReadTheLog')));
     }
   }, [app.id]);
   useEffect(() => { void load(); }, [load]);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
-      <div className="flex items-center"><span className="font-mono text-[10px] tracking-[0.16em] text-fg-dim">OUTPUT OF v{app.version || app.latest}</span>
-        <button type="button" onClick={() => void load()} className="ml-auto inline-flex items-center gap-1 text-[12px] text-fg-dim hover:text-fg"><RefreshCw size={12} />Refresh</button></div>
+      <div className="flex items-center"><span className="font-mono text-[10px] tracking-[0.16em] text-fg-dim">{tr('ui.appDetail.outputOfV')}{app.version || app.latest}</span>
+        <button type="button" onClick={() => void load()} className="ml-auto inline-flex items-center gap-1 text-[12px] text-fg-dim hover:text-fg"><RefreshCw size={12} />{tr('ui.appDetail.refresh')}</button></div>
       <pre className="min-h-40 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md bg-[#0b0c0e] p-3 font-mono text-[11px] leading-relaxed text-[#c9cdc9]">{log ?? 'loading…'}</pre>
     </div>
   );
@@ -118,7 +119,7 @@ function Overview({ app, onChanged, onDeleted }: { app: Detail; onChanged: (d: D
       const out = await work();
       if (out) onChanged(out);
     } catch (e) {
-      setError(errorMessage(e, 'That did not work.'));
+      setError(errorMessage(e, tr('ui.appDetail.thatDidNotWork')));
     } finally {
       setBusy('');
     }
@@ -128,42 +129,42 @@ function Overview({ app, onChanged, onDeleted }: { app: Detail; onChanged: (d: D
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <div className="mb-2 font-mono text-[10px] tracking-[0.16em] text-fg-dim">VISITS · LAST 7 DAYS</div>
+        <div className="mb-2 font-mono text-[10px] tracking-[0.16em] text-fg-dim">{tr('ui.appDetail.visitsLast7Days')}</div>
         <div className="flex items-end gap-3"><b className="text-[24px] font-semibold leading-none">{total}</b><Sparkline values={app.visits_7d} width={200} height={34} /></div>
       </div>
       {app.description && <p className="text-[13px] text-fg-dim">{app.description}</p>}
       <dl className="grid grid-cols-[100px_1fr] gap-x-3 gap-y-2 text-[12.5px]">
-        <dt className="font-mono text-[10.5px] text-fg-dim">who can open</dt><dd><AccessLabel access={app.access} /></dd>
-        <dt className="font-mono text-[10.5px] text-fg-dim">built by</dt>
-        <dd>{app.agent?.name || 'an agent'}{owner && app.session_id ? <> · <Link className="underline" to="/home" onClick={() => openChat(app)}>open chat</Link></> : ''}</dd>
-        <dt className="font-mono text-[10.5px] text-fg-dim">runs on</dt><dd>{app.runtime === 'sandbox' ? 'The agents’ sandboxed computer' : 'This machine'}</dd>
-        {canEdit && app.command && <><dt className="font-mono text-[10.5px] text-fg-dim">start</dt><dd className="break-all font-mono text-[11.5px]">{app.command}</dd></>}
-        {canEdit && app.install && <><dt className="font-mono text-[10.5px] text-fg-dim">install</dt><dd className="break-all font-mono text-[11.5px]">{app.install}</dd></>}
-        {owner && app.folder && <><dt className="font-mono text-[10.5px] text-fg-dim">from folder</dt><dd className="break-all font-mono text-[11.5px]">{app.folder}</dd></>}
-        {app.branch && <><dt className="font-mono text-[10.5px] text-fg-dim">branch</dt><dd className="font-mono text-[11.5px]">{app.branch}</dd></>}
-        {app.task && <><dt className="font-mono text-[10.5px] text-fg-dim">kept fresh by</dt><dd><Link className="underline" to={`/tasks/${app.task.id}`}>{app.task.title}</Link>{app.task.schedule ? ` · ${app.task.schedule}` : ''}</dd></>}
-        {app.uses_api && <><dt className="font-mono text-[10.5px] text-fg-dim">Cognitrix API</dt><dd>Has its own key (read, chat, run)</dd></>}
-        <dt className="font-mono text-[10.5px] text-fg-dim">sleeps after</dt>
+        <dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.whoCanOpen')}</dt><dd><AccessLabel access={app.access} /></dd>
+        <dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.builtBy')}</dt>
+        <dd>{app.agent?.name || tr('ui.appDetail.anAgent')}{owner && app.session_id ? <> · <Link className="underline" to="/home" onClick={() => openChat(app)}>{tr('ui.appDetail.openChat')}</Link></> : ''}</dd>
+        <dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.runsOn')}</dt><dd>{app.runtime === 'sandbox' ? tr('ui.appDetail.theAgentsSandboxedComputer') : tr('ui.appDetail.thisMachine')}</dd>
+        {canEdit && app.command && <><dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.start_2b02')}</dt><dd className="break-all font-mono text-[11.5px]">{app.command}</dd></>}
+        {canEdit && app.install && <><dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.install')}</dt><dd className="break-all font-mono text-[11.5px]">{app.install}</dd></>}
+        {owner && app.folder && <><dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.fromFolder')}</dt><dd className="break-all font-mono text-[11.5px]">{app.folder}</dd></>}
+        {app.branch && <><dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.branch')}</dt><dd className="font-mono text-[11.5px]">{app.branch}</dd></>}
+        {app.task && <><dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.keptFreshBy')}</dt><dd><Link className="underline" to={`/tasks/${app.task.id}`}>{app.task.title}</Link>{app.task.schedule ? ` · ${app.task.schedule}` : ''}</dd></>}
+        {app.uses_api && <><dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.cognitrixApi')}</dt><dd>{tr('ui.appDetail.hasItsOwnKeyRead')}</dd></>}
+        <dt className="font-mono text-[10.5px] text-fg-dim">{tr('ui.appDetail.sleepsAfter')}</dt>
         <dd>{owner ? (
-          <select aria-label="Sleep after" value={app.sleep_after} disabled={busy !== ''} onChange={(e) => void patch({ sleep_after: Number(e.target.value) })}
+          <select aria-label={tr('ui.appDetail.sleepAfter')} value={app.sleep_after} disabled={busy !== ''} onChange={(e) => void patch({ sleep_after: Number(e.target.value) })}
             className="h-8 rounded-md border border-line bg-bg px-2 text-[12.5px]">
-            {SLEEP_CHOICES.map(([v, label]) => <option key={v} value={v}>{v ? `${label} with no visitors` : label}</option>)}
-            {!SLEEP_CHOICES.some(([v]) => v === app.sleep_after) && <option value={app.sleep_after}>{app.sleep_after} min</option>}
+            {SLEEP_CHOICES.map(([v, label]) => <option key={v} value={v}>{v ? tr('ui.appDetail.labelWithNoVisitors', { label }) : label}</option>)}
+            {!SLEEP_CHOICES.some(([v]) => v === app.sleep_after) && <option value={app.sleep_after}>{tr('ui.appDetail.sleepAfterMin', { sleep_after: app.sleep_after })}</option>}
           </select>
-        ) : app.sleep_after ? `${app.sleep_after} min with no visitors` : 'never'}</dd>
+        ) : app.sleep_after ? tr('ui.appDetail.sleepAfterMinWithNo', { sleep_after: app.sleep_after }) : tr('ui.appDetail.never')}</dd>
       </dl>
       {app.last_error && <p className="rounded-md border border-danger-ink/30 bg-danger-ink/5 p-2.5 text-[12.5px] text-danger-ink">{app.last_error}</p>}
       {canEdit && (
         <div className="flex flex-wrap gap-2">
           {app.status === 'online'
-            ? <button type="button" className={button} disabled={busy !== ''} onClick={() => void act('stop', async () => (await api.post<Detail>(`/hosted-apps/${app.id}/stop`)).data)}><Pause size={14} />{busy === 'stop' ? 'Stopping…' : 'Sleep now'}</button>
-            : app.version > 0 && <button type="button" className={button} disabled={busy !== ''} onClick={() => void act('start', async () => (await api.post<Detail>(`/hosted-apps/${app.id}/start`)).data)}><Play size={14} />{busy === 'start' ? 'Starting…' : 'Start'}</button>}
-          {app.folder && <button type="button" className={button} disabled={busy !== ''} title="Publish its folder again as a new version"
-            onClick={() => void act('redeploy', async () => (await api.post<Detail>(`/hosted-apps/${app.id}/redeploy`, {})).data)}><RefreshCw size={14} />{busy === 'redeploy' ? 'Publishing…' : 'Redeploy'}</button>}
-          {owner && <button type="button" className={button} disabled={busy !== ''} onClick={() => void patch({ pinned: !app.pinned })}><Pin size={14} />{app.pinned ? 'Unpin' : 'Pin'}</button>}
+            ? <button type="button" className={button} disabled={busy !== ''} onClick={() => void act('stop', async () => (await api.post<Detail>(`/hosted-apps/${app.id}/stop`)).data)}><Pause size={14} />{busy === 'stop' ? tr('ui.appDetail.stopping') : tr('ui.appDetail.sleepNow')}</button>
+            : app.version > 0 && <button type="button" className={button} disabled={busy !== ''} onClick={() => void act('start', async () => (await api.post<Detail>(`/hosted-apps/${app.id}/start`)).data)}><Play size={14} />{busy === 'start' ? tr('ui.appDetail.starting') : tr('ui.appDetail.start')}</button>}
+          {app.folder && <button type="button" className={button} disabled={busy !== ''} title={tr('ui.appDetail.publishItsFolderAgainAs')}
+            onClick={() => void act('redeploy', async () => (await api.post<Detail>(`/hosted-apps/${app.id}/redeploy`, {})).data)}><RefreshCw size={14} />{busy === 'redeploy' ? tr('ui.appDetail.publishing') : tr('ui.appDetail.redeploy')}</button>}
+          {owner && <button type="button" className={button} disabled={busy !== ''} onClick={() => void patch({ pinned: !app.pinned })}><Pin size={14} />{app.pinned ? tr('ui.appDetail.unpin') : tr('ui.appDetail.pin')}</button>}
           {owner && <button type="button" className={cn(button, 'text-danger-ink')} disabled={busy !== ''}
             onClick={() => setConfirmDelete(true)}>
-            <Trash2 size={14} />Delete</button>}
+            <Trash2 size={14} />{tr('ui.appDetail.delete')}</button>}
         </div>
       )}
       {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
@@ -217,7 +218,7 @@ export default function AppDetail() {
   }, [app?.status, load]);
 
   if (error && !app) return <ErrorState message={error} onRetry={() => void load()} />;
-  if (!app) return <LoadingState label="loading app…" />;
+  if (!app) return <LoadingState label={tr('ui.appDetail.loadingApp')} />;
 
   const copy = async () => {
     try {
@@ -236,7 +237,7 @@ export default function AppDetail() {
     <iframe key={frame} src={frame} title={app.title} sandbox={APP_FRAME_SANDBOX} className="h-full w-full border-0 bg-white" />
   ) : (
     <div className="grid h-full place-items-center p-6 text-center text-[13px] text-fg-dim">
-      {app.status === 'building' ? `Building version ${Math.max(1, app.latest)}…` : app.last_error || 'This app has no running version yet.'}
+      {app.status === 'building' ? tr('ui.appDetail.buildingVersionMax', { max: Math.max(1, app.latest) }) : app.last_error || tr('ui.appDetail.thisAppHasNoRunning')}
     </div>
   );
   const sideBody = side === 'overview' ? <Overview app={app} onChanged={setApp} onDeleted={() => navigate('/apps', { replace: true })} />
@@ -245,33 +246,33 @@ export default function AppDetail() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="app-page-header flex flex-none items-center gap-2 border-b border-line bg-panel py-2 pl-16 pr-3 md:gap-3 md:px-4">
-        <Link to="/apps" aria-label="All apps" className="grid h-9 w-9 flex-none place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg"><ArrowLeft size={16} /></Link>
+        <Link to="/apps" aria-label={tr('ui.appDetail.allApps')} className="grid h-9 w-9 flex-none place-items-center rounded-md text-fg-dim hover:bg-panel-2 hover:text-fg"><ArrowLeft size={16} /></Link>
         <h1 className="min-w-0 truncate text-[15px] font-semibold">{app.title}</h1>
         <AppStatusBadge app={app} className="hidden sm:inline-flex" />
-        <button type="button" onClick={() => void copy()} title="Copy the link"
+        <button type="button" onClick={() => void copy()} title={tr('ui.appDetail.copyTheLink')}
           className="hidden min-w-0 items-center gap-1.5 truncate rounded-md border border-line bg-bg px-2 py-1 font-mono text-[11.5px] text-fg-dim hover:text-fg lg:inline-flex">
           {copied ? <Check size={12} /> : <Copy size={12} />}{appLink(app).replace(/^https?:\/\//, '')}
         </button>
         <div className="ml-auto flex flex-none items-center gap-2">
-          {app.role !== 'view' && <button type="button" className={cn(button, 'hidden md:inline-flex')} onClick={editInChat}><Pencil size={14} />Edit in chat</button>}
-          {live && <button type="button" className={cn(button, 'w-9 justify-center px-0')} onClick={openFull} aria-label="Full screen" title="Full screen (Esc to come back)"><Maximize2 size={14} /></button>}
-          {live && <button type="button" className={cn(button, 'hidden md:inline-flex')} onClick={() => void openAppWindow(app).catch(() => openFull())} title="Open in its own window"><ExternalLink size={14} />Open</button>}
+          {app.role !== 'view' && <button type="button" className={cn(button, 'hidden md:inline-flex')} onClick={editInChat}><Pencil size={14} />{tr('ui.appDetail.editInChat')}</button>}
+          {live && <button type="button" className={cn(button, 'w-9 justify-center px-0')} onClick={openFull} aria-label={tr('ui.appDetail.fullScreen')} title={tr('ui.appDetail.fullScreenEscToCome')}><Maximize2 size={14} /></button>}
+          {live && <button type="button" className={cn(button, 'hidden md:inline-flex')} onClick={() => void openAppWindow(app).catch(() => openFull())} title={tr('ui.appDetail.openInItsOwnWindow')}><ExternalLink size={14} />{tr('ui.appDetail.open')}</button>}
           {app.role === 'owner' ? (
-            <button type="button" className={cn(button, 'border-transparent bg-accent text-accent-foreground hover:bg-accent/90')} onClick={() => setSharing(true)} aria-label="Share">
-              <Share2 size={14} /><span className="hidden md:inline">Share</span>
+            <button type="button" className={cn(button, 'border-transparent bg-accent text-accent-foreground hover:bg-accent/90')} onClick={() => setSharing(true)} aria-label={tr('ui.appDetail.share')}>
+              <Share2 size={14} /><span className="hidden md:inline">{tr('ui.appDetail.share')}</span>
             </button>
           ) : (
-            <button type="button" className={button} onClick={() => void copy()} aria-label="Copy link">{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+            <button type="button" className={button} onClick={() => void copy()} aria-label={tr('ui.appDetail.copyLink')}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
           )}
         </div>
       </header>
 
       {/* Phone: one thing at a time. */}
-      <nav role="tablist" aria-label="App sections" className="flex flex-none gap-1 border-b border-line px-2 md:hidden">
+      <nav role="tablist" aria-label={tr('ui.appDetail.appSections')} className="flex flex-none gap-1 border-b border-line px-2 md:hidden">
         {(['app', 'versions', 'logs', 'overview'] as PhoneTab[]).filter((t) => app.role !== 'view' || t === 'app' || t === 'overview').map((t) => (
           <button key={t} type="button" role="tab" aria-selected={phoneTab === t} onClick={() => { setPhoneTab(t); if (t !== 'app') setSide(t); }}
             className={cn('-mb-px border-b-2 px-3 py-2.5 text-[13px]', phoneTab === t ? 'border-accent font-medium' : 'border-transparent text-fg-dim')}>
-            {t === 'overview' ? 'Details' : TAB_LABEL[t]}
+            {t === 'overview' ? tr('ui.appDetail.details') : TAB_LABEL[t]}
           </button>
         ))}
       </nav>
@@ -283,7 +284,7 @@ export default function AppDetail() {
       <div className="hidden min-h-0 flex-1 md:flex">
         <div className="min-w-0 flex-1 p-4"><div className="h-full overflow-hidden rounded-[10px] border border-line bg-panel">{appFrame}</div></div>
         <aside className="flex w-[360px] flex-none flex-col border-l border-line bg-panel">
-          <nav role="tablist" aria-label="App details" className="flex flex-none gap-1 border-b border-line px-3">
+          <nav role="tablist" aria-label={tr('ui.appDetail.appDetails')} className="flex flex-none gap-1 border-b border-line px-3">
             {(['overview', 'versions', 'logs'] as SideTab[]).filter((t) => app.role !== 'view' || t === 'overview').map((t) => (
               <button key={t} type="button" role="tab" aria-selected={side === t} onClick={() => setSide(t)}
                 className={cn('-mb-px border-b-2 px-3 py-2.5 text-[13px]', side === t ? 'border-accent font-medium' : 'border-transparent text-fg-dim hover:text-fg')}>

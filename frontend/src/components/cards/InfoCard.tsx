@@ -2,6 +2,7 @@ import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { CardChart } from '@/components/cards/CardChart';
 import { buttonMessage, requestCardAction, type Card, type CardBlock, type CardButton } from '@/lib/cards';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const MarkdownMessage = lazy(() => import('@/components/MarkdownMessage'));
 
@@ -151,7 +152,7 @@ export function InfoCard({ card }: { card: Card }) {
     if (pressed) return;
     const sent = requestCardAction(buttonMessage(card, button));
     if (!sent) {
-      setNote('Buttons work in the chat this card came from.');
+      setNote(tr('ui.cards.infoCard.buttonsWorkInTheChat'));
       return;
     }
     // Hold the buttons while the press is sent; give them back if it fails.
@@ -162,7 +163,7 @@ export function InfoCard({ card }: { card: Card }) {
         savePressed(card.id, button.label);
       } else {
         setPressed(null);
-        setNote("Couldn't send that. Check the connection and try again.");
+        setNote(tr('ui.cards.infoCard.couldnTSendThatCheck'));
       }
     });
   };
@@ -180,7 +181,7 @@ export function InfoCard({ card }: { card: Card }) {
       </div>
       {buttons.length > 0 && (
         <div className="space-y-1.5">
-          <Label>Next steps</Label>
+          <Label>{tr('ui.cards.infoCard.nextSteps')}</Label>
           <div className="flex flex-wrap gap-2">
             {buttons.map((b, i) => (b.url ? (
               <a key={i} href={b.url} target="_blank" rel="noreferrer nofollow"
@@ -217,7 +218,7 @@ export function InfoCard({ card }: { card: Card }) {
 /** While the agent is still writing the card. */
 export function InfoCardPending() {
   return (
-    <div className="w-full max-w-3xl space-y-3 border-l-[3px] border-accent/50 py-0.5 pl-4" aria-label="Writing card">
+    <div className="w-full max-w-3xl space-y-3 border-l-[3px] border-accent/50 py-0.5 pl-4" aria-label={tr('ui.cards.infoCard.writingCard')}>
       <div className="h-4 w-48 animate-pulse rounded bg-panel-2" />
       <div className="flex gap-6">
         {[0, 1, 2].map((i) => <div key={i} className="h-10 w-20 animate-pulse rounded bg-panel-2" />)}

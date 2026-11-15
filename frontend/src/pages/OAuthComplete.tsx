@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useUser } from '@/context/AppContext';
 import { takeAfterSignIn } from '@/lib/afterSignIn';
 import { setToken } from '@/lib/session';
+import { tr } from '@/lib/i18n';
 
 /** Landing page after Google/GitHub sign-in on the web: the token arrives in
  *  the URL fragment (never sent to a server), is stored, and the hash cleared. */
@@ -23,7 +24,7 @@ export default function OAuthComplete() {
 
   return (
     <div role="status" className="flex h-full min-h-screen items-center justify-center bg-bg font-mono text-sm text-fg-dim">
-      signing you in…
+      {tr('ui.oAuthComplete.signingYouIn')}
     </div>
   );
 }

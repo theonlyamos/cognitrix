@@ -7,19 +7,21 @@ import { useOptionalTheme } from '@/context/ThemeContext';
 import { agentModel, type PickTarget, type PickerAgent, type PickerTeam } from '@/lib/agentPicker';
 import { cn } from '@/lib/utils';
 import { composerBtn } from '@/components/composerStyles';
+import { tr } from '@/lib/i18n';
 
-export const NEW_CHAT_SUGGESTIONS = [
-  'What can you help me with?',
-  'Plan my week',
-  'Research a topic and write a short brief',
+/** Starter prompts under a new chat, in the app's language. */
+export const newChatSuggestions = () => [
+  tr('ui.newChatGreeting.whatCanYouHelpMe'),
+  tr('ui.newChatGreeting.planMyWeek'),
+  tr('ui.newChatGreeting.researchATopicAndWrite'),
 ];
 
 export function greetingFor(date: Date = new Date()): string {
   const hour = date.getHours();
-  if (hour < 5) return 'Good evening';
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
+  if (hour < 5) return tr('ui.newChatGreeting.goodEvening');
+  if (hour < 12) return tr('ui.newChatGreeting.goodMorning');
+  if (hour < 18) return tr('ui.newChatGreeting.goodAfternoon');
+  return tr('ui.newChatGreeting.goodEvening');
 }
 
 /**
@@ -69,11 +71,11 @@ export function NewChatGreeting({
         <h2 className="text-[28px] font-bold leading-tight tracking-[-0.015em] sm:text-[30px]">
           {greetingFor()}{first ? `, ${first}` : ''}
         </h2>
-        <p className="mt-2 text-[15px] text-fg-dim">What should we work on?</p>
+        <p className="mt-2 text-[15px] text-fg-dim">{tr('ui.newChatGreeting.whatShouldWeWorkOn')}</p>
       </div>
       <div className="mt-6">{children}</div>
       <div className="mt-4 flex flex-wrap justify-center gap-2">
-        {NEW_CHAT_SUGGESTIONS.map((s) => (
+        {newChatSuggestions().map((s) => (
           <button
             key={s}
             type="button"
@@ -86,7 +88,7 @@ export function NewChatGreeting({
       </div>
       {others.length > 0 && (
         <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-[13px] text-fg-dim">
-          <span>Or start with</span>
+          <span>{tr('ui.newChatGreeting.orStartWith')}</span>
           {others.map(({ target, named }) => (
             <button
               key={`${target.kind}:${target.id}`}
@@ -99,7 +101,7 @@ export function NewChatGreeting({
               {target.kind === 'team' && <span className="text-fg-dim">(team)</span>}
             </button>
           ))}
-          <Link to="/agents" className="min-h-11 content-center px-1 underline-offset-2 hover:text-fg hover:underline md:min-h-8">All agents</Link>
+          <Link to="/agents" className="min-h-11 content-center px-1 underline-offset-2 hover:text-fg hover:underline md:min-h-8">{tr('ui.newChatGreeting.allAgents')}</Link>
         </div>
       )}
     </div>
@@ -169,7 +171,7 @@ export function AgentPickerChip({
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`Chat with ${current.name}. Change`}
+        aria-label={tr('ui.newChatGreeting.chatWithNameChange', { name: current.name })}
         onClick={() => setOpen((v) => !v)}
         className={cn(composerBtn, 'pl-1.5 text-fg', open && 'bg-panel-2')}
       >
@@ -178,12 +180,12 @@ export function AgentPickerChip({
         <ChevronDownIcon className="hidden h-3.5 w-3.5 text-fg-dim sm:block" strokeWidth={2} aria-hidden="true" />
       </button>
       {open && (
-        <div role="menu" aria-label="Chat with" className="animate-rise absolute bottom-full left-0 z-30 mb-2 max-h-[min(60vh,420px)] w-[min(280px,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-line bg-panel p-1.5 shadow-lg">
-          <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-dim">Agents</div>
+        <div role="menu" aria-label={tr('ui.newChatGreeting.chatWith')} className="animate-rise absolute bottom-full left-0 z-30 mb-2 max-h-[min(60vh,420px)] w-[min(280px,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-line bg-panel p-1.5 shadow-lg">
+          <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-dim">{tr('ui.newChatGreeting.agents')}</div>
           {agents.map((a) => item({ kind: 'agent', id: a.id }, a.name, agentModel(a), a.avatar))}
           {teams.length > 0 && (
             <>
-              <div className="px-2.5 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-dim">Teams</div>
+              <div className="px-2.5 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-dim">{tr('ui.newChatGreeting.teams')}</div>
               {teams.map((t) => item({ kind: 'team', id: t.id }, t.name, 'group chat'))}
             </>
           )}

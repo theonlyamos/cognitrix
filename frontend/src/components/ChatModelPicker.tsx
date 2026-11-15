@@ -4,6 +4,7 @@ import { MODELS, PROVIDER_LABELS, isHarness } from '@/lib/providers';
 import { fetchProviderModels } from '@/components/ModelPicker';
 import { composerBtn, composerPopover } from '@/components/composerStyles';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 export interface ChatModel {
   provider: string;
@@ -137,34 +138,34 @@ export default function ChatModelPicker({ agentLlm, value, onChange, disabled }:
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={`Model: ${current || 'agent default'}${value ? '' : ' (agent default)'}. Change`}
-        title={value ? `${PROVIDER_LABELS[value.provider] || value.provider} · ${value.model} (this chat only)` : `${PROVIDER_LABELS[agentProvider] || agentProvider} · ${agentModel} (the agent's model)`}
+        aria-label={tr('ui.chatModelPicker.modelCurrentValueChange', { current: current || 'agent default', value: value ? '' : ' (agent default)' })}
+        title={value ? tr('ui.chatModelPicker.itemModelThisChatOnly', { item: PROVIDER_LABELS[value.provider] || value.provider, model: value.model }) : tr('ui.chatModelPicker.itemAgentmodelTheAgentS', { item: PROVIDER_LABELS[agentProvider] || agentProvider, agentModel })}
         className={cn(composerBtn, open && 'bg-panel-2 text-fg', value && 'text-fg')}
       >
         <ChipIcon />
-        <span className="hidden max-w-[10rem] truncate sm:inline">{shortModel(current) || 'Model'}</span>
+        <span className="hidden max-w-[10rem] truncate sm:inline">{shortModel(current) || tr('ui.chatModelPicker.model')}</span>
         {value && <span aria-hidden className="h-1.5 w-1.5 flex-none rounded-full bg-accent" />}
         <svg aria-hidden width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="hidden opacity-60 sm:block"><path d="m6 9 6 6 6-6" /></svg>
       </button>
       {open && (
         <>
           <div aria-hidden className="fixed inset-0 z-40 bg-black/40 md:hidden" onClick={() => setOpen(false)} />
-          <div role="dialog" aria-label="Model for this chat" className={cn(composerPopover, 'md:w-[22rem]')}>
+          <div role="dialog" aria-label={tr('ui.chatModelPicker.modelForThisChat')} className={cn(composerPopover, 'md:w-[22rem]')}>
             <div aria-hidden className="mx-auto mb-2 h-1 w-9 rounded-full bg-line md:hidden" />
-            <div className="px-2 pb-1 pt-1.5 font-mono text-[10.5px] tracking-[0.1em] text-fg-dim">MODEL FOR THIS CHAT</div>
+            <div className="px-2 pb-1 pt-1.5 font-mono text-[10.5px] tracking-[0.1em] text-fg-dim">{tr('ui.chatModelPicker.modelForThisChat_05d0')}</div>
             <button
               type="button"
               onClick={() => pick(null)}
               className={cn('flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-panel-2 md:min-h-9', !value && 'bg-panel-2')}
             >
               <span className="min-w-0 flex-1">
-                <span className="block text-[13px] text-fg">Agent's model</span>
-                <span className="block truncate text-[11px] text-fg-dim">{PROVIDER_LABELS[agentProvider] || agentProvider} · {agentModel || 'default'}</span>
+                <span className="block text-[13px] text-fg">{tr('ui.chatModelPicker.agentSModel')}</span>
+                <span className="block truncate text-[11px] text-fg-dim">{PROVIDER_LABELS[agentProvider] || agentProvider} · {agentModel || tr('ui.chatModelPicker.default')}</span>
               </span>
               {!value && <Check />}
             </button>
             <div className="mx-1 my-1.5 h-px bg-line" />
-            <div role="tablist" aria-label="Provider" className="flex flex-wrap gap-1 px-1.5 pb-1.5">
+            <div role="tablist" aria-label={tr('ui.chatModelPicker.provider')} className="flex flex-wrap gap-1 px-1.5 pb-1.5">
               {providerIds.map((id) => (
                 <button
                   key={id}
@@ -181,7 +182,7 @@ export default function ChatModelPicker({ agentLlm, value, onChange, disabled }:
                 </button>
               ))}
             </div>
-            <div role="listbox" aria-label={`${PROVIDER_LABELS[provider] || provider} models`} className="max-h-56 overflow-y-auto">
+            <div role="listbox" aria-label={tr('ui.chatModelPicker.itemModels', { item: PROVIDER_LABELS[provider] || provider })} className="max-h-56 overflow-y-auto">
               {models.map((m) => (
                 <button
                   key={m}
@@ -195,18 +196,18 @@ export default function ChatModelPicker({ agentLlm, value, onChange, disabled }:
                   {isSelected(m) && <Check />}
                 </button>
               ))}
-              {models.length === 0 && <p className="px-2 py-1.5 text-[12px] text-fg-dim">No models listed for this provider. Type one below.</p>}
+              {models.length === 0 && <p className="px-2 py-1.5 text-[12px] text-fg-dim">{tr('ui.chatModelPicker.noModelsListedForThis')}</p>}
             </div>
             <form className="flex gap-1.5 px-1.5 pb-1 pt-1.5" onSubmit={(e) => { e.preventDefault(); if (custom.trim()) pick({ provider, model: custom.trim() }); }}>
-              <label className="sr-only" htmlFor="chat-model-custom">Other model name</label>
+              <label className="sr-only" htmlFor="chat-model-custom">{tr('ui.chatModelPicker.otherModelName')}</label>
               <input
                 id="chat-model-custom"
                 value={custom}
                 onChange={(e) => setCustom(e.target.value)}
-                placeholder="Other model name"
+                placeholder={tr('ui.chatModelPicker.otherModelName')}
                 className="min-w-0 flex-1 rounded-md border border-line bg-bg px-2 py-1.5 font-mono text-[12px] text-fg placeholder:text-fg-dim"
               />
-              <button type="submit" disabled={!custom.trim()} className="rounded-md border border-line px-2.5 text-[12px] hover:bg-panel-2 disabled:opacity-50">Use</button>
+              <button type="submit" disabled={!custom.trim()} className="rounded-md border border-line px-2.5 text-[12px] hover:bg-panel-2 disabled:opacity-50">{tr('ui.chatModelPicker.use')}</button>
             </form>
           </div>
         </>

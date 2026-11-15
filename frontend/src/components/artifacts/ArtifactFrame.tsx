@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { errorMessage } from '@/lib/api';
 import { useTheme } from '@/context/ThemeContext';
 import { bridgeCall, frameSrc, type CommentAnchor, type PagePower } from '@/lib/artifactPages';
+import { tr } from '@/lib/i18n';
 
 export interface FramePin { id: string; n: number; x: number; y: number; title: string; active: boolean }
 
@@ -74,14 +75,14 @@ export function ArtifactFrame({ url, title, pageId, allowed = [], pins, picking 
         const power = kind.split('.')[0] as PagePower;
         const answer = (value: unknown, error?: string) => post({ type: 'result', id, value, error });
         if (!now.allowed.includes(power)) {
-          answer(null, now.pageId ? `Not allowed: the viewer has not let this page use "${power}".` : 'Sign in to Cognitrix to use this.');
+          answer(null, now.pageId ? tr('ui.artifacts.artifactFrame.notAllowedTheViewerHas', { power }) : tr('ui.artifacts.artifactFrame.signInToCognitrixTo'));
         } else if (kind === 'download') {
           saveFile(String(payload.filename || ''), String(payload.content ?? ''), String(payload.mime || ''));
           answer(true);
         } else if (now.pageId) {
-          bridgeCall(now.pageId, kind, payload).then((value) => answer(value), (e) => answer(null, errorMessage(e, 'That did not work.')));
+          bridgeCall(now.pageId, kind, payload).then((value) => answer(value), (e) => answer(null, errorMessage(e, tr('ui.artifacts.artifactFrame.thatDidNotWork'))));
         } else {
-          answer(null, 'Sign in to Cognitrix to use this.');
+          answer(null, tr('ui.artifacts.artifactFrame.signInToCognitrixTo'));
         }
       }
     };

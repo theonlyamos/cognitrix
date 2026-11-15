@@ -5,6 +5,7 @@ import { folderName } from '@/lib/folders';
 import { timeAgo, timeUntil, type TabId, type TabProps } from '@/lib/agentDraft';
 import { Card, Eyebrow, buttonClass, linkButtonClass, primaryButtonClass } from '@/components/agent/ui';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 function paramsPreview(params: Record<string, unknown>): string {
   const command = params.command ?? params.path ?? params.url ?? params.task;
@@ -27,7 +28,7 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
       await api.post(`/tasks/${approval.task_id}/runs/${approval.run_id}/approvals/${approval.id}`, { approved });
       refreshOverview();
     } catch (e) {
-      setApprovalError(errorMessage(e, 'Could not answer that approval.'));
+      setApprovalError(errorMessage(e, tr('ui.agent.overviewTab.couldNotAnswerThatApproval')));
     } finally {
       setBusy('');
     }
@@ -46,10 +47,10 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
         data.task_runs ? `${data.task_runs} task ${data.task_runs === 1 ? 'run' : 'runs'}` : '',
         data.checks ? `${data.checks} planned ${data.checks === 1 ? 'check' : 'checks'}` : '',
       ].filter(Boolean);
-      setStopNote(parts.length ? `Stopped ${parts.join(', ')}.` : 'Nothing was running.');
+      setStopNote(parts.length ? tr('ui.agent.overviewTab.stoppedParts', { parts: parts.join(', ') }) : tr('ui.agent.overviewTab.nothingWasRunning'));
       refreshOverview();
     } catch (e) {
-      setStopNote(errorMessage(e, "Couldn't stop everything. Try again."));
+      setStopNote(errorMessage(e, tr('ui.agent.overviewTab.couldnTStopEverythingTry')));
     } finally {
       setStopping(false);
     }
@@ -60,9 +61,9 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
     || (overview?.tasks || []).some((t) => t.status === 'in_progress' || !!t.wake_at);
   const askFirst = draft.tools.filter((t) => draft.toolPermissions[t] === 'ask').length;
   const tiles = [
-    { label: 'CHATS · 7 DAYS', value: stats?.chats_week, note: stats ? `${stats.running_chats} running now` : '', tone: stats?.running_chats ? 'text-ok' : 'text-fg-dim' },
-    { label: 'TASK RUNS · 7 DAYS', value: stats?.task_runs_week, note: stats ? (stats.failed_runs_week ? `${stats.failed_runs_week} failed` : 'none failed') : '', tone: stats?.failed_runs_week ? 'text-danger-ink' : 'text-fg-dim' },
-    { label: 'WAITING ON YOU', value: stats?.pending_approvals, note: stats?.pending_approvals ? 'see below' : 'nothing to approve', tone: stats?.pending_approvals ? 'text-warn-ink' : 'text-fg-dim' },
+    { label: tr('ui.agent.overviewTab.chats7Days'), value: stats?.chats_week, note: stats ? `${stats.running_chats} running now` : '', tone: stats?.running_chats ? 'text-ok' : 'text-fg-dim' },
+    { label: tr('ui.agent.overviewTab.taskRuns7Days'), value: stats?.task_runs_week, note: stats ? (stats.failed_runs_week ? `${stats.failed_runs_week} failed` : 'none failed') : '', tone: stats?.failed_runs_week ? 'text-danger-ink' : 'text-fg-dim' },
+    { label: tr('ui.agent.overviewTab.waitingOnYou'), value: stats?.pending_approvals, note: stats?.pending_approvals ? 'see below' : 'nothing to approve', tone: stats?.pending_approvals ? 'text-warn-ink' : 'text-fg-dim' },
     { label: 'TOOLS', value: draft.tools.length, note: askFirst ? `${askFirst} ask first` : 'default approvals', tone: 'text-fg-dim' },
   ];
 
@@ -108,7 +109,7 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
     <div className="flex flex-col gap-[18px]">
       {overviewError && (
         <p role="alert" className="rounded-md border border-danger/40 px-3 py-2 text-[13px] text-danger-ink">
-          Couldn't load this agent's activity: {overviewError}
+          {tr('ui.agent.overviewTab.couldnTLoadThisAgent', { overviewError })}
         </p>
       )}
 
@@ -125,12 +126,12 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
       {(working || stopNote) && (
         <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-line bg-panel px-4 py-3">
           <p role="status" className="min-w-[200px] flex-1 text-[13.5px] text-fg-dim">
-            {stopNote || 'This agent is working or has a check planned. Stop all ends its running chats, the chats it started, its task runs and planned checks. Schedules you set stay on.'}
+            {stopNote || tr('ui.agent.overviewTab.thisAgentIsWorkingOr')}
           </p>
           {working && (
             <button type="button" onClick={() => void stopAll()} disabled={stopping}
               className={cn(buttonClass, 'border-danger/40 text-danger-ink')}>
-              {stopping ? 'Stopping…' : 'Stop all'}
+              {stopping ? tr('ui.agent.overviewTab.stopping') : tr('ui.agent.overviewTab.stopAll')}
             </button>
           )}
         </div>
@@ -138,18 +139,18 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
 
       {overview && overview.approvals.length > 0 && (
         <Card tone="warn">
-          <Eyebrow className="text-warn-ink">WAITING ON YOU</Eyebrow>
+          <Eyebrow className="text-warn-ink">{tr('ui.agent.overviewTab.waitingOnYou')}</Eyebrow>
           <ul className="mt-2 divide-y divide-line">
             {overview.approvals.map((a) => (
               <li key={a.id} className="flex flex-wrap items-center gap-3 py-3 first:pt-1 last:pb-0">
                 <div className="min-w-[240px] flex-1">
-                  <div className="text-[15px] font-medium">{a.tool_name} <span className="font-normal text-fg-dim">· {a.risk_level || 'needs approval'}</span></div>
+                  <div className="text-[15px] font-medium">{a.tool_name} <span className="font-normal text-fg-dim">· {a.risk_level || tr('ui.agent.overviewTab.needsApproval')}</span></div>
                   <div className="mt-1 truncate font-mono text-[12px] text-fg-dim" title={paramsPreview(a.params)}>
-                    {paramsPreview(a.params)} · from task “{a.task_title}”
+                    {tr('ui.agent.overviewTab.paramspreviewFromTaskTaskTitle', { paramsPreview: paramsPreview(a.params), task_title: a.task_title })}
                   </div>
                 </div>
-                <button type="button" disabled={busy === a.id} onClick={() => void answer(a, false)} className={buttonClass}>Deny</button>
-                <button type="button" disabled={busy === a.id} onClick={() => void answer(a, true)} className={primaryButtonClass}>Approve</button>
+                <button type="button" disabled={busy === a.id} onClick={() => void answer(a, false)} className={buttonClass}>{tr('ui.agent.overviewTab.deny')}</button>
+                <button type="button" disabled={busy === a.id} onClick={() => void answer(a, true)} className={primaryButtonClass}>{tr('ui.agent.overviewTab.approve')}</button>
               </li>
             ))}
           </ul>
@@ -158,11 +159,11 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
       )}
 
       <div className="grid grid-cols-1 gap-[18px] md:grid-cols-2">
-        <Card title="Recent chats" aside={<button type="button" onClick={() => openChat()} className={linkButtonClass}>New chat</button>}>
+        <Card title={tr('ui.agent.overviewTab.recentChats')} aside={<button type="button" onClick={() => openChat()} className={linkButtonClass}>{tr('ui.agent.overviewTab.newChat')}</button>}>
           {!overview ? (
-            <p className="text-[13px] text-fg-dim">Loading…</p>
+            <p className="text-[13px] text-fg-dim">{tr('ui.agent.overviewTab.loading')}</p>
           ) : overview.recent_chats.length === 0 ? (
-            <p className="text-[13px] text-fg-dim">No chats yet.</p>
+            <p className="text-[13px] text-fg-dim">{tr('ui.agent.overviewTab.noChatsYet')}</p>
           ) : (
             <ul className="-mt-1">
               {overview.recent_chats.map((c) => (
@@ -170,19 +171,19 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
                   <button type="button" onClick={() => openChat(c.id)}
                     className="flex min-h-11 w-full items-center gap-2.5 border-t border-line py-2 text-left text-[14px] first:border-t-0 hover:text-accent-ink">
                     <span aria-hidden className={cn('h-[7px] w-[7px] flex-none rounded-full', c.running ? 'bg-ok' : 'bg-line')} />
-                    <span className="min-w-0 flex-1 truncate">{c.title || 'Untitled chat'}</span>
-                    <span className="flex-none text-[12px] text-fg-dim">{c.running ? 'running' : timeAgo(c.last_active)}</span>
+                    <span className="min-w-0 flex-1 truncate">{c.title || tr('ui.agent.overviewTab.untitledChat')}</span>
+                    <span className="flex-none text-[12px] text-fg-dim">{c.running ? tr('ui.agent.overviewTab.running') : timeAgo(c.last_active)}</span>
                   </button>
                 </li>
               ))}
             </ul>
           )}
         </Card>
-        <Card title="Coming up" aside={<button type="button" onClick={() => goTo('tasks')} className={linkButtonClass}>All tasks</button>}>
+        <Card title={tr('ui.agent.overviewTab.comingUp')} aside={<button type="button" onClick={() => goTo('tasks')} className={linkButtonClass}>{tr('ui.agent.overviewTab.allTasks')}</button>}>
           {!overview ? (
-            <p className="text-[13px] text-fg-dim">Loading…</p>
+            <p className="text-[13px] text-fg-dim">{tr('ui.agent.overviewTab.loading')}</p>
           ) : upcoming.length === 0 ? (
-            <p className="text-[13px] text-fg-dim">Nothing scheduled.</p>
+            <p className="text-[13px] text-fg-dim">{tr('ui.agent.overviewTab.nothingScheduled')}</p>
           ) : (
             <ul className="-mt-1">
               {upcoming.map((u) => (
@@ -199,7 +200,7 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
         </Card>
       </div>
 
-      <Card title="Setup at a glance">
+      <Card title={tr('ui.agent.overviewTab.setupAtAGlance')}>
         <ul className="-mt-1">
           {glance.map((g) => (
             <li key={g.label}>

@@ -5,6 +5,7 @@ import MarkdownMessage from '@/components/MarkdownMessage';
 import { desktop, onDesktopEvent } from '@/lib/desktop';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
 import { insertTranscript } from '@/lib/voice';
+import { tr } from '@/lib/i18n';
 
 interface AgentLite {
   id: string;
@@ -122,7 +123,7 @@ export default function QuickAsk() {
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        throw new Error(body.detail || `Request failed (${response.status})`);
+        throw new Error(body.detail || tr('ui.quickAsk.requestFailedStatus', { status: response.status }));
       }
       await readSse(response, (event, data) => {
         let payload: Record<string, string> = {};
@@ -132,11 +133,11 @@ export default function QuickAsk() {
           return;
         }
         if (event === 'chunk' && payload.content) setAnswer((a) => a + payload.content);
-        else if (event === 'error') setError(payload.detail || 'Something went wrong.');
+        else if (event === 'error') setError(payload.detail || tr('ui.quickAsk.somethingWentWrong'));
         if (payload.session_id) setSessionId(payload.session_id);
       });
     } catch (err) {
-      if ((err as Error).name !== 'AbortError') setError((err as Error).message || 'Could not reach the engine.');
+      if ((err as Error).name !== 'AbortError') setError((err as Error).message || tr('ui.quickAsk.couldNotReachTheEngine'));
     } finally {
       setBusy(false);
     }
@@ -163,21 +164,21 @@ export default function QuickAsk() {
           </div>
         ) : (
           <>
-        <label htmlFor="quick-ask-input" className="sr-only">Ask Cognitrix</label>
+        <label htmlFor="quick-ask-input" className="sr-only">{tr('ui.quickAsk.askCognitrix')}</label>
         <input
           id="quick-ask-input"
           ref={inputRef}
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={asked ? 'Ask a follow-up…' : 'Ask anything…'}
+          placeholder={asked ? tr('ui.quickAsk.askAFollowUp') : tr('ui.quickAsk.askAnything')}
           autoComplete="off"
           className="min-w-0 flex-1 border-0 bg-transparent text-[17px] outline-none placeholder:text-fg-dim"
         />
             <MicButton voice={voice} className="flex-none" />
           </>
         )}
-        <label htmlFor="quick-ask-agent" className="sr-only">Agent</label>
+        <label htmlFor="quick-ask-agent" className="sr-only">{tr('ui.quickAsk.agent')}</label>
         <select
           id="quick-ask-agent"
           value={agentId}
@@ -197,20 +198,20 @@ export default function QuickAsk() {
       <div className="min-h-0 flex-1 overflow-y-auto border-t border-line px-4 py-3.5 pl-[58px] text-[14px] leading-relaxed" aria-live="polite">
         {!asked && !error && (
           <p className="text-fg-dim">
-            {agents && agents.length === 0 ? 'Create an agent in the app first, then ask it anything here.' : `Ask ${agentName ?? 'your agent'} a quick question. Tools run the same as in a chat.`}
+            {agents && agents.length === 0 ? tr('ui.quickAsk.createAnAgentInThe') : tr('ui.quickAsk.askAgentnameAQuickQuestion', { agentName: agentName ?? 'your agent' })}
           </p>
         )}
         {asked && <p className="mb-2 font-medium">{asked}</p>}
         {answer && <MarkdownMessage content={answer} />}
-        {busy && !answer && <p className="text-fg-dim">Thinking…</p>}
+        {busy && !answer && <p className="text-fg-dim">{tr('ui.quickAsk.thinking')}</p>}
         {error && <p role="alert" className="text-danger-ink">{error}</p>}
         <VoiceNotice voice={voice} />
       </div>
 
       <div className="flex flex-none gap-5 bg-bg/60 px-4 py-2 pl-[58px] font-mono text-[11px] text-fg-dim">
-        <span>Enter ask</span>
-        <button type="button" onClick={openInChat} className="hover:text-fg">Ctrl Enter open in full chat</button>
-        <span>Esc dismiss</span>
+        <span>{tr('ui.quickAsk.enterAsk')}</span>
+        <button type="button" onClick={openInChat} className="hover:text-fg">{tr('ui.quickAsk.ctrlEnterOpenInFull')}</button>
+        <span>{tr('ui.quickAsk.escDismiss')}</span>
       </div>
     </div>
   );
