@@ -324,7 +324,6 @@ def test_stdout_only_carries_protocol_messages(tmp_path):
         reply = send(2, 'session/new', {'cwd': str(tmp_path), 'mcpServers': []})
         assert reply['id'] == 2 and 'No agents yet' in reply['error']['data']['message']
     finally:
-        proc.stdin.close()
         out, err = proc.communicate(timeout=60)
     assert out.decode().strip() == ''
     assert 'a stray print from a tool' in err.decode()
