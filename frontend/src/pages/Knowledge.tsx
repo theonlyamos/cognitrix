@@ -5,6 +5,7 @@ import { Button } from '@/lib/components/ui/button';
 import { Input } from '@/lib/components/ui/input';
 import { PageHeader, LoadingState, ErrorState, EmptyState } from '@/components/list-ui';
 import { cn } from '@/lib/utils';
+import { timeAgo } from '@/lib/agentDraft';
 
 interface KnowledgeDocument {
   id: string;
@@ -13,6 +14,13 @@ interface KnowledgeDocument {
   status: 'queued' | 'ready' | 'failed';
   error: string | null;
   passages: number;
+  /** Set for a web source: the page it was read from. */
+  source_url?: string | null;
+  max_pages?: number;
+  pages_read?: number;
+  /** Days between automatic re-reads; 0 = only when asked. */
+  refresh_days?: number;
+  refreshed?: string | null;
 }
 export interface KnowledgeCollection {
   id: string;
@@ -20,7 +28,67 @@ export interface KnowledgeCollection {
   description: string;
   documents: KnowledgeDocument[];
 }
-interface Hit { text: string; name: string; position: number; score: number }
+interface Hit { text: string; name: string; position: number; score: number; url?: string | null }
+
+const PAGE_CHOICES = [
+  { value: 1, label: 'Just this page' },
+  { value: 10, label: 'This page + linked pages (up to 10)' },
+  { value: 25, label: 'This page + linked pages (up to 25)' },
+  { value: 50, label: 'This page + linked pages (up to 50)' },
+];
+const REFRESH_CHOICES = [
+  { value: 0, label: 'Refresh when I ask' },
+  { value: 1, label: 'Refresh daily' },
+  { value: 7, label: 'Refresh weekly' },
+  { value: 30, label: 'Refresh monthly' },
+];
+const selectClass = 'h-9 rounded-lg border border-line bg-bg px-2 text-[12.5px] text-fg md:h-8';
+
+/** "Add a web page" form: the address, how much of the site, and how often to read it again. */
+function AddWebPage({ collectionId, onAdded, onError }: { collectionId: string; onAdded: () => void; onError: (message: string) => void }) {
+  const [url, setUrl] = useState('');
+  const [pages, setPages] = useState(1);
+  const [refresh, setRefresh] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!url.trim()) return;
+    setBusy(true);
+    onError('');
+    try {
+      await api.post(`/knowledge/${collectionId}/urls`, { url: url.trim(), max_pages: pages, refresh_days: refresh });
+      setUrl('');
+      onAdded();
+    } catch (e) {
+      onError(errorMessage(e, 'Could not add that page.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form onSubmit={submit} className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3" aria-label="Add a web page">
+      <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://docs.example.com/guide/" aria-label="Web page address"
+        inputMode="url" className="min-w-[220px] flex-1" />
+      <select value={pages} onChange={(e) => setPages(Number(e.target.value))} aria-label="How much of the site to read" className={selectClass}>
+        {PAGE_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+      </select>
+      <select value={refresh} onChange={(e) => setRefresh(Number(e.target.value))} aria-label="How often to read it again" className={selectClass}>
+        {REFRESH_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+      </select>
+      <Button type="submit" size="sm" variant="outline" disabled={busy || !url.trim()}>{busy ? 'Adding…' : 'Add page'}</Button>
+    </form>
+  );
+}
+
+function docStatus(doc: KnowledgeDocument): string {
+  if (doc.status === 'queued') return doc.source_url && doc.error ? `reading… ${doc.error}` : 'reading…';
+  if (doc.status === 'failed') return doc.error || 'failed';
+  if (doc.source_url) {
+    const pages = doc.pages_read ?? 1;
+    return `${pages} page${pages === 1 ? '' : 's'} · ${doc.passages} passages${doc.refreshed ? ` · read ${timeAgo(doc.refreshed)}` : ''}`;
+  }
+  return `${size(doc.size_bytes)} · ${doc.passages} passages`;
+}
 
 const ACCEPT = '.pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.html,.htm,.log,.rst,.yaml,.yml';
 
@@ -58,6 +126,26 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
     }
     setBusy(false);
     onChanged();
+  };
+
+  const refresh = async (doc: KnowledgeDocument) => {
+    setError('');
+    try {
+      await api.post(`/knowledge/${collection.id}/documents/${doc.id}/refresh`);
+      onChanged();
+    } catch (e) {
+      setError(errorMessage(e, 'Could not refresh the page.'));
+    }
+  };
+
+  const setRefreshDays = async (doc: KnowledgeDocument, days: number) => {
+    setError('');
+    try {
+      await api.patch(`/knowledge/${collection.id}/documents/${doc.id}`, { refresh_days: days });
+      onChanged();
+    } catch (e) {
+      setError(errorMessage(e, 'Could not change how often it is read.'));
+    }
   };
 
   const remove = async (doc: KnowledgeDocument) => {
@@ -110,16 +198,38 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
         <ul className="border-t border-line">
           {collection.documents.map((doc) => (
             <li key={doc.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-2 last:border-b-0">
-              <span className="min-w-0 flex-1 truncate text-[13.5px]">{doc.name}</span>
-              <span className={cn('font-mono text-[11px]', doc.status === 'failed' ? 'text-danger-ink' : 'text-fg-dim')}>
-                {doc.status === 'queued' ? 'reading…' : doc.status === 'failed' ? doc.error || 'failed' : `${size(doc.size_bytes)} · ${doc.passages} passages`}
+              <span className="min-w-0 flex-1 basis-[200px]">
+                <span className="block truncate text-[13.5px]">
+                  {doc.source_url && <span aria-label="Web page" className="mr-1.5 font-mono text-[11px] text-accent-ink">www</span>}
+                  {doc.name}
+                </span>
+                {doc.source_url && (
+                  <a href={doc.source_url} target="_blank" rel="noreferrer noopener" className="block truncate font-mono text-[11px] text-fg-dim hover:text-fg hover:underline">
+                    {doc.source_url}{(doc.max_pages ?? 1) > 1 ? ` + linked pages (up to ${doc.max_pages})` : ''}
+                  </a>
+                )}
               </span>
+              <span className={cn('font-mono text-[11px]', doc.status === 'failed' || (doc.error && doc.status === 'ready' && doc.error.startsWith('Last refresh')) ? 'text-danger-ink' : 'text-fg-dim')}
+                title={doc.status === 'ready' && doc.error ? doc.error : undefined}>
+                {docStatus(doc)}
+              </span>
+              {doc.source_url && (
+                <>
+                  <select value={doc.refresh_days ?? 0} onChange={(e) => void setRefreshDays(doc, Number(e.target.value))}
+                    aria-label={`How often to read ${doc.name} again`} className={cn(selectClass, 'h-8 md:h-7 text-[11.5px]')}>
+                    {REFRESH_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  </select>
+                  <button type="button" onClick={() => void refresh(doc)} disabled={doc.status === 'queued'} aria-label={`Refresh ${doc.name}`}
+                    className="min-h-11 px-1 font-mono text-[11px] text-fg-dim hover:text-fg disabled:opacity-50 md:min-h-0">refresh</button>
+                </>
+              )}
               <button type="button" onClick={() => void remove(doc)} aria-label={`Remove ${doc.name}`}
                 className="min-h-11 px-1 font-mono text-[11px] text-fg-dim hover:text-danger-ink md:min-h-0">remove</button>
             </li>
           ))}
         </ul>
       )}
+      <AddWebPage collectionId={collection.id} onAdded={onChanged} onError={setError} />
       {collection.documents.some((d) => d.status === 'ready') && (
         <form onSubmit={search} className="flex gap-2 border-t border-line px-4 py-3">
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Try a search, the way an agent would" aria-label={`Search ${collection.name}`} />
@@ -132,7 +242,7 @@ function CollectionCard({ collection, onChanged }: { collection: KnowledgeCollec
             <ol className="space-y-3">
               {hits.map((hit, i) => (
                 <li key={`${hit.name}-${hit.position}-${i}`}>
-                  <div className="font-mono text-[11px] text-fg-dim">{hit.name} · part {hit.position + 1}</div>
+                  <div className="truncate font-mono text-[11px] text-fg-dim">{hit.name} · {hit.url ? hit.url : `part ${hit.position + 1}`}</div>
                   <p className="mt-0.5 line-clamp-4 whitespace-pre-wrap text-[13px] leading-relaxed">{hit.text}</p>
                 </li>
               ))}
@@ -165,7 +275,7 @@ export default function Knowledge() {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
-      <PageHeader title="Knowledge" subtitle="documents your agents can search and quote from · private to you" />
+      <PageHeader title="Knowledge" subtitle="documents and web pages your agents can search and quote from · private to you" />
       <div className="flex-1 overflow-y-auto">
         {loading && !data ? (
           <LoadingState label="loading collections…" />
@@ -182,7 +292,7 @@ export default function Knowledge() {
               <EmptyState
                 icon={<span aria-hidden className="font-mono text-lg">¶</span>}
                 title="No collections yet"
-                desc="Create a collection, add PDFs, Word files or notes, then turn it on for an agent on its Connections tab. Files are read on this computer."
+                desc="Create a collection, add PDFs, Word files, notes or web pages, then turn it on for an agent on its Connections tab. Everything is read and indexed on this computer."
               />
             ) : (
               collections.map((c) => <CollectionCard key={c.id} collection={c} onChanged={() => refetch({ silent: true })} />)

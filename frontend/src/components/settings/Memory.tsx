@@ -5,8 +5,9 @@ import { Toggle } from '@/pages/Notifications';
 import { timeAgo } from '@/lib/agentDraft';
 import { cn } from '@/lib/utils';
 import {
-  addMemory, deleteAllMemories, deleteLegacyMemory, deleteMemory, legacyMemoryCount, listMemories,
-  saveMemorySettings, updateMemory, type MemoryList, type MemoryScope, type SavedMemory,
+  addMemory, approveMemory, convertLegacyMemory, deleteAllMemories, deleteLegacyMemory, deleteMemory, exportMemories,
+  importMemories, legacyMemoryCount, listMemories, saveMemorySettings, settlePendingMemories, updateMemory,
+  type ImportResult, type MemoryList, type MemoryScope, type SavedMemory,
 } from '@/lib/memories';
 import { Group, Segmented, SettingRow, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 
@@ -26,6 +27,8 @@ export function MemorySettings() {
   const [adding, setAdding] = useState(false);
   const [legacy, setLegacy] = useState(0);
   const [confirmAll, setConfirmAll] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = () => listMemories().then(setData).catch((e) => setLoadError(errorMessage(e, 'Could not load memories.')));
 
@@ -35,14 +38,15 @@ export function MemorySettings() {
     legacyMemoryCount().then(setLegacy).catch(() => {});
   }, []);
 
+  const pending = useMemo(() => (data ? data.memories.filter((m) => m.pending) : []), [data]);
+  const saved = useMemo(() => (data ? data.memories.filter((m) => !m.pending) : []), [data]);
   const shown = useMemo(() => {
-    if (!data) return [];
     const q = query.trim().toLowerCase();
-    return data.memories.filter((m) => (
+    return saved.filter((m) => (
       (filter === 'all' || (filter === 'global' ? m.scope === 'global' : m.agent_id === filter))
       && (!q || m.content.toLowerCase().includes(q))
     ));
-  }, [data, filter, query]);
+  }, [saved, filter, query]);
 
   if (loadError) return <p role="alert" className="text-[12.5px] text-danger-ink">{loadError}</p>;
   if (!data) return <p className="text-[13px] text-fg-dim">Loading…</p>;
@@ -64,7 +68,15 @@ export function MemorySettings() {
   };
 
   const settings = data.settings;
-  const agentIds = new Set(data.memories.filter((m) => m.agent_id).map((m) => m.agent_id as string));
+  const agentIds = new Set(saved.filter((m) => m.agent_id).map((m) => m.agent_id as string));
+
+  const proposedNotice = (r: ImportResult, what: string) => {
+    const parts = [`${r.proposed} ${r.proposed === 1 ? 'memory' : 'memories'} from ${what} waiting for your OK below.`];
+    if (r.duplicates) parts.push(`${r.duplicates} already saved.`);
+    if (r.skipped.length) parts.push(`${r.skipped.length} left out (secrets, too long, or memory full).`);
+    if (!r.proposed && !r.duplicates) parts.splice(0, 1, `Nothing worth keeping was found in ${what}.`);
+    setNotice(parts.join(' '));
+  };
   const chips = [
     { id: 'all', label: 'All' },
     { id: 'global', label: 'Global' },
@@ -85,19 +97,48 @@ export function MemorySettings() {
         <SettingRow
           label="Save new memories"
           detail={settings.auto_save === 'auto'
-            ? 'Agents save what seems worth keeping. A note shows in the chat each time, with Undo.'
-            : 'Agents only save something when you ask them to remember it.'}
+            ? 'Agents save what seems worth keeping. A note shows in the chat each time, with Undo. After reading web pages, files or app content, they ask first.'
+            : settings.auto_save === 'ask'
+              ? 'Agents propose memories and you approve each one in the chat (Save or No).'
+              : 'Agents only save something when you ask them to remember it.'}
         >
           <Segmented
             label="Save new memories"
             value={settings.auto_save}
-            options={[{ value: 'auto', label: 'Automatically' }, { value: 'explicit', label: 'When I ask' }]}
+            options={[{ value: 'auto', label: 'Automatically' }, { value: 'ask', label: 'Ask me first' }, { value: 'explicit', label: 'When I ask' }]}
             onChange={(auto_save) => void run(() => saveMemorySettings({ auto_save }), 'Could not change the setting.')}
           />
         </SettingRow>
       </Group>
 
-      <SubHeading className="!mt-6">{`SAVED MEMORIES · ${data.memories.length}`}</SubHeading>
+      {notice && (
+        <p role="status" className="!mt-4 rounded-lg border border-line bg-panel px-3 py-2 text-[12.5px] text-fg-dim">
+          {notice} <button type="button" className="ml-1 text-accent-ink hover:underline" onClick={() => setNotice(null)}>Dismiss</button>
+        </p>
+      )}
+
+      {pending.length > 0 && (
+        <section aria-label="Memories waiting for your OK">
+          <div className="!mt-6 flex flex-wrap items-center gap-2">
+            <SubHeading className="!mt-0 flex-1">{`WAITING FOR YOUR OK · ${pending.length}`}</SubHeading>
+            <button type="button" disabled={busy} className={quietButtonClass}
+              onClick={() => void run(() => settlePendingMemories(false), 'Could not discard them.')}>Discard all</button>
+            <button type="button" disabled={busy} className={buttonClass}
+              onClick={() => void run(() => settlePendingMemories(true), 'Could not save them.')}>Save all</button>
+          </div>
+          <p className="mb-2 mt-1 text-[12px] text-fg-dim">Agents don’t see these until you save them.</p>
+          <ul className="divide-y divide-line rounded-[12px] border border-accent/40 bg-panel">
+            {pending.map((m) => (
+              <PendingRow key={m.id} memory={m} busy={busy} highlighted={m.id === highlight}
+                replaced={m.replaces ? saved.find((x) => x.id === m.replaces)?.content : undefined}
+                onApprove={() => void run(() => approveMemory(m.id), 'Could not save the memory.')}
+                onDiscard={() => void run(() => deleteMemory(m.id), 'Could not discard the memory.')} />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <SubHeading className="!mt-6">{`SAVED MEMORIES · ${saved.length}`}</SubHeading>
 
       <div className={cn('space-y-3', !settings.enabled && 'opacity-60')}>
         <div className="flex flex-wrap items-center gap-2">
@@ -133,9 +174,18 @@ export function MemorySettings() {
 
         {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
 
-        {data.memories.length === 0 ? (
+        {importing && (
+          <ImportForm busy={busy} onCancel={() => setImporting(false)}
+            onImport={(text) => void run(async () => {
+              const result = await importMemories(text);
+              setImporting(false);
+              proposedNotice(result, 'your import');
+            }, 'Could not import those memories.')} />
+        )}
+
+        {saved.length === 0 ? (
           <p className="rounded-[10px] border border-line bg-panel px-3.5 py-4 text-[13px] leading-relaxed text-fg-dim">
-            Nothing saved yet. Tell an agent “remember that…” in any chat, or add a memory here.
+            Nothing saved yet. Tell an agent “remember that…” in any chat, add a memory here, or import what another assistant remembers.
           </p>
         ) : shown.length === 0 ? (
           <p className="px-1 text-[13px] text-fg-dim">No memories match.</p>
@@ -152,6 +202,24 @@ export function MemorySettings() {
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-3 text-[12.5px]">
+        <button type="button" className="text-fg-dim hover:text-fg hover:underline" onClick={() => { setError(null); setImporting(true); }}>
+          Import…
+        </button>
+        {saved.length > 0 && (
+          <>
+            <button type="button" className="text-fg-dim hover:text-fg hover:underline"
+              onClick={() => void exportMemories('markdown').catch((e) => setError(errorMessage(e, 'Could not export.')))}>Export Markdown</button>
+            <button type="button" className="text-fg-dim hover:text-fg hover:underline"
+              onClick={() => void exportMemories('json').catch((e) => setError(errorMessage(e, 'Could not export.')))}>Export JSON</button>
+          </>
+        )}
+        {legacy > 0 && (
+          <button type="button" disabled={busy} className="text-fg-dim hover:text-fg hover:underline disabled:opacity-60"
+            title="A model reads the old background memory and proposes facts for you to approve."
+            onClick={() => void run(async () => proposedNotice(await convertLegacyMemory(), 'your old automatic memory'), 'Could not convert the old memory.')}>
+            {busy ? 'Working…' : 'Turn old memory into saved memories'}
+          </button>
+        )}
         {legacy > 0 && (
           <button type="button" disabled={busy} className="text-fg-dim hover:text-fg hover:underline disabled:opacity-60"
             onClick={() => void run(async () => { await deleteLegacyMemory(); setLegacy(0); }, 'Could not delete the old memory.')}
@@ -174,6 +242,56 @@ export function MemorySettings() {
         ))}
       </div>
     </div>
+  );
+}
+
+function PendingRow({ memory, busy, highlighted, replaced, onApprove, onDiscard }: {
+  memory: SavedMemory;
+  busy: boolean;
+  highlighted: boolean;
+  replaced?: string;
+  onApprove: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <li className={cn('flex flex-wrap items-start gap-x-3 gap-y-1.5 px-3.5 py-3', highlighted && 'bg-accent/10')}>
+      <div className="min-w-0 flex-1 basis-[240px]">
+        <div className="text-[13.5px] leading-snug">{memory.content}</div>
+        <div className="mt-1 text-[11.5px] text-fg-dim">
+          {replaced && <>Replaces “{replaced}” · </>}
+          {memory.source === 'import' ? <>Imported · {timeAgo(memory.created)}</> : origin(memory)}
+        </div>
+      </div>
+      <span className={cn('mt-0.5 rounded px-1.5 py-0.5 font-mono text-[10px] tracking-[0.06em]',
+        memory.scope === 'global' ? 'bg-accent/15 text-accent-ink' : 'bg-panel-2 text-fg-dim')}>
+        {scopeLabel(memory)}
+      </span>
+      <div className="flex items-center gap-0.5">
+        <button type="button" onClick={onDiscard} disabled={busy} className={cn(quietButtonClass, 'hover:text-danger-ink')}>Discard</button>
+        <button type="button" onClick={onApprove} disabled={busy} className={buttonClass}>Save</button>
+      </div>
+    </li>
+  );
+}
+
+function ImportForm({ busy, onImport, onCancel }: { busy: boolean; onImport: (text: string) => void; onCancel: () => void }) {
+  const [text, setText] = useState('');
+  return (
+    <form className="space-y-2.5 rounded-[10px] border border-line bg-bg p-3" aria-label="Import memories"
+      onSubmit={(e) => { e.preventDefault(); if (text.trim()) onImport(text.trim()); }}>
+      <p className="text-[12.5px] leading-relaxed text-fg-dim">
+        Paste what another assistant remembers about you (in ChatGPT: Settings › Personalization › Memory; in Claude: ask
+        “list everything you remember about me”), your own notes, or a Cognitrix export. Each fact waits for your OK before agents see it.
+      </p>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={6} autoFocus aria-label="Memories to import"
+        placeholder={'- Prefers short answers\n- Works on a Python and React app\n- Lives in Accra'}
+        className="w-full resize-y rounded-lg border border-line bg-panel p-2.5 text-[13px] text-fg placeholder:text-fg-dim focus:border-accent focus:outline-none" />
+      <div className="flex items-center gap-2">
+        <span className="flex-1 text-[11.5px] text-fg-dim">Your main agent’s model splits it into separate facts.</span>
+        <button type="button" onClick={onCancel} className={quietButtonClass}>Cancel</button>
+        <button type="submit" disabled={busy || !text.trim()} className={buttonClass}>{busy ? 'Reading…' : 'Import'}</button>
+      </div>
+    </form>
   );
 }
 

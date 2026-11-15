@@ -624,6 +624,11 @@ class AgentManager:
                     )
                     continue
 
+                # Noted before it runs, so a Memory save in the same batch
+                # as a web read is held for approval too (memory/guard.py).
+                from cognitrix.memory import guard as memory_guard
+                memory_guard.note_tool(tool)
+
                 # Safety check
                 # Work on a copy: `args` is the dict stored in the assistant
                 # message, and runtime-only values (like the agent object)
