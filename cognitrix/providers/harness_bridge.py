@@ -76,6 +76,8 @@ class Bridge:
     _task: asyncio.Task | None = None
     _stack: contextlib.AsyncExitStack | None = None
     _running: set[asyncio.Task] = field(default_factory=set)
+    listed: bool = False
+    """Whether the CLI asked for the tool list (it loaded the server)."""
 
     @property
     def url(self) -> str:
@@ -103,6 +105,7 @@ class Bridge:
         bridge = self
 
         async def list_tools(_ctx, _params) -> types.ListToolsResult:
+            bridge.listed = True
             tools = [types.Tool(name=t['name'], description=t['description'], input_schema=t['input_schema'])
                      for t in bridge.tools]
             if bridge.approve is not None:

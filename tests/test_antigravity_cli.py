@@ -36,7 +36,7 @@ def _cmd(**kw):
 def test_listed_as_a_harness():
     assert h.is_harness('antigravity-cli')
     assert h.HARNESSES['antigravity-cli'].program == 'agy'
-    assert 'antigravity-cli' in h.NO_TOOL_HARNESSES
+    assert 'antigravity-cli' not in h.NO_TOOL_HARNESSES
     assert 'antigravity-cli' not in h.ASK_HARNESSES
 
 
@@ -227,3 +227,15 @@ def test_coding_agent_cli():
         assert ca.normalise_agent(name) == 'antigravity'
     assert ca.PREFERENCE[-1] == 'antigravity'
     assert ca.normalize_agent_limits({'clis': ['agy', 'claude']}) == {'clis': ['antigravity', 'claude']}
+
+
+def test_tools_reach_agy_through_a_private_workspace_folder(tmp_path):
+    folder = tmp_path / (h.AGY_TOOLS_DIR_PREFIX + 'abc')
+    argv, env = _cmd(tools_url='http://127.0.0.1:5/mcp/tok', settings_file=str(folder), extra_dirs=['/data/apps'])
+    config = json.loads((folder / '.agents' / 'mcp_config.json').read_text())
+    assert config == {'mcpServers': {'cognitrix': {'serverUrl': 'http://127.0.0.1:5/mcp/tok'}}}
+    dirs = [argv[i + 1] for i, a in enumerate(argv) if a == '--add-dir']
+    assert dirs == ['/data/apps', str(folder)]
+    assert env == {}
+    # Nothing is written into the working folder itself.
+    assert not (tmp_path / '.agents').exists()

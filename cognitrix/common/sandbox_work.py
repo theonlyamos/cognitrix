@@ -47,8 +47,30 @@ CLI_KEYS = {
     'claude': (('anthropic', 'ANTHROPIC_API_KEY'),),
     'codex': (('openai', 'OPENAI_API_KEY'), ('openai', 'CODEX_API_KEY')),
     'gemini': (('google', 'GEMINI_API_KEY'), ('google', 'GOOGLE_API_KEY')),
+    # Antigravity signs in with the OS keyring, which the sandbox doesn't
+    # have; with modelProvider "gemini" it uses GEMINI_API_KEY instead.
+    'antigravity': (('google', 'GEMINI_API_KEY'),),
 }
 SANDBOX_CLIS = tuple(CLI_KEYS)
+
+# Run before agy in the sandbox: point it at the Gemini API key (merging into
+# any settings already in the home volume). jq is in the sandbox image.
+AGY_SANDBOX_SETUP = (
+    'f="$HOME/.gemini/antigravity-cli/settings.json"; mkdir -p "${f%/*}" && '
+    'if [ -s "$f" ]; then jq \'.modelProvider = "gemini"\' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; '
+    'else printf \'{"modelProvider": "gemini"}\\n\' > "$f"; fi'
+)
+
+
+def sandbox_cli_command(key: str, argv: list[str]) -> str:
+    """The shell command that runs a coding agent CLI in the sandbox."""
+    import shlex
+    command = shlex.join(argv)
+    if key == 'antigravity':
+        missing = ("echo \"Antigravity CLI isn't in this sandbox yet. Update the sandbox (Settings, Computer) "
+                   "and try again.\" >&2; exit 127")
+        return f'if ! command -v agy >/dev/null; then {missing}; fi; {{ {AGY_SANDBOX_SETUP}; }} && {command}'
+    return command
 PROVIDER_LABELS = {'anthropic': 'an Anthropic', 'openai': 'an OpenAI', 'google': 'a Google (Gemini)'}
 
 
