@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Pin as PinIcon } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
@@ -7,6 +7,8 @@ import { usePolling } from '@/hooks/usePolling';
 import { useOptionalNotifications } from '@/context/NotificationsContext';
 import { AgentBadge } from '@/components/StartChat';
 import { ChatRowMenu } from '@/components/ChatRowMenu';
+import { ShareChatDialog } from '@/components/sharing/ShareChatDialog';
+import { sharedChatHref, type SharedChatRow } from '@/lib/sharedChats';
 import { ChatRail, type RailChat, type RailGroup } from '@/components/ChatRail';
 import { exportChat } from '@/lib/chatExport';
 import { fmtRelative } from '@/lib/transcript';
@@ -87,6 +89,12 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
   const [showAll, setShowAll] = useState(false);
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [sharing, setSharing] = useState<{ id: string; title: string } | null>(null);
+  // Chats other people shared with me (sessions/sharing.py).
+  const location = useLocation();
+  const { data: sharedData, refetch: refetchShared } = useResource<SharedChatRow[]>('/shared-chats');
+  usePolling(() => { if (!document.hidden) void refetchShared({ silent: true }); }, 30_000, true);
+  const shared = sharedData || [];
 
   // Agents and teams too: one made since the sidebar mounted owns new chats.
   const reread = useCallback(() => {
@@ -296,6 +304,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
       { label: c.pinned ? 'Unpin' : 'Pin to top', disabled: busy, onSelect: () => void update(c, { pinned: !c.pinned }) },
       { label: c.archived ? 'Move back to chats' : 'Archive', disabled: busy, onSelect: () => void update(c, { archived: !c.archived }) },
       ...(c.kind === 'team' ? [] : [
+        { label: 'Share…', onSelect: () => setSharing({ id: c.id, title: c.title }) },
         { label: 'Export as Markdown', onSelect: () => void exportChat(c.id, c.title, who).catch(() => {}) },
         { label: 'Save as skill', disabled: busy, onSelect: () => void saveAsSkill(c) },
       ]),
@@ -425,6 +434,36 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
             })}
           </div>
         )}
+        {shared.length > 0 && (
+          <section aria-label="Shared with you" className="mt-2">
+            <div className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-dim">Shared with you</div>
+            <ul className="flex flex-col gap-px">
+              {shared.map((c) => {
+                const href = sharedChatHref(c.id);
+                const selected = location.pathname === href;
+                return (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onClick={() => { onNavigate?.(); navigate(href); }}
+                      aria-current={selected ? 'page' : undefined}
+                      title={`${c.title} · ${c.owner}'s chat with ${c.agent.name}`}
+                      className={cn(
+                        'flex min-h-11 w-full items-center gap-2.5 rounded-lg pl-2.5 pr-2 text-left text-[13.5px] transition-colors md:min-h-[34px]',
+                        selected ? 'bg-panel-2 font-medium text-fg' : 'text-fg/90 hover:bg-panel-2',
+                      )}
+                    >
+                      <AgentBadge name={c.agent.name} avatar={c.agent.avatar} size="sm" />
+                      <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                      <span className="flex-none truncate text-[11.5px] text-fg-dim">{c.owner}</span>
+                      {c.running && <span aria-label="working" className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
         {grouped.archived.length > 0 && (
           <div className="mt-2">
             <button
@@ -445,6 +484,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
         )}
       </div>
     </div>
+    {sharing && <ShareChatDialog chatId={sharing.id} title={sharing.title} onClose={() => setSharing(null)} />}
     </>
   );
 }

@@ -238,6 +238,10 @@ app.include_router(api_router)
 from .routes.hosted_apps import app_proxy  # noqa: E402
 
 app.include_router(app_proxy)
+# A public agent link's chat page and website widget, at /chat/<token>.
+from .routes.public_agents import public_chat_pages  # noqa: E402
+
+app.include_router(public_chat_pages)
 # OpenAI-compatible shim at the app root (/v1). MUST be registered before the
 # SPA catch-all below, or GET /v1/models would be served index.html with 200.
 app.include_router(openai_api)

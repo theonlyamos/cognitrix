@@ -185,7 +185,12 @@ class HybridContextManager(BaseContextManager):
         # 2. Saved memories about this person (cognitrix/memory/saved.py).
         # The old automatic store (raw messages in Chroma) is no longer read.
         user_id = str(getattr(session, 'user_id', None) or '')
-        if user_id and not getattr(session, 'task_id', None) and not getattr(session, 'incognito', False):
+        # Never in a visitor's chat on a public link (it isn't the person's),
+        # nor while answering someone else (a guest in a shared chat).
+        from cognitrix.safety.permissions import guest_run
+
+        if (user_id and not getattr(session, 'task_id', None) and not getattr(session, 'incognito', False)
+                and not getattr(session, 'public_link_id', None) and not guest_run.get()):
             query = ''
             for m in reversed(session.chat or []):
                 if str(m.get('role', '')).lower() == 'user' and m.get('type', 'text') == 'text':

@@ -40,6 +40,7 @@ const Meetings = lazy(() => import('@/pages/Meetings'));
 const Notifications = lazy(() => import('@/pages/Notifications'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const QuickAsk = lazy(() => import('@/pages/QuickAsk'));
+const SharedChat = lazy(() => import('@/pages/SharedChat'));
 
 function LoadingScreen({ waitingForServer = false }: { waitingForServer?: boolean }) {
   return (
@@ -95,6 +96,7 @@ function AppRoutes() {
         <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/home" element={<Home />} />
+          <Route path="/shared/:chatId" element={<SharedChat />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/agents/new" element={<AgentPage />} />
           <Route path="/agents/:agentId" element={<AgentDetail />} />

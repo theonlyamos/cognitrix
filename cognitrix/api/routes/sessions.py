@@ -721,6 +721,12 @@ async def _delete_owned(session_id: str, ctx: AuthContext) -> None:
         # The binding is the last row deleted, after exact resource cleanup and
         # Session deletion both succeeded.
         await finish_delete(token)
+        try:
+            from cognitrix.sessions.sharing import drop_shares
+
+            await drop_shares(session_id)
+        except Exception:
+            logger.debug('Could not drop shares of chat %s', session_id, exc_info=True)
     except Exception as error:
         if isinstance(error, (OwnershipNotFound, OwnershipConflict)):
             _raise_ownership_error(error)

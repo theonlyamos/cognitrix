@@ -9,6 +9,7 @@ import type { ChatMessage, ToolArtifact } from '@/context/SessionContext';
 import {
   BlockedEndpointNotice, RefusedNotice, SignInNeededNotice, blockedEndpoint, isRefusal, signInNeeded,
 } from '@/components/SafetyNotices';
+import { splitAuthor } from '@/lib/sharedChats';
 import { parsePress } from '@/lib/cards';
 import { speakText, stopSpeaking, useSpeechState } from '@/lib/speech';
 import { cn } from '@/lib/utils';
@@ -180,9 +181,14 @@ export const ChatMessageRow = memo(function ChatMessageRow({
     );
   }
   const blockedUrl = isUser ? null : blockedEndpoint(message.content);
+  // Written by someone this chat is shared with (sessions/sharing.py).
+  const guest = isUser ? splitAuthor(message.content) : null;
+  const guestAuthor = guest?.author ?? null;
   return (
     <div className={cn('group/msg mx-auto flex w-full max-w-3xl flex-col px-4 py-2.5 sm:px-6', isUser && 'items-end')}>
-      {isUser ? (
+      {isUser && guestAuthor ? (
+        <div className="mb-1 truncate text-[12px] font-semibold text-fg-dim" title={`${guestAuthor} wrote this in the shared chat`}>{guestAuthor}</div>
+      ) : isUser ? (
         <span className="sr-only">You said:</span>
       ) : message.speaker ? (
         <div className="mb-1 truncate text-[12px] font-semibold text-fg-dim" title={message.speaker}>{message.speaker}</div>
@@ -196,7 +202,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
         {blockedUrl && <BlockedEndpointNotice url={blockedUrl} />}
         {isUser ? (
           <>
-            <div className="whitespace-pre-wrap break-words leading-relaxed">{message.content}</div>
+            <div className="whitespace-pre-wrap break-words leading-relaxed">{guestAuthor ? guest?.text : message.content}</div>
             {message.steered && (
               <div className="mt-1 font-mono text-[10.5px] text-fg-dim">sent while the agent was working</div>
             )}

@@ -435,6 +435,7 @@ _SESSION_MIGRATION_COLUMNS = (
     ('incognito', 'BOOLEAN'),
     ('title', 'TEXT'), ('pinned', 'BOOLEAN'), ('archived', 'BOOLEAN'),
     ('pending_messages', 'TEXT'),
+    ('public_link_id', 'TEXT'), ('visitor_key', 'TEXT'),
 )
 
 _TASKRUN_INDEXES = (
@@ -816,11 +817,15 @@ async def _ensure_schema():
     from cognitrix.artifact_pages.models import MODELS as ARTIFACT_PAGE_MODELS
     from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
     from cognitrix.swarms.models import MODELS as SWARM_MODELS
+    from cognitrix.public_agents.models import MODELS as PUBLIC_AGENT_MODELS
+    from cognitrix.sessions.sharing import MODELS as CHAT_SHARE_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
         *HOSTED_APP_MODELS,
         *SWARM_MODELS,
+        *PUBLIC_AGENT_MODELS,
+        *CHAT_SHARE_MODELS,
         AgentOffer,
         MeetingNote,
         PersonalSkill,

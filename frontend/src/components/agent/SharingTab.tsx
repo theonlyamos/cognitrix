@@ -3,6 +3,7 @@ import { api, errorMessage } from '@/lib/api';
 import type { TabProps } from '@/lib/agentDraft';
 import { Card, buttonClass, inputClass, primaryButtonClass } from '@/components/agent/ui';
 import { cn } from '@/lib/utils';
+import PublicLinkCard from '@/components/agent/PublicLinkCard';
 
 type Role = 'use' | 'edit';
 interface Person { id: string; name: string; email: string }
@@ -161,6 +162,8 @@ export default function SharingTab({ agent }: TabProps) {
           {notice && !dirty && <p role="status" className="text-[13px] text-fg-dim">{notice}</p>}
         </div>
       </Card>
+
+      <PublicLinkCard agentId={agent.id} />
     </div>
   );
 }
