@@ -230,3 +230,30 @@ def test_big_results_keep_their_structured_part():
                         'structuredContent': {'rows': 3}})
     assert data['structuredContent'] == {'rows': 3}
     assert 'too large' in data['content'][0]['text']
+
+
+async def test_screen_changes_are_kept_for_reopening(db):
+    from cognitrix.api.routes import app_views as routes
+
+    amos, row = await _setup()
+    tools = await _wrappers(row)
+    _as(amos, session_id='s1', agent_id='a1')
+    view_id = (await tools['Tasks_add_task'].run(text='One')).outcome.entities[0].id
+    me = _ctx(amos)
+    await routes.call_tool(view_id, routes.CallBody(name='toggle_task', arguments={'index': 0}), me)
+    shown = await routes.get_view(view_id, me)
+    assert shown['version'] == 2 and shown['tool_result']['structuredContent']['tasks'][0]['done'] is True
+
+
+async def test_a_switched_off_app_stays_off_for_open_screens(db):
+    from cognitrix.api.routes import app_views as routes
+    from cognitrix.models.mcp_server import MCPServer
+
+    amos, row = await _setup()
+    tools = await _wrappers(row)
+    _as(amos, session_id='s1', agent_id='a1')
+    view_id = (await tools['Tasks_show_board'].run()).outcome.entities[0].id
+    await MCPServer.update_one({'id': row.id}, {'enabled': False})
+    with pytest.raises(HTTPException) as off:
+        await routes.call_tool(view_id, routes.CallBody(name='show_board'), _ctx(amos))
+    assert off.value.status_code == 409

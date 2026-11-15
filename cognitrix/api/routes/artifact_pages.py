@@ -228,6 +228,42 @@ async def page_source(page_id: str, v: int | None = None, ctx: AuthContext = Dep
         raise _bad(exc)
 
 
+class NewDocument(BaseModel):
+    title: str = ''
+    format: Literal['sheet', 'whiteboard']
+
+
+BLANK = {'sheet': '{"tabs":[{"name":"Sheet1","cells":{}}]}', 'whiteboard': '{"items":[]}'}
+
+
+@artifact_pages_api.post('')
+async def new_document(body: NewDocument, ctx: AuthContext = Depends(jwt_only)):
+    """A blank sheet or whiteboard a person starts themselves (agents use Publish Artifact)."""
+    title = body.title.strip() or ('Untitled sheet' if body.format == 'sheet' else 'Untitled whiteboard')
+    try:
+        page, _ = await store.publish(user_key=_me(ctx), title=title, content=BLANK[body.format], fmt=body.format)
+    except store.PageError as exc:
+        raise _bad(exc)
+    return {'id': str(page.id)}
+
+
+class ContentBody(BaseModel):
+    content: str
+    base_version: int
+
+
+@artifact_pages_api.put('/{page_id}/content')
+async def save_content(page_id: str, body: ContentBody, ctx: AuthContext = Depends(jwt_only)):
+    """A person's edit to a sheet or whiteboard (409 when it changed since they opened it)."""
+    page, _role = await _page(page_id, ctx)
+    try:
+        page = await store.save_edit(page, user_key=_me(ctx), name=_my_name(ctx), content=body.content,
+                                     base_version=body.base_version)
+    except store.PageError as exc:
+        raise _bad(exc)
+    return {'version': page.version, 'updated': page.updated}
+
+
 class PageUpdate(BaseModel):
     title: str | None = None
     pinned: bool | None = None
