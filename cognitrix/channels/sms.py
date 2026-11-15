@@ -33,6 +33,8 @@ API_BASE = 'https://api.twilio.com/2010-04-01'
 _SID_RE = re.compile(r'^AC[0-9a-fA-F]{32}$')
 _PHONE_RE = re.compile(r'^\+[1-9]\d{6,14}$')
 _SEEN_LIMIT = 500
+MAX_BODY = 1600
+MAX_OFFERS = 5
 
 
 class SmsError(RuntimeError):
@@ -101,8 +103,9 @@ class SmsTransport(Transport):
         self._owns_session = session is None
         self._handlers: Handlers | None = None
         self._seen: OrderedDict[str, None] = OrderedDict()
-        self._choices: dict[str, tuple[str, list[Button]]] = {}
-        """chat -> (message ref, numbered choices) of the last message that offered some."""
+        self._offers: dict[str, list[tuple[str, dict[int, Button]]]] = {}
+        """chat -> open offers (message ref, number -> choice). Numbers keep counting
+        across open offers, so "1" can never mean a choice in a different text."""
 
     def _http(self) -> aiohttp.ClientSession:
         if self._session is None:
@@ -148,14 +151,26 @@ class SmsTransport(Transport):
     async def send(self, chat_id: str, text: str, buttons: list[Button] | None = None,
                    thread_id: str = '') -> str:
         body = to_sms(text)
-        if buttons:
-            body += '\n\n' + '\n'.join(f'{i}. {b.label}' for i, b in enumerate(buttons, 1))
-            body += '\nReply with a number.'
-        data = await self._call('POST', '/Messages.json', {'From': self._phone, 'To': chat_id, 'Body': body or '...'})
-        ref = str(data.get('sid') or '')
-        if buttons:
-            self._choices[chat_id] = (ref, list(buttons))
+        if not buttons:
+            return await self._post(chat_id, body)
+        offers = self._offers.setdefault(chat_id, [])
+        first = max((n for _ref, numbered in offers for n in numbered), default=0) + 1
+        numbered = {first + i: b for i, b in enumerate(buttons)}
+        suffix = '\n'.join(f'{n}. {b.label}' for n, b in numbered.items()) + '\nReply with a number.'
+        if len(body) + 2 + len(suffix) > MAX_BODY:
+            # Too long for one text with its choices: the text first, then the choices.
+            for start in range(0, len(body), MAX_BODY):
+                await self._post(chat_id, body[start:start + MAX_BODY])
+            ref = await self._post(chat_id, suffix[:MAX_BODY])
+        else:
+            ref = await self._post(chat_id, f'{body}\n\n{suffix}' if body else suffix)
+        offers.append((ref, numbered))
+        del offers[:-MAX_OFFERS]
         return ref
+
+    async def _post(self, chat_id: str, body: str) -> str:
+        data = await self._call('POST', '/Messages.json', {'From': self._phone, 'To': chat_id, 'Body': body or '...'})
+        return str(data.get('sid') or '')
 
     async def edit(self, chat_id: str, message_ref: str, text: str) -> None:
         """Texts can't be edited; ``answer_button`` says the outcome instead."""
@@ -198,19 +213,19 @@ class SmsTransport(Transport):
 
     def _choice(self, chat_id: str, text: str) -> ButtonPress | None:
         """A reply that picks one of the numbered choices last offered to this chat."""
-        offered = self._choices.get(chat_id)
-        if offered is None:
-            return None
-        ref, buttons = offered
+        offers = self._offers.get(chat_id) or []
         word = text.strip().rstrip('.!').lower()
-        picked = None
-        if word.isdigit() and 1 <= int(word) <= len(buttons):
-            picked = buttons[int(word) - 1]
-        else:
-            picked = next((b for b in buttons if b.label.strip().lower() == word), None)
-        if picked is None:
-            return None
-        self._choices.pop(chat_id, None)
+        hits = []
+        for index, (ref, numbered) in enumerate(offers):
+            for number, button in numbered.items():
+                if (word.isdigit() and int(word) == number) or button.label.strip().lower() == word:
+                    hits.append((index, ref, button))
+        if len(hits) != 1:
+            return None  # no choice, or a label more than one open text offers
+        index, ref, picked = hits[0]
+        del offers[index]
+        if not offers:
+            self._offers.pop(chat_id, None)
         return ButtonPress(chat_id=chat_id, sender_id=chat_id, data=picked.data, message_ref=ref)
 
     async def receive(self, urls: list[str], sig: str, params: dict[str, str]) -> None:

@@ -172,3 +172,34 @@ def test_twilio_urls_cover_proxies():
     urls = _twilio_urls(request, 'https://public.example.com/')
     assert 'https://cog.example.com/api/v1/channels/sms/x/webhook' in urls
     assert 'https://public.example.com/api/v1/channels/sms/x/webhook' in urls
+
+
+async def test_several_open_choices_get_their_own_numbers():
+    transport = FakeTwilio()
+    presses = []
+
+    async def on_button(press):
+        presses.append(press)
+
+    async def on_message(msg):
+        pass
+
+    transport._handlers = Handlers(on_message=on_message, on_button=on_button)
+    first = await transport.send('+15559990000', 'Delete old logs?', [Button('Approve', 'ta:a:1'), Button('Deny', 'ta:a:0')])
+    await transport.send('+15559990000', 'Send the invoice?', [Button('Approve', 'ta:b:1'), Button('Deny', 'ta:b:0')])
+    assert '3. Approve\n4. Deny' in transport.calls[-1][2]['Body']
+    # "Approve" is offered twice, so it picks nothing; "1" is the first text's.
+    await _receive(transport, _params('Approve', sid='SM10'))
+    assert presses == []
+    await _receive(transport, _params('1', sid='SM11'))
+    assert presses[-1].data == 'ta:a:1' and presses[-1].message_ref == first
+    await _receive(transport, _params('Deny', sid='SM12'))
+    assert presses[-1].data == 'ta:b:0'
+
+
+async def test_long_text_with_choices_stays_under_twilios_limit():
+    transport = FakeTwilio()
+    await transport.send('+15559990000', 'x' * 1500, [Button('A' * 60, 'q:1:0'), Button('B' * 60, 'q:1:1')])
+    bodies = [c[2]['Body'] for c in transport.calls]
+    assert all(len(b) <= sms.MAX_BODY for b in bodies) and len(bodies) == 2
+    assert bodies[-1].startswith('1. ' + 'A' * 60)
