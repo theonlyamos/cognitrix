@@ -36,6 +36,9 @@ class UserUpdate(BaseModel):
     role: Literal['admin', 'member'] | None = None
     disabled: bool | None = None
     new_password: str | None = Field(default=None, min_length=8, max_length=200)
+    # Swarm caps for this person; 0 means the server's own limit.
+    swarm_concurrency: int | None = Field(default=None, ge=0, le=64)
+    swarm_max_workers: int | None = Field(default=None, ge=0, le=500)
 
 
 class InviteBody(BaseModel):
@@ -57,8 +60,18 @@ async def _admins(users) -> list:
 
 
 async def _project(user, me: str) -> dict:
+    from cognitrix.swarms import service as swarms
+
     totals = (await usage.summary(agent_access.owner_key(user), 30))['total']
+    try:
+        caps = await swarms.get_settings(agent_access.owner_key(user))
+        swarm_caps = (int(caps.admin_concurrency or 0), int(caps.admin_max_workers or 0))
+    except Exception:
+        logger.debug('Could not read swarm limits', exc_info=True)
+        swarm_caps = (0, 0)
     return {
+        'swarm_concurrency': swarm_caps[0],
+        'swarm_max_workers': swarm_caps[1],
         'id': str(user.id),
         'name': user.name,
         'email': user.email,
@@ -108,6 +121,13 @@ async def update_user(user_id: str, body: UserUpdate, ctx: AuthContext = Depends
         changes['tokens_valid_after'] = int(time.time())
         changes['reset_token_hash'] = None
         changes['reset_expires'] = None
+    caps = {key: value for key, value in (('admin_concurrency', body.swarm_concurrency),
+                                          ('admin_max_workers', body.swarm_max_workers)) if value is not None}
+    if caps:
+        from cognitrix.swarms import service as swarms
+
+        await swarms.save_settings(agent_access.owner_key(user), caps, admin=True)
+        _audit(ctx, 'changed swarm limits for', user.email)
     if changes:
         await User.update_one({'id': user.id}, changes)
         _audit(ctx, 'changed ' + ', '.join(k for k in changes if k not in ('tokens_valid_after',)), user.email)

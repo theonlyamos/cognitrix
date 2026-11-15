@@ -13,6 +13,7 @@ const TaskIcon = () => svg(<><path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0
 const BoltIcon = ({ size = 15 }: { size?: number }) => svg(<path d="M13 2L3 14h9l-1 8 10-12h-9z" />, size);
 const EyeOffIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M17.94 17.94A10 10 0 0 1 12 20c-7 0-11-8-11-8a18 18 0 0 1 5.06-5.94M9.9 4.24A9 9 0 0 1 12 4c7 0 11 8 11 8a18 18 0 0 1-2.16 3.19" /><path d="M1 1l22 22" /></>, size);
 const BoxIcon = ({ size = 15 }: { size?: number }) => svg(<><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" /><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12" /></>, size);
+const SwarmIcon = ({ size = 15 }: { size?: number }) => svg(<><circle cx="12" cy="5" r="2.2" /><circle cx="5" cy="18" r="2.2" /><circle cx="12" cy="18" r="2.2" /><circle cx="19" cy="18" r="2.2" /><path d="M12 7.2v8.6M12 11H5v4.8M12 11h7v4.8" /></>, size);
 const ClockIcon = ({ size = 15 }: { size?: number }) => svg(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>, size);
 
 function Switch({ on, tone }: { on: boolean; tone: 'danger' | 'warn' | 'accent' }) {
@@ -44,6 +45,8 @@ interface Props {
   incognitoTitle: string;
   reasoning: string;
   onReasoning: (value: string) => void;
+  /** Swarm: the agent splits this message's job across parallel workers. Left out where swarms can't run. */
+  swarm?: { on: boolean; onToggle: () => void };
   /** Run in sandbox: shown when the sandboxed computer is on (or the chat already uses it). */
   sandbox?: { on: boolean; available: boolean; onToggle: () => void };
   /** Shown between the + button and the on/off indicators (agent, model, folders). */
@@ -92,7 +95,7 @@ export default function ComposerMenu(p: Props) {
           aria-label="More options"
           aria-haspopup="menu"
           aria-expanded={open}
-          title="Attach, run as task, auto-approve, incognito, reasoning"
+          title="Attach, run as task, swarm, auto-approve, incognito, reasoning"
           className={cn(composerIconBtn, open && 'bg-panel-2 text-fg')}
         >
           <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={cn('transition-transform', open && 'rotate-45')}><path d="M12 5v14M5 12h14" /></svg>
@@ -150,6 +153,21 @@ export default function ComposerMenu(p: Props) {
                 <span className="min-w-0 flex-1">Incognito<span className={sub}>New chats only, nothing remembered</span></span>
                 <Switch on={p.incognito} tone="warn" />
               </button>
+              {p.swarm && (
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={p.swarm.on}
+                  aria-label="Swarm"
+                  title="The agent splits the job across several workers that run at the same time, then gives you one result. Uses more tokens."
+                  className={item}
+                  onClick={p.swarm.onToggle}
+                >
+                  <SwarmIcon />
+                  <span className="min-w-0 flex-1">Swarm<span className={sub}>Split the job across parallel workers</span></span>
+                  <Switch on={p.swarm.on} tone="accent" />
+                </button>
+              )}
               {p.sandbox && (
                 <button
                   type="button"
@@ -205,6 +223,18 @@ export default function ComposerMenu(p: Props) {
         <button type="button" onClick={() => setOpen(true)} title={`Reasoning: ${reasoningLabel(p.reasoning).toLowerCase()}. Click to change it.`} aria-label={`Reasoning ${reasoningLabel(p.reasoning).toLowerCase()}. Change`} className={cn(composerBtn)}>
           <ClockIcon size={15} />
           <span className="hidden sm:inline">{reasoningLabel(p.reasoning)}</span>
+        </button>
+      )}
+      {p.swarm?.on && (
+        <button
+          type="button"
+          onClick={p.swarm.onToggle}
+          title="Swarm is on: the agent splits the job across parallel workers. Click to turn it off."
+          aria-label="Turn off swarm"
+          className={cn(composerBtn, 'text-accent-ink')}
+        >
+          <SwarmIcon size={15} />
+          <span className="hidden sm:inline">Swarm</span>
         </button>
       )}
       {p.sandbox?.on && (

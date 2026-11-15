@@ -129,6 +129,11 @@ class Task(Model):
     """Set on the home task of a standing assistant (tasks/standing.py): the
     agent whose brief this task checks in on. Its runs are read-only."""
 
+    swarm: bool = False
+    """Swarm task: each step's agent may split its work across parallel
+    workers with Spawn Workers (cognitrix/swarms). The run stays one durable
+    task run, so it survives restarts and can be scheduled like any task."""
+
     async def team(self):
         agents: list[Agent] = []
         for agent_id in self.assigned_agents:

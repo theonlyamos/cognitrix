@@ -8,6 +8,7 @@ from ...api.routes.credentials import credentials_api
 from ...api.routes.knowledge import knowledge_api
 from ...api.routes.memories import memories_api
 from ...api.routes.themes import themes_api
+from ...api.routes.swarms import swarms_api
 from ...api.routes.artifacts import artifacts_api
 from ...api.routes.artifact_pages import artifact_frame_api, artifact_pages_api
 from ...api.routes.assistant import assistant_api
@@ -71,6 +72,7 @@ api_router.include_router(apps_api)
 api_router.include_router(credentials_api)
 api_router.include_router(memories_api)
 api_router.include_router(themes_api)
+api_router.include_router(swarms_api)
 api_router.include_router(usage_api)
 api_router.include_router(push_api)
 api_router.include_router(account_api)

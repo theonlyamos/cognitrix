@@ -138,6 +138,18 @@ def find_mentions(text: str, agents: Sequence[Agent]) -> list[str]:
     return found
 
 
+def mentions_everyone(text: str) -> bool:
+    """True when ``text`` addresses the whole team (@all, @everyone, @team)."""
+    if not text or '@' not in text:
+        return False
+    lowered = _strip_code(_strip_think(text)).lower()
+    for match in re.finditer(r'(?<![\w@])@', lowered):
+        rest = lowered[match.end():]
+        if any(rest.startswith(h) and not _word_char(rest, len(h)) for h in EVERYONE_HANDLES):
+            return True
+    return False
+
+
 def _word_char(text: str, index: int) -> bool:
     return index < len(text) and (text[index].isalnum() or text[index] in '_-')
 
@@ -287,13 +299,8 @@ async def run_group_turn(
     spoken: list[str] = []
     counts: dict[str, int] = {}
 
-    while queue and len(spoken) < MAX_AGENT_TURNS:
-        agent_id = queue.pop(0)
-        agent = by_id.get(agent_id)
-        if agent is None or counts.get(agent_id, 0) >= MAX_TURNS_PER_AGENT:
-            continue
-        counts[agent_id] = counts.get(agent_id, 0) + 1
-
+    def prepare(agent_id: str):
+        agent = by_id[agent_id]
         history, trigger = agent_view(session.chat, agent_id)
         group_agent = agent.model_copy(update={
             'system_prompt': (agent.system_prompt or '') + group_system_prompt(agent, team, members),
@@ -304,29 +311,30 @@ async def run_group_turn(
             team_id=session.team_id,
             user_id=session.user_id,
         )
-        start = len(scratch.chat)
+        return agent, group_agent, scratch, trigger, len(scratch.chat)
+
+    async def announce(agent: Agent) -> None:
         await emit({
             'type': 'group_speaker',
-            'agent_id': agent_id,
+            'agent_id': str(agent.id),
             'name': agent.name,
             'handle': handle(agent.name),
         })
-        try:
-            await run_agent(group_agent, scratch, trigger, emit)
-        finally:
-            # Keep whatever the agent produced, even when the turn is stopped.
-            produced = scratch.chat[start + 1:]
-            stamp = now_iso()
-            for entry in produced:
-                session.update_history({
-                    **entry,
-                    'speaker_id': agent_id,
-                    'speaker': agent.name,
-                    'timestamp': stamp,
-                })
-            await asyncio.shield(session.save())
-        spoken.append(agent_id)
 
+    async def record(agent: Agent, scratch, start: int) -> list[dict[str, Any]]:
+        produced = scratch.chat[start + 1:]
+        stamp = now_iso()
+        for entry in produced:
+            session.update_history({
+                **entry,
+                'speaker_id': str(agent.id),
+                'speaker': agent.name,
+                'timestamp': stamp,
+            })
+        await asyncio.shield(session.save())
+        return produced
+
+    def follow_ups(agent_id: str, produced: list[dict[str, Any]]) -> None:
         reply = next(
             (visible_text(e) for e in reversed(produced) if visible_text(e)), ''
         )
@@ -337,6 +345,72 @@ async def run_group_turn(
                 and counts.get(mentioned, 0) < MAX_TURNS_PER_AGENT
             ):
                 queue.append(mentioned)
+
+    # The whole team was asked (@all, @team, @everyone): the members answer at
+    # the same time, like a swarm's workers, each seeing the chat as it was.
+    # The leader then speaks last with every answer in front of it.
+    together = [a for a in queue if a in by_id]
+    if mentions_everyone(message) and len(together) >= 2:
+        leader = str(team.leader_id or '')
+        closing = leader if leader in together and len(together) >= 3 else ''
+        together = [a for a in together if a != closing][:MAX_AGENT_TURNS]
+        queue = [closing] if closing else []
+        listed = [by_id[a].name for a in together]
+        names = ', '.join(listed[:-1]) + ' and ' + listed[-1]
+        await emit({'type': 'status', 'content': f'{names} are answering at the same time.'})
+        prepared = {a: prepare(a) for a in together}
+        buffers: dict[str, list[dict[str, Any]]] = {a: [] for a in together}
+
+        async def one(agent_id: str) -> None:
+            _agent, group_agent, scratch, trigger, _start = prepared[agent_id]
+
+            async def hold(payload: Any = None, *args: Any, **kwargs: Any) -> None:
+                # Streams would interleave: each answer is shown whole, in turn.
+                if isinstance(payload, dict):
+                    buffers[agent_id].append(payload)
+
+            await run_agent(group_agent, scratch, trigger, hold)
+
+        jobs = [asyncio.ensure_future(one(a)) for a in together]
+        try:
+            results = await asyncio.gather(*jobs, return_exceptions=True)
+        except asyncio.CancelledError:
+            for job in jobs:
+                job.cancel()
+            await asyncio.gather(*jobs, return_exceptions=True)
+            results = None
+        try:
+            for index, agent_id in enumerate(together):
+                agent, _group_agent, scratch, _trigger, start = prepared[agent_id]
+                counts[agent_id] = counts.get(agent_id, 0) + 1
+                await announce(agent)
+                for payload in buffers[agent_id]:
+                    await emit(payload)
+                failure = results[index] if results is not None else None
+                if isinstance(failure, Exception):
+                    await emit({'type': 'error', 'content': f'{agent.name} could not answer: {failure}'})
+                produced = await record(agent, scratch, start)
+                spoken.append(agent_id)
+                follow_ups(agent_id, produced)
+        finally:
+            if results is None:
+                raise asyncio.CancelledError
+
+    while queue and len(spoken) < MAX_AGENT_TURNS:
+        agent_id = queue.pop(0)
+        if agent_id not in by_id or counts.get(agent_id, 0) >= MAX_TURNS_PER_AGENT:
+            continue
+        counts[agent_id] = counts.get(agent_id, 0) + 1
+        agent, group_agent, scratch, trigger, start = prepare(agent_id)
+        await announce(agent)
+        produced: list[dict[str, Any]] = []
+        try:
+            await run_agent(group_agent, scratch, trigger, emit)
+        finally:
+            # Keep whatever the agent produced, even when the turn is stopped.
+            produced = await record(agent, scratch, start)
+        spoken.append(agent_id)
+        follow_ups(agent_id, produced)
 
     if queue and len(spoken) >= MAX_AGENT_TURNS:
         await emit({

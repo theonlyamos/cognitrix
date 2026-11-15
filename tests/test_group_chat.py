@@ -199,3 +199,46 @@ def test_agents_saved_before_folder_columns_still_load():
 
     assert Agent._can_request_folders_default(None) is True
     assert Agent._can_request_folders_default(False) is False
+
+
+@pytest.mark.asyncio
+async def test_whole_team_answers_at_the_same_time_and_the_lead_goes_last():
+    import asyncio
+
+    running = {'now': 0, 'peak': 0}
+    seen: dict[str, str] = {}
+
+    async def run_agent(agent, scratch, trigger, emit):
+        seen[agent.id] = trigger
+        running['now'] += 1
+        running['peak'] = max(running['peak'], running['now'])
+        await emit({'type': 'generate', 'content': f'{agent.name} thinking'})
+        await asyncio.sleep(0.02)
+        running['now'] -= 1
+        scratch.update_history({'role': 'User', 'type': 'text', 'content': trigger})
+        scratch.update_history({'role': 'assistant', 'type': 'text', 'content': f'{agent.name} says hi'})
+
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    session = FakeSession()
+    session.update_history(gc.transcript_entry('@team what do you each think?'))
+    spoken = await gc.run_group_turn(
+        session, FakeTeam(leader_id='a'), TEAM, '@team what do you each think?', emit=emit, run_agent=run_agent)
+
+    # Bob and Cara answered together; Alice, the lead, spoke last and saw both.
+    assert spoken == ['b', 'c', 'a'] and running['peak'] == 2
+    assert 'Bob Smith says hi' not in seen['c'] and 'Cara says hi' not in seen['b']
+    assert 'Bob Smith says hi' in seen['a'] and 'Cara says hi' in seen['a']
+    assert [e['speaker_id'] for e in session.chat] == ['user', 'b', 'c', 'a']
+    # Each answer is shown whole, under its own speaker.
+    shown = [(e['type'], e.get('name') or e.get('content')) for e in events]
+    assert shown == [
+        ('status', 'Bob Smith and Cara are answering at the same time.'),
+        ('group_speaker', 'Bob Smith'), ('generate', 'Bob Smith thinking'),
+        ('group_speaker', 'Cara'), ('generate', 'Cara thinking'),
+        ('group_speaker', 'Alice'), ('generate', 'Alice thinking'),
+    ]
+    assert gc.mentions_everyone('hi @all') and not gc.mentions_everyone('hi @alice') and not gc.mentions_everyone('`@all`')

@@ -39,8 +39,9 @@ export default function OverviewTab({ agent, draft, overview, overviewError, ref
     setStopping(true);
     setStopNote('');
     try {
-      const { data } = await api.post<{ chats: number; task_runs: number; checks: number }>(`/agents/${agent.id}/stop-all`);
+      const { data } = await api.post<{ chats: number; task_runs: number; checks: number; swarms?: number }>(`/agents/${agent.id}/stop-all`);
       const parts = [
+        data.swarms ? `${data.swarms} ${data.swarms === 1 ? 'swarm' : 'swarms'}` : '',
         data.chats ? `${data.chats} ${data.chats === 1 ? 'chat' : 'chats'}` : '',
         data.task_runs ? `${data.task_runs} task ${data.task_runs === 1 ? 'run' : 'runs'}` : '',
         data.checks ? `${data.checks} planned ${data.checks === 1 ? 'check' : 'checks'}` : '',

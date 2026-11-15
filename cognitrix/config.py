@@ -370,6 +370,7 @@ _TASK_MIGRATION_COLUMNS = (
     ('wake_reason', 'TEXT'), ('wake_requested_by', 'TEXT'),
     ('wake_authority_kind', 'TEXT'), ('wake_authority_id', 'TEXT'),
     ('max_runs_per_day', 'INTEGER'), ('standing_agent_id', 'TEXT'),
+    ('swarm', 'BOOLEAN'),
 )
 
 _USER_MIGRATION_COLUMNS = (
@@ -814,10 +815,12 @@ async def _ensure_schema():
     from cognitrix.tasks.standing import AgentOffer
     from cognitrix.artifact_pages.models import MODELS as ARTIFACT_PAGE_MODELS
     from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
+    from cognitrix.swarms.models import MODELS as SWARM_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
         *HOSTED_APP_MODELS,
+        *SWARM_MODELS,
         AgentOffer,
         MeetingNote,
         PersonalSkill,

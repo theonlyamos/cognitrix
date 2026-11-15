@@ -14,6 +14,9 @@ interface Person {
   you: boolean;
   created: string;
   usage_30d: { calls: number; tokens: number; cost: number };
+  /** Swarm caps set by an admin; 0 is the server's own limit. */
+  swarm_concurrency?: number;
+  swarm_max_workers?: number;
 }
 
 interface Invite {
@@ -125,7 +128,17 @@ function PersonRow({ person, busy, onChange }: {
   const [settingPassword, setSettingPassword] = useState(false);
   const [password, setPassword] = useState('');
   const [saved, setSaved] = useState(false);
+  const [settingCaps, setSettingCaps] = useState(false);
+  const [atOnce, setAtOnce] = useState(String(person.swarm_concurrency ?? 0));
+  const [perSwarm, setPerSwarm] = useState(String(person.swarm_max_workers ?? 0));
   const usage = person.usage_30d;
+  const capped = Boolean(person.swarm_concurrency || person.swarm_max_workers);
+
+  const saveCaps = async (event: FormEvent) => {
+    event.preventDefault();
+    await onChange({ swarm_concurrency: Number(atOnce) || 0, swarm_max_workers: Number(perSwarm) || 0 });
+    setSettingCaps(false);
+  };
 
   const savePassword = async (event: FormEvent) => {
     event.preventDefault();
@@ -153,11 +166,19 @@ function PersonRow({ person, busy, onChange }: {
               Last 30 days: {formatTokens(usage.tokens)} tokens, {formatCost(usage.cost)}
               {saved && ' · New password saved'}
             </span>
+            {capped && (
+              <span className="block">
+                Swarm limits: {person.swarm_concurrency ? `${person.swarm_concurrency} workers at once` : 'server limit at once'}, {person.swarm_max_workers ? `${person.swarm_max_workers} per swarm` : 'server limit per swarm'}
+              </span>
+            )}
           </>
         )}
       >
         <button type="button" className={quietButtonClass} disabled={busy} onClick={() => { setSaved(false); setSettingPassword((v) => !v); }}>
           Set password
+        </button>
+        <button type="button" className={quietButtonClass} disabled={busy} onClick={() => setSettingCaps((v) => !v)}>
+          Swarm limits
         </button>
         {!person.you && (
           <>
@@ -180,6 +201,21 @@ function PersonRow({ person, busy, onChange }: {
           </>
         )}
       </SettingRow>
+      {settingCaps && (
+        <form onSubmit={saveCaps} className="flex flex-wrap items-end gap-2 px-3.5 pb-3" aria-label={`Swarm limits for ${person.name}`}>
+          <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
+            Workers at once
+            <input type="number" min={0} max={64} value={atOnce} onChange={(e) => setAtOnce(e.target.value)} className={`${inputClass} w-28`} />
+          </label>
+          <label className="flex flex-col gap-1 text-[12px] text-fg-dim">
+            Workers per swarm
+            <input type="number" min={0} max={500} value={perSwarm} onChange={(e) => setPerSwarm(e.target.value)} className={`${inputClass} w-28`} />
+          </label>
+          <button type="submit" disabled={busy} className={primaryButtonClass}>Save</button>
+          <button type="button" className={quietButtonClass} onClick={() => setSettingCaps(false)}>Cancel</button>
+          <p className="basis-full text-[12px] text-fg-dim">0 leaves the server's own limit. A person can set their own limits lower, never higher.</p>
+        </form>
+      )}
       {settingPassword && (
         <form onSubmit={savePassword} className="flex flex-wrap items-center gap-2 px-3.5 pb-3" aria-label={`Set a password for ${person.name}`}>
           <input

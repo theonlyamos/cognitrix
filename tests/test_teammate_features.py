@@ -571,7 +571,7 @@ async def test_stop_all_stops_chats_runs_and_pending_checks(db, monkeypatch):
     finally:
         mine.finish({'type': 'turn_stopped'})
         theirs.finish({'type': 'turn_stopped'})
-    assert out == {'chats': 1, 'task_runs': 1, 'checks': 1}
+    assert out == {'chats': 1, 'task_runs': 1, 'checks': 1, 'swarms': 0}
     assert stopped == ['chat-a'] and cancelled == [task.id]
     assert not (await Task.get(task.id)).wake_pending
     assert (await Task.get(foreign.id)).wake_pending

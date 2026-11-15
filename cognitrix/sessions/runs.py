@@ -90,6 +90,9 @@ class ChatRun:
     stop: Callable[[], bool] | None = None
     # True for a chat an agent started (see sessions/agent_chats.py).
     started_by_agent: bool = False
+    # Set for a swarm worker's chat (cognitrix/swarms): these have their own
+    # limits and are not counted against the Start Chat limit.
+    swarm_id: str = ''
     # Set once the turn loop is reading this run's inbox. Runs started by
     # paths that don't (task mode, team chats) refuse steering instead of
     # holding messages nobody will read.

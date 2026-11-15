@@ -10,10 +10,13 @@ import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { ComputerPreview } from '@/components/ComputerPreview';
 import FolderChips from '@/components/FolderChips';
 import { AgentBadge } from '@/components/StartChat';
+import { SwarmCard } from '@/components/SwarmCard';
+import type { Swarm } from '@/lib/swarms';
 
-export type SidebarSection = 'computer' | 'waiting' | 'artifacts' | 'files' | 'activity' | 'folders' | 'about';
+export type SidebarSection = 'swarm' | 'computer' | 'waiting' | 'artifacts' | 'files' | 'activity' | 'folders' | 'about';
 
 export const SIDEBAR_SECTIONS: { id: SidebarSection; label: string }[] = [
+  { id: 'swarm', label: 'Swarm' },
   { id: 'computer', label: 'Computer' },
   { id: 'waiting', label: 'Waiting on you' },
   { id: 'artifacts', label: 'Artifacts' },
@@ -96,6 +99,12 @@ export interface ChatSidebarProps {
   images: ToolArtifact[];
   files: FileItem[];
   activity: SidebarActivity[];
+  /** This chat's swarms, newest first. */
+  swarms?: Swarm[];
+  onStopSwarm?: (swarmId: string) => void | Promise<void>;
+  onStopWorker?: (swarmId: string, name: string) => void | Promise<void>;
+  onMergeWorker?: (swarmId: string, name: string) => Promise<string>;
+  onOpenChat?: (chatId: string) => void;
   busy: boolean;
   folders: WorkFolder[];
   onChangeFolders: (folders: WorkFolder[]) => void | Promise<void>;
@@ -169,6 +178,8 @@ export function ChatSidebar(props: ChatSidebarProps) {
   };
 
   const empty = (text: string) => <p className="text-[12.5px] leading-relaxed text-fg-dim">{text}</p>;
+  const swarms = props.swarms ?? [];
+  const swarmsRunning = swarms.filter((s) => s.status === 'running').length;
 
   return (
     <section aria-label="This chat" className="flex h-full min-h-0 flex-col bg-panel">
@@ -204,6 +215,24 @@ export function ChatSidebar(props: ChatSidebarProps) {
       </header>
 
       <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto">
+        {section('swarm', swarmsRunning ? 'running' : swarms.length || '', swarms.length === 0
+          ? empty('When the agent splits a job across workers, they show here with what each one is doing.')
+          : (
+            <div className="flex flex-col gap-2">
+              {swarms.slice(0, 5).map((swarm) => (
+                <SwarmCard
+                  key={swarm.id}
+                  swarm={swarm}
+                  compact
+                  onStop={(id) => props.onStopSwarm?.(id)}
+                  onStopWorker={(id, name) => props.onStopWorker?.(id, name)}
+                  onMerge={props.onMergeWorker}
+                  onOpenChat={props.onOpenChat}
+                />
+              ))}
+            </div>
+          ))}
+
         {section('computer', desktop ? 'live' : sandboxOn ? 'idle' : 'off', desktop ? (
           <>
             <ComputerPreview desktop={desktop} label={about.agentName} onOpen={props.onOpenComputer} />

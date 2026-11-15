@@ -21,6 +21,7 @@ import { AppearanceSettings } from '@/components/settings/Appearance';
 import { MemorySettings } from '@/components/settings/Memory';
 import { SkillsSettings } from '@/components/settings/Skills';
 import { UsageSettings } from '@/components/settings/Usage';
+import { SwarmSettings } from '@/components/settings/Swarms';
 import { PasswordChange } from '@/components/settings/PasswordChange';
 import { SpokenRepliesSettings } from '@/components/settings/SpokenReplies';
 import { PeopleSettings } from '@/components/settings/People';
@@ -32,7 +33,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'people' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'people' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -55,6 +56,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'voice', label: 'Voice', group: 'AI', keywords: 'input mic microphone speech transcription dictation spoken replies read aloud listen text to speech tts' },
   { id: 'apps', label: 'Connected apps', group: 'AGENTS', keywords: 'github gmail google calendar drive docs sheets slides notion linear sentry sign in oauth connectors integrations mcp' },
   { id: 'access', label: 'Agent access', group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
+  { id: 'swarms', label: 'Swarms', group: 'AGENTS', keywords: 'swarm workers parallel sub agents subagents fan out limit budget tokens concurrency how many at once' },
   { id: 'chat-apps', label: 'Chat apps', group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp bot alerts approvals mention channel' },
   { id: 'people', label: 'People', group: 'SERVER', keywords: 'users admin invite invitation members roles disable accounts email smtp reset', adminOnly: true },
   { id: 'desktop', label: 'Desktop app', group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
@@ -417,6 +419,8 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
       return (<><SectionHeader title="Models and keys" description="Your ChatGPT plan, and API keys for the model providers your agents use." /><ChatGPTPlanCard /><ProviderKeys /></>);
     case 'usage':
       return (<><SectionHeader title="Usage" description="How many tokens your agents used and roughly what that cost." /><UsageSettings /></>);
+    case 'swarms':
+      return (<><SectionHeader title="Swarms" description="How many workers an agent may start for one job, and how much they may use." /><SwarmSettings /></>);
     case 'memory':
       return (
         <>
