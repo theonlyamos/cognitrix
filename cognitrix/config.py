@@ -830,6 +830,7 @@ async def _ensure_schema():
     from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
     from cognitrix.mcp.app_views import MODELS as APP_VIEW_MODELS
     from cognitrix.swarms.models import MODELS as SWARM_MODELS
+    from cognitrix.agent_email.models import MODELS as EMAIL_MODELS
     from cognitrix.sessions.side_questions import SideQuestion
 
     for model in (
@@ -837,6 +838,7 @@ async def _ensure_schema():
         *HOSTED_APP_MODELS,
         *APP_VIEW_MODELS,
         *SWARM_MODELS,
+        *EMAIL_MODELS,
         AgentOffer,
         SideQuestion,
         MeetingNote,

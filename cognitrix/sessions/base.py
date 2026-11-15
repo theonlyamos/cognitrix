@@ -690,6 +690,21 @@ class Session(Model):
             except Exception:
                 logger.debug('Set Theme tool unavailable', exc_info=True)
 
+        # Send Email: an agent with its own email address (agent email,
+        # cognitrix/agent_email) can write from it. Asks before each send.
+        if interface in ('web', 'ws', 'task') and owner and getattr(agent.llm, 'supports_tool_use', True):
+            try:
+                if not any(str(getattr(t, 'name', '')).lower() == 'send email' for t in agent.tools):
+                    from cognitrix.tools.agent_mail import agent_has_address
+                    from cognitrix.tools.base import ToolManager
+
+                    if await agent_has_address(str(owner), str(agent.id)):
+                        mail_tool = ToolManager.get_by_name('send_email')
+                        if mail_tool:
+                            agent = agent.model_copy(update={'tools': [*agent.tools, mail_tool]})
+            except Exception:
+                logger.debug('Send Email tool unavailable', exc_info=True)
+
         # Swarms (cognitrix/swarms): a chat's agent can start workers with
         # Spawn Workers and steer them with Swarm; a worker's own chat gets
         # Swarm Team instead. Added per turn, not stored on the agent.
