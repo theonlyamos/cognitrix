@@ -187,7 +187,7 @@ async def test_removing_someone_moves_their_work_and_deletes_their_private_data(
 
     ada, bob = str(setup.ada.id), str(setup.bob.id)
     carol = await setup.make('Carol', 'carol@example.com')
-    llm = LLM(provider='openai', model='gpt-5.5')
+    llm = LLM(provider='openai', model='gpt-5.5', api_key='sk-test-0000000000')
 
     def Agent(**fields):  # noqa: N802
         return AgentModel(llm=llm, system_prompt='x', **fields)
