@@ -82,7 +82,7 @@ async def app_shot(slug: str, t: str = ''):
     app = await store.by_slug(slug)
     if read is None or app is None or store.role_of(app, read[0]) is None:
         raise HTTPException(status_code=404, detail='Not found')
-    shot = store.shot_file(slug)
+    shot = store.shot_file(app.slug)
     if shot is None:
         raise HTTPException(status_code=404, detail='Not found')
     return FileResponse(shot, media_type='image/png', headers={'Cache-Control': 'private, max-age=3600'})

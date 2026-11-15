@@ -617,8 +617,17 @@ def shots_dir() -> Path:
     return path
 
 
+_SLUG = re.compile(r'[a-z0-9][a-z0-9-]{0,80}')
+
+
 def shot_file(slug: str) -> Path | None:
-    path = shots_dir() / f'{slug}.png'
+    # App names are lowercase letters, digits and dashes; anything else (a path) never reaches the disk.
+    if not _SLUG.fullmatch(str(slug or '')):
+        return None
+    root = shots_dir().resolve()
+    path = (root / f'{slug}.png').resolve()
+    if path.parent != root:
+        return None
     return path if path.is_file() else None
 
 
