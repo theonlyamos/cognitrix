@@ -52,6 +52,47 @@ async def test_create_task_rejects_start_without_owner():
 
     out = await create_task.run('T', 'D', start_now=True)
     assert out.outcome.error.code == 'task_owner_required'
+    # The agent reads this message; it must not send a signed-in person to sign in.
+    assert 'agent_refs' in out.outcome.error.message
+    assert 'not about the person being signed in' in out.outcome.error.message
+
+
+@pytest.mark.asyncio
+async def test_create_task_scheduled_without_assignee_runs_as_the_calling_agent(monkeypatch):
+    from cognitrix.tools.management import create_task
+    from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
+
+    saved = []
+    class Task:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+            self.id = 'task1'
+        async def save(self): saved.append(self)
+
+    class Me:
+        id = 'agent-me'
+        name = 'Assistant'
+
+    monkeypatch.setattr('cognitrix.tasks.base.Task', Task)
+    monkeypatch.setattr('cognitrix.tasks.scheduler.validate_schedule', lambda task, respecified: None)
+    monkeypatch.setattr('cognitrix.tasks.scheduler.compute_next_run', lambda task: None)
+    token = set_execution_context(ToolExecutionContext(user_id='user-1'))
+    try:
+        out = await create_task.run('Watch PRs', 'Check my PRs for reviews', schedule_interval_seconds=900,
+                                    parent=Me())
+        # An API key limited to other agents can't make the agent schedule itself.
+        limited = set_execution_context(ToolExecutionContext(user_id='user-1', api_key_id='k',
+                                                             allowed_agents=frozenset({'other'})))
+        try:
+            denied = await create_task.run('Watch PRs', 'D', schedule_interval_seconds=900, parent=Me())
+        finally:
+            reset_execution_context(limited)
+    finally:
+        reset_execution_context(token)
+    assert out.outcome.status == 'success', out.outcome
+    assert saved[0].assigned_agents == ['agent-me'] and saved[0].owner_id == 'user-1'
+    assert saved[0].schedule_enabled is True
+    assert denied.outcome.status != 'success' and len(saved) == 1
 
 
 @pytest.mark.asyncio
@@ -362,3 +403,35 @@ async def test_content_edit_of_enabled_schedule_takes_editor_authority(task_stor
     saved = task_store['saved'][0]
     assert saved.schedule_authority_kind == 'api_key' and saved.schedule_authority_id == 'k1'
     assert saved.next_run_at == '2030-01-01 00:00:00'
+
+
+@pytest.mark.asyncio
+async def test_parameter_recovery_leaves_runtime_values_out_of_the_prompt():
+    """A failing tool that takes the calling agent must not crash recovery
+    (the agent isn't JSON) or leak it into the prompt, and keeps it on retry."""
+    from cognitrix.tools.resilient_tool_wrapper import ResilientToolManager
+
+    class Me:
+        pass
+    me, prompts = Me(), []
+
+    async def llm(messages):
+        prompts.append(messages[0]['content'])
+        return '{"title": "Fixed", "parent": "nope"}'
+
+    class FakeTool:
+        name, description = 'Create Task', 'd'
+        internal_params = ['parent']
+
+    class McpTool:
+        # A public argument that happens to share the name stays the model's.
+        name, description = 'Make Page', 'd'
+        internal_params: list[str] = []
+
+    manager = ResilientToolManager.__new__(ResilientToolManager)
+    manager.llm = llm
+    out = await manager._attempt_param_recovery(FakeTool(), {'title': 'T', 'parent': me}, 'boom')
+    assert out == {'title': 'Fixed', 'parent': me}
+    assert 'parent' not in prompts[0]
+    public = await manager._attempt_param_recovery(McpTool(), {'title': 'T', 'parent': 'p1'}, 'boom')
+    assert public == {'title': 'Fixed', 'parent': 'nope'}

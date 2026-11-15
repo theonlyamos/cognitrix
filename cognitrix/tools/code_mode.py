@@ -359,7 +359,18 @@ async def run_code(code: str, *, parent=None, interface=None) -> ToolOutcome:
     aliases = {js_name(t.name): t.name for t in (getattr(parent, 'tools', None) or [])
                if getattr(t, 'name', None)}
 
+    # mini-racer runs the Python callback outside this task's context, so
+    # without this every tool the script calls would lose the caller's
+    # authority (signed-in user, API key scopes, session, folders) and fall
+    # back to an anonymous default. Each call gets its own copy, as a direct
+    # tool call in the chat loop would.
+    caller_context = contextvars.copy_context()
+
     async def call(name: Any, args_json: Any) -> str:
+        return await asyncio.get_running_loop().create_task(
+            _call(name, args_json), context=caller_context.copy())
+
+    async def _call(name: Any, args_json: Any) -> str:
         name = aliases.get(js_name(str(name)), str(name))
         if len(calls) >= MAX_CALLS_PER_SCRIPT:
             return json.dumps({'ok': False, 'error': f'Too many tool calls in one script (limit {MAX_CALLS_PER_SCRIPT}).'})
