@@ -25,6 +25,9 @@ import { desktopName, getChatSandbox, sandboxStatus, setChatSandbox, type ChatSa
 import { ChatSidebar, loadSidebarOpen, saveSidebarOpen, type SidebarActivity, type SidebarWaiting } from '@/components/ChatSidebar';
 import { QuestionCard, type QuestionRequest } from '@/components/QuestionCard';
 import { MicButton, VoiceBar, VoiceNotice, useVoiceInput } from '@/components/VoiceInput';
+import { LiveVoiceButton, LiveVoicePanel } from '@/components/LiveVoice';
+import { useLiveVoice } from '@/hooks/useLiveVoice';
+import { SideQuestionButton, SideQuestionsPanel } from '@/components/SideQuestions';
 import { insertTranscript } from '@/lib/voice';
 import FolderChips from '@/components/FolderChips';
 import ComposerMenu from '@/components/ComposerMenu';
@@ -669,10 +672,15 @@ export default function Home() {
   }, [sidebarOpen, artifactOpen, appViewOpen, computerOpen, closeArtifact, closeAppView, setSidebar]);
   // Spoken replies: when a turn ends and "read replies aloud" is on, read the
   // answer. Sending a new message stops whatever was being read.
+  // Live voice mode reads replies itself and keeps speaking across turns.
+  const [liveVoice, setLiveVoice] = useState(false);
+  const liveVoiceRef = useRef(liveVoice);
+  liveVoiceRef.current = liveVoice;
   const wasBusyRef = useRef(false);
   useEffect(() => {
     const wasBusy = wasBusyRef.current;
     wasBusyRef.current = busy;
+    if (liveVoiceRef.current) return;
     if (busy && !wasBusy) stopSpeaking();
     if (!busy && wasBusy && question === null && getSpeechPrefs().autoRead) {
       const last = messagesRef.current[messagesRef.current.length - 1];
@@ -1781,8 +1789,58 @@ export default function Home() {
 
 
   // The message box: in the middle of a new chat's greeting, else at the bottom.
+  const lastReply = useMemo(() => {
+    const last = messages[messages.length - 1];
+    return last?.role === 'assistant' ? { id: last.id, content: last.content } : null;
+  }, [messages]);
+
+  // Side questions: asked beside the chat without interrupting it (Ctrl+/).
+  const [sideOpen, setSideOpen] = useState(false);
+  useEffect(() => {
+    if (!activeSessionId) setSideOpen(false);
+  }, [activeSessionId]);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault();
+        setSideOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeSessionId]);
+
+  const live = useLiveVoice({
+    enabled: liveVoice,
+    busy,
+    approvals,
+    question,
+    agentName: currentAgent?.name || '',
+    lastReply,
+    onSend: (text) => (busy ? steer(text, { keepComposer: true }) : send(text, 'chat', null, { keepComposer: true })),
+    onStop: () => void stop(),
+    onApproval: (id, approved) => void respondApproval(id, approved),
+    onAnswer: (q, answer) => {
+      const current = question;
+      if (current && current.request_id === q.request_id) void postQuestionAction(current, 'answer', answer).catch(() => undefined);
+    },
+    onExit: () => setLiveVoice(false),
+  });
+
   const composer = (
     <div className="relative mx-auto max-w-3xl">
+      {sideOpen && activeSessionId && (
+        <div className="animate-rise absolute bottom-full left-0 right-0 z-20 mb-2 md:left-auto md:w-[26rem]">
+          <SideQuestionsPanel
+            sessionId={activeSessionId}
+            busy={busy}
+            agentName={currentAgent?.name || ''}
+            onClose={() => { setSideOpen(false); inputRef.current?.focus(); }}
+            onUseInChat={(text) => { setInput(text); setSideOpen(false); inputRef.current?.focus(); }}
+          />
+        </div>
+      )}
       {skillMenuOpen && (
         <div
           id="skill-menu"
@@ -1899,6 +1957,11 @@ export default function Home() {
           </div>
         )}
         {voice.active && <VoiceBar voice={voice} />}
+        {liveVoice && (
+          <div className="border-b border-line">
+            <LiveVoicePanel live={live} approvals={approvals} question={question} onExit={() => setLiveVoice(false)} />
+          </div>
+        )}
         {(rework || reworkError) && (
           <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-1.5 text-[12px] text-fg-dim" role="status">
             <span className={reworkError ? 'text-danger-ink' : undefined}>
@@ -1996,8 +2059,14 @@ export default function Home() {
           </ComposerMenu>
           </div>
           <span className="flex-1" />
-          {!voice.active && !(busy && input.trim()) && (
-            <MicButton voice={voice} className="rounded-lg" />
+          {!voice.active && !liveVoice && !(busy && input.trim()) && (
+            <>
+              {activeSessionId && (
+                <SideQuestionButton onClick={() => setSideOpen((v) => !v)} active={sideOpen} className="rounded-lg" />
+              )}
+              <LiveVoiceButton onClick={() => setLiveVoice(true)} disabled={!isConnected} className="rounded-lg" />
+              <MicButton voice={voice} className="rounded-lg" />
+            </>
           )}
           {busy && !!input.trim() && !voice.active && (
             // While it works, typed text is sent into the running task;
