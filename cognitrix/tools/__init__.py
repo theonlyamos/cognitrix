@@ -43,6 +43,7 @@ from cognitrix.tools.sandbox_work import (
 )
 from cognitrix.tools.swarm import spawn_workers, swarm, swarm_team
 from cognitrix.tools.theme import set_theme
+from cognitrix.tools.agent_mail import send_email
 from cognitrix.tools.misc import (
     Edit,
     Glob,
@@ -102,7 +103,7 @@ __all__ = [
     'request_folder',
     'start_chat', 'check_chat', 'message_chat',
     'spawn_workers', 'swarm', 'swarm_team',
-    'memory', 'search_chats', 'read_chat', 'set_theme', 'search_knowledge', 'learn_from_website',
+    'memory', 'search_chats', 'read_chat', 'set_theme', 'search_knowledge', 'learn_from_website', 'send_email',
     'take_screenshot', 'text_input', 'key_press', 'hot_key',
     'mouse_click', 'mouse_double_click', 'mouse_right_click', 'mouse_scroll',
     'list_windows', 'open_app', 'look_at_window', 'click_element', 'set_text',

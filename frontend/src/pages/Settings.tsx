@@ -12,6 +12,7 @@ import { VoiceSettingsCard } from '@/components/VoiceSettingsCard';
 import { McpServersCard } from '@/components/McpServersCard';
 import { ConnectedAppsCard } from '@/components/ConnectedAppsCard';
 import { ChatChannelsCard } from '@/components/ChatChannelsCard';
+import { AgentEmailCard } from '@/components/AgentEmailCard';
 import { CredentialsCard } from '@/components/CredentialsCard';
 import { ComputerAppsCard } from '@/components/ComputerAppsCard';
 import { ComputerSandboxCard } from '@/components/ComputerSandboxCard';
@@ -34,7 +35,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'people' | 'audit' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'email' | 'people' | 'audit' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -59,6 +60,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'access', get label() { return tr('ui.settings.agentAccess'); }, group: 'AGENTS', keywords: 'working folder files mcp servers tools saved sign-ins credentials secrets passwords tokens' },
   { id: 'swarms', get label() { return tr('ui.settings.swarms'); }, group: 'AGENTS', keywords: 'swarm workers parallel sub agents subagents fan out limit budget tokens concurrency how many at once' },
   { id: 'chat-apps', get label() { return tr('ui.settings.chatApps'); }, group: 'AGENTS', keywords: 'telegram slack discord teams microsoft whatsapp sms text message twilio phone bot alerts approvals mention channel' },
+  { id: 'email', get label() { return tr('ui.settings.agentEmail'); }, group: 'AGENTS', keywords: 'email mail address inbox imap smtp gmail mailbox reply send' },
   { id: 'people', get label() { return tr('ui.settings.people'); }, group: 'SERVER', keywords: 'users admin invite invitation members roles disable remove delete accounts email smtp reset spending limit cap budget', adminOnly: true },
   { id: 'audit', get label() { return tr('ui.settings.auditLog'); }, group: 'SERVER', keywords: 'audit log activity history who did what tool calls approvals sign ins security' },
   { id: 'desktop', get label() { return tr('ui.settings.desktopApp'); }, group: 'THIS COMPUTER', keywords: 'startup windows login tray notifications hotkey quick ask update version upgrade', desktopOnly: true },
@@ -472,6 +474,16 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
             description={tr('ui.settings.chatWithYourAgentsFrom')}
           />
           <ChatChannelsCard />
+        </>
+      );
+    case 'email':
+      return (
+        <>
+          <SectionHeader
+            title={tr('ui.settings.agentEmail')}
+            description={tr('ui.settings.giveEachAgentItsOwn')}
+          />
+          <AgentEmailCard />
         </>
       );
     case 'people':

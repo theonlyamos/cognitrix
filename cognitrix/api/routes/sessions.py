@@ -131,7 +131,10 @@ def _session_title(chat) -> str:
             and message.get('type') == 'text'
             and message.get('content')
         ):
-            first_line = str(message['content']).strip().splitlines()[0]
+            from cognitrix.sessions.sharing import split_author
+
+            # A message someone the chat is shared with wrote: their own words.
+            first_line = split_author(str(message['content']))[1].strip().splitlines()[0]
             return first_line[:60] + ('…' if len(first_line) > 60 else '')
     return 'New conversation'
 
@@ -727,6 +730,12 @@ async def _delete_owned(session_id: str, ctx: AuthContext) -> None:
         # The binding is the last row deleted, after exact resource cleanup and
         # Session deletion both succeeded.
         await finish_delete(token)
+        try:
+            from cognitrix.sessions.sharing import drop_shares
+
+            await drop_shares(session_id)
+        except Exception:
+            logger.debug('Could not drop shares of chat %s', session_id, exc_info=True)
     except Exception as error:
         if isinstance(error, (OwnershipNotFound, OwnershipConflict)):
             _raise_ownership_error(error)

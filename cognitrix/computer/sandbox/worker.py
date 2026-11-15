@@ -48,6 +48,8 @@ class Worker:
     def __init__(self, driver: Driver):
         self.driver = driver
         self._local = threading.local()
+        self._recorder = None
+        self._last_recording: dict | None = None
         driver.add_listener(self._on_event)
 
     def _on_event(self, event) -> None:
@@ -104,13 +106,47 @@ class Worker:
         self.driver.hold(by)
 
     def release(self) -> None:
+        # Handing back ends a recording; its steps wait for record_stop.
+        if self._recorder is not None and self._recorder.recording:
+            self._last_recording = self._recorder.stop()
         self.driver.release()
 
     def status(self) -> dict:
-        return {'held_by': self.driver.held_by, 'windows': len(self.driver.list_windows())}
+        return {'held_by': self.driver.held_by, 'windows': len(self.driver.list_windows()),
+                'recording': bool(self._recorder and self._recorder.recording)}
+
+    # Teach a task: record what the person does while they have control.
+    def record_start(self) -> dict:
+        if self.driver.held_by is None:
+            raise HumanControl('Take over the desktop first, then show the task.')
+        from cognitrix.computer.sandbox.recorder import Recorder
+
+        if self._recorder is None:
+            self._recorder = Recorder(backend=self.driver.backend)
+        try:
+            self._last_recording = None
+            self._recorder.start()
+        except ImportError:
+            raise Unsupported('This computer is too old to record. Update it (Settings, Computer).') from None
+        except RuntimeError as exc:
+            raise Unsupported(str(exc)) from None
+        return {'recording': True}
+
+    def record_status(self) -> dict:
+        rec = self._recorder
+        return {'recording': bool(rec and rec.recording), 'steps': rec.steps() if rec else [],
+                'error': rec.error if rec else ''}
+
+    def record_stop(self) -> dict:
+        rec = self._recorder
+        if rec is not None and rec.recording:
+            return rec.stop()
+        last, self._last_recording = self._last_recording, None
+        return last or {'steps': [], 'truncated': False}
 
     METHODS = frozenset({'list_windows', 'window', 'open', 'look', 'act_on_element', 'set_text', 'click_point',
-                         'type_text', 'press_key', 'scroll', 'stop_agent', 'hold', 'release', 'status'})
+                         'type_text', 'press_key', 'scroll', 'stop_agent', 'hold', 'release', 'status',
+                         'record_start', 'record_status', 'record_stop'})
 
     def call(self, method: str, args: dict, actor: dict | None) -> dict:
         if method not in self.METHODS:

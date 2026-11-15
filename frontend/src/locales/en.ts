@@ -48,6 +48,7 @@ const en = {
   'settings.section.apps': 'Connected apps',
   'settings.section.access': 'Agent access',
   'settings.section.chat-apps': 'Chat apps',
+  'settings.section.email': 'Agent email',
   'settings.section.people': 'People',
   'settings.section.audit': 'Audit log',
   'settings.section.skills': 'Skills',

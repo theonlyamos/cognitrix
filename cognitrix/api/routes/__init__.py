@@ -16,6 +16,7 @@ from ...api.routes.assistant import assistant_api
 from ...api.routes.automations import automations_api, hooks_api
 from ...api.routes.audio import audio_api
 from ...api.routes.auth import auth_api
+from ...api.routes.agent_email import email_api
 from ...api.routes.channels import channel_hooks_api, channels_api
 from ...api.routes.meetings import meetings_api
 from ...api.routes.computer import computer_api
@@ -29,6 +30,8 @@ from ...api.routes.hosted_apps import hosted_apps_api
 from ...api.routes.base import api_router
 from ...api.routes.providers import providers_api
 from ...api.routes.public import public_api
+from ...api.routes.public_agents import public_agent_api, public_links_api
+from ...api.routes.chat_sharing import chat_sharing_api
 from ...api.routes.sessions import sessions_api
 from ...api.routes.skills import skills_api
 from ...api.routes.system import system_api
@@ -41,6 +44,8 @@ from ...api.routes.usage import usage_api
 from ...api.routes.audit import audit_api
 
 api_router.include_router(public_api)
+api_router.include_router(public_agent_api)
+api_router.include_router(public_links_api)
 api_router.include_router(artifact_frame_api)
 api_router.include_router(app_view_frame_api)
 api_router.include_router(hooks_api)
@@ -63,6 +68,7 @@ api_router.include_router(tasks_api)
 api_router.include_router(teams_run_api)
 api_router.include_router(team_chat_api)
 api_router.include_router(teams_api)
+api_router.include_router(chat_sharing_api)
 api_router.include_router(sessions_api)
 api_router.include_router(auth_api)
 api_router.include_router(oauth_api)
@@ -86,6 +92,7 @@ api_router.include_router(admin_api)
 api_router.include_router(system_api)
 api_router.include_router(channel_hooks_api)
 api_router.include_router(channels_api)
+api_router.include_router(email_api)
 api_router.include_router(meetings_api)
 api_router.include_router(computer_api)
 api_router.include_router(overlay_api)

@@ -35,7 +35,12 @@ export function ComputerSandboxCard() {
   }
 
   const docker = settings?.docker;
-  const dockerNote = !docker
+  const fly = settings?.host === 'fly' ? settings.fly : undefined;
+  const dockerNote = fly
+    ? fly.configured
+      ? <StatusPill tone="ok">{tr('ui.computerSandboxCard.onFly')}</StatusPill>
+      : <StatusPill tone="warn">{tr('ui.computerSandboxCard.flySettingsMissing')}</StatusPill>
+    : !docker
     ? null
     : !docker.installed
       ? <StatusPill tone="warn">{tr('ui.computerSandboxCard.dockerNotInstalled')}</StatusPill>
@@ -52,8 +57,16 @@ export function ComputerSandboxCard() {
         label={tr('ui.computerSandboxCard.giveAgentsTheirOwnComputer')}
         detail={
           <>
-            {tr('ui.computerSandboxCard.agentsWorkOnALinux')}{' '}<span className="font-medium">{tr('ui.computerSandboxCard.computer')}</span>{' '}{tr('ui.computerSandboxCard.inChatNeeds')}{' '}
-            <a className="text-accent-ink hover:underline" href="https://www.docker.com/products/docker-desktop/" target="_blank" rel="noreferrer">{tr('ui.computerSandboxCard.dockerDesktop')}</a>.
+            {fly ? (
+              <>
+                {tr('ui.computerSandboxCard.eachPersonGetsTheirOwn')}{fly.app ? tr('ui.computerSandboxCard.appAppValue', { app: fly.app, value: fly.region ? `, ${fly.region}` : '' }) : ''}{tr('ui.computerSandboxCard.withADesktopPerAgent')}{' '}<span className="font-medium">{tr('ui.computerSandboxCard.computer')}</span>{' '}{tr('ui.computerSandboxCard.inChatValueValue2', { value: fly.idle_minutes > 0 && tr('ui.computerSandboxCard.itValueAfterIdleMinutes', { value: fly.idle_action === 'suspend' ? 'is suspended' : 'stops', idle_minutes: fly.idle_minutes }), value2: !fly.configured && tr('ui.computerSandboxCard.theServerStillNeedsMissing', { missing: fly.missing.join(', ') }) })}
+              </>
+            ) : (
+              <>
+                {tr('ui.computerSandboxCard.agentsWorkOnALinux')}{' '}<span className="font-medium">{tr('ui.computerSandboxCard.computer')}</span>{' '}{tr('ui.computerSandboxCard.inChatNeeds')}{' '}
+                <a className="text-accent-ink hover:underline" href="https://www.docker.com/products/docker-desktop/" target="_blank" rel="noreferrer">{tr('ui.computerSandboxCard.dockerDesktop')}</a>.
+              </>
+            )}
             {settings?.from_env && tr('ui.computerSandboxCard.setByTheServerCognitrix')}
           </>
         }

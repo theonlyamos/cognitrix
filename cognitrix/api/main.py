@@ -111,12 +111,23 @@ async def lifespan(app: FastAPI):
         except Exception:
             import logging
             logging.getLogger('cognitrix.log').exception('Chat app bots did not start')
+        try:
+            from ..agent_email.service import start_email
+            await start_email()
+        except Exception:
+            import logging
+            logging.getLogger('cognitrix.log').exception('Agent email did not start')
         yield
     finally:
         cleanup_errors = []
         try:
             from ..channels.service import stop_channels
             await stop_channels()
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+        try:
+            from ..agent_email.service import stop_email
+            await stop_email()
         except BaseException as exc:
             cleanup_errors.append(exc)
         tasks = tuple(task for task in (scheduler, recovery, app_sleeper, knowledge_refresher) if task is not None)
@@ -241,6 +252,10 @@ app.include_router(api_router)
 from .routes.hosted_apps import app_proxy  # noqa: E402
 
 app.include_router(app_proxy)
+# A public agent link's chat page and website widget, at /chat/<token>.
+from .routes.public_agents import public_chat_pages  # noqa: E402
+
+app.include_router(public_chat_pages)
 # OpenAI-compatible shim at the app root (/v1). MUST be registered before the
 # SPA catch-all below, or GET /v1/models would be served index.html with 200.
 app.include_router(openai_api)

@@ -3,9 +3,10 @@ import { errorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import {
-  desktopName, handBack, openViewer, resetSandbox, sandboxStatus, takeOver, updateSandbox,
-  type SandboxDesktop, type SandboxStatus,
+  desktopName, handBack, openViewer, resetSandbox, sandboxStatus, startTeaching, stopTeaching, takeOver, updateSandbox, wakeSandbox,
+  type SandboxDesktop, type SandboxStatus, type TaughtStep,
 } from '@/lib/sandbox';
+import { TeachLive, TeachReview } from '@/components/TeachTask';
 import { tr } from '@/lib/i18n';
 
 interface PanelAgent {
@@ -50,6 +51,7 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
   }, [desktops, focusName, selected]);
 
   const label = (d: SandboxDesktop) => agents.find((a) => desktopName(a.id) === d.name)?.name ?? (d.name === 'main' ? 'Shared' : d.name);
+  const agentIdOf = (d: SandboxDesktop) => agents.find((a) => desktopName(a.id) === d.name)?.id ?? null;
   const current = desktops.find((d) => d.name === selected) ?? null;
 
   // Expand fills the app window; Full screen then takes the whole monitor.
@@ -157,7 +159,8 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
             {tr('ui.computerPanel.theSandboxedComputerIsOff')}{' '}<code>COGNITRIX_COMPUTER_SANDBOX=docker</code>{' '}{tr('ui.computerPanel.needsDocker')}
           </p>
         )}
-        {status?.enabled && !current && (
+        {status?.enabled && !current && status.asleep && !status.error && <AsleepNote desktop={focusName} onWoken={load} />}
+        {status?.enabled && !current && !(status.asleep && !status.error) && (
           <p className="p-4 text-[12.5px] leading-relaxed text-fg-dim">
             {status.error || tr('ui.computerPanel.nothingToShowYetThe')}
           </p>
@@ -167,6 +170,7 @@ export function ComputerPanel({ agents, focusAgentId, onClose, onBack }: {
             key={current.name}
             desktop={current}
             agentName={label(current)}
+            agentId={agentIdOf(current)}
             onChange={load}
             onControl={onControl}
             view={fullscreen && !isPhone() ? 'fullscreen' : expanded ? 'expanded' : 'docked'}
@@ -270,9 +274,10 @@ function DesktopSelect({ desktops, selected, label, onSelect, className }: {
 
 type View = 'docked' | 'expanded' | 'fullscreen';
 
-function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading, trailing }: {
+function DesktopScreen({ desktop, agentName, agentId, onChange, onControl, view, leading, trailing }: {
   desktop: SandboxDesktop;
   agentName: string;
+  agentId?: string | null;
   onChange: () => void;
   /** Told whether you have control, so the panel leaves Esc to the desktop. */
   onControl?: (held: boolean) => void;
@@ -291,6 +296,9 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  // Teach a task: recording while you have control, then the review.
+  const [teaching, setTeaching] = useState(false);
+  const [taught, setTaught] = useState<TaughtStep[] | null>(null);
 
   useEffect(() => {
     let rfb: import('@novnc/novnc/lib/rfb').default | null = null;
@@ -323,8 +331,11 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
   // isn't left waiting.
   const controlRef = useRef<string | null>(null);
   controlRef.current = control;
+  const teachingRef = useRef(false);
+  teachingRef.current = teaching;
   useEffect(() => () => {
-    if (controlRef.current) void handBack(desktop.name).catch(() => {});
+    if (teachingRef.current) void stopTeaching(desktop.name).catch(() => {});
+    else if (controlRef.current) void handBack(desktop.name).catch(() => {});
   }, [desktop.name]);
 
   const heldByYou = control !== null;
@@ -343,7 +354,41 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
     }
   }
 
+  async function teach() {
+    setBusy(true);
+    setError('');
+    try {
+      setControl(await startTeaching(desktop.name));
+      setTeaching(true);
+      onChange();
+    } catch (err) {
+      setError(errorMessage(err, tr('ui.computerPanel.couldnTStartRecording')));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finishTeaching(keep: boolean) {
+    setBusy(true);
+    setError('');
+    try {
+      const got = await stopTeaching(desktop.name);
+      setTeaching(false);
+      setControl(null);
+      if (keep) setTaught(got.steps);
+      onChange();
+    } catch (err) {
+      setError(errorMessage(err, tr('ui.computerPanel.couldnTStopRecording')));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function giveBack() {
+    if (teaching) {
+      await finishTeaching(true);
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -358,7 +403,9 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
   }
 
   const barVisible = useAutoHide(view === 'fullscreen');
-  const statusText = heldByYou
+  const statusText = teaching
+    ? `Recording. Do the task on the screen, then press Done. ${agentName} is paused.`
+    : heldByYou
     ? `You're in control. ${agentName} is paused and sees nothing until you hand back.`
     : heldElsewhere
       ? `${desktop.held_by} has control; ${agentName} is paused.`
@@ -368,10 +415,26 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
       {state === 'closed' && (
         <button type="button" className={quietButtonClass} onClick={() => setAttempt((n) => n + 1)}>{tr('ui.computerPanel.reconnect')}</button>
       )}
-      {heldByYou || heldElsewhere ? (
+      {teaching ? (
+        <>
+          <button type="button" className={quietButtonClass} disabled={busy} onClick={() => void finishTeaching(false)}>{tr('ui.computerPanel.cancel')}</button>
+          <button type="button" className={primaryButtonClass} disabled={busy} onClick={() => void finishTeaching(true)}>{tr('ui.computerPanel.done')}</button>
+        </>
+      ) : heldByYou || heldElsewhere ? (
         <button type="button" className={primaryButtonClass} disabled={busy} onClick={() => void giveBack()}>{tr('ui.computerPanel.handBack')}</button>
       ) : (
-        <button type="button" className={view === 'docked' ? buttonClass : primaryButtonClass} disabled={busy} onClick={() => void take()}>{tr('ui.computerPanel.takeOver')}</button>
+        <>
+          <button
+            type="button"
+            className={quietButtonClass}
+            disabled={busy}
+            onClick={() => void teach()}
+            title={tr('ui.computerPanel.showAgentnameATaskOnce', { agentName })}
+          >
+            {tr('ui.computerPanel.teachATask')}
+          </button>
+          <button type="button" className={view === 'docked' ? buttonClass : primaryButtonClass} disabled={busy} onClick={() => void take()}>{tr('ui.computerPanel.takeOver')}</button>
+        </>
       )}
     </>
   );
@@ -388,6 +451,7 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
           full && 'absolute left-1/2 top-3 z-10 max-w-[calc(100%-24px)] -translate-x-1/2 rounded-xl border border-line bg-panel/95 shadow-lg backdrop-blur transition-opacity duration-300',
           full && !barVisible && 'pointer-events-none opacity-0',
           heldByYou && docked && 'bg-accent/10',
+          teaching && docked && 'bg-danger/10',
         )}
       >
         {leading}
@@ -401,6 +465,10 @@ function DesktopScreen({ desktop, agentName, onChange, onControl, view, leading,
         {trailing}
       </div>
       {error && <p role="alert" className="px-3 pb-2 text-[12px] text-danger-ink">{error}</p>}
+      {teaching && <TeachLive desktop={desktop.name} />}
+      {taught && (
+        <TeachReview desktop={desktop.name} agentId={agentId} agentName={agentName} steps={taught} onClose={() => setTaught(null)} />
+      )}
       <div className={cn('flex min-h-0 min-w-0 flex-1', docked ? 'bg-panel-2 p-3' : full ? 'bg-black' : 'bg-bg p-4 md:p-6', 'max-md:p-0 side:p-0')}>
         <div
           ref={screenRef}
@@ -486,6 +554,37 @@ function UpdateButton({ onDone }: { onDone: () => void }) {
       </button>
       <button type="button" className={quietButtonClass} disabled={busy} onClick={() => setConfirming(false)}>{tr('ui.computerPanel.later')}</button>
     </span>
+  );
+}
+
+/** A hosted computer sleeps when nobody uses it, so it costs nothing. */
+function AsleepNote({ desktop, onWoken }: { desktop: string | null; onWoken: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <div className="flex flex-col items-start gap-2 p-4 text-[12.5px] leading-relaxed text-fg-dim">
+      <p>{tr('ui.computerPanel.theAgentsComputerIsAsleep')}</p>
+      <button
+        type="button"
+        className={buttonClass}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError('');
+          try {
+            await wakeSandbox(desktop);
+          } catch (err) {
+            setError(errorMessage(err, tr('ui.computerPanel.couldnTWakeIt')));
+          } finally {
+            setBusy(false);
+            onWoken();
+          }
+        }}
+      >
+        {busy ? tr('ui.computerPanel.wakingUpToAMinute') : tr('ui.computerPanel.wakeItNow')}
+      </button>
+      {error && <p role="alert" className="text-danger-ink">{error}</p>}
+    </div>
   );
 }
 

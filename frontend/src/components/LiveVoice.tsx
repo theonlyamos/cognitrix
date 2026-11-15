@@ -5,6 +5,7 @@ import type { LivePhase, LiveVoice, LiveVoiceOptions } from '@/hooks/useLiveVoic
 import { getLiveVoicePrefs, setLiveVoicePrefs } from '@/lib/liveVoice';
 import { useSpeechState } from '@/lib/speech';
 import { cn } from '@/lib/utils';
+import { tr } from '@/lib/i18n';
 
 const STATUS: Record<LivePhase, string> = {
   starting: 'Starting the microphone…',
@@ -17,9 +18,9 @@ const STATUS: Record<LivePhase, string> = {
 };
 
 const PAUSES = [
-  { ms: 800, label: 'Short' },
-  { ms: 1100, label: 'Normal' },
-  { ms: 1800, label: 'Long' },
+  { ms: 800, get label() { return tr('ui.liveVoice.short'); } },
+  { ms: 1100, get label() { return tr('ui.liveVoice.normal'); } },
+  { ms: 1800, get label() { return tr('ui.liveVoice.long'); } },
 ];
 
 /** Starts live voice mode; sits next to the mic in the chat box. */
@@ -29,8 +30,8 @@ export function LiveVoiceButton({ onClick, disabled, className }: { onClick: () 
       type="button"
       onClick={onClick}
       disabled={disabled}
-      aria-label="Live voice mode"
-      title="Live voice: talk hands-free and answer approvals out loud"
+      aria-label={tr('ui.liveVoice.liveVoiceMode')}
+      title={tr('ui.liveVoice.liveVoiceTalkHandsFree')}
       className={cn(
         'grid h-11 w-11 place-items-center rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-60 md:h-8 md:w-8',
         className,
@@ -66,7 +67,7 @@ export function LiveVoicePanel({ live, ...props }: Pick<LiveVoiceOptions, 'appro
   const level = live.phase === 'hearing' || live.phase === 'listening' || live.phase === 'waiting';
 
   return (
-    <div className="px-2 py-2" role="region" aria-label="Live voice mode">
+    <div className="px-2 py-2" role="region" aria-label={tr('ui.liveVoice.liveVoiceMode')}>
       <div className="flex items-center gap-3">
         <div
           aria-hidden="true"
@@ -91,13 +92,13 @@ export function LiveVoicePanel({ live, ...props }: Pick<LiveVoiceOptions, 'appro
           <div className="text-[13px] font-medium text-fg" role="status" aria-live="polite">{status}</div>
           {live.phase === 'speaking' ? (
             <div className="truncate text-[11.5px] text-fg-dim">
-              {prefs.interrupt ? 'Talk to interrupt' : 'Press interrupt to talk'}
+              {prefs.interrupt ? tr('ui.liveVoice.talkToInterrupt') : tr('ui.liveVoice.pressInterruptToTalk')}
               {speech.error ? ` · ${speech.error}` : ''}
             </div>
           ) : live.heard ? (
-            <div className="truncate text-[11.5px] text-fg-dim" title={live.heard}>You said: “{live.heard}”</div>
+            <div className="truncate text-[11.5px] text-fg-dim" title={live.heard}>{tr('ui.liveVoice.youSaidHeard', { heard: live.heard })}</div>
           ) : (
-            <div className="truncate text-[11.5px] text-fg-dim">Speak naturally; a short pause sends it. Say “end voice mode” to finish.</div>
+            <div className="truncate text-[11.5px] text-fg-dim">{tr('ui.liveVoice.speakNaturallyAShortPause')}</div>
           )}
         </div>
         <div className={cn('hidden w-28 flex-none sm:block', !level || live.muted ? 'opacity-30' : '')}>
@@ -110,15 +111,15 @@ export function LiveVoicePanel({ live, ...props }: Pick<LiveVoiceOptions, 'appro
               onClick={live.interrupt}
               className="h-11 rounded border border-line px-3 text-[12px] text-fg hover:bg-panel-2 md:h-8"
             >
-              Interrupt
+              {tr('ui.liveVoice.interrupt')}
             </button>
           )}
           <button
             type="button"
             onClick={live.toggleMute}
             aria-pressed={live.muted}
-            aria-label={live.muted ? 'Unmute microphone' : 'Mute microphone'}
-            title={live.muted ? 'Unmute' : 'Mute'}
+            aria-label={live.muted ? tr('ui.liveVoice.unmuteMicrophone') : tr('ui.liveVoice.muteMicrophone')}
+            title={live.muted ? tr('ui.liveVoice.unmute') : tr('ui.liveVoice.mute')}
             className={cn(
               'grid h-11 w-11 place-items-center rounded transition-colors hover:bg-panel-2 md:h-8 md:w-8',
               live.muted ? 'text-danger-ink' : 'text-fg-dim hover:text-fg',
@@ -134,8 +135,8 @@ export function LiveVoicePanel({ live, ...props }: Pick<LiveVoiceOptions, 'appro
             type="button"
             onClick={() => setShowOptions((v) => !v)}
             aria-expanded={showOptions}
-            aria-label="Voice mode options"
-            title="Options"
+            aria-label={tr('ui.liveVoice.voiceModeOptions')}
+            title={tr('ui.liveVoice.options')}
             className="grid h-11 w-11 place-items-center rounded text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg md:h-8 md:w-8"
           >
             <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16" /><circle cx="9" cy="6" r="2" fill="currentColor" /><circle cx="15" cy="12" r="2" fill="currentColor" /><circle cx="8" cy="18" r="2" fill="currentColor" /></svg>
@@ -145,7 +146,7 @@ export function LiveVoicePanel({ live, ...props }: Pick<LiveVoiceOptions, 'appro
             onClick={props.onExit}
             className="h-11 rounded bg-danger px-3 text-[12px] font-medium text-bg transition hover:brightness-105 md:h-8"
           >
-            End
+            {tr('ui.liveVoice.end')}
           </button>
         </div>
       </div>
@@ -157,10 +158,10 @@ export function LiveVoicePanel({ live, ...props }: Pick<LiveVoiceOptions, 'appro
               checked={prefs.interrupt}
               onChange={(e) => setPrefs(setLiveVoicePrefs({ interrupt: e.target.checked }))}
             />
-            Talking cuts in while it speaks
+            {tr('ui.liveVoice.talkingCutsInWhileIt')}
           </label>
           <span className="flex items-center gap-2">
-            Pause before sending
+            {tr('ui.liveVoice.pauseBeforeSending')}
             {PAUSES.map((p) => (
               <button
                 key={p.ms}
@@ -173,20 +174,20 @@ export function LiveVoicePanel({ live, ...props }: Pick<LiveVoiceOptions, 'appro
               </button>
             ))}
           </span>
-          <span className="text-[11px]">Pause changes apply next time voice mode opens. Voices are set in <Link to="/settings/voice" className="text-accent-ink hover:underline">Settings, Voice</Link>.</span>
+          <span className="text-[11px]">{tr('ui.liveVoice.pauseChangesApplyNextTime')}{' '}<Link to="/settings/voice" className="text-accent-ink hover:underline">{tr('ui.liveVoice.settingsVoice')}</Link>.</span>
         </div>
       )}
       {live.needsSetup && (
         <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-fg-dim">
-          Voice mode needs a speech-to-text provider.{' '}
-          <Link to="/settings/voice" className="text-accent-ink hover:underline">Set it up in Settings</Link>
+          {tr('ui.liveVoice.voiceModeNeedsASpeech')}{' '}
+          <Link to="/settings/voice" className="text-accent-ink hover:underline">{tr('ui.liveVoice.setItUpInSettings')}</Link>
         </div>
       )}
       {live.error && (
         <div role="alert" className="mt-1.5 font-mono text-[10.5px] text-danger-ink">
           {live.error}
           {live.phase !== 'error' && (
-            <button type="button" onClick={live.retry} className="ml-2 text-fg-dim hover:text-fg">Dismiss</button>
+            <button type="button" onClick={live.retry} className="ml-2 text-fg-dim hover:text-fg">{tr('ui.liveVoice.dismiss')}</button>
           )}
         </div>
       )}

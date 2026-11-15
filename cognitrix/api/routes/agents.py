@@ -1362,6 +1362,14 @@ async def delete_agent(agent_id: str, ctx: AuthContext = Depends(get_auth_contex
             await soft_delete_task(home)
     except Exception:
         logger.exception('Could not remove the check-ins of agent %s', agent_id)
+    # Its public link and visitors' chats go with it.
+    from cognitrix.public_agents import service as public_links
+    from cognitrix.public_agents.models import PublicAgentLink
+
+    link = await public_links.link_for_agent(agent_id)
+    if link is not None:
+        await public_links.delete_link_chats(str(link.id))
+        await PublicAgentLink.delete_many({'id': link.id})
     await Agent.delete_many({'id': agent_id})
     return {"message": "Agent deleted successfully"}
 

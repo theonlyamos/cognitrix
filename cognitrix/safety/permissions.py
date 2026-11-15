@@ -60,6 +60,13 @@ read_only_run: ContextVar[str] = ContextVar('permissions_read_only_run', default
 # that reaches the person's connected apps, memory, chats, tasks or screen.
 guest_run: ContextVar[bool] = ContextVar('permissions_guest_run', default=False)
 
+# Set while the agent answers a visitor on its public link (cognitrix/public_agents):
+# the only tools it is offered or may run, by ``tool_key``. None everywhere else.
+# Stricter than a guest: nothing that reads this machine's files or the web
+# pages a stranger names, only the agent's own documents (and web search when
+# the owner allows it).
+public_tools: ContextVar[frozenset[str] | None] = ContextVar('permissions_public_tools', default=None)
+
 
 def is_unattended(interface: str | None) -> bool:
     return str(interface or '') in UNATTENDED_INTERFACES or unattended_turn.get()
@@ -154,10 +161,13 @@ def switched_off(agent: Any, tool_name: str) -> str | None:
 
 
 def visible_tools(agent: Any, tools: list) -> list:
-    """Drop tools set to "never" (or switched off) so the model isn't offered them."""
+    """Drop tools set to "never" (or switched off) so the model isn't offered them.
+    On a public link only the tools allowed there are offered."""
+    allowed = public_tools.get()
     return [
         t for t in tools
         if not is_denied(agent, getattr(t, 'name', '')) and not switched_off(agent, getattr(t, 'name', ''))
+        and (allowed is None or tool_key(getattr(t, 'name', '')) in allowed)
     ]
 
 
@@ -258,6 +268,9 @@ GUEST_TOOLS = frozenset({
 def _only_looks(tool: Any, args: dict, mcp_reads: bool | None) -> bool:
     name = str(getattr(tool, 'name', '') or '').strip().lower().replace(' ', '_')
     args = args if isinstance(args, dict) else {}
+    allowed = public_tools.get()
+    if allowed is not None:
+        return tool_key(getattr(tool, 'name', '')) in allowed
     if guest_run.get():
         return name in GUEST_TOOLS
     if name in READ_ONLY_TOOLS:

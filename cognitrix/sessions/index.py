@@ -146,6 +146,8 @@ async def record(session) -> None:
             return
         if session.task_id or session.run_id:
             return
+        if getattr(session, 'public_link_id', None):
+            return  # a visitor's chat on a public link is not in the owner's list
         owner = await _owner_of(session)
         if not owner:
             return
