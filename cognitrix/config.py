@@ -371,6 +371,7 @@ _TASK_MIGRATION_COLUMNS = (
     ('wake_authority_kind', 'TEXT'), ('wake_authority_id', 'TEXT'),
     ('max_runs_per_day', 'INTEGER'), ('standing_agent_id', 'TEXT'),
     ('swarm', 'BOOLEAN'), ('read_memory', 'BOOLEAN'),
+    ('created_by', 'TEXT'), ('report_to', 'TEXT'), ('report_only_on', 'TEXT'),
 )
 
 _USER_MIGRATION_COLUMNS = (
@@ -839,6 +840,7 @@ async def _ensure_schema():
     from cognitrix.skills.personal import PersonalSkill
     from cognitrix.tasks.approvals import TaskApproval
     from cognitrix.tasks.automation import AgentNotification, TaskTrigger, TriggerEvent
+    from cognitrix.tasks.reports import TaskReport
     from cognitrix.tasks.standing import AgentOffer
     from cognitrix.artifact_pages.models import MODELS as ARTIFACT_PAGE_MODELS
     from cognitrix.hosted_apps.models import MODELS as HOSTED_APP_MODELS
@@ -877,6 +879,7 @@ async def _ensure_schema():
         VoiceSettings,
         TaskTrigger,
         TriggerEvent,
+        TaskReport,
         AgentNotification,
         MCPServer,
         ChatChannel,

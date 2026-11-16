@@ -184,4 +184,11 @@ async def automation_tick(now: datetime | None = None) -> int:
         await poll_calendar_calls(now)
     except Exception:
         logger.exception('Could not check calendars for calls')
-    return await fire_due_wakes(now) + await dispatch_trigger_events(now)
+    reported = 0
+    try:
+        from cognitrix.tasks.reports import deliver_due_reports
+
+        reported = await deliver_due_reports(now)
+    except Exception:
+        logger.exception('Could not deliver task results to the agents that created them')
+    return await fire_due_wakes(now) + await dispatch_trigger_events(now) + reported

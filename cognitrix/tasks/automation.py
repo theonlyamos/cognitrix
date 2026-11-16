@@ -49,7 +49,7 @@ MAX_PENDING_EVENTS = 20
 MAX_TRIGGERS_PER_TASK = 10
 MAX_RUNS_PER_DAY_LIMIT = 1_440
 DISPATCH_CLAIM_SECONDS = 300
-AUTOMATION_TRIGGER_KINDS = ('wake', 'webhook', 'email')
+AUTOMATION_TRIGGER_KINDS = ('wake', 'webhook', 'email', 'task_result')
 MAIL_KIND = 'gmail'
 MATCH_MAX_CHARS = 200
 
@@ -292,6 +292,12 @@ async def automation_brief(task: Any, run: Any) -> str:
         event = await TriggerEvent.get(event_id) if event_id else None
         if event is not None and event.payload:
             parts.append(untrusted_text_block('New mail', event.payload, EVENT_MAX_BYTES + 512))
+    elif kind == 'task_result':
+        from cognitrix.tasks.reports import brief_for_run
+
+        report = await brief_for_run(run)
+        parts.append('Why this run started: a task that this task created has ended.'
+                     + (f'\n\n{report}' if report else ''))
     elif kind == 'webhook':
         parts.append(
             'Why this run started: a webhook event arrived'
