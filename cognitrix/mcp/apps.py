@@ -72,7 +72,17 @@ async def call_tool(client: Any, config: Any, tool_name: str, arguments: dict[st
         tool = native.find(row, tool_name) if row is not None else None
         if tool is not None:
             return await native.call(row, tool, arguments)
-    return await client.call_tool(config.key, tool_name, arguments)
+    result = await client.call_tool(config.key, tool_name, arguments)
+    if getattr(config, 'catalog_id', None) == 'github' and getattr(config, 'id', None):
+        # Lets watched pull requests tell the agent's own comments apart.
+        try:
+            from cognitrix.tasks import pr_watch
+
+            hints = (client.tool_annotations.get(config.key) or {}).get(tool_name)
+            await pr_watch.record_agent_write(str(config.id), tool_name, hints, result)
+        except Exception:
+            pass
+    return result
 
 
 async def annotations(client: Any, config: Any, tool_name: str) -> dict[str, Any] | None:

@@ -12,9 +12,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 
 const watching = {
   id: 'w1', repo: 'acme/app', number: 7, title: 'Add login', url: 'https://github.com/acme/app/pull/7',
-  target: 'chat', session_id: 's1', task_id: null, where: 'chat "Release prep"', mode: 'poll', check_seconds: 120,
+  target: 'chat', session_id: 's1', task_id: null, where: 'chat "Release prep"', mode: 'poll', check_seconds: 120, next_check_at: '2030-06-01 12:02:00',
   note: null, status: 'watching', stop_reason: null, error: null, last_news_at: null,
 };
+const viaApp = { ...watching, id: 'w3', number: 9, title: 'Docs', mode: 'app', check_seconds: null };
 const merged = {
   ...watching, id: 'w2', number: 6, title: 'Fix build', target: 'task', session_id: null, task_id: 't1',
   where: 'task "Babysit"', mode: 'webhook', status: 'stopped', stop_reason: 'The pull request was merged.',
@@ -22,7 +23,7 @@ const merged = {
 
 beforeEach(() => {
   Object.values(api).forEach((fn) => fn.mockReset());
-  api.get.mockImplementation(async (url: string) => ({ data: url === '/github/watches' ? [watching, merged] : [] }));
+  api.get.mockImplementation(async (url: string) => ({ data: url === '/github/watches' ? [watching, viaApp, merged] : [] }));
   api.post.mockResolvedValue({ data: {} });
   api.delete.mockResolvedValue({ data: {} });
 });
@@ -32,6 +33,8 @@ describe('Automations: watched pull requests', () => {
     render(<MemoryRouter><Automations /></MemoryRouter>);
     const live = (await screen.findByText('acme/app#7', { exact: false })).closest('li')!;
     expect(live).toHaveTextContent('every 2 min');
+    expect(live).toHaveTextContent('Next check');
+    expect(screen.getByText('acme/app#9', { exact: false }).closest('li')!).toHaveTextContent('instant');
     expect(within(live).getByRole('link', { name: 'chat "Release prep"' })).toHaveAttribute('href', '/home?chat=s1');
     const done = screen.getByText('acme/app#6', { exact: false }).closest('li')!;
     expect(done).toHaveTextContent('Stopped: The pull request was merged.');

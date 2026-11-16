@@ -9,26 +9,38 @@ tool of the GitHub connection, ``cognitrix/mcp/native.py``). That saves a
 - in a task run, news starts a new run of the task, through a "github"
   ``TaskTrigger`` that sits next to the task's other triggers.
 
-Two ways to notice changes, both ending in the same check:
+Three ways to notice changes, all ending in the same check:
 
 - **Timed checks** (the desktop app, and any server without a public https
-  address): the scheduler looks at each watched pull request every couple of
-  minutes (``COGNITRIX_GITHUB_CHECK_SECONDS``, default 120).
-- **Webhooks** (a server with ``COGNITRIX_PUBLIC_URL`` on https): one GitHub
-  webhook per repository and connection posts to
-  ``/api/v1/github/hooks/<id>``. A delivery is checked against its HMAC
-  signature, and only says *which* pull request to look at; the check then
-  reads the pull request from GitHub as usual. A slow timed check still runs
-  (every 15 minutes) in case a delivery is missed.
+  address). The pace adapts: every ``COGNITRIX_GITHUB_CHECK_SECONDS``
+  (default 120) while CI runs or something happened in the last hour, five
+  times slower after an hour of quiet, fifteen times slower after a day, and
+  backing off on errors and GitHub's rate limit.
+- **A GitHub App** (a server with ``COGNITRIX_PUBLIC_URL`` on https and
+  ``GITHUB_APP_ID`` / ``GITHUB_APP_PRIVATE_KEY`` / ``GITHUB_APP_WEBHOOK_SECRET``
+  set): every repository the App is installed on posts its events to
+  ``/api/v1/github/app/webhook``. Nothing has to be added per repository and
+  nobody needs admin rights.
+- **A repository webhook** (the same server without an App, or a repository
+  the App isn't installed on): one webhook per repository and connection
+  posts to ``/api/v1/github/hooks/<id>``. Adding it needs admin rights.
 
-A check reads the pull request, its reviews, comments, review comments and
-CI checks, and compares them with what it saw last time. Only real changes
-wake the agent: a new review or comment, a check that failed, all checks
-passing, ready for review, merged, closed or reopened. New commits are
-mentioned, but don't wake the agent on their own. Comments and reviews made
-from the connected account while the agent itself was busy are taken to be
-the agent's own and are skipped. Watching stops on its own once the pull
-request is merged or closed, and after 30 days without news.
+Webhook deliveries are checked against their HMAC signature, and only say
+*which* pull request to look at; the check then reads the pull request from
+GitHub. A slow timed check still runs in case a delivery is missed.
+
+A check is cheap when nothing changed: GitHub's ETags turn unchanged answers
+into "304 Not Modified", which doesn't count against the rate limit, and the
+reviews and comments are only read again when the pull request itself says
+it changed.
+
+Only real changes wake the agent: a new review or comment, CI finishing (one
+summary per run of checks, or early when checks keep failing while others
+run long), ready for review, merged, closed or reopened. New commits are
+mentioned but don't wake it on their own. News that arrives close together
+is bundled into one wake-up. Comments the agent itself posted through the
+GitHub tools are recognised and skipped. Watching stops on its own once the
+pull request is merged or closed, and after 30 days without news.
 """
 from __future__ import annotations
 
@@ -39,8 +51,10 @@ import logging
 import os
 import re
 import secrets
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -59,17 +73,28 @@ HTTP_TIMEOUT = 20
 MAX_PAGES = 5
 
 CHAT, TASK = 'chat', 'task'
-POLL, WEBHOOK = 'poll', 'webhook'
+POLL, WEBHOOK, APP = 'poll', 'webhook', 'app'
+INSTANT = (WEBHOOK, APP)
 WATCHING, STOPPED = 'watching', 'stopped'
 
 DEFAULT_SECONDS, MIN_SECONDS = 120, 30
 WEBHOOK_RECHECK_SECONDS = 15 * 60
+MAX_POLL_SECONDS = 30 * 60
+MAX_RECHECK_SECONDS = 60 * 60
+QUIET_AFTER = timedelta(hours=1)
+IDLE_AFTER = timedelta(days=1)
+BUNDLE_SECONDS = 60
+"""News is held this long so a burst (five review comments) wakes the agent once."""
+CI_EARLY_AFTER = timedelta(minutes=15)
+"""Failing checks are reported before the rest finish once they have failed this long."""
 MAX_WATCHES_PER_USER = 20
 EXPIRE_DAYS = 30
-OWN_GRACE_SECONDS = 90
+OWN_WRITE_SECONDS = 30
+OWN_WRITES_KEEP = timedelta(days=2)
 SNIPPET_CHARS = 400
 INSTRUCTIONS_MAX_CHARS = 1000
 NEWS_MAX_LINES = 40
+MAX_LISTED_CHECKS = 10
 WEBHOOK_MAX_BYTES = 2 * 1024 * 1024
 HOOK_EVENTS = (
     'pull_request', 'pull_request_review', 'pull_request_review_comment',
@@ -79,11 +104,18 @@ HOOK_EVENTS = (
 _REF = re.compile(
     r'^\s*(?:https?://github\.com/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?'
     r'(?:/pull/|/pulls/|#)(\d+)\s*/?\s*$')
+_OWN_IDS = re.compile(r'(?:issuecomment-|discussion_r|pullrequestreview-)(\d+)')
 _FAILED = {'failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'stale', 'error'}
 
 
 class WatchError(Exception):
     """Something the agent or the person should read, in plain words."""
+
+
+class RateLimited(WatchError):
+    def __init__(self, reset_at: datetime | None):
+        super().__init__("GitHub's rate limit was reached; checks carry on once it resets.")
+        self.reset_at = reset_at
 
 
 def utcnow() -> datetime:
@@ -133,21 +165,29 @@ class PullRequestWatch(Model):
     instructions: str = ''
     """What the agent meant to do when news arrives, in its own words."""
     mode: str = POLL
+    """"poll", "webhook" (a repository webhook) or "app" (the GitHub App)."""
     hook_id: str | None = None
-    """``GitHubRepoHook`` row, when GitHub posts changes to us."""
+    """``GitHubRepoHook`` row, for mode "webhook"."""
     note: str | None = None
     """Why updates come from timed checks although webhooks were possible."""
     status: str = WATCHING
     stop_reason: str | None = None
     state: str = ''
     """JSON: what the last check saw (see ``diff``)."""
+    etags: str = ''
+    """JSON: GitHub ETags of the last answers, so unchanged ones cost nothing."""
     pending: str = ''
     """JSON list of news lines not delivered yet."""
+    hold_until: str | None = None
+    """Pending news waits until then, to bundle a burst into one wake-up."""
     final: bool = False
     """The pending news ends the watch (merged or closed)."""
     due: bool = False
     """A webhook delivery said something changed: check at the next tick."""
     checked_at: str | None = None
+    next_check_at: str | None = None
+    failures: int = 0
+    """Checks in a row that failed; timed checks back off."""
     last_news_at: str | None = None
     started_at: str | None = None
     error: str | None = None
@@ -155,6 +195,10 @@ class PullRequestWatch(Model):
     @validator('due', 'final', pre=True)
     def _null_false(cls, value):
         return bool(value) if value is not None else False
+
+    @validator('failures', pre=True)
+    def _null_zero(cls, value):
+        return int(value or 0)
 
 
 class GitHubRepoHook(Model):
@@ -169,7 +213,20 @@ class GitHubRepoHook(Model):
     """Sealed (``cognitrix.common.secret_box``): signs every delivery."""
 
 
-MODELS = (PullRequestWatch, GitHubRepoHook)
+class GitHubAgentWrite(Model):
+    """An agent changed something through a GitHub connection's tools.
+
+    Lets a check tell the agent's own comments and reviews from the person's,
+    although both are made with the same account."""
+
+    connection_id: str
+    at: str
+    tool: str = ''
+    ids: str = '[]'
+    """JSON list of comment and review ids found in the tool's answer."""
+
+
+MODELS = (PullRequestWatch, GitHubRepoHook, GitHubAgentWrite)
 
 
 def _stamp(when: datetime | None = None) -> str:
@@ -224,6 +281,7 @@ def public_watch(watch: PullRequestWatch, where: str = '') -> dict[str, Any]:
         'where': where,
         'mode': watch.mode,
         'check_seconds': check_seconds() if watch.mode == POLL else None,
+        'next_check_at': watch.next_check_at if watch.status == WATCHING else None,
         'note': watch.note or None,
         'status': watch.status,
         'stop_reason': watch.stop_reason or None,
@@ -267,10 +325,19 @@ async def connection_token(row: Any) -> str:
     return await oauth.access_token(row)
 
 
-class _GitHub:
-    """A small REST client that turns failures into ``WatchError``."""
+NOT_MODIFIED = object()
+"""``_GitHub.get`` answer when the ETag still matches."""
 
-    def __init__(self, token: str):
+
+class _GitHub:
+    """A small REST client that turns failures into ``WatchError``.
+
+    ``etags`` maps a URL to the ETag of its last answer. ``get`` sends it, and
+    answers ``NOT_MODIFIED`` when GitHub says nothing changed.
+    """
+
+    def __init__(self, token: str, etags: dict[str, str] | None = None):
+        self.etags = dict(etags or {})
         self.client = httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers={
             'Authorization': f'Bearer {token}',
             'Accept': 'application/vnd.github+json',
@@ -289,16 +356,27 @@ class _GitHub:
         except httpx.HTTPError:
             raise WatchError("Couldn't reach GitHub.")
 
-    async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        response = await self.request('GET', path, params=params)
+    async def get(self, path: str, params: dict[str, Any] | None = None, *, cache: bool = False) -> Any:
+        key = path + ('?' + '&'.join(f'{k}={v}' for k, v in sorted((params or {}).items())) if params else '')
+        headers = {'If-None-Match': self.etags[key]} if cache and key in self.etags else {}
+        response = await self.request('GET', path, params=params, headers=headers)
+        if response.status_code == 304:
+            return NOT_MODIFIED
+        if response.status_code in (403, 429) and (
+                response.headers.get('x-ratelimit-remaining') == '0' or response.headers.get('retry-after')):
+            reset = response.headers.get('x-ratelimit-reset')
+            after = response.headers.get('retry-after')
+            when = (_parse_time(int(reset)) if reset and reset.isdigit()
+                    else utcnow() + timedelta(seconds=int(after)) if after and after.isdigit() else None)
+            raise RateLimited(when)
         if response.status_code == 401:
             raise WatchError('GitHub turned down the sign-in. Reconnect GitHub in Settings › Connected apps.')
         if response.status_code == 404:
             raise WatchError("GitHub couldn't find that, or the connected account can't see it.")
-        if response.status_code == 403 and response.headers.get('x-ratelimit-remaining') == '0':
-            raise WatchError("GitHub's rate limit was reached; checks carry on once it resets.")
         if response.status_code >= 400:
             raise WatchError(f'GitHub refused the check ({response.status_code}).')
+        if cache and response.headers.get('etag'):
+            self.etags[key] = response.headers['etag']
         try:
             return response.json()
         except ValueError:
@@ -316,27 +394,40 @@ class _GitHub:
         return items
 
 
-async def fetch(gh: _GitHub, repo: str, number: int, since: str | None = None) -> dict[str, Any]:
-    """Everything a check compares, straight from GitHub."""
+async def fetch(gh: _GitHub, repo: str, number: int, old: dict[str, Any] | None = None,
+                since: str | None = None) -> dict[str, Any]:
+    """What a check compares, from GitHub. A part that is ``None`` didn't change.
+
+    The pull request, its check runs and its statuses are asked for with
+    their ETags. Reviews and comments are only read when the pull request's
+    own "updated" time moved, which every new review and comment does.
+    """
     base = f'/repos/{quote(repo, safe="/")}'
-    pr = await gh.get(f'{base}/pulls/{number}')
-    if not isinstance(pr, dict):
+    pr = await gh.get(f'{base}/pulls/{number}', cache=True)
+    if pr is NOT_MODIFIED and old is None:
         raise WatchError('GitHub sent back something unreadable.')
-    head = str(((pr.get('head') or {}).get('sha')) or '')
-    comment_params = {'since': since} if since else {}
-    raw: dict[str, Any] = {
-        'pr': pr,
-        'reviews': await gh.get_all(f'{base}/pulls/{number}/reviews'),
-        'comments': await gh.get_all(f'{base}/issues/{number}/comments', comment_params),
-        'review_comments': await gh.get_all(f'{base}/pulls/{number}/comments', comment_params),
-        'check_runs': [],
-        'statuses': [],
-    }
+    raw: dict[str, Any] = {'pr': None, 'reviews': None, 'comments': None, 'review_comments': None,
+                           'check_runs': None, 'statuses': None}
+    if pr is not NOT_MODIFIED:
+        if not isinstance(pr, dict):
+            raise WatchError('GitHub sent back something unreadable.')
+        raw['pr'] = pr
+        if old is None or pr.get('updated_at') != old.get('updated_at'):
+            comment_params = {'since': since} if since else {}
+            raw['reviews'] = await gh.get_all(f'{base}/pulls/{number}/reviews')
+            raw['comments'] = await gh.get_all(f'{base}/issues/{number}/comments', comment_params)
+            raw['review_comments'] = await gh.get_all(f'{base}/pulls/{number}/comments', comment_params)
+    head = str(((raw['pr'] or {}).get('head') or {}).get('sha') or (old or {}).get('head') or '')
     if head:
-        runs = await gh.get(f'{base}/commits/{head}/check-runs', {'per_page': 100})
-        raw['check_runs'] = (runs or {}).get('check_runs') or [] if isinstance(runs, dict) else []
-        status = await gh.get(f'{base}/commits/{head}/status', {'per_page': 100})
-        raw['statuses'] = (status or {}).get('statuses') or [] if isinstance(status, dict) else []
+        cache = old is not None and old.get('head') == head
+        runs = await gh.get(f'{base}/commits/{head}/check-runs', {'per_page': 100}, cache=True)
+        if runs is not NOT_MODIFIED or not cache:
+            runs = {} if runs is NOT_MODIFIED else runs
+            raw['check_runs'] = (runs.get('check_runs') or []) if isinstance(runs, dict) else []
+        status = await gh.get(f'{base}/commits/{head}/status', {'per_page': 100}, cache=True)
+        if status is not NOT_MODIFIED or not cache:
+            status = {} if status is NOT_MODIFIED else status
+            raw['statuses'] = (status.get('statuses') or []) if isinstance(status, dict) else []
     return raw
 
 
@@ -357,10 +448,9 @@ def pr_state(pr: dict[str, Any]) -> str:
     return 'closed' if pr.get('state') == 'closed' else 'open'
 
 
-def check_results(raw: dict[str, Any]) -> dict[str, str]:
-    """name -> "pending", "ok" or "failed: <why>" for the head commit."""
+def _run_results(runs: list[Any]) -> dict[str, str]:
     results: dict[str, str] = {}
-    for run in raw.get('check_runs') or []:
+    for run in runs:
         name = str(run.get('name') or 'check')
         if run.get('status') != 'completed':
             results[name] = 'pending'
@@ -368,49 +458,81 @@ def check_results(raw: dict[str, Any]) -> dict[str, str]:
             results[name] = f"failed: {run.get('conclusion')}"
         else:
             results[name] = 'ok'
-    for status in raw.get('statuses') or []:
+    return results
+
+
+def _status_results(statuses: list[Any]) -> dict[str, str]:
+    results: dict[str, str] = {}
+    for status in statuses:
         name = str(status.get('context') or 'status')
         state = status.get('state')
         results[name] = 'pending' if state == 'pending' else ('ok' if state == 'success' else f'failed: {state}')
     return results
 
 
+def check_results(raw: dict[str, Any]) -> dict[str, str]:
+    """name -> "pending", "ok" or "failed: <why>" for the head commit."""
+    return {**_run_results(raw.get('check_runs') or []), **_status_results(raw.get('statuses') or [])}
+
+
 def _max_id(items: list[Any]) -> int:
     return max((int(item.get('id') or 0) for item in items if isinstance(item, dict)), default=0)
 
 
-OwnCheck = Callable[[str, Any], bool]
+OwnCheck = Callable[[str, Any, int], bool]
 
 
-def diff(old: dict[str, Any] | None, raw: dict[str, Any],
-         is_own: OwnCheck | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _failed_list(failed: dict[str, str]) -> str:
+    names = [f"{name} ({result.split(': ', 1)[-1]})" for name, result in sorted(failed.items())]
+    more = len(names) - MAX_LISTED_CHECKS
+    return ', '.join(names[:MAX_LISTED_CHECKS]) + (f' and {more} more' if more > 0 else '')
+
+
+def diff(old: dict[str, Any] | None, raw: dict[str, Any], is_own: OwnCheck | None = None,
+         now: datetime | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """(new state, news) between the last look and ``raw``.
 
     Each news item is {"text", "wake", "final"}. Only items with ``wake``
     start the agent; the rest ride along. ``final`` means watching is over.
     With no earlier look there is no news: what is already there is the
-    starting point.
+    starting point. A part of ``raw`` that is None didn't change.
     """
-    is_own = is_own or (lambda _login, _when: False)
-    pr = raw.get('pr') or {}
-    head = str(((pr.get('head') or {}).get('sha')) or '')
-    checks = check_results(raw)
-    state = {
-        'state': pr_state(pr),
-        'draft': bool(pr.get('draft')),
-        'head': head,
-        'title': str(pr.get('title') or ''),
-        'review_id': max(_max_id(raw.get('reviews') or []), int((old or {}).get('review_id') or 0)),
-        'comment_id': max(_max_id(raw.get('comments') or []), int((old or {}).get('comment_id') or 0)),
-        'review_comment_id': max(_max_id(raw.get('review_comments') or []),
-                                 int((old or {}).get('review_comment_id') or 0)),
-        'checks': checks,
-        'checks_ok_for': '',
-    }
-    all_done = bool(checks) and all(v != 'pending' for v in checks.values())
-    all_ok = all_done and all(v == 'ok' for v in checks.values())
+    is_own = is_own or (lambda _login, _when, _id: False)
+    now = now or utcnow()
+    prev = old or {}
+    pr = raw.get('pr')
+    if pr is not None:
+        head = str(((pr.get('head') or {}).get('sha')) or '')
+        state = {
+            'state': pr_state(pr),
+            'draft': bool(pr.get('draft')),
+            'head': head,
+            'title': str(pr.get('title') or ''),
+            'updated_at': str(pr.get('updated_at') or ''),
+            'merged_by': str(((pr.get('merged_by') or {}).get('login')) or ''),
+        }
+    else:
+        state = {key: prev.get(key) for key in ('state', 'draft', 'head', 'title', 'updated_at', 'merged_by')}
+        head = str(state.get('head') or '')
+    for key in ('login', 'activity_at'):
+        if prev.get(key):
+            state[key] = prev[key]
+    same_head = old is not None and prev.get('head') == head
+    runs = (_run_results(raw['check_runs']) if raw.get('check_runs') is not None
+            else dict(prev.get('runs') or {}) if same_head else {})
+    statuses = (_status_results(raw['statuses']) if raw.get('statuses') is not None
+                else dict(prev.get('statuses') or {}) if same_head else {})
+    checks = {**runs, **statuses}
+    state.update(runs=runs, statuses=statuses, checks=checks)
+    for key, part in (('review_id', 'reviews'), ('comment_id', 'comments'), ('review_comment_id', 'review_comments')):
+        state[key] = max(_max_id(raw.get(part) or []), int(prev.get(key) or 0))
+
+    failed = {name: result for name, result in checks.items() if result.startswith('failed')}
+    running = [name for name, result in checks.items() if result == 'pending']
+    signature = f"{head}:{','.join(sorted(failed))}"
     if old is None:
-        state['checks_ok_for'] = head if all_ok else ''
+        state['ci_reported'] = signature if checks and not running else ''
+        state['activity_at'] = _stamp(now)
         return state, []
 
     news: list[dict[str, Any]] = []
@@ -418,16 +540,16 @@ def diff(old: dict[str, Any] | None, raw: dict[str, Any],
     def add(text: str, wake: bool = True, final: bool = False) -> None:
         news.append({'text': text, 'wake': wake, 'final': final})
 
-    if old.get('head') and head and old.get('head') != head:
-        add(f'New commits pushed: the head is now {head[:7]} (was {str(old["head"])[:7]}).', wake=False)
-    if old.get('draft') and not state['draft'] and state['state'] == 'open':
+    if prev.get('head') and head and prev.get('head') != head:
+        add(f'New commits pushed: the head is now {head[:7]} (was {str(prev["head"])[:7]}).', wake=False)
+    if prev.get('draft') and not state['draft'] and state['state'] == 'open':
         add('Marked ready for review.')
 
     for review in sorted(raw.get('reviews') or [], key=lambda r: int(r.get('id') or 0)):
-        if int(review.get('id') or 0) <= int(old.get('review_id') or 0) or review.get('state') == 'PENDING':
+        if int(review.get('id') or 0) <= int(prev.get('review_id') or 0) or review.get('state') == 'PENDING':
             continue
         who = _login(review)
-        if is_own(who, review.get('submitted_at')):
+        if is_own(who, review.get('submitted_at'), int(review.get('id') or 0)):
             continue
         verdict = {'APPROVED': 'approved', 'CHANGES_REQUESTED': 'requested changes',
                    'COMMENTED': 'commented', 'DISMISSED': 'was dismissed'}.get(str(review.get('state')), 'reviewed')
@@ -435,82 +557,127 @@ def diff(old: dict[str, Any] | None, raw: dict[str, Any],
         add(f'Review by {who}: {verdict}.' + (f' "{body}"' if body else ''))
 
     for comment in sorted(raw.get('comments') or [], key=lambda c: int(c.get('id') or 0)):
-        if int(comment.get('id') or 0) <= int(old.get('comment_id') or 0):
+        if int(comment.get('id') or 0) <= int(prev.get('comment_id') or 0):
             continue
         who = _login(comment)
-        if is_own(who, comment.get('created_at')):
+        if is_own(who, comment.get('created_at'), int(comment.get('id') or 0)):
             continue
         add(f'Comment by {who}: "{_snippet(comment.get("body"))}"')
 
     for comment in sorted(raw.get('review_comments') or [], key=lambda c: int(c.get('id') or 0)):
-        if int(comment.get('id') or 0) <= int(old.get('review_comment_id') or 0):
+        if int(comment.get('id') or 0) <= int(prev.get('review_comment_id') or 0):
             continue
         who = _login(comment)
-        if is_own(who, comment.get('created_at')):
+        if is_own(who, comment.get('created_at'), int(comment.get('id') or 0)):
             continue
         where = str(comment.get('path') or '')
         line = comment.get('line') or comment.get('original_line')
         where = f'{where}:{line}' if where and line else where
         add(f'Review comment by {who}' + (f' on {where}' if where else '') + f': "{_snippet(comment.get("body"))}"')
 
-    earlier = old.get('checks') or {} if old.get('head') == head else {}
-    for name, result in sorted(checks.items()):
-        if result.startswith('failed') and earlier.get(name) != result:
-            add(f'Check failed: {name} ({result.split(": ", 1)[-1]}).')
-    if all_ok:
-        state['checks_ok_for'] = head
-        if old.get('checks_ok_for') != head:
-            add(f'All {len(checks)} checks passed on {head[:7]}.')
-    elif old.get('head') == head:
-        state['checks_ok_for'] = str(old.get('checks_ok_for') or '')
+    # CI: one summary once every check on the head has finished. Failures
+    # are told early only when other checks keep running for a long time.
+    state['ci_reported'] = str(prev.get('ci_reported') or '')
+    state['ci_early'] = str(prev.get('ci_early') or '') if same_head else ''
+    state['failing_since'] = ''
+    if checks and not running:
+        if signature != state['ci_reported']:
+            passed = len(checks) - len(failed)
+            if failed:
+                add(f'Checks finished on {head[:7]}: {len(failed)} failed ({_failed_list(failed)}), {passed} passed.')
+            else:
+                add(f'All {len(checks)} checks passed on {head[:7]}.')
+        state['ci_reported'] = signature
+    elif failed:
+        since = _parse_time(prev.get('failing_since')) if same_head else None
+        since = since or now
+        state['failing_since'] = _stamp(since)
+        if now - since >= CI_EARLY_AFTER and state['ci_early'] != signature:
+            add(f'Checks failing on {head[:7]} while {len(running)} still run: {_failed_list(failed)}.')
+            state['ci_early'] = signature
 
-    before, now = old.get('state'), state['state']
-    if before != now:
-        if now == 'merged':
-            who = str(((pr.get('merged_by') or {}).get('login')) or '')
+    before, after = prev.get('state'), state['state']
+    if before != after:
+        if after == 'merged':
+            who = str(state.get('merged_by') or '')
             add('Merged' + (f' by {who}.' if who else '.'), final=True)
-        elif now == 'closed':
+        elif after == 'closed':
             add('Closed without merging.', final=True)
-        elif before in ('closed', 'merged') and now == 'open':
+        elif before in ('closed', 'merged') and after == 'open':
             add('Reopened.')
+    if news:
+        state['activity_at'] = _stamp(now)
     return state, news
 
 
-# --- when was the agent itself busy? -------------------------------------------
+# --- the agent's own writes ------------------------------------------------------
 
-async def busy_windows(watch: PullRequestWatch, now: datetime) -> list[tuple[datetime, datetime]]:
-    """When the watching agent was at work, so its own comments can be told apart."""
-    grace = timedelta(seconds=OWN_GRACE_SECONDS)
-    windows: list[tuple[datetime, datetime]] = []
-    if watch.target == CHAT and watch.session_id:
-        from cognitrix.sessions import runs as chat_runs
-
-        run = chat_runs.get_run(str(watch.owner_id), str(watch.session_id))
-        started = _parse_time(getattr(run, 'started_at', None)) if run is not None else None
-        if started is not None:
-            finished = _parse_time(getattr(run, 'finished_at', None)) or now
-            windows.append((started - grace, finished + grace))
-    elif watch.target == TASK and watch.task_id:
-        from cognitrix.tasks.run import TaskRun
-
-        cutoff = now - timedelta(days=1)
-        for run in await TaskRun.find({'task_id': str(watch.task_id)}) or []:
-            started = _parse_time(run.started_at or run.queued_at)
-            if started is None or started < cutoff:
-                continue
-            finished = _parse_time(run.completed_at) or now
-            windows.append((started - grace, finished + grace))
-    return windows
+def _is_write(tool_name: str, annotations: dict[str, Any] | None) -> bool:
+    if (annotations or {}).get('readOnlyHint'):
+        return False
+    name = tool_name.lower()
+    return not name.startswith(('get_', 'list_', 'search_', 'read_')) and name not in (
+        'watch_pull_request', 'stop_watching_pull_request', 'list_watched_pull_requests')
 
 
-def own_check(account: str, windows: list[tuple[datetime, datetime]]) -> OwnCheck:
+async def record_agent_write(connection_id: str, tool_name: str, annotations: dict[str, Any] | None,
+                             result: Any) -> None:
+    """Note a write an agent made through a GitHub connection (from ``mcp/apps.call_tool``)."""
+    if not connection_id or not _is_write(tool_name, annotations):
+        return
+    text = result if isinstance(result, str) else ''
+    if not text:
+        try:
+            text = ' '.join(str(getattr(block, 'text', '') or block) for block in (result or []))
+        except TypeError:
+            text = str(result or '')
+    ids = sorted({int(found) for found in _OWN_IDS.findall(text)})
+    try:
+        await GitHubAgentWrite(connection_id=str(connection_id), at=_stamp(), tool=tool_name[:80],
+                               ids=json.dumps(ids)).save()
+        cutoff = _stamp(utcnow() - OWN_WRITES_KEEP)
+        for old in await GitHubAgentWrite.find({'connection_id': str(connection_id)}) or []:
+            if (old.at or '') < cutoff:
+                await GitHubAgentWrite.delete_many({'id': old.id})
+    except Exception:
+        logger.debug('Could not note a GitHub write', exc_info=True)
+
+
+async def agent_writes(connection_id: str) -> tuple[set[int], list[datetime]]:
+    """Ids and times of what agents wrote through this connection lately."""
+    ids: set[int] = set()
+    times: list[datetime] = []
+    try:
+        rows = await GitHubAgentWrite.find({'connection_id': str(connection_id)}) or []
+    except Exception as exc:
+        if 'no such table' in str(exc).lower():
+            return ids, times
+        raise
+    for row in rows:
+        ids.update(int(i) for i in _loads(row.ids, []) if str(i).isdigit())
+        at = _parse_time(row.at)
+        if at is not None:
+            times.append(at)
+    return ids, times
+
+
+def own_check(account: str, ids: set[int], times: list[datetime]) -> OwnCheck:
+    """Whether a comment or review is the agent's own.
+
+    It has to come from the connected account and either carry an id an
+    agent's GitHub tool returned, or be made within seconds of such a write
+    (for tools whose answer has no link).
+    """
     account = (account or '').lower()
+    window = timedelta(seconds=OWN_WRITE_SECONDS)
 
-    def is_own(login: str, when: Any) -> bool:
+    def is_own(login: str, when: Any, item_id: int = 0) -> bool:
         if not account or (login or '').lower() != account:
             return False
+        if item_id and item_id in ids:
+            return True
         at = _parse_time(when)
-        return at is not None and any(start <= at <= end for start, end in windows)
+        return at is not None and any(abs(at - t) <= window for t in times)
     return is_own
 
 
@@ -541,7 +708,7 @@ async def describe(watch: PullRequestWatch) -> dict[str, Any]:
 
 async def watches_for(owner: str) -> list[PullRequestWatch]:
     rows = await PullRequestWatch.find({'owner_id': str(owner)}) or []
-    rows.sort(key=lambda w: (w.status != WATCHING, str(w.started_at or '')), reverse=False)
+    rows.sort(key=lambda w: (w.status != WATCHING, str(w.started_at or '')))
     return rows
 
 
@@ -583,10 +750,13 @@ def _same_target(watch: PullRequestWatch, target: dict[str, Any]) -> bool:
 
 
 def _speed(watch: PullRequestWatch) -> str:
+    if watch.mode == APP:
+        return 'News arrives as it happens (the Cognitrix GitHub App).'
     if watch.mode == WEBHOOK:
         return 'News arrives as it happens (a GitHub webhook on the repository).'
     minutes = max(1, round(check_seconds() / 60))
-    return f'GitHub is checked every {minutes} minute{"s" if minutes != 1 else ""}.'
+    return (f'GitHub is checked every {minutes} minute{"s" if minutes != 1 else ""} while there is activity, '
+            'and less often when it is quiet.')
 
 
 async def start_watch(row: Any, token: str, ref: str, instructions: str = '') -> str:
@@ -608,11 +778,13 @@ async def start_watch(row: Any, token: str, ref: str, instructions: str = '') ->
         raise WatchError(f'You can watch at most {MAX_WATCHES_PER_USER} pull requests at once. '
                          'Stop watching one first (Stop Watching Pull Request).')
 
+    now = utcnow()
     async with _GitHub(token) as gh:
         raw = await fetch(gh, repo, number)
+        etags = gh.etags
     pr = raw['pr']
     repo = str(((pr.get('base') or {}).get('repo') or {}).get('full_name') or repo)
-    state, _ = diff(None, raw)
+    state, _ = diff(None, raw, now=now)
     if not row.account:
         state['login'] = await _account_login(token)
 
@@ -626,8 +798,10 @@ async def start_watch(row: Any, token: str, ref: str, instructions: str = '') ->
         target=target['target'],
         instructions=str(instructions or '').strip()[:INSTRUCTIONS_MAX_CHARS],
         state=json.dumps(state),
-        checked_at=_stamp(),
-        started_at=_stamp(),
+        etags=json.dumps(etags),
+        checked_at=_stamp(now),
+        next_check_at=_stamp(now + timedelta(seconds=check_seconds())),
+        started_at=_stamp(now),
     )
     if target['target'] == TASK:
         trigger = await _task_trigger(target, repo, number)
@@ -649,8 +823,14 @@ async def start_watch(row: Any, token: str, ref: str, instructions: str = '') ->
         await TaskTrigger.update_one({'id': watch.trigger_id}, {'source_id': str(watch.id)})
 
     if webhooks_possible():
-        hook, note = await ensure_hook(row, token, repo)
-        update = {'mode': WEBHOOK, 'hook_id': str(hook.id)} if hook is not None else {'note': note}
+        update: dict[str, Any]
+        if app_configured() and await app_installed(repo):
+            update = {'mode': APP}
+        else:
+            hook, note = await ensure_hook(row, token, repo)
+            update = {'mode': WEBHOOK, 'hook_id': str(hook.id)} if hook is not None else {'note': note}
+        if update.get('mode') in INSTANT:
+            update['next_check_at'] = _stamp(now + timedelta(seconds=WEBHOOK_RECHECK_SECONDS))
         await PullRequestWatch.update_one({'id': watch.id}, update)
         for key, value in update.items():
             setattr(watch, key, value)
@@ -659,7 +839,8 @@ async def start_watch(row: Any, token: str, ref: str, instructions: str = '') ->
              else 'a new run of this task')
     lines = [
         f'Watching {label(watch)} "{watch.title}". {_speed(watch)}',
-        f'News (reviews, comments, failed checks, all checks passing, merged or closed) goes to {where}.',
+        f'News (reviews, comments, CI results, merged or closed) goes to {where}. '
+        'News that comes close together arrives as one message.',
         'Watching stops on its own when the pull request is merged or closed; '
         'use Stop Watching Pull Request to stop sooner.',
     ]
@@ -734,7 +915,9 @@ async def stop(watch: PullRequestWatch, reason: str, *, drop_pending: bool = Tru
     """Stop a watch. Its webhook goes once nothing else on the repo needs it."""
     update: dict[str, Any] = {'status': STOPPED, 'stop_reason': reason[:200], 'due': False}
     if drop_pending:
-        update.update(pending='', final=False)
+        update.update(pending='', final=False, hold_until=None)
+    else:
+        update['hold_until'] = None  # the last news goes out at once
     await PullRequestWatch.update_one({'id': watch.id}, update)
     for key, value in update.items():
         setattr(watch, key, value)
@@ -746,7 +929,61 @@ async def stop(watch: PullRequestWatch, reason: str, *, drop_pending: bool = Tru
         await release_hook(str(watch.hook_id))
 
 
-# --- repository webhooks ----------------------------------------------------------
+# --- webhooks: shared ----------------------------------------------------------------
+
+def signature_ok(secret: str, body: bytes, header: str | None) -> bool:
+    if not secret or not header or not header.startswith('sha256='):
+        return False
+    expected = 'sha256=' + hmac.new(secret.encode('utf-8'), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header.strip())
+
+
+def touched(event: str, payload: dict[str, Any]) -> tuple[set[int], set[str]]:
+    """Pull request numbers and commit shas a webhook delivery is about."""
+    numbers: set[int] = set()
+    shas: set[str] = set()
+    if event in ('pull_request', 'pull_request_review', 'pull_request_review_comment',
+                 'pull_request_review_thread'):
+        number = (payload.get('pull_request') or {}).get('number')
+        if number:
+            numbers.add(int(number))
+    elif event == 'issue_comment':
+        issue = payload.get('issue') or {}
+        if 'pull_request' in issue and issue.get('number'):
+            numbers.add(int(issue['number']))
+    elif event in ('check_run', 'check_suite'):
+        item = payload.get(event) or {}
+        numbers.update(int(pr['number']) for pr in item.get('pull_requests') or [] if pr.get('number'))
+        if item.get('head_sha'):
+            shas.add(str(item['head_sha']))
+    elif event == 'status' and payload.get('sha'):
+        shas.add(str(payload['sha']))
+    return numbers, shas
+
+
+async def _mark_due(watches: list[PullRequestWatch], event: str, body: bytes) -> int:
+    if event == 'ping':
+        return 0
+    try:
+        payload = json.loads(body.decode('utf-8'))
+    except ValueError:
+        return 0
+    if not isinstance(payload, dict):
+        return 0
+    numbers, shas = touched(event, payload)
+    if not numbers and not shas:
+        return 0
+    marked = 0
+    for watch in watches:
+        if watch.status != WATCHING:
+            continue
+        head = str(_loads(watch.state, {}).get('head') or '')
+        if int(watch.number) in numbers or (head and head in shas):
+            marked += await PullRequestWatch.update_one({'id': watch.id}, {'due': True}) or 0
+    return marked
+
+
+# --- webhooks: one per repository ---------------------------------------------------
 
 def hook_url(hook: GitHubRepoHook) -> str:
     from cognitrix.config import API_VERSION
@@ -755,9 +992,9 @@ def hook_url(hook: GitHubRepoHook) -> str:
 
 
 def _no_hook_note(repo: str) -> str:
-    minutes = max(1, round(check_seconds() / 60))
-    return (f"GitHub didn't let Cognitrix add a webhook to {repo}, so it is checked every {minutes} "
-            'minutes instead. Webhooks need admin rights on the repository.')
+    return (f"GitHub didn't let Cognitrix add a webhook to {repo}, so it is checked on a timer instead. "
+            'Webhooks need admin rights on the repository'
+            + (', or the Cognitrix GitHub App installed on it.' if app_configured() else '.'))
 
 
 async def ensure_hook(row: Any, token: str, repo: str) -> tuple[GitHubRepoHook | None, str | None]:
@@ -817,36 +1054,6 @@ async def release_hook(hook_id: str) -> None:
         logger.info('Could not remove the GitHub webhook on %s', hook.repo, exc_info=True)
 
 
-def signature_ok(secret: str, body: bytes, header: str | None) -> bool:
-    if not header or not header.startswith('sha256='):
-        return False
-    expected = 'sha256=' + hmac.new(secret.encode('utf-8'), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, header.strip())
-
-
-def touched(event: str, payload: dict[str, Any]) -> tuple[set[int], set[str]]:
-    """Pull request numbers and commit shas a webhook delivery is about."""
-    numbers: set[int] = set()
-    shas: set[str] = set()
-    if event in ('pull_request', 'pull_request_review', 'pull_request_review_comment',
-                 'pull_request_review_thread'):
-        number = (payload.get('pull_request') or {}).get('number')
-        if number:
-            numbers.add(int(number))
-    elif event == 'issue_comment':
-        issue = payload.get('issue') or {}
-        if 'pull_request' in issue and issue.get('number'):
-            numbers.add(int(issue['number']))
-    elif event in ('check_run', 'check_suite'):
-        item = payload.get(event) or {}
-        numbers.update(int(pr['number']) for pr in item.get('pull_requests') or [] if pr.get('number'))
-        if item.get('head_sha'):
-            shas.add(str(item['head_sha']))
-    elif event == 'status' and payload.get('sha'):
-        shas.add(str(payload['sha']))
-    return numbers, shas
-
-
 async def receive(hook_id: str, event: str, body: bytes, signature: str | None) -> int:
     """Mark the watches a verified delivery is about as due. Returns how many.
 
@@ -860,25 +1067,65 @@ async def receive(hook_id: str, event: str, body: bytes, signature: str | None) 
         raise LookupError(hook_id)
     if not signature_ok(unseal_or_empty(hook.secret), body, signature):
         raise PermissionError(hook_id)
-    if event == 'ping':
-        return 0
+    return await _mark_due(await PullRequestWatch.find({'hook_id': str(hook.id)}) or [], event, body)
+
+
+# --- webhooks: the GitHub App ----------------------------------------------------------
+
+def _app_env(name: str) -> str:
+    return os.getenv(name, '').strip()
+
+
+def app_configured() -> bool:
+    return bool(_app_env('GITHUB_APP_ID') and _app_env('GITHUB_APP_PRIVATE_KEY')
+                and _app_env('GITHUB_APP_WEBHOOK_SECRET'))
+
+
+def _app_private_key() -> str:
+    value = _app_env('GITHUB_APP_PRIVATE_KEY')
+    if '-----BEGIN' in value:
+        return value.replace('\\n', '\n')
+    path = Path(value).expanduser()
+    return path.read_text() if path.is_file() else ''
+
+
+def app_jwt() -> str:
+    """A short-lived token that speaks for the App itself (not an installation)."""
+    import jwt
+
+    now = int(time.time())
+    return jwt.encode({'iat': now - 60, 'exp': now + 540, 'iss': _app_env('GITHUB_APP_ID')},
+                      _app_private_key(), algorithm='RS256')
+
+
+async def app_installed(repo: str) -> bool:
+    """Whether the GitHub App is installed on the repository (so it gets its events)."""
     try:
-        payload = json.loads(body.decode('utf-8'))
+        token = app_jwt()
+    except Exception:
+        logger.warning('GITHUB_APP_PRIVATE_KEY could not be read; the GitHub App is not used')
+        return False
+    try:
+        async with _GitHub(token) as gh:
+            response = await gh.request('GET', f'/repos/{quote(repo, safe="/")}/installation')
+    except WatchError:
+        return False
+    return response.status_code == 200
+
+
+async def receive_app(event: str, body: bytes, signature: str | None) -> int:
+    """A delivery from the GitHub App. Raises ``PermissionError`` for a bad signature."""
+    if not app_configured() or not signature_ok(_app_env('GITHUB_APP_WEBHOOK_SECRET'), body, signature):
+        raise PermissionError('github app')
+    try:
+        payload = json.loads(body.decode('utf-8')) if event != 'ping' else {}
     except ValueError:
         return 0
-    if not isinstance(payload, dict):
+    repo = str(((payload or {}).get('repository') or {}).get('full_name') or '').lower()
+    if not repo:
         return 0
-    numbers, shas = touched(event, payload)
-    if not numbers and not shas:
-        return 0
-    marked = 0
-    for watch in await PullRequestWatch.find({'hook_id': str(hook.id)}) or []:
-        if watch.status != WATCHING:
-            continue
-        head = str(_loads(watch.state, {}).get('head') or '')
-        if int(watch.number) in numbers or (head and head in shas):
-            marked += await PullRequestWatch.update_one({'id': watch.id}, {'due': True}) or 0
-    return marked
+    watches = [w for w in await PullRequestWatch.find({'mode': APP}) or [] if w.repo.lower() == repo]
+    return await _mark_due(watches, event, body)
 
 
 # --- the check -------------------------------------------------------------------
@@ -888,9 +1135,32 @@ def _is_due(watch: PullRequestWatch, now: datetime) -> bool:
         return False
     if watch.due:
         return True
-    every = WEBHOOK_RECHECK_SECONDS if watch.mode == WEBHOOK else check_seconds()
-    checked = _parse_time(watch.checked_at)
-    return checked is None or checked <= now - timedelta(seconds=every)
+    when = _parse_time(watch.next_check_at)
+    if when is None:
+        checked = _parse_time(watch.checked_at)
+        every = WEBHOOK_RECHECK_SECONDS if watch.mode in INSTANT else check_seconds()
+        return checked is None or checked <= now - timedelta(seconds=every)
+    return when <= now
+
+
+def next_interval(watch: PullRequestWatch, state: dict[str, Any], now: datetime) -> int:
+    """Seconds until the next timed check: quick while things happen, slower when quiet."""
+    instant = watch.mode in INSTANT
+    base = WEBHOOK_RECHECK_SECONDS if instant else check_seconds()
+    ceiling = MAX_RECHECK_SECONDS if instant else MAX_POLL_SECONDS
+    if watch.failures:
+        return min(base * 2 ** min(int(watch.failures), 6), ceiling)
+    running = any(result == 'pending' for result in (state.get('checks') or {}).values())
+    last = max(filter(None, (_parse_time(state.get('activity_at')), _parse_time(watch.last_news_at),
+                             _parse_time(watch.started_at))), default=now)
+    quiet = now - last
+    if running or quiet < QUIET_AFTER:
+        factor = 1
+    elif quiet < IDLE_AFTER:
+        factor = 5
+    else:
+        factor = 15
+    return min(base * factor, ceiling)
 
 
 async def _target_alive(watch: PullRequestWatch) -> str | None:
@@ -928,6 +1198,12 @@ async def _trigger_paused(watch: PullRequestWatch) -> bool:
     return trigger is not None and not trigger.enabled
 
 
+async def _save(watch: PullRequestWatch, update: dict[str, Any]) -> None:
+    await PullRequestWatch.update_one({'id': watch.id}, update)
+    for key, value in update.items():
+        setattr(watch, key, value)
+
+
 async def check(watch: PullRequestWatch, now: datetime) -> bool:
     """Look at the pull request once. True when there is news to deliver."""
     from cognitrix.mcp import oauth
@@ -950,16 +1226,15 @@ async def check(watch: PullRequestWatch, now: datetime) -> bool:
 
     old = _loads(watch.state, {}) or None
     since_at = (_parse_time(watch.checked_at) or now) - timedelta(minutes=10)
-    async with _GitHub(token) as gh:
-        raw = await fetch(gh, watch.repo, int(watch.number), since_at.strftime('%Y-%m-%dT%H:%M:%SZ'))
+    async with _GitHub(token, _loads(watch.etags, {}) if old else {}) as gh:
+        raw = await fetch(gh, watch.repo, int(watch.number), old, since_at.strftime('%Y-%m-%dT%H:%M:%SZ'))
+        etags = gh.etags
     account = str(row.account or (old or {}).get('login') or '')
-    is_own = own_check(account, await busy_windows(watch, now))
-    state, news = diff(old, raw, is_own)
-    if old and old.get('login'):
-        state['login'] = old['login']
+    ids, times = await agent_writes(watch.connection_id)
+    state, news = diff(old, raw, own_check(account, ids, times), now)
 
-    update: dict[str, Any] = {'state': json.dumps(state), 'error': None,
-                              'title': state['title'][:200] or watch.title}
+    update: dict[str, Any] = {'state': json.dumps(state), 'etags': json.dumps(etags), 'error': None,
+                              'failures': 0, 'title': str(state.get('title') or watch.title)[:200]}
     woke = any(item['wake'] for item in news)
     if woke:
         lines = _loads(watch.pending, []) + [item['text'] for item in news]
@@ -967,18 +1242,39 @@ async def check(watch: PullRequestWatch, now: datetime) -> bool:
         update['last_news_at'] = _stamp(now)
         if any(item['final'] for item in news):
             update['final'] = True
-    elif _parse_time(watch.last_news_at or watch.started_at) and \
-            _parse_time(watch.last_news_at or watch.started_at) < now - timedelta(days=EXPIRE_DAYS):
-        await PullRequestWatch.update_one({'id': watch.id}, update)
-        await stop(watch, f'No news for {EXPIRE_DAYS} days.')
-        return False
-    await PullRequestWatch.update_one({'id': watch.id}, update)
-    for key, value in update.items():
-        setattr(watch, key, value)
+        elif not watch.hold_until:
+            update['hold_until'] = _stamp(now + timedelta(seconds=BUNDLE_SECONDS))
+    else:
+        started = _parse_time(watch.last_news_at or watch.started_at)
+        if started is not None and started < now - timedelta(days=EXPIRE_DAYS):
+            await _save(watch, update)
+            await stop(watch, f'No news for {EXPIRE_DAYS} days.')
+            return False
+    watch.failures = 0
+    interval = next_interval(watch, state, now)
+    next_at = now + timedelta(seconds=interval)
+    hold = _parse_time(update.get('hold_until') or watch.hold_until)
+    if hold is not None and hold < next_at:
+        next_at = hold  # look once more before handing the bundle over
+    update['next_check_at'] = _stamp(next_at)
+    await _save(watch, update)
     if watch.final:
         reason = 'The pull request was merged.' if state['state'] == 'merged' else 'The pull request was closed.'
         await stop(watch, reason, drop_pending=False)
     return woke
+
+
+async def _check_failed(watch: PullRequestWatch, exc: WatchError, now: datetime) -> None:
+    failures = int(watch.failures or 0) + 1
+    watch.failures = failures
+    if isinstance(exc, RateLimited) and exc.reset_at is not None:
+        next_at = max(exc.reset_at + timedelta(seconds=5), now + timedelta(seconds=MIN_SECONDS))
+    else:
+        next_at = now + timedelta(seconds=next_interval(watch, _loads(watch.state, {}), now))
+    update: dict[str, Any] = {'failures': failures, 'next_check_at': _stamp(next_at)}
+    if str(exc) != (watch.error or ''):
+        update['error'] = str(exc)[:300]
+    await _save(watch, update)
 
 
 # --- delivering news ---------------------------------------------------------------
@@ -1015,17 +1311,27 @@ def task_payload(watch: PullRequestWatch, lines: list[str]) -> str:
     return f'{label(watch)} "{watch.title}" ({watch.url})\n' + news_text(watch, lines)
 
 
+def _ready(watch: PullRequestWatch, now: datetime) -> bool:
+    if not _loads(watch.pending, []):
+        return False
+    if watch.final or watch.status == STOPPED:
+        return True
+    hold = _parse_time(watch.hold_until)
+    return hold is None or hold <= now
+
+
 async def deliver(watch: PullRequestWatch, now: datetime) -> bool:
     """Hand pending news to the chat or task. True when it was handed over."""
     lines = _loads(watch.pending, [])
     if not lines:
         return False
+    cleared = {'pending': '', 'final': False, 'hold_until': None}
     if watch.target == TASK:
         from cognitrix.tasks.automation import MAX_PENDING_EVENTS, PENDING, TaskTrigger, TriggerEvent
 
         trigger = await TaskTrigger.get(watch.trigger_id) if watch.trigger_id else None
         if trigger is None:
-            await PullRequestWatch.update_one({'id': watch.id}, {'pending': '', 'final': False})
+            await _save(watch, cleared)
             return False
         waiting = await TriggerEvent.find({'task_id': str(watch.task_id), 'status': PENDING}) or []
         if len(waiting) >= MAX_PENDING_EVENTS:
@@ -1042,39 +1348,43 @@ async def deliver(watch: PullRequestWatch, now: datetime) -> bool:
                                        chat_message(watch, lines), sender='GitHub', wait_seconds=0)
         if outcome == 'dropped':
             if await _target_alive(watch):
-                await PullRequestWatch.update_one({'id': watch.id}, {'pending': '', 'final': False})
+                await _save(watch, cleared)
             return False  # busy: tried again at the next tick
-    await PullRequestWatch.update_one({'id': watch.id}, {'pending': '', 'final': False})
-    watch.pending, watch.final = '', False
+    await _save(watch, cleared)
     logger.info('Pull request news for %s delivered (%s)', label(watch), outcome)
     return True
 
 
-async def poll_pr_watches(now: datetime | None = None, *, only_due: bool = False) -> int:
-    """Check every watch that is due, then deliver what is waiting. Returns deliveries."""
-    now = now or utcnow()
+async def _active_watches() -> list[PullRequestWatch]:
     try:
-        watches = await PullRequestWatch.find({}) or []
+        watching = await PullRequestWatch.find({'status': WATCHING}) or []
+        ending = await PullRequestWatch.find({'final': True}) or []
     except Exception as exc:
         if 'no such table' in str(exc).lower():
-            return 0
+            return []
         raise
+    seen = {str(w.id) for w in watching}
+    return watching + [w for w in ending if str(w.id) not in seen]
+
+
+async def poll_pr_watches(now: datetime | None = None, *, only_due: bool = False) -> int:
+    """Check every watch that is due, then deliver what is ready. Returns deliveries."""
+    now = now or utcnow()
     delivered = 0
-    for watch in watches:
+    for watch in await _active_watches():
         try:
-            if (watch.due if only_due else _is_due(watch, now)) and watch.status == WATCHING:
+            if watch.status == WATCHING and (watch.due if only_due else _is_due(watch, now)):
                 claim: dict[str, Any] = {'id': watch.id}
                 if watch.checked_at is not None:
                     claim['checked_at'] = watch.checked_at
                 if await PullRequestWatch.update_one(claim, {'checked_at': _stamp(now), 'due': False}) != 1:
                     continue
-                watch.checked_at = _stamp(now)
+                watch.checked_at, watch.due = _stamp(now), False
                 try:
                     await check(watch, now)
                 except WatchError as exc:
-                    if str(exc) != (watch.error or ''):
-                        await PullRequestWatch.update_one({'id': watch.id}, {'error': str(exc)[:300]})
-            if watch.pending:
+                    await _check_failed(watch, exc, now)
+            if _ready(watch, now):
                 delivered += 1 if await deliver(watch, now) else 0
         except Exception:
             logger.exception('Pull request check failed for watch %s', getattr(watch, 'id', '?'))

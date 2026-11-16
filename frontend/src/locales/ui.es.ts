@@ -1051,6 +1051,7 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.automations.eventsWaiting_other": "{n} eventos en espera",
   "ui.automations.giveATaskASchedule": "Dale a una tarea un horario, notas o un disparador por webhook y aparecerá aquí. Los agentes de esas ejecuciones pueden guardar notas, elegir su próxima revisión y avisarte.",
   "ui.automations.lastNewsUtctolocal": "Última novedad: {utcToLocal}.",
+  "ui.automations.nextCheckUtctolocal": "Próxima comprobación {utcToLocal}.",
   "ui.automations.lastResultResult": "Último resultado: {result}",
   "ui.automations.lastStatusValue": "último {status}{value}",
   "ui.automations.loadingAutomations": "cargando automatizaciones…",

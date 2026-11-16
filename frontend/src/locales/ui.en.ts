@@ -1055,6 +1055,7 @@ const uiEn = {
   "ui.automations.loadingAutomations": "loading automations…",
   "ui.automations.newTask": "+ New task",
   "ui.automations.newsGoesTo": "News goes to",
+  "ui.automations.nextCheckUtctolocal": "Next check {utcToLocal}.",
   "ui.automations.nextCheckWakeReason": "Next check: {wake_reason}",
   "ui.automations.nextNext": "next {next}",
   "ui.automations.noAutomationsYet": "No automations yet",

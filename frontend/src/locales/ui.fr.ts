@@ -1051,6 +1051,7 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.automations.eventsWaiting_other": "{n} événements en attente",
   "ui.automations.giveATaskASchedule": "Donnez à une tâche un calendrier, des notes ou un déclencheur webhook et elle apparaîtra ici. Les agents de ces exécutions peuvent garder des notes, choisir leur prochaine vérification et vous notifier.",
   "ui.automations.lastNewsUtctolocal": "Dernière actualité {utcToLocal}.",
+  "ui.automations.nextCheckUtctolocal": "Prochaine vérification {utcToLocal}.",
   "ui.automations.lastResultResult": "Dernier résultat : {result}",
   "ui.automations.lastStatusValue": "dernière : {status}{value}",
   "ui.automations.loadingAutomations": "chargement des automatisations…",

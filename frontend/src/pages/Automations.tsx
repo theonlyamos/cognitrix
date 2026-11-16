@@ -45,8 +45,9 @@ interface PullRequestWatch {
   task_id: string | null;
   /** Where news goes, e.g. chat "Release prep". */
   where: string;
-  mode: 'poll' | 'webhook';
+  mode: 'poll' | 'webhook' | 'app';
   check_seconds: number | null;
+  next_check_at?: string | null;
   /** Why it is checked on a timer although webhooks were possible. */
   note: string | null;
   status: 'watching' | 'stopped';
@@ -180,7 +181,7 @@ export default function Automations() {
 }
 
 function watchSpeed(w: PullRequestWatch): string {
-  if (w.mode === 'webhook') return 'instant';
+  if (w.mode === 'webhook' || w.mode === 'app') return 'instant';
   const minutes = Math.max(1, Math.round((w.check_seconds ?? 120) / 60));
   return `every ${minutes} min`;
 }
@@ -243,6 +244,7 @@ function WatchedPullRequests({ watches, onChange }: { watches: PullRequestWatch[
                 )}
                 {!live && w.stop_reason ? tr('ui.automations.stoppedStopReason', { stop_reason: w.stop_reason }) : null}
                 {live && w.last_news_at ? tr('ui.automations.lastNewsUtctolocal', { utcToLocal: utcToLocal(w.last_news_at) }) : null}
+                {live && w.mode === 'poll' && w.next_check_at ? <>{' '}{tr('ui.automations.nextCheckUtctolocal', { utcToLocal: utcToLocal(w.next_check_at) })}</> : null}
               </div>
               {live && w.note && <p className="w-full pl-3.5 text-[12px] text-fg-dim">{w.note}</p>}
               {live && w.error && <p role="alert" className="w-full pl-3.5 text-[12px] text-danger-ink">{w.error}</p>}

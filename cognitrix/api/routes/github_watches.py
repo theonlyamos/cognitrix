@@ -2,8 +2,8 @@
 
 ``github_watches_api`` lists a person's watches and stops one.
 ``github_hooks_api`` is the public receiver for the repository webhooks that
-watches add on a server GitHub can reach; every delivery must carry a valid
-``X-Hub-Signature-256``.
+watches add on a server GitHub can reach, and for the server's GitHub App
+when one is set up; every delivery must carry a valid ``X-Hub-Signature-256``.
 """
 from __future__ import annotations
 
@@ -63,10 +63,7 @@ async def _check_soon() -> None:
         logger.exception('Immediate pull request check failed; the scheduler will retry')
 
 
-@github_hooks_api.post('/github/hooks/{hook_id}', status_code=202, include_in_schema=False)
-async def receive_github_hook(hook_id: str, request: Request, background_tasks: BackgroundTasks):
-    """A delivery from a repository webhook. It only says which pull request
-    to look at: the check reads the pull request from GitHub itself."""
+async def _read_body(request: Request) -> bytes:
     declared = request.headers.get('content-length')
     if declared and declared.isdigit() and int(declared) > pr_watch.WEBHOOK_MAX_BYTES:
         raise HTTPException(status_code=413, detail='Payload too large')
@@ -75,6 +72,28 @@ async def receive_github_hook(hook_id: str, request: Request, background_tasks: 
         body += chunk
         if len(body) > pr_watch.WEBHOOK_MAX_BYTES:
             raise HTTPException(status_code=413, detail='Payload too large')
+    return body
+
+
+@github_hooks_api.post('/github/app/webhook', status_code=202, include_in_schema=False)
+async def receive_github_app(request: Request, background_tasks: BackgroundTasks):
+    """A delivery from the server's GitHub App (``GITHUB_APP_*`` settings)."""
+    body = await _read_body(request)
+    event = (request.headers.get('x-github-event') or '').strip()
+    try:
+        marked = await pr_watch.receive_app(event, body, request.headers.get('x-hub-signature-256'))
+    except PermissionError:
+        raise HTTPException(status_code=401, detail='Bad signature')
+    if marked:
+        background_tasks.add_task(_check_soon)
+    return {'event': event, 'matched': marked}
+
+
+@github_hooks_api.post('/github/hooks/{hook_id}', status_code=202, include_in_schema=False)
+async def receive_github_hook(hook_id: str, request: Request, background_tasks: BackgroundTasks):
+    """A delivery from a repository webhook. It only says which pull request
+    to look at: the check reads the pull request from GitHub itself."""
+    body = await _read_body(request)
     event = (request.headers.get('x-github-event') or '').strip()
     try:
         marked = await pr_watch.receive(hook_id, event, body, request.headers.get('x-hub-signature-256'))
