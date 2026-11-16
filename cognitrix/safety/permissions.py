@@ -256,6 +256,7 @@ READ_ONLY_TOOLS = frozenset({
     'load_skill', 'bash_output', 'list_windows', 'look_at_window', 'take_screenshot',
     # the check-in's own notes, alerts and offers
     'read_notes', 'update_notes', 'schedule_next_check', 'notify_me', 'offer_help',
+    'publish_brief', 'upcoming_calls',
 })
 
 

@@ -388,6 +388,7 @@ _MCP_SERVER_MIGRATION_COLUMNS = (
 
 _NOTIFICATION_MIGRATION_COLUMNS = (
     ('link', 'TEXT'),
+    ('quiet', 'BOOLEAN'),
 )
 
 _TRIGGER_MIGRATION_COLUMNS = (
@@ -417,6 +418,15 @@ _KNOWLEDGE_DOCUMENT_MIGRATION_COLUMNS = (
 
 _MEMORY_MIGRATION_COLUMNS = (
     ('pending', 'BOOLEAN'), ('replaces', 'TEXT'),
+    ('kind', 'TEXT'), ('valid_until', 'TEXT'), ('last_used', 'TEXT'), ('use_count', 'INTEGER'),
+)
+
+_MEMORY_SETTINGS_MIGRATION_COLUMNS = (
+    ('dream_enabled', 'BOOLEAN'),
+)
+
+_OFFER_MIGRATION_COLUMNS = (
+    ('quiet', 'BOOLEAN'),
 )
 
 _THEME_MIGRATION_COLUMNS = (
@@ -698,6 +708,8 @@ async def _migrate_relational_task_schema(database) -> None:
         ('chatchannels', _CHANNEL_MIGRATION_COLUMNS),
         ('knowledgedocuments', _KNOWLEDGE_DOCUMENT_MIGRATION_COLUMNS),
         ('memories', _MEMORY_MIGRATION_COLUMNS),
+        ('memorysetting', _MEMORY_SETTINGS_MIGRATION_COLUMNS),
+        ('agentoffers', _OFFER_MIGRATION_COLUMNS),
     ):
         for column, ctype in columns:
             clause = (
@@ -850,6 +862,7 @@ async def _ensure_schema():
     from cognitrix.sessions.side_questions import SideQuestion
     from cognitrix.payments.models import MODELS as PAYMENT_MODELS
     from cognitrix.meetings.calendar_calls import MODELS as CALENDAR_CALL_MODELS
+    from cognitrix.assistant.models import MODELS as ASSISTANT_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
@@ -861,6 +874,7 @@ async def _ensure_schema():
         *EMAIL_MODELS,
         *PAYMENT_MODELS,
         *CALENDAR_CALL_MODELS,
+        *ASSISTANT_MODELS,
         AgentOffer,
         SideQuestion,
         MeetingNote,
@@ -953,6 +967,8 @@ async def _ensure_schema():
         ('themesetting', _THEME_MIGRATION_COLUMNS),
         ('knowledgedocuments', _KNOWLEDGE_DOCUMENT_MIGRATION_COLUMNS),
         ('memories', _MEMORY_MIGRATION_COLUMNS),
+        ('memorysetting', _MEMORY_SETTINGS_MIGRATION_COLUMNS),
+        ('agentoffers', _OFFER_MIGRATION_COLUMNS),
         ('meetingnotes', _MEETING_MIGRATION_COLUMNS),
     ):
         try:

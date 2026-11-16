@@ -86,6 +86,7 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
   const [planConnected, setPlanConnected] = useState(false);
   const starterAgents = status.starter_team ?? [];
   const [starterTeam, setStarterTeam] = useState(true);
+  const [proactive, setProactive] = useState(true);
   const planSignIn = useChatGPTSignIn(() => setPlanConnected(true));
 
   const option = status.providers.find((p) => p.id === provider);
@@ -123,6 +124,7 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
         model: model.trim(),
         ...(askForKey ? { api_key: apiKey.trim() } : {}),
         ...(starterAgents.length ? { starter_team: starterTeam } : {}),
+        proactive,
       });
       finish(res.data?.agent?.id);
     } catch (e) {
@@ -255,6 +257,21 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
               </span>
             </label>
           )}
+
+          <label className="flex cursor-pointer items-start gap-2.5 rounded border border-line bg-panel-2 px-3.5 py-3">
+            <input
+              type="checkbox"
+              checked={proactive}
+              onChange={(e) => setProactive(e.target.checked)}
+              className="mt-[3px] accent-[var(--accent)]"
+            />
+            <span className="min-w-0">
+              <span className="block text-[13.5px] font-medium">{tr('ui.assistantSetup.checkInOnMyDay')}</span>
+              <span className="mt-0.5 block text-[12.5px] leading-relaxed text-fg-dim">
+                {tr('ui.assistantSetup.everyFewHoursItLooks')}
+              </span>
+            </span>
+          </label>
 
           {error && (
             <p role="alert" className="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-[13px] text-danger">

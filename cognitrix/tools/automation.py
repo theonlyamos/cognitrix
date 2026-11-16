@@ -130,9 +130,12 @@ async def schedule_next_check(minutes: int, reason: str) -> ToolOutcome:
 
 @tool(category=AUTOMATION_TOOL_CATEGORY, retryable=False, max_attempts=1,
       approval_mode='assigned_only')
-async def notify_me(title: str, message: str) -> ToolOutcome:
+async def notify_me(title: str, message: str, urgent: bool = False) -> ToolOutcome:
     """Alert the person you work for: it shows in their Inbox and as a desktop notification.
-    Use it only for something that needs their attention, not for routine progress."""
+    Use it only for something that needs their attention, not for routine progress.
+    urgent: true only for something with a deadline in the next few hours or that blocks work.
+    During a check-in, alerts outside quiet hours and under the person's daily limit push to their
+    phone; the rest wait in the Inbox for the morning brief."""
     title = str(title or '').strip()[:TITLE_MAX_CHARS]
     message = str(message or '').strip()[:MESSAGE_MAX_CHARS]
     if not title:
@@ -151,7 +154,9 @@ async def notify_me(title: str, message: str) -> ToolOutcome:
             return ToolOutcome.failure(
                 'too_many_notifications',
                 f'A run can send at most {MAX_NOTIFICATIONS_PER_RUN} notifications')
-        await create_notification(user_id, title, message, task_id=str(task.id), run_id=str(run.id))
+        await create_notification(user_id, title, message, task_id=str(task.id), run_id=str(run.id),
+                                  proactive=bool(getattr(task, 'standing_agent_id', None)),
+                                  urgent=bool(urgent))
     elif ctx.user_id:
         await create_notification(ctx.user_id, title, message, session_id=ctx.session_id)
     else:
@@ -185,3 +190,39 @@ async def offer_help(title: str, why: str, plan: str) -> ToolOutcome:
     if isinstance(result, str):
         return ToolOutcome.failure('offer_refused', result)
     return ToolOutcome.success('Offer sent. The person will accept or dismiss it in their Inbox.')
+
+
+BRIEF_TOOL_CATEGORY = 'brief'
+
+
+@tool(category=BRIEF_TOOL_CATEGORY, retryable=False, max_attempts=1,
+      approval_mode='assigned_only')
+async def publish_brief(summary: str, items: list | str) -> ToolOutcome:
+    """Publish the person's morning brief. Call it once, at the end of a morning-brief run.
+    summary: one or two sentences on the day ("Two replies owed and a 10:00 call; nothing is stuck.").
+    items: a list of at most 8 objects {"section", "text", "why", "link"}:
+      section: "today", "reply", "waiting", "stalled", "offers" or "other";
+      text: one sentence the person can act on; why: a few words on why it is here;
+      link (optional): an in-app path such as /tasks/<id>, or an https link.
+    An empty list is fine when nothing needs them."""
+    from cognitrix.assistant import brief, proactivity
+    from cognitrix.tasks import standing
+
+    try:
+        task, run = await _current_task()
+    except _NotInTask as exc:
+        return _not_in_task(exc)
+    if getattr(run, 'trigger_kind', None) != 'brief':
+        return ToolOutcome.failure('not_a_brief', 'Publish Brief only works in a morning-brief run.')
+    agent = await standing.standing_agent(task)
+    owner = str(task.owner_id or '')
+    if agent is None or not owner:
+        return ToolOutcome.failure('not_a_check_in', 'This run does not belong to a main assistant.')
+    try:
+        cleaned = brief.clean_items(items)
+    except ValueError as exc:
+        return ToolOutcome.failure('invalid_items', str(exc))
+    settings = await proactivity.get_settings(owner)
+    day = brief.local_day(settings)
+    row = await brief.publish(owner, agent, str(run.id), day, summary, cleaned)
+    return ToolOutcome.success(f'Brief published for {day} with {len(cleaned)} line(s) (id {row.id}).')

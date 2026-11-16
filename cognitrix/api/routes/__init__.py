@@ -13,6 +13,7 @@ from ...api.routes.artifacts import artifacts_api
 from ...api.routes.artifact_pages import artifact_frame_api, artifact_pages_api
 from ...api.routes.app_views import app_view_frame_api, app_views_api
 from ...api.routes.assistant import assistant_api
+from ...api.routes.proactive import proactive_api
 from ...api.routes.automations import automations_api, hooks_api
 from ...api.routes.audio import audio_api
 from ...api.routes.auth import auth_api
@@ -54,6 +55,7 @@ api_router.include_router(hooks_api)
 # matches in registration order and e.g. GET /tasks/start/{id} would otherwise
 # be swallowed by GET /tasks/{task_id}.
 api_router.include_router(assistant_api)
+api_router.include_router(proactive_api)
 api_router.include_router(agents_invoke_api)
 api_router.include_router(agents_api)
 api_router.include_router(tools_api)

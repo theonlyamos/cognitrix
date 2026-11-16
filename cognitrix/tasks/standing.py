@@ -74,6 +74,8 @@ class AgentOffer(Model):
     decided_at: str | None = None
     session_id: str | None = None
     """The chat that an accepted offer started."""
+    quiet: bool | None = None
+    """Not pushed (quiet hours or the day's interruption limit); it waits in the Inbox."""
 
 
 def public_offer(row: AgentOffer) -> dict[str, Any]:
@@ -88,6 +90,7 @@ def public_offer(row: AgentOffer) -> dict[str, Any]:
         'plan': data.get('plan') or '',
         'status': data.get('status') or OFFER_PENDING,
         'session_id': data.get('session_id'),
+        'quiet': bool(data.get('quiet')),
         'created_at': str(created).replace('T', ' ')[:19] if created else None,
     }
 
@@ -307,12 +310,20 @@ async def offers_for(user_id: str, agent_id: str | None = None) -> list[AgentOff
         raise
 
 
-async def run_context(task: Any, agent: Any) -> str:
+async def run_context(task: Any, agent: Any, run: Any = None) -> str:
     """Prompt text restated on every check-in of a standing assistant."""
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     settings = settings_of(agent)
     now = datetime.now().astimezone()
+    try:
+        from cognitrix.assistant.proactivity import get_settings, local_now
+
+        owner_settings = await get_settings(str(getattr(task, 'owner_id', '') or ''))
+        if owner_settings.timezone:
+            now = local_now(owner_settings, datetime.now(UTC))
+    except Exception:
+        logger.debug('Could not read the person\'s timezone', exc_info=True)
     parts = [
         'This is a check-in on your standing brief, not a request from the person. Nobody is '
         'watching. You can read and look things up, but this run cannot send, change, create or '
@@ -349,6 +360,14 @@ async def run_context(task: Any, agent: Any) -> str:
         if dismissed:
             text += '\nOffers the person dismissed (do not offer these again): ' + '; '.join(dismissed)
         parts.append(text)
+    try:
+        from cognitrix.assistant.checkins import run_extras
+
+        extra = await run_extras(task, run, agent)
+        if extra:
+            parts.append(extra)
+    except Exception:
+        logger.exception('Could not add the proactive context to check-in %s', getattr(task, 'id', '?'))
     return '\n\n'.join(parts)
 
 
@@ -373,7 +392,15 @@ async def create_offer(task: Any, run: Any, agent: Any, title: str, details: str
         task_id=str(task.id), run_id=str(run.id),
         title=title, details=details, plan=plan,
     )
+    try:
+        from cognitrix.assistant.proactivity import should_interrupt
+
+        row.quiet = not await should_interrupt(owner)
+    except Exception:
+        logger.debug('Could not check the interruption limit', exc_info=True)
     await row.save()
+    if row.quiet:
+        return row
     try:
         from cognitrix.common import webpush
 

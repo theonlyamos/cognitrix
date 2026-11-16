@@ -1015,7 +1015,7 @@ async def test_check_in_step_is_not_graded_by_the_quality_gate(
     async def owner(_task):
         return agent
 
-    async def context(_task, _agent):
+    async def context(_task, _agent, _run=None):
         return "check-in context"
 
     monkeypatch.setattr(orchestrator, "TaskStepExecutor", Executor)

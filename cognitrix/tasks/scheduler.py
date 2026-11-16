@@ -14,7 +14,7 @@ server time) and the resulting instant is converted back to naive UTC.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from croniter import croniter
 
@@ -120,6 +120,19 @@ async def tick(now: datetime | None = None) -> int:
             for key, value in claim.items():
                 setattr(task, key, value)
 
+            if getattr(task, 'standing_agent_id', None):
+                # A standing assistant's check-in: the free change check and
+                # the person's proactivity guards decide whether a model runs.
+                from cognitrix.assistant.checkins import gate_checkin
+                try:
+                    allowed, reason = await gate_checkin(task, now.replace(tzinfo=UTC))
+                except Exception:
+                    logger.exception('Check-in gate failed for task %s; running it', task.id)
+                    allowed, reason = True, ''
+                if not allowed:
+                    logger.debug('Skipped check-in %s: %s', task.id, reason)
+                    continue
+
             from cognitrix.api.routes.tasks import _enqueue_task_start
             try:
                 await _enqueue_task_start(
@@ -184,4 +197,10 @@ async def automation_tick(now: datetime | None = None) -> int:
         await poll_calendar_calls(now)
     except Exception:
         logger.exception('Could not check calendars for calls')
+    try:
+        from cognitrix.assistant.checkins import proactive_tick
+
+        await proactive_tick(now.replace(tzinfo=UTC))
+    except Exception:
+        logger.exception('Proactive assistant tick failed')
     return await fire_due_wakes(now) + await dispatch_trigger_events(now)

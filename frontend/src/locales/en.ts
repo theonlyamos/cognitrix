@@ -44,6 +44,7 @@ const en = {
   'settings.section.models': 'Models and keys',
   'settings.section.usage': 'Usage',
   'settings.section.swarms': 'Swarms',
+  'settings.section.assistant': 'Assistant',
   'settings.section.memory': 'Memory',
   'settings.section.voice': 'Voice',
   'settings.section.apps': 'Connected apps',

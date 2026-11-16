@@ -656,6 +656,8 @@ class Session(Model):
                     'memory': settings.enabled and not incognito,
                     'search chats': settings.history_enabled and not incognito,
                     'read chat': settings.history_enabled and not incognito,
+                    # Come back to this chat later (cognitrix/assistant/followups.py).
+                    'follow up later': not incognito and getattr(agent.llm, 'supports_tool_use', True),
                 }
                 tools = [t for t in agent.tools
                          if wanted.get(str(getattr(t, 'name', '')).lower(), True)]

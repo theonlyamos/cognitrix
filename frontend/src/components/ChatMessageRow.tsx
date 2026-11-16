@@ -12,6 +12,7 @@ import {
 } from '@/components/SafetyNotices';
 import { splitAuthor } from '@/lib/sharedChats';
 import { parsePress } from '@/lib/cards';
+import { nextStep } from '@/lib/proactive';
 import { speakText, stopSpeaking, useSpeechState } from '@/lib/speech';
 import { cn } from '@/lib/utils';
 import { tr, dateLocale } from '@/lib/i18n';
@@ -42,6 +43,8 @@ interface ChatMessageRowProps {
   onEdit?: (message: ChatMessage) => void;
   /** Ask for a new answer to the last question (the latest reply only). */
   onRegenerate?: () => void;
+  /** Say yes to the "Next step: …" a reply ends with (the latest reply only). */
+  onNextStep?: (step: string) => void;
 }
 
 const actionClass =
@@ -96,6 +99,7 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   selectedEditSourceId,
   onEdit,
   onRegenerate,
+  onNextStep,
 }: ChatMessageRowProps) {
   if (message.role === 'tool') {
     if (!message.tools?.length) return null;
@@ -187,6 +191,8 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   // Written by someone this chat is shared with (sessions/sharing.py).
   const guest = isUser ? splitAuthor(message.content) : null;
   const guestAuthor = guest?.author ?? null;
+  // A reply ending "Next step: …" gets a one-tap yes (the latest reply only).
+  const step = !isUser && onNextStep && !(isLast && streaming) ? nextStep(message.content) : null;
   return (
     <div className={cn('group/msg mx-auto flex w-full max-w-3xl flex-col px-4 py-2.5 sm:px-6', isUser && 'items-end')}>
       {isUser && guestAuthor ? (
@@ -218,9 +224,20 @@ export const ChatMessageRow = memo(function ChatMessageRow({
         ) : (
           <div className="md break-words">
             <Suspense fallback={<div className="whitespace-pre-wrap break-words leading-relaxed">{message.content}</div>}>
-              <MarkdownMessage content={message.content} />
+              <MarkdownMessage content={step ? step.rest : message.content} />
             </Suspense>
           </div>
+        )}
+        {step && onNextStep && (
+          <button
+            type="button"
+            onClick={() => onNextStep(step.step)}
+            className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border border-accent/50 bg-accent/10 px-3 py-1.5 text-left text-[12.5px] text-fg hover:bg-accent/20"
+            title={tr('ui.chatMessageRow.tellTheAgentToGo')}
+          >
+            <span className="font-mono text-[10.5px] tracking-[0.06em] text-accent-ink">{tr('ui.chatMessageRow.nextStep')}</span>
+            <span className="min-w-0 truncate">{step.step}</span>
+          </button>
         )}
         {isUser && message.artifacts?.map((artifact) => (
           <div key={artifact.id} className="mt-3">
