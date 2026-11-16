@@ -102,6 +102,63 @@ class TaskReport(Model):
         return 0 if value is None else value
 
 
+class TaskReportClaim(Model):
+    """One row per finished run that was considered for a report.
+
+    A unique index on ``run_id`` (``ensure_schema``) makes queueing atomic:
+    the completion step, recovery and the reconcile sweep may all try the
+    same run, and only the one whose insert succeeds goes on.
+    """
+
+    run_id: str
+    task_id: str = ''
+
+
+CLAIM_INDEX = 'ux_task_report_claims_run'
+RECONCILE_EVERY = timedelta(minutes=5)
+RECONCILE_WINDOW = timedelta(days=1)
+RECONCILE_GRACE = timedelta(minutes=2)
+_last_reconcile: dict[str, datetime] = {}
+
+
+async def ensure_schema() -> None:
+    """Create the unique index that makes per-run claims atomic."""
+    from odbms import DBMS
+
+    database = DBMS.Database
+    if getattr(database, 'dbms', '') not in ('sqlite', 'postgresql', 'mysql'):
+        return
+    table = TaskReportClaim.table_name()
+    statement = (f'CREATE UNIQUE INDEX {CLAIM_INDEX} ON {table} (run_id)'
+                 if database.dbms == 'mysql' else
+                 f'CREATE UNIQUE INDEX IF NOT EXISTS {CLAIM_INDEX} ON {table} (run_id)')
+    try:
+        await database.query(statement)
+    except Exception as exc:
+        if 'exist' not in str(exc).lower() and 'duplicate' not in str(exc).lower():
+            raise
+
+
+async def _claim_run(task_id: str, run_id: str) -> bool:
+    """True for exactly one caller per run."""
+    if await TaskReportClaim.find({'run_id': run_id}):
+        return False
+    try:
+        await TaskReportClaim(run_id=run_id, task_id=str(task_id)).save()
+    except Exception as exc:
+        if 'unique' in str(exc).lower() or 'duplicate' in str(exc).lower():
+            return False
+        raise
+    return True
+
+
+async def _unclaim_run(run_id: str) -> None:
+    try:
+        await TaskReportClaim.delete_many({'run_id': run_id})
+    except Exception:
+        logger.debug('Could not release the report claim of run %s', run_id, exc_info=True)
+
+
 def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
@@ -234,20 +291,33 @@ async def queue_report(task: Any, run: Any) -> bool:
     target = _target(created_by)
     if target is None:
         return False
+    run_id = str(run.id)
+    if not await _claim_run(task.id, run_id):
+        return creator_only  # someone else queued (or skipped) this run
+    try:
+        await _queue_claimed(task, run, status, created_by, target)
+    except BaseException:
+        await _unclaim_run(run_id)  # let a later pass try again
+        raise
+    return creator_only
+
+
+async def _queue_claimed(task: Any, run: Any, status: str, created_by: dict[str, Any],
+                         target: tuple[str, str]) -> None:
     rows = await _rows_for(task.id)
     run_id = str(run.id)
     if any(run_id in (row.run_ids or []) for row in rows):
-        return creator_only
+        return
 
     text = _result_text(run)
     result_hash = _hash(text) if status == 'completed' else None
     only_on = getattr(task, 'report_only_on', None) or 'always'
     if only_on == 'failure' and status == 'completed':
-        return creator_only
+        return
     if only_on == 'changed' and status == 'completed':
         last = next((r.result_hash for r in reversed(rows) if r.result_hash), None)
         if last == result_hash:
-            return creator_only
+            return
 
     # The agent kept getting failures back: tell the person as well.
     failed_in_a_row = 0
@@ -271,7 +341,7 @@ async def queue_report(task: Any, run: Any) -> bool:
             {'run_ids': [*row.run_ids, run_id], 'run_statuses': [*row.run_statuses, status],
              'result_hash': result_hash or row.result_hash})
         if changed == 1:
-            return creator_only
+            return
         break
     now = _fmt(_now())
     await TaskReport(
@@ -279,7 +349,37 @@ async def queue_report(task: Any, run: Any) -> bool:
         target_kind=kind, target_id=target_id, run_ids=[run_id], run_statuses=[status],
         result_hash=result_hash, queued_at=now, next_at=now,
     ).save()
-    return creator_only
+
+
+async def reconcile_missing_reports(now: datetime | None = None, *, force: bool = False) -> int:
+    """Queue reports for finished runs that never reached the completion step
+    (a worker that stopped right after saving the run). Runs every few minutes."""
+    from cognitrix.tasks.base import Task
+    from cognitrix.tasks.run import TaskRun
+
+    now = now or _now()
+    last = _last_reconcile.get('at')
+    if not force and last is not None and now - last < RECONCILE_EVERY:
+        return 0
+    _last_reconcile['at'] = now
+    oldest = _fmt(now - RECONCILE_WINDOW)
+    newest = _fmt(now - RECONCILE_GRACE)
+    queued = 0
+    for task in await Task.find({}) or []:
+        if task.deleted_at or not getattr(task, 'created_by', None) or effective_report_to(task) == 'person':
+            continue
+        for run in await TaskRun.find({'task_id': str(task.id)}) or []:
+            ended = str(run.completed_at or '').replace('T', ' ')[:19]
+            if _plain(run.status) not in ('completed', 'failed') or not ended or not oldest <= ended <= newest:
+                continue
+            if await TaskReportClaim.find({'run_id': str(run.id)}):
+                continue
+            try:
+                await queue_report(task, run)
+                queued += 1
+            except Exception:
+                logger.exception('Could not queue the missed report of run %s', run.id)
+    return queued
 
 
 async def _tell_person(task: Any, run: Any, why: str) -> None:
@@ -478,6 +578,10 @@ async def deliver_due_reports(now: datetime | None = None) -> int:
         await _recover_claims(now)
     except Exception:
         logger.exception('Could not recover interrupted task reports')
+    try:
+        await reconcile_missing_reports(now)
+    except Exception:
+        logger.exception('Could not look for task results that were never reported')
     due = [row for row in await TaskReport.find({'status': PENDING}) or []
            if not row.next_at or row.next_at <= _fmt(now)]
     sent = 0
@@ -486,6 +590,8 @@ async def deliver_due_reports(now: datetime | None = None) -> int:
             if await TaskReport.update_one({'id': row.id, 'status': PENDING},
                                            {'status': DELIVERING, 'claimed_at': _fmt(now)}) != 1:
                 continue
+            # Runs may have been added to the row since it was read.
+            row = await TaskReport.get(row.id) or row
             row.status = DELIVERING
             task = await Task.get(row.task_id)
             if task is None:

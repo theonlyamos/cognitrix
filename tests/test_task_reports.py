@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from cognitrix.tasks import reports
 from cognitrix.tasks.automation import AgentNotification, TaskTrigger, TriggerEvent, automation_brief
 from cognitrix.tasks.base import Task
-from cognitrix.tasks.reports import TaskReport
+from cognitrix.tasks.reports import TaskReport, TaskReportClaim
 from cognitrix.tasks.run import TaskRun, TaskRunStatus
 from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
 
@@ -29,9 +29,12 @@ async def db(tmp_path):
     else:
         DBMS.initialize('sqlite', database=db_file)
     _patch_odbms_sqlite()
-    for model in (Task, TaskRun, TaskRunHead, TaskTrigger, TriggerEvent, AgentNotification, TaskReport):
+    for model in (Task, TaskRun, TaskRunHead, TaskTrigger, TriggerEvent, AgentNotification, TaskReport,
+                  TaskReportClaim):
         create = getattr(model, '_create_table_async', None) or model.create_table
         await create()
+    await reports.ensure_schema()
+    reports._last_reconcile.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -65,8 +68,10 @@ async def make_task(**kw) -> Task:
     return task
 
 
-async def make_run(task, status=TaskRunStatus.COMPLETED, result='Cheapest is 420 USD', error=None) -> TaskRun:
-    run = TaskRun(task_id=task.id, status=status, result=result, error=error, acl_version=1)
+async def make_run(task, status=TaskRunStatus.COMPLETED, result='Cheapest is 420 USD', error=None,
+                   completed_at=None) -> TaskRun:
+    run = TaskRun(task_id=task.id, status=status, result=result, error=error, acl_version=1,
+                  completed_at=completed_at)
     await run.save()
     return run
 
@@ -361,3 +366,58 @@ async def test_deliver_report_adds_tools_and_custom_follow_up(monkeypatch):
     used, follow_up = started[0]
     assert [t.name for t in used.tools] == ['Search', 'Notify Me'] and follow_up is done
     assert [t.name for t in agent.tools] == ['Search']  # the stored agent is not changed
+
+
+# --- review fixes: atomic claims, reload after claim, missed runs ---------------------------------
+
+@pytest.mark.asyncio
+async def test_one_claim_per_run_even_when_racing(db):
+    import asyncio
+
+    task = await make_task()
+    run = await make_run(task)
+    await asyncio.gather(*(reports.queue_report(task, run) for _ in range(4)))
+    rows = await TaskReport.find({'task_id': task.id})
+    assert len(rows) == 1 and rows[0].run_ids == [run.id]
+    assert len(await TaskReportClaim.find({'run_id': run.id})) == 1
+    # The unique index refuses a second claim row outright.
+    with pytest.raises(Exception, match='(?i)unique'):
+        await TaskReportClaim(run_id=run.id, task_id=task.id).save()
+
+
+@pytest.mark.asyncio
+async def test_delivery_uses_runs_added_after_the_scan(db, chat, monkeypatch):
+    task = await make_task()
+    await reports.queue_report(task, await make_run(task, result='first'))
+    late = await make_run(task, result='second result')
+    original = TaskReport.find
+
+    async def scan_then_append(query=None, *a, **kw):
+        rows = await original(query, *a, **kw)
+        if query == {'status': reports.PENDING} and not getattr(scan_then_append, 'done', False):
+            scan_then_append.done = True
+            await reports.queue_report(task, late)  # lands between the scan and the claim
+        return rows
+
+    monkeypatch.setattr(TaskReport, 'find', scan_then_append)
+    await reports.deliver_due_reports(reports._now())
+    text = chat['calls'][0][3]
+    assert 'ran 2 times' in text and 'second result' in text
+
+
+@pytest.mark.asyncio
+async def test_reconcile_queues_runs_that_never_reached_completion(db):
+    task = await make_task()
+    now = reports._now()
+    ended = (now - timedelta(minutes=10)).strftime(reports.FMT)
+    missed = await make_run(task, completed_at=ended)
+    fresh = await make_run(task, completed_at=now.strftime(reports.FMT))  # completion may still be on it
+    old = await make_run(task, completed_at=(now - timedelta(days=3)).strftime(reports.FMT))
+    assert await reports.reconcile_missing_reports(now, force=True) == 1
+    rows = await TaskReport.find({'task_id': task.id})
+    assert [r.run_ids for r in rows] == [[missed.id]]
+    assert not await TaskReportClaim.find({'run_id': fresh.id})
+    assert not await TaskReportClaim.find({'run_id': old.id})
+    # A second pass finds nothing new, and the sweep is rate-limited.
+    assert await reports.reconcile_missing_reports(now, force=True) == 0
+    assert await reports.reconcile_missing_reports(now + timedelta(minutes=1)) == 0

@@ -182,7 +182,9 @@ async def run_recovery_pass(
     from cognitrix.tasks.completion import _queue_creator_report
 
     for run in recovered_runs:
-        await _queue_creator_report(run.id)
+        run_id = getattr(run, 'id', None)
+        if run_id:
+            await _queue_creator_report(str(run_id))
     await recover_completion_notifications(repository=repository)
     try:
         recovered_outboxes = await repository.recover_outboxes()
