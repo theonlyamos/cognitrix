@@ -177,19 +177,20 @@ async def test_poll_reads_connected_calendars(cal, monkeypatch):
     assert reads == ['tok']
 
 
-async def test_upcoming_calls_tool(cal):
+async def test_upcoming_calls_tool(cal, monkeypatch):
     from cognitrix.tools.meetings import upcoming_calls
     from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
 
     cc = cal.cc
+    # The events are built around NOW; the tool reads the clock, so pin it there.
+    monkeypatch.setattr(cc, 'utcnow', lambda: NOW)
     token = set_execution_context(ToolExecutionContext(user_id='u1', agent_id='a1', session_id='s1'))
     try:
         out = await upcoming_calls.run(parent=SimpleNamespace(id='a1', name='Ada'))
         assert 'not connected' in str(out.content)
         await cal.MCPServer(name='Google Calendar', owner_id='u1', catalog_id='google-calendar',
                             auth_type='oauth').save()
-        await cc.sync('u1', await cc.settings_for('u1'), [_event('t1', minutes=60, title='Vendor review')],
-                      cc.utcnow())
+        await cc.sync('u1', await cc.settings_for('u1'), [_event('t1', minutes=60, title='Vendor review')], NOW)
         out = await upcoming_calls.run(parent=SimpleNamespace(id='a1', name='Ada'))
     finally:
         reset_execution_context(token)
