@@ -144,7 +144,8 @@ def stats_of(row: DreamRun) -> dict[str, Any]:
 # ---------------------------------------------------------------- reading
 
 def _norm(text: str) -> str:
-    return re.sub(r'[^a-z0-9 ]+', '', re.sub(r'\s+', ' ', text.lower())).strip()
+    # \w keeps letters in every script, so Chinese or Cyrillic facts don't all normalise to ''.
+    return re.sub(r'[^\w ]+', '', re.sub(r'\s+', ' ', text.casefold())).replace('_', '').strip()
 
 
 def fingerprint(rows: list[Any], activity: str = '') -> str:
@@ -236,7 +237,10 @@ async def free_pass(user_id: str, rows: list[Any], dream_id: str, *, auto: bool,
     today = saved.today()
     seen: dict[tuple[str, str, str], Any] = {}
     for row in sorted(rows, key=lambda r: (not r.pinned, r.created)):
-        key = (row.scope, row.agent_id or '', _norm(row.content))
+        normal = _norm(row.content)
+        if not normal:
+            continue  # nothing to compare on: never treat as a duplicate
+        key = (row.scope, row.agent_id or '', normal)
         keeper = seen.get(key)
         if keeper is None:
             seen[key] = row
@@ -547,7 +551,10 @@ async def run_dream(user_id: str, trigger: str = 'manual', *, run: DreamRun | No
 
             proposals: list[dict[str, Any]] = []
             counts = await free_pass(user_id, rows, dream_id, auto=auto, proposals=proposals)
-            rows = [r for r in await saved.list_memories(user_id) if not r.pending and not saved.expired(r)]
+            # The model pass and the "About you" summary see global memories only: the summary
+            # reaches every agent, so agent-only notes must not leak into it.
+            rows = [r for r in await saved.list_memories(user_id)
+                    if not r.pending and not saved.expired(r) and r.scope == 'global']
             picked, pairs = await _pick_rows(rows, since)
             near = {frozenset((str(picked[i].id), str(picked[j].id))) for i, j, _ in pairs}
 

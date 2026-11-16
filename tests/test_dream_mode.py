@@ -305,3 +305,64 @@ async def test_dream_routes(db, monkeypatch):  # noqa: F811
     await routes.undo_change(history['changes'][0]['id'], _ctx(amos))
     assert (await routes.list_memories(ctx=_ctx(amos)))['memories'] == []
     assert added['kind'] == 'preference'
+
+
+async def test_undo_chain_keeps_the_memory_id(db):  # noqa: F811
+    from cognitrix.memory import saved
+
+    user = await _user('Amos', 'amos@example.com')
+    uid = str(user.id)
+    row, _ = await saved.add(uid, 'Lives in Accra.', by='person')
+    row = await saved.update(row, content='Lives in Kumasi.', by='person')
+    await saved.delete(row, by='person')
+    deleted, updated, created = await saved.history(uid)
+    back = await saved.undo(deleted)
+    assert str(back.id) == str(row.id) and back.content == 'Lives in Kumasi.'
+    again = await saved.undo(updated)
+    assert str(again.id) == str(row.id) and again.content == 'Lives in Accra.'
+    assert len(await saved.list_memories(uid)) == 1
+    await saved.undo(created)
+    assert await saved.list_memories(uid) == []
+
+
+async def test_non_latin_memories_are_not_duplicates(db):  # noqa: F811
+    from cognitrix.memory import dream, saved
+
+    user = await _user('Amos', 'amos@example.com')
+    await _raw(user, '喜欢喝茶')
+    await _raw(user, '住在北京')
+    await _raw(user, '!!!')
+    await _raw(user, '???')
+    rows = await saved.list_memories(str(user.id))
+    proposals = []
+    counts = await dream.free_pass(str(user.id), rows, 'd1', auto=True, proposals=proposals)
+    assert counts['duplicates'] == 0 and proposals == []
+    assert dream._norm('喜欢 喝茶!') == '喜欢 喝茶'
+
+
+async def test_agent_only_memories_stay_out_of_the_model_pass(db):  # noqa: F811
+    from cognitrix.memory import dream
+
+    user = await _user('Amos', 'amos@example.com')
+    await _raw(user, 'Likes tea.')
+    await _raw(user, 'Secret project codename is Falcon.', scope='agent', agent_id='a1')
+    llm = _LLM({'operations': [], 'profile': 'Likes tea.'})
+    await dream.run_dream(str(user.id), 'manual', llm=llm)
+    sent = llm.prompts[0][-1]['content']
+    assert 'Likes tea.' in sent and 'Falcon' not in sent
+
+
+async def test_forgetting_a_memory_drops_the_dream_summary(db):  # noqa: F811
+    from cognitrix.memory import saved
+
+    user = await _user('Amos', 'amos@example.com')
+    uid = str(user.id)
+    row, _ = await saved.add(uid, 'Lives in Accra.')
+    await saved.set_profile(uid, 'Amos lives in Accra.', dream_id='d1')
+    await saved.delete(row, by='person')
+    assert await saved.get_profile(uid) is None
+    # A summary the person locked is theirs and stays.
+    row, _ = await saved.add(uid, 'Likes tea.')
+    await saved.set_profile(uid, 'Written by me.', locked=True)
+    await saved.update(row, content='Likes green tea.', by='agent')
+    assert (await saved.get_profile(uid)).text == 'Written by me.'

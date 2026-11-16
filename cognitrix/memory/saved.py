@@ -521,6 +521,14 @@ async def undo(change: MemoryChange, *, by: str = 'person') -> Memory | None:
         if not restored.id:
             restored = await Memory.find_one({'user_id': str(change.user_id), 'content': fields.get('content'),
                                               'updated': fields['updated']}) or restored
+        # Bring it back under its old id, so earlier history entries still point at it.
+        old_id = str(change.memory_id)
+        if restored.id and str(restored.id) != old_id and await Memory.get(old_id) is None:
+            try:
+                await Memory.update_one({'id': restored.id}, {'id': old_id})
+                restored = await Memory.get(old_id) or restored
+            except Exception:
+                logger.debug('Could not restore memory %s under its old id', old_id, exc_info=True)
     await _record(change.user_id, str(restored.id), 'update' if current is not None else 'create',
                   current, restored, by=by, note=f'Undid change {change.id}')
     await MemoryChange.update_one({'id': change.id}, {'undone': True})
@@ -636,6 +644,8 @@ async def update(row: Memory, *, content: Any = None, pinned: bool | None = None
         await Memory.update_one({'id': row.id}, changes)
         after = await Memory.get(row.id) or row
         await _record(row.user_id, str(row.id), 'update', row, after, by=by, dream_id=dream_id, note=note)
+        if by != 'dream' and 'content' in changes and changes['content'] != row.content:
+            await _profile_outdated(row.user_id)
         return after
     return await Memory.get(row.id) or row
 
@@ -662,6 +672,17 @@ async def delete(row: Memory, *, by: str = 'agent', dream_id: str = '', note: st
     await Memory.delete_many({'id': row.id})
     if not row.pending:
         await _record(row.user_id, str(row.id), 'delete', row, None, by=by, dream_id=dream_id, note=note)
+        if by != 'dream':
+            await _profile_outdated(row.user_id)
+
+
+async def _profile_outdated(user_id: str) -> None:
+    """A memory was forgotten or corrected outside dream mode: the summary drawn
+    from memories may still say the old thing, so drop it (unless the person
+    locked it). The next dream writes a fresh one."""
+    row = await get_profile(user_id)
+    if row is not None and not row.locked and row.text:
+        await MemoryProfile.delete_many({'id': row.id})
 
 
 async def delete_all(user_id: str) -> int:
