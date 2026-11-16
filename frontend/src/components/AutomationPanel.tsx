@@ -17,7 +17,8 @@ export interface AutomationTaskFields {
 export interface TaskTriggerRow {
   id: string;
   name: string;
-  /** "webhook" (the default) or "gmail" for new mail in the owner's Gmail. */
+  /** "webhook" (the default), "gmail" for new mail in the owner's Gmail, or
+   * "github" for news on a pull request an agent is watching. */
   kind?: string;
   enabled: boolean;
   token_hint: string;
@@ -26,7 +27,7 @@ export interface TaskTriggerRow {
   /** Mail triggers: only mail whose sender or subject contains this. */
   match?: string;
   checked_at?: string | null;
-  /** Mail triggers: why the last check failed, in words for the owner. */
+  /** Mail and pull request triggers: why the last check failed, or why watching stopped. */
   error?: string | null;
 }
 
@@ -264,11 +265,14 @@ export function AutomationPanel({
           <ul className="flex flex-col divide-y divide-line rounded-[10px] border border-line">
             {triggers.map((row) => {
               const mail = row.kind === 'gmail';
+              const pull = row.kind === 'github';
               return (
               <li key={row.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
                 <span className={cn('h-1.5 w-1.5 rounded-full', row.enabled ? 'bg-accent' : 'bg-fg-dim')} aria-hidden />
                 <span className="text-[13px] font-medium">{row.name}</span>
-                {mail ? (
+                {pull ? (
+                  <span className="font-mono text-[11px] text-fg-dim">{tr('ui.automationPanel.githubNewsWatchedByThe')}</span>
+                ) : mail ? (
                   <span className="font-mono text-[11px] text-fg-dim">
                     {row.match ? tr('ui.automationPanel.onlyMailMatchingMatch', { match: row.match }) : tr('ui.automationPanel.allNewMail')}
                   </span>
@@ -283,7 +287,7 @@ export function AutomationPanel({
                 <Button size="sm" variant="ghost" onClick={() => toggle(row)} disabled={busy !== null}>
                   {row.enabled ? tr('ui.automationPanel.turnOff') : tr('ui.automationPanel.turnOn')}
                 </Button>
-                {!mail && (
+                {!mail && !pull && (
                   <Button size="sm" variant="ghost" onClick={() => rotate(row.id)} disabled={busy !== null}>
                     {tr('ui.automationPanel.newUrl')}
                   </Button>
@@ -293,6 +297,9 @@ export function AutomationPanel({
                 </Button>
                 {mail && row.error && (
                   <p role="alert" className="w-full pl-3.5 text-[12px] text-danger-ink">{row.error}</p>
+                )}
+                {pull && row.error && (
+                  <p className="w-full pl-3.5 text-[12px] text-fg-dim">{row.error}</p>
                 )}
               </li>
               );

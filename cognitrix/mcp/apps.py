@@ -30,10 +30,16 @@ async def _row(config: Any) -> Any | None:
 
 
 def _has_options(config: Any) -> bool:
+    """Whether the connection may have built-in tools (``native.py``)."""
     from cognitrix.mcp import catalog
 
     app = catalog.get(getattr(config, 'catalog_id', None))
-    return bool(app and app.options and (getattr(config, 'auth_type', None) or '') == 'oauth')
+    auth = getattr(config, 'auth_type', None) or ''
+    if app is None:
+        return False
+    if app.id in native.APP_TOOLS and auth in ('oauth', 'header'):
+        return True
+    return bool(app.options and auth == 'oauth')
 
 
 async def list_tools(client: Any, config: Any) -> list[dict[str, Any]]:

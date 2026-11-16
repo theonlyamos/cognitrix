@@ -6,6 +6,10 @@ events" for their connection (``catalog.AppOption``), the tools here are added
 to that connection. They call Google's REST APIs with the connection's own
 sign-in, so nothing new is stored.
 
+GitHub connections always have Watch Pull Request and its companions
+(``APP_TOOLS``): they wake the agent when a pull request changes
+(``cognitrix/tasks/pr_watch.py``).
+
 To agents and to the permission settings they look like any other tool of
 the app: they are listed, searched, allowed or switched off the same way
 (``cognitrix/mcp/apps.py``). Every one of them asks before it runs unless the
@@ -43,6 +47,8 @@ class NativeTool:
     handler: Handler
     # Sends and changes ask first: nothing here is read-only.
     annotations: dict[str, Any]
+    # The handler also takes the connection row: handler(token, args, row).
+    with_row: bool = False
 
     def info(self) -> dict[str, Any]:
         return {
@@ -284,6 +290,82 @@ CALENDAR_EDIT = (
     ),
 )
 
+async def _watch_pr(token: str, args: dict[str, Any], row: Any) -> str:
+    from cognitrix.tasks import pr_watch
+
+    try:
+        return await pr_watch.start_watch(row, token, str(args.get('pull_request') or ''),
+                                          str(args.get('instructions') or ''))
+    except pr_watch.WatchError as exc:
+        raise NativeToolError(str(exc))
+
+
+async def _stop_watching_pr(token: str, args: dict[str, Any], row: Any) -> str:
+    from cognitrix.tasks import pr_watch
+
+    try:
+        return await pr_watch.stop_matching(str(args.get('pull_request') or ''))
+    except pr_watch.WatchError as exc:
+        raise NativeToolError(str(exc))
+
+
+async def _list_watched_prs(token: str, args: dict[str, Any], row: Any) -> str:
+    from cognitrix.tasks import pr_watch
+
+    try:
+        return await pr_watch.list_for_context()
+    except pr_watch.WatchError as exc:
+        raise NativeToolError(str(exc))
+
+
+_PR = {'pull_request': {'type': 'string', 'description': 'The pull request: owner/repo#123 or its github.com link.'}}
+
+# Watching only reads GitHub (and, on a server GitHub can reach, adds a
+# webhook to the repository), so it doesn't ask first.
+GITHUB_WATCH = (
+    NativeTool(
+        name='watch_pull_request',
+        description=(
+            'Get woken up when something happens on a GitHub pull request: a new review or comment, a CI '
+            'check that fails, all checks passing, ready for review, merged or closed. In a chat the news '
+            'arrives in this chat as a new message; in a task run it starts a new run of the task. Use it '
+            'after opening a pull request or when asked to keep an eye on one, instead of checking over '
+            'and over. Watching stops on its own when the pull request is merged or closed.'),
+        input_schema=_schema({
+            **_PR,
+            'instructions': {'type': 'string', 'description': (
+                'What you mean to do when news arrives, e.g. "fix failing checks and answer review '
+                'comments". It is shown to you with each update.')},
+        }, ['pull_request']),
+        handler=_watch_pr,
+        annotations={'readOnlyHint': False, 'destructiveHint': False, 'openWorldHint': False,
+                     'title': 'Watch pull request'},
+        with_row=True,
+    ),
+    NativeTool(
+        name='stop_watching_pull_request',
+        description='Stop getting news about a GitHub pull request you watch from this chat or task.',
+        input_schema=_schema(_PR, ['pull_request']),
+        handler=_stop_watching_pr,
+        annotations={'readOnlyHint': False, 'destructiveHint': False, 'openWorldHint': False,
+                     'title': 'Stop watching pull request'},
+        with_row=True,
+    ),
+    NativeTool(
+        name='list_watched_pull_requests',
+        description='List the GitHub pull requests being watched for the person, and how.',
+        input_schema=_schema({}, []),
+        handler=_list_watched_prs,
+        annotations={'readOnlyHint': True, 'title': 'List watched pull requests'},
+        with_row=True,
+    ),
+)
+
+# catalog app id -> tools every connection of that app has.
+APP_TOOLS: dict[str, tuple[NativeTool, ...]] = {
+    'github': GITHUB_WATCH,
+}
+
 # (catalog app id, option id) -> the tools that option adds.
 OPTION_TOOLS: dict[tuple[str, str], tuple[NativeTool, ...]] = {
     ('gmail', 'send'): GMAIL_SEND,
@@ -303,9 +385,12 @@ def option_granted(row: Any, chosen: catalog.AppOption) -> bool:
 def tools_for(row: Any) -> list[NativeTool]:
     """The built-in tools this connection has right now."""
     app = catalog.get(getattr(row, 'catalog_id', None))
-    if app is None or (getattr(row, 'auth_type', None) or '') != 'oauth':
+    auth = getattr(row, 'auth_type', None) or ''
+    if app is None or auth not in ('oauth', 'header'):
         return []
-    tools: list[NativeTool] = []
+    tools: list[NativeTool] = list(APP_TOOLS.get(app.id, ()))
+    if auth != 'oauth':
+        return tools
     for chosen in catalog.chosen_options(app, row):
         if option_granted(row, chosen):
             tools.extend(OPTION_TOOLS.get((app.id, chosen.id), ()))
@@ -322,12 +407,20 @@ async def call(row: Any, tool: NativeTool, args: dict[str, Any]) -> str:
     from cognitrix.mcp.registry import sign_in_message
 
     try:
-        token = await oauth.access_token(row)
+        if (getattr(row, 'auth_type', None) or '') == 'header':
+            from cognitrix.tasks.pr_watch import connection_token
+
+            token = await connection_token(row)
+        else:
+            token = await oauth.access_token(row)
     except oauth.ReconnectNeeded as exc:
         return sign_in_message(oauth.app_name(row), exc.reason)
     except httpx.HTTPError:
         return f"Couldn't reach {oauth.app_name(row)} to renew its sign-in. Try again in a moment."
     try:
-        return await tool.handler(token, {k: v for k, v in (args or {}).items() if v is not None})
+        clean = {k: v for k, v in (args or {}).items() if v is not None}
+        if tool.with_row:
+            return await tool.handler(token, clean, row)  # type: ignore[call-arg]
+        return await tool.handler(token, clean)
     except NativeToolError as exc:
         return f'Error: {exc}'

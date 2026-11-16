@@ -52,6 +52,8 @@ const TRIGGER_LABEL: Record<string, string> = {
   schedule: '⏱ schedule',
   wake: '↺ self-check',
   webhook: '⚡ webhook',
+  email: '✉ new mail',
+  github: '⑂ pull request news',
   agent: '◆ started by an agent',
 };
 

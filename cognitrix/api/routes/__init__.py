@@ -14,6 +14,7 @@ from ...api.routes.artifact_pages import artifact_frame_api, artifact_pages_api
 from ...api.routes.app_views import app_view_frame_api, app_views_api
 from ...api.routes.assistant import assistant_api
 from ...api.routes.automations import automations_api, hooks_api
+from ...api.routes.github_watches import github_hooks_api, github_watches_api
 from ...api.routes.audio import audio_api
 from ...api.routes.auth import auth_api
 from ...api.routes.agent_email import email_api
@@ -50,6 +51,7 @@ api_router.include_router(public_links_api)
 api_router.include_router(artifact_frame_api)
 api_router.include_router(app_view_frame_api)
 api_router.include_router(hooks_api)
+api_router.include_router(github_hooks_api)
 # Invoke/run-scoped routers MUST register before their crud twins: FastAPI
 # matches in registration order and e.g. GET /tasks/start/{id} would otherwise
 # be swallowed by GET /tasks/{task_id}.
@@ -64,6 +66,7 @@ api_router.include_router(hosted_apps_api)
 api_router.include_router(skills_api)
 api_router.include_router(providers_api)
 api_router.include_router(automations_api)
+api_router.include_router(github_watches_api)
 api_router.include_router(tasks_run_api)
 api_router.include_router(tasks_api)
 api_router.include_router(teams_run_api)
