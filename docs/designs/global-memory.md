@@ -215,3 +215,24 @@ Roughly: phase 1 is one PR of similar size to the credential vault (PR #44); pha
 3. **Today's automatic memory.** Recommended: stop using it and offer a one-click convert or delete. Alternative: keep it running as a hidden extra layer.
 4. **Chat history search.** Recommended: on by default (it's on-demand, so it adds nothing to the prompt unless used).
 5. **Format.** List of items (ChatGPT-style, recommended: easy to edit and scope) vs one editable summary per scope (Claude-style).
+
+## 6. Dream mode and memory upgrades (built Nov 2026)
+
+What was added on top of phases 1 to 3. Code: `cognitrix/memory/dream.py`, `cognitrix/memory/semantic.py`, `cognitrix/memory/saved.py`.
+
+- **Search by meaning.** `saved.search` and the prompt block rank memories by closeness to the question using the local ONNX MiniLM embedder (`utils/embedding_model.py`), cached in memory. Literal word matches still count. Set `COGNITRIX_MEMORY_EMBEDDINGS=0` to turn it off; a failure falls back to word matching for 10 minutes.
+- **Kinds and end dates.** Each memory can have a `kind` (about, preference, person, project, howto, other) and a `valid_until` date. Past that date it leaves the prompt and search, and dream mode retires it. The Memory tool takes both.
+- **History with undo.** Every create, change, delete and approval is recorded in `MemoryChange` with before and after copies and who made it (person, agent, dream). Settings › Memory › History undoes any one of them. The newest 2000 per person are kept.
+- **"About you".** A short summary (`MemoryProfile`, up to 1200 characters) that leads the prompt block. Dream mode writes it from memories only; once the person edits or locks it, dream mode leaves it alone.
+- **Use tracking.** `last_used` and `use_count` are bumped when search returns a memory.
+
+### Dream mode
+
+A background job, separate from the main assistant, that tidies one person's memory. It runs nightly around 03:00 in their time zone (at most once every 20 hours, skipped when nothing changed since the last run) and when they press **Tidy now** in Settings › Memory (`POST /memories/dream`).
+
+1. A free pass with no model: merges exact duplicates and retires facts past their end date.
+2. A model pass on the main assistant's provider, on its small model: reads up to 120 memories (recently changed ones and near-duplicate pairs first), what the person wrote in chats since the last run (never incognito, task or shared chats, and only when chat history is on), and the current summary. It answers in JSON with merge, tag, update, delete, conflict and add operations plus a new summary.
+3. Policy. In "automatically" mode, tagging and merging near-duplicates of agent-saved facts apply at once. Everything else, and everything in "ask me first" mode, becomes a **suggested change** the person approves or rejects (a conflict asks which one to keep). Pinned memories are never touched, and memories the person typed themselves are only changed with their OK. A suggestion whose memories changed since is set aside.
+4. Each run is listed with its summary and an **Undo** that reverts everything it changed on its own. Usage counts against the daily token limit in Settings › Assistant.
+
+Routes: `GET/POST /memories/dream`, `POST /memories/dream/proposals/{id}`, `POST /memories/dream/{id}/undo`, `GET /memories/history`, `POST /memories/history/{id}/undo`, `GET/PUT /memories/profile`.

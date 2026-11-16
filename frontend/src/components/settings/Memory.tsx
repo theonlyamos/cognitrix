@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api, errorMessage } from '@/lib/api';
 import { Toggle } from '@/pages/Notifications';
@@ -11,6 +11,7 @@ import {
 } from '@/lib/memories';
 import { Group, Segmented, SettingRow, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { tr } from '@/lib/i18n';
+import { AboutYouCard, DreamSection, MemoryHistory } from '@/components/settings/MemoryDream';
 
 interface AgentLite { id: string; name: string }
 
@@ -30,8 +31,11 @@ export function MemorySettings() {
   const [confirmAll, setConfirmAll] = useState(false);
   const [importing, setImporting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const load = () => listMemories().then(setData).catch((e) => setLoadError(errorMessage(e, tr('ui.settings.memory.couldNotLoadMemories'))));
+  const load = () => listMemories().then((d) => { setData(d); setReloadKey((k) => k + 1); })
+    .catch((e) => setLoadError(errorMessage(e, tr('ui.settings.memory.couldNotLoadMemories'))));
+  const reload = useCallback(() => { void load(); }, []);
 
   useEffect(() => {
     void load();
@@ -117,6 +121,9 @@ export function MemorySettings() {
           {notice} <button type="button" className="ml-1 text-accent-ink hover:underline" onClick={() => setNotice(null)}>{tr('ui.settings.memory.dismiss')}</button>
         </p>
       )}
+
+      <AboutYouCard disabled={!settings.enabled} />
+      <DreamSection enabled={settings.dream_enabled !== false} memoryOn={settings.enabled} onChanged={reload} />
 
       {pending.length > 0 && (
         <section aria-label={tr('ui.settings.memory.memoriesWaitingForYourOk')}>
@@ -206,6 +213,7 @@ export function MemorySettings() {
         <button type="button" className="text-fg-dim hover:text-fg hover:underline" onClick={() => { setError(null); setImporting(true); }}>
           {tr('ui.settings.memory.import_4834')}
         </button>
+        <MemoryHistory reloadKey={reloadKey} onChanged={reload} />
         {saved.length > 0 && (
           <>
             <button type="button" className="text-fg-dim hover:text-fg hover:underline"
@@ -295,6 +303,17 @@ function ImportForm({ busy, onImport, onCancel }: { busy: boolean; onImport: (te
   );
 }
 
+function kindLabel(kind: string) {
+  switch (kind) {
+    case 'about': return tr('ui.settings.memory.aboutYou');
+    case 'preference': return 'PREFERENCE';
+    case 'person': return 'PERSON';
+    case 'project': return 'PROJECT';
+    case 'howto': return 'HOW-TO';
+    default: return 'OTHER';
+  }
+}
+
 function scopeLabel(m: SavedMemory) {
   return m.scope === 'global' ? 'GLOBAL' : (m.agent_name || 'ONE AGENT').toUpperCase();
 }
@@ -302,6 +321,7 @@ function scopeLabel(m: SavedMemory) {
 function origin(m: SavedMemory) {
   const when = timeAgo(m.updated || m.created);
   if (m.source === 'user') return <>{tr('ui.settings.memory.youAddedThisWhen', { when })}</>;
+  if (m.source === 'dream') return <>{tr('ui.settings.memory.addedByDreamModeWhen', { when })}</>;
   if (m.source_session_id) {
     return <>{tr('ui.settings.memory.savedIn')}{' '}<Link to={`/home?chat=${encodeURIComponent(m.source_session_id)}`} className="hover:text-fg hover:underline">{tr('ui.settings.memory.aChat')}</Link> · {when}</>;
   }
@@ -334,9 +354,17 @@ function MemoryRow({ memory, agents, busy, highlighted, maxChars, onSave, onPin,
         <div className="text-[13.5px] leading-snug">{memory.content}</div>
         <div className="mt-1 text-[11.5px] text-fg-dim">
           {memory.pinned && <span className="text-accent-ink">{tr('ui.settings.memory.pinned')}{' '}</span>}
+          {memory.expired
+            ? <span className="text-danger-ink">{tr('ui.settings.memory.noLongerTrueEndedValid', { valid_until: memory.valid_until })}</span>
+            : memory.valid_until ? <span>{tr('ui.settings.memory.trueUntilValidUntil', { valid_until: memory.valid_until })}</span> : null}
           {origin(memory)}
         </div>
       </div>
+      {memory.kind && (
+        <span className="mt-0.5 rounded bg-panel-2 px-1.5 py-0.5 font-mono text-[10px] tracking-[0.06em] text-fg-dim">
+          {kindLabel(memory.kind)}
+        </span>
+      )}
       <span className={cn('mt-0.5 rounded px-1.5 py-0.5 font-mono text-[10px] tracking-[0.06em]',
         memory.scope === 'global' ? 'bg-accent/15 text-accent-ink' : 'bg-panel-2 text-fg-dim')}>
         {scopeLabel(memory)}

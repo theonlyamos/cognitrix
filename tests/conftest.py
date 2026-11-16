@@ -29,3 +29,14 @@ def _secrets_key(monkeypatch):
     secret_box.reset_key_cache()
     yield
     secret_box.reset_key_cache()
+
+
+@pytest.fixture(autouse=True)
+def _no_memory_embeddings(monkeypatch):
+    """Memory search by meaning loads an 80 MB model on first use; tests that
+    want it install a fake embedder with cognitrix.memory.semantic.set_embedder."""
+    monkeypatch.setenv('COGNITRIX_MEMORY_EMBEDDINGS', '0')
+    yield
+    from cognitrix.memory import semantic
+
+    semantic.set_embedder(None)

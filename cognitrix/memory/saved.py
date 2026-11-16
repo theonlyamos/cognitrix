@@ -12,6 +12,7 @@ forget and search them. See docs/designs/global-memory.md.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 from collections import OrderedDict
@@ -19,7 +20,15 @@ from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from typing import Any
 
-from cognitrix.models.memory import AUTO_SAVE_MODES, SCOPES, Memory, MemorySettings
+from cognitrix.models.memory import (
+    AUTO_SAVE_MODES,
+    KINDS,
+    SCOPES,
+    Memory,
+    MemoryChange,
+    MemoryProfile,
+    MemorySettings,
+)
 
 logger = logging.getLogger('cognitrix.log')
 
@@ -28,7 +37,16 @@ MAX_CHARS = 300
 MAX_PER_USER = 500
 PROMPT_BUDGET_CHARS = 6000
 """About 1,500 tokens of memories in the system prompt."""
+RELEVANT_IN_PROMPT = 8
+"""When memories don't all fit, how many of the rest are picked by meaning."""
+PROFILE_MAX_CHARS = 1200
+PROFILE_LIST_BUDGET = 3000
+"""With an "About you" summary, about half the usual room is left for separate notes."""
 DUPLICATE_RATIO = 0.9
+SEMANTIC_MATCH = 0.35
+"""Search hits need at least this cosine closeness when matching by meaning."""
+HISTORY_KEEP = 2000
+"""Changes kept per person for undo; older ones are dropped."""
 
 FMT = '%Y-%m-%d %H:%M:%S'
 
@@ -72,7 +90,8 @@ async def get_settings(user_id: str) -> MemorySettings:
 
 async def save_settings(user_id: str, *, enabled: bool | None = None,
                         auto_save: str | None = None,
-                        history_enabled: bool | None = None) -> MemorySettings:
+                        history_enabled: bool | None = None,
+                        dream_enabled: bool | None = None) -> MemorySettings:
     if auto_save is not None and auto_save not in AUTO_SAVE_MODES:
         raise MemoryError_('invalid_mode', f'auto_save must be one of {", ".join(AUTO_SAVE_MODES)}')
     row = await MemorySettings.find_one({'user_id': str(user_id)})
@@ -83,6 +102,8 @@ async def save_settings(user_id: str, *, enabled: bool | None = None,
         changes['auto_save'] = auto_save
     if history_enabled is not None:
         changes['history_enabled'] = bool(history_enabled)
+    if dream_enabled is not None:
+        changes['dream_enabled'] = bool(dream_enabled)
     if row is None:
         row = MemorySettings(user_id=str(user_id), **changes)
         await row.save()
@@ -154,6 +175,36 @@ def clean_content(text: Any) -> str:
     return text
 
 
+def clean_kind(kind: Any) -> str:
+    value = str(kind or '').strip().lower()
+    if value and value not in KINDS:
+        raise MemoryError_('invalid_kind', f'kind must be one of {", ".join(KINDS)}')
+    return value
+
+
+def clean_valid_until(value: Any) -> str:
+    text = str(value or '').strip()[:10]
+    if not text:
+        return ''
+    try:
+        datetime.strptime(text, '%Y-%m-%d')
+    except ValueError:
+        raise MemoryError_('invalid_date', 'valid_until must be a date like 2026-12-31') from None
+    return text
+
+
+def today() -> str:
+    """Today's date in the person's timezone when a request set it, else this machine's."""
+    from cognitrix.common.clock import local_now
+
+    return local_now()[0].strftime('%Y-%m-%d')
+
+
+def expired(row: Memory, on: str | None = None) -> bool:
+    until = str(getattr(row, 'valid_until', '') or '')
+    return bool(until) and until < (on or today())
+
+
 def looks_secret(text: str) -> bool:
     if _SECRET_PATTERNS.search(text):
         return True
@@ -175,7 +226,7 @@ def _similar(a: str, b: str) -> float:
 # ---------------------------------------------------------------- reading
 
 def _visible(row: Memory, agent_id: str | None, read_global: bool) -> bool:
-    if row.pending:
+    if row.pending or expired(row):
         return False
     if row.scope == 'agent':
         return bool(agent_id) and row.agent_id == str(agent_id)
@@ -237,11 +288,43 @@ def rank(rows: list[Memory], query: str) -> list[Memory]:
     return [r for _s, _i, r in scored]
 
 
+async def rank_by_meaning(rows: list[Memory], query: str) -> list[tuple[Memory, float]] | None:
+    """Rows with their closeness to ``query`` in meaning, closest first; None
+    when meaning can't be measured right now."""
+    from cognitrix.memory import semantic
+
+    found = await semantic.scores(query, [r.content for r in rows])
+    if found is None:
+        return None
+    paired = sorted(zip(rows, found, strict=False), key=lambda p: -p[1])
+    return paired
+
+
 async def search(user_id: str, agent: Any, query: str, k: int = 10) -> list[Memory]:
     rows = await visible_memories(user_id, agent)
-    words = _words(query or '')
-    hits = [r for r in rank(rows, query) if words & _words(r.content) or query.lower() in r.content.lower()]
-    return hits[:k]
+    query = str(query or '')
+    words = _words(query)
+    by_meaning = await rank_by_meaning(rows, query) if rows else None
+    if by_meaning is not None:
+        literal = {str(r.id) for r in rows
+                   if words & _words(r.content) or (query and query.lower() in r.content.lower())}
+        hits = [r for r, score in by_meaning if score >= SEMANTIC_MATCH or str(r.id) in literal]
+    else:
+        hits = [r for r in rank(rows, query) if words & _words(r.content) or query.lower() in r.content.lower()]
+    hits = hits[:k]
+    await mark_used(hits)
+    return hits
+
+
+async def mark_used(rows: list[Memory]) -> None:
+    """Note that agents found these useful just now (for ranking and tidying)."""
+    stamp = now_str()
+    for row in rows:
+        try:
+            await Memory.update_one({'id': row.id}, {'last_used': stamp,
+                                                     'use_count': int(row.use_count or 0) + 1})
+        except Exception:
+            logger.debug('Could not mark memory %s used', row.id, exc_info=True)
 
 
 # ---------------------------------------------------------------- prompt
@@ -282,33 +365,58 @@ async def prompt_block(user_id: str | None, agent: Any, query: str = '',
     if not settings.enabled:
         return ''
     rows = await visible_memories(user_id, agent)
-    if not rows:
+    profile = await get_profile(user_id) if agent_reads_global(agent) else None
+    profile_text = (profile.text if profile else '') or ''
+    if not rows and not profile_text:
         return ''
+    print_key = _fingerprint(rows) + hashlib.sha256(profile_text.encode('utf-8', 'replace')).hexdigest()
     key = None
     if session_id:
         key = (str(user_id), str(getattr(agent, 'id', '') or ''), str(session_id), int(budget))
         cached = _block_cache.get(key)
-        if cached is not None and cached[0] == _fingerprint(rows):
+        if cached is not None and cached[0] == print_key:
             _block_cache.move_to_end(key)
             return cached[1]
-    block = _build_block(rows, query, budget)
+    if profile_text:
+        # The summary carries the gist, so fewer separate notes are needed.
+        budget = min(budget, PROFILE_LIST_BUDGET + len(profile_text))
+    relevant: list[Memory] = []
+    rest = [r for r in rows if not r.pinned]
+    if sum(len(r.content) + 30 for r in rows) + len(profile_text) > budget and query.strip():
+        by_meaning = await rank_by_meaning(rest, query)
+        if by_meaning is not None:
+            relevant = [r for r, score in by_meaning[:RELEVANT_IN_PROMPT] if score >= SEMANTIC_MATCH]
+        else:
+            words = _words(query)
+            relevant = [r for r in rank(rest, query) if words & _words(r.content)][:RELEVANT_IN_PROMPT]
+        if relevant:
+            await mark_used(relevant)
+    block = _build_block(rows, query, budget, profile_text=profile_text, relevant=relevant)
     if key is not None:
-        _block_cache[key] = (_fingerprint(rows), block)
+        _block_cache[key] = (print_key, block)
         _block_cache.move_to_end(key)
         while len(_block_cache) > _BLOCK_CACHE_MAX:
             _block_cache.popitem(last=False)
     return block
 
 
-def _build_block(rows: list[Memory], query: str, budget: int) -> str:
+def _build_block(rows: list[Memory], query: str, budget: int, *, profile_text: str = '',
+                 relevant: list[Memory] | None = None) -> str:
     pinned = [r for r in rows if r.pinned]
     rest = [r for r in rows if not r.pinned]
     lines: list[str] = []
-    used = 0
+    used = len(profile_text)
     left_out = 0
-    # Pinned and the newest come first; when the rest don't fit, the ones that
-    # match what the person just said win the remaining room.
-    ordered = pinned + (rest if sum(len(r.content) + 30 for r in rows) <= budget else rank(rest, query))
+    # Pinned come first. When the rest don't all fit, the ones closest in
+    # meaning to what the person just said go next, then the newest.
+    if sum(len(r.content) + 30 for r in rows) + used <= budget:
+        ordered = pinned + rest
+    else:
+        picked = {str(r.id) for r in relevant or []}
+        if relevant:
+            ordered = pinned + list(relevant) + [r for r in rest if str(r.id) not in picked]
+        else:
+            ordered = pinned + rank(rest, query)
     for row in ordered:
         line = f"- {row.content}" + (" [this agent only]" if row.scope == 'agent' else '') + f" (id {row.id})"
         if used + len(line) > budget and not row.pinned:
@@ -316,19 +424,152 @@ def _build_block(rows: list[Memory], query: str, budget: int) -> str:
             continue
         lines.append(line)
         used += len(line) + 1
-    if not lines:
+    if not lines and not profile_text:
         return ''
-    block = PROMPT_HEADER + "\n" + "\n".join(lines)
+    block = PROMPT_HEADER
+    if profile_text:
+        block += "\n\n### About the user (a summary of what you remember)\n" + profile_text.strip()
+        if lines:
+            block += "\n\n### Saved notes"
+    if lines:
+        block += "\n" + "\n".join(lines)
     if left_out:
         block += f"\n({left_out} more saved; use the Memory tool's search action to find them.)"
     return block
+
+
+# ---------------------------------------------------------------- history
+
+_SNAPSHOT_FIELDS = ('scope', 'agent_id', 'content', 'source', 'source_session_id', 'pinned', 'pending',
+                    'replaces', 'kind', 'valid_until', 'created', 'updated')
+
+
+def _snapshot(row: Memory | None) -> str:
+    if row is None:
+        return ''
+    data = {f: getattr(row, f, None) for f in _SNAPSHOT_FIELDS}
+    data['id'] = str(row.id)
+    return json.dumps(data, ensure_ascii=False)
+
+
+async def _record(user_id: str, memory_id: str, action: str, before: Memory | None, after: Memory | None,
+                  *, by: str, dream_id: str = '', note: str = '') -> None:
+    try:
+        await MemoryChange(
+            user_id=str(user_id), memory_id=str(memory_id), action=action, by=by or 'agent',
+            dream_id=str(dream_id or ''), before=_snapshot(before), after=_snapshot(after),
+            # Microseconds keep changes made in the same second in order (undo goes newest first).
+            note=str(note or '')[:300], created=datetime.now(UTC).strftime(FMT + '.%f'),
+        ).save()
+    except Exception:
+        logger.warning('Could not record a memory change', exc_info=True)
+
+
+async def history(user_id: str, *, memory_id: str | None = None, dream_id: str | None = None,
+                  limit: int = 100) -> list[MemoryChange]:
+    query: dict[str, Any] = {'user_id': str(user_id)}
+    if memory_id:
+        query['memory_id'] = str(memory_id)
+    if dream_id:
+        query['dream_id'] = str(dream_id)
+    rows = list(await MemoryChange.find(query) or [])
+    rows.sort(key=lambda r: (r.created, str(r.id)), reverse=True)
+    return rows[:max(1, limit)]
+
+
+async def prune_history(user_id: str) -> int:
+    rows = list(await MemoryChange.find({'user_id': str(user_id)}) or [])
+    if len(rows) <= HISTORY_KEEP:
+        return 0
+    rows.sort(key=lambda r: (r.created, str(r.id)))
+    old = rows[:len(rows) - HISTORY_KEEP]
+    for row in old:
+        await MemoryChange.delete_many({'id': row.id})
+    return len(old)
+
+
+class UndoError(ValueError):
+    pass
+
+
+async def undo(change: MemoryChange, *, by: str = 'person') -> Memory | None:
+    """Put a memory back the way it was before ``change``. Returns the restored
+    memory, or None when the change created it (undoing removes it)."""
+    if change.undone:
+        raise UndoError('That change was already undone.')
+    before = json.loads(change.before) if change.before else None
+    current = await get_memory(change.user_id, change.memory_id)
+    if before is None:
+        # Undo a create: remove the memory if it still exists.
+        if current is not None:
+            await Memory.delete_many({'id': current.id})
+            await _record(change.user_id, change.memory_id, 'delete', current, None, by=by,
+                          note=f'Undid change {change.id}')
+        await MemoryChange.update_one({'id': change.id}, {'undone': True})
+        return None
+    fields = {f: before.get(f) for f in _SNAPSHOT_FIELDS if f in before}
+    fields['updated'] = now_str()
+    if current is not None:
+        await Memory.update_one({'id': current.id}, fields)
+        restored = await Memory.get(current.id)
+    else:
+        existing = list(await Memory.find({'user_id': str(change.user_id)}) or [])
+        if len(existing) >= MAX_PER_USER:
+            raise UndoError(f'You already have {MAX_PER_USER} memories. Forget one first.')
+        restored = Memory(user_id=str(change.user_id), **{k: v for k, v in fields.items() if v is not None})
+        await restored.save()
+        if not restored.id:
+            restored = await Memory.find_one({'user_id': str(change.user_id), 'content': fields.get('content'),
+                                              'updated': fields['updated']}) or restored
+    await _record(change.user_id, str(restored.id), 'update' if current is not None else 'create',
+                  current, restored, by=by, note=f'Undid change {change.id}')
+    await MemoryChange.update_one({'id': change.id}, {'undone': True})
+    return restored
+
+
+def project_change(row: MemoryChange) -> dict[str, Any]:
+    def load(text: str) -> dict[str, Any] | None:
+        try:
+            return json.loads(text) if text else None
+        except ValueError:
+            return None
+    return {
+        'id': str(row.id), 'memory_id': row.memory_id, 'action': row.action, 'by': row.by,
+        'dream_id': row.dream_id or None, 'before': load(row.before), 'after': load(row.after),
+        'note': row.note or '', 'created': (row.created or '')[:19], 'undone': bool(row.undone),
+    }
+
+
+# ---------------------------------------------------------------- profile
+
+async def get_profile(user_id: str) -> MemoryProfile | None:
+    return await MemoryProfile.find_one({'user_id': str(user_id)})
+
+
+async def set_profile(user_id: str, text: Any, *, locked: bool | None = None, dream_id: str = '') -> MemoryProfile:
+    clean = re.sub(r'[ \t]+', ' ', str(text or '')).strip()
+    if len(clean) > PROFILE_MAX_CHARS:
+        raise MemoryError_('too_long', f'Keep the summary under {PROFILE_MAX_CHARS} characters.')
+    if clean and looks_secret(clean):
+        raise MemoryError_('looks_secret', 'The summary looks like it holds a password or key.')
+    row = await get_profile(user_id)
+    changes: dict[str, Any] = {'text': clean, 'updated': now_str(), 'dream_id': str(dream_id or '')}
+    if locked is not None:
+        changes['locked'] = bool(locked)
+    if row is None:
+        row = MemoryProfile(user_id=str(user_id), **changes)
+        await row.save()
+    else:
+        await MemoryProfile.update_one({'id': row.id}, changes)
+    return await get_profile(user_id) or row
 
 
 # ---------------------------------------------------------------- writing
 
 async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: str = '',
               source: str = 'agent', session_id: str = '', pinned: bool = False,
-              pending: bool = False, replaces: str = '') -> tuple[Memory, bool]:
+              pending: bool = False, replaces: str = '', kind: str = '', valid_until: str = '',
+              by: str | None = None, dream_id: str = '') -> tuple[Memory, bool]:
     """Save a memory. Returns (row, created). A near-duplicate of an existing
     memory in the same scope returns that memory with created False.
 
@@ -339,6 +580,8 @@ async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: st
     if scope == 'agent' and not agent_id:
         raise MemoryError_('agent_required', 'An agent-only memory needs the agent.')
     text = clean_content(content)
+    kind = clean_kind(kind)
+    valid_until = clean_valid_until(valid_until)
     existing = list(await Memory.find({'user_id': str(user_id)}))
     for row in existing:
         same_scope = row.scope == scope and (scope == 'global' or row.agent_id == str(agent_id))
@@ -353,23 +596,33 @@ async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: st
         user_id=str(user_id), scope=scope, agent_id=str(agent_id) if scope == 'agent' else '',
         content=text, source=source, source_session_id=str(session_id or ''),
         pinned=bool(pinned), pending=bool(pending), replaces=str(replaces or '') if pending else '',
-        created=stamp, updated=stamp,
+        created=stamp, updated=stamp, kind=kind, valid_until=valid_until,
     )
     await row.save()
-    if row.id:
-        return row, True
-    saved = await Memory.find_one({'user_id': str(user_id), 'created': stamp, 'content': text,
-                                   'scope': row.scope, 'agent_id': row.agent_id})
-    return saved or row, True
+    if not row.id:
+        row = await Memory.find_one({'user_id': str(user_id), 'created': stamp, 'content': text,
+                                     'scope': row.scope, 'agent_id': row.agent_id}) or row
+    who = by or {'user': 'person', 'import': 'import', 'dream': 'dream'}.get(source, 'agent')
+    await _record(user_id, str(row.id), 'create', None, row, by=who, dream_id=dream_id)
+    return row, True
+
+
+_UNSET: Any = object()
 
 
 async def update(row: Memory, *, content: Any = None, pinned: bool | None = None,
-                 scope: str | None = None, agent_id: str | None = None) -> Memory:
+                 scope: str | None = None, agent_id: str | None = None,
+                 kind: Any = _UNSET, valid_until: Any = _UNSET,
+                 by: str = 'agent', dream_id: str = '', note: str = '') -> Memory:
     changes: dict[str, Any] = {}
     if content is not None:
         changes['content'] = clean_content(content)
     if pinned is not None:
         changes['pinned'] = bool(pinned)
+    if kind is not _UNSET:
+        changes['kind'] = clean_kind(kind)
+    if valid_until is not _UNSET:
+        changes['valid_until'] = clean_valid_until(valid_until)
     if scope is not None:
         if scope not in SCOPES:
             raise MemoryError_('invalid_scope', 'scope must be "global" or "agent"')
@@ -381,10 +634,13 @@ async def update(row: Memory, *, content: Any = None, pinned: bool | None = None
     if changes:
         changes['updated'] = now_str()
         await Memory.update_one({'id': row.id}, changes)
+        after = await Memory.get(row.id) or row
+        await _record(row.user_id, str(row.id), 'update', row, after, by=by, dream_id=dream_id, note=note)
+        return after
     return await Memory.get(row.id) or row
 
 
-async def confirm(row: Memory) -> Memory:
+async def confirm(row: Memory, *, by: str = 'person') -> Memory:
     """Approve a pending memory: agents see it from now on. A proposed change
     to another memory replaces that memory."""
     if not row.pending:
@@ -393,13 +649,19 @@ async def confirm(row: Memory) -> Memory:
         old = await get_memory(row.user_id, row.replaces)
         if old is not None and not old.pending:
             await Memory.delete_many({'id': old.id})
+            await _record(row.user_id, str(old.id), 'delete', old, None, by=by,
+                          note=f'Replaced by approved memory {row.id}')
     await Memory.update_one({'id': row.id}, {'pending': False, 'replaces': '', 'updated': now_str()})
-    return await Memory.get(row.id) or row
+    after = await Memory.get(row.id) or row
+    await _record(row.user_id, str(row.id), 'approve', row, after, by=by)
+    return after
 
 
-async def delete(row: Memory) -> None:
+async def delete(row: Memory, *, by: str = 'agent', dream_id: str = '', note: str = '') -> None:
     # delete_many: odbms' sqlite delete_one emits DELETE ... LIMIT, which SQLite rejects.
     await Memory.delete_many({'id': row.id})
+    if not row.pending:
+        await _record(row.user_id, str(row.id), 'delete', row, None, by=by, dream_id=dream_id, note=note)
 
 
 async def delete_all(user_id: str) -> int:
@@ -407,6 +669,9 @@ async def delete_all(user_id: str) -> int:
     count = len(rows)
     if count:
         await Memory.delete_many({'user_id': str(user_id)})
+    # Deleting everything also forgets the history and the summary built from it.
+    await MemoryChange.delete_many({'user_id': str(user_id)})
+    await MemoryProfile.delete_many({'user_id': str(user_id)})
     return count
 
 
@@ -425,6 +690,11 @@ def project(row: Memory, agent_names: dict[str, str] | None = None) -> dict[str,
         'replaces': row.replaces or None,
         'created': row.created,
         'updated': row.updated or row.created,
+        'kind': row.kind or None,
+        'valid_until': row.valid_until or None,
+        'expired': expired(row),
+        'last_used': row.last_used or None,
+        'use_count': int(row.use_count or 0),
     }
 
 
