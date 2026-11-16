@@ -706,3 +706,55 @@ async def _write_key(key, serialization) -> str:
     with tempfile.NamedTemporaryFile('wb', suffix='.pem', delete=False) as handle:
         handle.write(pem)
     return handle.name
+
+
+async def test_news_is_kept_while_the_chat_is_paused_and_never_sent_twice(db, monkeypatch, delivered):
+    import asyncio
+
+    gh = GitHub(monkeypatch)
+    row = await _github_row()
+    await _chat()
+    await _watch_tool(row, pull_request='acme/app#7')
+    t0 = datetime.utcnow()
+    gh.comment(2, 'ann', 'first')
+    assert await pr_watch.poll_pr_watches(t0 + timedelta(minutes=3)) == 0
+
+    # Agents replied too often without the person: nothing is lost.
+    delivered.fake.outcome = 'paused'
+    assert await pr_watch.poll_pr_watches(t0 + timedelta(minutes=4)) == 0
+    watch = (await pr_watch.PullRequestWatch.find({}))[0]
+    assert json.loads(watch.pending) == ['Comment by ann: "first"']
+    gh.review(3, 'ann', 'APPROVED')
+    gh.pr.update(state='closed', merged=True, merged_by={'login': 'ann'})
+    assert await pr_watch.poll_pr_watches(t0 + timedelta(minutes=9, seconds=30)) == 0
+    watch = await pr_watch.PullRequestWatch.get(watch.id)
+    assert watch.status == 'stopped' and len(json.loads(watch.pending)) == 3
+
+    # The person carries on: everything arrives once, even with two callers at the same time.
+    delivered.fake.outcome = 'started'
+    delivered.clear()
+    later = t0 + timedelta(minutes=15)
+    copies = [await pr_watch.PullRequestWatch.get(watch.id) for _ in range(2)]
+    sent = await asyncio.gather(*(pr_watch.deliver(copy, later) for copy in copies))
+    assert sorted(sent) == [False, True] and len(delivered) == 1
+    text = delivered[0]['text']
+    assert '"first"' in text and 'approved' in text and 'Merged by ann.' in text
+    assert await pr_watch.poll_pr_watches(t0 + timedelta(minutes=20)) == 0 and len(delivered) == 1
+
+
+async def test_comments_are_read_since_the_last_answered_check(db, monkeypatch, delivered):
+    gh = GitHub(monkeypatch)
+    row = await _github_row()
+    await _chat()
+    await _watch_tool(row, pull_request='acme/app#7')
+    t0 = datetime.utcnow()
+    await pr_watch.poll_pr_watches(t0 + timedelta(minutes=3))
+    gh.rate_limited_until = int((t0 + timedelta(minutes=40)).replace(tzinfo=pr_watch.UTC).timestamp())
+    await pr_watch.poll_pr_watches(t0 + timedelta(minutes=6))
+    gh.rate_limited_until = None
+    gh.comment(5, 'ann', 'during the outage')
+    gh.mark()
+    await pr_watch.poll_pr_watches(t0 + timedelta(minutes=41))
+    asked = [r for m, u, r in gh.calls if u == f'{API}/issues/7/comments'][-1]
+    since = pr_watch._parse_time(asked.url.params['since'])
+    assert since <= (t0 + timedelta(minutes=3)).replace(microsecond=0)

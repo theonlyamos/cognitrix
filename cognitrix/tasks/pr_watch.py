@@ -84,6 +84,7 @@ MAX_RECHECK_SECONDS = 60 * 60
 QUIET_AFTER = timedelta(hours=1)
 IDLE_AFTER = timedelta(days=1)
 BUNDLE_SECONDS = 60
+PAUSED_RETRY_SECONDS = 5 * 60
 """News is held this long so a burst (five review comments) wakes the agent once."""
 CI_EARLY_AFTER = timedelta(minutes=15)
 """Failing checks are reported before the rest finish once they have failed this long."""
@@ -1225,13 +1226,17 @@ async def check(watch: PullRequestWatch, now: datetime) -> bool:
         raise WatchError("Couldn't reach GitHub to renew its sign-in.")
 
     old = _loads(watch.state, {}) or None
-    since_at = (_parse_time(watch.checked_at) or now) - timedelta(minutes=10)
+    # Comments since the last check that got an answer (not the claim time,
+    # which is already now), with some slack for clocks.
+    last = _parse_time((old or {}).get('fetched_at')) or _parse_time(watch.started_at) or now
+    since_at = last - timedelta(minutes=10)
     async with _GitHub(token, _loads(watch.etags, {}) if old else {}) as gh:
         raw = await fetch(gh, watch.repo, int(watch.number), old, since_at.strftime('%Y-%m-%dT%H:%M:%SZ'))
         etags = gh.etags
     account = str(row.account or (old or {}).get('login') or '')
     ids, times = await agent_writes(watch.connection_id)
     state, news = diff(old, raw, own_check(account, ids, times), now)
+    state['fetched_at'] = _stamp(now)
 
     update: dict[str, Any] = {'state': json.dumps(state), 'etags': json.dumps(etags), 'error': None,
                               'failures': 0, 'title': str(state.get('title') or watch.title)[:200]}
@@ -1241,7 +1246,7 @@ async def check(watch: PullRequestWatch, now: datetime) -> bool:
         update['pending'] = json.dumps(lines[-NEWS_MAX_LINES:])
         update['last_news_at'] = _stamp(now)
         if any(item['final'] for item in news):
-            update['final'] = True
+            update['final'], update['hold_until'] = True, None   # delivered right away
         elif not watch.hold_until:
             update['hold_until'] = _stamp(now + timedelta(seconds=BUNDLE_SECONDS))
     else:
@@ -1253,7 +1258,7 @@ async def check(watch: PullRequestWatch, now: datetime) -> bool:
     watch.failures = 0
     interval = next_interval(watch, state, now)
     next_at = now + timedelta(seconds=interval)
-    hold = _parse_time(update.get('hold_until') or watch.hold_until)
+    hold = _parse_time(update['hold_until'] if 'hold_until' in update else watch.hold_until)
     if hold is not None and hold < next_at:
         next_at = hold  # look once more before handing the bundle over
     update['next_check_at'] = _stamp(next_at)
@@ -1314,16 +1319,31 @@ def task_payload(watch: PullRequestWatch, lines: list[str]) -> str:
 def _ready(watch: PullRequestWatch, now: datetime) -> bool:
     if not _loads(watch.pending, []):
         return False
-    if watch.final or watch.status == STOPPED:
-        return True
     hold = _parse_time(watch.hold_until)
     return hold is None or hold <= now
+
+
+async def _claim_pending(watch: PullRequestWatch) -> bool:
+    """Take the pending news for this delivery, so a webhook check and the
+    scheduler can't both hand the same news over."""
+    if await PullRequestWatch.update_one({'id': watch.id, 'pending': watch.pending}, {'pending': ''}) != 1:
+        return False
+    return True
+
+
+async def _put_back(watch: PullRequestWatch, lines: list[str], now: datetime, retry_seconds: int) -> None:
+    """Delivery didn't happen: keep the news (and any that came meanwhile) for later."""
+    fresh = await PullRequestWatch.get(watch.id)
+    newer = _loads(fresh.pending, []) if fresh is not None else []
+    merged = (lines + newer)[-NEWS_MAX_LINES:]
+    update = {'pending': json.dumps(merged), 'hold_until': _stamp(now + timedelta(seconds=retry_seconds))}
+    await _save(watch, update)
 
 
 async def deliver(watch: PullRequestWatch, now: datetime) -> bool:
     """Hand pending news to the chat or task. True when it was handed over."""
     lines = _loads(watch.pending, [])
-    if not lines:
+    if not lines or not await _claim_pending(watch):
         return False
     cleared = {'pending': '', 'final': False, 'hold_until': None}
     if watch.target == TASK:
@@ -1335,6 +1355,7 @@ async def deliver(watch: PullRequestWatch, now: datetime) -> bool:
             return False
         waiting = await TriggerEvent.find({'task_id': str(watch.task_id), 'status': PENDING}) or []
         if len(waiting) >= MAX_PENDING_EVENTS:
+            await _put_back(watch, lines, now, BUNDLE_SECONDS)
             return False
         await TriggerEvent(
             trigger_id=str(trigger.id), task_id=str(watch.task_id),
@@ -1349,7 +1370,14 @@ async def deliver(watch: PullRequestWatch, now: datetime) -> bool:
         if outcome == 'dropped':
             if await _target_alive(watch):
                 await _save(watch, cleared)
-            return False  # busy: tried again at the next tick
+            else:
+                await _put_back(watch, lines, now, 0)   # busy: tried again at the next tick
+            return False
+        if outcome == 'paused':
+            # Agents replied too often without the person: the chat shows an
+            # alert. Keep the news until the person carries on.
+            await _put_back(watch, lines, now, PAUSED_RETRY_SECONDS)
+            return False
     await _save(watch, cleared)
     logger.info('Pull request news for %s delivered (%s)', label(watch), outcome)
     return True
