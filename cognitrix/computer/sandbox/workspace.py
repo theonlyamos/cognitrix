@@ -80,6 +80,9 @@ def child_env(extra: dict | None = None) -> dict:
         'PATH': f'{extra_path}:{path}', 'HOME': HOME, 'TERM': 'dumb', 'CI': '1',
         'NPM_CONFIG_PREFIX': os.path.join(HOME, '.npm-global'), 'PIP_BREAK_SYSTEM_PACKAGES': '1',
         'PYTHONUNBUFFERED': '1', 'FORCE_COLOR': '0', 'NO_COLOR': '1', 'GIT_TERMINAL_PROMPT': '0',
+        # An agent's folders belong to its own user while git here runs as
+        # 'agent' (project baselines): don't refuse them as "dubious".
+        'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'safe.directory', 'GIT_CONFIG_VALUE_0': '*',
     })
     for key, value in (extra or {}).items():
         if isinstance(key, str) and re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', key) and isinstance(value, str):
@@ -124,7 +127,7 @@ def _clip(text: str, limit: int = MAX_OUTPUT) -> str:
 class Workspace:
     """Shell, files and projects for every agent in this container."""
 
-    def __init__(self, terminal_opener=None) -> None:
+    def __init__(self, terminal_opener=None, user_for=None) -> None:
         self.jobs: dict[str, Job] = {}
         self._guard = threading.Lock()
         self._seq = 0
@@ -132,6 +135,9 @@ class Workspace:
         # Called with (agent, terminal log path) when a command starts, so the
         # supervisor can show it on the agent's desktop.
         self.terminal_opener = terminal_opener
+        # desktop name -> its agent's own Linux user (users.AgentUser), or
+        # None when every agent runs as 'agent'.
+        self.user_for = user_for
         os.makedirs(WORK_ROOT, exist_ok=True)
         os.makedirs(STATE_ROOT, exist_ok=True)
 
@@ -186,7 +192,9 @@ class Workspace:
         work = self.resolve(agent, cwd) if cwd else self.cwd(agent)
         if not os.path.isdir(work):
             raise WorkspaceError('not_found', f'No folder {work} in the sandbox.')
-        logs = os.path.join(STATE_ROOT, 'jobs')
+        user = self.user_for(agent) if self.user_for is not None else None
+        # The agent's own log folder: its command writes where it ended up there.
+        logs = os.path.join(STATE_ROOT, 'jobs', agent) if user is not None else os.path.join(STATE_ROOT, 'jobs')
         os.makedirs(logs, exist_ok=True)
         log = os.path.join(logs, f'{job_id}.log')
         cwd_file = os.path.join(logs, f'{job_id}.cwd')
@@ -198,10 +206,15 @@ class Workspace:
         shown = label or command
         self._terminal(agent, f'\n\x1b[1;32m{_short(work)} $\x1b[0m {shown}\n')
         out = open(log, 'wb')  # noqa: SIM115 - the pump thread closes it
+        run_env = child_env(env)
+        as_user: dict = {}
+        if user is not None:
+            run_env = user.env(agent, run_env)
+            as_user = user.popen_kwargs()
         proc = subprocess.Popen(  # noqa: S603
-            ['bash', '-c', script], cwd=work, env=child_env(env), stdout=subprocess.PIPE,
+            ['bash', '-c', script], cwd=work, env=run_env, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
-            start_new_session=True)
+            start_new_session=True, **as_user)
         job = Job(job_id, agent, command, shown, work, proc, log, cwd_file=cwd_file)
         with self._guard:
             self.jobs[job_id] = job
@@ -585,7 +598,7 @@ class Workspace:
                     os.remove(dest)
                 with open(dest, 'wb') as fh:
                     shutil.copyfileobj(src, fh)
-                os.chmod(dest, 0o755 if member.mode & 0o111 else 0o644)
+                os.chmod(dest, 0o770 if member.mode & 0o111 else 0o660)
         if source:
             self._git(agent, name, 'config', 'cognitrix.source', str(source)[:1000])
         self._baseline(agent, name, 'Copied in from the computer')

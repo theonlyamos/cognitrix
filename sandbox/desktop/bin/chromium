@@ -1,6 +1,6 @@
 #!/bin/sh
 # Chromium with accessibility on and this desktop's own profile.
-PROFILE="$HOME/.profiles/${DESKTOP_NAME:-main}/chromium"
+PROFILE="${COGNITRIX_PROFILES:-$HOME/.profiles}/${DESKTOP_NAME:-main}/chromium"
 mkdir -p "$PROFILE"
 # A container that was stopped hard leaves Chromium's profile lock behind, and
 # Chromium then refuses the profile. Nothing else uses this desktop's

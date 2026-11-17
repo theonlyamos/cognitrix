@@ -55,6 +55,8 @@ from cognitrix.computer.sandbox import (
 logger = logging.getLogger('cognitrix.sandbox')
 
 MODE_ENV = 'COGNITRIX_COMPUTER_SANDBOX'
+AGENT_USER_CAPS = ('CHOWN', 'FOWNER', 'SETGID', 'SETUID')
+AGENT_USERS_LABEL = 'cognitrix.agent-users'
 # Published by .github/workflows/sandbox-image.yml; Docker pulls it on first use.
 IMAGE = os.environ.get('COGNITRIX_SANDBOX_IMAGE', 'ghcr.io/theonlyamos/cognitrix-desktop:latest')
 SETTINGS_FILE = Path.home() / '.cognitrix' / 'computer-sandbox.json'
@@ -306,10 +308,25 @@ class SandboxManager:
             '--hostname', 'cognitrix-sandbox',
             # The key proxy runs on this machine (see key_proxy_env).
             '--add-host', 'host.docker.internal:host-gateway',
-            '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+            '--cap-drop', 'ALL', *self._agent_user_args(),
+            '--security-opt', 'no-new-privileges',
             '--pids-limit', '2048', '--memory', os.environ.get('COGNITRIX_SANDBOX_MEMORY', '4g'),
             '--shm-size', '1g',
             self.image, timeout=1200)  # the first start downloads the image
+
+    def _agent_user_args(self) -> list[str]:
+        """An image that gives each agent its own Linux user starts as root
+        only to drop to 'agent' with the four capabilities that takes (see
+        sandbox/desktop/bin/cognitrix-sandbox-root and sandbox/users.py).
+        An older image starts as 'agent' with none, as before."""
+        inspect = ('image', 'inspect', '--format', '{{index .Config.Labels "' + AGENT_USERS_LABEL + '"}}', self.image)
+        got = self._docker(*inspect, check=False, timeout=30)
+        if got.returncode != 0:  # not downloaded yet: download it now to know
+            self._docker('pull', '--quiet', self.image, check=False, timeout=1200)
+            got = self._docker(*inspect, check=False, timeout=30)
+        if got.returncode != 0 or got.stdout.strip() != '1':
+            return []
+        return ['--user', '0:0', *[f'--cap-add={c}' for c in AGENT_USER_CAPS]]
 
     def sandbox(self, user_id: Any) -> Sandbox:
         """The user's running sandbox, started if needed."""

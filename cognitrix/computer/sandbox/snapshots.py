@@ -197,6 +197,20 @@ def copy_script(source: str, target: str) -> str:
             f'{_swap_in(target)}')
 
 
+def _agent_files(box: Any, agent: str, give_back: bool = False) -> None:
+    """With a Linux user per agent, its files belong to that user: let the
+    computer's 'agent' user read them before saving or copying, and hand them
+    back after restoring or copying in. An older computer has no such users
+    (and no such call); nothing to do there."""
+    request = getattr(box, 'request', None)
+    if request is None:
+        return
+    try:
+        request('POST', f'/agents/{agent}/files', {'give_back': give_back}, timeout=600)
+    except DriverError as exc:
+        logger.info("Couldn't set %s's file owners: %s", agent, exc)
+
+
 def _bre(text: str) -> str:
     """A path as a literal in tar's --transform regex (names are [a-z0-9_-])."""
     return text.replace('.', r'\.')
@@ -220,6 +234,7 @@ def create_snapshot(mgr: Any, user_id: Any, name: str | None = None, agent: str 
         box = mgr.sandbox(user_id)
         snapshot_id = secrets.token_hex(6)
         target = _folder(user_id) / f'{snapshot_id}.tar.gz'
+        _agent_files(box, agent or '_all')
         if agent:
             script = agent_save_script(agent)
         else:
@@ -270,6 +285,7 @@ def restore_snapshot(mgr: Any, user_id: Any, snapshot_id: str, agent: str | None
             box = mgr.sandbox(user_id)
             _stop_desktop(box, target)
             _exec_from_file(mgr, box, agent_restore_script(target), source)
+            _agent_files(box, target, give_back=True)
             return {'ok': True, 'kind': 'agent', 'agent': target}
         return _restore_computer(mgr, user_id, source)
 
@@ -290,6 +306,7 @@ def _restore_computer(mgr: Any, user_id: Any, source: Path) -> dict:
             raise
         raise SnapshotError(str(exc)) from None
     box = mgr.sandbox(user_id)
+    _agent_files(box, '_all', give_back=True)
     for desktop in desktops:
         try:
             box.desktop(desktop)
@@ -306,6 +323,7 @@ def copy_agent(mgr: Any, user_id: Any, source: str, target: str) -> dict:
     with _lock(user_key(user_id)):
         box = mgr.sandbox(user_id)
         _stop_desktop(box, target)
+        _agent_files(box, source)
         try:
             code, out, err = mgr.exec_script(box, script, timeout=_TIMEOUT)
         except TimeoutError:
@@ -314,4 +332,5 @@ def copy_agent(mgr: Any, user_id: Any, source: str, target: str) -> dict:
             raise SnapshotError('That agent has nothing on the computer yet.')
         if code != 0:
             raise SnapshotError(f"Couldn't copy the setup: {_last_line(err or out)}")
+        _agent_files(box, target, give_back=True)
     return {'ok': True, 'from': source, 'to': target}
