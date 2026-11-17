@@ -26,6 +26,7 @@ from cognitrix.tasks import Task
 from cognitrix.tasks.automation import (
     DISPATCHED,
     EVENT_MAX_BYTES,
+    GITHUB_KIND,
     MAIL_KIND,
     MATCH_MAX_CHARS,
     MAX_PENDING_EVENTS,
@@ -236,6 +237,15 @@ async def update_trigger(task_id: str, trigger_id: str, body: TriggerPatch,
 @automations_api.delete('/tasks/{task_id}/triggers/{trigger_id}')
 async def delete_trigger(task_id: str, trigger_id: str, ctx: AuthContext = Depends(get_auth_context)):
     _task, trigger = await _owned_trigger(task_id, trigger_id, ctx)
+    if trigger.kind == GITHUB_KIND and trigger.source_id:
+        # The pull request watch behind it stops (and its webhook goes) too.
+        from cognitrix.tasks import pr_watch
+
+        watch = await pr_watch.PullRequestWatch.get(trigger.source_id)
+        if watch is not None:
+            if watch.status == pr_watch.WATCHING:
+                await pr_watch.stop(watch, 'Its trigger was deleted from the task.')
+            await pr_watch.PullRequestWatch.delete_many({'id': watch.id})
     await TaskTrigger.delete_many({'id': trigger.id})
     for event in await TriggerEvent.find({'trigger_id': trigger.id, 'status': PENDING}) or []:
         await TriggerEvent.update_one({'id': event.id, 'status': PENDING},

@@ -55,6 +55,28 @@ A task's Automation panel can add a **new Gmail** trigger next to webhooks (`Tas
 - Mail that was already there when the trigger was added, or while it was off, never starts a run.
 - It needs the owner's Gmail connection and the Gmail API turned on in the Google Cloud project. A failed check shows its reason on the trigger.
 
+## Watching a GitHub pull request
+
+Every GitHub connection (signed in or with a token) has three built-in tools next to GitHub's own: **Watch Pull Request**, **Stop Watching Pull Request** and **List Watched Pull Requests** (`cognitrix/mcp/native.py`, logic in `cognitrix/tasks/pr_watch.py`). An agent calls Watch Pull Request after opening a pull request, or when asked to keep an eye on one, and is woken when something happens instead of checking over and over.
+
+- **Where news goes.** In a chat, news arrives in that chat as a new message and starts a turn of the agent (the same path as replies from chats an agent started). In a task run, the watch adds a "github" trigger to the task and news starts a new run, with the news as untrusted data and the agent's own note on what to do.
+- **What counts as news.** A new review or comment, a review comment, CI results, ready for review, merged, closed, reopened. New commits are mentioned but don't wake the agent alone.
+- **CI.** One summary per run of checks on the head commit, once every check has finished ("Checks finished on abc1234: 2 failed (...), 5 passed." or "All 7 checks passed"). If a check fails while others keep running for more than 15 minutes, the failure is told early, once.
+- **Bundling.** News waits one minute for more before it is delivered, so a review with ten comments wakes the agent once. Merged and closed are delivered right away.
+- **The agent's own comments.** Every write an agent makes through a GitHub connection is noted (`GitHubAgentWrite`, kept two days), with the comment and review ids found in the tool's answer. A comment or review from the connected account with one of those ids, or made within 30 seconds of such a write when the answer had no id, is the agent's own and skipped. The person writing as themselves still wakes the agent.
+- **Stopping.** Watching stops when the pull request is merged or closed (that last bit of news is still delivered), after 30 days without news, when its chat or task is deleted, or from Automations › Watched pull requests. A person can have 20 watches at once. Wake-ups of a task count against its daily automation cap; a chat stops being woken after several agent reports in a row without the person, as for other agent reports.
+
+**Desktop app (and servers GitHub can't reach):** the scheduler checks each watched pull request every `COGNITRIX_GITHUB_CHECK_SECONDS` (default 120, minimum 30) while checks are running or there was activity in the last hour, five times less often after an hour of quiet and fifteen times less often after a day (at most every 30 minutes). Each check asks with the ETags of the last answers, so an unchanged pull request costs three "304 Not Modified" answers, which don't count against GitHub's rate limit. Reviews and comments are only read when the pull request's own "updated" time moved. Failed checks back off (doubling, up to the slow interval); when GitHub's rate limit is reached, checks wait for its reset.
+
+**Web server:** when `COGNITRIX_PUBLIC_URL` is an https address (and not the desktop app), the first watch on a repository adds one webhook to it for that GitHub connection, posting to `/api/v1/github/hooks/<id>` with its own secret. No tunnel is needed. Deliveries are checked against `X-Hub-Signature-256`, may be up to 2 MB, and are filtered by `X-GitHub-Event` and pull request number (or head commit for check and status events); a matching delivery makes the check run right away. A timed check still runs every 15 minutes in case a delivery is missed. The webhook is removed when the last watch using it stops. Adding a webhook needs admin rights on the repository; the `repo` scope the GitHub app already asks for covers it. When GitHub refuses, the watch falls back to timed checks and says so. Set `COGNITRIX_GITHUB_WEBHOOKS=0` to always use timed checks.
+
+**Web server with a GitHub App (optional, recommended):** a GitHub App gets events from every repository it is installed on, without admin rights and without one webhook per repository. When the App is installed on a watched repository, the watch uses it instead of a repository webhook; otherwise it falls back as above. To set one up:
+
+1. GitHub › Settings › Developer settings › GitHub Apps › New GitHub App. Webhook URL: `<COGNITRIX_PUBLIC_URL>/api/v1/github/app/webhook`, with a webhook secret.
+2. Repository permissions, read-only: Pull requests, Issues, Checks, Commit statuses, Metadata. Subscribe to events: Pull request, Pull request review, Pull request review comment, Issue comment, Check run, Check suite, Status.
+3. Generate a private key, and set `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` (the PEM text, with `\n` for line breaks, or a path to the .pem file) and `GITHUB_APP_WEBHOOK_SECRET`.
+4. People install the App on their repositories (or organization). The App only says that something happened; the check still reads the pull request with the person's own GitHub connection, so they see nothing they couldn't already see.
+
 ## Limits
 
 - Pending sign-ins are kept in memory for ten minutes, like "Sign in with Google". Run one API process, or keep a sign-in on the process that started it.

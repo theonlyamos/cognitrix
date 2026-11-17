@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { api, errorMessage } from '@/lib/api';
 import { useResource } from '@/hooks/useResource';
 import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/lib/components/ui/button';
@@ -29,6 +31,29 @@ interface Automation {
     completed_at: string | null;
     result: string;
   } | null;
+}
+
+/** A pull request an agent watches (cognitrix/tasks/pr_watch.py). */
+interface PullRequestWatch {
+  id: string;
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  target: 'chat' | 'task';
+  session_id: string | null;
+  task_id: string | null;
+  /** Where news goes, e.g. chat "Release prep". */
+  where: string;
+  mode: 'poll' | 'webhook' | 'app';
+  check_seconds: number | null;
+  next_check_at?: string | null;
+  /** Why it is checked on a timer although webhooks were possible. */
+  note: string | null;
+  status: 'watching' | 'stopped';
+  stop_reason: string | null;
+  error: string | null;
+  last_news_at: string | null;
 }
 
 const RUN_STATUS: Record<string, string> = {
@@ -70,8 +95,13 @@ function Chip({ children, className }: { children: React.ReactNode; className?: 
 /** Every task that runs on its own: scheduled, self-checking, or triggered by webhooks. */
 export default function Automations() {
   const { data, loading, error, refetch } = useResource<Automation[]>('/automations');
-  usePolling(() => refetch({ silent: true }), 15000, true);
+  const watched = useResource<PullRequestWatch[]>('/github/watches');
+  usePolling(() => {
+    refetch({ silent: true });
+    watched.refetch({ silent: true });
+  }, 15000, true);
   const items = data ?? [];
+  const watches = watched.data ?? [];
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">
@@ -82,11 +112,12 @@ export default function Automations() {
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto">
+        {watches.length > 0 && <WatchedPullRequests watches={watches} onChange={() => watched.refetch({ silent: true })} />}
         {loading && !data ? (
           <LoadingState label={tr('ui.automations.loadingAutomations')} />
         ) : error ? (
           <ErrorState message={error} onRetry={refetch} />
-        ) : items.length === 0 ? (
+        ) : items.length === 0 && watches.length === 0 ? (
           <EmptyState
             icon={<AutomationIcon />}
             title={tr('ui.automations.noAutomationsYet')}
@@ -146,6 +177,82 @@ export default function Automations() {
         )}
       </div>
     </div>
+  );
+}
+
+function watchSpeed(w: PullRequestWatch): string {
+  if (w.mode === 'webhook' || w.mode === 'app') return 'instant';
+  const minutes = Math.max(1, Math.round((w.check_seconds ?? 120) / 60));
+  return `every ${minutes} min`;
+}
+
+/** Pull requests agents watch: news wakes the chat or task that asked. */
+function WatchedPullRequests({ watches, onChange }: { watches: PullRequestWatch[]; onChange: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const act = async (w: PullRequestWatch, how: 'stop' | 'remove') => {
+    setBusy(w.id);
+    setFailed(null);
+    try {
+      if (how === 'stop') await api.post(`/github/watches/${w.id}/stop`);
+      else await api.delete(`/github/watches/${w.id}`);
+      onChange();
+    } catch (err) {
+      setFailed(errorMessage(err, tr('ui.automations.couldNotChangeTheWatch')));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section aria-labelledby="watched-prs" className="border-b border-line px-6 py-4 max-md:px-4">
+      <h2 id="watched-prs" className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">{tr('ui.automations.watchedPullRequests')}</h2>
+      <p className="mt-1 text-[12.5px] text-fg-dim">
+        {tr('ui.automations.agentsWatchingAGithubPull')}
+      </p>
+      {failed && <p role="alert" className="mt-2 text-[12.5px] text-danger-ink">{failed}</p>}
+      <ul className="mt-2 flex flex-col divide-y divide-line rounded-[10px] border border-line">
+        {watches.map((w) => {
+          const live = w.status === 'watching';
+          const target = w.target === 'task' && w.task_id ? `/tasks/${w.task_id}?automation=1` : w.session_id ? `/home?chat=${w.session_id}` : null;
+          return (
+            <li key={w.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2">
+              <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', live ? 'bg-accent' : 'bg-fg-dim')} aria-hidden />
+              <a href={w.url} target="_blank" rel="noreferrer" className="min-w-0 truncate text-[13px] font-medium hover:text-accent-ink">
+                {w.repo}#{w.number}
+                {w.title ? <span className="font-normal text-fg-dim"> · {w.title}</span> : null}
+              </a>
+              {live && <Chip>{watchSpeed(w)}</Chip>}
+              <span className="flex-1" />
+              {live ? (
+                <Button size="sm" variant="ghost" onClick={() => act(w, 'stop')} disabled={busy !== null}>
+                  {tr('ui.automations.stopWatching')}
+                </Button>
+              ) : (
+                <Button size="sm" variant="ghost" className="hover:text-danger-ink" onClick={() => act(w, 'remove')} disabled={busy !== null}>
+                  {tr('ui.automations.remove')}
+                </Button>
+              )}
+              <div className="w-full pl-3.5 text-[12px] text-fg-dim">
+                {w.where && (
+                  <>
+                    {tr('ui.automations.newsGoesTo')}{' '}
+                    {target ? <Link to={target} className="underline-offset-2 hover:underline">{w.where}</Link> : w.where}
+                    {'. '}
+                  </>
+                )}
+                {!live && w.stop_reason ? tr('ui.automations.stoppedStopReason', { stop_reason: w.stop_reason }) : null}
+                {live && w.last_news_at ? tr('ui.automations.lastNewsUtctolocal', { utcToLocal: utcToLocal(w.last_news_at) }) : null}
+                {live && w.mode === 'poll' && w.next_check_at ? <>{' '}{tr('ui.automations.nextCheckUtctolocal', { utcToLocal: utcToLocal(w.next_check_at) })}</> : null}
+              </div>
+              {live && w.note && <p className="w-full pl-3.5 text-[12px] text-fg-dim">{w.note}</p>}
+              {live && w.error && <p role="alert" className="w-full pl-3.5 text-[12px] text-danger-ink">{w.error}</p>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
