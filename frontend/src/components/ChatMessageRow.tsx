@@ -15,7 +15,8 @@ import { parsePress } from '@/lib/cards';
 import { nextStep } from '@/lib/proactive';
 import { speakText, stopSpeaking, useSpeechState } from '@/lib/speech';
 import { cn } from '@/lib/utils';
-import { tr, dateLocale } from '@/lib/i18n';
+import { tr } from '@/lib/i18n';
+import { fmtFullTime, fmtTime, fmtTook } from '@/lib/messageTime';
 
 const MarkdownMessage = lazy(() => import('@/components/MarkdownMessage'));
 
@@ -30,8 +31,6 @@ const prettyJson = (value: string) => {
   }
 };
 
-const fmtTime = (value?: string | number) =>
-  value ? new Date(value).toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '';
 
 interface ChatMessageRowProps {
   message: ChatMessage;
@@ -249,10 +248,20 @@ export const ChatMessageRow = memo(function ChatMessageRow({
           </div>
         ))}
       </div>
-      {(message.timestamp || (message.content.trim() && !(isLast && streaming))) && (
+      {(message.timestamp || message.durationMs !== undefined || (message.content.trim() && !(isLast && streaming))) && (
         <div className="mt-1 flex flex-wrap items-center gap-3 opacity-100 transition-opacity md:opacity-0 md:group-hover/msg:opacity-100 md:group-focus-within/msg:opacity-100">
-          {message.timestamp && (
-            <span className="font-mono text-[10.5px] text-fg-dim">{fmtTime(message.timestamp)}</span>
+          {(message.timestamp || (!isUser && message.durationMs !== undefined)) && (
+            <span className="font-mono text-[10.5px] text-fg-dim">
+              {message.timestamp && (
+                <time dateTime={message.timestamp} title={fmtFullTime(message.timestamp)}>{fmtTime(message.timestamp)}</time>
+              )}
+              {message.timestamp && !isUser && message.durationMs !== undefined && ' · '}
+              {!isUser && message.durationMs !== undefined && (
+                <span title={tr('ui.chatMessageRow.answeredIn', { time: fmtTook(message.durationMs) })}>
+                  {tr('ui.chatMessageRow.took', { time: fmtTook(message.durationMs) })}
+                </span>
+              )}
+            </span>
           )}
           {message.content.trim() && !(isLast && streaming) && (
           <>

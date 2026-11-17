@@ -4,7 +4,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Optional, Self
 
 from odbms import Model
@@ -1443,6 +1443,7 @@ class Session(Model):
                                 'type': 'turn_timing',
                                 'content': f"Took {duration_str}",
                                 'duration': turn_duration,
+                                'at': datetime.now(timezone.utc).isoformat(),  # when the reply finished
                                 'prompt_tokens': usage.get('prompt_tokens'),
                                 'completion_tokens': usage.get('completion_tokens'),
                             })
@@ -1493,6 +1494,7 @@ class Session(Model):
                     'type': 'turn_timing',
                     'content': f"Took {duration_str}",
                     'duration': turn_duration,
+                    'at': datetime.now(timezone.utc).isoformat(),  # when the reply finished
                     'prompt_tokens': usage.get('prompt_tokens'),
                     'completion_tokens': usage.get('completion_tokens'),
                 })

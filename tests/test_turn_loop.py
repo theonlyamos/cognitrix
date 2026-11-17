@@ -761,6 +761,11 @@ async def test_tool_turn_persists_valid_sequence(monkeypatch):
     assert session.chat[2]["role"] == "tool" and session.chat[2]["tool_call_id"] == "call_1"
     assert session.chat[3]["role"] == "assistant" and session.chat[3]["content"] == "final answer"
     assert not session.chat[3].get("tool_calls")
+    # The turn closes with its duration and end time (shown under the reply).
+    timing = session.chat[4]
+    assert timing["type"] == "turn_timing" and timing["duration"] >= 0
+    from datetime import datetime
+    assert datetime.fromisoformat(timing["at"]).tzinfo is not None
 
     # The full message list sent to the provider is spec-valid.
     _assert_spec_valid(LLMManager.format_query(_llm(), [{"role": "system", "content": "s"}] + session.chat))
