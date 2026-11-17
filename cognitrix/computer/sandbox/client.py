@@ -71,6 +71,8 @@ _IMAGE_ID_TTL_S = 60.0
 AUTO_UPDATE_IDLE_S = float(os.environ.get('COGNITRIX_SANDBOX_AUTO_UPDATE_IDLE_S', '600') or 0)
 AUTO_UPDATE_EVERY_S = 300.0
 
+_NO_OWNER = object()
+
 _ERRORS = {'human_control': HumanControl, 'stale': Stale, 'busy': Busy, 'blocked': Blocked,
            'unsupported': Unsupported}
 
@@ -166,7 +168,9 @@ class Sandbox:
         self.machine_id = ''  # Fly only
         self.image_id = ''  # the image the container was made from (sha256:...)
         self.container_id = ''
-        self.owner: Any = None  # the user it belongs to (for restarting it onto a newer image)
+        # The user it belongs to, for restarting it onto a newer image (None is
+        # the signed-out local user, so "not known" is _NO_OWNER).
+        self.owner: Any = _NO_OWNER
         self.passwords: dict[str, str] = {}  # desktop -> VNC password
         # One driver per desktop, kept so its snapshots last between tool calls
         # (normalized-coordinate clicks read the last look's size).
@@ -449,7 +453,7 @@ class SandboxManager:
         windows close, which is why it waits. Returns the restarted names."""
         done = []
         for name, box in list(self._boxes.items()):
-            if box.owner is None:
+            if box.owner is _NO_OWNER:
                 continue
             info = self._inspect(name)
             if info is None or not (info.get('State') or {}).get('Running') or not self._outdated(info):

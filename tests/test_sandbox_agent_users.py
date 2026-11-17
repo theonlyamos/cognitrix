@@ -254,3 +254,5 @@ def test_idle_outdated_computers_are_restarted(monkeypatch):
     assert mgr.update_idle() == []  # someone is watching it
     mgr.viewer_closed('u1')
     assert mgr.update_idle() == [box.name] and updated == ['u1']
+    box.owner = None  # the signed-out local user's computer is updated too
+    assert mgr.update_idle() == [box.name] and updated == ['u1', None]
