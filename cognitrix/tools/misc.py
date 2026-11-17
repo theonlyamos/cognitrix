@@ -1359,23 +1359,34 @@ def _to_screen(x: int, y: int) -> tuple[int, int]:
     return int(round(float(x) * _screen_scale)), int(round(float(y) * _screen_scale))
 
 
-def _sandbox_refusal():
-    """With the sandboxed computer on, the full-screen tools would act on the
-    engine's own machine, not the agent's computer: point at the window tools."""
+def _screen_refusal(computer: str):
+    """The full-screen tools act on this machine's own screen, which is the
+    person's computer: only when they asked for it by name. All other
+    computer work happens on the agent's own sandboxed computer."""
+    from cognitrix.computer import PERSON, which_computer
     from cognitrix.computer.sandbox.client import sandbox_mode
-
-    if not sandbox_mode():
-        return None
     from cognitrix.tools.utils import ToolOutcome
-    return ToolOutcome.failure('unsupported', "You work on a sandboxed computer: use list_windows, open_app, "
-                               'look_at_window and the other window tools instead of this one.')
+
+    if which_computer(computer) != PERSON:
+        return ToolOutcome.failure(
+            'not_your_computer', "This tool works on the person's own screen. Do computer work on your own computer "
+            'with list_windows, open_app, look_at_window and the other window tools. Only if the person explicitly '
+            "asked you to use their computer, call again with computer='person'.")
+    if sandbox_mode() == 'fly':
+        return ToolOutcome.failure('unsupported', "This server can't reach the person's own computer. Use the "
+                                   'window tools on your own computer instead.')
+    return None
 
 
 @tool(category='system')
-def take_screenshot():
+def take_screenshot(computer: str = 'agent'):
     """Take a screenshot of the screen. The image is shown to you right after this
-    tool's result. Give click coordinates in that image's pixels."""
-    if (refused := _sandbox_refusal()) is not None:
+    tool's result. Give click coordinates in that image's pixels.
+    Args:
+        computer (str, optional): Must be 'person': these tools only reach the person's own screen, so use
+            them only when the person explicitly asked you to work on their computer.
+    """
+    if (refused := _screen_refusal(computer)) is not None:
         return refused
     global _screen_scale, _shot_size
     import base64
@@ -1405,89 +1416,103 @@ def take_screenshot():
 
 
 @tool(category='system')
-def text_input(text: str):
+def text_input(text: str, computer: str = 'agent'):
     """Type text at the current keyboard focus (click the field first).
     Args:
         text (str): Text to type.
+        computer (str, optional): Must be 'person': these tools only reach the person's own screen, so use
+            them only when the person explicitly asked you to work on their computer.
     """
-    if (refused := _sandbox_refusal()) is not None:
+    if (refused := _screen_refusal(computer)) is not None:
         return refused
     _pyautogui().write(text, 0.02)
     return 'Text typed'
 
 
 @tool(category='system')
-def key_press(key: str):
+def key_press(key: str, computer: str = 'agent'):
     """Press one key, e.g. enter, tab, esc, backspace, up, down, pagedown, f5.
     Args:
         key (str): Name of the key.
+        computer (str, optional): Must be 'person': these tools only reach the person's own screen, so use
+            them only when the person explicitly asked you to work on their computer.
     """
-    if (refused := _sandbox_refusal()) is not None:
+    if (refused := _screen_refusal(computer)) is not None:
         return refused
     _pyautogui().press(key.lower())
     return f'Pressed {key}'
 
 
 @tool(category='system')
-def hot_key(hotkeys: list):
+def hot_key(hotkeys: list, computer: str = 'agent'):
     """Press keys together, e.g. ["ctrl", "l"] or ["alt", "tab"].
     Args:
         hotkeys (list): Keys to press together.
+        computer (str, optional): Must be 'person': these tools only reach the person's own screen, so use
+            them only when the person explicitly asked you to work on their computer.
     """
-    if (refused := _sandbox_refusal()) is not None:
+    if (refused := _screen_refusal(computer)) is not None:
         return refused
     _pyautogui().hotkey(*[str(k).lower() for k in hotkeys])
     return f"Pressed {'+'.join(hotkeys)}"
 
 
 @tool(category='system')
-def mouse_click(x: int, y: int):
+def mouse_click(x: int, y: int, computer: str = 'agent'):
     """Left-click at (x, y) in the latest screenshot's coordinates.
     Args:
         x (int): X coordinate in the screenshot.
         y (int): Y coordinate in the screenshot.
+        computer (str, optional): Must be 'person': these tools only reach the person's own screen, so use
+            them only when the person explicitly asked you to work on their computer.
     """
-    if (refused := _sandbox_refusal()) is not None:
+    if (refused := _screen_refusal(computer)) is not None:
         return refused
     _pyautogui().click(*_to_screen(x, y))
     return f'Clicked at ({x}, {y})'
 
 
 @tool(category='system')
-def mouse_double_click(x: int, y: int):
+def mouse_double_click(x: int, y: int, computer: str = 'agent'):
     """Double-click at (x, y) in the latest screenshot's coordinates.
     Args:
         x (int): X coordinate in the screenshot.
         y (int): Y coordinate in the screenshot.
+        computer (str, optional): Must be 'person': these tools only reach the person's own screen, so use
+            them only when the person explicitly asked you to work on their computer.
     """
-    if (refused := _sandbox_refusal()) is not None:
+    if (refused := _screen_refusal(computer)) is not None:
         return refused
     _pyautogui().doubleClick(*_to_screen(x, y))
     return f'Double-clicked at ({x}, {y})'
 
 
 @tool(category='system')
-def mouse_right_click(x: int, y: int):
+def mouse_right_click(x: int, y: int, computer: str = 'agent'):
     """Right-click at (x, y) in the latest screenshot's coordinates.
     Args:
         x (int): X coordinate in the screenshot.
         y (int): Y coordinate in the screenshot.
+        computer (str, optional): Must be 'person': these tools only reach the person's own screen, so use
+            them only when the person explicitly asked you to work on their computer.
     """
-    if (refused := _sandbox_refusal()) is not None:
+    if (refused := _screen_refusal(computer)) is not None:
         return refused
     _pyautogui().rightClick(*_to_screen(x, y))
     return f'Right-clicked at ({x}, {y})'
 
 
 @tool(category='system')
-def mouse_scroll(x: int, y: int, amount: int):
+def mouse_scroll(x: int, y: int, amount: int, computer: str = 'agent'):
     """Scroll with the mouse wheel over (x, y). Positive amount scrolls up, negative down.
     Args:
         x (int): X coordinate in the screenshot.
         y (int): Y coordinate in the screenshot.
         amount (int): Wheel clicks; about 3 per screenful of text.
+        computer (str, optional): Must be 'person': these tools only reach the person's own screen, so use
+            them only when the person explicitly asked you to work on their computer.
     """
-    if (refused := _sandbox_refusal()) is not None:
+    if (refused := _screen_refusal(computer)) is not None:
         return refused
     sx, sy = _to_screen(x, y)
     _pyautogui().scroll(int(amount), x=sx, y=sy)

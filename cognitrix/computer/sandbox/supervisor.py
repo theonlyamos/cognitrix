@@ -7,6 +7,8 @@ accessibility bus. Every request except /health needs the container's token
 (``Authorization: Bearer <COGNITRIX_SANDBOX_TOKEN>``):
 
     GET    /health
+    POST   /agents/<name>/files           {give_back?}: let 'agent' read an agent's files (before a snapshot
+                                          or copy), or hand them back to its own user (after); '_all' = every agent
     POST   /exec                          run a short shell script as this computer's user: {script, input?}
                                           -> {code, stdout, stderr} (the engine's snapshots and key proxy
                                           use these where Docker can't reach in, e.g. on Fly)
@@ -68,6 +70,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from cognitrix.computer.sandbox import SERVICE_PORT, check_name, token
 from cognitrix.computer.sandbox.apps import AppHost, AppHostError, unb64
 from cognitrix.computer.sandbox.audio import DesktopAudio
+from cognitrix.computer.sandbox.users import AgentUser, Users, keep_caps_to_self
 from cognitrix.computer.sandbox.workspace import Workspace, WorkspaceError
 
 logger = logging.getLogger('cognitrix.sandbox')
@@ -87,6 +90,8 @@ class Desktop:
     procs: dict[str, subprocess.Popen] = field(default_factory=dict)
     held_by: str | None = None
     terminal: subprocess.Popen | None = None  # xterm following the agent's commands
+    user: AgentUser | None = None  # the agent's own Linux user (None: everything runs as 'agent')
+    xauth: str = ''  # this display's X cookie file: only its own agent's apps can connect
     audio: DesktopAudio | None = None  # its own speaker and microphone (calls)
     started: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
@@ -110,10 +115,25 @@ class Desktop:
 
 
 class Supervisor:
-    def __init__(self) -> None:
+    def __init__(self, users: Users | None = None) -> None:
         self.desktops: dict[str, Desktop] = {}
         self._guard = threading.Lock()
+        self.users = users or Users(enabled=False)
         os.makedirs(TOKENS, exist_ok=True)
+        if self.users.enabled:
+            os.chmod(STATE, 0o711)  # agents' users read their own display's X cookie in here
+            os.chmod(TOKENS, 0o700)
+
+    def user_for(self, name: str) -> AgentUser | None:
+        """The agent's own user, with its folders ready (None when agents
+        share the 'agent' user)."""
+        if not self.users.enabled:
+            return None
+        running = {n for n, d in self.desktops.items() if all(p.poll() is None for p in d.procs.values())}
+        user = self.users.get(name, running)
+        if user is not None:
+            self.users.prepare(name, user)
+        return user
 
     def _free_number(self) -> int:
         used = {d.number for d in self.desktops.values()}
@@ -132,6 +152,7 @@ class Supervisor:
                 raise RuntimeError(f'this computer already runs {MAX_DESKTOPS} desktops; stop one first')
             # VNC passwords are 8 characters at most.
             desk = Desktop(name, self._free_number(), secrets.token_hex(4), secrets.token_hex(4))
+            desk.user = self.user_for(name)
             self._start(desk)
             self.desktops[name] = desk
             return desk
@@ -145,8 +166,15 @@ class Supervisor:
         env.update(desk.audio.setup())
         quiet = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL, 'start_new_session': True}
         width, height = SCREEN.split('x')[:2]
+        auth: list[str] = []
+        if desk.user is not None:
+            # Each display takes only clients with its cookie, so one agent's
+            # apps can't watch or type into another agent's screen.
+            desk.xauth = self._make_xauth(desk)
+            env['XAUTHORITY'] = desk.xauth
+            auth = ['-auth', desk.xauth]
         desk.procs['xvfb'] = subprocess.Popen(  # noqa: S603
-            ['Xvfb', desk.display, '-screen', '0', SCREEN, '-nolisten', 'tcp'], env=env, **quiet)
+            ['Xvfb', desk.display, '-screen', '0', SCREEN, '-nolisten', 'tcp', *auth], env=env, **quiet)
         _wait_for(lambda: os.path.exists(f'/tmp/.X11-unix/X{desk.number}'), 10)
         desk.procs['wm'] = subprocess.Popen(['openbox'], env=env, **quiet)  # noqa: S607
         if shutil.which('xsetroot'):  # a calm grey instead of a black desktop
@@ -157,16 +185,36 @@ class Supervisor:
         with os.fdopen(fd, 'w') as fh:  # full password, then the view-only one
             fh.write(f'{desk.full_password}\n__BEGIN_VIEWONLY__\n{desk.password}\n')
         desk.procs['vnc'] = subprocess.Popen(  # noqa: S603
-            ['x11vnc', '-display', desk.display, '-rfbport', str(desk.vnc_port), '-localhost', '-passwdfile', pwfile,
+            ['x11vnc', '-display', desk.display, *auth, '-rfbport', str(desk.vnc_port), '-localhost', '-passwdfile', pwfile,
              '-shared', '-forever', '-noxdamage', '-quiet', '-geometry', f'{width}x{height}'],
             env=env, **quiet)
         with open(os.path.join(TOKENS, desk.name), 'w') as fh:
             fh.write(f'{desk.name}: localhost:{desk.vnc_port}\n')
+        command = [os.environ.get('COGNITRIX_SANDBOX_PYTHON', 'python3'), '-m', 'cognitrix.computer.sandbox.worker',
+                   '--port', str(desk.worker_port)]
+        as_user: dict = {}
+        if desk.user is not None:
+            # The driver, and every app it opens, runs as the agent's own user
+            # with its own session and accessibility bus.
+            env = desk.user.env(desk.name, env)
+            command = ['dbus-run-session', '--', *command, '--own-a11y']
+            as_user = desk.user.popen_kwargs()
         desk.procs['worker'] = subprocess.Popen(  # noqa: S603
-            [os.environ.get('COGNITRIX_SANDBOX_PYTHON', 'python3'), '-m', 'cognitrix.computer.sandbox.worker',
-             '--port', str(desk.worker_port)], env=env, stdout=None, stderr=None, start_new_session=True)
+            command, env=env, stdout=None, stderr=None, start_new_session=True, cwd=env.get('HOME'), **as_user)
         if not _wait_for(lambda: self._worker_up(desk), 20):
             logger.warning('desktop %s: worker did not start', desk.name)
+
+    def _make_xauth(self, desk: Desktop) -> str:
+        path = os.path.join(STATE, f'{desk.name}.xauth')
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        subprocess.run(['xauth', '-q', '-f', path, 'add', desk.display, '.', secrets.token_hex(16)],  # noqa: S603,S607
+                       check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.chown(path, -1, desk.user.gid)
+        os.chmod(path, 0o640)
+        return path
 
     def _worker_up(self, desk: Desktop) -> bool:
         try:
@@ -186,6 +234,8 @@ class Supervisor:
         if not os.path.exists(log):
             open(log, 'a').close()  # noqa: SIM115
         env = dict(os.environ, DISPLAY=desk.display)
+        if desk.xauth:
+            env['XAUTHORITY'] = desk.xauth
         env.pop('COGNITRIX_SANDBOX_TOKEN', None)
         desk.terminal = subprocess.Popen(  # noqa: S603
             ['xterm', '-T', 'Terminal', '-class', 'CognitrixTerminal', '-fa', 'DejaVu Sans Mono', '-fs', '11',
@@ -207,7 +257,8 @@ class Supervisor:
                     os.killpg(proc.pid, signal.SIGTERM)
                 except OSError:
                     pass
-        for path in (os.path.join(TOKENS, desk.name), os.path.join(STATE, f'{desk.name}.vncpass')):
+        for path in (os.path.join(TOKENS, desk.name), os.path.join(STATE, f'{desk.name}.vncpass'),
+                     os.path.join(STATE, f'{desk.name}.xauth')):
             try:
                 os.remove(path)
             except OSError:
@@ -406,6 +457,20 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
                 return
             if parts[:1] == ['work']:
                 self._work(method, parts)
+                return
+            if parts[:1] == ['agents'] and len(parts) == 3 and parts[2] == 'files' and method == 'POST':
+                # Before a snapshot or copy, let 'agent' read the agent's files;
+                # after a restore or copy, give them back to the agent's user.
+                give_back = bool(self._body().get('give_back'))
+                names = sup.users.known() if parts[1] == '_all' else [check_name(parts[1])]
+                for name in names if sup.users.enabled else []:
+                    if give_back:
+                        user = sup.users.get(name)
+                        if user is not None:
+                            sup.users.prepare(name, user, force=True)
+                    else:
+                        sup.users.share(name)
+                self._reply(200, {'ok': True, 'own_users': sup.users.enabled})
                 return
             if parts[:1] == ['exec'] and method == 'POST':
                 self._exec(parts[1:2])
@@ -734,7 +799,11 @@ def make_server(sup: Supervisor, port: int = SERVICE_PORT, host: str | None = No
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    sup = Supervisor()
+    keep_caps_to_self()  # nothing this starts gets the capabilities to switch users
+    os.umask(0o007)
+    users = Users()
+    logger.info('agents get their own Linux users: %s', 'yes' if users.enabled else 'no')
+    sup = Supervisor(users)
     apps = AppHost(APPS_ROOT)
 
     def show_terminal(agent: str, log: str) -> None:
@@ -743,7 +812,7 @@ def main() -> None:
         except Exception:  # the desktop limit, or no X: commands still run
             logger.info('no terminal for %s', agent, exc_info=True)
 
-    work = Workspace(terminal_opener=show_terminal)
+    work = Workspace(terminal_opener=show_terminal, user_for=sup.user_for)
     server = make_server(sup, apps=apps, work=work)
     signal.signal(signal.SIGTERM, lambda *_: (sup.shutdown(), apps.shutdown(), work.shutdown(), os._exit(0)))
     logger.info('sandbox supervisor on :%d (x11vnc %s)', SERVICE_PORT, shutil.which('x11vnc') or 'missing')

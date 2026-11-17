@@ -167,6 +167,13 @@ def _sandboxed_computer() -> bool:
     return sandbox_mode() is not None
 
 
+def _on_persons_computer(params: dict) -> bool:
+    """A window tool call that asks for the person's own computer by name."""
+    from cognitrix.computer import PERSON, which_computer
+
+    return which_computer(params.get('computer')) == PERSON
+
+
 def _publish_app_risk(params: dict) -> RiskAssessment:
     """Publishing an app runs the agent's code as a server. In the agents'
     sandboxed computer that's their own container; on this machine it's like
@@ -415,7 +422,7 @@ class DestructiveOpDetector:
                 RiskLevel.MEDIUM, ['person_takeover'],
                 f"Asks you to take over its computer: {reason}. Open the agent's computer, press Take over, "
                 'do it, then allow this to hand the computer back')
-        if name in _SANDBOX_WINDOW_TOOLS and _sandboxed_computer():
+        if name in _SANDBOX_WINDOW_TOOLS and _sandboxed_computer() and not _on_persons_computer(params):
             # The agents' own computer in a container, not the person's screen.
             return RiskAssessment(RiskLevel.LOW, ['sandbox_computer'],
                                   f"'{tool_name}' works in the agent's sandboxed computer")

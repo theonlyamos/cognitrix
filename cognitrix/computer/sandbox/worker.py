@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -196,11 +197,35 @@ def serve(worker: Worker, port: int, host: str = '127.0.0.1') -> ThreadingHTTPSe
     return server
 
 
+def start_a11y_bus() -> None:
+    """The accessibility bus for this desktop's session (the supervisor
+    started us inside our own D-Bus session), switched on so apps expose
+    their controls."""
+    import shutil
+    import subprocess
+    import time
+
+    launcher = next((p for p in ('/usr/libexec/at-spi-bus-launcher', '/usr/lib/at-spi2-core/at-spi-bus-launcher')
+                     if os.path.exists(p)), None) or shutil.which('at-spi-bus-launcher')
+    if launcher:
+        subprocess.Popen([launcher, '--launch-immediately'], stdout=subprocess.DEVNULL,  # noqa: S603
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        time.sleep(1)
+    subprocess.run(['dbus-send', '--session', '--print-reply', '--dest=org.a11y.Bus', '/org/a11y/bus',  # noqa: S603,S607
+                    'org.freedesktop.DBus.Properties.Set', 'string:org.a11y.Status', 'string:IsEnabled',
+                    'variant:boolean:true'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+                   check=False)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='Driver worker for one sandbox desktop')
     parser.add_argument('--port', type=int, required=True)
+    parser.add_argument('--own-a11y', action='store_true',
+                        help="start this desktop's own accessibility bus (the agent has its own user)")
     opts = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
+    if opts.own_a11y:
+        start_a11y_bus()
     from cognitrix.computer.linux import LinuxBackend
 
     worker = Worker(Driver(LinuxBackend(), sandbox=True))

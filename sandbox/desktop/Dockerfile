@@ -18,7 +18,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        xvfb openbox x11vnc novnc websockify x11-xserver-utils \
+        xvfb xauth openbox x11vnc novnc websockify x11-xserver-utils \
         dbus dbus-x11 at-spi2-core libatspi2.0-0 libgtk-3-bin \
         libxtst6 libxss1 libxcomposite1 \
         chromium firefox-esr \
@@ -75,6 +75,15 @@ RUN chmod 755 /usr/local/bin/* \
        /opt/cognitrix-sandbox/cognitrix/computer/sandbox/__pycache__ \
     && useradd --create-home --shell /bin/bash agent
 
+# A Linux user per agent (cognitrix/computer/sandbox/users.py): each in its
+# own group, which 'agent' (the supervisor) is also in. Their home folders
+# are set per agent at run time (~/work/<agent>).
+RUN for i in $(seq -w 1 64); do \
+        groupadd "cgx$i" \
+        && useradd --no-create-home --home-dir /nonexistent --shell /bin/bash -g "cgx$i" "cgx$i" \
+        && usermod -aG "cgx$i" agent || exit 1; \
+    done
+
 USER agent
 WORKDIR /home/agent
 # Files, downloads, browser profiles, Apps (~/.cognitrix-apps) and the agents'
@@ -82,4 +91,9 @@ WORKDIR /home/agent
 VOLUME /home/agent
 
 EXPOSE 8790 6080
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/cognitrix-sandbox"]
+# Tells the engine to start this image as root with the capabilities for a
+# Linux user per agent (cognitrix/computer/sandbox/client.py).
+LABEL cognitrix.agent-users="1"
+# Started as root (with only the capabilities it needs to give each agent
+# its own user), it drops to 'agent' at once; see bin/cognitrix-sandbox-root.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/cognitrix-sandbox-root"]

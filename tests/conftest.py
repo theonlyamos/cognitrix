@@ -32,6 +32,18 @@ def _secrets_key(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_default_sandbox(monkeypatch, tmp_path):
+    """The agents' sandboxed computer is on by default wherever Docker is
+    installed; tests start with it off and no saved setting, unless they
+    switch it on themselves."""
+    from cognitrix.computer.sandbox import client as sandbox_client
+
+    monkeypatch.setattr(sandbox_client, '_docker_installed', lambda: False)
+    monkeypatch.setattr(sandbox_client, 'SETTINGS_FILE', tmp_path / 'computer-sandbox.json')
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _no_memory_embeddings(monkeypatch):
     """Memory search by meaning loads an 80 MB model on first use; tests that
     want it install a fake embedder with cognitrix.memory.semantic.set_embedder."""

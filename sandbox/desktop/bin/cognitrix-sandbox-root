@@ -2,13 +2,27 @@
 # Start the sandbox as the 'agent' user when the host starts it as root.
 #
 # Fly volumes mount owned by root, so the agent user couldn't write its own
-# home folder. Hosted on Fly, the machine runs this as root: it hands
-# /home/agent to the agent user, then drops every privilege and runs the
-# normal entrypoint. Local Docker already runs as 'agent' and goes straight on.
+# home folder: hand /home/agent to the agent user first.
+#
+# Then drop to 'agent', keeping only the four capabilities the supervisor
+# needs to run each agent's desktop and commands as that agent's own Linux
+# user (SETUID, SETGID) and to hand it its folders (CHOWN, FOWNER). The
+# supervisor clears them from everything it starts
+# (cognitrix/computer/sandbox/users.py). Started as 'agent' (an older engine),
+# it goes straight on and every agent shares that user, as before.
 set -e
 if [ "$(id -u)" = "0" ]; then
     if [ "$(stat -c %U /home/agent)" != "agent" ]; then
         chown agent:agent /home/agent
+    fi
+    CAPS=+chown,+fowner,+setgid,+setuid
+    if [ "${COGNITRIX_SANDBOX_AGENT_USERS:-1}" = "0" ]; then
+        CAPS=-all
+    fi
+    if [ "$CAPS" != "-all" ] && setpriv --reuid=agent --regid=agent --init-groups --inh-caps="$CAPS" \
+            --ambient-caps="$CAPS" --bounding-set=-all,"$CAPS" true 2>/dev/null; then
+        exec setpriv --reuid=agent --regid=agent --init-groups --inh-caps="$CAPS" --ambient-caps="$CAPS" \
+            --bounding-set=-all,"$CAPS" env HOME=/home/agent USER=agent LOGNAME=agent /usr/local/bin/cognitrix-sandbox
     fi
     exec setpriv --reuid=agent --regid=agent --init-groups --inh-caps=-all \
         env HOME=/home/agent USER=agent LOGNAME=agent /usr/local/bin/cognitrix-sandbox

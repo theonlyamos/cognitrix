@@ -6,7 +6,17 @@ import base64
 import io
 from typing import Any
 
-from cognitrix.computer import ActionResult, Actor, DriverError, Unsupported, current_actor, get_driver
+from cognitrix.computer import (
+    AGENT,
+    PERSON,
+    ActionResult,
+    Actor,
+    DriverError,
+    Unsupported,
+    current_actor,
+    get_driver,
+    which_computer,
+)
 from cognitrix.tools.misc import coords_normalized, queue_image
 from cognitrix.tools.tool import tool
 from cognitrix.tools.utils import ToolOutcome
@@ -22,18 +32,60 @@ def _actor(parent: Any) -> Actor:
                  session_id=ctx.session_id, user_id=ctx.user_id)
 
 
-def _driver(actor: Actor):
-    """The agent's desktop in the user's sandbox when that is on, else this machine."""
+COMPUTER_NOTE = (
+    '## Your computer\n'
+    'You have your own computer: a Linux desktop with Chromium and Firefox that the person can watch. Do '
+    'everything that needs a computer or a browser there, including visiting websites: open_app with the web '
+    'address (for example open_app("https://x.com")), then look_at_window, click_element, type_in_window and '
+    "the other window tools. The person's own computer is not yours to use: unless they explicitly ask you to "
+    "use their computer or their browser, don't drive a browser or apps on it, so don't use skills or commands "
+    'that do (such as agent-browser, Playwright or Puppeteer scripts run with Bash) or the full-screen tools. '
+    "When they do ask, pass computer='person' to the window tools. Just reading a page's text with WebFetch "
+    'is fine.')
+
+
+def computer_note() -> str:
+    """The system-prompt block about the agent's own computer, while it has one."""
+    try:
+        from cognitrix.computer.sandbox.client import sandbox_mode
+
+        return COMPUTER_NOTE if sandbox_mode() else ''
+    except Exception:
+        return ''
+
+
+class _Refused(Exception):
+    def __init__(self, outcome):
+        self.outcome = outcome
+
+
+def _driver(actor: Actor, computer: str = AGENT):
+    """The agent's desktop in the user's sandbox, or, only when asked for by
+    name, the person's own computer (this machine)."""
     from cognitrix.computer.sandbox.client import sandbox_driver, sandbox_mode
 
-    return sandbox_driver(actor) if sandbox_mode() else get_driver()
+    mode = sandbox_mode()
+    if which_computer(computer) == PERSON:
+        if mode == 'fly':
+            raise _Refused(ToolOutcome.failure(
+                'unsupported', "This server runs agents' computers in the cloud and can't reach the person's own "
+                'computer. Tell them, and offer to do it on your computer instead.'))
+        return get_driver()
+    if not mode:
+        raise _Refused(ToolOutcome.failure(
+            'computer_off', "Your own computer (the sandboxed computer) is off, so there's nowhere to do this. Ask "
+            'the person to turn it on in Settings, Agent access (it needs Docker Desktop). Only if they explicitly '
+            "asked you to use their own computer, call again with computer='person'."))
+    return sandbox_driver(actor)
 
 
-def _run(fn, parent: Any = None):
+def _run(fn, parent: Any = None, computer: str = AGENT):
     actor = _actor(parent)
     token = current_actor.set(actor)
     try:
-        return fn(_driver(actor))
+        return fn(_driver(actor, computer))
+    except _Refused as exc:
+        return exc.outcome
     except Unsupported as exc:
         return ToolOutcome.failure('unsupported', str(exc))
     except DriverError as exc:
@@ -65,11 +117,13 @@ def _image_point(driver, window_id: int, x: float, y: float) -> tuple[float, flo
 
 
 @tool(category='system')
-def list_windows(search: str | None = None):
+def list_windows(search: str | None = None, computer: str = AGENT):
     """List open app windows you can work in without taking over the person's screen.
     Each line starts with the window id to pass to the other window tools.
     Args:
         search (str, optional): Only windows whose title or app name contains this text.
+        computer (str, optional): 'agent' (default) lists windows on your own sandboxed computer. 'person' lists
+            the person's own computer, only when they explicitly asked you to work on their computer.
     """
     def go(driver):
         windows = driver.list_windows(search)
@@ -84,14 +138,17 @@ def list_windows(search: str | None = None):
                 line += f' - can\'t control: {w.blocked}'
             lines.append(line)
         return '\n'.join(lines)
-    return _run(go)
+    return _run(go, computer=computer)
 
 
 @tool(category='system')
-def open_app(target: str):
+def open_app(target: str, computer: str = AGENT):
     """Open an app, file or folder in the background, without taking focus, and return its window id.
     Args:
-        target (str): An app name ("Notepad", "Calculator"), or the full path of a file or folder.
+        target (str): An app name ("Notepad", "Calculator"), a web address ("https://x.com", opens in the
+            browser), or the full path of a file or folder.
+        computer (str, optional): 'agent' (default) opens it on your own sandboxed computer. 'person' opens it
+            on the person's own computer, only when they explicitly asked you to work on their computer.
     """
     def go(driver):
         win = driver.open(target)
@@ -100,11 +157,11 @@ def open_app(target: str):
                     '(some apps reuse an existing window).')
         note = f' - can\'t control: {win.blocked}' if win.blocked else ''
         return f'Opened {target!r}: window {win.id} {win.title!r} ({win.app}){note}. Look at it with look_at_window.'
-    return _run(go)
+    return _run(go, computer=computer)
 
 
 @tool(category='system')
-def look_at_window(window_id: int, find: str | None = None, max_elements: int = 60, *, parent: Any | None = None):
+def look_at_window(window_id: int, find: str | None = None, max_elements: int = 60, computer: str = AGENT, *, parent: Any | None = None):
     """Look at one app window: you get its screenshot (attached after this result, even if other windows
     cover it) and a numbered list of its controls. Use those numbers with click_element and set_text, which
     are more reliable than clicking pixels. Look again after acting, because numbers change.
@@ -112,6 +169,7 @@ def look_at_window(window_id: int, find: str | None = None, max_elements: int = 
         window_id (int): Window id from list_windows or open_app.
         find (str, optional): Only list controls whose name or value contains this text.
         max_elements (int, optional): Most controls to list (default 60).
+        computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
     def go(driver):
         image, snap, shown, note = driver.look(window_id, find, max_elements, viewer=_viewer(parent))
@@ -148,11 +206,11 @@ def look_at_window(window_id: int, find: str | None = None, max_elements: int = 
         elif not total:
             lines.append('(no readable controls; use the screenshot and click_in_window)')
         return '\n'.join(lines)
-    return _run(go, parent)
+    return _run(go, parent, computer)
 
 
 @tool(category='system')
-def click_element(window_id: int, element: int, action: str = 'click', use_screen: bool = False, *,
+def click_element(window_id: int, element: int, action: str = 'click', use_screen: bool = False, computer: str = AGENT, *,
                   parent: Any | None = None):
     """Act on a control from your latest look_at_window of that window, in the background.
     action "click" presses buttons and links and opens list items; use "select" to only select an item,
@@ -163,25 +221,27 @@ def click_element(window_id: int, element: int, action: str = 'click', use_scree
         action (str, optional): click, select, toggle or expand. Default click.
         use_screen (bool, optional): Only after a result said this needs the screen: bring the window to the front
             for a moment and use the real mouse and keyboard, then put things back. The person is asked first.
+        computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
     return _run(lambda d: _done(d.act_on_element(window_id, element, action, viewer=_viewer(parent),
-                                                 use_screen=use_screen)), parent)
+                                                 use_screen=use_screen)), parent, computer)
 
 
 @tool(category='system')
-def set_text(window_id: int, text: str, element: int | None = None, *, parent: Any | None = None):
+def set_text(window_id: int, text: str, element: int | None = None, computer: str = AGENT, *, parent: Any | None = None):
     """Put text into a text field in the background, replacing what it holds. Prefer this over typing.
     Args:
         window_id (int): Window id.
         text (str): The full text the field should contain.
         element (int, optional): Control number of the field from look_at_window; default is the focused field.
+        computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
-    return _run(lambda d: _done(d.set_text(window_id, text, element, viewer=_viewer(parent))), parent)
+    return _run(lambda d: _done(d.set_text(window_id, text, element, viewer=_viewer(parent))), parent, computer)
 
 
 @tool(category='system')
 def click_in_window(window_id: int, x: int, y: int, button: str = 'left', double: bool = False,
-                    use_screen: bool = False, *, parent: Any | None = None):
+                    use_screen: bool = False, computer: str = AGENT, *, parent: Any | None = None):
     """Click a point in a window's latest look_at_window screenshot, in the background. Use click_element
     when the target is in the control list.
     Args:
@@ -192,17 +252,18 @@ def click_in_window(window_id: int, x: int, y: int, button: str = 'left', double
         double (bool, optional): Double-click. Default false.
         use_screen (bool, optional): Only after a result said this needs the screen: bring the window to the front
             for a moment and use the real mouse and keyboard, then put things back. The person is asked first.
+        computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
     def go(driver):
         ix, iy = _image_point(driver, window_id, x, y)
         return _done(driver.click_point(window_id, ix, iy, button, double, viewer=_viewer(parent),
                                         use_screen=use_screen))
-    return _run(go, parent)
+    return _run(go, parent, computer)
 
 
 @tool(category='system')
 def type_in_window(window_id: int, text: str, x: int | None = None, y: int | None = None,
-                   use_screen: bool = False, *, parent: Any | None = None):
+                   use_screen: bool = False, computer: str = AGENT, *, parent: Any | None = None):
     """Type text into a window in the background, at its focused field or after clicking (x, y) in its
     screenshot. Use set_text instead when the field is in the control list. Browsers and Electron apps need
     use_screen=true to type; end the text with a new line (or press_key_in_window "enter") to submit.
@@ -213,17 +274,18 @@ def type_in_window(window_id: int, text: str, x: int | None = None, y: int | Non
         y (int, optional): Click here first (screenshot coordinates) to focus the field.
         use_screen (bool, optional): Only after a result said this needs the screen: bring the window to the front
             for a moment and use the real mouse and keyboard, then put things back. The person is asked first.
+        computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
     def go(driver):
         ix = iy = None
         if x is not None and y is not None:
             ix, iy = _image_point(driver, window_id, x, y)
         return _done(driver.type_text(window_id, text, ix, iy, viewer=_viewer(parent), use_screen=use_screen))
-    return _run(go, parent)
+    return _run(go, parent, computer)
 
 
 @tool(category='system')
-def press_key_in_window(window_id: int, keys: str, use_screen: bool = False, *, parent: Any | None = None):
+def press_key_in_window(window_id: int, keys: str, use_screen: bool = False, computer: str = AGENT, *, parent: Any | None = None):
     """Press a key or shortcut in a window in the background, e.g. "enter", "tab", "down", "ctrl+s", "ctrl+w".
     Prefer a shortcut over opening a menu (menus in modern apps take the screen). Browsers and Electron apps
     need use_screen=true for keys; clicking their controls works in the background.
@@ -232,12 +294,13 @@ def press_key_in_window(window_id: int, keys: str, use_screen: bool = False, *, 
         keys (str): Key name, or keys joined with + for a shortcut.
         use_screen (bool, optional): Only after a result said this needs the screen: bring the window to the front
             for a moment and use the real mouse and keyboard, then put things back. The person is asked first.
+        computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
-    return _run(lambda d: _done(d.press_key(window_id, keys, use_screen=use_screen)), parent)
+    return _run(lambda d: _done(d.press_key(window_id, keys, use_screen=use_screen)), parent, computer)
 
 
 @tool(category='system')
-def scroll_window(window_id: int, direction: str = 'down', amount: int = 3, element: int | None = None, *,
+def scroll_window(window_id: int, direction: str = 'down', amount: int = 3, element: int | None = None, computer: str = AGENT, *,
                   parent: Any | None = None):
     """Scroll a window, or one of its scrollable controls, in the background.
     Args:
@@ -245,8 +308,9 @@ def scroll_window(window_id: int, direction: str = 'down', amount: int = 3, elem
         direction (str, optional): up, down, left or right. Default down.
         amount (int, optional): Steps to scroll (default 3).
         element (int, optional): Control number of the area to scroll; default is the main scrollable area.
+        computer (str, optional): Same as for list_windows: 'agent' (default) or 'person'.
     """
-    return _run(lambda d: _done(d.scroll(window_id, direction, amount, element, viewer=_viewer(parent))), parent)
+    return _run(lambda d: _done(d.scroll(window_id, direction, amount, element, viewer=_viewer(parent))), parent, computer)
 
 
 @tool(category='system')

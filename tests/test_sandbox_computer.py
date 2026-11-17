@@ -197,7 +197,30 @@ async def test_full_screen_tools_point_at_the_window_tools(monkeypatch):
     from cognitrix.tools import misc
     monkeypatch.setenv('COGNITRIX_COMPUTER_SANDBOX', 'docker')
     out = (await misc.mouse_click.run(x=1, y=2)).content
-    assert 'sandboxed computer' in out
+    assert 'list_windows' in out and "computer='person'" in out
+    monkeypatch.delenv('COGNITRIX_COMPUTER_SANDBOX')
+    # Off or on, they never act without the person's computer asked for by name.
+    assert "computer='person'" in (await misc.mouse_click.run(x=1, y=2)).content
+
+
+def test_window_tools_on_the_persons_computer_still_ask(monkeypatch):
+    det = DestructiveOpDetector()
+    monkeypatch.setenv('COGNITRIX_COMPUTER_SANDBOX', 'docker')
+    risk = det.analyze('type_in_window', {'window_id': 1, 'text': 'x', 'computer': 'person'})
+    assert risk.risk_level != RiskLevel.LOW and 'desktop_control' in risk.categories
+
+
+def test_sandbox_is_on_by_default_where_docker_is_installed(monkeypatch):
+    from cognitrix.computer.sandbox import client as sandbox_client
+
+    monkeypatch.delenv('COGNITRIX_COMPUTER_SANDBOX', raising=False)
+    monkeypatch.setattr(sandbox_client, '_docker_installed', lambda: True)
+    assert sandbox_client.sandbox_mode() == 'docker'
+    sandbox_client.save_enabled(False)  # switched off in Settings stays off
+    assert sandbox_client.sandbox_mode() is None
+    sandbox_client.save_enabled(True)
+    monkeypatch.setattr(sandbox_client, '_docker_installed', lambda: False)
+    assert sandbox_client.sandbox_mode() == 'docker'
 
 
 async def test_ask_to_take_over_is_sandbox_only(monkeypatch):
@@ -403,3 +426,27 @@ def test_newer_image_check_is_throttled(fake_manager, monkeypatch):
     mgr._pulling = False
     assert mgr.check_for_update() is False  # pulled moments ago
     assert mgr.check_for_update(force=True) is True
+
+
+def test_agents_are_told_to_browse_on_their_own_computer(monkeypatch):
+    from cognitrix.sessions.base import _with_folder_prompt
+
+    monkeypatch.delenv('COGNITRIX_COMPUTER_SANDBOX', raising=False)
+    assert _with_folder_prompt([{'role': 'system', 'content': 'base'}], ())[0]['content'] == 'base'
+    monkeypatch.setenv('COGNITRIX_COMPUTER_SANDBOX', 'docker')
+    content = _with_folder_prompt([{'role': 'system', 'content': 'base'}], ())[0]['content']
+    assert '## Your computer' in content and 'agent-browser' in content and "computer='person'" in content
+
+
+def test_browser_skills_get_a_reminder_while_the_agent_has_a_computer(monkeypatch):
+    from types import SimpleNamespace
+
+    from cognitrix.tools.skill_tool import _host_browser_note
+
+    skill = SimpleNamespace(name='agent-browser', description='Automate the browser from the command line')
+    other = SimpleNamespace(name='summarize-document', description='Summarize a document')
+    monkeypatch.delenv('COGNITRIX_COMPUTER_SANDBOX', raising=False)
+    assert _host_browser_note(skill) == ''
+    monkeypatch.setenv('COGNITRIX_COMPUTER_SANDBOX', 'docker')
+    assert "person's own computer" in _host_browser_note(skill)
+    assert _host_browser_note(other) == ''

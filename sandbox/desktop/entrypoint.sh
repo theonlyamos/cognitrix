@@ -17,9 +17,14 @@ dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus \
 # Sound: one PulseAudio server; each desktop gets its own speaker and
 # microphone from the supervisor (cognitrix/computer/sandbox/audio.py), so an
 # agent can sit in a call in the sandbox browser.
+# Its socket takes every user, so agents with their own Linux user get sound
+# on their own desktop's devices too.
 if command -v pulseaudio >/dev/null 2>&1; then
+    mkdir -p /tmp/cognitrix-pulse && chmod 755 /tmp/cognitrix-pulse
+    export PULSE_SERVER=unix:/tmp/cognitrix-pulse/native
     pulseaudio --daemonize=yes --exit-idle-time=-1 --disallow-exit -n \
-        --load=module-native-protocol-unix --load=module-always-sink >/dev/null 2>&1 || true
+        --load="module-native-protocol-unix auth-anonymous=1 socket=/tmp/cognitrix-pulse/native" \
+        --load=module-always-sink >/dev/null 2>&1 || true
 fi
 
 # Live screens: one websocket endpoint, each desktop picked by ?token=<name>.
