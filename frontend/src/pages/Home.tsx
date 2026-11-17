@@ -1375,7 +1375,8 @@ export default function Home() {
           while (end < all.length && all[end].role === 'user' && (isUploadNote(all[end]) || !all[end].content.trim())) end += 1;
           const label = /(\n|^)📎 .*$/s.exec(all[replace.index].content)?.[0] ?? '';
           setMessages(all.slice(0, end).map((m, i) => (
-            i === replace.index ? { ...m, content: `${msg}${label && !label.startsWith('\n') && msg ? '\n' : ''}${label}` } : m
+            // Re-sent now: the new answer's time is measured from here.
+            i === replace.index ? { ...m, timestamp: new Date().toISOString(), content: `${msg}${label && !label.startsWith('\n') && msg ? '\n' : ''}${label}` } : m
           )));
         } else {
           setMessages(messagesRef.current.slice(0, replace.index));
