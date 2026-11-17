@@ -7,7 +7,21 @@ import { tr, trn } from '@/lib/i18n';
 
 const NOTES_MAX = 8000;
 
+/** The agent that made the task with Create Task, and where it was working. */
+export interface TaskCreator {
+  agent_id?: string;
+  agent_name?: string | null;
+  kind?: 'chat' | 'task';
+  session_id?: string;
+  task_id?: string;
+  depth?: number;
+}
+
 export interface AutomationTaskFields {
+  created_by?: TaskCreator | null;
+  report_to?: string | null;
+  report_only_on?: string | null;
+  report_to_effective?: string;
   notes?: string | null;
   wake_pending?: boolean;
   wake_at?: string | null;
@@ -17,7 +31,8 @@ export interface AutomationTaskFields {
 export interface TaskTriggerRow {
   id: string;
   name: string;
-  /** "webhook" (the default) or "gmail" for new mail in the owner's Gmail. */
+  /** "webhook" (the default), "gmail" for new mail in the owner's Gmail, or
+   * "github" for news on a pull request an agent is watching. */
   kind?: string;
   enabled: boolean;
   token_hint: string;
@@ -26,7 +41,7 @@ export interface TaskTriggerRow {
   /** Mail triggers: only mail whose sender or subject contains this. */
   match?: string;
   checked_at?: string | null;
-  /** Mail triggers: why the last check failed, in words for the owner. */
+  /** Mail and pull request triggers: why the last check failed, or why watching stopped. */
   error?: string | null;
 }
 
@@ -53,6 +68,88 @@ function hookUrl(path: string): string {
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="font-mono text-[10px] tracking-[0.18em] text-fg-dim">{children}</h3>;
+}
+
+const selectClass = 'h-9 rounded-lg border border-line bg-bg px-2 text-[12.5px] text-fg outline-none focus:border-accent disabled:opacity-60';
+
+/** Who hears about a finished run of a task an agent made (tasks/reports.py). */
+function ReportingSection({
+  task,
+  busy,
+  onSave,
+}: {
+  task: AutomationTaskFields;
+  busy: boolean;
+  onSave: (reportTo: string, onlyOn: string) => void;
+}) {
+  const creator = task.created_by ?? {};
+  const agent = creator.agent_name || tr('ui.automationPanel.theAgent');
+  const reportTo = task.report_to ?? '';
+  const onlyOn = task.report_only_on ?? 'always';
+  const effective = task.report_to_effective ?? 'person';
+  const origin = creator.kind === 'chat' && creator.session_id
+    ? { href: `/home?chat=${encodeURIComponent(creator.session_id)}`, label: tr('ui.automationPanel.openTheChat') }
+    : creator.kind === 'task' && creator.task_id
+      ? { href: `/tasks/${encodeURIComponent(creator.task_id)}`, label: tr('ui.automationPanel.openTheTask') }
+      : null;
+  return (
+    <div className="flex flex-col gap-2">
+      <SectionTitle>{tr('ui.automationPanel.results')}</SectionTitle>
+      <p className="text-[12.5px] text-fg-dim">
+        {creator.kind === 'task'
+          ? tr('ui.automationPanel.agentMadeThisTaskDuringATask', { agent })
+          : tr('ui.automationPanel.agentMadeThisTaskInAChat', { agent })}
+        {origin && (
+          <>
+            {' '}
+            <a href={origin.href} className="text-accent-ink underline-offset-2 hover:underline">{origin.label}</a>
+          </>
+        )}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="task-report-to" className="text-[12.5px]">{tr('ui.automationPanel.resultsGoTo')}</label>
+        <select
+          id="task-report-to"
+          className={selectClass}
+          value={reportTo}
+          disabled={busy}
+          onChange={(e) => onSave(e.target.value, onlyOn)}
+        >
+          <option value="">
+            {effective === 'creator' && !reportTo
+              ? tr('ui.automationPanel.defaultAgent', { agent })
+              : !reportTo ? tr('ui.automationPanel.defaultYou') : tr('ui.automationPanel.default')}
+          </option>
+          <option value="creator">{agent}</option>
+          <option value="person">{tr('ui.automationPanel.you')}</option>
+          <option value="both">{tr('ui.automationPanel.agentAndYou', { agent })}</option>
+        </select>
+        {effective !== 'person' && (
+          <>
+            <label htmlFor="task-report-only-on" className="text-[12.5px]">{tr('ui.automationPanel.tellTheAgent')}</label>
+            <select
+              id="task-report-only-on"
+              className={selectClass}
+              value={onlyOn}
+              disabled={busy}
+              onChange={(e) => onSave(reportTo, e.target.value)}
+            >
+              <option value="always">{tr('ui.automationPanel.afterEveryRun')}</option>
+              <option value="failure">{tr('ui.automationPanel.onlyWhenARunFails')}</option>
+              <option value="changed">{tr('ui.automationPanel.onlyWhenTheResultChanges')}</option>
+            </select>
+          </>
+        )}
+      </div>
+      <p className="text-[12px] text-fg-dim">
+        {effective === 'person'
+          ? tr('ui.automationPanel.youAreToldWhenARunEnds')
+          : effective === 'both'
+            ? tr('ui.automationPanel.bothAreTold', { agent })
+            : tr('ui.automationPanel.theAgentDecidesWhetherToTellYou', { agent })}
+      </p>
+    </div>
+  );
 }
 
 /** Notes, the agent's next check, and webhook and new-mail triggers for one task. */
@@ -131,6 +228,15 @@ export function AutomationPanel({
       }
     }, tr('ui.automationPanel.couldNotSaveTheNotes'));
 
+  const saveReporting = (reportTo: string, onlyOn: string) =>
+    act('reporting', async () => {
+      await api.put(`/tasks/${taskId}/reporting`, {
+        report_to: reportTo || null,
+        report_only_on: onlyOn && onlyOn !== 'always' ? onlyOn : null,
+      });
+      await onChanged();
+    }, tr('ui.automationPanel.couldNotSaveWhoGets'));
+
   const cancelWake = () =>
     act('wake', async () => {
       await api.delete(`/tasks/${taskId}/wake`);
@@ -188,6 +294,10 @@ export function AutomationPanel({
   return (
     <section aria-label={tr('ui.automationPanel.automation')} className="flex flex-col gap-5 border-b border-line bg-panel px-6 py-4 max-md:px-4">
       {error && <p role="alert" className="font-mono text-[12px] text-danger-ink">{error}</p>}
+
+      {task?.created_by?.agent_id && (
+        <ReportingSection task={task} busy={busy === 'reporting'} onSave={saveReporting} />
+      )}
 
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
@@ -264,11 +374,14 @@ export function AutomationPanel({
           <ul className="flex flex-col divide-y divide-line rounded-[10px] border border-line">
             {triggers.map((row) => {
               const mail = row.kind === 'gmail';
+              const pull = row.kind === 'github';
               return (
               <li key={row.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
                 <span className={cn('h-1.5 w-1.5 rounded-full', row.enabled ? 'bg-accent' : 'bg-fg-dim')} aria-hidden />
                 <span className="text-[13px] font-medium">{row.name}</span>
-                {mail ? (
+                {pull ? (
+                  <span className="font-mono text-[11px] text-fg-dim">{tr('ui.automationPanel.githubNewsWatchedByThe')}</span>
+                ) : mail ? (
                   <span className="font-mono text-[11px] text-fg-dim">
                     {row.match ? tr('ui.automationPanel.onlyMailMatchingMatch', { match: row.match }) : tr('ui.automationPanel.allNewMail')}
                   </span>
@@ -283,7 +396,7 @@ export function AutomationPanel({
                 <Button size="sm" variant="ghost" onClick={() => toggle(row)} disabled={busy !== null}>
                   {row.enabled ? tr('ui.automationPanel.turnOff') : tr('ui.automationPanel.turnOn')}
                 </Button>
-                {!mail && (
+                {!mail && !pull && (
                   <Button size="sm" variant="ghost" onClick={() => rotate(row.id)} disabled={busy !== null}>
                     {tr('ui.automationPanel.newUrl')}
                   </Button>
@@ -293,6 +406,9 @@ export function AutomationPanel({
                 </Button>
                 {mail && row.error && (
                   <p role="alert" className="w-full pl-3.5 text-[12px] text-danger-ink">{row.error}</p>
+                )}
+                {pull && row.error && (
+                  <p className="w-full pl-3.5 text-[12px] text-fg-dim">{row.error}</p>
                 )}
               </li>
               );

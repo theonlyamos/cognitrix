@@ -181,7 +181,7 @@ async def scheduler_loop() -> None:
 
 
 async def automation_tick(now: datetime | None = None) -> int:
-    """Agent wake-ups, new-mail and calendar-call checks, and queued trigger events (see tasks/automation.py)."""
+    """Agent wake-ups, new-mail, pull request and calendar-call checks, and queued trigger events (see tasks/automation.py)."""
     from cognitrix.tasks.automation import dispatch_trigger_events, fire_due_wakes
 
     now = now or _utcnow()
@@ -191,6 +191,12 @@ async def automation_tick(now: datetime | None = None) -> int:
         await poll_mail_triggers(now)
     except Exception:
         logger.exception('Could not check for new mail')
+    try:
+        from cognitrix.tasks.pr_watch import poll_pr_watches
+
+        await poll_pr_watches(now)
+    except Exception:
+        logger.exception('Could not check watched pull requests')
     try:
         from cognitrix.meetings.calendar_calls import poll as poll_calendar_calls
 
@@ -203,4 +209,11 @@ async def automation_tick(now: datetime | None = None) -> int:
         await proactive_tick(now.replace(tzinfo=UTC))
     except Exception:
         logger.exception('Proactive assistant tick failed')
-    return await fire_due_wakes(now) + await dispatch_trigger_events(now)
+    reported = 0
+    try:
+        from cognitrix.tasks.reports import deliver_due_reports
+
+        reported = await deliver_due_reports(now)
+    except Exception:
+        logger.exception('Could not deliver task results to the agents that created them')
+    return await fire_due_wakes(now) + await dispatch_trigger_events(now) + reported

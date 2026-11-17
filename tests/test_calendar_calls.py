@@ -182,8 +182,7 @@ async def test_upcoming_calls_tool(cal, monkeypatch):
     from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
 
     cc = cal.cc
-    # The events are built around NOW; the tool reads the clock, so pin it there.
-    monkeypatch.setattr(cc, 'utcnow', lambda: NOW)
+    monkeypatch.setattr(cc, 'utcnow', lambda: NOW)   # the events are at fixed times
     token = set_execution_context(ToolExecutionContext(user_id='u1', agent_id='a1', session_id='s1'))
     try:
         out = await upcoming_calls.run(parent=SimpleNamespace(id='a1', name='Ada'))

@@ -42,3 +42,27 @@ describe('AutomationPanel triggers', () => {
     expect(screen.queryByText(/Copy this URL now/)).not.toBeInTheDocument();
   });
 });
+
+describe('AutomationPanel results', () => {
+  const made = { agent_id: 'a1', agent_name: 'Scout', kind: 'chat' as const, session_id: 'chat-9' };
+
+  it('is hidden for tasks people made', async () => {
+    render(<AutomationPanel taskId="task-1" task={{}} onChanged={() => {}} />);
+    await screen.findByText('Releases');
+    expect(screen.queryByLabelText('Results go to')).not.toBeInTheDocument();
+  });
+
+  it('shows who made the task and saves who gets its results', async () => {
+    api.put.mockResolvedValue({ data: {} });
+    const onChanged = vi.fn();
+    render(<AutomationPanel taskId="task-1" task={{ created_by: made, report_to_effective: 'creator' }} onChanged={onChanged} />);
+    expect(screen.getByText(/Scout made this task in a chat/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open the chat' })).toHaveAttribute('href', '/home?chat=chat-9');
+    expect(screen.getByText(/decides whether to tell you/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Tell the agent'), { target: { value: 'changed' } });
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith('/tasks/task-1/reporting', { report_to: null, report_only_on: 'changed' }));
+    fireEvent.change(screen.getByLabelText('Results go to'), { target: { value: 'both' } });
+    await waitFor(() => expect(api.put).toHaveBeenLastCalledWith('/tasks/task-1/reporting', { report_to: 'both', report_only_on: null }));
+    expect(onChanged).toHaveBeenCalled();
+  });
+});

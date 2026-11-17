@@ -13,7 +13,7 @@ import { ArtifactPreview } from '@/components/ArtifactPreview';
 import { TranscriptView } from '@/components/TranscriptView';
 import { parseCard } from '@/lib/cards';
 import { TaskApprovals } from '@/components/TaskApprovals';
-import { AutomationPanel } from '@/components/AutomationPanel';
+import { AutomationPanel, type TaskCreator } from '@/components/AutomationPanel';
 import {
   parseChatEntries,
   parseSessionDate,
@@ -46,13 +46,20 @@ interface TaskData {
   wake_pending?: boolean;
   wake_at?: string | null;
   wake_reason?: string | null;
+  created_by?: TaskCreator | null;
+  report_to?: string | null;
+  report_only_on?: string | null;
+  report_to_effective?: string;
 }
 
 const TRIGGER_LABEL: Record<string, string> = {
   schedule: '⏱ schedule',
   wake: '↺ self-check',
   webhook: '⚡ webhook',
+  email: '✉ new mail',
+  github: '⑂ pull request news',
   agent: '◆ started by an agent',
+  task_result: '↩ result of a task it made',
 };
 
 // next_run_at is naive UTC — parse with an explicit Z, never as local time.
@@ -1117,6 +1124,14 @@ export default function TaskDetail() {
           {task?.wake_pending && task.wake_at && (
             <span className="sr-only font-mono text-[10.5px] text-fg-dim md:not-sr-only" title={task.wake_reason || tr('ui.taskDetail.nextCheck')}>
               {tr('ui.taskDetail.checkNextrunlocal', { nextRunLocal: nextRunLocal(task.wake_at) })}
+            </span>
+          )}
+          {task?.created_by?.agent_id && (
+            <span
+              className="sr-only font-mono text-[10.5px] text-fg-dim md:not-sr-only"
+              title={task.report_to_effective === 'person' ? tr('ui.taskDetail.resultsGoToYou') : tr('ui.taskDetail.resultsGoBackToThe')}
+            >
+              {tr('ui.taskDetail.madeByAgent', { agent: task.created_by.agent_name || tr('ui.taskDetail.anAgent') })}
             </span>
           )}
           {hasSchedule && (

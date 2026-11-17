@@ -141,6 +141,9 @@ def _task_json(task: Task) -> dict:
         data.pop('wake_authority_kind', None)
         data.pop('wake_authority_id', None)
         data.pop('deleted_at', None)
+        from cognitrix.tasks.reports import effective_report_to, public_creator
+        data['created_by'] = public_creator(data.get('created_by'))
+        data['report_to_effective'] = effective_report_to(task)
     return data
 
 
@@ -721,6 +724,12 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
     for field in WAKE_FIELDS:
         setattr(task, field, getattr(stored, field) if stored is not None else None)
     task.wake_pending = bool(task.wake_pending)
+    # Only Create Task records an agent as a task's creator.
+    task.created_by = getattr(stored, 'created_by', None) if stored is not None else None
+    from cognitrix.tasks.reports import validate_report_fields
+    report_error = validate_report_fields(task.report_to, task.report_only_on)
+    if report_error:
+        raise HTTPException(status_code=422, detail=report_error)
     automation_error = validate_automation_fields(task)
     if automation_error:
         raise HTTPException(status_code=422, detail=automation_error)
@@ -736,7 +745,8 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
         # resets to default. Callback fields never round-trip (stripped from
         # projections) and schedule fields may be omitted by API clients —
         # carry them over instead of silently wiping them.
-        for field in ('callback_url', 'callback_key_id', 'notes', 'max_runs_per_day', 'swarm', 'read_memory'):
+        for field in ('callback_url', 'callback_key_id', 'notes', 'max_runs_per_day', 'swarm', 'read_memory',
+                      'report_to', 'report_only_on'):
             if field not in task.model_fields_set:
                 setattr(task, field, getattr(stored, field))
         if not respecified:

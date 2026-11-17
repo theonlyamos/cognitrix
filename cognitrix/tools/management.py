@@ -155,11 +155,18 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
                       agent_refs: list[str] | None = None, team_ref: str | None = None,
                       start_now: bool = False, schedule_at: str | None = None,
                       schedule_interval_seconds: int | None = None, schedule_cron: str | None = None,
-                      schedule_enabled: bool | None = None, swarm: bool = False, *, parent=None) -> ToolOutcome:
+                      schedule_enabled: bool | None = None, swarm: bool = False,
+                      report_to: str | None = None, report_only_on: str | None = None,
+                      *, parent=None) -> ToolOutcome:
     """Create a task, optionally assign it, schedule it, or queue it once now. A task that starts now or
     runs on a schedule needs an agent to run it: pass agent_refs or team_ref, or leave both out to have
     you (the calling agent) run it. Set swarm to true for a big job that splits into many parallel parts:
-    each step may then fan out to workers (Spawn Workers)."""
+    each step may then fan out to workers (Spawn Workers).
+    report_to says who hears when a run ends: "creator" (you: the result comes back to this chat, or
+    starts a new run of the task you are running, and you decide whether to tell the person with
+    Notify Me), "person" (the person is notified, you are not), or "both". Left out, a one-off task
+    reports to you and a scheduled one to the person. report_only_on limits reports to you:
+    "always" (default), "failure", or "changed" (only when the result differs from the last one)."""
     from cognitrix.tasks.base import Task
     from cognitrix.tasks.scheduler import compute_next_run, normalize_schedule_at, validate_schedule
     _require_scope('write')
@@ -172,6 +179,18 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
         return ToolOutcome.failure('invalid_task', 'Task title and description are required')
     if team_ref and agent_refs:
         return ToolOutcome.failure('invalid_assignment', 'Specify agents or a team, not both')
+    from cognitrix.tasks import reports
+    reason = reports.validate_report_fields(report_to, report_only_on)
+    if reason:
+        return ToolOutcome.failure('invalid_task', reason)
+    try:
+        created_by = await reports.creator_snapshot(parent, current_execution_context())
+    except ValueError as exc:
+        return ToolOutcome.failure('too_deep', str(exc))
+    if report_to in ('creator', 'both') and created_by is None:
+        return ToolOutcome.failure(
+            'cannot_report_back', 'Results can only come back to you from a chat or a task run '
+                                  'with a signed-in person. Leave report_to out, or use "person".')
     try:
         agents = await _agents(agent_refs)
         team = await _team(team_ref) if team_ref else None
@@ -206,7 +225,8 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
                     owner_id=current_execution_context().user_id,
                     assigned_agents=agent_ids, team_id=str(team.id) if team else None, autostart=False,
                     schedule_at=schedule_at, schedule_interval=schedule_interval_seconds,
-                    schedule_cron=schedule_cron, schedule_enabled=enabled, swarm=swarm)
+                    schedule_cron=schedule_cron, schedule_enabled=enabled, swarm=swarm,
+                    created_by=created_by, report_to=report_to, report_only_on=report_only_on)
         if enabled:
             authority = current_execution_context()
             task.schedule_requested_by = authority.user_id
@@ -225,6 +245,10 @@ async def create_task(title: str, description: str, steps: list[str] | None = No
                 await _enqueue_task_start(task)
             except Exception:
                 warnings.append('Task was saved, but it could not be queued to start now.')
+        if reports.effective_report_to(task) in ('creator', 'both'):
+            where = 'into this chat' if created_by and created_by.get('kind') == 'chat' else \
+                'as a new run of the task you are running'
+            warnings.append(f'When it ends, its result comes back to you {where}.')
         return ToolOutcome.success(f"Task '{task.title}' created.", warnings=warnings,
                                    entities=[EntityRef(type='task', id=str(task.id), name=task.title)])
     except ValueError as exc:
@@ -292,10 +316,13 @@ async def update_task(task_ref: str, title: str | None = None, description: str 
                       steps: list[str] | None = None, schedule_at: str | None = None,
                       schedule_interval_seconds: int | None = None, schedule_cron: str | None = None,
                       schedule_enabled: bool | None = None, clear_schedule: bool = False,
-                      swarm: bool | None = None) -> ToolOutcome:
+                      swarm: bool | None = None, report_to: str | None = None,
+                      report_only_on: str | None = None) -> ToolOutcome:
     """Change an existing task's title, description, steps, schedule or swarm mode. Only the fields you pass change.
     steps replaces all steps. Setting one of schedule_at / schedule_interval_seconds / schedule_cron replaces
-    the schedule; schedule_enabled alone pauses or resumes it; clear_schedule removes it."""
+    the schedule; schedule_enabled alone pauses or resumes it; clear_schedule removes it.
+    report_to (person, creator or both) and report_only_on (always, failure or changed) change who hears
+    when a run ends; creator only works on a task an agent created."""
     from cognitrix.tasks.scheduler import compute_next_run, normalize_schedule_at, validate_schedule
     _require_scope('write')
     if (not isinstance(clear_schedule, bool) or (swarm is not None and not isinstance(swarm, bool))
@@ -311,8 +338,13 @@ async def update_task(task_ref: str, title: str | None = None, description: str 
     new_type = bool(schedule_at or schedule_interval_seconds or schedule_cron)
     if clear_schedule and (new_type or schedule_enabled):
         return ToolOutcome.failure('invalid_schedule', 'clear_schedule cannot be combined with a new schedule')
+    from cognitrix.tasks import reports
+    reason = reports.validate_report_fields(report_to, report_only_on)
+    if reason:
+        return ToolOutcome.failure('invalid_task', reason)
     if not (title is not None or description is not None or steps is not None or new_type
-            or schedule_enabled is not None or clear_schedule or swarm is not None):
+            or schedule_enabled is not None or clear_schedule or swarm is not None
+            or report_to is not None or report_only_on is not None):
         return ToolOutcome.failure('nothing_to_update', 'Pass at least one field to change')
     try:
         task = await _task(task_ref)
@@ -325,6 +357,13 @@ async def update_task(task_ref: str, title: str | None = None, description: str 
             task.step_instructions = _steps(steps)
         if swarm is not None:
             task.swarm = swarm
+        if report_to is not None:
+            if report_to != 'person' and not task.created_by:
+                return ToolOutcome.failure('cannot_report_back',
+                                           'This task was not created by an agent, so it has no creator to report to.')
+            task.report_to = report_to
+        if report_only_on is not None:
+            task.report_only_on = report_only_on
 
         schedule_touched = new_type or clear_schedule or schedule_enabled is not None
         if clear_schedule:
@@ -618,6 +657,7 @@ async def get_task(task_ref: str, runs: int = 5) -> ToolOutcome:
              f'Status: {_status(task, latest)}',
              f'Schedule: {_schedule_text(task)}',
              f'Owner: {"you" if task.owner_id else "shared"}']
+    lines.append(await _report_line(task))
     agents = await _agent_names(list(task.assigned_agents or []))
     if task.team_id:
         lines.append(f'Team: {task.team_id}')
@@ -642,6 +682,19 @@ async def get_task(task_ref: str, runs: int = 5) -> ToolOutcome:
         body.append(untrusted_text_block(f'Result of run {finished.id}', text, _RESULT_CHARS))
     return ToolOutcome.success('\n'.join(lines) + '\n\n' + '\n\n'.join(body),
                                entities=[EntityRef(type='task', id=str(task.id), name=task.title)])
+
+
+async def _report_line(task: Any) -> str:
+    from cognitrix.tasks import reports
+    report_to = reports.effective_report_to(task)
+    creator = getattr(task, 'created_by', None) or {}
+    if report_to == 'person':
+        return 'Results go to: the person'
+    names = await _agent_names([str(creator.get('agent_id'))]) if creator.get('agent_id') else []
+    who = names[0] if names else 'the agent that created it'
+    only = getattr(task, 'report_only_on', None) or 'always'
+    text = f'Results go to: {who}' + (' and the person' if report_to == 'both' else '')
+    return text + ('' if only == 'always' else f' (only on {only})')
 
 
 async def _agent_label() -> str | None:

@@ -30,10 +30,16 @@ async def _row(config: Any) -> Any | None:
 
 
 def _has_options(config: Any) -> bool:
+    """Whether the connection may have built-in tools (``native.py``)."""
     from cognitrix.mcp import catalog
 
     app = catalog.get(getattr(config, 'catalog_id', None))
-    return bool(app and app.options and (getattr(config, 'auth_type', None) or '') == 'oauth')
+    auth = getattr(config, 'auth_type', None) or ''
+    if app is None:
+        return False
+    if app.id in native.APP_TOOLS and auth in ('oauth', 'header'):
+        return True
+    return bool(app.options and auth == 'oauth')
 
 
 async def list_tools(client: Any, config: Any) -> list[dict[str, Any]]:
@@ -66,7 +72,17 @@ async def call_tool(client: Any, config: Any, tool_name: str, arguments: dict[st
         tool = native.find(row, tool_name) if row is not None else None
         if tool is not None:
             return await native.call(row, tool, arguments)
-    return await client.call_tool(config.key, tool_name, arguments)
+    result = await client.call_tool(config.key, tool_name, arguments)
+    if getattr(config, 'catalog_id', None) == 'github' and getattr(config, 'id', None):
+        # Lets watched pull requests tell the agent's own comments apart.
+        try:
+            from cognitrix.tasks import pr_watch
+
+            hints = (client.tool_annotations.get(config.key) or {}).get(tool_name)
+            await pr_watch.record_agent_write(str(config.id), tool_name, hints, result)
+        except Exception:
+            pass
+    return result
 
 
 async def annotations(client: Any, config: Any, tool_name: str) -> dict[str, Any] | None:
