@@ -850,6 +850,7 @@ async def _ensure_schema():
     from cognitrix.sessions.side_questions import SideQuestion
     from cognitrix.payments.models import MODELS as PAYMENT_MODELS
     from cognitrix.meetings.calendar_calls import MODELS as CALENDAR_CALL_MODELS
+    from cognitrix.tasks.pr_watch import MODELS as PR_WATCH_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
@@ -861,6 +862,7 @@ async def _ensure_schema():
         *EMAIL_MODELS,
         *PAYMENT_MODELS,
         *CALENDAR_CALL_MODELS,
+        *PR_WATCH_MODELS,
         AgentOffer,
         SideQuestion,
         MeetingNote,

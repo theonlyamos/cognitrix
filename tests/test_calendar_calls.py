@@ -177,11 +177,12 @@ async def test_poll_reads_connected_calendars(cal, monkeypatch):
     assert reads == ['tok']
 
 
-async def test_upcoming_calls_tool(cal):
+async def test_upcoming_calls_tool(cal, monkeypatch):
     from cognitrix.tools.meetings import upcoming_calls
     from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
 
     cc = cal.cc
+    monkeypatch.setattr(cc, 'utcnow', lambda: NOW)   # the events are at fixed times
     token = set_execution_context(ToolExecutionContext(user_id='u1', agent_id='a1', session_id='s1'))
     try:
         out = await upcoming_calls.run(parent=SimpleNamespace(id='a1', name='Ada'))
