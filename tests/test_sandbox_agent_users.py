@@ -122,3 +122,137 @@ def test_snapshots_hand_files_over_around_saving_and_restoring(tmp_path, monkeyp
     calls.clear()
     snapshots.restore_snapshot(Mgr(), 'u1', item['id'], agent='agent-b')
     assert calls[-1] == ('/agents/agent-b/files', {'give_back': True})
+
+
+# -- file tools stay inside what the agent's own user could reach --------------
+
+@pytest.fixture
+def fenced(folders, monkeypatch):
+    import shutil
+
+    from cognitrix.computer.sandbox import workspace as ws_mod
+
+    if shutil.which('git') is None:
+        pytest.skip('needs git')
+    monkeypatch.setattr(ws_mod, 'HOME', str(folders))
+    monkeypatch.setattr(ws_mod, 'WORK_ROOT', users.WORK_ROOT)
+    monkeypatch.setattr(ws_mod, 'STATE_ROOT', users.STATE_ROOT)
+    monkeypatch.setenv('COGNITRIX_SANDBOX_STATE', str(folders / 'state'))
+    me = AgentUser('cgx01', os.getuid(), os.getgid())
+    other = AgentUser('cgx02', 99998, 99998)
+    monkeypatch.setattr(users, 'pool', lambda: [me, other])
+    ws = ws_mod.Workspace(user_for=lambda agent: me)
+    for agent in ('agent-a', 'agent-b'):
+        for folder in users.agent_folders(agent):
+            os.makedirs(folder, exist_ok=True)
+    (folders / 'work' / 'agent-b' / 'secret.txt').write_text('token=abc')
+    return ws
+
+
+def test_file_tools_refuse_another_agents_folder(fenced, folders):
+    from cognitrix.computer.sandbox.workspace import WorkspaceError
+
+    other = str(folders / 'work' / 'agent-b' / 'secret.txt')
+    for call in (lambda: fenced.read_file('agent-a', other),
+                 lambda: fenced.write_file('agent-a', other, 'x'),
+                 lambda: fenced.read_file('agent-a', str(folders / 'state' / 'agent-b.vncpass'))):
+        with pytest.raises(WorkspaceError) as err:
+            call()
+        assert err.value.code == 'not_allowed'
+    # A link in its own folder doesn't get around it.
+    os.symlink(str(folders / 'work' / 'agent-b'), str(folders / 'work' / 'agent-a' / 'peek'))
+    with pytest.raises(WorkspaceError):
+        fenced.read_file('agent-a', 'peek/secret.txt')
+    fenced.write_file('agent-a', 'mine.txt', 'hello')
+    assert fenced.read_file('agent-a', 'mine.txt')['text'].endswith('hello')
+    with pytest.raises(WorkspaceError):  # its user can't list the folder that holds everyone's
+        fenced.grep('agent-a', 'token', path=str(folders / 'work'))
+    # Searching elsewhere skips links into another agent's folder.
+    import tempfile
+    with tempfile.TemporaryDirectory() as shared:
+        os.symlink(other, os.path.join(shared, 'leak.txt'))
+        open(os.path.join(shared, 'fine.txt'), 'w').write('token=public')
+        found = fenced.grep('agent-a', 'token', path=shared)
+        assert found['hits'] == 1 and 'fine.txt' in found['lines'][0]
+        assert fenced.glob('agent-a', '*.txt', path=shared)['matches'] == ['fine.txt']
+
+
+def test_import_refuses_a_link_that_leads_out_of_the_project(fenced, folders):
+    import io
+    import tarfile
+
+    from cognitrix.computer.sandbox.workspace import WorkspaceError
+
+    def archive(files):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode='w:gz') as tar:
+            for name, text in files.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(text)
+                tar.addfile(info, io.BytesIO(text.encode()))
+        return buf.getvalue()
+
+    fenced.import_project('agent-a', 'proj', archive({'src/a.txt': 'one'}))
+    project = folders / 'work' / 'agent-a' / 'proj'
+    # The agent swaps a folder in its project for a link to another agent's folder.
+    import shutil
+    shutil.rmtree(project / 'src')
+    os.symlink(str(folders / 'work' / 'agent-b'), str(project / 'src'))
+    with pytest.raises(WorkspaceError) as err:
+        fenced.import_project('agent-a', 'proj', archive({'src/secret.txt': 'overwritten'}), replace=True)
+    assert err.value.code == 'bad_archive'
+    assert (folders / 'work' / 'agent-b' / 'secret.txt').read_text() == 'token=abc'
+
+
+def test_inside_follows_links():
+    import tempfile
+
+    from cognitrix.computer.sandbox.workspace import _inside
+
+    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as away:
+        os.makedirs(os.path.join(root, 'ok'))
+        os.symlink(away, os.path.join(root, 'out'))
+        assert _inside(root, 'ok/file') == os.path.join(os.path.realpath(root), 'ok', 'file')
+        assert _inside(root, 'out/file') is None
+        assert _inside(root, '../x') is None
+
+
+# -- running computers move onto the image with agent users --------------------
+
+def test_a_container_started_without_the_capabilities_is_outdated(monkeypatch):
+    from cognitrix.computer.sandbox.client import SandboxManager
+
+    mgr = SandboxManager(image='img')
+    monkeypatch.setattr(mgr, '_local_image_id', lambda fresh=False: 'sha256:new')
+    labels = {'Config': {'Labels': {'cognitrix.agent-users': '1'}}, 'Image': 'sha256:new'}
+    assert mgr._outdated({**labels, 'HostConfig': {'CapAdd': None}})
+    assert not mgr._outdated({**labels, 'HostConfig': {'CapAdd': ['CAP_CHOWN', 'CAP_FOWNER', 'CAP_SETGID',
+                                                                  'CAP_SETUID']}})
+    assert not mgr._outdated({'Config': {'Labels': {}}, 'Image': 'sha256:new', 'HostConfig': {}})
+    assert mgr._outdated({'Config': {'Labels': {}}, 'Image': 'sha256:old', 'HostConfig': {}})
+
+
+def test_idle_outdated_computers_are_restarted(monkeypatch):
+    from cognitrix.computer.sandbox import client
+    from cognitrix.computer.sandbox.client import Sandbox, SandboxManager
+
+    mgr = SandboxManager(image='img')
+    box = Sandbox('cognitrix-sandbox-x', 't', 1, 2)
+    box.owner = 'u1'
+    mgr._boxes[box.name] = box
+    monkeypatch.setattr(mgr, '_inspect', lambda name: {'State': {'Running': True}})
+    monkeypatch.setattr(mgr, '_outdated', lambda info: True)
+    updated = []
+    monkeypatch.setattr(mgr, 'update', lambda owner: updated.append(owner))
+    answers = {'busy': ['a command is running'], 'idle_s': 9999}
+    monkeypatch.setattr(box, 'request', lambda *a, **k: answers)
+    assert mgr.update_idle() == [] and not updated
+    answers.update(busy=[], idle_s=5)
+    assert mgr.update_idle() == []
+    answers.update(idle_s=client.AUTO_UPDATE_IDLE_S + 1)
+    mgr.viewer_opened('u1')
+    assert mgr.update_idle() == []  # someone is watching it
+    mgr.viewer_closed('u1')
+    assert mgr.update_idle() == [box.name] and updated == ['u1']
+    box.owner = None  # the signed-out local user's computer is updated too
+    assert mgr.update_idle() == [box.name] and updated == ['u1', None]

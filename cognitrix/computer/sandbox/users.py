@@ -284,3 +284,45 @@ def _fix(path: str, uid: int, gid: int) -> None:
             os.chmod(path, want)
     except OSError:
         pass
+
+
+# -- what an agent's file tools may touch -----------------------------------------
+
+def _within(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip('/') + '/')
+
+
+class Boundary:
+    """What one agent may read and write through the computer's file tools,
+    which run in the supervisor (as 'agent', a member of every agent's group):
+    the same as the agent's own Linux user could, so the tools are no way
+    around it. Paths are checked after following links."""
+
+    def __init__(self, desktop: str, user: AgentUser, everyone: list[AgentUser]) -> None:
+        self.desktop = check_name(desktop)
+        self.own = [os.path.realpath(p) for p in agent_folders(desktop)] + [os.path.realpath(runtime_dir(user))]
+        state = os.environ.get('COGNITRIX_SANDBOX_STATE', '/tmp/cognitrix-sandbox')
+        self.closed = [os.path.realpath(p) for p in (HOME, state, '/tmp/cognitrix-run')]
+        self.other_uids = {u.uid for u in everyone if u.uid != user.uid}
+        self.other_gids = {u.gid for u in everyone if u.gid != user.gid}
+
+    def allows(self, path: str) -> bool:
+        real = os.path.realpath(path)
+        if any(_within(real, root) for root in self.own):
+            return True
+        if any(_within(real, root) for root in self.closed):
+            return False
+        # Elsewhere (/tmp, /opt, ...): not what another agent's user owns, nor
+        # inside a folder of theirs.
+        probe = real
+        while True:
+            try:
+                st = os.lstat(probe)
+                if st.st_uid in self.other_uids or st.st_gid in self.other_gids:
+                    return False
+            except OSError:
+                pass
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                return True
+            probe = parent

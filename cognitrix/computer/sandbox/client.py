@@ -65,6 +65,13 @@ LABEL = 'cognitrix.sandbox'
 # published (only the changed layers download). 0 turns the check off.
 UPDATE_CHECK_HOURS_ENV = 'COGNITRIX_SANDBOX_UPDATE_CHECK_HOURS'
 _IMAGE_ID_TTL_S = 60.0
+# A running computer made from an older image moves onto the newer one once
+# it has been idle this long (0 turns that off; the panel's Update button
+# still works). Checked every AUTO_UPDATE_EVERY_S.
+AUTO_UPDATE_IDLE_S = float(os.environ.get('COGNITRIX_SANDBOX_AUTO_UPDATE_IDLE_S', '600') or 0)
+AUTO_UPDATE_EVERY_S = 300.0
+
+_NO_OWNER = object()
 
 _ERRORS = {'human_control': HumanControl, 'stale': Stale, 'busy': Busy, 'blocked': Blocked,
            'unsupported': Unsupported}
@@ -161,6 +168,9 @@ class Sandbox:
         self.machine_id = ''  # Fly only
         self.image_id = ''  # the image the container was made from (sha256:...)
         self.container_id = ''
+        # The user it belongs to, for restarting it onto a newer image (None is
+        # the signed-out local user, so "not known" is _NO_OWNER).
+        self.owner: Any = _NO_OWNER
         self.passwords: dict[str, str] = {}  # desktop -> VNC password
         # One driver per desktop, kept so its snapshots last between tool calls
         # (normalized-coordinate clicks read the last look's size).
@@ -237,6 +247,7 @@ class SandboxManager:
         # Open live screens per user: a hosted computer isn't stopped while
         # someone watches it.
         self._viewers: dict[str, int] = {}
+        self._auto_update: threading.Thread | None = None
 
     kind = 'docker'
 
@@ -356,11 +367,13 @@ class SandboxManager:
             token = labels.get(f'{LABEL}.token', '')
             if box is None or box.token != token or not box.api.endswith(f':{api_port}'):
                 box = Sandbox(name, token, api_port, viewer_port)
+                box.owner = user_id
                 self._boxes[name] = box
             box.image_id = str(info.get('Image') or '')
             box.container_id = str(info.get('Id') or '')
         self._wait_healthy(box)
         self.check_for_update()
+        self._start_auto_update()
         return box
 
     @staticmethod
@@ -402,9 +415,61 @@ class SandboxManager:
         return image_id
 
     def _outdated(self, info: dict) -> bool:
+        """Made from an older image than the newest downloaded one, or started
+        without what the image needs to give each agent its own Linux user
+        (an older engine started it)."""
         current = str(info.get('Image') or '')
         latest = self._local_image_id()
-        return bool(current and latest and current != latest)
+        if current and latest and current != latest:
+            return True
+        return self._lacks_agent_users(info)
+
+    def _lacks_agent_users(self, info: dict) -> bool:
+        labels = (info.get('Config') or {}).get('Labels') or {}
+        if labels.get(AGENT_USERS_LABEL) != '1':
+            return False  # its image doesn't have them
+        added = {str(c).upper().removeprefix('CAP_') for c in ((info.get('HostConfig') or {}).get('CapAdd') or [])}
+        return not set(AGENT_USER_CAPS) <= added
+
+    # -- moving idle computers onto a newer image ---------------------------------
+    def _start_auto_update(self) -> None:
+        if self._auto_update is not None or AUTO_UPDATE_IDLE_S <= 0:
+            return
+        self._auto_update = threading.Thread(target=self._auto_update_loop, name='sandbox-auto-update', daemon=True)
+        self._auto_update.start()
+
+    def _auto_update_loop(self) -> None:
+        while True:
+            time.sleep(AUTO_UPDATE_EVERY_S)
+            try:
+                self.update_idle()
+            except Exception:
+                logger.info("Couldn't check the agents' computers for updates", exc_info=True)
+
+    def update_idle(self) -> list[str]:
+        """Restart running computers that are outdated (see ``_outdated``) onto
+        the newest image, once nobody has used one for a while: no request,
+        command, take-over or open live screen. Files and logins stay; open
+        windows close, which is why it waits. Returns the restarted names."""
+        done = []
+        for name, box in list(self._boxes.items()):
+            if box.owner is _NO_OWNER:
+                continue
+            info = self._inspect(name)
+            if info is None or not (info.get('State') or {}).get('Running') or not self._outdated(info):
+                continue
+            if self.watched(box.owner):
+                continue
+            try:
+                activity = box.request('GET', '/activity', timeout=10)
+            except DriverError:
+                continue
+            if activity.get('busy') or float(activity.get('idle_s') or 0) < AUTO_UPDATE_IDLE_S:
+                continue
+            logger.info('Moving idle sandbox %s onto the newer image', name)
+            self.update(box.owner)
+            done.append(name)
+        return done
 
     def update_available(self, box: Sandbox) -> bool:
         """True when a newer image has been downloaded than the one this

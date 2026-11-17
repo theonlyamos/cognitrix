@@ -138,6 +138,7 @@ class Workspace:
         # desktop name -> its agent's own Linux user (users.AgentUser), or
         # None when every agent runs as 'agent'.
         self.user_for = user_for
+        self._pool = None
         os.makedirs(WORK_ROOT, exist_ok=True)
         os.makedirs(STATE_ROOT, exist_ok=True)
 
@@ -147,13 +148,43 @@ class Workspace:
         os.makedirs(path, exist_ok=True)
         return path
 
+    def boundary(self, agent: str):
+        """What the agent may touch when it has its own Linux user (None:
+        agents share one user and the whole container is theirs)."""
+        user = self.user_for(agent) if self.user_for is not None else None
+        if user is None:
+            return None
+        from cognitrix.computer.sandbox.users import Boundary, pool
+        if self._pool is None:
+            self._pool = pool()
+        return Boundary(agent, user, self._pool)
+
     def resolve(self, agent: str, path: str | None, base: str | None = None) -> str:
         """An absolute path in the container. Relative paths start at the
-        agent's current folder. The whole container is the sandbox, so any
-        path is allowed."""
+        agent's current folder. With a Linux user per agent, only what that
+        user could reach: not another agent's folders, nor the computer's own
+        files (links are followed before checking)."""
         raw = os.path.expanduser(str(path or '.'))
         start = base or self.cwd(agent)
-        return os.path.normpath(raw if os.path.isabs(raw) else os.path.join(start, raw))
+        full = os.path.normpath(raw if os.path.isabs(raw) else os.path.join(start, raw))
+        fence = self.boundary(agent)
+        if fence is None:
+            return full
+        real = os.path.realpath(full)
+        if not fence.allows(real):
+            raise WorkspaceError('not_allowed', f"{path or full} is outside what you can use on this computer: another "
+                                 "agent's folder or the computer's own files.")
+        return real
+
+    @staticmethod
+    def _walk(base: str, fence, skip: tuple[str, ...]):
+        """os.walk that stays out of folders and files the agent can't use."""
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if d not in skip
+                           and (fence is None or fence.allows(os.path.join(dirpath, d)))]
+            if fence is not None:
+                filenames = [f for f in filenames if fence.allows(os.path.join(dirpath, f))]
+            yield dirpath, dirnames, filenames
 
     def cwd(self, agent: str) -> str:
         got = self._cwd.get(agent)
@@ -434,8 +465,8 @@ class Workspace:
         regex = _glob_regex(pattern if ('/' in pattern or pattern.startswith('**')) else f'**/{pattern}')
         found: list[tuple[float, str]] = []
         seen = 0
-        for dirpath, dirnames, filenames in os.walk(base):
-            dirnames[:] = [d for d in dirnames if d not in ('.git', 'node_modules', '.venv', '__pycache__')]
+        for dirpath, dirnames, filenames in self._walk(base, self.boundary(agent),
+                                                       ('.git', 'node_modules', '.venv', '__pycache__')):
             names = filenames + (dirnames if include_dirs else [])
             for name in names:
                 seen += 1
@@ -462,6 +493,7 @@ class Workspace:
         limit = max(1, min(int(max_results or 100), 1000))
         context = max(0, min(int(context or 0), 10))
         files = [base] if os.path.isfile(base) else None
+        fence = self.boundary(agent)
         out: list[str] = []
         hits = 0
 
@@ -469,8 +501,8 @@ class Workspace:
             if files is not None:
                 yield from files
                 return
-            for dirpath, dirnames, filenames in os.walk(base):
-                dirnames[:] = [d for d in dirnames if d not in ('.git', 'node_modules', '.venv', '__pycache__')]
+            for dirpath, _dirnames, filenames in self._walk(base, fence,
+                                                            ('.git', 'node_modules', '.venv', '__pycache__')):
                 for name in filenames:
                     if include and not fnmatch.fnmatch(name, include):
                         continue
@@ -565,8 +597,11 @@ class Workspace:
                 tracked = self._git(agent, name, 'ls-files', '-z').stdout.split('\0')
                 for rel in tracked:
                     if rel and rel not in incoming:
+                        gone = _inside(target, rel)
+                        if gone is None:
+                            continue
                         try:
-                            os.remove(os.path.join(target, rel))
+                            os.remove(gone)
                         except OSError:
                             pass
             else:
@@ -586,7 +621,12 @@ class Workspace:
             with open(os.path.join(git_dir, 'info', 'attributes'), 'w', encoding='utf-8') as fh:
                 fh.write('* -text -filter -ident\n')
             for member in members:
-                dest = os.path.join(target, member.name)
+                # Inside the project after following links: a link the agent
+                # made in its folder can't send a file somewhere else.
+                dest = _inside(target, member.name)
+                if dest is None:
+                    raise WorkspaceError('bad_archive', f'{member.name} would land outside the project folder '
+                                         '(a link in the way); remove the link in the sandbox and copy in again.')
                 if member.isdir():
                     os.makedirs(dest, exist_ok=True)
                     continue
@@ -666,8 +706,8 @@ class Workspace:
                 got = self._git(agent, name, 'rev-parse', f'HEAD:{f["path"]}', check=False)
                 item['base'] = got.stdout.strip() if got.returncode == 0 else None
             if f['status'] != 'deleted':
-                full = os.path.join(target, f['path'])
-                if os.path.islink(full) or not os.path.isfile(full):
+                full = _inside(target, f['path'])
+                if full is None or os.path.islink(full) or not os.path.isfile(full):
                     continue
                 with open(full, 'rb') as fh:
                     data = fh.read()
@@ -694,8 +734,7 @@ class Workspace:
         """Files under ``base`` changed after ``since`` (test screenshots)."""
         root = self.resolve(agent, base)
         found: list[tuple[float, str]] = []
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in ('.git', 'node_modules', '.venv')]
+        for dirpath, _dirnames, filenames in self._walk(root, self.boundary(agent), ('.git', 'node_modules', '.venv')):
             for name in filenames:
                 if name.lower().endswith(suffixes):
                     full = os.path.join(dirpath, name)
@@ -716,6 +755,21 @@ class Workspace:
             except OSError:
                 continue
         return out
+
+
+def _inside(root: str, rel: str) -> str | None:
+    """``root``/``rel`` when it is inside ``root`` once every link on the way
+    is followed (the file itself may be a link: callers remove or skip it),
+    else None."""
+    base = os.path.realpath(root)
+    joined = os.path.normpath(os.path.join(base, rel))
+    parent = os.path.realpath(os.path.dirname(joined))
+    if parent != base and not parent.startswith(base + os.sep):
+        return None
+    full = os.path.join(parent, os.path.basename(joined))
+    if not full.startswith(base + os.sep):
+        return None
+    return full
 
 
 def _safe_members(tar: tarfile.TarFile) -> list[tarfile.TarInfo]:
