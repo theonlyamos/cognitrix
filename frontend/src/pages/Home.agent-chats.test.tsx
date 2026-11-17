@@ -15,6 +15,7 @@ const harness = vi.hoisted(() => ({
   resolveToolCall: vi.fn(),
   stopRunningTools: vi.fn(),
   failRunningTools: vi.fn(),
+  markTurnDuration: vi.fn(),
   clearMessages: vi.fn(),
   setMessages: vi.fn(),
 }));

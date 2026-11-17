@@ -158,3 +158,44 @@ describe('toChatMessages speakers', () => {
     expect(toChatMessages(entries).some((m) => m.speaker)).toBe(false);
   });
 });
+
+describe('turn timing on restored replies', () => {
+  it('puts the end time and duration on the turn reply and the start time on the question', () => {
+    const messages = toChatMessages(parseChatEntries([
+      { role: 'user', type: 'text', content: 'Plan my week' },
+      { role: 'assistant', type: 'tool_calls', content: 'Checking.', tool_calls: [{ name: 'calendar', arguments: {}, tool_call_id: 'c1' }] },
+      { role: 'tool', tool_call_id: 'c1', content: 'ok' },
+      { role: 'assistant', type: 'text', content: 'Here is your week.' },
+      { role: 'system', type: 'turn_timing', content: 'Took 12.5s', duration: 12.5, at: '2026-11-17T10:00:12.500Z' },
+    ]));
+    const user = messages.find((m) => m.role === 'user');
+    const preamble = messages.find((m) => m.content === 'Checking.');
+    const reply = messages.find((m) => m.content === 'Here is your week.');
+    expect(user?.timestamp).toBe('2026-11-17T10:00:00.000Z');
+    expect(preamble?.durationMs).toBeUndefined();
+    expect(reply).toMatchObject({ timestamp: '2026-11-17T10:00:12.500Z', durationMs: 12500 });
+  });
+
+  it('shows the duration of older turns that have no end time', () => {
+    const messages = toChatMessages(parseChatEntries([
+      { role: 'user', type: 'text', content: 'hi' },
+      { role: 'assistant', type: 'text', content: 'hello' },
+      { role: 'system', type: 'turn_timing', content: 'Took 1s', duration: 1.2 },
+    ]));
+    expect(messages[0].timestamp).toBeUndefined();
+    expect(messages[1]).toMatchObject({ durationMs: 1200 });
+    expect(messages[1].timestamp).toBeUndefined();
+  });
+
+  it('does not move a turn timing onto an earlier turn reply', () => {
+    const messages = toChatMessages(parseChatEntries([
+      { role: 'user', type: 'text', content: 'one' },
+      { role: 'assistant', type: 'text', content: 'first' },
+      { role: 'system', type: 'turn_timing', content: 'Took 1s', duration: 1, at: '2026-11-17T10:00:01Z' },
+      { role: 'assistant', type: 'text', content: 'second' },
+      { role: 'system', type: 'turn_timing', content: 'Took 2s', duration: 2, at: '2026-11-17T10:00:05Z' },
+    ]));
+    expect(messages[1].durationMs).toBe(1000);
+    expect(messages[2].durationMs).toBe(2000);
+  });
+});

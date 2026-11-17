@@ -15,6 +15,8 @@ export interface BackendChatEntry {
   outcome?: { status?: unknown; artifacts?: unknown; card?: unknown };
   artifact?: unknown;
   duration?: number;
+  /** turn_timing: when the reply finished (ISO, UTC). Older rows lack it. */
+  at?: string;
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
 }
@@ -30,8 +32,8 @@ export type TranscriptTool = {
 };
 
 export type TranscriptEntry =
-  | { kind: 'user'; content: string; steered?: boolean }
-  | { kind: 'assistant'; content: string; name?: string; live?: boolean }
+  | { kind: 'user'; content: string; steered?: boolean; at?: string }
+  | { kind: 'assistant'; content: string; name?: string; live?: boolean; at?: string; durationMs?: number }
   | { kind: 'tool_calls'; content: string; name?: string; tools: TranscriptTool[] }
   | { kind: 'tool_result'; content: string }
   | { kind: 'image'; artifact: ToolArtifact }
@@ -80,6 +82,34 @@ const safeArtifacts = (value: unknown): ToolArtifact[] | undefined => {
     ...(candidate.height !== undefined ? { height: candidate.height } : {}),
   })) : undefined;
 };
+
+const validDate = (s: unknown): string | undefined => (
+  typeof s === 'string' && !Number.isNaN(new Date(s).getTime()) ? s : undefined
+);
+
+/** A turn_timing row closes a turn: put its end time and duration on the
+ *  turn's last reply, and its start time on the message that began it. */
+function stampTurn(out: TranscriptEntry[], timing: BackendChatEntry) {
+  const duration = typeof timing.duration === 'number' && Number.isFinite(timing.duration) && timing.duration >= 0
+    ? timing.duration : undefined;
+  const at = validDate(timing.at);
+  let replied = false;
+  for (let i = out.length - 1; i >= 0; i--) {
+    const e = out[i];
+    if (e.kind === 'user' && !e.steered) {
+      if (at && duration !== undefined && !e.at) {
+        e.at = new Date(new Date(at).getTime() - duration * 1000).toISOString();
+      }
+      return;
+    }
+    if (e.kind === 'assistant' && !replied) {
+      if (e.durationMs !== undefined || e.at) return; // an earlier turn's reply
+      if (duration !== undefined) e.durationMs = Math.round(duration * 1000);
+      if (at) e.at = at;
+      replied = true;
+    }
+  }
+}
 
 /** Map raw backend chat entries to render-ready transcript entries. Unknown
  *  shapes fall back to `system` so future entry types degrade gracefully. */
@@ -169,6 +199,7 @@ export function parseChatEntries(chat: BackendChatEntry[] | null | undefined): T
           ? `${(m.prompt_tokens ?? 0).toLocaleString(dateLocale())} → ${(m.completion_tokens ?? 0).toLocaleString(dateLocale())} tok`
           : undefined;
       out.push({ kind: 'timing', label: content || 'turn', tokens });
+      stampTurn(out, m);
     } else if (content.trim()) {
       out.push({ kind: 'system', content });
     }
@@ -186,7 +217,7 @@ export function toChatMessages(
   // Group chats label each reply with the agent who wrote it.
   const who = (name?: string) => (options.speakers && name ? { speaker: name } : {});
   for (const e of entries) {
-    if (e.kind === 'user') out.push({ id: `hist-${out.length}`, role: 'user', content: e.content, ...(e.steered ? { steered: true } : {}) });
+    if (e.kind === 'user') out.push({ id: `hist-${out.length}`, role: 'user', content: e.content, ...(e.steered ? { steered: true } : {}), ...(e.at ? { timestamp: e.at } : {}) });
     else if (e.kind === 'image') {
       const last = out[out.length - 1];
       if (last?.role === 'user') {
@@ -195,7 +226,16 @@ export function toChatMessages(
         out.push({ id: `hist-${out.length}`, role: 'user', content: '', artifacts: [e.artifact] });
       }
     }
-    else if (e.kind === 'assistant') out.push({ id: `hist-${out.length}`, role: 'assistant', content: e.content, ...who(e.name) });
+    else if (e.kind === 'assistant') {
+      out.push({
+        id: `hist-${out.length}`,
+        role: 'assistant',
+        content: e.content,
+        ...who(e.name),
+        ...(e.at ? { timestamp: e.at } : {}),
+        ...(e.durationMs !== undefined ? { durationMs: e.durationMs } : {}),
+      });
+    }
     else if (e.kind === 'tool_calls') {
       // The assistant's preamble (if any) first, then the tools it invoked as a
       // chip row — matches how the live stream renders a tool round.

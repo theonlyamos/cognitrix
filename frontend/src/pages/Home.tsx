@@ -148,7 +148,7 @@ interface ApprovalRequest {
 }
 
 export default function Home() {
-  const { messages, addMessage, attachArtifactsToLatestUser: attachArtifactsToLatestUserFromSession, addArtifactsToLastUser, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, stopRunningTools, failRunningTools, clearMessages, setMessages } = useSession();
+  const { messages, addMessage, attachArtifactsToLatestUser: attachArtifactsToLatestUserFromSession, addArtifactsToLastUser, appendToLastMessage, setIsStreaming, addToolCall, resolveToolCall, stopRunningTools, failRunningTools, markTurnDuration, clearMessages, setMessages } = useSession();
   const attachArtifactsToLatestUser = attachArtifactsToLatestUserFromSession ?? addArtifactsToLastUser;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -978,9 +978,10 @@ export default function Home() {
     setFollowSid(null);
     if (reason === 'stopped') stopRunningTools();
     else if (reason === 'error') failRunningTools(errorResult);
+    if (reason !== 'error') markTurnDuration();
     void refetchConvos({ silent: true });
     void refreshRuns();
-  }, [clearStopFallback, failRunningTools, refetchConvos, refreshRuns, setIsStreaming, stopRunningTools]);
+  }, [clearStopFallback, failRunningTools, markTurnDuration, refetchConvos, refreshRuns, setIsStreaming, stopRunningTools]);
 
   // A conversation finished in the background: refresh the list so its
   // new reply time shows.
@@ -1374,7 +1375,8 @@ export default function Home() {
           while (end < all.length && all[end].role === 'user' && (isUploadNote(all[end]) || !all[end].content.trim())) end += 1;
           const label = /(\n|^)📎 .*$/s.exec(all[replace.index].content)?.[0] ?? '';
           setMessages(all.slice(0, end).map((m, i) => (
-            i === replace.index ? { ...m, content: `${msg}${label && !label.startsWith('\n') && msg ? '\n' : ''}${label}` } : m
+            // Re-sent now: the new answer's time is measured from here.
+            i === replace.index ? { ...m, timestamp: new Date().toISOString(), content: `${msg}${label && !label.startsWith('\n') && msg ? '\n' : ''}${label}` } : m
           )));
         } else {
           setMessages(messagesRef.current.slice(0, replace.index));

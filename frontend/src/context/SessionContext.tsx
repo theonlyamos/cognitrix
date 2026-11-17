@@ -31,6 +31,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   timestamp?: string;
+  /** How long the agent took to answer (ms), on the turn's final reply. */
+  durationMs?: number;
   /** Session-owned images attached to this user turn. */
   artifacts?: ToolArtifact[];
   /** Tool chips for a `role: 'tool'` row (the agent's tool activity). */
@@ -59,6 +61,8 @@ interface SessionContextType {
   /** Mark every still-running tool as failed when the turn terminates in error. */
   failRunningTools: (result?: string) => void;
   clearMessages: () => void;
+  /** A turn ended: stamp its final reply with how long it took. */
+  markTurnDuration: () => void;
   setMessages: (messages: ChatMessage[]) => void;
   setAgentId: (agentId: string | null) => void;
   setIsStreaming: (isStreaming: boolean) => void;
@@ -220,6 +224,28 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setMessagesState([]);
   }, []);
 
+  // Duration runs from the person's message to the end of the turn, and goes
+  // on the turn's last reply (not on a preamble before a tool round).
+  const markTurnDuration = useCallback(() => {
+    const now = Date.now();
+    setMessagesState(prev => {
+      let reply = -1;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const m = prev[i];
+        if (m.role === 'user' && !m.steered) {
+          if (reply === -1 || !m.timestamp || prev[reply].durationMs !== undefined) return prev;
+          const started = new Date(m.timestamp).getTime();
+          if (!Number.isFinite(started)) return prev;
+          const copy = [...prev];
+          copy[reply] = { ...copy[reply], timestamp: new Date(now).toISOString(), durationMs: Math.max(0, now - started) };
+          return copy;
+        }
+        if (reply === -1 && m.role === 'assistant' && m.content.trim()) reply = i;
+      }
+      return prev;
+    });
+  }, []);
+
   const setAgentId = useCallback((agentId: string | null) => {
     setCurrentAgentId(agentId);
   }, []);
@@ -238,6 +264,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       stopRunningTools,
       failRunningTools,
       clearMessages,
+      markTurnDuration,
       setMessages: setMessagesState,
       setAgentId,
       setIsStreaming,
