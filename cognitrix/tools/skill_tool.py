@@ -1,6 +1,7 @@
 """load_skill meta-tool — loads skill instructions into agent context."""
 
 import logging
+import re
 
 from cognitrix.tools.tool import tool
 
@@ -74,6 +75,8 @@ async def load_skill(skill_name: str, context: str = "same") -> str:
 
     # Render skill content - resolve environment variables
     skill_content = _render_skill(manifest)
+    if (note := _host_browser_note(manifest)):
+        skill_content = note + '\n\n' + skill_content
 
     if context == "same":
         # Return the skill instructions for the agent to follow
@@ -85,6 +88,29 @@ async def load_skill(skill_name: str, context: str = "same") -> str:
         skill_content=skill_content,
         parent=parent,
     )
+
+
+_BROWSER_SKILL = re.compile(r'\b(browser|browse|playwright|puppeteer|selenium|chromium|headless)\b', re.I)
+
+
+def _host_browser_note(manifest) -> str:
+    """A skill that drives a browser would run it on the person's own
+    computer (its commands go through Bash on this machine). While the agent
+    has its own computer, remind it to browse there instead."""
+    text = ' '.join(str(getattr(manifest, k, '') or '') for k in ('name', 'description'))
+    if not _BROWSER_SKILL.search(text.replace('-', ' ')):
+        return ''
+    try:
+        from cognitrix.common.sandbox_work import turn_in_sandbox
+        from cognitrix.computer.sandbox.client import sandbox_mode
+
+        if not sandbox_mode() or turn_in_sandbox():
+            return ''  # no computer of its own, or this skill's commands already run there
+    except Exception:
+        return ''
+    return ("[Before you follow this skill: it drives a browser on the person's own computer. Use it only if the "
+            'person explicitly asked you to use their computer or their browser. Otherwise browse on your own '
+            'computer instead: open_app with the web address, then the window tools.]')
 
 
 def _render_skill(manifest) -> str:

@@ -52,7 +52,7 @@ def test_desktop_tools_are_registered():
 
 
 async def test_screenshot_is_scaled_and_queued_as_an_image(gui):
-    out = (await misc.take_screenshot.run()).content
+    out = (await misc.take_screenshot.run(computer='person')).content
     assert '1280x720' in out
     assert len(gui.images) == 1
     uri = gui.images[0]
@@ -62,17 +62,17 @@ async def test_screenshot_is_scaled_and_queued_as_an_image(gui):
 
 
 async def test_clicks_scale_back_to_the_screen(gui):
-    await misc.take_screenshot.run()
-    await misc.mouse_click.run(x=640, y=360)
+    await misc.take_screenshot.run(computer='person')
+    await misc.mouse_click.run(x=640, y=360, computer='person')
     assert gui.clicks == [(960, 540)]
 
 
 async def test_gemini_grid_coordinates_are_converted(gui):
     token = misc.coords_normalized.set(True)
     try:
-        out = (await misc.take_screenshot.run()).content
+        out = (await misc.take_screenshot.run(computer='person')).content
         assert '0-1000' in out
-        await misc.mouse_click.run(x=500, y=500)
+        await misc.mouse_click.run(x=500, y=500, computer='person')
     finally:
         misc.coords_normalized.reset(token)
     assert gui.clicks == [(960, 540)]
@@ -80,7 +80,7 @@ async def test_gemini_grid_coordinates_are_converted(gui):
 
 async def test_screenshot_without_a_collecting_chat_says_so(monkeypatch):
     monkeypatch.setattr(misc, '_pyautogui', lambda: FakeGui())
-    out = (await misc.take_screenshot.run()).content
+    out = (await misc.take_screenshot.run(computer='person')).content
     assert 'cannot show images' in out
 
 
@@ -91,7 +91,7 @@ async def test_concurrent_chats_keep_their_own_images(monkeypatch):
         token, images = misc.start_image_collection()
         try:
             await asyncio.sleep(delay)
-            await misc.take_screenshot.run()
+            await misc.take_screenshot.run(computer='person')
             await asyncio.sleep(0.02)
             return len(images)
         finally:

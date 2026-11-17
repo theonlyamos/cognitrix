@@ -70,14 +70,31 @@ _ERRORS = {'human_control': HumanControl, 'stale': Stale, 'busy': Busy, 'blocked
 
 def sandbox_mode() -> str | None:
     """'docker' or 'fly' when agents use the sandboxed computer, else None.
-    The environment variable wins; otherwise the setting saved from Settings
-    (which only switches the local Docker one on)."""
+    The environment variable wins; then the setting saved from Settings
+    (which only switches the local Docker one on); with neither, it is on
+    when Docker is installed."""
     value = os.environ.get(MODE_ENV, '').strip().lower()
     if value:
         if value == 'fly':
             return 'fly'
         return 'docker' if value in ('docker', '1', 'true', 'yes', 'on') else None
-    return 'docker' if _saved().get('enabled') else None
+    saved = _saved()
+    if 'enabled' in saved:
+        return 'docker' if saved.get('enabled') else None
+    # Never switched in Settings: on wherever Docker is installed, so agents
+    # do computer work on their own computer rather than the person's.
+    return 'docker' if _docker_installed() else None
+
+
+_docker_seen: tuple[float, bool] = (-1.0, False)
+
+
+def _docker_installed() -> bool:
+    global _docker_seen
+    now = time.monotonic()
+    if _docker_seen[0] < 0 or now - _docker_seen[0] > 300:
+        _docker_seen = (now, bool(shutil.which('docker')))
+    return _docker_seen[1]
 
 
 def mode_from_env() -> bool:

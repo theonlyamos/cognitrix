@@ -126,6 +126,7 @@ def _with_folder_prompt(prompt, folders, sandbox: tuple | None = None, session_i
     person sent this message with it on."""
     prompt = _with_folder_block(prompt, folders, sandbox)
     prompt = _with_app_screens(prompt, session_id)
+    prompt = _with_computer_note(prompt)
     try:
         from cognitrix.tools.swarm import SWARM_MODE_NOTE, swarm_requested
 
@@ -176,6 +177,20 @@ def _with_folder_block(prompt, folders, sandbox: tuple | None = None) -> Any:
             and isinstance(prompt[0].get('content'), str):
         return [{**prompt[0], 'content': prompt[0]['content'] + '\n\n' + block}, *prompt[1:]]
     return [{'role': 'system', 'content': block}, *prompt]
+
+
+def _with_computer_note(prompt) -> Any:
+    """Tell the agent to do computer and browser work on its own sandboxed
+    computer, not the person's, while it has one."""
+    if not isinstance(prompt, list):
+        return prompt
+    try:
+        from cognitrix.tools.computer import computer_note
+
+        note = computer_note()
+    except Exception:
+        return prompt
+    return _with_note(prompt, note)
 
 
 def _with_note(prompt, note: str) -> Any:

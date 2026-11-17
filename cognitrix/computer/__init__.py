@@ -977,6 +977,19 @@ def fingerprint_of(title: str, elements: list[Element]) -> str:
     return h.hexdigest()
 
 
+# Which computer a tool call acts on: the agent's own sandboxed computer
+# (always, unless the person asked for theirs by name) or the person's own.
+AGENT, PERSON = 'agent', 'person'
+_PERSON_WORDS = frozenset({'person', 'mine', 'my', 'my computer', 'user', 'host', 'local', 'their computer'})
+
+
+def which_computer(computer: Any) -> str:
+    """'person' when a tool's computer argument names the person's own
+    computer, else 'agent'."""
+    text = str(computer or '').strip().lower().replace('_', ' ').replace("'s", '')
+    return PERSON if text in _PERSON_WORDS or text.startswith('person') else AGENT
+
+
 _driver: Driver | None = None
 _driver_guard = threading.Lock()
 

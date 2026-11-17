@@ -43,9 +43,10 @@ def app_of_call(tool_name: Any, params: dict | None) -> str | None:
     params = params if isinstance(params, dict) else {}
     if params.get('use_screen'):
         return None
+    from cognitrix.computer import PERSON, which_computer
     from cognitrix.computer.sandbox.client import sandbox_mode
 
-    if sandbox_mode():
+    if sandbox_mode() and which_computer(params.get('computer')) != PERSON:
         return None  # the sandbox isn't the person's computer: no per-app answers
     try:
         from cognitrix.computer import get_driver

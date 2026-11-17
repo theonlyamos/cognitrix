@@ -186,7 +186,7 @@ def driver(fake):
 async def test_tools_say_so_where_there_is_no_driver(monkeypatch):
     monkeypatch.setattr(computer.sys, 'platform', 'sunos5')
     monkeypatch.setattr(computer, '_driver', None)
-    out = (await tools.list_windows.run()).content
+    out = (await tools.list_windows.run(computer='person')).content
     assert 'only available on Windows and Linux' in out
 
 
@@ -196,9 +196,9 @@ async def test_linux_without_a_desktop_session_says_so(monkeypatch):
     monkeypatch.delenv('DISPLAY', raising=False)
     monkeypatch.delenv('WAYLAND_DISPLAY', raising=False)
     monkeypatch.delenv('XDG_SESSION_TYPE', raising=False)
-    assert 'needs a desktop session' in (await tools.list_windows.run()).content
+    assert 'needs a desktop session' in (await tools.list_windows.run(computer='person')).content
     monkeypatch.setenv('XDG_SESSION_TYPE', 'wayland')
-    assert 'Wayland' in (await tools.list_windows.run()).content
+    assert 'Wayland' in (await tools.list_windows.run(computer='person')).content
 
 
 def test_element_numbers_are_tied_to_the_latest_snapshot(driver, fake):
@@ -270,7 +270,7 @@ def test_blocked_windows_are_refused(driver, fake):
 
 async def test_list_shows_why_a_window_cant_be_controlled(driver, monkeypatch):
     monkeypatch.setattr(tools, 'get_driver', lambda: driver)
-    out = (await tools.list_windows.run()).content
+    out = (await tools.list_windows.run(computer='person')).content
     assert "4: 'PowerShell' (windowsterminal.exe) - can't control: it is a terminal" in out
     assert "1: 'Calc' (calc.exe)" in out
 
@@ -356,7 +356,7 @@ async def test_look_tool_queues_the_screenshot(driver, fake, monkeypatch):
     monkeypatch.setattr(tools, 'get_driver', lambda: driver)
     token, images = misc.start_image_collection()
     try:
-        out = (await tools.look_at_window.run(window_id=1)).content
+        out = (await tools.look_at_window.run(window_id=1, computer='person')).content
     finally:
         misc.end_image_collection(token)
     assert len(images) == 1 and 'snapshot s' in out
@@ -555,3 +555,25 @@ def test_overlay_endpoints_need_the_desktop_token(monkeypatch):
     monkeypatch.setattr('cognitrix.computer.overlay.stop', lambda agent_id=None: [])
     ok = client.post('/computer/overlay/stop', json={}, headers={'X-Cognitrix-Desktop-Token': 'secret-token'})
     assert ok.status_code == 200 and ok.json() == {'stopped': []}
+
+
+async def test_window_tools_default_to_the_agents_own_computer(monkeypatch, driver):
+    """With the sandboxed computer off, the window tools don't fall back to
+    the person's own computer: only computer='person' reaches it."""
+    out = (await tools.list_windows.run()).content
+    assert 'is off' in out and "computer='person'" in out
+    assert 'is off' not in (await tools.list_windows.run(computer='person')).content
+
+
+async def test_person_computer_routes_to_this_machine_even_with_the_sandbox_on(monkeypatch, driver):
+    from cognitrix.computer.sandbox import client as sandbox_client
+
+    monkeypatch.setenv('COGNITRIX_COMPUTER_SANDBOX', 'docker')
+    called = []
+    monkeypatch.setattr(sandbox_client, 'sandbox_driver', lambda actor=None: called.append(actor) or driver)
+    await tools.list_windows.run()
+    assert len(called) == 1
+    await tools.list_windows.run(computer='person')
+    assert len(called) == 1  # the person's computer never goes through the sandbox
+    monkeypatch.setenv('COGNITRIX_COMPUTER_SANDBOX', 'fly')
+    assert "can't reach the person's own computer" in (await tools.list_windows.run(computer='person')).content
