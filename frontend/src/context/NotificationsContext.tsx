@@ -104,6 +104,8 @@ export interface InboxQuestion {
 export interface InboxNotification {
   kind: 'notification';
   id: string;
+  /** Held back by quiet hours or the daily alert limit: listed, never popped. */
+  quiet?: boolean;
   task_id: string | null;
   run_id: string | null;
   session_id: string | null;
@@ -119,6 +121,8 @@ export interface InboxNotification {
 export interface InboxOffer {
   kind: 'offer';
   id: string;
+  /** Held back by quiet hours or the daily alert limit: listed, never popped. */
+  quiet?: boolean;
   agent_id: string;
   agent_name: string;
   title: string;
@@ -279,6 +283,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       if (seenInbox.current) {
         for (const item of items) {
           if (seenInbox.current.has(item.id)) continue;
+          // Your assistant held this back (quiet hours, daily limit): it waits in the Inbox.
+          if ((item.kind === 'notification' || item.kind === 'offer') && item.quiet) continue;
           if (item.kind === 'approval') {
             // The chat is on screen: its card is right there.
             if (item.source === 'chat' && isLookingAtChat(item.session_id)) {

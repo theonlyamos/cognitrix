@@ -69,6 +69,15 @@ async def inbox(ctx: AuthContext = Depends(get_auth_context)) -> dict[str, Any]:
     from cognitrix.tasks.base import Task
 
     user_key = principal_key(ctx.user)
+    try:
+        # The Inbox is polled while the app is open: it tells the proactive
+        # assistant the person is around, and their timezone.
+        from cognitrix.assistant.proactivity import touch
+        from cognitrix.common.clock import client_timezone
+
+        await touch(user_key, client_timezone.get())
+    except Exception:
+        pass
     rows = await approvals.TaskApproval.find({'user_id': user_key, 'status': approvals.PENDING}) or []
     titles: dict[str, str] = {}
     items: list[dict[str, Any]] = []

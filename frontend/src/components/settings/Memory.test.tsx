@@ -19,6 +19,14 @@ const lib = vi.hoisted(() => ({
   importMemories: vi.fn(),
   convertLegacyMemory: vi.fn(),
   exportMemories: vi.fn(),
+  dreamStatus: vi.fn(),
+  dreamNow: vi.fn(),
+  answerDreamProposal: vi.fn(),
+  undoDream: vi.fn(),
+  getMemoryProfile: vi.fn(),
+  saveMemoryProfile: vi.fn(),
+  memoryHistory: vi.fn(),
+  undoMemoryChange: vi.fn(),
 }));
 
 vi.mock('@/lib/memories', async (importOriginal) => ({
@@ -48,6 +56,9 @@ beforeEach(() => {
   Object.values(lib).forEach((fn) => fn.mockReset());
   lib.listMemories.mockResolvedValue(list([short, pnpm]));
   lib.legacyMemoryCount.mockResolvedValue(0);
+  lib.dreamStatus.mockResolvedValue({ enabled: true, running: false, runs: [], proposals: [], hour: 3 });
+  lib.getMemoryProfile.mockResolvedValue({ text: '', locked: false, updated: null, by_dream: false });
+  lib.memoryHistory.mockResolvedValue([]);
 });
 
 const renderSettings = () => render(<MemoryRouter><MemorySettings /></MemoryRouter>);
@@ -143,5 +154,49 @@ describe('memory phase 3', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Import' }));
     await waitFor(() => expect(lib.importMemories).toHaveBeenCalledWith('- Likes tea\n- Lives in Accra'));
     expect(await screen.findByText(/2 memories from your import waiting for your OK/)).toBeInTheDocument();
+  });
+});
+
+describe('dream mode', () => {
+  it('tidies now and shows what it did', async () => {
+    lib.dreamNow.mockResolvedValue({ id: 'd1', status: 'running' });
+    lib.dreamStatus
+      .mockResolvedValueOnce({ enabled: true, running: false, runs: [], proposals: [], hour: 3 })
+      .mockResolvedValue({
+        enabled: true, running: false, hour: 3, proposals: [],
+        runs: [{ id: 'd1', trigger: 'manual', status: 'done', started: '2026-11-16 10:00:00', finished: '2026-11-16 10:01:00',
+          summary: 'Merged 2 repeats.', stats: {} }],
+      });
+    renderSettings();
+    fireEvent.click(await screen.findByRole('button', { name: 'Tidy now' }));
+    await waitFor(() => expect(lib.dreamNow).toHaveBeenCalled());
+    expect(await screen.findByRole('status')).toHaveTextContent('Merged 2 repeats.');
+  });
+
+  it('asks before bigger changes and needs a choice for a conflict', async () => {
+    lib.dreamStatus.mockResolvedValue({
+      enabled: true, running: false, runs: [], hour: 3,
+      proposals: [{
+        id: 'p1', dream_id: 'd1', action: 'conflict', reason: 'Two homes', status: 'pending', created: '', content: null,
+        kind: null, valid_until: null,
+        memories: [{ id: 'm1', content: 'Lives in Accra.', source: 'agent' }, { id: 'm2', content: 'Lives in Kumasi.', source: 'agent' }],
+      }],
+    });
+    lib.answerDreamProposal.mockResolvedValue(undefined);
+    renderSettings();
+    const keep = await screen.findByRole('button', { name: 'Keep this one' });
+    expect(keep).toBeDisabled();
+    fireEvent.click(screen.getByLabelText('Lives in Kumasi.'));
+    fireEvent.click(keep);
+    await waitFor(() => expect(lib.answerDreamProposal).toHaveBeenCalledWith('p1', true, 'm2'));
+  });
+
+  it('shows the summary about you and locks it', async () => {
+    lib.getMemoryProfile.mockResolvedValue({ text: 'Amos builds Cognitrix.', locked: false, updated: null, by_dream: true });
+    lib.saveMemoryProfile.mockResolvedValue({ text: 'Amos builds Cognitrix.', locked: true, updated: null, by_dream: false });
+    renderSettings();
+    expect(await screen.findByText('Amos builds Cognitrix.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Lock' }));
+    await waitFor(() => expect(lib.saveMemoryProfile).toHaveBeenCalledWith('Amos builds Cognitrix.', true));
   });
 });

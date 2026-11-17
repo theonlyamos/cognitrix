@@ -43,6 +43,7 @@ const fr: Messages = {
   'settings.section.models': 'Modèles et clés',
   'settings.section.usage': 'Utilisation',
   'settings.section.swarms': 'Essaims',
+  'settings.section.assistant': 'Assistant',
   'settings.section.memory': 'Mémoire',
   'settings.section.voice': 'Voix',
   'settings.section.apps': 'Applications connectées',

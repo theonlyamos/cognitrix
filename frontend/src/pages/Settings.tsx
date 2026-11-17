@@ -20,6 +20,7 @@ import { ProviderKeys } from '@/components/settings/ProviderKeys';
 import { ChatGPTPlanCard } from '@/components/settings/ChatGPTPlan';
 import { AppearanceSettings } from '@/components/settings/Appearance';
 import { MemorySettings } from '@/components/settings/Memory';
+import { AssistantSettings } from '@/components/settings/Assistant';
 import { SkillsSettings } from '@/components/settings/Skills';
 import { UsageSettings } from '@/components/settings/Usage';
 import { SwarmSettings } from '@/components/settings/Swarms';
@@ -35,7 +36,7 @@ const onWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.
 
 const STATUS_TEXT = { starting: 'Starting', running: 'Running', stopped: 'Stopped', failed: 'Failed' } as const;
 
-type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'email' | 'people' | 'audit' | 'desktop' | 'engine';
+type SectionId = 'account' | 'appearance' | 'models' | 'usage' | 'swarms' | 'assistant' | 'memory' | 'skills' | 'voice' | 'apps' | 'access' | 'chat-apps' | 'email' | 'people' | 'audit' | 'desktop' | 'engine';
 
 interface SectionMeta {
   id: SectionId;
@@ -53,6 +54,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'appearance', get label() { return tr('ui.settings.appearance'); }, group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
   { id: 'models', get label() { return tr('ui.settings.modelsAndKeys'); }, group: 'AI', keywords: 'providers api key chatgpt plan subscription plus pro openai anthropic claude gemini google groq openrouter cerebras ollama' },
   { id: 'usage', get label() { return tr('ui.settings.usage'); }, group: 'AI', keywords: 'cost spend tokens money bill price how much' },
+  { id: 'assistant', get label() { return tr('ui.settings.assistant'); }, group: 'AI', keywords: 'proactive check in brief morning quiet hours do not disturb interrupt alerts notifications push daily limit tokens main assistant' },
   { id: 'memory', get label() { return tr('ui.settings.memory'); }, group: 'AI', keywords: 'remember memories personalization forget history what agents know about me' },
   { id: 'skills', get label() { return tr('ui.settings.skills'); }, group: 'AI', keywords: 'skill instructions learned how to slash commands playbook procedure reuse' },
   { id: 'voice', get label() { return tr('ui.settings.voice'); }, group: 'AI', keywords: 'input mic microphone speech transcription dictation spoken replies read aloud listen text to speech tts' },
@@ -425,6 +427,8 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
       return (<><SectionHeader title={tr('ui.settings.usage')} description={tr('ui.settings.howManyTokensYourAgents')} /><UsageSettings /></>);
     case 'swarms':
       return (<><SectionHeader title={tr('ui.settings.swarms')} description={tr('ui.settings.howManyWorkersAnAgent')} /><SwarmSettings /></>);
+    case 'assistant':
+      return (<><SectionHeader title={tr('ui.settings.assistant')} description={tr('ui.settings.howMuchYourMainAssistant')} /><AssistantSettings /></>);
     case 'memory':
       return (
         <>

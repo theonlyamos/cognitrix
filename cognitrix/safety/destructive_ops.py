@@ -97,6 +97,10 @@ _KNOWN_LOW = frozenset({
     'start_chat', 'check_chat', 'message_chat',
     # saved memories: each change shows in the chat with Undo
     'memory', 'search_chats', 'read_chat',
+    # coming back to this same chat later; the follow-up turn's own risky calls still ask
+    'follow_up_later',
+    # the morning brief only lands in the person's Inbox and dashboard
+    'publish_brief',
     # the app's colours: each change shows in the chat with Undo
     'set_theme',
     # artifact pages: a page is private to its owner until they share it

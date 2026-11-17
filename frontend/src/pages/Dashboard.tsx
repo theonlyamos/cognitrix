@@ -17,6 +17,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { ArtworkScene } from '@/components/ThemeArtwork';
+import { BriefCard } from '@/components/BriefCard';
 import { useUser } from '@/context/AppContext';
 import { useOptionalNotifications, type InboxItem } from '@/context/NotificationsContext';
 import { useResource } from '@/hooks/useResource';
@@ -555,6 +556,8 @@ export default function Dashboard() {
               }
             />
           </section>
+
+          <BriefCard className="mt-6" />
 
           {/* Main grid */}
           <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">

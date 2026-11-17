@@ -1733,6 +1733,12 @@ export default function Home() {
   let lastQuestionIndex = messages.length - 1;
   while (lastQuestionIndex >= 0 && !isUserTurn(messages[lastQuestionIndex])) lastQuestionIndex -= 1;
   const canRegenerate = lastQuestionIndex >= 0;
+  // Ref so the handler stays the same object and finished replies don't re-render.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const acceptNextStep = useCallback((step: string) => {
+    void sendRef.current(`Yes, go ahead: ${step}`, 'chat', null, { keepComposer: true });
+  }, []);
   let lastReplyIndex = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i].role === 'assistant' && messages[i].content.trim()) {
@@ -2230,6 +2236,7 @@ export default function Home() {
                   selectedEditSourceId={editSource?.type === 'artifact' ? editSource.artifact.id : undefined}
                   onEdit={canRework && isUserTurn(message) ? startRework : undefined}
                   onRegenerate={canRework && index === lastReplyIndex && canRegenerate ? regenerate : undefined}
+                  onNextStep={index === messages.length - 1 && index === lastReplyIndex && !busy ? acceptNextStep : undefined}
                 />
               ))}
 

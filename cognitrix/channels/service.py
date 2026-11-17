@@ -928,7 +928,8 @@ class ChannelService:
         from cognitrix.tasks import approvals
         from cognitrix.tasks.automation import unread_notifications
 
-        notes = await unread_notifications(channel.user_id)
+        # Quiet alerts (quiet hours, over the day's limit) wait in the Inbox only.
+        notes = [n for n in await unread_notifications(channel.user_id) if not getattr(n, 'quiet', False)]
         rows = await approvals.TaskApproval.find(
             {'user_id': channel.user_id, 'status': approvals.PENDING}) or []
         return notes, rows

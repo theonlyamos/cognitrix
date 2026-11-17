@@ -151,6 +151,46 @@ def _add_swarm_tools(roster: Sequence[Agent]) -> None:
             agent.tools = [*(agent.tools or []), spawn]
 
 
+CHECKIN_FAST_KINDS = ('schedule', 'wake', 'email', 'webhook')
+"""Check-ins started by these run on the provider's small model; the brief,
+meeting prep and manual check-ins keep the assistant's own model."""
+
+
+def _prepare_proactive_run(task: Any, run_rec: Any, roster: Sequence[Agent]) -> None:
+    """A standing assistant's run is proactive work: count its tokens toward the
+    person's daily limit, use the small model for routine check-ins, and give
+    the morning brief its Publish Brief tool. In-memory only."""
+    from cognitrix import usage
+    from cognitrix.assistant.proactivity import usage_sink
+
+    owner = str(getattr(task, 'owner_id', '') or '')
+    if owner:
+        usage.set_sink(usage_sink(owner))
+    kind = getattr(run_rec, 'trigger_kind', None)
+    if kind in CHECKIN_FAST_KINDS:
+        from cognitrix.agents.starter_team import FAST_MODELS
+
+        for agent in roster:
+            llm = getattr(agent, 'llm', None)
+            fast = FAST_MODELS.get(str(getattr(llm, 'provider', '') or '').lower())
+            if llm is not None and fast and getattr(llm, 'model', '') != fast:
+                try:
+                    copy = llm.model_copy(deep=True)
+                    copy.model = fast
+                    agent.llm = copy
+                except Exception:
+                    logger.debug('Could not switch check-in to the small model', exc_info=True)
+    if kind == 'brief':
+        from cognitrix.tools.base import ToolManager
+
+        tool = ToolManager.get_by_name('publish_brief')
+        if tool is not None:
+            for agent in roster:
+                if getattr(agent.llm, 'supports_tool_use', True) and all(
+                        t.name != tool.name for t in agent.tools):
+                    agent.tools = [*agent.tools, tool]
+
+
 def _add_automation_tools(roster: Sequence[Agent], offers: bool = False) -> None:
     """Give every tool-capable agent in this run the automation tools.
 
@@ -1448,8 +1488,9 @@ async def run(
                 raise RuntimeError('this check-in no longer belongs to a standing assistant')
             read_only_run.set(standing.READ_ONLY_REASON)
             standing_offers = standing.settings_of(standing_owner)['offers']
-            context = await standing.run_context(task, standing_owner)
+            context = await standing.run_context(task, standing_owner, run_rec)
             brief = f'{context}\n\n{brief}' if brief else context
+            _prepare_proactive_run(task, run_rec, roster)
         _automation_brief.set(brief)
         if brief:
             # Only automation runs (scheduled, woken, webhook, or with notes

@@ -162,6 +162,9 @@ class AgentNotification(Model):
     read_at: str | None = None
     link: str | None = None
     """In-app page the alert's button opens, e.g. /settings/apps."""
+    quiet: bool | None = None
+    """Kept in the Inbox without pushing to the phone, desktop or chat app:
+    a proactive alert during quiet hours or over the day's interruption limit."""
 
 
 def public_trigger(trigger: TaskTrigger) -> dict[str, Any]:
@@ -193,6 +196,7 @@ def public_notification(row: AgentNotification) -> dict[str, Any]:
         'title': data.get('title') or '',
         'message': data.get('message') or '',
         'link': data.get('link') or None,
+        'quiet': bool(data.get('quiet')),
         'read_at': data.get('read_at'),
         'created_at': _timestamp(data.get('created_at')),
     }
@@ -505,8 +509,25 @@ async def create_notification(
     run_id: str | None = None,
     session_id: str | None = None,
     link: str | None = None,
+    proactive: bool = False,
+    urgent: bool = False,
 ) -> AgentNotification:
+    """Put an alert in the person's Inbox and push it.
+
+    ``proactive`` marks work nobody asked for (check-ins, briefs, follow-ups,
+    stuck-work alerts): those push only outside quiet hours and under the
+    day's interruption limit (``assistant/proactivity.should_interrupt``),
+    otherwise they wait quietly in the Inbox. ``urgent`` ones skip the limit."""
+    quiet = False
+    if proactive:
+        try:
+            from cognitrix.assistant.proactivity import NORMAL, URGENT, should_interrupt
+
+            quiet = not await should_interrupt(str(user_id), URGENT if urgent else NORMAL)
+        except Exception:
+            logger.debug('Could not check the interruption limit', exc_info=True)
     row = AgentNotification(
+        quiet=quiet,
         link=link,
         user_id=str(user_id),
         title=_clip(title, TITLE_MAX_CHARS) or 'Update',
@@ -516,6 +537,8 @@ async def create_notification(
         session_id=session_id,
     )
     await row.save()
+    if quiet:
+        return row
     from cognitrix.common import webpush
 
     webpush.send_soon(

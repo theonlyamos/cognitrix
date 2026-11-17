@@ -205,6 +205,17 @@ class HybridContextManager(BaseContextManager):
                     system_content += "\n\n" + block
             except Exception:
                 logger.exception("Could not load saved memories")
+        if (user_id and not getattr(session, 'task_id', None) and not getattr(session, 'public_link_id', None)
+                and not guest_run.get()):
+            try:
+                from cognitrix.assistant.signals import awareness_block
+
+                note = await awareness_block(
+                    user_id, agent, str(getattr(session, 'id', '') or '') or None)
+                if note:
+                    system_content += "\n\n" + note
+            except Exception:
+                logger.exception("Could not build the what's-going-on note")
         if getattr(session, 'incognito', False):
             system_content += "\n\n" + INCOGNITO_NOTE
 

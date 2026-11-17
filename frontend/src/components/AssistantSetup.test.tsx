@@ -60,7 +60,7 @@ describe('first-run assistant setup', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(apiPost).toHaveBeenCalledWith('/onboarding/assistant', {
-      name: 'Jarvis', provider: 'anthropic', model: 'claude-sonnet-5-5',
+      name: 'Jarvis', provider: 'anthropic', model: 'claude-sonnet-5-5', proactive: true,
     });
     expect(localStorage.getItem('selectedAgentId')).toBe('a1');
     expect(changed).toHaveBeenCalled();
@@ -83,7 +83,7 @@ describe('first-run assistant setup', () => {
     fireEvent.change(screen.getByLabelText(/API KEY/), { target: { value: 'sk-mine' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create assistant' }));
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/onboarding/assistant', {
-      name: 'Assistant', provider: 'openai', model: 'gpt-5.5', api_key: 'sk-mine',
+      name: 'Assistant', provider: 'openai', model: 'gpt-5.5', api_key: 'sk-mine', proactive: true,
     }));
   });
 
@@ -120,7 +120,7 @@ describe('starter team', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create assistant' }));
 
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/onboarding/assistant', {
-      name: 'Assistant', provider: 'anthropic', model: 'claude-sonnet-5-5', starter_team: false,
+      name: 'Assistant', provider: 'anthropic', model: 'claude-sonnet-5-5', starter_team: false, proactive: true,
     }));
   });
 });

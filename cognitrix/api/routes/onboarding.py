@@ -59,6 +59,9 @@ class AssistantSetup(BaseModel):
     # Also create the specialists the assistant hands work to
     # (cognitrix/agents/starter_team.py).
     starter_team: bool = True
+    # Make it the main assistant and let it check in on a starter brief
+    # (cognitrix/assistant/setup.py): a morning brief and quiet check-ins.
+    proactive: bool = True
 
 
 def _has_server_key(provider: str) -> bool:
@@ -188,7 +191,8 @@ async def _create_assistant(user: User, name: str, llm: LLM) -> Agent:
         llm=llm,
         system_prompt=default_assistant_prompt(getattr(user, 'name', None)),
         description=DEFAULT_ASSISTANT_DESCRIPTION,
-        tools=list(ToolManager.list_all_tools()),
+        # Publish Brief is given to morning-brief runs only (tasks/orchestrator.py).
+        tools=[t for t in ToolManager.list_all_tools() if t.name != 'Publish Brief'],
         owner_id=agent_access.owner_key(user),
         memory={'save_global': True},
     )
@@ -225,6 +229,18 @@ async def create_default_assistant(
     name = _clean_name(setup.name)
     llm = _build_llm(setup)
     agent = await _create_assistant(ctx.user, name, llm)
+    proactive = False
+    if setup.proactive:
+        try:
+            from cognitrix.api.routes.tasks import _run_authority, _run_identity
+            from cognitrix.assistant.setup import enable_defaults
+
+            requested_by, _actor = _run_identity(ctx)
+            authority_kind, authority_id = _run_authority(ctx)
+            proactive = await enable_defaults(agent, agent_access.owner_key(ctx.user), requested_by=requested_by,
+                                              authority_kind=authority_kind, authority_id=authority_id)
+        except Exception:
+            logger.exception('Could not turn on check-ins for assistant %s', agent.id)
     team_size = 0
     if setup.starter_team:
         try:
@@ -235,7 +251,7 @@ async def create_default_assistant(
             # from the Agents page.
             logger.exception('Could not create the starter team for user %s', agent.owner_id)
     await _mark_onboarded(ctx.user)
-    return {'agent': redact_secrets(agent.json()), 'starter_team': team_size}
+    return {'agent': redact_secrets(agent.json()), 'starter_team': team_size, 'proactive': proactive}
 
 
 @onboarding_api.post('/starter-team')

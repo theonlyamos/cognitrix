@@ -10,7 +10,7 @@ export interface SavedMemory {
   scope: MemoryScope;
   agent_id: string | null;
   agent_name: string | null;
-  source: 'user' | 'agent' | 'import';
+  source: 'user' | 'agent' | 'import' | 'dream';
   /** The chat it was saved in, if any. */
   source_session_id: string | null;
   pinned: boolean;
@@ -21,12 +21,24 @@ export interface SavedMemory {
   /** UTC 'YYYY-MM-DD HH:MM:SS'. */
   created: string;
   updated: string;
+  /** What it's about: about, preference, person, project, howto or other. */
+  kind?: MemoryKind | '';
+  /** 'YYYY-MM-DD' after which it is no longer true; '' when it doesn't end. */
+  valid_until?: string;
+  /** Past its valid_until: agents no longer see it. */
+  expired?: boolean;
+  last_used?: string;
+  use_count?: number;
 }
+
+export type MemoryKind = 'about' | 'preference' | 'person' | 'project' | 'howto' | 'other';
 
 export interface MemorySettings {
   enabled: boolean;
   history_enabled: boolean;
   auto_save: AutoSave;
+  /** Dream mode: tidy memory each night. */
+  dream_enabled?: boolean;
 }
 
 export interface MemoryList {
@@ -40,13 +52,15 @@ export async function listMemories(): Promise<MemoryList> {
   return (await api.get<MemoryList>('/memories')).data;
 }
 
-export async function addMemory(input: { content: string; scope: MemoryScope; agent_id?: string | null; pinned?: boolean }): Promise<SavedMemory> {
+export async function addMemory(input: {
+  content: string; scope: MemoryScope; agent_id?: string | null; pinned?: boolean; kind?: string; valid_until?: string;
+}): Promise<SavedMemory> {
   return (await api.post<SavedMemory>('/memories', input)).data;
 }
 
 export async function updateMemory(
   id: string,
-  input: Partial<{ content: string; pinned: boolean; scope: MemoryScope; agent_id: string | null }>,
+  input: Partial<{ content: string; pinned: boolean; scope: MemoryScope; agent_id: string | null; kind: string; valid_until: string }>,
 ): Promise<SavedMemory> {
   return (await api.patch<SavedMemory>(`/memories/${encodeURIComponent(id)}`, input)).data;
 }
@@ -130,4 +144,102 @@ export function memoryChange(toolName: string, result?: string | null): MemoryCh
   const m = /^Memory (saved|updated|forgotten|proposed) \(id ([^,)\s]+)(?:, (global|agent))?\): ([\s\S]+)$/.exec(first);
   if (!m) return null;
   return { kind: m[1] as MemoryChange['kind'], id: m[2], scope: m[3] as MemoryScope | undefined, content: m[4].trim() };
+}
+
+// ---------------------------------------------------------------- history
+
+export interface MemorySnapshot { id: string; content: string; scope: MemoryScope; kind?: string; valid_until?: string; pinned?: boolean }
+
+/** One recorded change to a memory, with Undo. */
+export interface MemoryHistoryEntry {
+  id: string;
+  memory_id: string;
+  action: 'create' | 'update' | 'delete' | 'approve';
+  /** Who made it: 'person', 'agent' or 'dream'. */
+  by: string;
+  dream_id: string | null;
+  before: MemorySnapshot | null;
+  after: MemorySnapshot | null;
+  note: string;
+  created: string;
+  undone: boolean;
+}
+
+export async function memoryHistory(params: { memory_id?: string; dream_id?: string; limit?: number } = {}): Promise<MemoryHistoryEntry[]> {
+  return (await api.get<{ changes: MemoryHistoryEntry[] }>('/memories/history', { params })).data.changes;
+}
+
+export async function undoMemoryChange(id: string): Promise<void> {
+  await api.post(`/memories/history/${encodeURIComponent(id)}/undo`);
+}
+
+// ---------------------------------------------------------------- about you
+
+export interface MemoryProfile {
+  text: string;
+  /** Written or locked by you; dream mode leaves it alone. */
+  locked: boolean;
+  updated: string | null;
+  by_dream: boolean;
+}
+
+export async function getMemoryProfile(): Promise<MemoryProfile> {
+  return (await api.get<MemoryProfile>('/memories/profile')).data;
+}
+
+export async function saveMemoryProfile(text: string, locked?: boolean): Promise<MemoryProfile> {
+  return (await api.put<MemoryProfile>('/memories/profile', { text, locked })).data;
+}
+
+// ---------------------------------------------------------------- dream mode
+
+export interface DreamRun {
+  id: string;
+  trigger: 'night' | 'manual' | string;
+  status: 'running' | 'done' | 'skipped' | 'failed';
+  started: string;
+  finished: string | null;
+  summary: string;
+  stats: Record<string, number | boolean>;
+  error?: string;
+}
+
+export interface DreamProposal {
+  id: string;
+  dream_id: string;
+  action: 'merge' | 'update' | 'delete' | 'add' | 'conflict';
+  /** The memories it touches; content is null when one was deleted since. */
+  memories: { id: string; content: string | null; source: string | null }[];
+  content: string | null;
+  kind: string | null;
+  valid_until: string | null;
+  reason: string;
+  status: string;
+  created: string;
+}
+
+export interface DreamStatus {
+  enabled: boolean;
+  running: boolean;
+  runs: DreamRun[];
+  proposals: DreamProposal[];
+  /** Local hour the nightly dream runs. */
+  hour: number;
+}
+
+export async function dreamStatus(): Promise<DreamStatus> {
+  return (await api.get<DreamStatus>('/memories/dream')).data;
+}
+
+/** Tidy now: run dream mode right away. */
+export async function dreamNow(): Promise<DreamRun> {
+  return (await api.post<DreamRun>('/memories/dream')).data;
+}
+
+export async function answerDreamProposal(id: string, approve: boolean, keepId?: string): Promise<void> {
+  await api.post(`/memories/dream/proposals/${encodeURIComponent(id)}`, { approve, keep_id: keepId });
+}
+
+export async function undoDream(id: string): Promise<number> {
+  return (await api.post<{ undone: number }>(`/memories/dream/${encodeURIComponent(id)}/undo`)).data.undone;
 }

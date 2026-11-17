@@ -245,6 +245,12 @@ async def accept_offer(offer_id: str, ctx: AuthContext = Depends(get_auth_contex
     if not await standing.decide_offer(row, standing.OFFER_ACCEPTED):
         raise HTTPException(status_code=409, detail='This offer was already answered')
     try:
+        from cognitrix.assistant.proactivity import record_feedback
+
+        await record_feedback(me, 'useful', row.title)
+    except Exception:
+        logger.debug('Could not record the acceptance', exc_info=True)
+    try:
         session = await agent_chats.create_chat(me, agent, {
             'agent_id': str(agent.id), 'agent_name': str(agent.name or ''), 'session_id': None,
             'depth': 0, 'report_back': False, 'exchanges': 1, 'offer_id': str(row.id),
@@ -264,6 +270,12 @@ async def dismiss_offer(offer_id: str, ctx: AuthContext = Depends(get_auth_conte
     row = await _offer(offer_id, ctx)
     if not await standing.decide_offer(row, standing.OFFER_DISMISSED):
         raise HTTPException(status_code=409, detail='This offer was already answered')
+    try:
+        from cognitrix.assistant.proactivity import record_feedback
+
+        await record_feedback(_me(ctx), 'dismissed', row.title)
+    except Exception:
+        logger.debug('Could not record the dismissal', exc_info=True)
     return {'status': standing.OFFER_DISMISSED}
 
 
