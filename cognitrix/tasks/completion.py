@@ -106,6 +106,27 @@ def _push_completion(task, run) -> None:
         logging.getLogger('cognitrix.log').exception('Could not push a task result')
 
 
+async def _queue_creator_report(run_id: str) -> bool:
+    """Owe the agent that created the task a report on this run, when it
+    asked for one (tasks/reports.py). Runs for every finished run, webhook
+    or not; idempotent per run. True when the person's push is skipped."""
+    try:
+        from cognitrix.tasks.reports import queue_report
+        from cognitrix.tasks.run import TaskRun
+
+        run = await TaskRun.get(run_id)
+        if run is None or run.status not in (TaskRunStatus.COMPLETED, TaskRunStatus.FAILED,
+                                              TaskRunStatus.CANCELLED):
+            return False
+        task = await Task.get(run.task_id)
+        if task is None or not getattr(task, 'created_by', None):
+            return False
+        return await queue_report(task, run)
+    except Exception:
+        logger.exception('Could not queue the report of run %s for its creator', run_id)
+        return False
+
+
 async def deliver_completion_notification(
     run_id: str,
     *,
@@ -114,6 +135,7 @@ async def deliver_completion_notification(
 ) -> bool:
     """Claim and deliver one terminal notification; safe under concurrency."""
     repository = repository or RunRepository()
+    agent_only = await _queue_creator_report(run_id)
     owner = owner or f"completion:{uuid.uuid4()}"
     claimed = await repository.claim_completion_notification(
         run_id,
@@ -126,8 +148,9 @@ async def deliver_completion_notification(
     if task is None:
         task = SimpleNamespace(id=claimed.task_id)
     # Tell the person's browsers once, on the first attempt only: the webhook
-    # below may be retried, a push must not be.
-    if int(getattr(claimed, 'completion_notification_attempts', 0) or 0) <= 1:
+    # below may be retried, a push must not be. A task that reports to the
+    # agent that created it leaves telling the person to that agent.
+    if int(getattr(claimed, 'completion_notification_attempts', 0) or 0) <= 1 and not agent_only:
         _push_completion(task, claimed)
     delivered = await notify_completion(task, claimed)
     await repository.finish_completion_notification(

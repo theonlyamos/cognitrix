@@ -125,6 +125,19 @@ class Task(Model):
     COGNITRIX_AUTOMATION_MAX_RUNS_PER_DAY. User-defined schedules don't count
     against it."""
 
+    created_by: dict[str, Any] | None = None
+    """Set when an agent created the task (Create Task): the agent, the person,
+    the chat or task run it was working in, and how deep agent-made tasks
+    nest. Server-owned; see tasks/reports.py."""
+
+    report_to: str | None = None
+    """Who hears about a finished run: person, creator or both. None picks
+    the default (creator for an agent's one-off task, else person)."""
+
+    report_only_on: str | None = None
+    """When the creator is told: always (None), failure, or changed (a
+    result that differs from the last one reported)."""
+
     standing_agent_id: str | None = None
     """Set on the home task of a standing assistant (tasks/standing.py): the
     agent whose brief this task checks in on. Its runs are read-only."""

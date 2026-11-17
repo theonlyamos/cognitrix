@@ -150,6 +150,8 @@ interface TaskSummary {
   id: string;
   title: string;
   status?: string;
+  /** "creator": the agent that made the task hears about it and decides whether to tell you. */
+  report_to_effective?: string;
 }
 
 interface NotificationsContextValue {
@@ -350,6 +352,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
           const before = previous.get(task.id);
           const now = task.status ?? 'pending';
           if (!before || before === now) continue;
+          // The agent that made this task gets its result and alerts you itself if needed.
+          if (task.report_to_effective === 'creator') continue;
           if (now === 'completed') {
             push({ event: 'task_finished', title: tr('ui.notificationsContext.taskFinishedTitle', { title: task.title }), body: 'The report is ready to review.', href: `/tasks/${task.id}` });
           } else if (now === 'failed') {

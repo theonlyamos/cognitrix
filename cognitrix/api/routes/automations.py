@@ -72,6 +72,28 @@ async def save_notes(task_id: str, body: NotesBody, ctx: AuthContext = Depends(g
     return {'notes': notes or None}
 
 
+class ReportingBody(BaseModel):
+    report_to: str | None = None
+    report_only_on: str | None = None
+
+
+@automations_api.put('/tasks/{task_id}/reporting')
+async def save_reporting(task_id: str, body: ReportingBody, ctx: AuthContext = Depends(get_auth_context)):
+    """Who hears about a finished run of an agent-created task (tasks/reports.py)."""
+    from cognitrix.tasks.reports import effective_report_to, validate_report_fields
+
+    task = await _require_task_edit(await _visible_task(task_id), ctx)
+    reason = validate_report_fields(body.report_to, body.report_only_on)
+    if reason:
+        raise HTTPException(status_code=422, detail=reason)
+    if body.report_to in ('creator', 'both') and not task.created_by:
+        raise HTTPException(status_code=422, detail='Only a task an agent created can report to that agent')
+    await Task.update_one({'id': task.id}, {'report_to': body.report_to, 'report_only_on': body.report_only_on})
+    task.report_to, task.report_only_on = body.report_to, body.report_only_on
+    return {'report_to': body.report_to, 'report_only_on': body.report_only_on,
+            'report_to_effective': effective_report_to(task)}
+
+
 @automations_api.delete('/tasks/{task_id}/wake')
 async def cancel_wake(task_id: str, ctx: AuthContext = Depends(get_auth_context)):
     """Cancel a pending agent wake-up (Schedule Next Check)."""

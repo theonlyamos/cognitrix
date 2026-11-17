@@ -390,10 +390,16 @@ def _deliver(user_key: str, agent: Any, parent_agent: Any, parent: Any, session:
 
 
 async def deliver_report(user_key: str, parent_agent_id: str, parent_id: str, text: str, *,
-                         sender: str, wait_seconds: float = REPORT_WAIT_SECONDS) -> str:
+                         sender: str, wait_seconds: float = REPORT_WAIT_SECONDS,
+                         on_done: Callable[[str, str], Awaitable[None]] | None = None,
+                         extra_tools: list[Any] | None = None) -> str:
     """Hand ``text`` (which must start with REPORT_PREFIX) to a chat as news
     from agents it started: steered into its running turn when it has one,
     else as a new turn once the chat is free.
+
+    ``on_done`` replaces the default follow-up of a new turn (an Inbox alert
+    with the reply). ``extra_tools`` are given to that turn's agent only,
+    e.g. Notify Me so it can decide to alert the person itself.
 
     Returns 'steered', 'started', 'paused' (agents replied too many times in
     a row; the person was alerted instead) or 'dropped'.
@@ -437,5 +443,10 @@ async def deliver_report(user_key: str, parent_agent_id: str, parent_id: str, te
             await _alert_once(user_key, parent_id, f'{parent_agent.name} heard back from {sender}',
                               parent_reply[:300] or 'Open the chat to see the reply.')
 
-        run_in_background(user_key, parent_agent, parent, text, on_done=told)
+        if extra_tools:
+            names = {str(getattr(t, 'name', '')).lower() for t in parent_agent.tools or []}
+            added = [t for t in extra_tools if str(getattr(t, 'name', '')).lower() not in names]
+            if added:
+                parent_agent = parent_agent.model_copy(update={'tools': [*(parent_agent.tools or []), *added]})
+        run_in_background(user_key, parent_agent, parent, text, on_done=on_done or told)
         return 'started'
