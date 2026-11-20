@@ -94,6 +94,23 @@ async def save_reporting(task_id: str, body: ReportingBody, ctx: AuthContext = D
             'report_to_effective': effective_report_to(task)}
 
 
+class ResultArtifactBody(BaseModel):
+    result_artifact: str | None = None
+
+
+@automations_api.put('/tasks/{task_id}/result-artifact')
+async def save_result_artifact(task_id: str, body: ResultArtifactBody, ctx: AuthContext = Depends(get_auth_context)):
+    """Whether finished runs keep their result as an artifact (artifact_pages/guidance.py)."""
+    from cognitrix.artifact_pages.guidance import RESULT_ARTIFACT_MODES
+
+    task = await _require_task_edit(await _visible_task(task_id), ctx)
+    mode = None if body.result_artifact in (None, '', 'auto') else body.result_artifact
+    if mode not in RESULT_ARTIFACT_MODES:
+        raise HTTPException(status_code=422, detail='result_artifact must be auto, always or off')
+    await Task.update_one({'id': task.id}, {'result_artifact': mode})
+    return {'result_artifact': mode or 'auto'}
+
+
 @automations_api.delete('/tasks/{task_id}/wake')
 async def cancel_wake(task_id: str, ctx: AuthContext = Depends(get_auth_context)):
     """Cancel a pending agent wake-up (Schedule Next Check)."""

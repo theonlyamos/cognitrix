@@ -816,6 +816,56 @@ async def get_chat_usage(
     return JSONResponse(await chat_usage.report(session, llm))
 
 
+@sessions_api.get('/{session_id}/changes')
+async def get_chat_changes(
+    session_id: str,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Files this chat's agent changed, as diffs, grouped by where they live
+    (this computer, a paired PC, or the sandbox copy of a chat folder)."""
+    from cognitrix.file_changes import service as changes
+
+    _, session = await _load_authorized_session(session_id, ctx)
+    return JSONResponse(await changes.chat_changes(session))
+
+
+class ChangeActionBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    action: str = Field(pattern='^(accept|unaccept|reject)$')
+    source: str = Field(min_length=1, max_length=300)
+    path: str | None = Field(default=None, max_length=4000)
+    """A file; empty with reject means every file of the source."""
+    hunk: str | None = Field(default=None, max_length=64)
+    """One part of the file; empty means the whole file."""
+
+
+@sessions_api.post('/{session_id}/changes')
+async def act_on_chat_changes(
+    session_id: str,
+    body: ChangeActionBody,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Accept a change (a hunk, a file, or with no file every file of the
+    source), take that back, or put a
+    change back as it was ("reject"). Answers with the changes as they are now."""
+    from cognitrix.file_changes import service as changes
+
+    _, session = await _load_authorized_session(session_id, ctx)
+    if body.action == 'reject' and ctx.api_key is not None:
+        raise HTTPException(status_code=403, detail='Only you can put changes back, not an API key.')
+    if body.action == 'unaccept' and not body.path:
+        raise HTTPException(status_code=400, detail='Pick a file.')
+    try:
+        if body.action == 'reject':
+            await changes.reject(session, body.source, body.path, body.hunk)
+        else:
+            await changes.accept(session, body.source, body.path, body.hunk, on=body.action == 'accept')
+    except changes.ChangeError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from None
+    return JSONResponse(await changes.chat_changes(session))
+
+
 @sessions_api.get('/{session_id}/pending')
 async def get_pending_messages(
     session_id: str,

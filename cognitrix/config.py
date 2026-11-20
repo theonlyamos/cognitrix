@@ -875,6 +875,7 @@ async def _ensure_schema():
     from cognitrix.tasks.pr_watch import MODELS as PR_WATCH_MODELS
     from cognitrix.models.paired_device import MODELS as PAIRED_DEVICE_MODELS
     from cognitrix.models.sign_in import MODELS as SIGN_IN_MODELS
+    from cognitrix.file_changes.models import MODELS as FILE_CHANGE_MODELS
 
     for model in (
         *ARTIFACT_PAGE_MODELS,
@@ -890,6 +891,7 @@ async def _ensure_schema():
         *PR_WATCH_MODELS,
         *PAIRED_DEVICE_MODELS,
         *SIGN_IN_MODELS,
+        *FILE_CHANGE_MODELS,
         AgentOffer,
         SideQuestion,
         MeetingNote,
@@ -960,6 +962,13 @@ async def _ensure_schema():
         await ensure_report_schema()
     except Exception:
         log.exception('Could not create the task report claim index')
+
+    try:
+        from cognitrix.artifact_pages.guidance import ensure_schema as ensure_artifact_result_schema
+
+        await ensure_artifact_result_schema()
+    except Exception:
+        log.exception('Could not create the artifact result claim index')
 
     if dbms in ('postgresql', 'mysql'):
         await _migrate_relational_task_schema(DBMS.Database)

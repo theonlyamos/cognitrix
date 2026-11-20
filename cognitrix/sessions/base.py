@@ -1058,10 +1058,25 @@ class Session(Model):
         turn_folders = self._turn_folders(agent, interface)
         inherited_folders = tuple(getattr(tool_context, 'folders', ()) or ())
 
+        # Artifacts: how and when to deliver work as an artifact, and the ones
+        # this chat or task already made (artifact_pages/guidance.py). Only
+        # for agents that have the artifact tools this turn.
+        artifact_block = ''
+        if any(str(getattr(t, 'name', '')).lower() == 'publish artifact' for t in agent.tools):
+            try:
+                from cognitrix.artifact_pages.guidance import context_block
+
+                turn_task = str(getattr(tool_context, 'task_id', '') or self.task_id or '')
+                artifact_block = await context_block(
+                    str(owner) if owner else None,
+                    session_id='' if turn_task else str(self.id or ''), task_id=turn_task)
+            except Exception:
+                logger.debug('Artifact guidance unavailable', exc_info=True)
+
         # Build the context-aware prompt using the manager
         turn_note = ''
         prompt = await agent.get_context_manager().build_prompt(agent, self)
-        prompt = _with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), turn_note)
+        prompt = _with_note(_with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), artifact_block), turn_note)
 
         # Tools set to "never" for this agent aren't offered to the model
         # (the agent loop refuses them too, see safety/permissions.py).
@@ -1413,7 +1428,7 @@ class Session(Model):
 
                                 prompt = await agent.get_context_manager().build_prompt(agent, self)
                                 # Keep the folder list (including any just granted) on every request.
-                                prompt = _with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), turn_note)
+                                prompt = _with_note(_with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), artifact_block), turn_note)
                                 continue  # Continue the loop to re-prompt the LLM with the tool result
                             else:
                                 if interface == 'cli':
@@ -1461,7 +1476,7 @@ class Session(Model):
                                        'or give your final answer.]',
                         })
                         prompt = await agent.get_context_manager().build_prompt(agent, self)
-                        prompt = _with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), turn_note)
+                        prompt = _with_note(_with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), artifact_block), turn_note)
                         continue
 
                     # Persist the final assistant text only when this response did
@@ -1510,7 +1525,7 @@ class Session(Model):
                         # answer: keep the turn going so it gets read now
                         # instead of waiting for another turn.
                         prompt = await agent.get_context_manager().build_prompt(agent, self)
-                        prompt = _with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), turn_note)
+                        prompt = _with_note(_with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), artifact_block), turn_note)
                         continue
 
                     if not called_tools:
@@ -1776,6 +1791,10 @@ class Session(Model):
         if switched is not None:
             self.run_in_sandbox = switched
         if switched is False or interface not in ('web', 'ws', 'task'):
+            return
+        if interface in ('web', 'ws') and not getattr(self, 'team_id', None):
+            # An agent chat shows its changes live under the last reply and
+            # in the side panel (cognitrix.file_changes), with these buttons.
             return
         folders = [f for f in turn_folders if getattr(f, 'name', '') != 'scratch']
         if not folders or not sw.sandbox_available():

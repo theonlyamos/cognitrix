@@ -29,12 +29,15 @@ export interface PageSummary {
 }
 
 export interface PageTask { id: string; title: string; schedule: string; next_run_at: string | null }
+/** Where an artifact came from (owner only): the chat that made it, or the task whose run did. */
+export interface PageOrigin { kind: 'chat' | 'task'; id: string; title: string }
 export interface PageVersion { number: number; note: string; created: string; size_bytes: number; by_task: boolean }
 
 export interface PageDetail extends PageSummary {
   frame_url: string;
   versions: PageVersion[];
   task: PageTask | null;
+  origin?: PageOrigin | null;
   allowed_powers: PagePower[];
   consent_asked: boolean;
   share_version: number;

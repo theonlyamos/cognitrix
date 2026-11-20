@@ -105,7 +105,7 @@ _KNOWN_LOW = frozenset({
     'set_theme',
     # artifact pages: a page is private to its owner until they share it
     # themselves, and every version is kept
-    'publish_artifact', 'read_artifact', 'artifact_comments',
+    'publish_artifact', 'read_artifact', 'artifact_comments', 'list_artifacts',
     # cards only show in the chat; a button press is a message to the agent
     'show_card',
     # apps: reading an app's status and logs, looking at it in a headless browser,

@@ -493,6 +493,29 @@ async def task_info(task_id: str) -> dict[str, Any] | None:
     }
 
 
+async def origin_info(page: ArtifactPage) -> dict[str, Any] | None:
+    """Where the page came from, for its owner: the chat that made it (with
+    its title) or, failing that, the task whose run made its first version."""
+    if page.session_id:
+        try:
+            from cognitrix.sessions.base import Session
+
+            chat = await Session.get(page.session_id)
+        except Exception:
+            chat = None
+        if chat is not None:
+            title = str(getattr(chat, 'title', '') or getattr(chat, 'name', '') or '').strip()
+            return {'kind': 'chat', 'id': str(chat.id), 'title': title or 'Untitled chat'}
+    rows = await ArtifactVersion.find({'page_id': str(page.id)}) or []
+    for row in sorted(rows, key=lambda r: r.number):
+        if row.task_id:
+            info = await task_info(row.task_id)
+            if info:
+                return {'kind': 'task', 'id': info['id'], 'title': info['title']}
+            break
+    return None
+
+
 def project(page: ArtifactPage, role: str | None, *, people: dict[str, str], agents: dict[str, str],
             comments: int = 0) -> dict[str, Any]:
     return {
