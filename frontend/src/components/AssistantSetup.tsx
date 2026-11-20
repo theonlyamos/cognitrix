@@ -6,7 +6,8 @@ import { Input } from '@/lib/components/ui/input';
 import { Select } from '@/lib/components/ui/select';
 import { Field } from '@/components/form';
 import ModelPicker from '@/components/ModelPicker';
-import { AGENTS_CHANGED_EVENT, MODELS, PROVIDER_LABELS } from '@/lib/providers';
+import HarnessNote from '@/components/HarnessNote';
+import { AGENTS_CHANGED_EVENT, HARNESS_INSTALL, MODELS, PROVIDER_LABELS } from '@/lib/providers';
 import { SignInWaiting, useChatGPTSignIn } from '@/components/settings/ChatGPTPlan';
 import { tr } from '@/lib/i18n';
 
@@ -17,6 +18,9 @@ interface ProviderOption {
   default_model: string;
   /** Connected by signing in (ChatGPT plan), not with a key. */
   sign_in?: boolean;
+  /** A coding agent CLI (Claude Code, Codex, ...) signed in on this computer. */
+  harness?: boolean;
+  installed?: boolean;
 }
 
 /** A specialist the assistant can hand work to (cognitrix/agents/starter_team.py). */
@@ -39,6 +43,7 @@ export interface OnboardingStatus {
 
 function keyNote(option: ProviderOption | undefined): string {
   if (!option) return '';
+  if (option.harness) return option.installed ? 'installed' : 'not installed';
   if (!option.needs_key) return 'no key needed';
   if (option.sign_in) return option.has_key ? 'signed in' : 'needs sign-in';
   return option.has_key ? 'key found' : 'needs a key';
@@ -81,6 +86,7 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
   const [provider, setProvider] = useState(status.suggested.provider);
   const [model, setModel] = useState(status.suggested.model);
   const [apiKey, setApiKey] = useState('');
+  const [harnessMode, setHarnessMode] = useState('edit');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<'create' | 'skip' | null>(null);
   const [planConnected, setPlanConnected] = useState(false);
@@ -114,6 +120,9 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
     if (!name.trim()) return setError(tr('ui.assistantSetup.giveYourAssistantAName'));
     if (!model.trim()) return setError(tr('ui.assistantSetup.chooseAModel'));
     if (needsPlanSignIn) return setError(tr('ui.assistantSetup.continueWithChatgptFirstOr'));
+    if (option?.harness && !option.installed) {
+      return setError(`${tr('ui.harnessNote.labelIsnTInstalledOn', { label: PROVIDER_LABELS[provider] || provider })} ${HARNESS_INSTALL[provider] || ''}`.trim());
+    }
     if (askForKey && !apiKey.trim()) return setError(tr('ui.assistantSetup.pasteYourItemApiKey', { item: PROVIDER_LABELS[provider] || provider }));
     setError('');
     setBusy('create');
@@ -123,6 +132,7 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
         provider,
         model: model.trim(),
         ...(askForKey ? { api_key: apiKey.trim() } : {}),
+        ...(option?.harness ? { harness_mode: harnessMode } : {}),
         ...(starterAgents.length ? { starter_team: starterTeam } : {}),
         proactive,
       });
@@ -182,18 +192,32 @@ export function AssistantSetupDialog({ status, onDone }: { status: OnboardingSta
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label={tr('ui.assistantSetup.provider')} hint={keyNote(option)}>
               <Select value={provider} onChange={(e) => changeProvider(e.target.value)}>
-                {status.providers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {PROVIDER_LABELS[p.id] || p.id}
-                    {p.needs_key && (p.has_key || (p.sign_in && planConnected)) ? ' ✓' : ''}
-                  </option>
-                ))}
+                <optgroup label={tr('ui.agent.generalTab.modelProviders')}>
+                  {status.providers.filter((p) => !p.harness).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {PROVIDER_LABELS[p.id] || p.id}
+                      {p.needs_key && (p.has_key || (p.sign_in && planConnected)) ? ' ✓' : ''}
+                    </option>
+                  ))}
+                </optgroup>
+                {status.providers.some((p) => p.harness) && (
+                  <optgroup label={tr('ui.agent.generalTab.codingAgentsOnThisComputer')}>
+                    {status.providers.filter((p) => p.harness).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {PROVIDER_LABELS[p.id] || p.id}
+                        {p.installed ? ' ✓' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </Select>
             </Field>
             <Field label={tr('ui.assistantSetup.model')} required>
               <ModelPicker provider={provider} value={model} onChange={setModel} />
             </Field>
           </div>
+
+          {option?.harness && <HarnessNote provider={provider} mode={harnessMode} onModeChange={setHarnessMode} />}
 
           {askForKey && (
             <Field label={tr('ui.assistantSetup.apiKey')} required hint={tr('ui.assistantSetup.keptWithThisAssistant')}>

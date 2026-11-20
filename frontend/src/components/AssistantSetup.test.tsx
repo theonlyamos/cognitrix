@@ -67,6 +67,34 @@ describe('first-run assistant setup', () => {
     window.removeEventListener(AGENTS_CHANGED_EVENT, changed);
   });
 
+  it('offers the coding agent CLIs and sends the picked one with its mode', async () => {
+    const clis = [
+      { id: 'codex', needs_key: false, has_key: false, default_model: 'gpt-6.2-sol', harness: true, installed: true },
+      { id: 'antigravity-cli', needs_key: false, has_key: false, default_model: 'gemini-3.8-flash-medium', harness: true, installed: false },
+    ];
+    apiGet.mockImplementation((url: string) => Promise.resolve({
+      data: url === '/onboarding' ? status({ providers: [...status().providers, ...clis] }) : { harnesses: ['codex'] },
+    }));
+    apiPost.mockResolvedValue({ data: { agent: { id: 'a2' } } });
+    renderSetup();
+    const provider = await screen.findByLabelText(/PROVIDER/);
+    expect(screen.getByRole('group', { name: 'Coding agents on this computer' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Codex ✓' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Antigravity CLI' })).toBeInTheDocument();
+
+    fireEvent.change(provider, { target: { value: 'antigravity-cli' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create assistant' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/isn't installed/);
+    expect(apiPost).not.toHaveBeenCalled();
+
+    fireEvent.change(provider, { target: { value: 'codex' } });
+    expect(screen.getByLabelText(/MODEL/)).toHaveValue('gpt-6.2-sol');
+    fireEvent.click(screen.getByRole('button', { name: 'Create assistant' }));
+    await waitFor(() => expect(apiPost).toHaveBeenCalledWith('/onboarding/assistant', {
+      name: 'Assistant', provider: 'codex', model: 'gpt-6.2-sol', harness_mode: 'edit', proactive: true,
+    }));
+  });
+
   it('asks for a key only when the provider has none', async () => {
     apiGet.mockResolvedValue({ data: status() });
     renderSetup();

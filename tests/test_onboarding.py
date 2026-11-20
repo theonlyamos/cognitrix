@@ -113,6 +113,46 @@ async def test_unknown_provider_is_refused(db):
     assert exc.value.status_code == 400
 
 
+async def test_setup_offers_every_coding_agent_cli(db, monkeypatch):
+    from cognitrix.api.routes import onboarding
+    from cognitrix.providers import harness
+
+    monkeypatch.setattr(harness, 'installed', lambda: {'codex': '/usr/bin/codex'})
+    status = await onboarding.onboarding_status(_ctx(await _user()))
+
+    clis = {p['id']: p for p in status['providers'] if p.get('harness')}
+    assert set(clis) == set(harness.HARNESSES)
+    assert clis['codex']['installed'] is True
+    assert clis['antigravity-cli']['installed'] is False
+    assert clis['codex']['default_model'] == harness.HARNESSES['codex'].models[0]
+    # A CLI is offered, never suggested ahead of the model providers.
+    assert status['suggested']['provider'] not in clis
+
+
+async def test_create_assistant_on_a_coding_agent_cli(db, monkeypatch):
+    from cognitrix.agents import Agent
+    from cognitrix.api.routes import onboarding
+    from cognitrix.providers import harness
+
+    monkeypatch.setattr(harness, 'find_program', lambda key: '/usr/bin/codex' if key == 'codex' else None)
+    user = await _user()
+    with pytest.raises(HTTPException) as exc:
+        await onboarding.create_default_assistant(
+            onboarding.AssistantSetup(provider='antigravity-cli', model='gemini-4-carbon-high'), _ctx(user)
+        )
+    assert exc.value.status_code == 400
+    assert 'not installed' in exc.value.detail
+
+    result = await onboarding.create_default_assistant(
+        onboarding.AssistantSetup(provider='codex', model='gpt-6.2-sol', harness_mode='read_only', starter_team=False),
+        _ctx(user),
+    )
+    agent = await Agent.find_one({'id': result['agent']['id']})
+    assert agent.llm.provider == 'codex'
+    assert agent.llm.model == 'gpt-6.2-sol'
+    assert agent.llm.harness_mode == 'read_only'
+
+
 async def test_skip_still_gives_a_user_with_no_agents_an_assistant(db):
     from cognitrix.agents import Agent
     from cognitrix.api.routes import onboarding

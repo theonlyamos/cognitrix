@@ -347,3 +347,39 @@ async def test_chat_denial_is_not_overridden_by_reviewer(gate, reviewer):
     assert not second.approved
     assert cli.call_count == 2
     assert len(llm.prompts) == 1
+
+
+# ── a coding agent CLI as the reviewer ──────────────────────────────────
+
+def test_cli_reviewer_runs_read_only(monkeypatch):
+    from cognitrix.providers.base import LLM
+
+    monkeypatch.setenv('COGNITRIX_REVIEWER_PROVIDER', 'codex')
+    monkeypatch.setenv('COGNITRIX_REVIEWER_MODEL', 'gpt-6.2-sol')
+    monkeypatch.setattr(LLM, 'load_llm', staticmethod(lambda provider: LLM(provider=provider, model='')))
+    llm = ar._load_reviewer_llm()
+    assert llm.provider == 'codex'
+    assert llm.model == 'gpt-6.2-sol'
+    assert llm.harness_mode == 'read_only'
+
+
+async def test_review_does_not_join_the_chats_cli_session(monkeypatch):
+    from cognitrix.providers import harness
+
+    seen = []
+
+    class _Spy(_FakeLLM):
+        async def __call__(self, prompt, stream=False, **kw):
+            seen.append(harness.turn.get())
+            return await super().__call__(prompt, stream=stream, **kw)
+
+    monkeypatch.setenv('COGNITRIX_REVIEWER', 'always')
+    monkeypatch.setattr(ar, '_load_reviewer_llm', lambda: _Spy('{"decision": "allow", "reason": "fits"}'))
+    token = harness.turn.set(harness.TurnInfo(session_id='chat:agent', folders=(), host_process_mode=None))
+    try:
+        verdict = await ar.review_action('write_file', {'path': 'a.txt'}, _risk())
+        assert verdict.decision == 'allow'
+        assert seen == [None]
+        assert harness.turn.get() is not None  # the chat's own turn is untouched
+    finally:
+        harness.turn.reset(token)

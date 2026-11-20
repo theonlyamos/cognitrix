@@ -253,7 +253,24 @@ def _load_reviewer_llm():
     if cfg['model']:
         llm.model = cfg['model']
     llm.temperature = 0.0
+    from cognitrix.providers.harness import is_harness
+
+    if is_harness(llm.provider):
+        # A coding agent CLI as the reviewer only reads and answers.
+        llm.harness_mode = 'read_only'
     return llm
+
+
+async def _ask(llm: Any, prompt: list[dict[str, Any]]) -> Any:
+    from cognitrix.providers import harness
+
+    # A CLI reviewer must not resume the chat's CLI session or borrow its
+    # tools. Reset after: wait_for runs this in the caller's own task.
+    token = harness.turn.set(None)
+    try:
+        return await llm(prompt, stream=False)
+    finally:
+        harness.turn.reset(token)
 
 
 async def review_action(tool_name: str, params: dict[str, Any], risk: RiskAssessment,
@@ -272,7 +289,7 @@ async def review_action(tool_name: str, params: dict[str, Any], risk: RiskAssess
     model = f"{llm.provider}/{llm.model}" if getattr(llm, 'model', '') else str(llm.provider)
     prompt = build_review_prompt(tool_name, params, risk, goal)
     try:
-        response = await asyncio.wait_for(llm(prompt, stream=False), timeout=_timeout())
+        response = await asyncio.wait_for(_ask(llm, prompt), timeout=_timeout())
     except ExecutionControlError:
         # Run limits (budget, call caps, cancellation) must stop the step.
         raise

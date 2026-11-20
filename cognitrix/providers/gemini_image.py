@@ -13,7 +13,7 @@ import httpx
 from cognitrix.media.processing import run_media_cpu
 from cognitrix.media.types import ResolvedImage
 
-MODEL = 'gemini-3.1-flash-image'
+MODEL = 'gemini-nano-banana-2.1'
 URL = 'https://generativelanguage.googleapis.com/v1beta/interactions'
 MAX_PROVIDER_RESPONSE_BYTES = 15 * 1024 * 1024
 PROVIDER_STREAM_CHUNK_BYTES = 64 * 1024

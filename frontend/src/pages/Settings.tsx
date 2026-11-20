@@ -17,6 +17,7 @@ import { CredentialsCard } from '@/components/CredentialsCard';
 import { ComputerAppsCard } from '@/components/ComputerAppsCard';
 import { ComputerSandboxCard } from '@/components/ComputerSandboxCard';
 import { ProviderKeys } from '@/components/settings/ProviderKeys';
+import { CodingAgents } from '@/components/settings/CodingAgents';
 import { ChatGPTPlanCard } from '@/components/settings/ChatGPTPlan';
 import { AppearanceSettings } from '@/components/settings/Appearance';
 import { MemorySettings } from '@/components/settings/Memory';
@@ -56,7 +57,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'account', get label() { return tr('ui.settings.account'); }, group: 'GENERAL', keywords: 'profile email name password export backup download data sign out devices api keys' },
   { id: 'sign-ins', get label() { return tr('ui.settings.signIns'); }, group: 'GENERAL', keywords: 'devices signed in sessions sign out phone browser laptop code qr another device new device log in login security' },
   { id: 'appearance', get label() { return tr('ui.settings.appearance'); }, group: 'GENERAL', keywords: 'theme dark light system send enter motion animation' },
-  { id: 'models', get label() { return tr('ui.settings.modelsAndKeys'); }, group: 'AI', keywords: 'providers api key chatgpt plan subscription plus pro openai anthropic claude gemini google groq openrouter cerebras ollama' },
+  { id: 'models', get label() { return tr('ui.settings.modelsAndKeys'); }, group: 'AI', keywords: 'providers api key chatgpt plan subscription plus pro openai anthropic claude gemini google groq openrouter cerebras ollama coding agent cli claude code codex gemini cli copilot opencode antigravity' },
   { id: 'usage', get label() { return tr('ui.settings.usage'); }, group: 'AI', keywords: 'cost spend tokens money bill price how much' },
   { id: 'assistant', get label() { return tr('ui.settings.assistant'); }, group: 'AI', keywords: 'proactive check in brief morning quiet hours do not disturb interrupt alerts notifications push daily limit tokens main assistant' },
   { id: 'memory', get label() { return tr('ui.settings.memory'); }, group: 'AI', keywords: 'remember memories personalization forget history what agents know about me' },
@@ -427,7 +428,7 @@ function SectionBody({ id, desktopApp }: { id: SectionId; desktopApp: boolean })
     case 'appearance':
       return <AppearanceSection />;
     case 'models':
-      return (<><SectionHeader title={tr('ui.settings.modelsAndKeys')} description={tr('ui.settings.yourChatgptPlanAndApi')} /><ChatGPTPlanCard /><ProviderKeys /></>);
+      return (<><SectionHeader title={tr('ui.settings.modelsAndKeys')} description={tr('ui.settings.yourChatgptPlanAndApi')} /><ChatGPTPlanCard /><CodingAgents /><ProviderKeys /></>);
     case 'usage':
       return (<><SectionHeader title={tr('ui.settings.usage')} description={tr('ui.settings.howManyTokensYourAgents')} /><UsageSettings /></>);
     case 'swarms':

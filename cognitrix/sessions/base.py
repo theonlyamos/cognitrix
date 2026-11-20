@@ -1178,7 +1178,14 @@ class Session(Model):
                     # A coding agent CLI provider runs in this chat's folder
                     # and resumes its own session (providers/harness.py).
                     from cognitrix.providers import harness as _harness
-                    if _harness.is_harness(agent.llm.provider):
+                    from cognitrix.providers.base import turn_llm_override as _turn_override
+                    # A CLI picked for this chat in the model picker counts too.
+                    _picked = _turn_override.get()
+                    _turn_provider = str(
+                        _picked[1].provider if _picked is not None and _picked[0] == agent.llm.id
+                        else agent.llm.provider
+                    ).lower()
+                    if _harness.is_harness(_turn_provider):
                         from cognitrix.tools.utils import ToolExecutionContext as _TEC
                         _ctx = tool_context or _TEC()
                         _harness.turn.set(_harness.TurnInfo(
@@ -1192,7 +1199,7 @@ class Session(Model):
                                 agent, interface, output, tool_context, turn_folders, inherited_folders,
                                 record_history, turn_sandbox),
                             approve=lambda name, params: agent.manager.approve_cli_action(
-                                _harness.HARNESSES[agent.llm.provider.lower()].label, name, params,
+                                _harness.HARNESSES[_turn_provider].label, name, params,
                                 interface=interface, folders=tuple(inherited_folders or turn_folders or ()),
                             ),
                         ))

@@ -56,6 +56,8 @@ class AssistantSetup(BaseModel):
     model: str
     api_key: str | None = None
     reasoning_effort: str | None = None
+    # For a coding agent CLI: read_only, ask, edit (default) or full.
+    harness_mode: str | None = None
     # Also create the specialists the assistant hands work to
     # (cognitrix/agents/starter_team.py).
     starter_team: bool = True
@@ -100,7 +102,28 @@ def _provider_options() -> list[dict[str, Any]]:
             # Connected by signing in, not by pasting a key.
             'sign_in': provider in PLAN_PROVIDERS,
         })
+    options.extend(_harness_options())
     return options
+
+
+def _harness_options() -> list[dict[str, Any]]:
+    """The coding agent CLIs (Claude Code, Codex, Gemini CLI, ...), which run
+    on this computer signed in with the person's own plan."""
+    from cognitrix.providers import harness
+
+    found = harness.installed()
+    return [
+        {
+            'id': key,
+            'needs_key': False,
+            'has_key': False,
+            'default_model': spec.models[0] if spec.models else '',
+            'sign_in': False,
+            'harness': True,
+            'installed': key in found,
+        }
+        for key, spec in harness.HARNESSES.items()
+    ]
 
 
 def _suggested_provider(options: list[dict[str, Any]]) -> str:
@@ -147,12 +170,32 @@ def _clean_name(raw: str | None) -> str:
 
 
 def _build_llm(setup: AssistantSetup) -> LLM:
+    from cognitrix.providers import harness
+
     provider = setup.provider.strip().lower()
-    if provider not in SETUP_PROVIDERS:
+    if provider not in SETUP_PROVIDERS and not harness.is_harness(provider):
         raise HTTPException(status_code=400, detail=f"Unknown provider '{setup.provider}'.")
     model = setup.model.strip()
     if not model:
         raise HTTPException(status_code=400, detail='Choose a model.')
+    if harness.is_harness(provider):
+        spec = harness.HARNESSES[provider]
+        if not harness.find_program(provider):
+            raise HTTPException(
+                status_code=400,
+                detail=f'{spec.label} is not installed on this computer. Install it with: {spec.install_hint}.',
+            )
+        try:
+            llm = LLM(
+                provider=provider, model=model,
+                harness_mode=harness.normalize_mode(setup.harness_mode),
+                **({'reasoning_effort': normalize_reasoning_effort(setup.reasoning_effort)}
+                   if setup.reasoning_effort else {}),
+            )
+        except (ProviderKeyDestinationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        llm.provider = provider
+        return llm
 
     llm_data: dict[str, Any] = {
         'provider': provider,

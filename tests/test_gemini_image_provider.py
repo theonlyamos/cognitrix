@@ -119,7 +119,7 @@ async def test_generate_sends_stateless_direct_blocks_and_encodes_source_off_loo
     assert isinstance(cpu_calls[1][1][0], (bytes, bytearray))
     assert bytes(cpu_calls[1][1][0]) == json.dumps(response_payload).encode()
     assert captured['payload'] == {
-        'model': 'gemini-3.1-flash-image',
+        'model': 'gemini-nano-banana-2.1',
         'store': False,
         'input': [
             {'type': 'text', 'text': 'Make it blue'},

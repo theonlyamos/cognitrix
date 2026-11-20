@@ -114,19 +114,19 @@ HARNESSES: dict[str, Harness] = {
     'codex': Harness(
         'codex', 'Codex', 'codex',
         'npm install -g @openai/codex, then run `codex login` (Sign in with ChatGPT)',
-        ('gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-5.5'), False),
+        ('gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-5.5'), False),
     'gemini-cli': Harness(
         'gemini-cli', 'Gemini CLI', 'gemini',
         'npm install -g @google/gemini-cli, then run `gemini` once and sign in',
-        ('gemini-3.6-flash', 'gemini-4-hydrogen', 'gemini-4-carbon', 'gemini-3.8-flash'), True),
+        ('gemini-3.6-flash', 'gemini-4-neon', 'gemini-4-hydrogen', 'gemini-4-carbon', 'gemini-3.8-flash'), True),
     'copilot-cli': Harness(
         'copilot-cli', 'GitHub Copilot CLI', 'copilot',
         'npm install -g @github/copilot, then run `copilot login` (needs a Copilot plan)',
-        ('auto', 'claude-sonnet-5-5', 'gpt-6.1-sol'), True),
+        ('auto', 'claude-sonnet-5-5', 'gpt-6.2-sol'), True),
     'opencode': Harness(
         'opencode', 'OpenCode', 'opencode',
         'npm install -g opencode-ai, then run `opencode auth login`',
-        ('openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5', 'github-copilot/gpt-5.5'), False),
+        ('openai/gpt-6.2-sol', 'anthropic/claude-sonnet-5-5', 'github-copilot/gpt-5.5'), False),
     # Google's Antigravity CLI. A native binary (no npm package); `agy models`
     # lists the slugs a signed-in account can use.
     'antigravity-cli': Harness(
