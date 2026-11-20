@@ -358,6 +358,15 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
         return fail('read_only', 'Every folder on this PC is shared read only, and a command could change files, so '
                     'commands are refused. Ask the person to share a folder as read & write to run commands.')
     folders = _folders_for(cfg, for_commands=power == COMMANDS)
+    only = {_norm_path(p) for p in (ctx.get('only_folders') or []) if isinstance(p, str) and p.strip()}
+    if only and folders:
+        # A chat in a project uses only the project's folders on this PC.
+        from cognitrix.common.folders import Folder
+        folders = [Folder(f.path, f.access, f.name, i == 0)
+                   for i, f in enumerate(f for f in folders if _norm_path(f.path) in only)]
+        if not folders:
+            return fail('outside_project', "This chat's project doesn't use any of the folders this call needs on "
+                        'this PC. Ask the person to add the folder to the project.')
     if not folders:
         return fail('no_folders', "This PC hasn't shared any folders (or they were moved). Ask the person to add one "
                     'on the PC.')
@@ -392,6 +401,10 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
     _log({'at': started, 'tool': name, 'ok': True, 'seconds': round(time.time() - started, 1),
           'command': args.get('command'), 'path': args.get('file_path') or args.get('path')})
     return {'type': 'result', 'id': call_id, 'ok': True, 'text': text}
+
+
+def _norm_path(path: str) -> str:
+    return str(path or '').replace('\\', '/').rstrip('/').lower()
 
 
 def _keep_for_undo(ctx: dict[str, Any], args: dict[str, Any]) -> None:

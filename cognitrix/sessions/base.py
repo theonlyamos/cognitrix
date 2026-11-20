@@ -243,6 +243,10 @@ class Session(Model):
     """A paired PC's id (cognitrix/computer/paired): this chat's shell and
     file tools run on the person's own PC. None: the usual computer."""
 
+    project_id: str | None = None
+    """The project this chat belongs to (cognitrix/projects): its
+    instructions, folders, knowledge, memories and computer apply."""
+
     user_id: str | None = None
     """Durable owner of an ordinary web/API chat (None for local/internal sessions)"""
 
@@ -618,9 +622,19 @@ class Session(Model):
         # ...and toward this chat's own token counts (side panel).
         from cognitrix.usage import chat as chat_usage
         sink_token = usage.set_sink(chat_usage.turn_sink(self, getattr(agent, 'llm', None), usage.current_sink()))
+        # A chat or task in a project: its instructions, knowledge, memories
+        # and computer apply to everything this turn does (projects/context.py).
+        from cognitrix.projects import context as project_context
+        try:
+            turn_project = await project_context.for_session(self, owner)
+        except Exception:
+            logger.debug('Could not load the chat project', exc_info=True)
+            turn_project = None
+        project_token = project_context.set_project(turn_project)
         try:
             return await self._run_turn(message, agent, *args, **kwargs)
         finally:
+            project_context.reset(project_token)
             usage.reset_sink(sink_token)
             usage.reset_owner(usage_token)
             memory_guard.end_turn(guard_token)
@@ -861,8 +875,13 @@ class Session(Model):
                 logger.debug('Personal skills unavailable', exc_info=True)
 
         # Search Knowledge is offered only to agents that were given at least
-        # one document collection.
+        # one document collection (their own, or their project's).
         try:
+            from cognitrix.projects.context import get as _turn_project, knowledge_for
+            if _turn_project() is not None:
+                merged = knowledge_for(agent)
+                if merged != list(getattr(agent, 'knowledge', None) or []):
+                    agent = agent.model_copy(update={'knowledge': merged})
             if getattr(agent, 'knowledge', None):
                 from cognitrix.tools.base import ToolManager
 
@@ -1075,6 +1094,11 @@ class Session(Model):
 
         # Build the context-aware prompt using the manager
         turn_note = ''
+        try:
+            from cognitrix.projects.context import prompt_note
+            turn_note = prompt_note()
+        except Exception:
+            logger.debug('Project note unavailable', exc_info=True)
         prompt = await agent.get_context_manager().build_prompt(agent, self)
         prompt = _with_note(_with_note(_with_folder_prompt(prompt, inherited_folders or tuple(turn_folders), sandbox_for_prompt, self.id), artifact_block), turn_note)
 
@@ -1831,7 +1855,14 @@ class Session(Model):
         )
         source = self.folders
         if source is None:
-            source = list(getattr(agent, 'folders', None) or [])
+            # A chat in a project starts in the project's folders, not the
+            # agent's own defaults: a project is one scope.
+            from cognitrix.projects.context import get as _turn_project
+            project = _turn_project()
+            if project is not None and project.folders:
+                source = [dict(f) for f in project.folders]
+            else:
+                source = list(getattr(agent, 'folders', None) or [])
         folders = normalize_folders(source, validate=False, scratch=self.scratch_path())
         if not folders:
             folders = [scratch_folder(self.scratch_key())]

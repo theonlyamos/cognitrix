@@ -661,8 +661,9 @@ class SandboxManager:
         return proxy_env(f'http://cognitrix:{token}@{host}:{port}', f'{folder}/bundle.pem', f'{folder}/ca.pem')
 
     def driver(self, user_id: Any, agent_id: Any = None) -> RemoteDriver:
+        from cognitrix.projects.context import sandbox_identity
         box = self.sandbox(user_id)
-        name = desktop_name(agent_id)
+        name = desktop_name(sandbox_identity(agent_id))
         if name not in box.passwords:
             box.desktop(name)
         driver = box.drivers.get(name)
