@@ -77,17 +77,41 @@ async def test_old_chats_show_context_from_the_last_reply():
     assert report['context']['tokens'] == 5040 and report['context']['window'] == 128_000
 
 
-async def test_switching_models_uses_the_new_window(monkeypatch):
+async def test_a_model_picked_for_the_turn_drives_the_context(monkeypatch):
+    from cognitrix.providers.base import turn_llm_override
+
     async def prices():
         return {}
     monkeypatch.setattr(pricing, 'load', prices)
     session = SimpleNamespace(token_usage=None, chat=[])
-    _turn(session, _llm(window=200_000), [
-        ('anthropic', 'claude-opus-5-5', {'prompt_tokens': 10, 'completion_tokens': 5}),
-    ])
-    report = await chat_usage.report(session, _llm('openai', 'gpt-5.5', window=400_000))
-    assert report['context']['window'] == 400_000 and report['context']['stale_model']
+    agent_llm = _llm(window=200_000)
+    agent_llm.id = 'agent-llm'
+    picked = _llm('openai', 'gpt-5.5', window=400_000)
+    token = turn_llm_override.set(('agent-llm', picked))
+    try:
+        _turn(session, agent_llm, [('openai', 'gpt-5.5', {'prompt_tokens': 10, 'completion_tokens': 5})])
+    finally:
+        turn_llm_override.reset(token)
+    # The report keeps the picked model's window, not the agent's default.
+    report = await chat_usage.report(session, agent_llm)
+    assert report['context']['model'] == 'gpt-5.5' and report['context']['window'] == 400_000
     assert report['prices_available'] is False and report['total']['unpriced_tokens'] == 15
+
+
+async def test_history_summaries_count_but_leave_the_context_meter():
+    session = SimpleNamespace(token_usage=None, chat=[])
+    llm = _llm()
+    token = usage.set_sink(chat_usage.turn_sink(session, llm))
+    try:
+        usage.note_model('anthropic', 'claude-opus-5-5')
+        usage.log({'prompt_tokens': 50_000, 'completion_tokens': 500})
+        with chat_usage.side_call():
+            usage.log({'prompt_tokens': 30_000, 'completion_tokens': 2_000})
+    finally:
+        usage.reset_sink(token)
+    assert session.token_usage['context']['tokens'] == 50_500
+    report = await chat_usage.report(session, llm)
+    assert report['total']['prompt_tokens'] == 80_000
 
 
 async def test_usage_route_is_for_the_chats_owner_only(tmp_path, monkeypatch):

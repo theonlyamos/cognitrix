@@ -20,7 +20,7 @@ export interface ChatTokenUsage {
   total: ChatTokenTotals;
   last_turn: ChatTokenTotals | null;
   by_model: (ChatTokenTotals & { provider: string; model: string })[];
-  context: { tokens: number; window: number; provider?: string; model?: string; stale_model?: boolean } | null;
+  context: { tokens: number; window: number; provider?: string; model?: string } | null;
 }
 
 /** Small amounts keep two significant digits: a chat often costs a fraction of a cent. */

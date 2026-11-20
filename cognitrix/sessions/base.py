@@ -450,7 +450,9 @@ class Session(Model):
             )},
             {'role': 'user', 'content': f"Summarize this conversation history:\n\n{convo}"},
         ]
-        resp = await llm(prompt, stream=False)
+        from cognitrix.usage import chat as chat_usage
+        with chat_usage.side_call():
+            resp = await llm(prompt, stream=False)
         summary = ''
         if resp and not getattr(resp, 'error', None):
             summary = (resp.llm_response or '').strip()
@@ -557,7 +559,9 @@ class Session(Model):
                     "Write the updated progress summary, covering all of the above."
                 )},
             ]
-            resp = await llm(prompt, stream=False)
+            from cognitrix.usage import chat as chat_usage
+            with chat_usage.side_call():
+                resp = await llm(prompt, stream=False)
             text = ''
             if resp and not getattr(resp, 'error', None):
                 text = (resp.llm_response or '').strip()

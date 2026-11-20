@@ -16,12 +16,43 @@ when the panel asks (``report``), the same way the usage page does.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
 from cognitrix.usage import TOKEN_FIELDS, current_model
 
 logger = logging.getLogger('cognitrix.log')
+
+# Set around model calls that are not the conversation itself (history
+# summaries): they still count toward the totals, not the context meter.
+_side_call: ContextVar[bool] = ContextVar('cognitrix_chat_side_call', default=False)
+
+
+@contextmanager
+def side_call():
+    token = _side_call.set(True)
+    try:
+        yield
+    finally:
+        _side_call.reset(token)
+
+
+def _turn_llm(llm: Any) -> Any:
+    """The model this turn really talks to: a model picked in the chat
+    window for this turn stands in for the agent's own (providers.base)."""
+    if llm is None:
+        return None
+    try:
+        from cognitrix.providers.base import turn_llm_override
+
+        override = turn_llm_override.get()
+    except Exception:
+        override = None
+    if override is not None and override[0] == getattr(llm, 'id', None):
+        return override[1]
+    return llm
 
 
 def _blank(provider: str, model: str) -> dict[str, Any]:
@@ -57,9 +88,10 @@ def record(session: Any, usage: dict, provider: str, model: str, llm: Any = None
     _add(last.setdefault('models', {}), provider, model, counts)
     # The chat's own model's latest call is how full its context is: what it
     # read plus what it wrote, which the next call reads back.
+    llm = _turn_llm(llm)
     agent_provider = str(getattr(llm, 'provider', '') or '')
     agent_model = str(getattr(llm, 'model', '') or '')
-    if llm is not None and (provider, model) == (agent_provider, agent_model):
+    if llm is not None and not _side_call.get() and (provider, model) == (agent_provider, agent_model):
         try:
             window = int(llm.get_context_window() or 0)
         except Exception:
@@ -143,15 +175,9 @@ async def report(session: Any, llm: Any = None) -> dict[str, Any]:
     prices = await pricing.load() if models else {}
     last = data.get('last_turn') or {}
     last_models = last.get('models') or {}
+    # The window saved with the context is the one of the model that read it
+    # (a model picked for one turn included).
     context = data.get('context') or _context_from_history(session, llm)
-    if context and llm is not None and (context.get('provider'), context.get('model')) != (
-        str(getattr(llm, 'provider', '') or ''), str(getattr(llm, 'model', '') or '')
-    ):
-        # The agent moved to another model since: its window is what counts now.
-        try:
-            context = {**context, 'window': int(llm.get_context_window() or 0), 'stale_model': True}
-        except Exception:
-            pass
     return {
         'tracked': bool(models),
         'prices_available': bool(prices),
