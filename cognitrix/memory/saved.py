@@ -225,11 +225,25 @@ def _similar(a: str, b: str) -> float:
 
 # ---------------------------------------------------------------- reading
 
+def _turn_project():
+    try:
+        from cognitrix.projects.context import get
+        return get()
+    except Exception:
+        return None
+
+
 def _visible(row: Memory, agent_id: str | None, read_global: bool) -> bool:
     if row.pending or expired(row):
         return False
+    project = _turn_project()
+    if row.scope == 'project':
+        # Project memories are seen only inside their project.
+        return project is not None and row.project_id == project.id
     if row.scope == 'agent':
         return bool(agent_id) and row.agent_id == str(agent_id)
+    if project is not None and not project.use_account_memory:
+        return False
     return read_global
 
 
@@ -240,8 +254,12 @@ def _order(rows: list[Memory]) -> list[Memory]:
 
 
 async def list_memories(user_id: str, *, scope: str | None = None, agent_id: str | None = None,
-                        query: str | None = None) -> list[Memory]:
+                        query: str | None = None, project_id: str | None = None) -> list[Memory]:
     rows = list(await Memory.find({'user_id': str(user_id)}))
+    if project_id:
+        rows = [r for r in rows if r.scope == 'project' and r.project_id == str(project_id)]
+    elif scope == 'project':
+        rows = [r for r in rows if r.scope == 'project']
     if scope == 'global':
         rows = [r for r in rows if r.scope == 'global']
     elif scope == 'agent':
@@ -365,7 +383,9 @@ async def prompt_block(user_id: str | None, agent: Any, query: str = '',
     if not settings.enabled:
         return ''
     rows = await visible_memories(user_id, agent)
-    profile = await get_profile(user_id) if agent_reads_global(agent) else None
+    project = _turn_project()
+    account_ok = project is None or project.use_account_memory
+    profile = await get_profile(user_id) if account_ok and agent_reads_global(agent) else None
     profile_text = (profile.text if profile else '') or ''
     if not rows and not profile_text:
         return ''
@@ -577,22 +597,29 @@ async def set_profile(user_id: str, text: Any, *, locked: bool | None = None, dr
 async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: str = '',
               source: str = 'agent', session_id: str = '', pinned: bool = False,
               pending: bool = False, replaces: str = '', kind: str = '', valid_until: str = '',
-              by: str | None = None, dream_id: str = '') -> tuple[Memory, bool]:
+              by: str | None = None, dream_id: str = '', project_id: str = '') -> tuple[Memory, bool]:
     """Save a memory. Returns (row, created). A near-duplicate of an existing
     memory in the same scope returns that memory with created False.
 
     ``pending`` saves it as a proposal the person approves (``confirm``) or
     discards; ``replaces`` names the memory an approved proposal takes over from."""
     if scope not in SCOPES:
-        raise MemoryError_('invalid_scope', 'scope must be "global" or "agent"')
+        raise MemoryError_('invalid_scope', 'scope must be "global", "agent" or "project"')
     if scope == 'agent' and not agent_id:
         raise MemoryError_('agent_required', 'An agent-only memory needs the agent.')
+    if scope == 'project' and not project_id:
+        project = _turn_project()
+        project_id = project.id if project is not None else ''
+    if scope == 'project' and not project_id:
+        raise MemoryError_('project_required', 'A project memory can only be saved in a project chat.')
     text = clean_content(content)
     kind = clean_kind(kind)
     valid_until = clean_valid_until(valid_until)
     existing = list(await Memory.find({'user_id': str(user_id)}))
     for row in existing:
-        same_scope = row.scope == scope and (scope == 'global' or row.agent_id == str(agent_id))
+        same_scope = row.scope == scope and (
+            scope == 'global' or (scope == 'agent' and row.agent_id == str(agent_id))
+            or (scope == 'project' and row.project_id == str(project_id)))
         if same_scope and str(row.id) != str(replaces) and _similar(row.content, text) >= DUPLICATE_RATIO:
             return row, False
     if len(existing) >= MAX_PER_USER:
@@ -602,6 +629,7 @@ async def add(user_id: str, content: Any, *, scope: str = 'global', agent_id: st
     stamp = now_str()
     row = Memory(
         user_id=str(user_id), scope=scope, agent_id=str(agent_id) if scope == 'agent' else '',
+        project_id=str(project_id) if scope == 'project' else '',
         content=text, source=source, source_session_id=str(session_id or ''),
         pinned=bool(pinned), pending=bool(pending), replaces=str(replaces or '') if pending else '',
         created=stamp, updated=stamp, kind=kind, valid_until=valid_until,
@@ -633,7 +661,9 @@ async def update(row: Memory, *, content: Any = None, pinned: bool | None = None
         changes['valid_until'] = clean_valid_until(valid_until)
     if scope is not None:
         if scope not in SCOPES:
-            raise MemoryError_('invalid_scope', 'scope must be "global" or "agent"')
+            raise MemoryError_('invalid_scope', 'scope must be "global", "agent" or "project"')
+        if scope == 'project' and not row.project_id:
+            raise MemoryError_('project_required', 'Only a memory saved in a project can be a project memory.')
         target = str(agent_id if agent_id is not None else row.agent_id or '')
         if scope == 'agent' and not target:
             raise MemoryError_('agent_required', 'An agent-only memory needs the agent.')
@@ -704,6 +734,7 @@ def project(row: Memory, agent_names: dict[str, str] | None = None) -> dict[str,
         'scope': row.scope,
         'agent_id': row.agent_id or None,
         'agent_name': (agent_names or {}).get(row.agent_id) if row.agent_id else None,
+        'project_id': row.project_id or None,
         'source': row.source,
         'source_session_id': row.source_session_id or None,
         'pinned': bool(row.pinned),

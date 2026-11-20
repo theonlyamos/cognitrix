@@ -673,6 +673,16 @@ class SSEManager:
                     if action.get('incognito') and not requested_sid
                     else self._resolve_session(requested_sid)
                 )
+                # A new chat started in a project (cognitrix/projects) starts
+                # with the project's folders and computer; picks below win.
+                if session is not None and not requested_sid and action.get('project_id') \
+                        and not action.get('incognito'):
+                    from cognitrix.projects.store import new_chat_settings, project_of
+                    project = await project_of(self.user_key, action['project_id'])
+                    if project is not None:
+                        session.project_id = str(project.id)
+                        for key, value in new_chat_settings(project).items():
+                            setattr(session, key, value)
                 # Folders picked before the first message of a new chat (already
                 # checked by the chat endpoint) replace the agent's defaults.
                 if session is not None and not requested_sid and action.get('folders') is not None:

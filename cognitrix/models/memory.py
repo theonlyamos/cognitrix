@@ -11,7 +11,7 @@ Persistence rule: instance ``save()`` once at creation, ``update_one`` after.
 from odbms import Model
 from pydantic import field_validator
 
-SCOPES = ('global', 'agent')
+SCOPES = ('global', 'agent', 'project')
 SOURCES = ('user', 'agent', 'import', 'dream')
 AUTO_SAVE_MODES = ('auto', 'ask', 'explicit')
 KINDS = ('about', 'preference', 'person', 'project', 'howto', 'other')
@@ -24,6 +24,8 @@ class Memory(Model):
     scope: str = 'global'
     agent_id: str = ''
     """Set when scope is ``agent``."""
+    project_id: str = ''
+    """Set when scope is ``project``: only chats and tasks in that project see it."""
     content: str
     source: str = 'agent'
     """``user`` (typed in Settings), ``agent`` (an agent saved it) or ``import``."""
@@ -49,7 +51,7 @@ class Memory(Model):
     """UTC time an agent last found it by search or as a relevant fact."""
     use_count: int = 0
 
-    @field_validator('agent_id', 'source_session_id', 'created', 'updated', 'replaces',
+    @field_validator('agent_id', 'project_id', 'source_session_id', 'created', 'updated', 'replaces',
                      'kind', 'valid_until', 'last_used', mode='before')
     @classmethod
     def _text_default(cls, value):

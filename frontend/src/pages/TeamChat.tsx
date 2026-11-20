@@ -33,6 +33,7 @@ interface ApprovalRequest {
   app?: { key: string; label: string };
   /** Takes over the screen: asked every time, so nothing to remember. */
   always_ask?: boolean;
+  always?: { kind: 'tool' | 'command'; label: string; computer?: string };
 }
 
 interface RunEvent {
@@ -317,10 +318,10 @@ export default function TeamChat() {
     }
   }, [chatId, refresh, running, setParams, teamId]);
 
-  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always') => {
+  const respondApproval = useCallback(async (requestId: string, approved: boolean, remember = false, rememberShell = false, rememberApp?: 'chat' | 'always', always = false) => {
     setApprovals((prev) => prev.filter((a) => a.request_id !== requestId));
     try {
-      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}), ...(rememberApp ? { remember_app: rememberApp } : {}) });
+      await api.post('/agents/approval', { request_id: requestId, approved, remember, ...(rememberShell ? { remember_shell: true } : {}), ...(rememberApp ? { remember_app: rememberApp } : {}), ...(always ? { always: true } : {}) });
     } catch {
       /* the turn times out server-side if this never lands */
     }
@@ -509,6 +510,13 @@ export default function TeamChat() {
                   <button onClick={() => respondApproval(a.request_id, true, false, false, 'chat')} title={tr('ui.teamChat.letAgentsClickAndType', { label: a.app.label })} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.teamChat.allowLabelInThisChat', { label: a.app.label })}</button>
                   <button onClick={() => respondApproval(a.request_id, true, false, false, 'always')} title={tr('ui.teamChat.neverAskAgainBeforeAgents', { label: a.app.label })} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">{tr('ui.teamChat.alwaysAllowLabel', { label: a.app.label })}</button>
                 </>
+              )}
+              {a.always && (
+                <button onClick={() => respondApproval(a.request_id, true, true, false, undefined, true)}
+                  title={a.always.kind === 'command' ? tr('ui.approvals.alwaysCommandHint', { label: a.always.label }) : tr('ui.approvals.alwaysToolHint')}
+                  className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-fg-dim hover:text-fg md:min-h-0">
+                  {a.always.kind === 'command' ? tr('ui.approvals.alwaysAllowCommand', { label: a.always.label }) : tr('ui.approvals.alwaysAllow')}
+                </button>
               )}
               <button onClick={() => respondApproval(a.request_id, false)} className="min-h-11 rounded border border-line px-2.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-danger hover:text-danger-ink md:min-h-0">{tr('ui.teamChat.deny')}</button>
             </div>

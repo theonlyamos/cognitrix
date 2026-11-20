@@ -12,6 +12,7 @@ const en = {
   'nav.automations': 'Automations',
   'nav.teams': 'Teams',
   'nav.artifacts': 'Artifacts',
+  'nav.projects': 'Projects',
   'nav.apps': 'Apps',
   'nav.knowledge': 'Knowledge',
   'nav.meetings': 'Meetings',

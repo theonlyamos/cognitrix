@@ -372,6 +372,7 @@ _TASK_MIGRATION_COLUMNS = (
     ('max_runs_per_day', 'INTEGER'), ('standing_agent_id', 'TEXT'),
     ('swarm', 'BOOLEAN'), ('read_memory', 'BOOLEAN'),
     ('created_by', 'TEXT'), ('report_to', 'TEXT'), ('report_only_on', 'TEXT'),
+    ('project_id', 'TEXT'),
     ('computer', 'TEXT'),
 )
 
@@ -421,6 +422,7 @@ _KNOWLEDGE_DOCUMENT_MIGRATION_COLUMNS = (
 _MEMORY_MIGRATION_COLUMNS = (
     ('pending', 'BOOLEAN'), ('replaces', 'TEXT'),
     ('kind', 'TEXT'), ('valid_until', 'TEXT'), ('last_used', 'TEXT'), ('use_count', 'INTEGER'),
+    ('project_id', 'TEXT'),
 )
 
 _MEMORY_SETTINGS_MIGRATION_COLUMNS = (
@@ -475,6 +477,11 @@ _SESSION_MIGRATION_COLUMNS = (
     ('pending_messages', 'TEXT'),
     ('public_link_id', 'TEXT'), ('visitor_key', 'TEXT'),
     ('loaded_tools', 'TEXT'),
+    ('project_id', 'TEXT'),
+)
+
+_CHAT_INDEX_MIGRATION_COLUMNS = (
+    ('project_id', 'TEXT'),
 )
 
 _TASKRUN_INDEXES = (
@@ -718,6 +725,7 @@ async def _migrate_relational_task_schema(database) -> None:
         ('memorysetting', _MEMORY_SETTINGS_MIGRATION_COLUMNS),
         ('agentoffers', _OFFER_MIGRATION_COLUMNS),
         ('paireddevices', _PAIRED_DEVICE_MIGRATION_COLUMNS),
+        ('chatindexes', _CHAT_INDEX_MIGRATION_COLUMNS),
     ):
         for column, ctype in columns:
             clause = (
@@ -874,6 +882,8 @@ async def _ensure_schema():
     from cognitrix.assistant.models import MODELS as ASSISTANT_MODELS
     from cognitrix.tasks.pr_watch import MODELS as PR_WATCH_MODELS
     from cognitrix.models.paired_device import MODELS as PAIRED_DEVICE_MODELS
+    from cognitrix.projects.models import MODELS as PROJECT_MODELS
+    from cognitrix.safety.command_rules import MODELS as COMMAND_RULE_MODELS
     from cognitrix.file_changes.models import MODELS as FILE_CHANGE_MODELS
 
     for model in (
@@ -889,6 +899,8 @@ async def _ensure_schema():
         *ASSISTANT_MODELS,
         *PR_WATCH_MODELS,
         *PAIRED_DEVICE_MODELS,
+        *PROJECT_MODELS,
+        *COMMAND_RULE_MODELS,
         *FILE_CHANGE_MODELS,
         AgentOffer,
         SideQuestion,
@@ -1002,6 +1014,7 @@ async def _ensure_schema():
         ('agentoffers', _OFFER_MIGRATION_COLUMNS),
         ('meetingnotes', _MEETING_MIGRATION_COLUMNS),
         ('paireddevices', _PAIRED_DEVICE_MIGRATION_COLUMNS),
+        ('chatindexes', _CHAT_INDEX_MIGRATION_COLUMNS),
     ):
         try:
             cursor = await DBMS.Database.query(f'PRAGMA table_info({table})')

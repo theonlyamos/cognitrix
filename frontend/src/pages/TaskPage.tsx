@@ -219,6 +219,8 @@ export default function TaskPage() {
         swarm,
         read_memory: readMemory,
         computer: computer || null,
+        // A new task made from a project's Tasks tab belongs to that project.
+        ...(!taskId && searchParams.get('project') ? { project_id: searchParams.get('project') } : {}),
         // Always sent: the form is authoritative for schedule state (the
         // server treats their presence as a full respecification).
         schedule_at: scheduleMode === 'once' && scheduleAt ? new Date(scheduleAt).toISOString() : null,

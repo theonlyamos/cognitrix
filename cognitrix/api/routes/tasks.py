@@ -722,6 +722,13 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
         from cognitrix.computer.paired.store import device_of
         if await device_of(task.owner_id, task.computer) is None:
             raise HTTPException(status_code=422, detail='That PC is not one of yours.')
+    if task.project_id:
+        from cognitrix.projects.store import project_of
+        project = await project_of(task.owner_id, task.project_id)
+        if project is None:
+            raise HTTPException(status_code=422, detail='That project is not one of yours.')
+        if stored is None and not task.computer and project.computer not in ('', 'sandbox'):
+            task.computer = project.computer  # a new task works on the project's PC
     # Tombstones are server-owned. Full-row creates/edits cannot hide or
     # resurrect a task by supplying this field themselves.
     task.deleted_at = None
@@ -754,7 +761,7 @@ async def save_task(request: Request, task: Task, background_tasks: BackgroundTa
         # projections) and schedule fields may be omitted by API clients —
         # carry them over instead of silently wiping them.
         for field in ('callback_url', 'callback_key_id', 'notes', 'max_runs_per_day', 'swarm', 'read_memory',
-                      'report_to', 'report_only_on', 'result_artifact', 'computer'):
+                      'report_to', 'report_only_on', 'result_artifact', 'computer', 'project_id'):
             if field not in task.model_fields_set:
                 setattr(task, field, getattr(stored, field))
         if not respecified:

@@ -180,6 +180,13 @@ def _sandbox_source(ws: Any, name: str, reviews: dict[str, set[str]]) -> dict | 
 
 
 async def chat_changes(session: Any) -> dict:
+    # A chat in a project with the shared sandbox reads the project's copy.
+    from cognitrix.projects.context import scope_for
+    async with scope_for(session):
+        return await _chat_changes(session)
+
+
+async def _chat_changes(session: Any) -> dict:
     """Every change this chat can review, grouped by where it lives."""
     session_id = str(session.id)
     reviews = await _reviews(session_id)
@@ -398,6 +405,13 @@ def _revert_sandbox(ws: Any, src: dict, f: dict, hunks: list[dict]) -> None:
 
 
 async def reject(session: Any, source: str, path: str | None, hunk: str | None) -> None:
+    # A chat in a project with the shared sandbox reads the project's copy.
+    from cognitrix.projects.context import scope_for
+    async with scope_for(session):
+        return await _reject(session, source, path, hunk)
+
+
+async def _reject(session: Any, source: str, path: str | None, hunk: str | None) -> None:
     """Put a hunk, a file, or (no path) every file of a source back."""
     changes = await chat_changes(session)
     src = next((s for s in changes['sources'] if s['key'] == source), None)

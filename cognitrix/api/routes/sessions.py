@@ -436,6 +436,7 @@ async def all_chats(ctx: AuthContext = Depends(get_auth_context)):
                 'kind': 'team',
                 'agent_id': None,
                 'team_id': row.team_id,
+                'project_id': row.project_id or None,
                 'running': running(row.session_id),
             })
             continue
@@ -465,6 +466,7 @@ async def all_chats(ctx: AuthContext = Depends(get_auth_context)):
             'kind': 'agent',
             'agent_id': row.agent_id or str(binding.agent_id or ''),
             'team_id': None,
+            'project_id': row.project_id or None,
             'running': running(row.session_id),
         })
 

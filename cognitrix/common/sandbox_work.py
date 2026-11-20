@@ -436,8 +436,11 @@ class SandboxWork:
 
     def __init__(self, user_id: Any, agent_id: Any):
         from cognitrix.computer.sandbox import desktop_name
+        from cognitrix.projects.context import sandbox_identity
         self.user_id = user_id
-        self.agent = desktop_name(agent_id)
+        # In a project with the shared sandbox, every agent uses the project's
+        # desktop, Linux user and ~/work folder.
+        self.agent = desktop_name(sandbox_identity(agent_id))
         self._box = None
 
     @property
@@ -954,7 +957,8 @@ def pick_cli(which: str) -> str:
 
 def sandbox_prompt(folders: Any, agent_id: Any, user_id: Any = None) -> str:
     from cognitrix.computer.sandbox import desktop_name
-    root = f'/home/agent/work/{desktop_name(agent_id)}'
+    from cognitrix.projects.context import sandbox_identity
+    root = f'/home/agent/work/{desktop_name(sandbox_identity(agent_id))}'
     lines = [
         '## Coding in the sandbox',
         "Your shell and file tools (Bash, Read, Write, Edit, Glob, Grep, Coding Agent, Run Tests) work in the "
