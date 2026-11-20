@@ -18,7 +18,10 @@ import { ComputerPanel } from '@/components/ComputerPanel';
 import { ArtifactViewer } from '@/components/artifacts/ArtifactViewer';
 import { AppViewPanel } from '@/components/appviews/AppViewPanel';
 import { announceAppViewUpdate, appViewFrom, listAppViews, onOpenAppView, type AppViewSummary } from '@/lib/appViews';
-import { onCardAction, parseCard } from '@/lib/cards';
+import { onCardAction, parseCard, requestCardAction } from '@/lib/cards';
+import { copyBackMessage, useChatChanges, type ChangeSource } from '@/lib/fileChanges';
+import { ChangesCards } from '@/components/changes/ChangesCard';
+import { ChangesPanel } from '@/components/changes/ChangesPanel';
 import { PanelButton, PanelCard } from '@/components/cards/PanelCard';
 import { announceArtifactUpdate, onArtifactUpdate, onOpenArtifact, parseStamp, publishedFrom, type ArtifactList } from '@/lib/artifactPages';
 import { desktopName, getChatSandbox, sandboxStatus, setChatSandbox, type ChatSandbox, type SandboxDesktop } from '@/lib/sandbox';
@@ -358,6 +361,14 @@ export default function Home() {
   // A connected app's own screen open beside the chat (same place again).
   const [appViewOpen, setAppViewOpen] = useState<string | null>(null);
   const [appViewExpanded, setAppViewExpanded] = useState(false);
+  // The chat's file changes open beside the chat (same place again), at a
+  // source and file when opened from one.
+  const [changesOpen, setChangesOpen] = useState<{ source?: string; path?: string } | null>(null);
+  const [changesExpanded, setChangesExpanded] = useState(false);
+  const closeChanges = useCallback(() => {
+    setChangesOpen(null);
+    setChangesExpanded(false);
+  }, []);
   const closeAppView = useCallback(() => {
     setAppViewOpen(null);
     setAppViewExpanded(false);
@@ -365,6 +376,7 @@ export default function Home() {
   const showArtifact = useCallback((id: string) => {
     setComputerOpen(false);
     setAppViewOpen(null);
+    setChangesOpen(null);
     setArtifactOpen(id);
     setNewPageIds((prev) => {
       if (!prev.has(id)) return prev;
@@ -380,6 +392,7 @@ export default function Home() {
   useEffect(() => onOpenArtifact(showArtifact), [showArtifact]);
   const showAppView = useCallback((id: string) => {
     setComputerOpen(false);
+    setChangesOpen(null);
     setArtifactOpen(null);
     setArtifactExpanded(false);
     setAppViewOpen(id);
@@ -573,6 +586,26 @@ export default function Home() {
   waitingRef.current = waiting;
 
   const busy = waiting || streaming || question !== null;
+  // Files the agent changed in this chat: the card under the last reply, the
+  // side panel's Changes section and the diff viewer share one copy.
+  const chatChanges = useChatChanges(activeSessionId, busy);
+  const openChanges = useCallback((source?: string, path?: string) => {
+    setComputerOpen(false);
+    setArtifactOpen(null);
+    setArtifactExpanded(false);
+    setAppViewOpen(null);
+    setChangesOpen({ source, path });
+  }, []);
+  const copyBack = useCallback((src: ChangeSource) => {
+    if (src.project) void requestCardAction(copyBackMessage(src.project));
+  }, []);
+  useEffect(() => { closeChanges(); }, [activeSessionId, closeChanges]);
+  useEffect(() => {
+    if (!changesExpanded) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setChangesExpanded(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [changesExpanded]);
   const chatSwarms = useChatSwarms(incognito ? null : activeSessionId, busy);
   const busyRef = useRef(busy);
 
@@ -660,9 +693,10 @@ export default function Home() {
       event.preventDefault();
       // Same as the header button: with an artifact or the computer showing,
       // the shortcut closes the whole right column.
-      if (sidebarOpen || artifactOpen || appViewOpen || computerOpen) {
+      if (sidebarOpen || artifactOpen || appViewOpen || computerOpen || changesOpen) {
         closeArtifact();
         closeAppView();
+        closeChanges();
         setComputerOpen(false);
         setSidebar(false);
       } else {
@@ -671,7 +705,7 @@ export default function Home() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sidebarOpen, artifactOpen, appViewOpen, computerOpen, closeArtifact, closeAppView, setSidebar]);
+  }, [sidebarOpen, artifactOpen, appViewOpen, computerOpen, changesOpen, closeArtifact, closeAppView, closeChanges, setSidebar]);
   // Spoken replies: when a turn ends and "read replies aloud" is on, read the
   // answer. Sending a new message stops whatever was being read.
   // Live voice mode reads replies itself and keeps speaking across turns.
@@ -1790,10 +1824,11 @@ export default function Home() {
   }
 
   // ── The chat's side panel ──
-  const sidebarShown = sidebarOpen || !!artifactOpen || !!appViewOpen || computerOpen;
+  const sidebarShown = sidebarOpen || !!artifactOpen || !!appViewOpen || computerOpen || !!changesOpen;
   const closeRightSide = () => {
     closeArtifact();
     closeAppView();
+    closeChanges();
     setComputerOpen(false);
     setSidebar(false);
   };
@@ -2231,7 +2266,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => {
-                  if (sidebarShown) { closeArtifact(); setComputerOpen(false); setSidebar(false); }
+                  if (sidebarShown) { closeArtifact(); closeChanges(); setComputerOpen(false); setSidebar(false); }
                   else setSidebar(true);
                 }}
                 aria-pressed={sidebarShown}
@@ -2344,6 +2379,17 @@ export default function Home() {
             />
           )}
 
+          {activeSessionId && agentId && (
+            <ChangesCards
+              sessionId={activeSessionId}
+              sources={busy ? [] : chatChanges.changes?.sources ?? []}
+              working={chatChanges.working}
+              onOpen={openChanges}
+              onCopyBack={copyBack}
+              onUndoAll={(src) => void chatChanges.act({ action: 'reject', source: src.key })}
+            />
+          )}
+
           {approvals.map((a) => (
             <div key={a.request_id} role="alert" className="mx-auto my-4 w-[calc(100%-3rem)] max-w-[720px]">
               <PanelCard
@@ -2403,7 +2449,22 @@ export default function Home() {
           />
         </aside>
       )}
-      {appViewOpen && !artifactOpen && (
+      {changesOpen && !artifactOpen && (
+        <aside className={cn('fixed inset-0 z-40 flex flex-col border-line',
+          !changesExpanded && 'md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l')}>
+          <ChangesPanel
+            state={chatChanges}
+            initialSource={changesOpen.source}
+            initialPath={changesOpen.path}
+            onClose={closeRightSide}
+            onBack={sidebarOpen ? closeChanges : undefined}
+            expanded={changesExpanded}
+            onToggleExpand={() => setChangesExpanded((v) => !v)}
+            onCopyBack={copyBack}
+          />
+        </aside>
+      )}
+      {appViewOpen && !artifactOpen && !changesOpen && (
         <aside className={cn('fixed inset-0 z-40 flex flex-col border-line',
           !appViewExpanded && 'md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l')}>
           <AppViewPanel
@@ -2417,7 +2478,7 @@ export default function Home() {
           />
         </aside>
       )}
-      {computerOpen && !artifactOpen && !appViewOpen && (
+      {computerOpen && !artifactOpen && !appViewOpen && !changesOpen && (
         <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l">
           <ComputerPanel
             agents={agents.map((a) => ({ id: String(a.id), name: a.name }))}
@@ -2427,14 +2488,14 @@ export default function Home() {
           />
         </aside>
       )}
-      {sidebarOpen && !artifactOpen && !appViewOpen && !computerOpen && agentId && !picking && (
+      {sidebarOpen && !artifactOpen && !appViewOpen && !computerOpen && !changesOpen && agentId && !picking && (
         <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[320px] md:flex-none md:border-l">
           <ChatSidebar
             onClose={() => setSidebar(false)}
             desktop={agentDesktop?.name ?? null}
             sandboxOn={sandboxOn}
             desktopHeldBy={agentDesktop?.held_by}
-            onOpenComputer={() => { closeArtifact(); closeAppView(); setComputerOpen(true); }}
+            onOpenComputer={() => { closeArtifact(); closeAppView(); closeChanges(); setComputerOpen(true); }}
             waiting={sidebarWaiting}
             onApprove={(id) => void respondApproval(id, true)}
             onDeny={(id) => void respondApproval(id, false)}
@@ -2460,6 +2521,8 @@ export default function Home() {
             onChangeFolders={changeFolders}
             foldersDisabled={busy}
             sessionId={activeSessionId}
+            changes={chatChanges.changes?.sources ?? []}
+            onOpenChanges={openChanges}
             about={{
               agentId,
               agentName: agentById.get(agentId)?.name || 'Agent',

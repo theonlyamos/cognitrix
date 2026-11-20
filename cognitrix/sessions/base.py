@@ -1777,6 +1777,10 @@ class Session(Model):
             self.run_in_sandbox = switched
         if switched is False or interface not in ('web', 'ws', 'task'):
             return
+        if interface in ('web', 'ws') and not getattr(self, 'team_id', None):
+            # An agent chat shows its changes live under the last reply and
+            # in the side panel (cognitrix.file_changes), with these buttons.
+            return
         folders = [f for f in turn_folders if getattr(f, 'name', '') != 'scratch']
         if not folders or not sw.sandbox_available():
             return

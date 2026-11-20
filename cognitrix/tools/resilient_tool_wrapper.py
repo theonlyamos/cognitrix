@@ -71,15 +71,21 @@ class ResilientToolManager:
                 # Execute tool: on the chat's paired PC when it runs there
                 # (cognitrix/computer/paired), else here.
                 from cognitrix.computer.paired.turn import run_remote
+                from cognitrix.file_changes import record as file_record
+                # Write and Edit: keep the file's text from before and after,
+                # for the chat's changes view (review, accept, put back).
+                watch = await file_record.before(tool, validated)
                 remote = run_remote(tool, validated)
                 remote_text = await remote
                 if remote_text is not None:
+                    await file_record.after(watch, file_record.succeeded(remote_text))
                     return ToolResult(success=True, data=remote_text, attempts=attempt)
                 operation = tool.run(**validated)
                 if accounting is not None:
                     result = await accounting.wait_within_wall(operation)
                 else:
                     result = await operation
+                await file_record.after(watch, file_record.succeeded(file_record.tool_text(result)))
 
                 return ToolResult(
                     success=True,
