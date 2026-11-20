@@ -687,3 +687,60 @@ async def test_a_task_step_waits_for_its_pc_before_the_step_clock_starts(db, mon
     asyncio.get_running_loop().create_task(come_back())
     monkeypatch.setenv('COGNITRIX_PAIRED_TASK_WAIT_S', '5')
     assert await turn.wait_before_step('pc-back', task_id='t10', user_id='u1') is None
+
+
+async def _account():
+    from cognitrix.models import User
+    await User(name='Kofi Boateng', email='kofi@example.com', password='x').save()
+    return await User.find_one({'email': 'kofi@example.com'})
+
+
+async def test_a_sign_in_code_links_a_pc_and_signing_it_out_unpairs_it(db, server, tmp_path, monkeypatch):
+    from cognitrix import signins
+    from cognitrix.computer.paired.connector import link, preview
+    from cognitrix.models.paired_device import PairedDevice
+    from cognitrix.models.sign_in import SignIn
+
+    monkeypatch.delenv('COGNITRIX_CODE_SIGNIN', raising=False)
+    signins._tries.clear()
+    user = await _account()
+    made = await signins.make_code(user)
+    shared = tmp_path / 'work'
+    shared.mkdir()
+
+    assert (await preview(server.url, made['code']))['account'] == 'Kofi Boateng · kofi@example.com'
+    view = await link(server.url, made['code'], name='Kofi laptop', folders=[str(shared)], powers=['files'])
+    assert view['account'] == 'Kofi Boateng · kofi@example.com'
+
+    device = (await PairedDevice.find({'user_id': str(user.id)}))[0]
+    row = await SignIn.find_one({'sid': device.sign_in_sid})
+    assert (row.method, row.kind, row.name) == ('code', 'cli', 'Kofi laptop (cognitrix connect)')
+    listed = await signins.listing(user)
+    assert [(s['name'], s['linked_pc']) for s in listed] == [('Kofi laptop (cognitrix connect)', True)]
+
+    # The code worked once.
+    with pytest.raises(Exception):
+        await link(server.url, made['code'], name='Other', folders=[str(shared)], powers=[])
+
+    # Signing it out in Settings, Sign-ins unpairs the PC.
+    assert await signins.end(str(user.id), device.sign_in_sid)
+    assert await PairedDevice.find({'user_id': str(user.id)}) in ([], None)
+
+
+async def test_a_pairing_code_pc_shows_in_sign_ins_and_unpairing_signs_it_out(db, server, tmp_path):
+    from cognitrix import signins
+    from cognitrix.api.routes import computer_devices
+    from cognitrix.common.security import AuthContext
+    from cognitrix.models.sign_in import SignIn
+
+    user = await _account()
+    item = store.make_code(str(user.id), 'Kofi')
+    device, _ = await store.pair(item.code, '1.2.3.4', name='Studio PC', platform='Windows', folders=[], powers=[],
+                                 client='desktop')
+    row = await SignIn.find_one({'sid': device.sign_in_sid})
+    assert (row.method, row.kind, row.name) == ('pairing', 'desktop', 'Studio PC (desktop app)')
+    assert [s['linked_pc'] for s in await signins.listing(user)] == [True]
+
+    await computer_devices.unpair_device(str(device.id), AuthContext(user=user))
+    assert (await SignIn.find_one({'sid': device.sign_in_sid})).ended_at
+    assert await signins.listing(user) == []

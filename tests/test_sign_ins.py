@@ -113,7 +113,7 @@ async def test_a_code_signs_in_one_new_device(world):
     from cognitrix.api.routes import sign_ins
 
     laptop = await _ctx(await _login())
-    made = await sign_ins.make_sign_in_code(laptop)
+    made = await sign_ins.make_sign_in_code(_request(), laptop)
     code = made['code']
     assert len(code) == 9 and made['expires_in'] == 300
     assert (await sign_ins.sign_in_code_status(code, laptop))['status'] == 'waiting'
@@ -134,7 +134,7 @@ async def test_a_code_signs_in_one_new_device(world):
 
     # The new device can't make codes for its first day.
     with pytest.raises(HTTPException) as exc_info:
-        await sign_ins.make_sign_in_code(phone)
+        await sign_ins.make_sign_in_code(_request(), phone)
     assert exc_info.value.status_code == 403
 
     # Signing the new device out from the laptop ends it.
@@ -148,7 +148,7 @@ async def test_codes_expire_cancel_and_cap(world):
     from cognitrix.models.sign_in import SignInCode
 
     ctx = await _ctx(await _login())
-    codes = [(await sign_ins.make_sign_in_code(ctx))['code'] for _ in range(4)]
+    codes = [(await sign_ins.make_sign_in_code(_request(), ctx))['code'] for _ in range(4)]
     assert (await sign_ins.sign_in_code_status(codes[0], ctx))['status'] == 'expired'  # only 3 open at once
     await sign_ins.cancel_sign_in_code(codes[1], ctx)
     with pytest.raises(HTTPException):
@@ -178,7 +178,7 @@ async def test_code_sign_in_can_be_turned_off(world, monkeypatch):
     monkeypatch.setenv('COGNITRIX_CODE_SIGNIN', 'false')
     assert (await auth.auth_options())['code_sign_in'] is False
     with pytest.raises(HTTPException) as exc_info:
-        await sign_ins.make_sign_in_code(await _ctx(await _login()))
+        await sign_ins.make_sign_in_code(_request(), await _ctx(await _login()))
     assert exc_info.value.status_code == 403
 
 

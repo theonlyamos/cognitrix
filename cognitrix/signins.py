@@ -229,6 +229,7 @@ async def end(user_id: str, sid: str) -> bool:
         return False
     await SignIn.update_one({'sid': sid}, {'ended_at': now_stamp()})
     forget(sid)
+    await _unlink_pcs([sid])
     return True
 
 
@@ -237,13 +238,46 @@ async def end_all(user_id: str, keep_sid: str = '') -> int:
     from cognitrix.models.sign_in import SignIn
 
     count = 0
+    ended: list[str] = []
     for row in await SignIn.find({'user_id': str(user_id)}) or []:
         if row.ended_at or (keep_sid and row.sid == keep_sid):
             continue
         await SignIn.update_one({'sid': row.sid}, {'ended_at': now_stamp()})
         forget(row.sid)
+        ended.append(row.sid)
         count += 1
+    await _unlink_pcs(ended)
     return count
+
+
+async def _unlink_pcs(sids: list[str]) -> None:
+    """A PC linked by a sign-in stops being paired when that sign-in ends."""
+    if not sids:
+        return
+    from cognitrix.models.paired_device import PairedDevice
+
+    for sid in sids:
+        try:
+            rows = await PairedDevice.find({'sign_in_sid': sid}) or []
+        except Exception:  # noqa: BLE001 - no paired PCs table (yet)
+            return
+        for device in rows:
+            await PairedDevice.delete_many({'id': device.id})
+            try:
+                from cognitrix.computer.paired.hub import hub
+                await hub.drop(device.id, {'type': 'unpaired'}, code=4401)
+            except Exception:  # noqa: BLE001 - not connected here
+                pass
+
+
+async def linked_pc_sids(user_id: str) -> set[str]:
+    from cognitrix.models.paired_device import PairedDevice
+
+    try:
+        rows = await PairedDevice.find({'user_id': str(user_id)}) or []
+    except Exception:  # noqa: BLE001
+        return set()
+    return {str(d.sign_in_sid) for d in rows if getattr(d, 'sign_in_sid', '')}
 
 
 def _lifetime() -> timedelta:
@@ -252,8 +286,9 @@ def _lifetime() -> timedelta:
     return timedelta(minutes=float(JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
 
 
-def view(row, current_sid: str = '') -> dict[str, Any]:
+def view(row, current_sid: str = '', linked: set[str] | None = None) -> dict[str, Any]:
     return {
+        'linked_pc': bool(linked and row.sid in linked),
         'id': row.sid,
         'name': row.name or 'Unknown device',
         'kind': row.kind or 'browser',
@@ -286,7 +321,8 @@ async def listing(user, current_sid: str = '') -> list[dict[str, Any]]:
     current = [r for r in rows if r.sid == current_sid]
     others = sorted((r for r in rows if r.sid != current_sid), key=lambda r: str(r.last_seen_at or r.created_at),
                     reverse=True)
-    return [view(r, current_sid) for r in current + others]
+    linked = await linked_pc_sids(str(user.id))
+    return [view(r, current_sid, linked) for r in current + others]
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +345,7 @@ def normalize(code: Any) -> str:
     return normalize_code(code)
 
 
-async def make_code(user, sid: str = '') -> dict[str, Any]:
+async def make_code(user, sid: str = '', server: str = '') -> dict[str, Any]:
     """A one-time code another device can sign in with."""
     from cognitrix.models.sign_in import SignIn, SignInCode
 
@@ -338,7 +374,7 @@ async def make_code(user, sid: str = '') -> dict[str, Any]:
                      made_by_name=made_by or 'a signed-in device', expires_at=now + CODE_TTL_S).save()
     from cognitrix import audit
     audit.record('sign_in', 'Made a sign-in code', user_id=str(user.id), actor=str(user.email), outcome='ok')
-    return {'code': code, 'expires_in': CODE_TTL_S}
+    return {'code': code, 'expires_in': CODE_TTL_S, 'server': server}
 
 
 async def code_status(user, code: str) -> dict[str, Any]:
@@ -351,7 +387,7 @@ async def code_status(user, code: str) -> dict[str, Any]:
         out: dict[str, Any] = {'status': 'used'}
         row = await SignIn.find_one({'sid': item.used_sid}) if item.used_sid else None
         if row is not None:
-            out['sign_in'] = view(row)
+            out['sign_in'] = view(row, '', await linked_pc_sids(str(user.id)))
             out['sign_in']['ended'] = bool(row.ended_at)
         return out
     left = int(item.expires_at or 0) - int(time.time())
@@ -389,8 +425,31 @@ def _forgive(address: str) -> None:
             recent.pop()
 
 
-async def use_code(code: str, request=None, *, name: str = '', kind: str = '') -> tuple[Any, str]:
-    """Sign a new device in with a code. Returns (user, token)."""
+async def peek_code(code: str, address: str) -> dict[str, Any]:
+    """Whose account a sign-in code is for, without using it (a PC shows this before linking)."""
+    from cognitrix.models import User
+    from cognitrix.models.sign_in import SignInCode
+
+    if not code_signin_on():
+        raise SignInError('off', 'Signing in with a code is turned off on this server.', 403)
+    _count_try(address or 'unknown')
+    key = normalize(code)
+    item = await SignInCode.find_one({'code_hash': _hash(key)}) if key else None
+    user = await User.get(item.user_id) if item is not None else None
+    if item is None or item.canceled or item.used_at or int(item.expires_at or 0) <= int(time.time()) \
+            or user is None or getattr(user, 'disabled', None):
+        raise SignInError('bad_code', "That code isn't right or has expired. Make a new one on your signed-in device.",
+                          400)
+    _forgive(address or 'unknown')
+    name = str(getattr(user, 'name', '') or '').strip()
+    email = str(getattr(user, 'email', '') or '').strip()
+    return {'account': ' · '.join(p for p in (name, email) if p)[:160] or 'your account',
+            'expires_in': int(item.expires_at) - int(time.time())}
+
+
+async def redeem_code(code: str, *, address: str = '', user_agent: str = '', name: str = '',
+                      kind: str = '') -> tuple[Any, str]:
+    """Use a sign-in code: record the new device and return (user, sid)."""
     import asyncio
 
     from cognitrix.models import User
@@ -399,7 +458,7 @@ async def use_code(code: str, request=None, *, name: str = '', kind: str = '') -
     global _use_lock
     if not code_signin_on():
         raise SignInError('off', 'Signing in with a code is turned off on this server.', 403)
-    address = client_address(request) or 'unknown'
+    address = address or 'unknown'
     _count_try(address)
     bad = SignInError('bad_code', "That code isn't right or has expired. Make a new one on your signed-in device.", 400)
     key = normalize(code)
@@ -416,7 +475,7 @@ async def use_code(code: str, request=None, *, name: str = '', kind: str = '') -
             raise bad
         await SignInCode.update_one({'code_hash': item.code_hash}, {'used_at': int(time.time())})
     _forgive(address)
-    sid = await start(user, method='code', user_agent=_header(request, 'user-agent'), address=address,
+    sid = await start(user, method='code', user_agent=user_agent, address=address,
                       name=name, kind=kind, approved_by=item.made_by_name, approved_by_sid=item.made_by_sid)
     await SignInCode.update_one({'code_hash': item.code_hash}, {'used_sid': sid})
     from cognitrix.models.sign_in import SignIn
@@ -435,4 +494,11 @@ async def use_code(code: str, request=None, *, name: str = '', kind: str = '') -
             link='/settings/sign-ins')
     except Exception:  # noqa: BLE001 - the notice is best effort
         pass
+    return user, sid
+
+
+async def use_code(code: str, request=None, *, name: str = '', kind: str = '') -> tuple[Any, str]:
+    """Sign a new device in with a code. Returns (user, token)."""
+    user, sid = await redeem_code(code, address=client_address(request), user_agent=_header(request, 'user-agent'),
+                                  name=name, kind=kind)
     return user, make_token(user, sid)

@@ -25,6 +25,18 @@ password, signs out the other devices.
 3. The dialog on the first device shows which device signed in, with **That wasn't me,
    sign it out** in case it wasn't you.
 
+## Linking a PC with the same code
+
+The code also links a PC, so your agents can work on it (see `docs/pair-your-pc.md`):
+
+- **Desktop app:** Settings › Computers › This PC: enter the web address and the code.
+- **Terminal:** `cognitrix connect <server> --code <code> --folder <path>` (the Get a code dialog shows the command).
+
+One code signs the PC in and pairs it. You still choose on the PC which folders and powers agents get
+(none by default). The PC shows in **Settings › Sign-ins** (marked as a linked PC, with **Unlink**) and in
+**Settings › Computers**. Unlinking it in Sign-ins unpairs it; unpairing it in Computers ends its sign-in.
+A PC paired with a pairing code from Settings › Computers shows in Sign-ins too.
+
 Rules:
 
 - A code works once, for 5 minutes. At most 3 are open per person; making a 4th cancels the oldest.
@@ -48,6 +60,7 @@ Rules:
 | `POST /api/v1/auth/sign-ins/codes` | Make a code `{code, expires_in}` |
 | `GET /api/v1/auth/sign-ins/codes/{code}` | `waiting`, `used` (with the device) or `expired` |
 | `DELETE /api/v1/auth/sign-ins/codes/{code}` | Cancel a code |
+| `POST /api/v1/computer/devices/claim`, `/pair` | Also accept a sign-in code (a PC links with it; `client`: `desktop` or `cli`) |
 | `POST /api/v1/auth/code-sign-in` | `{code, device_name?, device_kind?}` → `{user, access_token}` (no sign-in needed) |
 
 `POST /api/v1/auth/login` also takes optional `device_name` and `device_kind`

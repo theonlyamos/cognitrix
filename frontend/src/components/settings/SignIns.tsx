@@ -8,7 +8,7 @@ import {
   type SignInCode, type SignInDevice, type SignInList,
 } from '@/lib/signIns';
 import { timeAgo } from '@/lib/agentDraft';
-import { Group, SettingRow, StatusPill, SubHeading, buttonClass, primaryButtonClass } from '@/components/settings/ui';
+import { Group, SettingRow, StatusPill, SubHeading, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { tr } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
@@ -28,7 +28,10 @@ function methodText(d: SignInDevice): string {
     case 'password': return tr('ui.signIns.signedInWithPassword');
     case 'google': return tr('ui.signIns.signedInWithGoogle');
     case 'github': return tr('ui.signIns.signedInWithGithub');
-    case 'code': return tr('ui.signIns.signedInWithACodeFrom', { name: d.approved_by || tr('ui.signIns.anotherDevice') });
+    case 'code': return d.linked_pc
+      ? tr('ui.signIns.linkedWithACodeFrom', { name: d.approved_by || tr('ui.signIns.anotherDevice') })
+      : tr('ui.signIns.signedInWithACodeFrom', { name: d.approved_by || tr('ui.signIns.anotherDevice') });
+    case 'pairing': return tr('ui.signIns.linkedWithAPairingCode');
     case 'earlier': return tr('ui.signIns.signedInBeforeThisList');
     default: return '';
   }
@@ -124,6 +127,7 @@ export function SignInCodeDialog({ onClose, onSignedIn }: { onClose: () => void;
     }
   };
 
+  const command = code ? `cognitrix connect ${code.server || window.location.origin} --code ${code.code}` : '';
   const minutes = Math.floor(left / 60);
   const seconds = String(left % 60).padStart(2, '0');
 
@@ -146,7 +150,7 @@ export function SignInCodeDialog({ onClose, onSignedIn }: { onClose: () => void;
               <div className="min-w-0 flex-1">
                 <div className={cn('text-[14px] font-medium', ended && 'text-fg-dim line-through')}>{device.name}</div>
                 <div className="text-[12px] text-fg-dim" role="status">
-                  {ended ? tr('ui.signIns.signedOut') : tr('ui.signIns.isNowSignedInAs')}
+                  {ended ? tr('ui.signIns.signedOut') : device.linked_pc ? tr('ui.signIns.isNowLinked') : tr('ui.signIns.isNowSignedInAs')}
                 </div>
               </div>
             </div>
@@ -188,6 +192,16 @@ export function SignInCodeDialog({ onClose, onSignedIn }: { onClose: () => void;
                 </div>
               )}
             </div>
+            {code && !expired && (
+              <div className="mt-3 text-[12.5px] leading-snug">
+                <span className="font-medium">{tr('ui.signIns.onAPc')}</span>{' '}
+                <span className="text-fg-dim">{tr('ui.signIns.inTheDesktopAppOpen')}</span>
+                <div className="mt-1.5 flex items-center gap-2 rounded-lg border border-line bg-panel-2 px-2.5 py-1.5">
+                  <code className="min-w-0 flex-1 break-all font-mono text-[11.5px]">{command}</code>
+                  <button type="button" onClick={() => copy(command, 'cmd')} className={quietButtonClass}>{copied === 'cmd' ? tr('ui.signIns.copied') : tr('ui.signIns.copy')}</button>
+                </div>
+              </div>
+            )}
             <p className="mt-3 text-[12px] leading-snug text-fg-dim">{tr('ui.signIns.anyoneWhoHasThisCode')}</p>
             <div className="mt-4 flex justify-end">
               <button type="button" onClick={close} className={buttonClass}>{tr('ui.signIns.cancel')}</button>
@@ -282,7 +296,7 @@ export function SignInsSettings() {
             >
               {!d.current && (
                 <button type="button" onClick={() => end(d)} disabled={busy === d.id} className={cn(buttonClass, 'border-transparent text-danger-ink')}>
-                  {busy === d.id ? tr('ui.signIns.signingOut') : tr('ui.signIns.signOut')}
+                  {busy === d.id ? tr('ui.signIns.signingOut') : d.linked_pc ? tr('ui.signIns.unlink') : tr('ui.signIns.signOut')}
                 </button>
               )}
             </SettingRow>

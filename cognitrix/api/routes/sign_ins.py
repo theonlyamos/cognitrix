@@ -58,10 +58,10 @@ async def sign_out_others(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any
 
 
 @sign_ins_api.post('/sign-ins/codes')
-async def make_sign_in_code(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+async def make_sign_in_code(request: Request, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     from cognitrix import signins
     try:
-        return await signins.make_code(ctx.user, ctx.sid)
+        return await signins.make_code(ctx.user, ctx.sid, server=str(request.base_url).rstrip('/'))
     except signins.SignInError as exc:
         raise _error(exc) from None
 

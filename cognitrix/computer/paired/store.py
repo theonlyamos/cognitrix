@@ -123,10 +123,49 @@ def claim(code: str, address: str) -> dict[str, Any]:
     return {'account': item.account, 'expires_in': int(item.expires - time.time())}
 
 
-async def pair(code: str, address: str, *, name: str, platform: str, folders: Any, powers: Any,
-               version: str = '') -> tuple[Any, str]:
-    """Use the code: make the device record and return (device, token)."""
+def _kind(client: str) -> str:
+    return 'desktop' if client == 'desktop' else 'cli'
+
+
+def _pc_label(name: str, client: str) -> str:
+    return f"{name} ({'desktop app' if client == 'desktop' else 'cognitrix connect'})"[:80]
+
+
+async def _make_device(user_id: str, *, name: str, platform: str, folders: Any, powers: Any,
+                       version: str, sign_in_sid: str) -> tuple[Any, str]:
     from cognitrix.models.paired_device import PairedDevice
+
+    existing = await PairedDevice.find({'user_id': user_id}) or []
+    if len(existing) >= MAX_DEVICES_PER_USER:
+        raise PairingError('too_many_devices', f'This account already has {MAX_DEVICES_PER_USER} paired PCs. '
+                           'Unpair one on the web first.', 409)
+    token = new_token()
+    stamp = now_stamp()
+    device = PairedDevice(
+        user_id=user_id,
+        name=(str(name or '').strip() or 'My PC')[:80],
+        platform=str(platform or '')[:80],
+        token_hash=hash_token(token),
+        folders_json=json.dumps(clean_folders(folders)),
+        powers=','.join(clean_powers(powers)),
+        version=str(version or '')[:40],
+        paired_at=stamp,
+        last_seen_at=stamp,
+        sign_in_sid=sign_in_sid,
+    )
+    await device.save()
+    return device, token
+
+
+async def pair(code: str, address: str, *, name: str, platform: str, folders: Any, powers: Any,
+               version: str = '', client: str = '') -> tuple[Any, str]:
+    """Use the code: make the device record and return (device, token).
+
+    The PC also shows in Settings, Sign-ins as a linked device, so it can be
+    signed out (unpaired) from there like any other device."""
+    from types import SimpleNamespace
+
+    from cognitrix import signins
 
     item = _live(code, address)
     with _lock:
@@ -134,29 +173,35 @@ async def pair(code: str, address: str, *, name: str, platform: str, folders: An
             raise PairingError('used_code', 'That code was already used. Make a new one on the web.', 409)
         item.device_id = 'pending'
     try:
-        existing = await PairedDevice.find({'user_id': item.user_id}) or []
-        if len(existing) >= MAX_DEVICES_PER_USER:
-            raise PairingError('too_many_devices', f'This account already has {MAX_DEVICES_PER_USER} paired PCs. '
-                               'Unpair one on the web first.', 409)
-        token = new_token()
-        stamp = now_stamp()
-        device = PairedDevice(
-            user_id=item.user_id,
-            name=(str(name or '').strip() or 'My PC')[:80],
-            platform=str(platform or '')[:80],
-            token_hash=hash_token(token),
-            folders_json=json.dumps(clean_folders(folders)),
-            powers=','.join(clean_powers(powers)),
-            version=str(version or '')[:40],
-            paired_at=stamp,
-            last_seen_at=stamp,
-        )
-        await device.save()
+        pc_name = (str(name or '').strip() or 'My PC')[:80]
+        sid = await signins.start(SimpleNamespace(id=item.user_id), method='pairing', address=address,
+                                  name=_pc_label(pc_name, client), kind=_kind(client))
+        device, token = await _make_device(item.user_id, name=pc_name, platform=platform, folders=folders,
+                                           powers=powers, version=version, sign_in_sid=sid)
     except BaseException:
         item.device_id = None
         raise
     item.device_id = str(device.id)
     return device, token
+
+
+async def pair_with_sign_in_code(code: str, address: str, *, name: str, platform: str, folders: Any, powers: Any,
+                                 version: str = '', client: str = '') -> tuple[Any, str]:
+    """A code from Settings, Sign-ins signs the PC in and pairs it in one go."""
+    from cognitrix import signins
+
+    pc_name = (str(name or '').strip() or 'My PC')[:80]
+    try:
+        user, sid = await signins.redeem_code(code, address=address, name=_pc_label(pc_name, client),
+                                              kind=_kind(client))
+    except signins.SignInError as exc:
+        raise PairingError(exc.code, exc.message, exc.status) from None
+    try:
+        return await _make_device(str(user.id), name=pc_name, platform=platform, folders=folders, powers=powers,
+                                  version=version, sign_in_sid=sid)
+    except BaseException:
+        await signins.end(str(user.id), sid)
+        raise
 
 
 async def device_for_token(token: str):

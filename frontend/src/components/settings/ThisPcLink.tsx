@@ -109,13 +109,13 @@ function LinkForm({ defaults, onLinked }: { defaults: PcLink; onLinked: (l: PcLi
   if (!account) {
     return (
       <div className="space-y-3 rounded-[12px] border border-line bg-panel p-3.5">
-        <p className="text-[12.5px] leading-snug text-fg-dim">{tr('ui.thisPc.onTheWebOpenSettings')}</p>
+        <p className="text-[12.5px] leading-snug text-fg-dim">{tr('ui.thisPc.onTheWebGetACode')}</p>
         <div>
           <label htmlFor="link-server" className="mb-1 block text-[12px] text-fg-dim">{tr('ui.thisPc.webAddress')}</label>
           <input id="link-server" value={server} onChange={(e) => setServer(e.target.value)} placeholder="https://cognitrix.example.com" className={inputClass} />
         </div>
         <div>
-          <label htmlFor="link-code" className="mb-1 block text-[12px] text-fg-dim">{tr('ui.thisPc.pairingCode')}</label>
+          <label htmlFor="link-code" className="mb-1 block text-[12px] text-fg-dim">{tr('ui.thisPc.code')}</label>
           <input id="link-code" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="ABCD-EFGH" maxLength={12} className={cn(inputClass, 'font-mono tracking-[0.1em]')} />
         </div>
         {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}

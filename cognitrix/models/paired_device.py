@@ -26,6 +26,8 @@ class PairedDevice(Model):
     paired_at: str = ''
     last_seen_at: str = ''
     """Naive UTC 'YYYY-MM-DD HH:MM:SS'."""
+    sign_in_sid: str = ''
+    """The Sign-ins row (cognitrix/signins.py) this PC's link shows as; signing it out unpairs the PC."""
     sent_tasks: str = ''
     """Comma separated ids of tasks this PC handed to the web account (newest last, at most 50)."""
 

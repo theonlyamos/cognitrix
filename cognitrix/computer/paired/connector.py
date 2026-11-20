@@ -261,7 +261,7 @@ async def preview(server: str, code: str) -> dict[str, Any]:
     return {'server': normalize_server(server), 'account': str(out.get('account') or ''), 'code': code}
 
 
-async def link(server: str, code: str, *, name: str, folders: Any, powers: Any) -> dict[str, Any]:
+async def link(server: str, code: str, *, name: str, folders: Any, powers: Any, client: str = 'cli') -> dict[str, Any]:
     """Pair this PC and save the link. Returns the public view of it."""
     from cognitrix.config import VERSION
 
@@ -274,7 +274,7 @@ async def link(server: str, code: str, *, name: str, folders: Any, powers: Any) 
     info = await _post(server, '/claim', {'code': code})
     out = await _post(server, '/pair', {
         'code': code, 'name': (name or default_name())[:80], 'platform': platform_label(),
-        'folders': shared, 'powers': chosen, 'version': VERSION,
+        'folders': shared, 'powers': chosen, 'version': VERSION, 'client': client,
     })
     if not out.get('token'):
         raise LinkError('failed', "The server didn't send a token back.")

@@ -13,6 +13,8 @@ export interface SignInDevice {
   created_at: string;
   last_seen_at: string;
   current: boolean;
+  /** A PC linked to this account (Settings › Computers); signing it out unpairs it. */
+  linked_pc?: boolean;
   ended?: boolean;
 }
 
@@ -26,6 +28,8 @@ export interface SignInList {
 export interface SignInCode {
   code: string;
   expires_in: number;
+  /** This server's address, for `cognitrix connect`. */
+  server?: string;
 }
 
 export type SignInCodeStatus =

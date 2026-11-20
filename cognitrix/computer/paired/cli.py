@@ -19,7 +19,8 @@ def add_parser(subparsers) -> None:
     p = subparsers.add_parser(
         'connect', help='Let your agents on a Cognitrix web server work on this PC (pair it, then stay connected)')
     p.add_argument('server', nargs='?', default='', help='The web server, like cognitrix.example.com')
-    p.add_argument('--code', default='', help='The pairing code from Settings, Computers, Pair a computer')
+    p.add_argument('--code', default='', help='A code from the web: Settings, Sign-ins, Get a code (signs this PC in and links it), '
+                   'or Settings, Computers, Pair a computer')
     p.add_argument('--folder', action='append', default=[], help='A folder agents may use (repeat for more)')
     p.add_argument('--read-only', action='store_true', help='Agents may read the folders but not change them')
     p.add_argument('--no-commands', action='store_true', help="Don't let agents run commands here")
@@ -107,7 +108,7 @@ async def command(args) -> None:
         print('Paired.')
         _print_link(view)
     elif not load_config().get('token'):
-        sys.exit('This PC is not paired yet. Make a code on the web (Settings, Computers, Pair a computer), '
+        sys.exit('This PC is not paired yet. Make a code on the web (Settings, Sign-ins, Get a code), '
                  'then run: cognitrix connect <server> --code <code> --folder <path>')
 
     print('Connecting... (Ctrl+C to stop; agents can only use this PC while this runs)')

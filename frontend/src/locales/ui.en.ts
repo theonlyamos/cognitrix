@@ -3685,8 +3685,6 @@ const uiEn = {
   "ui.thisPc.nameForThisPc": "Name for this PC",
   "ui.thisPc.noFoldersAgentsCanT": "No folders. Agents can't use anything here until you add one.",
   "ui.thisPc.notConnected": "NOT CONNECTED",
-  "ui.thisPc.onTheWebOpenSettings": "On the web, open Settings › Computers › Pair a computer, then enter the web address and the code here.",
-  "ui.thisPc.pairingCode": "Pairing code",
   "ui.thisPc.pauseAgents": "Pause agents",
   "ui.thisPc.paused": "PAUSED",
   "ui.thisPc.readOnly": "Read only",
@@ -3871,6 +3869,15 @@ const uiEn = {
   "ui.login.signInCode": "Sign-in code",
   "ui.login.codeFromASignedInDevice": "CODE FROM A SIGNED-IN DEVICE",
   "ui.login.onADeviceWhereYou": "On a device where you're signed in, open Settings › Sign-ins and press Get a code.",
+  "ui.thisPc.onTheWebGetACode": "On the web, open Settings › Sign-ins › Get a code (or Settings › Computers › Pair a computer), then enter the web address and the code here. This PC shows up in both places.",
+  "ui.thisPc.code": "Code",
+  "ui.signIns.linkedWithACodeFrom": "PC linked with a code from {name}",
+  "ui.signIns.linkedWithAPairingCode": "PC linked with a pairing code",
+  "ui.signIns.isNowLinked": "is now linked to your account. Your agents can use it only as you allow on that PC.",
+  "ui.signIns.onAPc": "On a PC:",
+  "ui.signIns.inTheDesktopAppOpen": "in the desktop app, open Settings › Computers › This PC and enter the code, or run this. It signs the PC in and links it, so agents can work on it as you allow there.",
+  "ui.signIns.copy": "Copy",
+  "ui.signIns.unlink": "Unlink",
 } as const;
 
 export default uiEn;

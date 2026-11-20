@@ -461,6 +461,7 @@ _AGENT_MIGRATION_COLUMNS = (
 
 _PAIRED_DEVICE_MIGRATION_COLUMNS = (
     ('sent_tasks', 'TEXT'),
+    ('sign_in_sid', 'TEXT'),
 )
 
 _SESSION_MIGRATION_COLUMNS = (
