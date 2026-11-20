@@ -3678,7 +3678,7 @@ const uiEn = {
   "ui.thisPc.readWriteAndSearchFiles": "Read, write and search files in these folders",
   "ui.thisPc.remove": "Remove",
   "ui.thisPc.resumeAgents": "Resume agents",
-  "ui.thisPc.runCommandsInTheseFolders": "Run commands in these folders, after you OK each one",
+  "ui.thisPc.commandsRunAsYou": "Run commands after you OK each one. They start only in read & write folders, and run as you, so they can reach what you can.",
   "ui.thisPc.unlink": "Unlink",
   "ui.thisPc.unlinkAgentsCanNoLonger": "Unlink? Agents can no longer use this PC.",
   "ui.thisPc.unlinkThisPc": "Unlink this PC",

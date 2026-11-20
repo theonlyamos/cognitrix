@@ -59,6 +59,8 @@ class ToolExecutionContext:
     # Set on the PC itself while it runs a call from the server: only the
     # folders its owner shared count (no apps folder, no app working folder).
     device_host: bool = False
+    # A helper agent of a chat on a PC: it may look at the PC, never change it.
+    device_read_only: bool = False
 
     @property
     def restricted(self) -> bool:
@@ -130,6 +132,9 @@ def delegated_execution_context(
         folders=_read_only_folders(source.folders),
         # A helper of a chat that works in the sandbox works there too.
         sandbox=source.sandbox,
+        # ...and a helper of a chat on a paired PC looks at that PC, read only.
+        device=source.device,
+        device_read_only=bool(source.device),
     )
 
 

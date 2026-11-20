@@ -334,3 +334,47 @@ def test_the_wire_format_is_plain_json():
     assert _jsonable({'command': 'ls', 'approved': True, 'parent': object(), 'interface': 'web'}) == {
         'command': 'ls', 'approved': True}
     json.dumps(_jsonable({'a': [1, 2], 'b': object()}))
+
+
+async def test_commands_never_start_in_a_read_only_folder(server, tmp_path):
+    from cognitrix.computer.paired.connector import load_config, run_call, save_config
+
+    view, connector, shared = await _paired_pc(server, tmp_path)
+    try:
+        cfg = load_config()
+        cfg['folders'] = [{'path': str(shared), 'writable': False}]
+        save_config(cfg)
+        reply = await run_call(load_config(), {'id': 'a', 'tool': 'Bash',
+                                               'args': {'command': 'echo hi > made.txt', 'approved': True}})
+        assert reply['ok'] is False and reply['error'] == 'read_only'
+        assert not (shared / 'made.txt').exists()
+        # Reading still works there.
+        reply = await run_call(load_config(), {'id': 'b', 'tool': 'Read', 'args': {'file_path': 'notes.txt'}})
+        assert reply['ok'] and 'first line' in reply['text']
+    finally:
+        await connector.stop()
+
+
+async def test_a_helper_agent_only_looks_at_the_pc(server, tmp_path):
+    from cognitrix.computer.paired.turn import device_view, run_remote, tools_for
+    from cognitrix.tools.base import ToolManager
+    from cognitrix.tools.utils import delegated_execution_context
+
+    view, connector, shared = await _paired_pc(server, tmp_path)
+    try:
+        parent = ToolExecutionContext(user_id='u1', device=view['device_id'])
+        child = delegated_execution_context(parent)
+        assert child.device == view['device_id'] and child.device_read_only
+        token = set_execution_context(child)
+        try:
+            assert 'first line' in await run_remote(ToolManager.get_by_name('Read'), {'file_path': 'notes.txt'})
+            out = await run_remote(ToolManager.get_by_name('Write'), {'file_path': 'x.txt', 'content': 'no'})
+            assert out.startswith('Error') and not (shared / 'x.txt').exists()
+            out = await run_remote(ToolManager.get_by_name('Bash'), {'command': 'echo hi', 'approved': True})
+            assert out.startswith('Error')
+        finally:
+            reset_execution_context(token)
+        device = await device_view('u1', view['device_id'], read_only=True)
+        assert set(tools_for(device)) == {'read', 'glob', 'grep'}
+    finally:
+        await connector.stop()

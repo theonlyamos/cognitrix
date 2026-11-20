@@ -28,7 +28,7 @@ ports are opened on the PC. When a chat works on a PC, Bash, Bash Output, Kill
 Shell, Read, Write, Edit, Glob and Grep are sent to it and run there, inside
 the shared folders only. The PC enforces its own folder list, read-only
 folders, the files/commands switches and pause, whatever the server asks.
-Each command asks the person in the chat first. The PC also keeps a local log
+Each command asks the person in the chat first. Commands start only in folders shared read & write and run as the person's own user, so a command can reach whatever that user can: the approval is the guard, not the folder list. Helper agents a chat calls can only Read, Glob and Grep on the PC. The PC also keeps a local log
 of what ran in `~/.cognitrix/paired-log.jsonl`.
 
 ## Limits in this version

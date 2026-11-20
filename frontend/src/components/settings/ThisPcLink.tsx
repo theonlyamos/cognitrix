@@ -54,7 +54,7 @@ function PowerToggles({ powers, onChange, disabled }: { powers: DevicePower[]; o
       <SettingRow label={tr('ui.thisPc.files')} detail={tr('ui.thisPc.readWriteAndSearchFiles')}>
         <Toggle label={tr('ui.thisPc.files')} checked={powers.includes('files')} disabled={disabled} onChange={(v) => set('files', v)} />
       </SettingRow>
-      <SettingRow label={tr('ui.thisPc.commands')} detail={tr('ui.thisPc.runCommandsInTheseFolders')}>
+      <SettingRow label={tr('ui.thisPc.commands')} detail={tr('ui.thisPc.commandsRunAsYou')}>
         <Toggle label={tr('ui.thisPc.commands')} checked={powers.includes('commands')} disabled={disabled} onChange={(v) => set('commands', v)} />
       </SettingRow>
     </Group>

@@ -875,6 +875,14 @@ class Session(Model):
                 turn_device = await chat_device(self, getattr(tool_context, 'user_id', None) or self.user_id)
             except Exception:
                 logger.debug('Could not load the paired PC', exc_info=True)
+        elif getattr(tool_context, 'device_read_only', False) and getattr(tool_context, 'device', None):
+            # A helper agent of a chat on a paired PC: it looks at that PC.
+            try:
+                from cognitrix.computer.paired.turn import device_view
+                turn_device = await device_view(getattr(tool_context, 'user_id', None) or self.user_id,
+                                                tool_context.device, read_only=True)
+            except Exception:
+                logger.debug('Could not load the paired PC', exc_info=True)
         turn_sandbox = False if turn_device else self._turn_sandbox(agent, interface, tool_context)
         sandbox_for_prompt: Any = (
             (agent.id, getattr(tool_context, 'user_id', None) or self.user_id) if turn_sandbox else None)

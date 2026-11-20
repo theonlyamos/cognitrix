@@ -223,13 +223,18 @@ async def link(server: str, code: str, *, name: str, folders: Any, powers: Any) 
 # Running a call from the server
 # ---------------------------------------------------------------------------
 
-def _folders_for(cfg: dict[str, Any]):
+def _folders_for(cfg: dict[str, Any], *, for_commands: bool = False):
+    """The shared folders as tool folders. For commands, only read & write
+    folders: a command runs as the person and can change whatever it reaches,
+    so a folder shared read only never hosts one."""
     from cognitrix.common.folders import READ, WRITE, Folder
     powers = set(clean_powers(cfg.get('powers')))
     out = []
     for item in clean_folders(cfg.get("folders")):
         path = Path(item['path'])
         if not path.is_dir():
+            continue
+        if for_commands and not item.get('writable', True):
             continue
         writable = item.get('writable', True) and FILES in powers
         out.append(Folder(path=str(path), access=WRITE if writable else READ, name=path.name or str(path),
@@ -279,7 +284,10 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
         return fail('paused', 'Agents are paused on this PC.')
     if power not in clean_powers(cfg.get('powers')):
         return fail(f'no_{power}', f'{power} is switched off on this PC.')
-    folders = _folders_for(cfg)
+    if power == COMMANDS and _folders_for(cfg) and not _folders_for(cfg, for_commands=True):
+        return fail('read_only', 'Every folder on this PC is shared read only, and a command could change files, so '
+                    'commands are refused. Ask the person to share a folder as read & write to run commands.')
+    folders = _folders_for(cfg, for_commands=power == COMMANDS)
     if not folders:
         return fail('no_folders', "This PC hasn't shared any folders (or they were moved). Ask the person to add one "
                     'on the PC.')
