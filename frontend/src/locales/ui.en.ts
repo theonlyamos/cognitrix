@@ -127,7 +127,7 @@ const uiEn = {
   "ui.agent.foldersTab.letTheAgentAskFor": "Let the agent ask for other folders",
   "ui.agent.foldersTab.makePrimary": "make primary",
   "ui.agent.foldersTab.name": "Name",
-  "ui.agent.foldersTab.newChatsRunTheAgent": "New chats run the agent's shell, file changes and tests in its sandboxed computer (Settings, Computer) instead of this computer. It copies these folders in, and changes come back only when you approve them. Each chat can switch it in the + menu.",
+  "ui.agent.foldersTab.newChatsRunTheAgent": "On by default whenever the sandboxed computer is on (Settings, Computer): the agent's shell, file changes and tests run there instead of on this computer. It copies these folders in the first time it uses them, and changes come back only when you approve them. Turn it off to run code on this computer. Each chat can switch it in the + menu.",
   "ui.agent.foldersTab.noDefaultFoldersEachNew": "No default folders: each new chat starts with a private scratch folder. Tasks use the app's working folder",
   "ui.agent.foldersTab.noFoldersEachChatGets": "No folders: each chat gets a private scratch folder, deleted with the chat.",
   "ui.agent.foldersTab.pasteAFolderPath": "Paste a folder path",

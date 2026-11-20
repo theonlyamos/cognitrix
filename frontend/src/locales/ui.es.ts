@@ -128,7 +128,7 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.agent.foldersTab.letTheAgentAskFor": "Permitir que el agente pida otras carpetas",
   "ui.agent.foldersTab.makePrimary": "hacer principal",
   "ui.agent.foldersTab.name": "Nombre",
-  "ui.agent.foldersTab.newChatsRunTheAgent": "Los chats nuevos ejecutan el shell, los cambios de archivos y las pruebas del agente en su equipo aislado (Ajustes, Equipo) en lugar de en este equipo. Copia estas carpetas allí, y los cambios solo vuelven cuando los apruebas. Cada chat puede cambiarlo en el menú +.",
+  "ui.agent.foldersTab.newChatsRunTheAgent": "Activado por defecto siempre que el equipo aislado esté encendido (Ajustes, Equipo): el shell del agente, sus cambios de archivos y sus pruebas se ejecutan allí en lugar de en este equipo. Copia estas carpetas la primera vez que las usa, y los cambios solo vuelven cuando los apruebas. Desactívalo para ejecutar el código en este equipo. Cada chat puede cambiarlo en el menú +.",
   "ui.agent.foldersTab.noDefaultFoldersEachNew": "Sin carpetas predeterminadas: cada chat nuevo empieza con una carpeta temporal privada. Las tareas usan la carpeta de trabajo de la app",
   "ui.agent.foldersTab.noFoldersEachChatGets": "Sin carpetas: cada chat recibe una carpeta temporal privada, que se elimina con el chat.",
   "ui.agent.foldersTab.pasteAFolderPath": "Pega la ruta de una carpeta",

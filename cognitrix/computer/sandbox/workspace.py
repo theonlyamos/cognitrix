@@ -39,6 +39,10 @@ STATE_ROOT = os.path.join(HOME, '.cognitrix-sandbox')
 MAX_OUTPUT = 30_000  # characters a command returns at most (head and tail kept)
 MAX_TIMEOUT = 1800
 MAX_JOBS = 40  # running background jobs per container
+# A fair share for each agent: commands one agent may run at once, and how
+# much memory must stay free before another command starts.
+MAX_JOBS_PER_AGENT = int(os.environ.get('COGNITRIX_SANDBOX_JOBS_PER_AGENT', '12'))
+MIN_FREE_MB = int(os.environ.get('COGNITRIX_SANDBOX_MIN_FREE_MB', '256'))
 MAX_READ_BYTES = 5_000_000
 MAX_IMPORT_BYTES = int(os.environ.get('COGNITRIX_SANDBOX_MAX_IMPORT', str(500 * 1024 * 1024)))
 MAX_EXPORT_BYTES = 50 * 1024 * 1024
@@ -124,6 +128,83 @@ def _clip(text: str, limit: int = MAX_OUTPUT) -> str:
     return f'{head}\n\n[... {len(text) - len(head) - len(tail):,} characters cut ...]\n\n{tail}'
 
 
+JOB_OOM_SCORE = 300
+
+
+def free_memory_mb() -> int | None:
+    """Memory this computer still has free: the container's own limit when it
+    has one (cgroup v2), else the machine's."""
+    try:
+        with open('/sys/fs/cgroup/memory.max', encoding='ascii') as fh:
+            limit = fh.read().strip()
+        if limit != 'max':
+            with open('/sys/fs/cgroup/memory.current', encoding='ascii') as fh:
+                used = int(fh.read().strip())
+            reclaimable = 0
+            try:
+                with open('/sys/fs/cgroup/memory.stat', encoding='ascii') as fh:
+                    for line in fh:
+                        key, _, value = line.partition(' ')
+                        if key == 'inactive_file':
+                            reclaimable = int(value)
+            except (OSError, ValueError):
+                pass
+            return max(0, int(limit) - used + reclaimable) // (1024 * 1024)
+    except (OSError, ValueError):
+        pass
+    try:
+        with open('/proc/meminfo', encoding='ascii') as fh:
+            for line in fh:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def memory_by_uid() -> dict[int, int]:
+    """Resident memory (MB) of every process, added up per Linux user."""
+    out: dict[int, int] = {}
+    try:
+        pids = [p for p in os.listdir('/proc') if p.isdigit()]
+    except OSError:
+        return out
+    for pid in pids:
+        try:
+            with open(f'/proc/{pid}/status', encoding='ascii', errors='replace') as fh:
+                uid = rss = None
+                for line in fh:
+                    if line.startswith('Uid:'):
+                        uid = int(line.split()[1])
+                    elif line.startswith('VmRSS:'):
+                        rss = int(line.split()[1])
+            if uid is not None and rss:
+                out[uid] = out.get(uid, 0) + rss // 1024
+        except (OSError, ValueError, IndexError):
+            continue
+    return out
+
+
+def busy_note(why: str, running: list, by_memory: bool = False, uid_agent: dict[int, str] | None = None) -> str:
+    """What an agent is told when the computer is full: why, who is using it,
+    and what to do."""
+    counts: dict[str, int] = {}
+    for job in running:
+        counts[job.agent] = counts.get(job.agent, 0) + 1
+    parts = [f'The sandboxed computer is busy: {why}.']
+    if by_memory and uid_agent:
+        use = sorted(((mb, uid_agent[uid]) for uid, mb in memory_by_uid().items() if uid in uid_agent), reverse=True)
+        if use:
+            parts.append('Memory in use: ' + ', '.join(f'{name} {mb} MB' for mb, name in use[:5]) + '.')
+    if counts:
+        parts.append('Running commands: ' + ', '.join(f'{a} {n}' for a, n in sorted(counts.items(), key=lambda x: -x[1])[:6])
+                     + '.')
+    parts.append('Stop your own commands you no longer need (Bash Output with shell_id="list", then Kill Shell), wait '
+                 'a minute and try again, or tell the person the computer is full: they can give Docker more memory or '
+                 'stop agents they don\'t need.')
+    return ' '.join(parts)
+
+
 class Workspace:
     """Shell, files and projects for every agent in this container."""
 
@@ -186,6 +267,17 @@ class Workspace:
                 filenames = [f for f in filenames if fence.allows(os.path.join(dirpath, f))]
             yield dirpath, dirnames, filenames
 
+    def _uids(self, agents: set[str]) -> dict[int, str]:
+        out = {}
+        for name in agents:
+            try:
+                user = self.user_for(name) if self.user_for is not None else None
+            except Exception:
+                user = None
+            if user is not None:
+                out[user.uid] = name
+        return out
+
     def cwd(self, agent: str) -> str:
         got = self._cwd.get(agent)
         return got if got and os.path.isdir(got) else self.root(agent)
@@ -215,11 +307,21 @@ class Workspace:
         if not command.strip():
             raise WorkspaceError('bad_request', 'Give a command to run.')
         with self._guard:
-            running = sum(1 for j in self.jobs.values() if j.running)
-            if running >= MAX_JOBS:
-                raise WorkspaceError('limit', f'{running} commands are already running here; stop some first.')
+            running = [j for j in self.jobs.values() if j.running]
+            mine = sum(1 for j in running if j.agent == agent)
+            if len(running) >= MAX_JOBS:
+                raise WorkspaceError('busy', busy_note(f'{len(running)} commands are already running on this computer',
+                                                       running))
+            if mine >= MAX_JOBS_PER_AGENT:
+                raise WorkspaceError('limit', f'You already have {mine} commands running, your share of this computer. '
+                                     'Stop one (Kill Shell) or wait for one to finish.')
             self._seq += 1
             job_id = f'sbx_{self._seq}'
+        free = free_memory_mb()
+        if free is not None and free < MIN_FREE_MB:
+            running = [j for j in self.jobs.values() if j.running]
+            raise WorkspaceError('busy', busy_note(f'this computer is almost out of memory ({free} MB free)', running,
+                                                   by_memory=True, uid_agent=self._uids({j.agent for j in running})))
         work = self.resolve(agent, cwd) if cwd else self.cwd(agent)
         if not os.path.isdir(work):
             raise WorkspaceError('not_found', f'No folder {work} in the sandbox.')
@@ -231,6 +333,11 @@ class Workspace:
         cwd_file = os.path.join(logs, f'{job_id}.cwd')
         # Remember where the command ended up, so the next one starts there.
         script = f'{command}\n__cognitrix_ec=$?\npwd > {_sh_quote(cwd_file)} 2>/dev/null\nexit $__cognitrix_ec\n'
+        # Commands go before the desktops when memory runs out, and an agent
+        # running several at once gets less CPU for each, so one agent's
+        # build can't starve the others.
+        script = f'echo {JOB_OOM_SCORE} > /proc/self/oom_score_adj 2>/dev/null\n{script}'
+        niceness = min(15, 3 * mine)
         if self.terminal_opener is not None:
             # Starting the desktop takes a few seconds; the command doesn't wait.
             threading.Thread(target=self._open_terminal, args=(agent,), daemon=True).start()
@@ -243,7 +350,7 @@ class Workspace:
             run_env = user.env(agent, run_env)
             as_user = user.popen_kwargs()
         proc = subprocess.Popen(  # noqa: S603
-            ['bash', '-c', script], cwd=work, env=run_env, stdout=subprocess.PIPE,
+            ['nice', '-n', str(niceness), 'bash', '-c', script], cwd=work, env=run_env, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
             start_new_session=True, **as_user)
         job = Job(job_id, agent, command, shown, work, proc, log, cwd_file=cwd_file)

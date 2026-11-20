@@ -222,7 +222,7 @@ async def _chat_sandbox_view(session, ctx: AuthContext) -> dict[str, Any]:
             agent = await Agent.find_one({'id': session.agent_id})
         except Exception:
             agent = None
-    return {'run_in_sandbox': session.run_in_sandbox, 'agent_default': bool(getattr(agent, 'run_in_sandbox', False)),
+    return {'run_in_sandbox': session.run_in_sandbox, 'agent_default': wants_sandbox(None, agent),
             'effective': wants_sandbox(session.run_in_sandbox, agent), 'available': sandbox_available()}
 
 

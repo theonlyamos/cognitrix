@@ -111,11 +111,48 @@ def turn_in_sandbox() -> bool:
     return bool(getattr(current_execution_context(), 'sandbox', False))
 
 
-def wants_sandbox(session_value: Any, agent: Any) -> bool:
-    """A chat's own switch wins; otherwise the agent's default."""
+def sandbox_choice(session_value: Any, agent: Any) -> tuple[bool, bool]:
+    """(on, chosen). The chat's own switch wins, then the agent's setting
+    (Run code in the sandbox on, or "on my computer"). With neither, code runs
+    in the sandbox whenever the sandboxed computer is on: agents work on their
+    own computer unless the person says otherwise. ``chosen`` is False for
+    that default."""
     if session_value is not None:
-        return bool(session_value)
-    return bool(getattr(agent, 'run_in_sandbox', False))
+        return bool(session_value), True
+    if getattr(agent, 'code_on_my_computer', False):
+        return False, True
+    if getattr(agent, 'run_in_sandbox', False):
+        return True, True
+    return sandbox_available(), False
+
+
+def wants_sandbox(session_value: Any, agent: Any) -> bool:
+    return sandbox_choice(session_value, agent)[0]
+
+
+# Switch Computer For Code: a chat moved to (False) or back from (True) the
+# person's computer during a turn. for_turn reads it at once; the chat keeps it
+# from its next save (Session._turn_sandbox / take_chat_switch).
+_chat_switch: dict[str, bool] = {}
+_switch_lock = threading.Lock()
+
+
+def set_chat_switch(session_id: Any, on: bool) -> None:
+    if session_id:
+        with _switch_lock:
+            _chat_switch[str(session_id)] = bool(on)
+
+
+def chat_switch(session_id: Any) -> bool | None:
+    return _chat_switch.get(str(session_id)) if session_id else None
+
+
+def take_chat_switch(session_id: Any) -> bool | None:
+    """The switch made in the chat's last turn, once (the chat saves it)."""
+    if not session_id:
+        return None
+    with _switch_lock:
+        return _chat_switch.pop(str(session_id), None)
 
 
 def for_turn() -> SandboxWork | None:
@@ -124,7 +161,7 @@ def for_turn() -> SandboxWork | None:
     but it can't be used."""
     from cognitrix.tools.utils import current_execution_context
     ctx = current_execution_context()
-    if not getattr(ctx, 'sandbox', False):
+    if not getattr(ctx, 'sandbox', False) or chat_switch(ctx.session_id) is False:
         return None
     if not sandbox_available():
         raise SandboxWorkError(
@@ -507,6 +544,137 @@ class SandboxWork:
     def projects(self) -> list[dict]:
         return list(self._call('GET', '/projects').get('projects') or [])
 
+    # -- the chat's folders, copied in the first time they're used ------------
+    @property
+    def root(self) -> str:
+        return f'{SANDBOX_WORK_ROOT}/{self.agent}'
+
+    def project_for(self, folder: Any, *, copy: bool = True) -> str | None:
+        """The project that holds a copy of one of the chat's folders. The
+        first time, the folder is copied in (Copy Into Sandbox without being
+        asked). None when it isn't there and ``copy`` is False."""
+        source = os.path.normcase(os.path.abspath(str(folder.path)))
+        key = (str(self.user_id), self.agent, source)
+        if key in _copied:
+            return _copied[key]
+        projects = self.projects()
+        for p in projects:
+            if p.get('source') and os.path.normcase(os.path.abspath(str(p['source']))) == source:
+                _copied[key] = str(p['name'])
+                return _copied[key]
+        if not copy:
+            return None
+        base = default_project_name(folder)
+        taken = {str(p.get('name')) for p in projects}
+        name, n = base, 2
+        while name in taken:
+            name, n = f'{base}-{n}', n + 1
+        self.import_folder(Path(str(folder.path)), name)
+        _copied[key] = name
+        return name
+
+
+# (user, agent, folder on the computer) -> its project in the sandbox.
+_copied: dict[tuple[str, str, str], str] = {}
+SANDBOX_WORK_ROOT = '/home/agent/work'
+
+
+# (chat, project) -> the changes the person last saw on a card, so the
+# end-of-turn review shows each set of changes once.
+_reviewed: dict[tuple[str, str], int] = {}
+
+
+def _changes_key(files: list[dict]) -> int:
+    return hash(tuple((f.get('path'), f.get('status'), f.get('added'), f.get('removed')) for f in files))
+
+
+def note_reviewed(session_id: Any, project: str, files: list[dict]) -> None:
+    if session_id:
+        _reviewed[(str(session_id), str(project))] = _changes_key(files)
+
+
+def changes_to_review(ws: SandboxWork, session_id: Any, folders: list[Any]) -> list[str]:
+    """Projects copied in from these folders whose changes the person hasn't
+    seen on a card yet (nothing copied back)."""
+    out = []
+    for folder in folders:
+        name = ws.project_for(folder, copy=False)
+        if not name:
+            continue
+        files = ws.changes(name, patch=False).get('files') or []
+        if files and _reviewed.get((str(session_id), name)) != _changes_key(files):
+            out.append(name)
+    return out
+
+
+def default_project_name(folder: Any) -> str:
+    from cognitrix.computer.sandbox.workspace import WorkspaceError, project_name
+    raw = getattr(folder, 'name', '') or Path(str(folder.path)).name or 'project'
+    try:
+        return project_name(raw)
+    except WorkspaceError:
+        return project_name('project')
+
+
+def chat_folders() -> list[Any]:
+    """This turn's folders on the person's computer that can be copied in."""
+    from cognitrix.tools.utils import current_execution_context
+    return [f for f in (current_execution_context().folders or ()) if getattr(f, 'name', '') != 'scratch']
+
+
+def _host_inside(path: str, folder: Any) -> str | None:
+    """``path`` relative to the folder (posix), when it's inside it."""
+    try:
+        rel = Path(os.path.abspath(os.path.expanduser(path))).relative_to(Path(os.path.abspath(str(folder.path))))
+    except (ValueError, OSError):
+        return None
+    return rel.as_posix()
+
+
+def to_sandbox_path(ws: SandboxWork, path: str | None) -> str | None:
+    """A path the agent gave, in the sandbox. A path inside one of the chat's
+    folders on the person's computer points at that folder's copy, which is
+    made the first time; so does the copy's own sandbox path."""
+    if not path:
+        return path
+    folders = chat_folders()
+    if not folders:
+        return path
+    raw = str(path)
+    for folder in sorted(folders, key=lambda f: len(str(f.path)), reverse=True):
+        rel = _host_inside(raw, folder) if not raw.startswith(SANDBOX_WORK_ROOT + '/') else None
+        if rel is not None:
+            name = ws.project_for(folder)
+            return f'{ws.root}/{name}' + ('' if rel in ('', '.') else f'/{rel}')
+    _copy_named(ws, raw, folders)
+    return path
+
+
+def _copy_named(ws: SandboxWork, text: str, folders: list[Any]) -> None:
+    """Copy in a chat folder whose sandbox path (as the prompt gives it) is used."""
+    for folder in folders:
+        guess = f'{ws.root}/{default_project_name(folder)}'
+        if re.search(re.escape(guess) + r'(?![A-Za-z0-9._-])', text):
+            ws.project_for(folder)
+
+
+def map_command(ws: SandboxWork, command: str) -> str:
+    """A shell command, with paths to the chat's folders on the person's
+    computer pointed at their copies in the sandbox (copied in first)."""
+    folders = chat_folders()
+    if not folders or not command:
+        return command
+    for folder in sorted(folders, key=lambda f: len(str(f.path)), reverse=True):
+        host = os.path.abspath(str(folder.path))
+        spellings = {host, host.replace('\\', '/')}
+        hit = [sp for sp in spellings if sp and sp in command]
+        if hit:
+            name = ws.project_for(folder)
+            for sp in sorted(hit, key=len, reverse=True):
+                command = command.replace(sp, f'{ws.root}/{name}')
+    _copy_named(ws, command, folders)
+    return command
+
 
 # ---------------------------------------------------------------------------
 # Copying a folder in
@@ -807,15 +975,20 @@ def sandbox_prompt(folders: Any, agent_id: Any, user_id: Any = None) -> str:
                  'and NAME_PASSWORD, only for that command, and the person approves it. Never print them.')
     listed = [f for f in (folders or []) if getattr(f, 'name', '') != 'scratch']
     if listed:
-        lines.append('Folders on the person\'s computer you can copy in with Copy Into Sandbox:')
+        lines.append("The chat's folders on the person's computer, and where their copies are in the sandbox. A "
+                     'folder is copied in automatically the first time you use it (a path on the computer or the '
+                     'sandbox path, in a file tool, a working_dir or a command):')
         for f in listed:
             access = 'read & write' if getattr(f, 'writable', False) else 'read only'
-            lines.append(f'- {f.label}: {f.path} ({access})')
+            lines.append(f'- {f.label}: {f.path} ({access}) -> {root}/{default_project_name(f)}')
         lines.append(
-            f'Copy Into Sandbox puts a folder at {root}/<name>. When the work is done, call Sandbox Changes to '
-            'see the diff, then Copy Back From Sandbox, which asks the person to approve the changes before '
-            'they land on their computer (only into read & write folders).')
+            'When you finish a task that changed a copied folder, end with Copy Back From Sandbox: the person '
+            'reviews the changed files on its approval card before they land on their computer (only into read & '
+            'write folders). Sandbox Changes shows the diff first if you need it.')
     else:
         lines.append('No folders from the person\'s computer are attached to this chat; work in your folder, '
                      'or git clone a repository there.')
+    lines.append('If the person explicitly asks you to run code or change files on their own computer ("my '
+                 "computer\", \"my laptop\"), call Switch Computer For Code with computer='person' first. Otherwise "
+                 'always work in the sandbox.')
     return '\n'.join(lines)

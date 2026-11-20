@@ -128,7 +128,7 @@ const ui: Record<keyof typeof uiEn, string> = {
   "ui.agent.foldersTab.letTheAgentAskFor": "Laisser l'agent demander d'autres dossiers",
   "ui.agent.foldersTab.makePrimary": "définir comme principal",
   "ui.agent.foldersTab.name": "Nom",
-  "ui.agent.foldersTab.newChatsRunTheAgent": "Les nouvelles discussions exécutent le shell, les modifications de fichiers et les tests de l'agent dans son ordinateur isolé (Paramètres, Ordinateur) plutôt que sur cet ordinateur. Il y copie ces dossiers, et les modifications ne reviennent que si vous les approuvez. Chaque discussion peut changer cela dans le menu +.",
+  "ui.agent.foldersTab.newChatsRunTheAgent": "Activé par défaut dès que l'ordinateur en bac à sable est allumé (Paramètres, Ordinateur) : le shell de l'agent, ses modifications de fichiers et ses tests s'y exécutent au lieu de cet ordinateur. Il y copie ces dossiers la première fois qu'il les utilise, et les modifications ne reviennent qu'après votre accord. Désactivez-le pour exécuter le code sur cet ordinateur. Chaque chat peut le changer dans le menu +.",
   "ui.agent.foldersTab.noDefaultFoldersEachNew": "Aucun dossier par défaut : chaque nouvelle discussion démarre avec un dossier brouillon privé. Les tâches utilisent le dossier de travail de l'application",
   "ui.agent.foldersTab.noFoldersEachChatGets": "Aucun dossier : chaque discussion reçoit un dossier brouillon privé, supprimé avec la discussion.",
   "ui.agent.foldersTab.pasteAFolderPath": "Collez un chemin de dossier",

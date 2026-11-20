@@ -120,6 +120,14 @@ def _stopped_tool_messages(tool_calls: list[dict[str, Any]]) -> list[dict[str, A
     return stopped
 
 
+_CODE_TOOLS = frozenset({'bash', 'read', 'write', 'edit', 'glob', 'grep', 'coding agent', 'run tests'})
+
+
+def _code_tool_names(agent: Any) -> set[str]:
+    """The shell, file and coding tools the agent has itself."""
+    return {str(getattr(t, 'name', '')).lower() for t in getattr(agent, 'tools', None) or []} & _CODE_TOOLS
+
+
 def _with_folder_prompt(prompt, folders, sandbox: tuple | None = None, session_id: Any = None) -> Any:
     """The turn's additions to the system message: working folders, what
     open connected-app screens told the agent, and the Swarm switch when the
@@ -857,9 +865,16 @@ class Session(Model):
                 from cognitrix.tools.base import ToolManager
                 from cognitrix.tools.sandbox_work import SANDBOX_TOOL_NAMES
                 have = {str(getattr(t, 'name', '')).lower() for t in agent.tools}
+                # The shell and file tools come along only when the chat or
+                # the agent chose the sandbox. When the agent has them itself,
+                # it may move to the person's computer if they ask for it.
+                chosen = self._sandbox_chosen(agent) and not getattr(tool_context, 'sandbox', False)
+                wanted = ('bash', 'read', 'write', 'edit', 'glob', 'grep') if chosen else ()
+                gives_shell = any(ToolManager.get_by_name(n) is not None and ToolManager.get_by_name(n).name.lower()
+                                  not in have for n in wanted)
+                switch = () if gives_shell or getattr(tool_context, 'sandbox', False) else ('switch_computer_for_code',)
                 extra = [
-                    t for t in (ToolManager.get_by_name(n) for n in (
-                        'bash', 'read', 'write', 'edit', 'glob', 'grep', *SANDBOX_TOOL_NAMES))
+                    t for t in (ToolManager.get_by_name(n) for n in (*wanted, *SANDBOX_TOOL_NAMES, *switch))
                     if t is not None and t.name.lower() not in have
                 ]
                 if extra:
@@ -1497,6 +1512,10 @@ class Session(Model):
                     'turn_error': True,
                 })
 
+            if turn_sandbox and not self.last_turn_error and not getattr(tool_context, 'sandbox', False):
+                await self._sandbox_review(agent, interface, output, tool_context, turn_folders,
+                                           inherited_folders, record_history)
+
             # Calculate turn duration for all exit paths
             turn_duration = time.monotonic() - turn_start_time
             duration_str = format_duration(turn_duration)
@@ -1683,8 +1702,50 @@ class Session(Model):
             return True
         if interface not in ('web', 'ws', 'task') or getattr(tool_context, 'restricted', False):
             return False
-        from cognitrix.common.sandbox_work import wants_sandbox
-        return wants_sandbox(self.run_in_sandbox, agent)
+        from cognitrix.common.sandbox_work import sandbox_choice, take_chat_switch
+        switched = take_chat_switch(self.id)
+        if switched is not None:
+            # Switch Computer For Code in the last turn: the chat keeps it.
+            self.run_in_sandbox = switched
+        on, chosen = sandbox_choice(self.run_in_sandbox, agent)
+        # The default (nobody chose) only moves the tools the agent already
+        # has; it never hands an agent a shell it wasn't given.
+        return on and (chosen or bool(_code_tool_names(agent)))
+
+    async def _sandbox_review(self, agent: 'Agent', interface: str, output: Callable, tool_context: Any,
+                              turn_folders: list, inherited_folders: tuple, record_history: bool | None) -> None:
+        """End a sandbox turn with a review card for each folder whose copy in
+        the sandbox has changes the person hasn't seen: the changed files, with
+        buttons to copy them back or keep them there. Also keeps a Switch
+        Computer For Code choice on the chat."""
+        from cognitrix.common import sandbox_work as sw
+        switched = sw.chat_switch(self.id)
+        if switched is not None:
+            self.run_in_sandbox = switched
+        if switched is False or interface not in ('web', 'ws', 'task'):
+            return
+        folders = [f for f in turn_folders if getattr(f, 'name', '') != 'scratch']
+        if not folders or not sw.sandbox_available():
+            return
+        ws = sw.SandboxWork(getattr(tool_context, 'user_id', None) or self.user_id, agent.id)
+        try:
+            projects = await asyncio.to_thread(sw.changes_to_review, ws, self.id, folders)
+        except Exception:
+            logger.debug('Could not check the sandbox for changes to review', exc_info=True)
+            return
+        if not projects:
+            return
+        call = self._cli_tool_caller(agent, interface, output, tool_context, turn_folders, inherited_folders,
+                                     record_history, True)
+        for name in projects[:3]:
+            try:
+                await call('sandbox_changes', {'project': name, 'show_diff': False, 'review': True})
+            except Exception:
+                logger.debug('Could not show the sandbox review card', exc_info=True)
+
+    def _sandbox_chosen(self, agent: 'Agent') -> bool:
+        from cognitrix.common.sandbox_work import sandbox_choice
+        return sandbox_choice(self.run_in_sandbox, agent)[1]
 
     def _turn_folders(self, agent: 'Agent', interface: str) -> list:
         """This chat's working folders, copying the agent's defaults on first use.

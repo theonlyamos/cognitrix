@@ -101,7 +101,13 @@ class Agent(Model):
 
     run_in_sandbox: bool = False
     """New chats with this agent run code in the sandboxed computer (its shell,
-    files and tests work there); each chat can change it."""
+    files and tests work there); each chat can change it. With this and
+    ``code_on_my_computer`` both off, chats follow the default: the sandbox
+    whenever the sandboxed computer is on."""
+
+    code_on_my_computer: bool = False
+    """New chats with this agent run code on the person's computer even when
+    the sandboxed computer is on."""
 
     permission_level: str = 'auto'
     """How the agent asks before acting: auto (only risky actions ask), ask

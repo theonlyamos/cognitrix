@@ -51,6 +51,7 @@ from cognitrix.tools.sandbox_work import (
     copy_into_sandbox,
     run_tests,
     sandbox_changes,
+    switch_computer_for_code,
 )
 from cognitrix.tools.swarm import spawn_workers, swarm, swarm_team
 from cognitrix.tools.theme import set_theme
@@ -99,6 +100,7 @@ __all__ = [
     'show_card',
     'find_tools', 'run_code',
     'copy_into_sandbox',
+    'switch_computer_for_code',
     'sandbox_changes',
     'copy_back_from_sandbox',
     'run_tests',

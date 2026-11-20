@@ -71,7 +71,7 @@ from cognitrix.computer.sandbox import SERVICE_PORT, check_name, token
 from cognitrix.computer.sandbox.apps import AppHost, AppHostError, unb64
 from cognitrix.computer.sandbox.audio import DesktopAudio
 from cognitrix.computer.sandbox.users import AgentUser, Users, keep_caps_to_self
-from cognitrix.computer.sandbox.workspace import Workspace, WorkspaceError
+from cognitrix.computer.sandbox.workspace import MIN_FREE_MB, Workspace, WorkspaceError, free_memory_mb
 
 logger = logging.getLogger('cognitrix.sandbox')
 
@@ -149,13 +149,23 @@ class Supervisor:
             if desk is not None:
                 self._stop(desk)
             if len(self.desktops) >= MAX_DESKTOPS:
-                raise RuntimeError(f'this computer already runs {MAX_DESKTOPS} desktops; stop one first')
+                raise RuntimeError(self._busy(f'it already runs {MAX_DESKTOPS} agent desktops, the most it can'))
+            free = free_memory_mb()
+            if free is not None and free < 2 * MIN_FREE_MB:
+                raise RuntimeError(self._busy(f'it is almost out of memory ({free} MB free)'))
             # VNC passwords are 8 characters at most.
             desk = Desktop(name, self._free_number(), secrets.token_hex(4), secrets.token_hex(4))
             desk.user = self.user_for(name)
             self._start(desk)
             self.desktops[name] = desk
             return desk
+
+    def _busy(self, why: str) -> str:
+        now = time.time()
+        idle = sorted(self.desktops.values(), key=lambda d: d.last_used)
+        names = ', '.join(f'{d.name} (idle {int((now - d.last_used) // 60)} min)' for d in idle[:6])
+        return (f'The sandboxed computer is busy: {why}. Desktops running: {names}. Tell the person: they can stop '
+                "an agent's desktop they don't need in the Computer panel, or give Docker more memory.")
 
     def _start(self, desk: Desktop) -> None:
         env = dict(os.environ, DISPLAY=desk.display, DESKTOP_NAME=desk.name)
