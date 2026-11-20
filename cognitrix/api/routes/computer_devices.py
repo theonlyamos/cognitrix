@@ -158,6 +158,90 @@ async def device_screen(device_id: str, ctx: AuthContext = Depends(jwt_only)) ->
     return {'image': images[0], 'at': time.time()}
 
 
+# ---------------------------------------------------------------------------
+# The PC handing tasks to the web account (the 'tasks' power, its owner's choice
+# on the PC). These use the PC's own token, not a web sign-in.
+# ---------------------------------------------------------------------------
+
+async def _calling_pc(request: Request):
+    """The paired PC behind this request's token, with its owner's sign-in."""
+    from cognitrix.computer.paired import TASKS
+    from cognitrix.computer.paired.store import device_for_token, powers_of
+    from cognitrix.models.user import User
+    auth = request.headers.get('authorization', '')
+    token = auth[7:].strip() if auth.lower().startswith('bearer ') else ''
+    device = await device_for_token(token)
+    if device is None:
+        raise HTTPException(status_code=401, detail='This PC is not paired with this server any more.')
+    if TASKS not in powers_of(device):
+        raise HTTPException(status_code=403, detail="This PC isn't allowed to send tasks to the web account. "
+                            'Switch on "Send tasks" on the PC.')
+    user = await User.get(device.user_id)
+    if user is None or getattr(user, 'disabled', False):
+        raise HTTPException(status_code=403, detail='The web account is not available.')
+    return device, AuthContext(user=user)
+
+
+@devices_api.get('/link/agents')
+async def pc_agents(request: Request) -> dict[str, Any]:
+    """The web account's agents, for picking who does a task sent from the PC."""
+    from cognitrix.agents import access as agent_access
+    _, ctx = await _calling_pc(request)
+    agents = await agent_access.visible_agents(agent_access.owner_key(ctx.user))
+    return {'agents': [{'id': str(a.id), 'name': a.name} for a in agents]}
+
+
+class PcTaskBody(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default='', max_length=20000)
+    steps: list[str] = Field(default_factory=list, max_length=50)
+    agent_id: str | None = Field(default=None, max_length=80)
+
+
+@devices_api.post('/link/tasks')
+async def pc_send_task(body: PcTaskBody, request: Request) -> dict[str, Any]:
+    """Make a task on the web account and start it."""
+    from cognitrix.agents import access as agent_access
+    from cognitrix.api.routes.tasks import _check_task_references, start_task_run
+    from cognitrix.models.paired_device import PairedDevice
+    from cognitrix.tasks.base import Task
+    device, ctx = await _calling_pc(request)
+    agents = await agent_access.visible_agents(agent_access.owner_key(ctx.user))
+    ids = [str(a.id) for a in agents]
+    agent_id = body.agent_id if body.agent_id in ids else (ids[0] if ids else None)
+    if agent_id is None:
+        raise HTTPException(status_code=422, detail='The web account has no agents yet.')
+    steps = {str(i): {'step': s.strip()[:2000], 'done': False} for i, s in enumerate(x for x in body.steps if x.strip())}
+    task = Task(title=body.title.strip(), description=(body.description.strip() or body.title.strip()),
+                step_instructions=steps, assigned_agents=[agent_id], owner_id=str(ctx.user.id))
+    await _check_task_references(ctx, task)
+    await task.save()
+    sent = [t for t in str(device.sent_tasks or '').split(',') if t][-49:] + [str(task.id)]
+    await PairedDevice.update_one({'id': device.id}, {'sent_tasks': ','.join(sent)})
+    from cognitrix import audit
+    audit.record('settings', f'{device.name} sent a task to the web account', user_id=str(ctx.user.id),
+                 actor=f'pc:{device.name}', outcome='ok')
+    run = await start_task_run(str(task.id), None, ctx)
+    return {'task_id': str(task.id), 'run_id': run.get('run_id'), 'status': str(run.get('status') or '')}
+
+
+@devices_api.get('/link/tasks')
+async def pc_sent_tasks(request: Request) -> dict[str, Any]:
+    """The tasks this PC sent, newest first, with their latest result."""
+    from cognitrix.tasks.base import Task
+    device, _ = await _calling_pc(request)
+    out = []
+    for task_id in reversed([t for t in str(device.sent_tasks or '').split(',') if t][-20:]):
+        task = await Task.get(task_id)
+        if task is None or task.deleted_at:
+            continue
+        status = getattr(task.status, 'value', task.status)
+        results = list(task.results or [])
+        out.append({'id': str(task.id), 'title': task.title, 'status': str(status),
+                    'result': str(results[-1])[:4000] if results else ''})
+    return {'tasks': out}
+
+
 @devices_api.post('/relay', include_in_schema=False)
 async def relay_call(request: Request) -> dict[str, Any]:
     """The task worker reaching a PC through this process (see relay.py)."""
@@ -441,6 +525,51 @@ async def remove_link(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
     from cognitrix.computer.paired.connector import get_connector
     await get_connector().unpair()
     return _link_view()
+
+
+@link_api.get('/remote/agents')
+async def link_remote_agents(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """The linked web account's agents, for sending it a task."""
+    _desktop_only()
+    from cognitrix.computer.paired.connector import LinkError, remote
+    try:
+        return await remote('GET', '/link/agents')
+    except LinkError as exc:
+        raise _link_error(exc) from None
+
+
+class SendTaskBody(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default='', max_length=20000)
+    steps: list[str] = Field(default_factory=list, max_length=50)
+    agent_id: str | None = Field(default=None, max_length=80)
+
+
+@link_api.post('/remote/tasks')
+async def link_send_task(body: SendTaskBody, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """Hand a task to the linked web account; it runs there, on its agents."""
+    _desktop_only()
+    from cognitrix.computer.paired.connector import LinkError, load_config, remote
+    try:
+        out = await remote('POST', '/link/tasks', body.model_dump())
+    except LinkError as exc:
+        raise _link_error(exc) from None
+    out['url'] = f"{load_config().get('server', '')}/tasks/{out.get('task_id', '')}"
+    return out
+
+
+@link_api.get('/remote/tasks')
+async def link_sent_tasks(ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    _desktop_only()
+    from cognitrix.computer.paired.connector import LinkError, load_config, remote
+    try:
+        out = await remote('GET', '/link/tasks')
+    except LinkError as exc:
+        raise _link_error(exc) from None
+    server = load_config().get('server', '')
+    for task in out.get('tasks') or []:
+        task['url'] = f"{server}/tasks/{task.get('id', '')}"
+    return out
 
 
 async def start_saved_link() -> None:

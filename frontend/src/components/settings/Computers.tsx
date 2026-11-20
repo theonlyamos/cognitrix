@@ -23,6 +23,7 @@ function powersText(d: PairedDevice) {
     d.powers.includes('files') && tr('ui.computers.files'),
     d.powers.includes('commands') && tr('ui.computers.commands'),
     d.powers.includes('apps') && tr('ui.computers.apps'),
+    d.powers.includes('tasks') && tr('ui.computers.sendsTasks'),
   ].filter(Boolean);
   return names.length ? names.join(', ') : tr('ui.computers.nothingAllowed');
 }

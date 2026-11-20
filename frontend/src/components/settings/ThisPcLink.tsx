@@ -7,6 +7,7 @@ import {
 } from '@/lib/devices';
 import { Group, SettingRow, StatusPill, buttonClass, primaryButtonClass, quietButtonClass } from '@/components/settings/ui';
 import { Toggle } from '@/pages/Notifications';
+import { SentTasks } from '@/components/settings/SentTasks';
 import { tr } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
@@ -59,6 +60,9 @@ function PowerToggles({ powers, onChange, disabled }: { powers: DevicePower[]; o
       </SettingRow>
       <SettingRow label={tr('ui.thisPc.apps')} detail={tr('ui.thisPc.appsDetail')}>
         <Toggle label={tr('ui.thisPc.apps')} checked={powers.includes('apps')} disabled={disabled} onChange={(v) => set('apps', v)} />
+      </SettingRow>
+      <SettingRow label={tr('ui.thisPc.sendTasks')} detail={tr('ui.thisPc.sendTasksDetail')}>
+        <Toggle label={tr('ui.thisPc.sendTasks')} checked={powers.includes('tasks')} disabled={disabled} onChange={(v) => set('tasks', v)} />
       </SettingRow>
     </Group>
   );
@@ -208,6 +212,12 @@ export function ThisPcLink() {
       </div>
       <PowerToggles powers={link.powers} onChange={(powers) => void change({ powers })} disabled={busy} />
       <p className="text-[12px] leading-snug text-fg-dim">{tr('ui.thisPc.everyCommandAsksYouFirst')}</p>
+      {link.powers.includes('tasks') && (
+        <div>
+          <div className="mb-1 mt-2 text-[12px] text-fg-dim">{tr('ui.thisPc.tasksSentToAccount', { account: link.account })}</div>
+          <SentTasks account={link.account} />
+        </div>
+      )}
       {error && <p role="alert" className="text-[12.5px] text-danger-ink">{error}</p>}
       <div className="flex flex-wrap items-center gap-2">
         {confirmUnlink ? (

@@ -30,7 +30,8 @@ PROTOCOL = 1
 FILES = 'files'
 COMMANDS = 'commands'
 APPS = 'apps'  # work in app windows on the PC's own screen, in the background
-POWERS = (FILES, COMMANDS, APPS)
+TASKS = 'tasks'  # the other way round: this PC may hand tasks to the web account
+POWERS = (FILES, COMMANDS, APPS, TASKS)
 
 # The window tools (cognitrix/tools/computer.py): on a PC they always act on
 # the PC's own screen.

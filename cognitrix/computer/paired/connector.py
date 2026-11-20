@@ -161,6 +161,34 @@ def check_folders(folders: Any) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Handing tasks to the web account (the 'tasks' power), with this PC's token
+# ---------------------------------------------------------------------------
+
+async def remote(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Call the web account's server as this PC. Raises LinkError."""
+    import aiohttp
+    cfg = load_config()
+    if not cfg.get('token'):
+        raise LinkError('unpaired', 'This PC is not linked to a web account.')
+    url = normalize_server(cfg['server']) + API_PREFIX + path
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http, http.request(
+                method, url, json=body, headers={'Authorization': f"Bearer {cfg['token']}"}) as resp:
+            try:
+                data = await resp.json(content_type=None)
+            except Exception:
+                data = {}
+            if resp.status >= 400:
+                detail = data.get('detail') if isinstance(data, dict) else None
+                raise LinkError('failed', str(detail or f'The server answered {resp.status}.'))
+            return data if isinstance(data, dict) else {}
+    except LinkError:
+        raise
+    except Exception as exc:
+        raise LinkError('unreachable', f"Couldn't reach {cfg.get('server')}: {exc}") from None
+
+
+# ---------------------------------------------------------------------------
 # Pairing (HTTP, before there is a token)
 # ---------------------------------------------------------------------------
 

@@ -3706,6 +3706,22 @@ const uiEn = {
   "ui.taskPage.computerHint": "Where runs do their commands, files and apps. A PC that's offline is waited for up to 30 minutes, then you're told.",
   "ui.taskPage.agentsUsualComputer": "The agent's usual computer",
   "ui.taskPage.nameOffline": "{name} (offline)",
+  "ui.taskPage.couldNotSendTheTask": "Could not send the task.",
+  "ui.taskPage.runOn": "Run on",
+  "ui.taskPage.runOnWebHint": "The task runs on {account}'s agents on the web. Its result shows in Settings › Computers here, and you get a notification when it's done.",
+  "ui.taskPage.thisComputer": "This computer",
+  "ui.taskPage.accountOnTheWeb": "{account} on the web",
+  "ui.taskPage.agentOnTheWeb": "Agent on the web",
+  "ui.sentTasks.finishedOnAccount": "Finished on {account}.",
+  "ui.sentTasks.statusOnAccount": "{status} on {account}.",
+  "ui.sentTasks.couldNotLoadSentTasks": "Could not load the tasks sent to the web.",
+  "ui.sentTasks.loading": "Loading…",
+  "ui.sentTasks.noneYet": "None yet. Make a new task and pick the web account under Run on.",
+  "ui.sentTasks.openOnTheWeb": "Open on the web",
+  "ui.thisPc.sendTasks": "Send tasks",
+  "ui.thisPc.sendTasksDetail": "Let this PC hand tasks to the web account, to run on its agents. Results come back here.",
+  "ui.thisPc.tasksSentToAccount": "Tasks sent to {account}",
+  "ui.computers.sendsTasks": "sends tasks here",
 } as const;
 
 export default uiEn;

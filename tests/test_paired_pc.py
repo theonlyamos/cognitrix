@@ -492,3 +492,71 @@ async def test_a_task_waits_for_an_offline_pc_then_tells_the_person(db, monkeypa
         assert len(told) == 1
     finally:
         reset_execution_context(token)
+
+
+async def test_a_pc_can_hand_tasks_to_the_web_account_only_when_allowed(server, tmp_path, monkeypatch):
+    from cognitrix.agents import access as agent_access
+    from cognitrix.api.routes import tasks as tasks_routes
+    from cognitrix.computer.paired import connector as pc
+    from cognitrix.models.user import User
+    from cognitrix.tasks.base import Task
+
+    async def fake_user(user_id):
+        return SimpleNamespace(id=user_id, disabled=False, email='kofi@example.com', name='Kofi')
+
+    async def fake_agents(owner):
+        return [SimpleNamespace(id='a1', name='Assistant'), SimpleNamespace(id='a2', name='Coder')]
+
+    async def no_check(ctx, task):
+        return None
+
+    started = []
+
+    async def fake_start(task_id, body=None, ctx=None):
+        started.append((task_id, str(ctx.user.id)))
+        return {'task_id': task_id, 'run_id': 'r1', 'status': 'queued'}
+
+    monkeypatch.setattr(User, 'get', staticmethod(fake_user))
+    monkeypatch.setattr(agent_access, 'visible_agents', fake_agents)
+    monkeypatch.setattr(tasks_routes, '_check_task_references', no_check)
+    monkeypatch.setattr(tasks_routes, 'start_task_run', fake_start)
+
+    view, connector, shared = await _paired_pc(server, tmp_path)
+    try:
+        with pytest.raises(pc.LinkError) as refused:
+            await pc.remote('GET', '/link/agents')
+        assert 'Send tasks' in refused.value.message
+
+        cfg = pc.load_config()
+        cfg['powers'] = ['files', 'tasks']
+        pc.save_config(cfg)
+        await connector.push_state()
+        assert await _wait(lambda: 'tasks' in hub.get(view['device_id']).powers)
+        assert await _wait_async(lambda: _powers_saved(view['device_id'], 'tasks'))
+
+        agents = (await pc.remote('GET', '/link/agents'))['agents']
+        assert [a['name'] for a in agents] == ['Assistant', 'Coder']
+        sent = await pc.remote('POST', '/link/tasks', {'title': 'Summarize the logs', 'description': 'From today',
+                                                       'steps': ['Read them', ''], 'agent_id': 'a2'})
+        task = await Task.get(sent['task_id'])
+        assert task.owner_id == 'u1' and task.assigned_agents == ['a2'] and list(task.step_instructions) == ['0']
+        assert started == [(sent['task_id'], 'u1')]
+        listed = (await pc.remote('GET', '/link/tasks'))['tasks']
+        assert listed[0]['id'] == sent['task_id'] and listed[0]['title'] == 'Summarize the logs'
+    finally:
+        await connector.stop()
+
+
+async def _powers_saved(device_id, power):
+    from cognitrix.computer.paired.store import powers_of
+    from cognitrix.models.paired_device import PairedDevice
+    device = await PairedDevice.find_one({'id': device_id})
+    return power in powers_of(device)
+
+
+async def _wait_async(make, seconds: float = 10.0):
+    for _ in range(int(seconds / 0.05)):
+        if await make():
+            return True
+        await asyncio.sleep(0.05)
+    return False
