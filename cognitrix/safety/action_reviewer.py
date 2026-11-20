@@ -265,8 +265,12 @@ async def _ask(llm: Any, prompt: list[dict[str, Any]]) -> Any:
     from cognitrix.providers import harness
 
     # A CLI reviewer must not resume the chat's CLI session or borrow its
-    # tools. Reset after: wait_for runs this in the caller's own task.
-    token = harness.turn.set(None)
+    # tools, but keeps the chat's folders and its right to start a program on
+    # this computer. Reset after: wait_for runs this in the caller's own task.
+    chat = harness.turn.get()
+    token = harness.turn.set(None if chat is None else harness.TurnInfo(
+        session_id=None, folders=chat.folders, host_process_mode=chat.host_process_mode,
+    ))
     try:
         return await llm(prompt, stream=False)
     finally:

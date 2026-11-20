@@ -375,11 +375,17 @@ async def test_review_does_not_join_the_chats_cli_session(monkeypatch):
 
     monkeypatch.setenv('COGNITRIX_REVIEWER', 'always')
     monkeypatch.setattr(ar, '_load_reviewer_llm', lambda: _Spy('{"decision": "allow", "reason": "fits"}'))
-    token = harness.turn.set(harness.TurnInfo(session_id='chat:agent', folders=(), host_process_mode=None))
+    chat = harness.TurnInfo(session_id='chat:agent', folders=('f',), host_process_mode='allowed',
+                            tools=({'name': 'memory'},), call_tool=object(), approve=object())
+    token = harness.turn.set(chat)
     try:
         verdict = await ar.review_action('write_file', {'path': 'a.txt'}, _risk())
         assert verdict.decision == 'allow'
-        assert seen == [None]
-        assert harness.turn.get() is not None  # the chat's own turn is untouched
+        [during] = seen
+        assert during.session_id is None
+        assert during.tools == () and during.call_tool is None and during.approve is None
+        # Still allowed to start the CLI on this computer, in the chat's folders.
+        assert during.host_process_mode == 'allowed' and during.folders == ('f',)
+        assert harness.turn.get() is chat
     finally:
         harness.turn.reset(token)
