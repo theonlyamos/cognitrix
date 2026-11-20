@@ -140,6 +140,10 @@ async def update_user(user_id: str, body: UserUpdate, ctx: AuthContext = Depends
         changes['tokens_valid_after'] = int(time.time())
         changes['reset_token_hash'] = None
         changes['reset_expires'] = None
+    if changes.get('tokens_valid_after'):
+        from cognitrix import signins
+
+        await signins.end_all(str(user.id))
     caps = {key: value for key, value in (('admin_concurrency', body.swarm_concurrency),
                                           ('admin_max_workers', body.swarm_max_workers)) if value is not None}
     if caps:

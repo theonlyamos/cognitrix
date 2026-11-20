@@ -23,7 +23,6 @@ import html
 import os
 import secrets
 import time
-from datetime import timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -32,7 +31,6 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
-from cognitrix.common.security import create_access_token
 from cognitrix.config import API_VERSION
 from cognitrix.models import User
 
@@ -193,13 +191,13 @@ async def sign_in_with(provider: str, email: str, name: str) -> User:
     return user
 
 
-def _issue_token(user: User) -> str:
-    from cognitrix.common.constants import JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+async def _issue_token(user: User, provider: str = '', request: Request | None = None, desktop: bool = False) -> str:
+    from cognitrix import signins
 
-    return create_access_token(
-        data={'sub': user.email},
-        expires_delta=timedelta(minutes=float(JWT_ACCESS_TOKEN_EXPIRE_MINUTES)),
-    )
+    if desktop:  # the browser finishing the sign-in isn't the device that gets the token
+        return await signins.sign_in(user, None, method=provider or 'oauth', name='Cognitrix desktop app',
+                                     kind='desktop')
+    return await signins.sign_in(user, request, method=provider or 'oauth')
 
 
 def _desktop_page(title: str, body: str) -> HTMLResponse:
@@ -224,7 +222,7 @@ async def callback(provider: str, request: Request, code: str | None = None, sta
     _prune()
     flow = _flows.pop(state or '', None)
     if flow is None or flow['provider'] != provider:
-        return _finish(None, 'This sign-in link has expired. Please start again.', None)
+        return await _finish(None, 'This sign-in link has expired. Please start again.', None)
     poll = flow['poll']
     try:
         if error or not code:
@@ -232,16 +230,17 @@ async def callback(provider: str, request: Request, code: str | None = None, sta
         access_token = await _exchange_code(provider, code, flow['redirect_uri'])
         email, name = await _profile(provider, access_token)
         user = await sign_in_with(provider, email, name)
-        return _finish(user, None, poll)
+        return await _finish(user, None, poll, provider, request)
     except OAuthError as exc:
-        return _finish(None, exc.user_message, poll)
+        return await _finish(None, exc.user_message, poll)
     except (httpx.HTTPError, ValueError, KeyError):
         label = PROVIDERS.get(provider, {}).get('label', provider)
-        return _finish(None, f"Couldn't reach {label}. Please try again.", poll)
+        return await _finish(None, f"Couldn't reach {label}. Please try again.", poll)
 
 
-def _finish(user: User | None, error: str | None, poll: str | None):
-    token = _issue_token(user) if user is not None else None
+async def _finish(user: User | None, error: str | None, poll: str | None, provider: str = '',
+                  request: Request | None = None):
+    token = await _issue_token(user, provider, request, desktop=bool(poll)) if user is not None else None
     if poll:
         _results[poll] = {'token': token, 'error': error, 'created': time.time()}
         if error:

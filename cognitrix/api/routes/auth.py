@@ -4,19 +4,16 @@ import logging
 import os
 import secrets
 import time
-from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from cognitrix.common.constants import JWT_ACCESS_TOKEN_EXPIRE_MINUTES
 from cognitrix.common.security import (
     AuthContext,
     Token,
     authenticate,
-    create_access_token,
     get_auth_context,
     get_current_user,
     jwt_only,
@@ -66,10 +63,13 @@ auth_api = APIRouter(
 class LoginForm(BaseModel):
     username: str
     password: str
+    device_name: str = ''
+    """What the app calls this device (the desktop app and CLI send one; browsers are named from their user agent)."""
+    device_kind: str = ''
 
 
 @auth_api.post("/login", response_model=Token)
-async def login(form_data: LoginForm):
+async def login(form_data: LoginForm, request: Request):
     user = await authenticate(form_data.username, form_data.password)
     from cognitrix import audit
 
@@ -83,11 +83,14 @@ async def login(form_data: LoginForm):
             headers={"WWW-Authenticate": "Bearer"},
         )
     audit.record('sign_in', 'Signed in', user_id=str(user.id), actor=str(user.email), outcome='ok')
-    access_token_expires = timedelta(minutes=float(JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
-    access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
+    from cognitrix import signins
 
+    access_token = await signins.sign_in(user, request, method='password',
+                                         name=form_data.device_name, kind=form_data.device_kind)
+    return JSONResponse(await _signed_in_body(user, access_token))
+
+
+async def _signed_in_body(user, access_token: str) -> dict:
     user_data = user.json()
     # Never return the password hash to the client.
     if isinstance(user_data, dict):
@@ -97,7 +100,7 @@ async def login(form_data: LoginForm):
 
         user_data['is_admin'] = await is_admin(user)
 
-    return JSONResponse({"user": user_data, "access_token": access_token, "token_type": "bearer"})
+    return {"user": user_data, "access_token": access_token, "token_type": "bearer"}
 
 @auth_api.post("/signup")
 async def signup(new_user: User, request: Request):
@@ -196,7 +199,13 @@ async def auth_options(invite: str | None = None):
     return {
         'signup_open': await _signup_open() or valid_invite,
         'password_reset_by_email': _reset_by_email_ready(),
+        'code_sign_in': signins_on(),
     }
+
+
+def signins_on() -> bool:
+    from cognitrix.signins import code_signin_on
+    return code_signin_on()
 
 
 class ForgotPassword(BaseModel):
@@ -257,6 +266,9 @@ async def reset_password(body: ResetPassword):
         'reset_token_hash': None,
         'reset_expires': None,
     })
+    from cognitrix import signins
+
+    await signins.end_all(str(user.id))
     return {"message": "Password changed. Sign in with the new one."}
 
 class PasswordChange(BaseModel):
@@ -280,13 +292,13 @@ async def change_password(body: PasswordChange, ctx: Annotated[AuthContext, Depe
         'password': Utils.hash_password(body.new_password),
         'tokens_valid_after': int(time.time()),
     })
+    from cognitrix import signins
+
+    await signins.end_all(str(user.id), keep_sid=ctx.sid)
     from cognitrix import audit
 
     audit.record('settings', 'Changed their password', user_id=str(user.id), actor=str(user.email), outcome='ok')
-    access_token = create_access_token(
-        data={"sub": user.email},
-        expires_delta=timedelta(minutes=float(JWT_ACCESS_TOKEN_EXPIRE_MINUTES)),
-    )
+    access_token = signins.make_token(user, ctx.sid or None)
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -301,7 +313,7 @@ async def get_user(user: Annotated[User, Depends(get_current_user)]):
     return data
 
 @auth_api.post("/refresh")
-async def refresh(ctx: Annotated[AuthContext, Depends(get_auth_context)]):
+async def refresh(ctx: Annotated[AuthContext, Depends(get_auth_context)], request: Request):
     """Swap a valid session token for a fresh one, so an app that's in use
     keeps its sign-in instead of hitting the expiry. API keys can't be
     swapped for a session. Tokens revoked by "Sign out of all devices"
@@ -311,15 +323,23 @@ async def refresh(ctx: Annotated[AuthContext, Depends(get_auth_context)]):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="API keys can't be exchanged for a session token",
         )
-    access_token = create_access_token(
-        data={"sub": ctx.user.email},
-        expires_delta=timedelta(minutes=float(JWT_ACCESS_TOKEN_EXPIRE_MINUTES)),
-    )
+    from cognitrix import signins
+
+    sid = ctx.sid
+    if not sid:
+        # A token from before per-device sign-ins: give this device its row now,
+        # so it shows in Settings, Sign-ins and can be signed out on its own.
+        sid = await signins.start(ctx.user, method='earlier', user_agent=request.headers.get('user-agent', ''),
+                                  address=signins.client_address(request))
+    access_token = signins.make_token(ctx.user, sid)
     return {"access_token": access_token, "token_type": "bearer"}
 
 @auth_api.post("/logout")
-async def logout(current_user: User = Depends(get_current_user)):
+async def logout(ctx: Annotated[AuthContext, Depends(get_auth_context)]):
     """End every session token issued so far for this user (all devices).
     API keys are separate and stay valid until revoked."""
-    await User.update_one({'id': current_user.id}, {'tokens_valid_after': int(time.time())})
+    from cognitrix import signins
+
+    await User.update_one({'id': ctx.user.id}, {'tokens_valid_after': int(time.time())})
+    await signins.end_all(str(ctx.user.id))
     return {"message": "Logged out successfully"}

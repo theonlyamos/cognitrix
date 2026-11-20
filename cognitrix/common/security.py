@@ -102,6 +102,15 @@ def token_revoked(payload: dict, user) -> bool:
         return True
 
 
+async def _device_live(payload: dict, user) -> bool:
+    """A token that names its device works only while that device is signed in."""
+    sid = payload.get('sid')
+    if not sid:
+        return True  # made before per-device sign-ins
+    from cognitrix.signins import is_live
+    return await is_live(str(sid), str(user.id))
+
+
 def identity(payload):
     user_id = payload['identity']
     return User.get(user_id)
@@ -116,6 +125,8 @@ async def verify_token(token: str) -> User | None:
             return None
         user = await get_user(email=email)
         if user is None or token_revoked(payload, user):
+            return None
+        if not await _device_live(payload, user):
             return None
         return user
     except jwt.PyJWTError:
@@ -138,6 +149,8 @@ class AuthContext:
 
     user: User
     api_key: APIKey | None = None
+    sid: str = ''
+    """The signed-in device (cognitrix/signins.py) of a session token; '' for API keys and older tokens."""
 
     def has_scope(self, scope: str) -> bool:
         return self.api_key is None or self.api_key.has_scope(scope)
@@ -215,9 +228,11 @@ async def _resolve_jwt(token: str) -> AuthContext:
     user = await get_user(email=email)
     if user is None or token_revoked(payload, user) or getattr(user, 'disabled', None):
         raise _credentials_401
+    if not await _device_live(payload, user):
+        raise _credentials_401
     if getattr(user, 'password', None):
         del user.password
-    return AuthContext(user=user)
+    return AuthContext(user=user, sid=str(payload.get('sid') or ''))
 
 
 async def get_auth_context(request: Request) -> AuthContext:

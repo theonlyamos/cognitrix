@@ -18,6 +18,7 @@ from ...api.routes.automations import automations_api, hooks_api
 from ...api.routes.github_watches import github_hooks_api, github_watches_api
 from ...api.routes.audio import audio_api
 from ...api.routes.auth import auth_api
+from ...api.routes.sign_ins import sign_ins_api
 from ...api.routes.agent_email import email_api
 from ...api.routes.channels import channel_hooks_api, channels_api
 from ...api.routes.meetings import meetings_api
@@ -77,6 +78,7 @@ api_router.include_router(team_chat_api)
 api_router.include_router(teams_api)
 api_router.include_router(chat_sharing_api)
 api_router.include_router(sessions_api)
+api_router.include_router(sign_ins_api)
 api_router.include_router(auth_api)
 api_router.include_router(oauth_api)
 api_router.include_router(onboarding_api)
