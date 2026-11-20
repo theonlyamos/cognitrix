@@ -108,6 +108,12 @@ async def lifespan(app: FastAPI):
             import logging
             logging.getLogger('cognitrix.log').exception('Could not update default assistant prompts')
         try:
+            # Paired PCs connect to this (web) process.
+            from cognitrix.computer.paired.hub import hub as _paired_hub
+            _paired_hub.serving = True
+        except Exception:
+            pass
+        try:
             # The desktop app reconnects a PC linked to a web account.
             from .routes.computer_devices import start_saved_link
             await start_saved_link()

@@ -71,10 +71,11 @@ def _file_row(row: ArtifactFile, agents: dict[str, str]) -> dict[str, Any]:
 
 
 @artifact_pages_api.get('')
-async def list_artifacts(ctx: AuthContext = Depends(jwt_only), session_id: str = ''):
+async def list_artifacts(ctx: AuthContext = Depends(jwt_only), session_id: str = '', task_id: str = ''):
     """Pages I can open, and the images and documents my agents made.
 
-    With ``session_id``, only what that chat made (the chat's side panel)."""
+    With ``session_id``, only what that chat made (the chat's side panel);
+    with ``task_id``, only what that task made (its results)."""
     from cognitrix.artifacts import Artifact
 
     me = _me(ctx)
@@ -96,6 +97,13 @@ async def list_artifacts(ctx: AuthContext = Depends(jwt_only), session_id: str =
         pages = [p for p in pages if str(p.get('session_id') or '') == session_id]
         images = [r for r in images if str(r.get('session_id') or '') == session_id]
         files = [r for r in files if str(r.get('session_id') or '') == session_id]
+    if task_id:
+        from cognitrix.artifact_pages.guidance import related_pages
+
+        made = {str(p.id) for p in await related_pages(me, task_id=task_id)}
+        pages = [p for p in pages if p['id'] in made]
+        images = []
+        files = [r for r in files if str(r.get('task_id') or '') == task_id]
     return {'pages': pages, 'images': images, 'files': files, 'public_links': store.public_links_allowed()}
 
 
@@ -194,6 +202,7 @@ async def get_page(page_id: str, ctx: AuthContext = Depends(jwt_only)):
         } for v in rows] if store.can_edit(role) else [{'number': shown, 'note': '', 'created': page.updated,
                                                          'size_bytes': page.size_bytes, 'by_task': False}],
         'task': await store.task_info(page.task_id) if page.task_id else None,
+        'origin': await store.origin_info(page) if role == store.ROLE_OWNER else None,
         'allowed_powers': await store.allowed_powers(page, me),
         'consent_asked': await store.consent(page, me) is not None,
         'share_version': page.share_version,

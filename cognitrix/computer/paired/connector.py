@@ -27,13 +27,17 @@ from typing import Any
 from urllib.parse import urlparse
 
 from cognitrix.computer.paired import (
+    APPS,
     COMMANDS,
     FILES,
     PROTOCOL,
+    SCREEN,
     clean_folders,
     clean_powers,
     normalize_code,
+    secret_store,
     tool_power,
+    undo,
 )
 
 logger = logging.getLogger('cognitrix.paired')
@@ -58,15 +62,36 @@ def config_path() -> Path:
     return Path(os.environ.get('COGNITRIX_PAIRED_CONFIG') or (Path.home() / '.cognitrix' / 'paired.json'))
 
 
+_keychain_token: str | None = None  # what the keychain last gave or took, so it isn't asked on every call
+
+
 def load_config() -> dict[str, Any]:
+    global _keychain_token
     try:
         data = json.loads(config_path().read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    if not data.get('token') and data.get('token_store') == 'keychain':
+        if _keychain_token is None:
+            _keychain_token = secret_store.load()
+        if _keychain_token:
+            data['token'] = _keychain_token
+    return data
 
 
 def save_config(cfg: dict[str, Any]) -> None:
+    """Write the link. The token goes to the system keychain when there is one; else into the file."""
+    global _keychain_token
+    cfg = dict(cfg)
+    token = cfg.get('token')
+    cfg.pop('token_store', None)
+    if token:
+        if token == _keychain_token or secret_store.save(token):
+            _keychain_token = token
+            cfg.pop('token')
+            cfg['token_store'] = 'keychain'
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix('.tmp')
@@ -78,7 +103,21 @@ def save_config(cfg: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def token_location(cfg: dict[str, Any] | None = None) -> str:
+    """Where this PC's token is kept, in words for the person."""
+    try:
+        raw = json.loads(config_path().read_text(encoding='utf-8')) if cfg is None else cfg
+    except (OSError, ValueError):
+        raw = {}
+    if isinstance(raw, dict) and raw.get('token_store') == 'keychain':
+        return secret_store.where() or 'keychain'
+    return str(config_path())
+
+
 def forget_config() -> None:
+    global _keychain_token
+    _keychain_token = None
+    secret_store.delete()
     try:
         config_path().unlink()
     except OSError:
@@ -97,6 +136,7 @@ def public_config(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         'folders': clean_folders(cfg.get('folders')),
         'powers': clean_powers(cfg.get('powers')),
         'paused': bool(cfg.get('paused')),
+        'token_kept_in': token_location(cfg) if cfg.get('token') else '',
     }
 
 
@@ -156,6 +196,34 @@ def check_folders(folders: Any) -> list[dict[str, Any]]:
             seen.add(key)
             out.append({'path': str(real), 'writable': bool(item.get('writable', True))})
     return out
+
+
+# ---------------------------------------------------------------------------
+# Handing tasks to the web account (the 'tasks' power), with this PC's token
+# ---------------------------------------------------------------------------
+
+async def remote(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Call the web account's server as this PC. Raises LinkError."""
+    import aiohttp
+    cfg = load_config()
+    if not cfg.get('token'):
+        raise LinkError('unpaired', 'This PC is not linked to a web account.')
+    url = normalize_server(cfg['server']) + API_PREFIX + path
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as http, http.request(
+                method, url, json=body, headers={'Authorization': f"Bearer {cfg['token']}"}) as resp:
+            try:
+                data = await resp.json(content_type=None)
+            except Exception:
+                data = {}
+            if resp.status >= 400:
+                detail = data.get('detail') if isinstance(data, dict) else None
+                raise LinkError('failed', str(detail or f'The server answered {resp.status}.'))
+            return data if isinstance(data, dict) else {}
+    except LinkError:
+        raise
+    except Exception as exc:
+        raise LinkError('unreachable', f"Couldn't reach {cfg.get('server')}: {exc}") from None
 
 
 # ---------------------------------------------------------------------------
@@ -277,13 +345,15 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
         _log({'at': time.time(), 'tool': name, 'ok': False, 'error': code})
         return {'type': 'result', 'id': call_id, 'ok': False, 'error': code, 'message': text}
 
-    power = tool_power(name)
+    power = APPS if name == SCREEN else FILES if name in (undo.CHANGES, undo.UNDO) else tool_power(name)
     if power is None:
         return fail('not_allowed', f"{name} doesn't run on a paired PC.")
     if cfg.get('paused'):
         return fail('paused', 'Agents are paused on this PC.')
     if power not in clean_powers(cfg.get('powers')):
         return fail(f'no_{power}', f'{power} is switched off on this PC.')
+    if power == APPS:
+        return await _run_app_call(call_id, name, args, ctx, fail)
     if power == COMMANDS and _folders_for(cfg) and not _folders_for(cfg, for_commands=True):
         return fail('read_only', 'Every folder on this PC is shared read only, and a command could change files, so '
                     'commands are refused. Ask the person to share a folder as read & write to run commands.')
@@ -291,8 +361,8 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
     if not folders:
         return fail('no_folders', "This PC hasn't shared any folders (or they were moved). Ask the person to add one "
                     'on the PC.')
-    tool = ToolManager.get_by_name(name)
-    if tool is None:
+    tool = None if name in (undo.CHANGES, undo.UNDO) else ToolManager.get_by_name(name)
+    if tool is None and name not in (undo.CHANGES, undo.UNDO):
         return fail('not_allowed', f'{name} is not available on this PC.')
     if name != 'Bash':
         args.pop('approved', None)
@@ -308,6 +378,10 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
     token = set_execution_context(context)
     started = time.time()
     try:
+        if name in (undo.CHANGES, undo.UNDO):
+            return _run_undo_call(call_id, name, args, ctx, fail)
+        if name in undo.EDIT_TOOLS:
+            _keep_for_undo(ctx, args)
         validated = tool.validate_parameters(dict(args)) if hasattr(tool, 'validate_parameters') else dict(args)
         text = _text(await tool.run(**validated))
     except Exception as exc:
@@ -318,6 +392,94 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
     _log({'at': started, 'tool': name, 'ok': True, 'seconds': round(time.time() - started, 1),
           'command': args.get('command'), 'path': args.get('file_path') or args.get('path')})
     return {'type': 'result', 'id': call_id, 'ok': True, 'text': text}
+
+
+def _keep_for_undo(ctx: dict[str, Any], args: dict[str, Any]) -> None:
+    """Before an agent's Write or Edit: keep the file as it is, so the chat can undo."""
+    from cognitrix.common.folders import resolve_path
+    raw = args.get('file_path') or args.get('path')
+    if not raw:
+        return
+    try:
+        undo.remember(str(ctx.get('session_id') or ctx.get('task_id') or ''), resolve_path(str(raw), write=True))
+    except Exception:
+        # The tool itself will say why the path is refused; a failed copy must not block the edit.
+        logger.debug('Could not keep a copy for undo', exc_info=True)
+
+
+def _run_undo_call(call_id: Any, name: str, args: dict[str, Any], ctx: dict[str, Any], fail) -> dict[str, Any]:
+    """The chat's changed files on this PC, or putting some of them back."""
+    from cognitrix.common.folders import resolve_path
+    chat = str(ctx.get('session_id') or ctx.get('task_id') or '')
+    if not chat:
+        return fail('failed', 'Which chat? No chat was given.')
+    if name == undo.CHANGES:
+        return {'type': 'result', 'id': call_id, 'ok': True, 'text': json.dumps({'changes': undo.changes(chat)})}
+    paths = args.get('paths')
+    paths = None if paths is None else [str(p) for p in paths if p]
+    results = undo.restore(chat, paths, lambda p: resolve_path(p, write=True))
+    _log({'at': time.time(), 'tool': 'Undo', 'ok': all(r['ok'] for r in results),
+          'paths': [r['path'] for r in results]})
+    return {'type': 'result', 'id': call_id, 'ok': True, 'text': json.dumps({'restored': results})}
+
+
+def _screen_image(max_width: int = 1280) -> str:
+    """This PC's whole screen as a JPEG data URI, scaled down for the web."""
+    import base64
+    import io
+
+    from cognitrix.tools.misc import _grab_screen
+
+    img = _grab_screen().convert('RGB')
+    if img.width > max_width:
+        img = img.resize((max_width, round(img.height * max_width / img.width)))
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=70)
+    return 'data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode()
+
+
+async def _run_app_call(call_id: Any, name: str, args: dict[str, Any], ctx: dict[str, Any], fail) -> dict[str, Any]:
+    """The window tools, always on this PC's own screen (computer='person'),
+    or the web's view of the screen. Screenshots go back with the answer."""
+    from cognitrix.tools.base import ToolManager
+    from cognitrix.tools.misc import coords_normalized, end_image_collection, start_image_collection
+    from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
+
+    started = time.time()
+    if name == SCREEN:
+        try:
+            image = await asyncio.to_thread(_screen_image)
+        except Exception as exc:
+            return fail('failed', f"Couldn't capture the screen: {exc}")
+        return {'type': 'result', 'id': call_id, 'ok': True, 'text': '', 'images': [image]}
+    tool = ToolManager.get_by_name(name)
+    if tool is None:
+        return fail('not_allowed', f'{name} is not available on this PC.')
+    args = {**args, 'computer': 'person'}
+    context = ToolExecutionContext(
+        user_id='paired', session_id=str(ctx.get('session_id') or '') or None,
+        agent_id=str(ctx.get('agent_id') or '') or None, device_host=True)
+    token = set_execution_context(context)
+    img_token, images = start_image_collection()
+    norm_token = coords_normalized.set(bool(ctx.get('coords_normalized')))
+    try:
+        validated = tool.validate_parameters(dict(args)) if hasattr(tool, 'validate_parameters') else dict(args)
+        if 'parent' in set(getattr(tool, 'internal_params', None) or []):
+            # Who is acting, so one agent can't act on another agent's look at a window.
+            from types import SimpleNamespace
+            who = str(ctx.get('agent_id') or ctx.get('session_id') or '') or None
+            validated['parent'] = SimpleNamespace(id=who, name=None) if who else None
+        text = _text(await tool.run(**validated))
+    except Exception as exc:
+        logger.warning('A window call from the server failed here', exc_info=True)
+        return fail('failed', f'{name} failed on the PC: {exc}')
+    finally:
+        coords_normalized.reset(norm_token)
+        end_image_collection(img_token)
+        reset_execution_context(token)
+    _log({'at': started, 'tool': name, 'ok': True, 'seconds': round(time.time() - started, 1),
+          'target': args.get('target'), 'window': args.get('window_id')})
+    return {'type': 'result', 'id': call_id, 'ok': True, 'text': text, 'images': images[:4]}
 
 
 # ---------------------------------------------------------------------------

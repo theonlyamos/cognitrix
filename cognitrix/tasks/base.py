@@ -138,6 +138,10 @@ class Task(Model):
     """When the creator is told: always (None), failure, or changed (a
     result that differs from the last one reported)."""
 
+    computer: str | None = None
+    """One of the owner's paired PCs the run works on (its shell, files and
+    apps), or None for the agent's usual computer. See computer/paired."""
+
     standing_agent_id: str | None = None
     """Set on the home task of a standing assistant (tasks/standing.py): the
     agent whose brief this task checks in on. Its runs are read-only."""
@@ -150,6 +154,12 @@ class Task(Model):
     read_memory: bool = False
     """Runs see the owner's global saved memories (read-only; runs never save
     memories). Off by default: task runs are memory-free unless asked."""
+
+    result_artifact: str | None = None
+    """Keep each finished run's result as an artifact (one page per task, a
+    version per run): auto (None: when the result is long or structured and
+    the run didn't publish a page itself), always, or off.
+    See artifact_pages/guidance.py."""
 
     async def team(self):
         agents: list[Agent] = []

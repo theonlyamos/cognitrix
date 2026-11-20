@@ -10,16 +10,20 @@ box.
 1. On the web: **Settings › Computers › Pair a computer**. This shows a
    one-time code (`XXXX-XXXX`, 10 minutes, used once).
 2. On the PC, either:
-   - the desktop app: **Settings › Computers › This PC**, enter the web address
-     and the code, check the account it shows, pick folders and what agents may
+   - the desktop app: click **Open in the desktop app** in the pairing dialog
+     (or go to **Settings › Computers › This PC** and enter the web address and
+     the code), check the account it shows, pick folders and what agents may
      do, then **Allow**; or
    - a terminal: `cognitrix connect https://your-server --code XXXX-XXXX
      --folder ~/code` (repeat `--folder`; `--read-only`, `--no-commands`,
-     `--pc-name`; `--status` and `--unpair` later).
+     `--apps`, `--pc-name`; `--status` and `--unpair` later).
 
-The PC keeps a token in `~/.cognitrix/paired.json` (mode 600; set
-`COGNITRIX_PAIRED_CONFIG` to move it). The server only stores its hash. A PC
-not seen for 30 days must pair again.
+The PC keeps its token in the system keychain: Windows Credential Manager, the
+macOS Keychain, or the Secret Service on Linux (when `secret-tool` is
+installed). Without one it goes in `~/.cognitrix/paired.json` (mode 600; set
+`COGNITRIX_PAIRED_CONFIG` to move the file, `COGNITRIX_PAIRED_KEYCHAIN=0` to
+skip the keychain). The server only stores its hash. A PC not seen for 30 days
+must pair again.
 
 ## How it works
 
@@ -31,12 +35,33 @@ folders, the files/commands switches and pause, whatever the server asks.
 Each command asks the person in the chat first. Commands start only in folders shared read & write and run as the person's own user, so a command can reach whatever that user can: the approval is the guard, not the folder list. Helper agents a chat calls can only Read, Glob and Grep on the PC. The PC also keeps a local log
 of what ran in `~/.cognitrix/paired-log.jsonl`.
 
+## What a PC can allow
+
+- **Files**: Read, Write, Edit, Glob and Grep in the shared folders.
+- **Commands**: Bash, in read & write folders only, each one approved in the chat.
+- **Apps**: the window tools work on the PC's own screen, and the chat's side
+  panel shows the screen. Opening an app always asks the person first.
+- **Send tasks**: the desktop app can hand a task to the web account (on the
+  task page, **Run on** the web account) and follows its result under
+  **Settings › Computers › This PC**.
+
+Scheduled tasks can run on a PC too (the **Computer** field on the task). The
+task worker reaches the PC through the web process (`paired-relay.json` in the
+work folder, or `COGNITRIX_INTERNAL_URL`). If the PC is offline, the task waits
+up to 30 minutes (`COGNITRIX_PAIRED_TASK_WAIT_S`), then fails and notifies the
+person.
+
+## Undo
+
+Before an agent's Write or Edit changes a file, the PC keeps a copy of the file
+as it was before that chat first touched it (`~/.cognitrix/paired-undo/`, kept
+14 days, files up to 20 MB). The chat's side panel lists the changed files with
+**Undo** for each and **Undo all**. Changes made by commands aren't tracked.
+
 ## Limits in this version
 
-- Files and commands only (no apps or screen).
-- Chats only: scheduled tasks run by the worker can't reach a PC yet.
-- If the PC is offline the tool fails right away with a message telling the
-  person to start the desktop app or `cognitrix connect`; the agent does not
-  switch computers on its own.
+- If the PC is offline a chat's tool fails right away with a message telling
+  the person to start the desktop app or `cognitrix connect`; the agent does
+  not switch computers on its own.
 - Running several web processes: PCs connect to one of them; chats served by
   another process see the PC as offline.

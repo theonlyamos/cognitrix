@@ -12,7 +12,7 @@ import asyncio
 import sys
 from typing import Any
 
-from cognitrix.computer.paired import COMMANDS, FILES
+from cognitrix.computer.paired import APPS, COMMANDS, FILES
 
 
 def add_parser(subparsers) -> None:
@@ -23,6 +23,8 @@ def add_parser(subparsers) -> None:
     p.add_argument('--folder', action='append', default=[], help='A folder agents may use (repeat for more)')
     p.add_argument('--read-only', action='store_true', help='Agents may read the folders but not change them')
     p.add_argument('--no-commands', action='store_true', help="Don't let agents run commands here")
+    p.add_argument('--apps', action='store_true',
+                   help='Also let agents work in app windows on this screen (in the background; opening an app asks you)')
     p.add_argument('--pc-name', default='', help='What to call this PC on the web (default: its host name)')
     p.add_argument('--yes', '-y', action='store_true', help="Don't ask before allowing")
     p.add_argument('--status', action='store_true', help='Show the saved link and exit')
@@ -37,6 +39,8 @@ def _print_link(view: dict[str, Any]) -> None:
     print('Folders: ' + (', '.join(f"{f['path']}{'' if f.get('writable', True) else ' (read only)'}"
                                    for f in view.get('folders') or []) or 'none'))
     print('Allowed: ' + (', '.join(view.get('powers') or []) or 'nothing'))
+    if view.get('token_kept_in'):
+        print(f"Token:   kept in {view['token_kept_in']}")
 
 
 async def command(args) -> None:
@@ -83,13 +87,14 @@ async def command(args) -> None:
             sys.exit(exc.message)
         if not folders:
             sys.exit('Share at least one folder with --folder, like --folder ~/code/my-app')
-        powers = [FILES] + ([] if args.no_commands else [COMMANDS])
+        powers = [FILES] + ([] if args.no_commands else [COMMANDS]) + ([APPS] if args.apps else [])
         name = args.pc_name or default_name()
         print(f"Let agents of {info['account']} on {info['server']} use this PC ({name})?")
         for f in folders:
             print(f"  {f['path']} ({'read & write' if f['writable'] else 'read only'})")
         print('  They can: read' + ('' if args.read_only else ' and edit') + ' files there'
-              + ('' if args.no_commands else ', and run commands (each one asks you in the chat first)'))
+              + ('' if args.no_commands else ', and run commands (each one asks you in the chat first)')
+              + (', and use apps on this screen' if args.apps else ''))
         if not args.yes:
             answer = input('Allow? [y/N] ').strip().lower()
             if answer not in ('y', 'yes'):

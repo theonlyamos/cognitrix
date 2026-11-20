@@ -49,6 +49,13 @@
       "endpoints": [
         "https://github.com/theonlyamos/cognitrix/releases/latest/download/latest.json"
       ]
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "cognitrix"
+        ]
+      }
     }
   }
 }

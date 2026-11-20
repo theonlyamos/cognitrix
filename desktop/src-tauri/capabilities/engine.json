@@ -38,6 +38,7 @@
     "allow-clear-session",
     "allow-test-notification",
     "allow-check-for-update",
-    "allow-install-update"
+    "allow-install-update",
+    "allow-take-pending-link"
   ]
 }

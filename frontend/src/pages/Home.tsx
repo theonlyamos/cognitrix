@@ -52,6 +52,7 @@ import { setViewingChat } from '@/lib/chatPresence';
 import { useApprovalSeen } from '@/hooks/useApprovalSeen';
 import { tr, dateLocale } from '@/lib/i18n';
 import ComputerChip from '@/components/ComputerChip';
+import { PcScreenPanel } from '@/components/PcScreen';
 import { getChatComputer, listDevices, setChatComputer, type PairedDevice } from '@/lib/devices';
 
 
@@ -829,6 +830,13 @@ export default function Home() {
     return () => { cancelled = true; };
   }, [activeSessionId]);
   const chatPc = activeSessionId ? chatComputer : draftComputer;
+  const chatPcDevice = chatPc ? pcs.find((d) => d.id === chatPc) ?? null : null;
+  // Keep the picked PC's online state fresh while a chat works on it.
+  useEffect(() => {
+    if (!chatPc) return;
+    const timer = setInterval(refreshPcs, 20000);
+    return () => clearInterval(timer);
+  }, [chatPc, refreshPcs]);
   const changeComputer = useCallback(async (id: string | null) => {
     const sid = activeRef.current;
     if (sid) {
@@ -2478,7 +2486,12 @@ export default function Home() {
           />
         </aside>
       )}
-      {computerOpen && !artifactOpen && !appViewOpen && !changesOpen && (
+      {computerOpen && !artifactOpen && !appViewOpen && !changesOpen && chatPcDevice && (
+        <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l">
+          <PcScreenPanel device={chatPcDevice} onClose={closeRightSide} onBack={sidebarOpen ? () => setComputerOpen(false) : undefined} />
+        </aside>
+      )}
+      {computerOpen && !artifactOpen && !appViewOpen && !changesOpen && !chatPcDevice && (
         <aside className="fixed inset-0 z-40 flex flex-col border-line md:static md:z-auto md:w-[min(46vw,720px)] md:flex-none md:border-l">
           <ComputerPanel
             agents={agents.map((a) => ({ id: String(a.id), name: a.name }))}
@@ -2495,6 +2508,7 @@ export default function Home() {
             desktop={agentDesktop?.name ?? null}
             sandboxOn={sandboxOn}
             desktopHeldBy={agentDesktop?.held_by}
+            pc={chatPcDevice}
             onOpenComputer={() => { closeArtifact(); closeAppView(); closeChanges(); setComputerOpen(true); }}
             waiting={sidebarWaiting}
             onApprove={(id) => void respondApproval(id, true)}

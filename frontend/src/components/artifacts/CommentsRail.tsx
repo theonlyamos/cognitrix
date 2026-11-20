@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Bot, MapPin, X } from 'lucide-react';
 import { ago, type CommentAnchor, type CommentEntry, type CommentThread, type PageDetail } from '@/lib/artifactPages';
 import { cn } from '@/lib/utils';
@@ -53,6 +53,9 @@ export function CommentsRail({
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [showResolved, setShowResolved] = useState(false);
+  const input = useRef<HTMLTextAreaElement>(null);
+  // A spot was just picked on the page: type the comment straight away.
+  useEffect(() => { if (draftAnchor) input.current?.focus(); }, [draftAnchor]);
   const agentName = page.agent?.name || 'the agent';
   const open = threads.filter((t) => !t.resolved);
   const shown = showResolved ? threads.filter((t) => t.resolved) : open;
@@ -127,7 +130,7 @@ export function CommentsRail({
             <button type="button" className="ml-auto flex-none hover:text-fg" onClick={() => (replyTo ? onActive(null) : onClearAnchor())}>{tr('ui.artifacts.commentsRail.clear')}</button>
           </div>
         )}
-        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} maxLength={4000}
+        <textarea ref={input} value={text} onChange={(e) => setText(e.target.value)} rows={3} maxLength={4000}
           aria-label={tr('ui.artifacts.commentsRail.comment')} placeholder={replyTo ? tr('ui.artifacts.commentsRail.reply') : canSend ? tr('ui.artifacts.commentsRail.commentOrAgentToAsk', { agentName }) : tr('ui.artifacts.commentsRail.comment_5ce8')}
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit(e); }}
           className="w-full resize-none rounded-[10px] border border-line bg-panel px-3 py-2 text-[13px] placeholder:text-fg-dim focus:border-accent" />

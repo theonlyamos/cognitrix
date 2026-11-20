@@ -92,8 +92,11 @@ class TaskStepExecutor:
         step_title: str | None = None,
         emitter: TaskRunEventEmitter | None = None,
         cancel_check: Callable[[], Awaitable[None]] | None = None,
+        computer: str | None = None,
     ):
         self.snapshot = snapshot
+        # A paired PC the task works on (Task.computer), or None.
+        self.computer = computer
         self.tool_resolver = tool_resolver
         self.task_id = task_id
         self.run_id = run_id
@@ -115,6 +118,7 @@ class TaskStepExecutor:
             step_index=self.step_index,
             step_title=self.step_title,
             agent_id=self.snapshot.agent_id,
+            **({'computer': self.computer} if self.computer else {}),
         )
 
     async def _checkpoint(self) -> None:

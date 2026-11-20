@@ -7,7 +7,7 @@ import AppAlerts from '@/components/AppAlerts';
 import AssistantSetup from '@/components/AssistantSetup';
 import WhatsNew from '@/components/WhatsNew';
 import { NotificationsProvider } from '@/context/NotificationsContext';
-import { isDesktop, onDesktopEvent } from '@/lib/desktop';
+import { isDesktop, onDesktopEvent, invokeDesktop } from '@/lib/desktop';
 import { tr } from '@/lib/i18n';
 
 /** Persistent shell: the sidebar (with every chat) and alerts mount once;
@@ -50,6 +50,10 @@ function AppShell() {
       if (path === '/home' && window.location.pathname === '/home') window.location.reload();
       else navigate(path);
     }).then((fn) => (stop = fn));
+    // A cognitrix:// link that opened the app before this page was up.
+    void invokeDesktop<string | null>('take_pending_link').then((path) => {
+      if (path && path.startsWith('/')) navigate(path);
+    }).catch(() => {});
     return () => stop?.();
   }, [navigate]);
 
