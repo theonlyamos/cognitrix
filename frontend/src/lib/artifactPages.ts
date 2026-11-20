@@ -163,10 +163,10 @@ export const sizeLabel = (bytes: number): string =>
   bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 export const POWER_COPY: Record<PagePower, { title: string; detail: string; tag: string }> = {
-  apps: { title: 'Your connected apps', detail: 'Read from apps you connected, as you. It can only read, never send or change, and never sees your sign-in.', tag: 'read' },
-  ask: { title: 'Ask your agent', detail: 'Buttons on the page can send a question to an agent. Answers use your model key.', tag: 'ask' },
-  data: { title: 'Save page data', detail: 'Keeps small things you do on the page, such as ticked boxes. Some may be shared with other viewers.', tag: 'store' },
-  download: { title: 'Download files', detail: 'The page can hand you a file it made, such as a CSV export.', tag: 'file' },
+  apps: { get title() { return tr('ui.artifactPages.power.appsTitle'); }, get detail() { return tr('ui.artifactPages.power.appsDetail'); }, tag: 'read' },
+  ask: { get title() { return tr('ui.artifactPages.power.askTitle'); }, get detail() { return tr('ui.artifactPages.power.askDetail'); }, tag: 'ask' },
+  data: { get title() { return tr('ui.artifactPages.power.dataTitle'); }, get detail() { return tr('ui.artifactPages.power.dataDetail'); }, tag: 'store' },
+  download: { get title() { return tr('ui.artifactPages.power.downloadTitle'); }, get detail() { return tr('ui.artifactPages.power.downloadDetail'); }, tag: 'file' },
 };
 
 export async function bridgeCall(pageId: string, kind: string, payload: unknown): Promise<unknown> {

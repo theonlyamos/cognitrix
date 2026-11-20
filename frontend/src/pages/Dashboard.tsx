@@ -137,7 +137,7 @@ function inboxTitle(item: InboxItem): string {
   if (item.kind === 'approval') return tr('ui.dashboard.runToolName', { tool_name: item.tool_name });
   if (item.kind === 'notification' || item.kind === 'offer') return item.title;
   if (item.kind === 'skill_draft') return tr('ui.dashboard.reviewTheSkillName', { name: item.name });
-  return String(item.question.prompt || 'An agent asked a question');
+  return String(item.question.prompt || tr('ui.dashboard.anAgentAskedAQuestion'));
 }
 
 function inboxSource(item: InboxItem): string {
@@ -611,7 +611,7 @@ export default function Dashboard() {
                   <ul className="divide-y divide-line">
                     {chatList.slice(0, 6).map((c) => {
                       const agent = c.agent_id ? agentById.get(c.agent_id) : undefined;
-                      const name = c.kind === 'team' ? 'Team chat' : agent?.name || 'Agent';
+                      const name = c.kind === 'team' ? tr('ui.dashboard.teamChat') : agent?.name || tr('ui.dashboard.agent');
                       const href = c.kind === 'team' && c.team_id ? `/teams/${c.team_id}/chat?chat=${encodeURIComponent(c.id)}` : `/home?chat=${encodeURIComponent(c.id)}`;
                       return (
                         <li key={c.id}>

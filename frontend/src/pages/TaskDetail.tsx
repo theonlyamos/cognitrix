@@ -180,22 +180,22 @@ const ACTIVE_RUN = new Set(['queued', 'running', 'cancelling']);
 const RUN_PAGE_SIZE = 50;
 
 const FAILURE_LABEL: Record<string, string> = {
-  worker_lost: 'Worker lost',
-  lease_lost: 'Worker lease lost',
-  queue_timeout: 'Queue timed out',
-  budget_exceeded: 'Budget exceeded',
-  cancelled: 'Cancelled',
-  timeout: 'Run timed out',
-  provider_error: 'Provider request failed',
-  authority_invalid: 'Run authority invalid',
-  capability_unavailable: 'Required capability unavailable',
-  limit_backend_unavailable: 'Concurrency service unavailable',
-  concurrency_exhausted: 'Concurrency capacity exhausted',
-  validation_failed: 'Validation failed',
-  persistence_error: 'Task state persistence failed',
-  unknown: 'Run failed',
-  queue_publish_failed: 'Queue publication failed',
-  task_missing: 'Task unavailable',
+  get worker_lost() { return tr('ui.taskDetail.failure.workerLost'); },
+  get lease_lost() { return tr('ui.taskDetail.failure.leaseLost'); },
+  get queue_timeout() { return tr('ui.taskDetail.failure.queueTimeout'); },
+  get budget_exceeded() { return tr('ui.taskDetail.failure.budgetExceeded'); },
+  get cancelled() { return tr('ui.taskDetail.failure.cancelled'); },
+  get timeout() { return tr('ui.taskDetail.failure.timeout'); },
+  get provider_error() { return tr('ui.taskDetail.failure.providerError'); },
+  get authority_invalid() { return tr('ui.taskDetail.failure.authorityInvalid'); },
+  get capability_unavailable() { return tr('ui.taskDetail.failure.capabilityUnavailable'); },
+  get limit_backend_unavailable() { return tr('ui.taskDetail.failure.limitBackendUnavailable'); },
+  get concurrency_exhausted() { return tr('ui.taskDetail.failure.concurrencyExhausted'); },
+  get validation_failed() { return tr('ui.taskDetail.failure.validationFailed'); },
+  get persistence_error() { return tr('ui.taskDetail.failure.persistenceError'); },
+  get unknown() { return tr('ui.taskDetail.failure.unknown'); },
+  get queue_publish_failed() { return tr('ui.taskDetail.failure.queuePublishFailed'); },
+  get task_missing() { return tr('ui.taskDetail.failure.taskMissing'); },
 };
 
 const numericValue = (value: unknown): number | null => {
@@ -850,7 +850,7 @@ export default function TaskDetail() {
   );
   const forceCancelReady = activeRun?.status === 'cancelling'
     && activeRun.force_cancel_ready === true;
-  const cancelActionLabel = forceCancelReady ? 'Force cancel' : 'Cancelling\u2026';
+  const cancelActionLabel = forceCancelReady ? tr('ui.taskDetail.forceCancel') : tr('ui.taskDetail.cancelling');
   const cancelActionDisabled = cancelling
     || (activeRun?.status === 'cancelling' && !forceCancelReady);
   const actionStatus = activeRun?.status === 'cancelling' || cancelling
@@ -869,20 +869,20 @@ export default function TaskDetail() {
   const selectedRunUsage = selectedRun ? formatUsage(selectedRun) : [];
   const selectedRunFailureLabel = selectedRun?.error_code
     ? FAILURE_LABEL[selectedRun.error_code]
-      || (selectedRun.status === 'cancelled' ? 'Cancelled' : 'Run failed')
+      || (selectedRun.status === 'cancelled' ? tr('ui.taskDetail.failure.cancelled') : tr('ui.taskDetail.failure.unknown'))
     : null;
 
   const mobileActions: MobileHeaderAction[] = [
     { key: 'edit', label: tr('ui.taskDetail.editTask'), to: `/tasks/${taskId}/edit` },
     {
       key: 'automation',
-      label: showAutomation ? 'Hide notes and triggers' : 'Notes and triggers',
+      label: showAutomation ? tr('ui.taskDetail.hideNotesAndTriggers') : tr('ui.taskDetail.notesAndTriggers'),
       onSelect: () => setShowAutomation((v) => !v),
     },
     ...(hasSchedule
       ? [{
           key: 'schedule',
-          label: task?.schedule_enabled ? 'Pause task schedule' : 'Resume task schedule',
+          label: task?.schedule_enabled ? tr('ui.taskDetail.pauseTaskSchedule') : tr('ui.taskDetail.resumeTaskSchedule'),
           disabled: togglingSchedule,
           onSelect: toggleSchedule,
         }]
@@ -1300,7 +1300,7 @@ export default function TaskDetail() {
             <DurableResultView
               result={selectedDurableResult}
               tools={selectedDurableToolCalls}
-              agentName={selectedDurableTarget === 'synthesis' ? 'Final result' : selectedPlanStep?.agent_name}
+              agentName={selectedDurableTarget === 'synthesis' ? tr('ui.taskDetail.finalResult') : selectedPlanStep?.agent_name}
               taskId={taskId}
               runId={selectedRunId || undefined}
             />
@@ -1339,7 +1339,7 @@ export default function TaskDetail() {
             <DurableResultView
               result={selectedDurableResult}
               tools={selectedDurableToolCalls}
-              agentName={selectedDurableTarget === 'synthesis' ? 'Final result' : selectedPlanStep?.agent_name}
+              agentName={selectedDurableTarget === 'synthesis' ? tr('ui.taskDetail.finalResult') : selectedPlanStep?.agent_name}
               taskId={taskId}
               runId={selectedRunId || undefined}
             />

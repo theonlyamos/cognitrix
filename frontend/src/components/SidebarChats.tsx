@@ -306,8 +306,8 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
     }
     const actions = [
       { label: tr('ui.sidebarChats.rename'), disabled: busy, onSelect: () => setRenaming({ id: c.id, title: c.title }) },
-      { label: c.pinned ? 'Unpin' : 'Pin to top', disabled: busy, onSelect: () => void update(c, { pinned: !c.pinned }) },
-      { label: c.archived ? 'Move back to chats' : 'Archive', disabled: busy, onSelect: () => void update(c, { archived: !c.archived }) },
+      { label: c.pinned ? tr('ui.sidebarChats.unpin') : tr('ui.sidebarChats.pinToTop'), disabled: busy, onSelect: () => void update(c, { pinned: !c.pinned }) },
+      { label: c.archived ? tr('ui.sidebarChats.moveBackToChats') : tr('ui.sidebarChats.archive'), disabled: busy, onSelect: () => void update(c, { archived: !c.archived }) },
       ...(c.kind === 'team' ? [] : [
         { label: tr('ui.sidebarChats.share'), onSelect: () => setSharing({ id: c.id, title: c.title }) },
         { label: tr('ui.projects.moveToProject'), disabled: busy, onSelect: () => setMoving({ id: c.id, title: c.title, project: c.project_id ?? null }) },
@@ -441,8 +441,8 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
           </div>
         )}
         {shared.length > 0 && (
-          <section aria-label="Shared with you" className="mt-2">
-            <div className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-dim">Shared with you</div>
+          <section aria-label={tr('ui.sidebarChats.sharedWithYou')} className="mt-2">
+            <div className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-dim">{tr('ui.sidebarChats.sharedWithYou')}</div>
             <ul className="flex flex-col gap-px">
               {shared.map((c) => {
                 const href = sharedChatHref(c.id);
@@ -453,7 +453,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
                       type="button"
                       onClick={() => { onNavigate?.(); navigate(href); }}
                       aria-current={selected ? 'page' : undefined}
-                      title={`${c.title} · ${c.owner}'s chat with ${c.agent.name}`}
+                      title={tr('ui.sidebarChats.titleOwnerSChatWith', { title: c.title, owner: c.owner, name: c.agent.name })}
                       className={cn(
                         'flex min-h-11 w-full items-center gap-2.5 rounded-lg pl-2.5 pr-2 text-left text-[13.5px] transition-colors md:min-h-[34px]',
                         selected ? 'bg-panel-2 font-medium text-fg' : 'text-fg/90 hover:bg-panel-2',
@@ -462,7 +462,7 @@ export default function SidebarChats({ collapsed, onExpand, onNavigate }: Sideba
                       <AgentBadge name={c.agent.name} avatar={c.agent.avatar} size="sm" />
                       <span className="min-w-0 flex-1 truncate">{c.title}</span>
                       <span className="flex-none truncate text-[11.5px] text-fg-dim">{c.owner}</span>
-                      {c.running && <span aria-label="working" className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />}
+                      {c.running && <span aria-label={tr('ui.sidebarChats.working')} className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-accent" />}
                     </button>
                   </li>
                 );

@@ -287,12 +287,12 @@ function UpdateRow() {
   };
 
   const detail = !info
-    ? 'Checking…'
+    ? tr('ui.settings.updates.checking')
     : !info.enabled
-      ? "This build doesn't update itself. Download new versions from the releases page."
+      ? tr('ui.settings.updates.noSelfUpdate')
       : info.available
-        ? `Version ${info.available} is ready. Installing restarts the app and the engine.`
-        : checked ? 'You have the newest version.' : 'Cognitrix checks for new versions twice a day.';
+        ? tr('ui.settings.updates.versionReady', { version: info.available })
+        : checked ? tr('ui.settings.updates.newest') : tr('ui.settings.updates.checksTwiceADay');
 
   return (
     <>
@@ -325,7 +325,7 @@ function DesktopSection() {
       await desktop.testNotification();
       setTestResult({ ok: true, text: 'Sent. If nothing appeared, check Focus / Do not disturb in your system settings.' });
     } catch (err) {
-      setTestResult({ ok: false, text: typeof err === 'string' ? err : err instanceof Error ? err.message : 'The notification could not be shown.' });
+      setTestResult({ ok: false, text: typeof err === 'string' ? err : err instanceof Error ? err.message : tr('ui.settings.notificationNotShown') });
     }
   };
   return (

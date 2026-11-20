@@ -17,7 +17,10 @@ interface Sharing {
   directory?: Person[];
 }
 
-const ROLE_LABEL: Record<Role, string> = { use: 'Can chat', edit: 'Can edit' };
+const ROLE_LABEL: Record<Role, string> = {
+  get use() { return tr('ui.agent.sharingTab.canChat'); },
+  get edit() { return tr('ui.agent.sharingTab.canEdit'); },
+};
 
 function RoleSelect({ value, onChange, label, allowNone }: {
   value: Role | '';

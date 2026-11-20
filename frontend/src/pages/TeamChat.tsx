@@ -372,7 +372,7 @@ export default function TeamChat() {
   if (!info) return <div className="flex h-full min-w-0 flex-1 flex-col bg-bg"><LoadingState label={tr('ui.teamChat.loadingTeamChat')} /></div>;
 
   const lead = members.find((m) => m.lead);
-  const placeholder = members.length ? `Message the team… (@${members[0].handle} to ask one agent)` : 'Add agents to this team first';
+  const placeholder = members.length ? tr('ui.teamChat.messageTheTeamHandle', { handle: members[0].handle }) : tr('ui.teamChat.addAgentsFirst');
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-bg text-fg">

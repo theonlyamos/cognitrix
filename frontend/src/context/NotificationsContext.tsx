@@ -294,7 +294,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
             push({
               event: 'approval',
               title: tr('ui.notificationsContext.approvalNeededApprovaltitle', { approvalTitle: approvalTitle(item) }),
-              body: approvalPreview(item) || (item.task_title ? `${item.task_title} is paused until you answer.` : 'Paused until you answer.'),
+              body: approvalPreview(item) || (item.task_title ? tr('ui.notificationsContext.taskPaused', { task: item.task_title }) : tr('ui.notificationsContext.paused')),
               href: item.source === 'chat' ? item.href || '/inbox' : '/inbox',
               tag: `approval-${item.id}`,
               approvalId: item.id,
@@ -303,14 +303,14 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
             push({
               event: 'agent_alert',
               title: item.title,
-              body: item.message || (item.task_title ? `From ${item.task_title}` : 'Open the inbox to see it.'),
+              body: item.message || (item.task_title ? tr('ui.notificationsContext.fromTask', { task: item.task_title }) : tr('ui.notificationsContext.openInboxToSee')),
               href: '/inbox',
             });
           } else if (item.kind === 'offer') {
             push({
               event: 'agent_alert',
-              title: tr('ui.notificationsContext.agentNameOffersTitle', { agent_name: item.agent_name || 'Your assistant', title: item.title }),
-              body: item.details || 'Open the inbox to accept or dismiss it.',
+              title: tr('ui.notificationsContext.agentNameOffersTitle', { agent_name: item.agent_name || tr('ui.notificationsContext.yourAssistant'), title: item.title }),
+              body: item.details || tr('ui.notificationsContext.openInboxToAccept'),
               href: '/inbox',
               tag: `offer-${item.id}`,
             });
@@ -318,7 +318,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
             push({
               event: 'agent_alert',
               title: tr('ui.notificationsContext.skillToReviewName', { name: item.name }),
-              body: item.description || 'Open the inbox to review it.',
+              body: item.description || tr('ui.notificationsContext.openInboxToReview'),
               href: '/inbox',
             });
           } else {
@@ -329,7 +329,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
             push({
               event: 'question',
               title: tr('ui.notificationsContext.anAgentAskedAQuestion'),
-              body: String(item.question.prompt ?? item.question.header ?? 'Open the inbox to answer.'),
+              body: String(item.question.prompt ?? item.question.header ?? tr('ui.notificationsContext.openInboxToAnswer')),
               href: '/inbox',
             });
           }
