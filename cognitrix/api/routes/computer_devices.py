@@ -264,7 +264,8 @@ async def relay_call(request: Request) -> dict[str, Any]:
             device_id, str(data.get('tool') or ''), data.get('args') or {}, power=str(data.get('power') or ''),
             ctx=data.get('ctx') or {}, timeout=min(float(data.get('timeout') or 150), 900))
     except DeviceUnavailable as exc:
-        return {'error': str(exc)}
+        # Only the reason the hub gives (offline, paused, no_<power>, or a sentence for the person).
+        return {'error': exc.args[0] if exc.args else 'offline'}
     return {'text': text, 'images': images}
 
 

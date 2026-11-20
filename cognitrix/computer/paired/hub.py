@@ -158,8 +158,10 @@ class Hub:
             raise DeviceUnavailable(f'{conn.name} did not answer within {int(timeout)} seconds.') from None
         except DeviceUnavailable:
             raise
-        except Exception as exc:
-            raise DeviceUnavailable(f'{conn.name} went offline ({exc}).') from None
+        except Exception:
+            # The detail stays in the server log; the chat (and the relay) only get the plain reason.
+            logger.info('Lost %s during a call', conn.name, exc_info=True)
+            raise DeviceUnavailable(f'{conn.name} went offline.') from None
         finally:
             conn.pending.pop(call_id, None)
         if not reply.get('ok'):
