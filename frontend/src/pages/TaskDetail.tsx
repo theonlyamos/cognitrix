@@ -14,6 +14,7 @@ import { TranscriptView } from '@/components/TranscriptView';
 import { parseCard } from '@/lib/cards';
 import { TaskApprovals } from '@/components/TaskApprovals';
 import { AutomationPanel, type TaskCreator } from '@/components/AutomationPanel';
+import { TaskArtifacts } from '@/components/artifacts/TaskArtifacts';
 import {
   parseChatEntries,
   parseSessionDate,
@@ -50,6 +51,7 @@ interface TaskData {
   report_to?: string | null;
   report_only_on?: string | null;
   report_to_effective?: string;
+  result_artifact?: string | null;
 }
 
 const TRIGGER_LABEL: Record<string, string> = {
@@ -1215,6 +1217,8 @@ export default function TaskDetail() {
         {error && (
           <p role="alert" className="mx-6 mt-3 border-l-2 border-danger bg-danger/5 px-3 py-2 font-mono text-[12px] text-danger-ink">{error}</p>
         )}
+
+        {taskId && <TaskArtifacts taskId={taskId} refreshKey={`${task?.status ?? ""}:${(runs || []).map((r) => `${r.id}:${r.status}`).join(",")}`} />}
 
         {showAutomation && taskId && (
           <div className="max-h-[55vh] flex-none overflow-y-auto">

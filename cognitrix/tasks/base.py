@@ -151,6 +151,12 @@ class Task(Model):
     """Runs see the owner's global saved memories (read-only; runs never save
     memories). Off by default: task runs are memory-free unless asked."""
 
+    result_artifact: str | None = None
+    """Keep each finished run's result as an artifact (one page per task, a
+    version per run): auto (None: when the result is long or structured and
+    the run didn't publish a page itself), always, or off.
+    See artifact_pages/guidance.py."""
+
     async def team(self):
         agents: list[Agent] = []
         for agent_id in self.assigned_agents:

@@ -1308,6 +1308,20 @@ async def _take_report(swarm: SwarmRun, workers: list[SwarmWorker], *, prefix: s
     if not fresh and not swarm.notes:
         return None
     text = report_text(swarm, workers, fresh, prefix=REPORT_PREFIX if prefix is None else prefix)
+    if fresh and ledger(swarm, workers)['finished']:
+        # Every worker has ended: keep their full results as one artifact in
+        # the lead's chat, so the work isn't lost in the chat's scrollback.
+        try:
+            from cognitrix.artifact_pages.guidance import save_swarm_report
+
+            page = await save_swarm_report(swarm, workers)
+        except Exception:
+            logger.debug('Could not save swarm %s results as an artifact', swarm.id, exc_info=True)
+            page = None
+        if page is not None:
+            text += (f'\n\nThe workers\' full results are saved as the artifact "{page.title}" (artifact_id {page.id}). '
+                     'Put your combined answer in an artifact too (a new one, or update that one), and keep the chat '
+                     'reply short.')
     reported = [*(swarm.reported or []), *(w.name for w in fresh)]
     await SwarmRun.update_one({'id': swarm.id}, {'reported': reported, 'notes': []})
     swarm.reported, swarm.notes = reported, []

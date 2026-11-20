@@ -43,6 +43,8 @@ RUN_CODE = 'Run Code'
 # chat itself (asking the person, folders, skills, cards).
 CORE_TOOL_NAMES = frozenset({
     'find tools', 'run code', 'ask user', 'request folder', 'load skill', 'show card',
+    # Artifacts are how agents hand over work, so they are always at hand.
+    'publish artifact', 'read artifact', 'list artifacts',
 })
 
 # Below this many tools, loading on demand saves too little to be worth a step.

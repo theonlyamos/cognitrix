@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Clock, Code2, ExternalLink, Eye, Globe, LayoutPanelTop, Lock, Maximize2, MessageCircle, Minimize2,
-  MoreHorizontal, Shapes, Share, Table2, Users, X,
+  MoreHorizontal, Shapes, Share, Sparkles, Table2, Users, X,
 } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
 import {
@@ -367,6 +367,19 @@ export function ArtifactViewer({ pageId, variant, onClose, onBack, expanded, onT
               {tr('ui.artifacts.artifactViewer.updateNow')}
             </button>
           )}
+        </div>
+      )}
+      {!page.task && page.origin && (
+        <div className="flex flex-none items-center gap-1.5 border-b border-line px-3 py-1.5 text-[12px] text-fg-dim">
+          <Sparkles size={13} className="flex-none" aria-hidden />
+          <span className="min-w-0 truncate">
+            {page.agent?.name ? <>{tr('ui.artifacts.artifactViewer.madeBy')}{' '}<span className="font-medium text-fg">{page.agent.name}</span>{' '}{tr('ui.artifacts.artifactViewer.in')}{' '}</> : <>{tr('ui.artifacts.artifactViewer.madeIn')}{' '}</>}
+            {page.origin.kind === 'chat' ? (
+              <Link to={`/home?chat=${encodeURIComponent(page.origin.id)}`} className="font-medium text-fg underline-offset-2 hover:underline">{page.origin.title}</Link>
+            ) : (
+              <>{tr('ui.artifacts.artifactViewer.theTask')}{' '}<Link to={`/tasks/${page.origin.id}`} className="font-medium text-fg underline-offset-2 hover:underline">{page.origin.title}</Link></>
+            )}
+          </span>
         </div>
       )}
       {behind && (
