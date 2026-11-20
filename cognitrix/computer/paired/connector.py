@@ -27,9 +27,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 from cognitrix.computer.paired import (
+    APPS,
     COMMANDS,
     FILES,
     PROTOCOL,
+    SCREEN,
     clean_folders,
     clean_powers,
     normalize_code,
@@ -277,13 +279,15 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
         _log({'at': time.time(), 'tool': name, 'ok': False, 'error': code})
         return {'type': 'result', 'id': call_id, 'ok': False, 'error': code, 'message': text}
 
-    power = tool_power(name)
+    power = APPS if name == SCREEN else tool_power(name)
     if power is None:
         return fail('not_allowed', f"{name} doesn't run on a paired PC.")
     if cfg.get('paused'):
         return fail('paused', 'Agents are paused on this PC.')
     if power not in clean_powers(cfg.get('powers')):
         return fail(f'no_{power}', f'{power} is switched off on this PC.')
+    if power == APPS:
+        return await _run_app_call(call_id, name, args, ctx, fail)
     if power == COMMANDS and _folders_for(cfg) and not _folders_for(cfg, for_commands=True):
         return fail('read_only', 'Every folder on this PC is shared read only, and a command could change files, so '
                     'commands are refused. Ask the person to share a folder as read & write to run commands.')
@@ -318,6 +322,60 @@ async def run_call(cfg: dict[str, Any], message: dict[str, Any]) -> dict[str, An
     _log({'at': started, 'tool': name, 'ok': True, 'seconds': round(time.time() - started, 1),
           'command': args.get('command'), 'path': args.get('file_path') or args.get('path')})
     return {'type': 'result', 'id': call_id, 'ok': True, 'text': text}
+
+
+def _screen_image(max_width: int = 1280) -> str:
+    """This PC's whole screen as a JPEG data URI, scaled down for the web."""
+    import base64
+    import io
+
+    from cognitrix.tools.misc import _grab_screen
+
+    img = _grab_screen().convert('RGB')
+    if img.width > max_width:
+        img = img.resize((max_width, round(img.height * max_width / img.width)))
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=70)
+    return 'data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode()
+
+
+async def _run_app_call(call_id: Any, name: str, args: dict[str, Any], ctx: dict[str, Any], fail) -> dict[str, Any]:
+    """The window tools, always on this PC's own screen (computer='person'),
+    or the web's view of the screen. Screenshots go back with the answer."""
+    from cognitrix.tools.base import ToolManager
+    from cognitrix.tools.misc import coords_normalized, end_image_collection, start_image_collection
+    from cognitrix.tools.utils import ToolExecutionContext, reset_execution_context, set_execution_context
+
+    started = time.time()
+    if name == SCREEN:
+        try:
+            image = await asyncio.to_thread(_screen_image)
+        except Exception as exc:
+            return fail('failed', f"Couldn't capture the screen: {exc}")
+        return {'type': 'result', 'id': call_id, 'ok': True, 'text': '', 'images': [image]}
+    tool = ToolManager.get_by_name(name)
+    if tool is None:
+        return fail('not_allowed', f'{name} is not available on this PC.')
+    args = {**args, 'computer': 'person'}
+    context = ToolExecutionContext(
+        user_id='paired', session_id=str(ctx.get('session_id') or '') or None,
+        agent_id=str(ctx.get('agent_id') or '') or None, device_host=True)
+    token = set_execution_context(context)
+    img_token, images = start_image_collection()
+    norm_token = coords_normalized.set(bool(ctx.get('coords_normalized')))
+    try:
+        validated = tool.validate_parameters(dict(args)) if hasattr(tool, 'validate_parameters') else dict(args)
+        text = _text(await tool.run(**validated))
+    except Exception as exc:
+        logger.warning('A window call from the server failed here', exc_info=True)
+        return fail('failed', f'{name} failed on the PC: {exc}')
+    finally:
+        coords_normalized.reset(norm_token)
+        end_image_collection(img_token)
+        reset_execution_context(token)
+    _log({'at': started, 'tool': name, 'ok': True, 'seconds': round(time.time() - started, 1),
+          'target': args.get('target'), 'window': args.get('window_id')})
+    return {'type': 'result', 'id': call_id, 'ok': True, 'text': text, 'images': images[:4]}
 
 
 # ---------------------------------------------------------------------------

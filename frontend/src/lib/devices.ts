@@ -1,7 +1,7 @@
 import { api } from '@/lib/api';
 
 /** What a paired PC lets agents do: work with files, run commands. */
-export type DevicePower = 'files' | 'commands';
+export type DevicePower = 'files' | 'commands' | 'apps';
 
 export interface DeviceFolder {
   path: string;
@@ -114,4 +114,9 @@ export async function changePcLink(patch: Partial<Pick<PcLink, 'name' | 'folders
 
 export async function removePcLink(): Promise<PcLink> {
   return (await api.delete<PcLink>('/computer/link')).data;
+}
+
+/** A fresh picture of the PC's screen (only when the PC allows apps). */
+export async function deviceScreen(id: string): Promise<{ image: string; at: number }> {
+  return (await api.get<{ image: string; at: number }>(`/computer/devices/${encodeURIComponent(id)}/screen`)).data;
 }

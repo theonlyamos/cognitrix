@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from cognitrix.computer.paired import (
+    APPS,
     CALL_TIMEOUT_S,
     COMMANDS,
     DEFAULT_CALL_TIMEOUT_S,
@@ -100,6 +101,11 @@ def device_prompt(device: dict[str, Any]) -> str:
     if FILES in powers:
         lines.append('Writes and edits change the real files right away, so be careful and tell the person what '
                      'you changed.')
+    if APPS in powers and not device.get('read_only'):
+        lines.append(f"The window tools (list_windows, open_app, look_at_window, click_element, type_in_window and "
+                     f"the rest) work on {name}'s own screen, in app windows in the background, not on your "
+                     "sandboxed computer. Opening an app asks the person first. Don't touch apps they didn't ask "
+                     'about, and never enter passwords or payment details.')
     if device.get('read_only'):
         lines.append('You are helping another agent: on this PC you can only look (Read, Glob, Grep). '
                      'Writing, editing and commands are refused.')
@@ -132,6 +138,8 @@ def _unavailable(code: str, name: str) -> str:
         return f"Error: The person paused agents on {name}, so this didn't run. Ask them to resume it."
     if code == f'no_{COMMANDS}':
         return f"Error: The person hasn't allowed commands on {name}. Use the file tools, or ask them to allow commands there."
+    if code == f'no_{APPS}':
+        return f"Error: The person hasn't allowed apps on {name}. Ask them to allow it there."
     if code == f'no_{FILES}':
         return f"Error: The person hasn't allowed file access on {name}. Ask them to allow it there."
     return f'Error: {code}'
@@ -157,13 +165,22 @@ async def run_remote(tool: Any, params: dict[str, Any]) -> str | None:
     try:
         return await hub.call(
             device_id, name, _jsonable(params), power=power,
-            ctx={'session_id': ctx.session_id, 'agent_id': ctx.agent_id, 'task_id': ctx.task_id},
+            ctx={'session_id': ctx.session_id, 'agent_id': ctx.agent_id, 'task_id': ctx.task_id,
+                 'coords_normalized': _coords_normalized()},
             timeout=CALL_TIMEOUT_S.get(name, DEFAULT_CALL_TIMEOUT_S),
         )
     except DeviceUnavailable as exc:
         msg = str(exc)
-        return _unavailable(msg, label) if msg in ('offline', 'paused', f'no_{FILES}', f'no_{COMMANDS}') \
+        return _unavailable(msg, label) if msg in ('offline', 'paused', f'no_{FILES}', f'no_{COMMANDS}', f'no_{APPS}') \
             else f'Error: {msg}'
+
+
+def _coords_normalized() -> bool:
+    try:
+        from cognitrix.tools.misc import coords_normalized
+        return bool(coords_normalized.get())
+    except Exception:
+        return False
 
 
 def device_turn() -> bool:

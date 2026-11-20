@@ -378,3 +378,67 @@ async def test_a_helper_agent_only_looks_at_the_pc(server, tmp_path):
         assert set(tools_for(device)) == {'read', 'glob', 'grep'}
     finally:
         await connector.stop()
+
+
+async def test_apps_on_the_pc_use_its_own_screen_and_send_screenshots_back(server, tmp_path, monkeypatch):
+    import httpx
+
+    from cognitrix.computer.paired import connector as pc
+    from cognitrix.tools import base as tools_base
+    from cognitrix.tools.misc import end_image_collection, queue_image, start_image_collection
+
+    seen = {}
+
+    class FakeWindowTool:
+        name = 'Look At Window'
+
+        async def run(self, **kw):
+            seen.update(kw)
+            queue_image('data:image/png;base64,AAAA')
+            return 'window 7: Notepad'
+
+    real = tools_base.ToolManager.get_by_name
+    monkeypatch.setattr(tools_base.ToolManager, 'get_by_name',
+                        classmethod(lambda cls, n: FakeWindowTool() if n == 'Look At Window' else real(n)))
+    monkeypatch.setattr(pc, '_screen_image', lambda max_width=1280: 'data:image/jpeg;base64,SCREEN')
+
+    view, connector, shared = await _paired_pc(server, tmp_path, powers=('files',))
+    try:
+        device_id = view['device_id']
+        async with httpx.AsyncClient(base_url=server.url) as http:
+            refused = await http.get(f'/api/v1/computer/devices/{device_id}/screen')
+            assert refused.status_code == 409 and "doesn't allow apps" in refused.json()['detail']
+
+        cfg = pc.load_config()
+        cfg['powers'] = ['files', 'apps']
+        pc.save_config(cfg)
+        await connector.push_state()
+        assert await _wait(lambda: 'apps' in hub.get(device_id).powers)
+
+        token, images = start_image_collection()
+        try:
+            text = await hub.call(device_id, 'Look At Window', {'window_id': 7, 'computer': 'agent'}, power='apps')
+        finally:
+            end_image_collection(token)
+        assert text == 'window 7: Notepad'
+        assert seen['computer'] == 'person'  # always the PC's own screen
+        assert images == ['data:image/png;base64,AAAA']
+
+        async with httpx.AsyncClient(base_url=server.url) as http:
+            shot = (await http.get(f'/api/v1/computer/devices/{device_id}/screen')).json()
+        assert shot['image'] == 'data:image/jpeg;base64,SCREEN'
+    finally:
+        await connector.stop()
+
+
+def test_opening_an_app_on_a_pc_needs_a_person():
+    from cognitrix.safety.permissions import needs_person
+    from cognitrix.tools.base import ToolManager
+
+    open_app = ToolManager.get_by_name('Open App')
+    assert not needs_person((open_app,), {'target': 'notepad'})
+    token = set_execution_context(ToolExecutionContext(user_id='u1', device='d1'))
+    try:
+        assert needs_person((open_app,), {'target': 'notepad'})
+    finally:
+        reset_execution_context(token)

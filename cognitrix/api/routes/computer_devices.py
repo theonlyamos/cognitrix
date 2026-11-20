@@ -134,6 +134,30 @@ async def unpair_device(device_id: str, ctx: AuthContext = Depends(jwt_only)) ->
     return {'ok': True}
 
 
+@devices_api.get('/{device_id}/screen')
+async def device_screen(device_id: str, ctx: AuthContext = Depends(jwt_only)) -> dict[str, Any]:
+    """A fresh picture of the PC's screen, when its owner allowed apps there."""
+    from cognitrix.computer.paired import APPS, SCREEN
+    from cognitrix.computer.paired.hub import DeviceUnavailable, hub
+    from cognitrix.computer.paired.store import device_of
+    device = await device_of(_user_id(ctx), device_id)
+    if device is None:
+        raise HTTPException(status_code=404, detail='No such PC')
+    try:
+        text, images = await hub.call_full(device.id, SCREEN, {}, power=APPS, timeout=20)
+    except DeviceUnavailable as exc:
+        reason = str(exc)
+        detail = {
+            'offline': f'{device.name} is offline.',
+            'paused': f'Agents are paused on {device.name}.',
+            f'no_{APPS}': f"{device.name} doesn't allow apps, so its screen isn't shared.",
+        }.get(reason, reason)
+        raise HTTPException(status_code=409, detail=detail) from None
+    if not images:
+        raise HTTPException(status_code=502, detail=text.removeprefix('Error: ') or "Couldn't see the screen.")
+    return {'image': images[0], 'at': time.time()}
+
+
 class ChatComputerBody(BaseModel):
     computer: str | None = None
 
